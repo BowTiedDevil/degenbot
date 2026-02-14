@@ -4584,13 +4584,15 @@ def _process_scaled_token_balance_transfer_event(
             AaveV3CollateralPositionsTable.asset_id == aave_asset.id,
         )
     )
+
+    # Zero-amount transfers can be performed by users who don't have a position, so skip further
+    # processing
+    # ref: TX 0x37CB48358CE4E26AC1193415003A33538B239E7D6D5FB826998666912937B71D
     if from_user_position is None:
         return
-    #    assert from_user_position, f"{from_address}: TX {context.event['transactionHash'].to_0x_hex()}"
 
     # Always update last_index (even for zero-amount transfers)
     from_user_position.last_index = index
-
     to_user = _get_or_create_user(
         context=context,
         market=context.market,
