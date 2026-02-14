@@ -348,6 +348,7 @@ class AaveV3Event(Enum):
     LIQUIDATION_CALL = HexBytes(
         "0xe413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286"
     )
+    DEFICIT_CREATED = HexBytes("0x2bccfb3fad376d59d7accf970515eb77b2f27b082c90ed0fb15583dd5a942699")
 
 
 # Events that trigger transaction-level processing
@@ -1242,9 +1243,17 @@ def _matches_pool_event(
     """Check if a Pool event matches the expected type and parameters."""
     event_topic = event["topics"][0]
     # Allow LIQUIDATION_CALL when expecting REPAY or WITHDRAW
-    if event_topic != expected_type and not (
-        event_topic == AaveV3Event.LIQUIDATION_CALL.value
-        and expected_type in {AaveV3Event.REPAY.value, AaveV3Event.WITHDRAW.value}
+    # Allow DEFICIT_CREATED when expecting REPAY (bad debt write-off during liquidation)
+    if (
+        event_topic != expected_type
+        and not (
+            event_topic == AaveV3Event.LIQUIDATION_CALL.value
+            and expected_type in {AaveV3Event.REPAY.value, AaveV3Event.WITHDRAW.value}
+        )
+        and not (
+            event_topic == AaveV3Event.DEFICIT_CREATED.value
+            and expected_type == AaveV3Event.REPAY.value
+        )
     ):
         return False
 
@@ -1272,6 +1281,11 @@ def _matches_pool_event(
             event_debt_asset = _decode_address(event["topics"][2])
             event_user = _decode_address(event["topics"][3])
             return event_user == user_address and event_debt_asset == reserve_address
+        if event_topic == AaveV3Event.DEFICIT_CREATED.value:
+            # DeficitCreated matching - debt written off as bad debt during liquidation
+            event_user = _decode_address(event["topics"][1])
+            event_reserve = _decode_address(event["topics"][2])
+            return event_user == user_address and event_reserve == reserve_address
 
     elif expected_type == AaveV3Event.SUPPLY.value:
         event_reserve = _decode_address(event["topics"][1])
@@ -1335,6 +1349,7 @@ def _verify_pool_event_for_transaction(
                 AaveV3Event.SUPPLY.value,
                 AaveV3Event.WITHDRAW.value,
                 AaveV3Event.LIQUIDATION_CALL.value,
+                AaveV3Event.DEFICIT_CREATED.value,
             ],
         ],
     )
@@ -1348,9 +1363,17 @@ def _verify_pool_event_for_transaction(
         event_topic = pool_event["topics"][0]
 
         # Allow LIQUIDATION_CALL when expecting REPAY or WITHDRAW
-        if event_topic != expected_event_type and not (
-            event_topic == AaveV3Event.LIQUIDATION_CALL.value
-            and expected_event_type in {AaveV3Event.REPAY.value, AaveV3Event.WITHDRAW.value}
+        # Allow DEFICIT_CREATED when expecting REPAY (bad debt write-off during liquidation)
+        if (
+            event_topic != expected_event_type
+            and not (
+                event_topic == AaveV3Event.LIQUIDATION_CALL.value
+                and expected_event_type in {AaveV3Event.REPAY.value, AaveV3Event.WITHDRAW.value}
+            )
+            and not (
+                event_topic == AaveV3Event.DEFICIT_CREATED.value
+                and expected_event_type == AaveV3Event.REPAY.value
+            )
         ):
             continue
 
@@ -1472,9 +1495,7 @@ def _get_or_create_position[T: AaveV3CollateralPositionsTable | AaveV3DebtPositi
     position_table: type[T],
 ) -> T:
     """
-    Get an existing position or create a new one with zero balance.
-
-    This function is generic with respect to the position type.
+    Get existing position or create new one with zero balance.
     """
 
     for position in positions:
@@ -1665,6 +1686,56 @@ def _verify_stk_aave_balances(
             f"does not match contract ({actual_balance}) "
             f"@ {discount_token} at block {block_number}"
         )
+
+
+def _cleanup_zero_balance_positions(
+    *,
+    session: Session,
+    market: AaveV3MarketTable,
+    no_progress: bool,
+) -> None:
+    """
+    Delete all zero-balance debt and collateral positions for the market.
+
+    This cleanup runs after chunk verification to remove positions that no longer
+    hold any balance, keeping the database lean.
+    """
+
+    # Delete zero-balance collateral positions
+    collateral_positions = session.scalars(
+        select(AaveV3CollateralPositionsTable)
+        .join(AaveV3UsersTable)
+        .where(
+            AaveV3UsersTable.market_id == market.id,
+            AaveV3CollateralPositionsTable.balance == 0,
+        )
+    ).all()
+
+    for position in tqdm.tqdm(
+        collateral_positions,
+        desc="Cleaning up zero-balance collateral positions",
+        leave=False,
+        disable=no_progress,
+    ):
+        session.delete(position)
+
+    # Delete zero-balance debt positions
+    debt_positions = session.scalars(
+        select(AaveV3DebtPositionsTable)
+        .join(AaveV3UsersTable)
+        .where(
+            AaveV3UsersTable.market_id == market.id,
+            AaveV3DebtPositionsTable.balance == 0,
+        )
+    ).all()
+
+    for position in tqdm.tqdm(
+        debt_positions,
+        desc="Cleaning up zero-balance debt positions",
+        leave=False,
+        disable=no_progress,
+    ):
+        session.delete(position)
 
 
 def _verify_scaled_token_positions(
@@ -4312,10 +4383,10 @@ def _process_scaled_token_balance_transfer_event(
 
     event_amount, index = _decode_uint_values(event=context.event, num_values=2)
 
-    # Zero-amount transfers have no effect, so return early instead of adding special cases
+    # Zero-amount transfers have no balance effect, but the Aave contract still updates
+    # last_index for both sender and recipient (ScaledBalanceTokenBase._transfer lines 152-153).
     # ref: TX 0xd007ede5e5dcff5e30904db3d66a8e1926fd75742ca838636dd2d5730140dcc6
-    if event_amount == 0:
-        return
+    # ref: TX 0x1d30b4d7ff65d58fa2314b23744202f80b36760143b3e779f31d9010925d8b7e
 
     aave_asset = _get_asset_by_token_type(
         market=context.market,
@@ -4339,10 +4410,14 @@ def _process_scaled_token_balance_transfer_event(
             AaveV3CollateralPositionsTable.asset_id == aave_asset.id,
         )
     )
-    assert from_user_position, f"{from_address}: TX {context.event['transactionHash'].to_0x_hex()}"
 
-    from_user_starting_amount = from_user_position.balance
-    from_user_position.balance -= event_amount
+    # Zero-amount transfers can be performed by users who don't have a position, so skip further
+    # processing
+    # ref: TX 0x37CB48358CE4E26AC1193415003A33538B239E7D6D5FB826998666912937B71D
+    if from_user_position is None:
+        return
+
+    # Always update last_index (even for zero-amount transfers)
     from_user_position.last_index = index
 
     to_user = _get_or_create_user(
@@ -4366,9 +4441,18 @@ def _process_scaled_token_balance_transfer_event(
             session=context.session, user=to_user, asset_id=aave_asset.id
         )
 
+    # Always update last_index (even for zero-amount transfers)
+    to_user_position.last_index = index
+
+    # Skip balance updates and logging for zero-amount transfers
+    if event_amount == 0:
+        return
+
+    from_user_starting_amount = from_user_position.balance
+    from_user_position.balance -= event_amount
+
     to_user_starting_amount = to_user_position.balance
     to_user_position.balance += event_amount
-    to_user_position.last_index = index
 
     if VerboseConfig.is_verbose(
         user_address=from_address,
@@ -4704,7 +4788,7 @@ def update_aave_market(
     3. User Event Processing: Process transactions with assertions that classifying events exist
     """
 
-    logger.info(f"Updating market {market.id}: block range {start_block:,}-{end_block:,}")
+    logger.info(f"Updating market {market.id}: block range {start_block}-{end_block}")
 
     # Phase 1
     for event in _fetch_address_provider_events(
@@ -4940,3 +5024,10 @@ def update_aave_market(
             block_number=end_block,
             no_progress=no_progress,
         )
+
+    # Cleanup: Delete zero-balance positions after verification
+    _cleanup_zero_balance_positions(
+        session=session,
+        market=market,
+        no_progress=no_progress,
+    )
