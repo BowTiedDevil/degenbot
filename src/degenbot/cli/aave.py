@@ -76,6 +76,8 @@ class UserOperation(Enum):
 # GhoVariableDebtToken
 # Rev 1: 0x3FEaB6F8510C73E05b8C0Fdf96Df012E3A144319
 # Rev 2: 0x7aa606b1B341fFEeAfAdbbE4A2992EFB35972775
+# Rev 3: 0x20cb2f303ede313e2cc44549ad8653a5e8c0050e
+# Rev 4: 0x9b2b73f9ddd830f82d61520388ccf4fc048f9953
 #        0x4da27a545c0c5B758a6BA100e3a049001de870f5 (discount token stkAAVE)
 
 # GhoDiscountRateStrategy
