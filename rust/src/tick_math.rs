@@ -21,6 +21,7 @@ use num_bigint::BigUint;
 use pyo3::{exceptions::PyTypeError, exceptions::PyValueError, prelude::*, types::PyAny};
 
 /// Extract a U160 from a Python object (accepts int or bytes).
+#[inline]
 fn extract_u160(obj: &Bound<'_, PyAny>) -> PyResult<U160> {
     /// Number of bytes in a 160-bit word (U160).
     const BYTES_PER_WORD: usize = 20;
@@ -53,10 +54,15 @@ fn extract_u160(obj: &Bound<'_, PyAny>) -> PyResult<U160> {
     ))
 }
 
-/// Minimum sqrt price ratio (at `MIN_TICK`).
-pub const MIN_SQRT_RATIO: U160 = uint!(4295128739_U160);
-/// Maximum sqrt price ratio (at `MAX_TICK`).
-pub const MAX_SQRT_RATIO: U160 = uint!(1461446703485210103287273052203988822378723970342_U160);
+/// Sqrt ratio constants and utilities for Uniswap V3 tick math.
+pub struct SqrtRatio;
+
+impl SqrtRatio {
+    /// Minimum sqrt price ratio (at `MIN_TICK`).
+    pub const MIN: U160 = uint!(4295128739_U160);
+    /// Maximum sqrt price ratio (at `MAX_TICK`).
+    pub const MAX: U160 = uint!(1461446703485210103287273052203988822378723970342_U160);
+}
 
 /// Minimum valid tick value for Uniswap V3.
 pub const MIN_TICK: i32 = -887_272;
@@ -89,7 +95,7 @@ const TICK_MASKS: [(U256, U256); 19] = uint!([
 /// Converts a tick value to its corresponding sqrt price (X96 format).
 ///
 /// This function calculates the sqrt price for a given tick value using the
-/// Uniswap V3 tick math formula. The result is returned as a Python `BigUint`.
+/// Uniswap V3 tick math formula. The result is returned as a native Python int.
 ///
 /// # Arguments
 ///
@@ -97,7 +103,7 @@ const TICK_MASKS: [(U256, U256); 19] = uint!([
 ///
 /// # Returns
 ///
-/// A `BigUint` representing the sqrt price X96 value
+/// A Python int representing the sqrt price X96 value
 ///
 /// # Errors
 ///
@@ -112,17 +118,16 @@ const TICK_MASKS: [(U256, U256); 19] = uint!([
 /// println!("Tick 0 ratio: {}", ratio);
 /// ```
 #[pyfunction(signature = (tick))]
-pub fn get_sqrt_ratio_at_tick(tick: i32) -> PyResult<BigUint> {
+pub fn get_sqrt_ratio_at_tick(tick: i32) -> PyResult<Py<PyAny>> {
     let result = get_sqrt_ratio_at_tick_internal(tick)?;
-    let mut digits: Vec<u32> = Vec::with_capacity(6);
-    for limb in result.as_limbs() {
-        digits.push((limb & 0xFFFF_FFFF) as u32);
-        digits.push((limb >> 32) as u32);
-    }
-    while digits.last() == Some(&0) {
-        digits.pop();
-    }
-    Ok(BigUint::new(digits))
+    let bytes: Vec<u8> = result.to_be_bytes::<20>().to_vec();
+
+    Python::attach(|py| {
+        let py_bytes = pyo3::types::PyBytes::new(py, &bytes);
+        let int_class = py.get_type::<pyo3::types::PyInt>();
+        let result = int_class.call_method1("from_bytes", (py_bytes, "big"))?;
+        Ok(result.unbind().into())
+    })
 }
 
 /// Internal function to calculate sqrt ratio from tick.
@@ -221,7 +226,7 @@ pub fn get_tick_at_sqrt_ratio_internal(sqrt_price_x96: U160) -> Result<I24, Tick
     const TICK_HIGH_OFFSET: I256 =
         I256::from_raw(uint!(291339464771989622907027621153398088495_U256));
 
-    if !(sqrt_price_x96 >= MIN_SQRT_RATIO && sqrt_price_x96 < MAX_SQRT_RATIO) {
+    if !(sqrt_price_x96 >= SqrtRatio::MIN && sqrt_price_x96 < SqrtRatio::MAX) {
         return Err(TickMathError::SqrtRatioOutOfBounds);
     }
 
@@ -285,211 +290,211 @@ pub fn get_tick_at_sqrt_ratio_internal(sqrt_price_x96: U160) -> Result<I24, Tick
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-
     use super::*;
+    use std::error::Error;
     use std::str::FromStr;
 
     #[test]
-    fn test_tick_bounds_validation() {
+    fn test_tick_bounds_validation() -> Result<(), Box<dyn Error>> {
         // Test invalid ticks below minimum
-        assert!(
-            matches!(
-                get_sqrt_ratio_at_tick_internal(MIN_TICK - 1),
-                Err(TickMathError::InvalidTick(tick)) if tick == MIN_TICK - 1
-            ),
-            "Should reject tick below MIN_TICK"
-        );
+        if let Err(TickMathError::InvalidTick(tick)) = get_sqrt_ratio_at_tick_internal(MIN_TICK - 1)
+        {
+            if tick == MIN_TICK - 1 {
+                // pass
+            } else {
+                return Err("Wrong tick value returned".into());
+            }
+        } else {
+            return Err("Should have rejected tick below MIN_TICK".into());
+        }
 
         // Test invalid ticks above maximum
-        assert!(
-            matches!(
-                get_sqrt_ratio_at_tick_internal(MAX_TICK + 1),
-                Err(TickMathError::InvalidTick(tick)) if tick == MAX_TICK + 1
-            ),
-            "Should reject tick above MAX_TICK"
-        );
+        if let Err(TickMathError::InvalidTick(tick)) = get_sqrt_ratio_at_tick_internal(MAX_TICK + 1)
+        {
+            if tick == MAX_TICK + 1 {
+                // pass
+            } else {
+                return Err("Wrong tick value returned".into());
+            }
+        } else {
+            return Err("Should have rejected tick above MAX_TICK".into());
+        }
 
         // Test extreme invalid values
-        assert!(
-            matches!(
-                get_sqrt_ratio_at_tick_internal(i32::MIN),
-                Err(TickMathError::InvalidTick(tick)) if tick == i32::MIN
-            ),
-            "Should reject i32::MIN"
-        );
+        if let Err(TickMathError::InvalidTick(tick)) = get_sqrt_ratio_at_tick_internal(i32::MIN) {
+            if tick == i32::MIN {
+                // pass
+            } else {
+                return Err("Wrong tick value returned".into());
+            }
+        } else {
+            return Err("Should have rejected i32::MIN".into());
+        }
 
-        assert!(
-            matches!(
-                get_sqrt_ratio_at_tick_internal(i32::MAX),
-                Err(TickMathError::InvalidTick(tick)) if tick == i32::MAX
-            ),
-            "Should reject i32::MAX"
-        );
+        if let Err(TickMathError::InvalidTick(tick)) = get_sqrt_ratio_at_tick_internal(i32::MAX) {
+            if tick == i32::MAX {
+                // pass
+            } else {
+                return Err("Wrong tick value returned".into());
+            }
+        } else {
+            return Err("Should have rejected i32::MAX".into());
+        }
+
+        Ok(())
     }
 
     #[test]
-    fn test_tickmath() {
+    fn test_tickmath() -> Result<(), Box<dyn Error>> {
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(MIN_TICK)
-                .expect("Valid tick should produce valid ratio"),
-            U160::from_str("4295128739").unwrap()
+            get_sqrt_ratio_at_tick_internal(MIN_TICK)?,
+            U160::from_str("4295128739")?
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(MIN_TICK + 1)
-                .expect("Valid tick should produce valid ratio"),
-            U160::from_str("4295343490").unwrap()
+            get_sqrt_ratio_at_tick_internal(MIN_TICK + 1)?,
+            U160::from_str("4295343490")?
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(MAX_TICK - 1)
-                .expect("Valid tick should produce valid ratio"),
-            U160::from_str("1461373636630004318706518188784493106690254656249").unwrap()
+            get_sqrt_ratio_at_tick_internal(MAX_TICK - 1)?,
+            U160::from_str("1461373636630004318706518188784493106690254656249")?
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(MAX_TICK)
-                .expect("Valid tick should produce valid ratio"),
-            U160::from_str("1461446703485210103287273052203988822378723970342").unwrap(),
+            get_sqrt_ratio_at_tick_internal(MAX_TICK)?,
+            U160::from_str("1461446703485210103287273052203988822378723970342")?,
         );
+        Ok(())
     }
 
     #[test]
-    fn test_tickmath_mid_values() {
+    fn test_tickmath_mid_values() -> Result<(), Box<dyn Error>> {
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(0).expect("Valid tick should produce valid ratio"),
-            U160::from_str("79228162514264337593543950336").unwrap()
+            get_sqrt_ratio_at_tick_internal(0)?,
+            U160::from_str("79228162514264337593543950336")?
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(1).expect("Valid tick should produce valid ratio"),
-            U160::from_str("79232123823359799118286999568").unwrap()
+            get_sqrt_ratio_at_tick_internal(1)?,
+            U160::from_str("79232123823359799118286999568")?
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(-1).expect("Valid tick should produce valid ratio"),
-            U160::from_str("79224201403219477170569942574").unwrap()
+            get_sqrt_ratio_at_tick_internal(-1)?,
+            U160::from_str("79224201403219477170569942574")?
         );
+        Ok(())
     }
 
     #[test]
-    fn test_tickmath_negative_values() {
+    fn test_tickmath_negative_values() -> Result<(), Box<dyn Error>> {
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(-100000)
-                .expect("Valid tick should produce valid ratio"),
-            U160::from_str("533968626430936354154228408").unwrap()
+            get_sqrt_ratio_at_tick_internal(-100000)?,
+            U160::from_str("533968626430936354154228408")?
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(-500000)
-                .expect("Valid tick should produce valid ratio"),
-            U160::from_str("1101692437043807371").unwrap()
+            get_sqrt_ratio_at_tick_internal(-500000)?,
+            U160::from_str("1101692437043807371")?
         );
+        Ok(())
     }
 
     #[test]
-    fn test_tickmath_positive_values() {
+    fn test_tickmath_positive_values() -> Result<(), Box<dyn Error>> {
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(100000).expect("Valid tick should produce valid ratio"),
-            U160::from_str("11755562826496067164730007768450").unwrap()
+            get_sqrt_ratio_at_tick_internal(100000)?,
+            U160::from_str("11755562826496067164730007768450")?
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(500000).expect("Valid tick should produce valid ratio"),
-            U160::from_str("5697689776495288729098254600827762987878").unwrap()
+            get_sqrt_ratio_at_tick_internal(500000)?,
+            U160::from_str("5697689776495288729098254600827762987878")?
         );
+        Ok(())
     }
 
     #[test]
-    fn test_tickmath_additional_values() {
+    fn test_tickmath_additional_values() -> Result<(), Box<dyn Error>> {
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(10000).expect("Valid tick should produce valid ratio"),
-            U160::from_str("130621891405341611593710811006").unwrap()
+            get_sqrt_ratio_at_tick_internal(10000)?,
+            U160::from_str("130621891405341611593710811006")?
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(-10000).expect("Valid tick should produce valid ratio"),
-            U160::from_str("48055510970269007215549348797").unwrap()
+            get_sqrt_ratio_at_tick_internal(-10000)?,
+            U160::from_str("48055510970269007215549348797")?
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(1000).expect("Valid tick should produce valid ratio"),
-            U160::from_str("83290069058676223003182343270").unwrap()
+            get_sqrt_ratio_at_tick_internal(1000)?,
+            U160::from_str("83290069058676223003182343270")?
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(-1000).expect("Valid tick should produce valid ratio"),
-            U160::from_str("75364347830767020784054125655").unwrap()
+            get_sqrt_ratio_at_tick_internal(-1000)?,
+            U160::from_str("75364347830767020784054125655")?
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(100).expect("Valid tick should produce valid ratio"),
-            U160::from_str("79625275426524748796330556128").unwrap()
+            get_sqrt_ratio_at_tick_internal(100)?,
+            U160::from_str("79625275426524748796330556128")?
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(-100).expect("Valid tick should produce valid ratio"),
-            U160::from_str("78833030112140176575862854579").unwrap()
+            get_sqrt_ratio_at_tick_internal(-100)?,
+            U160::from_str("78833030112140176575862854579")?
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(10).expect("Valid tick should produce valid ratio"),
-            U160::from_str("79267784519130042428790663799").unwrap()
+            get_sqrt_ratio_at_tick_internal(10)?,
+            U160::from_str("79267784519130042428790663799")?
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(-10).expect("Valid tick should produce valid ratio"),
-            U160::from_str("79188560314459151373725315960").unwrap()
+            get_sqrt_ratio_at_tick_internal(-10)?,
+            U160::from_str("79188560314459151373725315960")?
         );
+        Ok(())
     }
 
     #[test]
-    fn test_tickmath_roundtrip() {
+    fn test_tickmath_roundtrip() -> Result<(), Box<dyn Error>> {
         let ticks = [
             -500000, -100000, -10000, -1000, -100, -10, -1, 0, 1, 10, 100, 1000, 10000, 100000,
             500000,
         ];
 
         for tick in ticks {
-            let ratio = get_sqrt_ratio_at_tick_internal(tick)
-                .expect("Valid tick should produce valid ratio");
-            let tick_back = get_tick_at_sqrt_ratio_internal(ratio)
-                .expect("Valid ratio should produce valid tick");
+            let ratio = get_sqrt_ratio_at_tick_internal(tick)?;
+            let tick_back = get_tick_at_sqrt_ratio_internal(ratio)?;
             assert_eq!(tick_back.as_i32(), tick);
         }
+        Ok(())
     }
 
     #[test]
-    fn test_tickmath_boundary_roundtrip() {
-        let min_ratio = get_sqrt_ratio_at_tick_internal(-887272)
-            .expect("Valid tick should produce valid ratio");
+    fn test_tickmath_boundary_roundtrip() -> Result<(), Box<dyn Error>> {
+        let min_ratio = get_sqrt_ratio_at_tick_internal(-887272)?;
         assert_eq!(
-            get_tick_at_sqrt_ratio_internal(min_ratio)
-                .expect("Valid ratio should produce valid tick"),
+            get_tick_at_sqrt_ratio_internal(min_ratio)?,
             I24::unchecked_from(-887272)
         );
 
-        let max_ratio =
-            get_sqrt_ratio_at_tick_internal(887272).expect("Valid tick should produce valid ratio");
+        let max_ratio = get_sqrt_ratio_at_tick_internal(887272)?;
         let max_ratio_minus_one = U256::from(max_ratio) - U256::ONE;
         assert_eq!(
-            get_tick_at_sqrt_ratio_internal(U160::from(max_ratio_minus_one))
-                .expect("Valid ratio should produce valid tick"),
+            get_tick_at_sqrt_ratio_internal(U160::from(max_ratio_minus_one))?,
             I24::unchecked_from(887271)
         );
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod proptests {
-    #![allow(clippy::expect_used)]
-
     use super::*;
     use proptest::prelude::*;
 
     proptest! {
         #[test]
         fn roundtrip_any_valid_tick(tick in -887272i32..=887272i32) {
-            let ratio = get_sqrt_ratio_at_tick_internal(tick)
-                .expect("Valid tick should produce valid ratio");
-            let tick_back = get_tick_at_sqrt_ratio_internal(ratio)
-                .expect("Valid ratio should produce valid tick");
+            let ratio = get_sqrt_ratio_at_tick_internal(tick)?;
+            let tick_back = get_tick_at_sqrt_ratio_internal(ratio)?;
             prop_assert_eq!(tick_back.as_i32(), tick);
         }
 
         #[test]
         fn tick_produces_monotonically_increasing_prices(tick_a in -887272i32..=887272i32, tick_b in -887272i32..=887272i32) {
-            let ratio_a = get_sqrt_ratio_at_tick_internal(tick_a)
-                .expect("Valid tick should produce valid ratio");
-            let ratio_b = get_sqrt_ratio_at_tick_internal(tick_b)
-                .expect("Valid tick should produce valid ratio");
+            let ratio_a = get_sqrt_ratio_at_tick_internal(tick_a)?;
+            let ratio_b = get_sqrt_ratio_at_tick_internal(tick_b)?;
 
             if tick_a < tick_b {
                 prop_assert!(ratio_a < ratio_b, "Price should increase with tick");
@@ -502,8 +507,7 @@ mod proptests {
 
         #[test]
         fn tick_0_produces_correct_price(tick in Just(0i32)) {
-            let ratio = get_sqrt_ratio_at_tick_internal(tick)
-                .expect("Tick 0 should produce valid ratio");
+            let ratio = get_sqrt_ratio_at_tick_internal(tick)?;
             // sqrt(1.0001^0) * 2^96 = 1 * 2^96 = 2^96
             let expected = U160::from(1u128) << 96;
             prop_assert_eq!(ratio, expected);

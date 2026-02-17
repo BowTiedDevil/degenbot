@@ -6,7 +6,6 @@ use alloy_primitives::Address;
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
-    types::{PyBytes, PyString},
 };
 use std::str::FromStr;
 
@@ -43,19 +42,21 @@ use std::str::FromStr;
 /// ```
 #[pyfunction(signature = (address))]
 pub fn to_checksum_address(address: &Bound<'_, PyAny>) -> PyResult<String> {
-    if address.is_instance_of::<PyString>() {
-        let addr = Address::from_str(address.extract()?)
+    if let Ok(s) = address.extract::<&str>() {
+        let addr = Address::from_str(s)
             .map_err(|e| PyErr::new::<PyValueError, _>(format!("Invalid address: {e}")))?;
-        Ok(addr.to_checksum(None))
-    } else if address.is_instance_of::<PyBytes>() {
-        if address.len()? != 20 {
+        return Ok(addr.to_checksum(None));
+    }
+
+    if let Ok(bytes) = address.extract::<&[u8]>() {
+        if bytes.len() != 20 {
             return Err(PyErr::new::<PyValueError, _>("Address must be 20 bytes"));
         }
-        let address = Address::from_slice(address.extract()?);
-        Ok(address.to_checksum(None))
-    } else {
-        Err(PyErr::new::<PyTypeError, _>(
-            "Address must be string or bytes",
-        ))
+        let address = Address::from_slice(bytes);
+        return Ok(address.to_checksum(None));
     }
+
+    Err(PyErr::new::<PyTypeError, _>(
+        "Address must be string or bytes",
+    ))
 }
