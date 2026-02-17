@@ -391,6 +391,7 @@ class AaveV3Event(Enum):
         "0xe413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286"
     )
     DEFICIT_CREATED = HexBytes("0x2bccfb3fad376d59d7accf970515eb77b2f27b082c90ed0fb15583dd5a942699")
+    ADDRESS_SET = HexBytes("0x9ef0e8c8e52743bb38b83b17d9429141d494b8041ca6d616a6c77cebae9cd8b7")
 
 
 # Events that trigger transaction-level processing
@@ -1314,7 +1315,10 @@ def _process_scaled_token_upgrade_event(
             return_types=["uint256"],
         )
         aave_collateral_asset.a_token_revision = atoken_revision
-        logger.info(f"Upgraded aToken revision to {atoken_revision}")
+        logger.info(
+            f"Upgraded aToken revision for {aave_collateral_asset.a_token.address} "
+            f"to {atoken_revision}"
+        )
     elif (
         aave_debt_asset := _get_asset_by_token_type(
             market=context.market,
@@ -1512,6 +1516,45 @@ def _verify_pool_event_for_transaction(
 
     msg = (
         f"Expected {event_name} event for user {user_address} with reserve {reserve_address} "
+        f"in transaction {tx_hash.to_0x_hex()} but no matching event found."
+    )
+    raise ValueError(msg)
+
+
+def _verify_address_set_for_transaction(
+    w3: Web3,
+    market: AaveV3MarketTable,
+    event: LogReceipt,
+    user_address: ChecksumAddress,
+) -> LogReceipt:
+    """
+    Verify that an AddressSet event exists for the given user in the transaction.
+
+    This is used to validate that a contract address was registered as a system
+    contract (e.g., UMBRELLA) before processing burns for that address.
+    """
+    provider_contract = _get_contract(market=market, contract_name="POOL_ADDRESS_PROVIDER")
+
+    provider_events = fetch_logs_retrying(
+        w3=w3,
+        start_block=event["blockNumber"],
+        end_block=event["blockNumber"],
+        address=[provider_contract.address],
+        topic_signature=[[AaveV3Event.ADDRESS_SET.value]],
+    )
+
+    tx_hash = event["transactionHash"]
+
+    for provider_event in provider_events:
+        if provider_event["transactionHash"] != tx_hash:
+            continue
+
+        new_address = _decode_address(provider_event["topics"][3])
+        if new_address == user_address:
+            return provider_event
+
+    msg = (
+        f"Expected AddressSet event for user {user_address} "
         f"in transaction {tx_hash.to_0x_hex()} but no matching event found."
     )
     raise ValueError(msg)
@@ -3733,6 +3776,47 @@ def _process_proxy_creation_event(
     )
 
 
+def _process_umbrella_creation_event(
+    *,
+    session: Session,
+    market: AaveV3MarketTable,
+    event: LogReceipt,
+    proxy_name: str,
+    proxy_id: bytes,
+) -> None:
+    """
+    Process an AddressSet event for UMBRELLA contract creation.
+
+    The AddressSet event structure:
+    - topics[1]: id (bytes32) - e.g., "UMBRELLA"
+    - topics[2]: oldAddress (address) - typically 0x0 for new addresses
+    - topics[3]: newAddress (address) - the actual contract address
+    """
+    (decoded_proxy_id,) = eth_abi.abi.decode(types=["bytes32"], data=event["topics"][1])
+
+    if decoded_proxy_id != proxy_id:
+        return
+
+    new_address = _decode_address(event["topics"][3])
+
+    if (
+        session.scalar(
+            select(AaveV3ContractsTable).where(AaveV3ContractsTable.address == new_address)
+        )
+        is not None
+    ):
+        return
+
+    market.contracts.append(
+        AaveV3ContractsTable(
+            market_id=market.id,
+            name=proxy_name,
+            address=new_address,
+            revision=None,
+        )
+    )
+
+
 def _process_discount_percent_updated_event(
     context: EventHandlerContext,
 ) -> None:
@@ -4242,15 +4326,24 @@ def _process_collateral_burn_event(
             reserve_address=reserve_address,
         )
     except ValueError:
-        # If no WITHDRAW event, try REPAY (for repay with aTokens)
-        _verify_pool_event_for_transaction(
-            w3=w3,
-            market=market,
-            event=event,
-            expected_event_type=AaveV3Event.REPAY.value,
-            user_address=user.address,
-            reserve_address=reserve_address,
-        )
+        try:
+            # If no WITHDRAW event, try REPAY (for repay with aTokens)
+            _verify_pool_event_for_transaction(
+                w3=w3,
+                market=market,
+                event=event,
+                expected_event_type=AaveV3Event.REPAY.value,
+                user_address=user.address,
+                reserve_address=reserve_address,
+            )
+        except ValueError:
+            # If no REPAY event, check for AddressSet (for UMBRELLA setup)
+            _verify_address_set_for_transaction(
+                w3=w3,
+                market=market,
+                event=event,
+                user_address=user.address,
+            )
 
     collateral_position = session.scalar(
         select(AaveV3CollateralPositionsTable).where(
@@ -4771,6 +4864,7 @@ def _fetch_address_provider_events(
                 AaveV3Event.POOL_CONFIGURATOR_UPDATED.value,
                 AaveV3Event.POOL_DATA_PROVIDER_UPDATED.value,
                 AaveV3Event.POOL_UPDATED.value,
+                AaveV3Event.ADDRESS_SET.value,
             ]
         ],
     )
@@ -5041,6 +5135,14 @@ def update_aave_market(
                 )
                 assert pool_data_provider is not None
                 pool_data_provider.address = new_pool_data_provider_address
+        elif topic == AaveV3Event.ADDRESS_SET.value:
+            _process_umbrella_creation_event(
+                session=session,
+                market=market,
+                event=event,
+                proxy_name="UMBRELLA",
+                proxy_id=eth_abi.abi.encode(["bytes32"], [b"UMBRELLA"]),
+            )
 
     # Phase 2
     try:
