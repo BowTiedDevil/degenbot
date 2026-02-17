@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from tqdm.contrib.logging import logging_redirect_tqdm
 from web3 import Web3
+from web3.exceptions import ContractLogicError
 from web3.types import LogReceipt
 
 import degenbot.aave.libraries.v3_1 as aave_library_v3_1
@@ -82,6 +83,9 @@ class UserOperation(Enum):
 
 # GhoDiscountRateStrategy
 # 0x4C38Ec4D1D2068540DfC11DFa4de41F733DDF812
+
+# Revision 4 deprecates the discount mechanism
+GHO_REVISION_DISCOUNT_DEPRECATED = 4
 
 GHO_VARIABLE_DEBT_TOKEN_ADDRESS = get_checksum_address("0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B")
 
@@ -1045,7 +1049,7 @@ def _process_discount_rate_strategy_updated_event(
 def _get_or_init_stk_aave_balance(
     *,
     user: AaveV3UsersTable,
-    discount_token: ChecksumAddress,
+    discount_token: ChecksumAddress | None,
     block_number: int,
     w3: Web3,
     skip_init: bool = False,
@@ -1066,6 +1070,10 @@ def _get_or_init_stk_aave_balance(
     skip_init is unused but kept for API compatibility.
     """
 
+    # If discount_token is None (revision 4+), return 0
+    if discount_token is None:
+        return 0
+
     if user.stk_aave_balance is None and not skip_init:
         balance: int
         (balance,) = raw_call(
@@ -1082,7 +1090,6 @@ def _get_or_init_stk_aave_balance(
     elif user.stk_aave_balance is None and skip_init:
         # Fetch from contract at block_number - 1
         # skip_init only prevents double-fetching within the same transaction
-        balance: int
         (balance,) = raw_call(
             w3=w3,
             address=discount_token,
@@ -1337,10 +1344,34 @@ def _process_scaled_token_upgrade_event(
         )
         aave_debt_asset.v_token_revision = vtoken_revision
         logger.info(f"Upgraded vToken revision to {vtoken_revision}")
+
+        # Handle GHO discount deprecation on upgrade to revision 4+
+        if (
+            aave_debt_asset.v_token.address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS
+            and vtoken_revision >= GHO_REVISION_DISCOUNT_DEPRECATED
+        ):
+            gho_asset = _get_gho_asset(context.session, context.market)
+            gho_asset.v_gho_discount_token = None
+            gho_asset.v_gho_discount_rate_strategy = None
+            logger.info(f"GHO discount mechanism deprecated at revision {vtoken_revision}")
     else:
         token_address = get_checksum_address(context.event["address"])
         msg = f"Unknown token type for address {token_address}. Expected aToken or vToken."
         raise ValueError(msg)
+
+
+def _get_gho_vtoken_revision(market: AaveV3MarketTable) -> int | None:
+    """Get the GHO vToken revision from market assets."""
+    for asset in market.assets:
+        if asset.v_token and asset.v_token.address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
+            return asset.v_token_revision
+    return None
+
+
+def _is_discount_supported(market: AaveV3MarketTable) -> bool:
+    """Check if GHO discount mechanism is supported (revision 2 or 3)."""
+    revision = _get_gho_vtoken_revision(market)
+    return revision is not None and revision < GHO_REVISION_DISCOUNT_DEPRECATED
 
 
 def _get_math_libraries(
@@ -1588,7 +1619,8 @@ def _get_or_create_user(
         # to properly initialize their gho_discount value
         gho_discount = 0
 
-        if context.gho_asset.v_gho_discount_token is not None:
+        # Only fetch discount if mechanism is supported (revision 2 or 3)
+        if context.gho_asset.v_gho_discount_token is not None and _is_discount_supported(market):
             try:
                 (discount_percent,) = raw_call(
                     w3=w3,
@@ -1601,8 +1633,14 @@ def _get_or_create_user(
                     block_identifier=block_number,
                 )
                 gho_discount = discount_percent
-            except (ValueError, RuntimeError, eth_abi.exceptions.DecodingError) as e:
-                # If the call fails (e.g., contract not deployed yet, node error), default to 0
+            except (
+                ValueError,
+                RuntimeError,
+                eth_abi.exceptions.DecodingError,
+                ContractLogicError,
+            ) as e:
+                # If the call fails (e.g., contract not deployed yet, node error,
+                # or function not found after upgrade to revision 4+), default to 0
                 logger.warning(
                     f"Failed to fetch GHO discount for user {user_address} at block "
                     f"{block_number}: {e}. Using default 0."
@@ -1772,6 +1810,10 @@ def _verify_gho_discount_amounts(
     Otherwise, verifies all users in the market.
     """
 
+    # Skip verification if discount mechanism is not supported (revision 4+)
+    if not _is_discount_supported(market):
+        return
+
     if gho_asset.v_gho_discount_token is None:
         return
 
@@ -1790,16 +1832,21 @@ def _verify_gho_discount_amounts(
         leave=False,
         disable=no_progress,
     ):
-        (discount_percent,) = raw_call(
-            w3=w3,
-            address=GHO_VARIABLE_DEBT_TOKEN_ADDRESS,
-            calldata=encode_function_calldata(
-                function_prototype="getDiscountPercent(address)",
-                function_arguments=[user.address],
-            ),
-            return_types=["uint256"],
-            block_identifier=block_number,
-        )
+        try:
+            (discount_percent,) = raw_call(
+                w3=w3,
+                address=GHO_VARIABLE_DEBT_TOKEN_ADDRESS,
+                calldata=encode_function_calldata(
+                    function_prototype="getDiscountPercent(address)",
+                    function_arguments=[user.address],
+                ),
+                return_types=["uint256"],
+                block_identifier=block_number,
+            )
+        except (ValueError, RuntimeError, eth_abi.exceptions.DecodingError, ContractLogicError):
+            # Function may not exist (revision 4+ after upgrade in same block)
+            # Verify that our tracked discount is 0 (the new default)
+            discount_percent = 0
 
         assert user.gho_discount == discount_percent, (
             f"User {user.address}: GHO discount {user.gho_discount} "
@@ -2233,6 +2280,23 @@ def _accrue_debt_on_action(
         # _userState[user].additionalData = index.toUint128(); # noqa: ERA001
         debt_position.last_index = index
 
+    elif token_revision >= 4:
+        # Revision 4+: Discount mechanism deprecated, _accrueDebtOnAction removed
+        # Simply calculate interest accrual without discount
+        balance_increase = wad_ray_math.ray_mul(
+            a=previous_scaled_balance,
+            b=index,
+        ) - wad_ray_math.ray_mul(
+            a=previous_scaled_balance,
+            b=debt_position.last_index or 0,
+        )
+
+        discount_scaled = 0
+
+        # Update last_index to match contract behavior:
+        # _userState[user].additionalData = index.toUint128(); # noqa: ERA001
+        debt_position.last_index = index
+
     else:
         msg = f"Unsupported token revision {token_revision}"
         raise ValueError(msg)
@@ -2251,6 +2315,8 @@ def _get_discount_rate(
 
     Calls calculateDiscountRate on the strategy contract with debt and discount token balances
     to determine the user's interest discount percentage.
+
+    Returns 0 if discount mechanism is deprecated (revision 4+).
     """
     new_discount_percentage: int
     (new_discount_percentage,) = raw_call(
@@ -2270,7 +2336,7 @@ def _refresh_discount_rate(
     *,
     w3: Web3,
     user: AaveV3UsersTable,
-    discount_rate_strategy: ChecksumAddress,
+    discount_rate_strategy: ChecksumAddress | None,
     discount_token_balance: int,
     scaled_debt_balance: int,
     debt_index: int,
@@ -2282,6 +2348,10 @@ def _refresh_discount_rate(
     Calculates the debt token balance from scaled balance and index, then
     fetches and applies the new discount rate from the strategy contract.
     """
+
+    # Skip if discount mechanism is not supported (revision 4+)
+    if discount_rate_strategy is None:
+        return
 
     debt_token_balance = wad_ray_math.ray_mul(
         a=scaled_debt_balance,
@@ -2352,8 +2422,8 @@ def _get_discounted_balance(
 def _process_gho_debt_burn(
     *,
     w3: Web3,
-    discount_token: ChecksumAddress,
-    discount_rate_strategy: ChecksumAddress,
+    discount_token: ChecksumAddress | None,
+    discount_rate_strategy: ChecksumAddress | None,
     event_data: DebtBurnEvent,
     user: AaveV3UsersTable,
     scaled_token_revision: int,
@@ -2510,6 +2580,28 @@ def _process_gho_debt_burn(
             logger.info(f"{discount_scaled=}")
             logger.info(f"{user.gho_discount=}")
 
+    elif scaled_token_revision >= 4:
+        # Revision 4+: Discount mechanism deprecated
+        discount_scaled = 0  # No discount mechanism in revision 4+
+
+        # uint256 amountToBurn = amount - balanceIncrease;
+        requested_amount = event_data.value + event_data.balance_increase
+
+        # uint256 amountScaled = amount.rayDiv(index);
+        amount_scaled = wad_ray_math_library.ray_div(
+            a=requested_amount,
+            b=event_data.index,
+        )
+
+        # uint256 previousScaledBalance = super.balanceOf(user);
+        previous_scaled_balance = debt_position.balance
+
+        # No discount in revision 4+, simply burn amount_scaled
+        # _burn(user, amountScaled.toUint128());
+        balance_delta = -amount_scaled
+
+        # No discount refresh needed for revision 4+
+
     else:
         msg = f"Unknown token revision: {scaled_token_revision}"
         raise ValueError(msg)
@@ -2614,10 +2706,17 @@ def _process_transaction_with_context(
                             default_discount=user.gho_discount,
                         )
                     )
-                else:
-                    # User doesn't exist in database yet - fetch discount from contract
-                    # This happens when a user with an existing GHO debt position
-                    # is first encountered during event processing
+                    continue
+
+                # User doesn't exist in database yet - fetch discount from contract
+                # This happens when a user with an existing GHO debt position
+                # is first encountered during event processing
+                if not _is_discount_supported(market):
+                    # Discount mechanism deprecated (revision 4+)
+                    tx_context.user_discounts[user_address] = 0
+                    continue
+
+                try:
                     (discount_percent,) = raw_call(
                         w3=w3,
                         address=GHO_VARIABLE_DEBT_TOKEN_ADDRESS,
@@ -2629,6 +2728,14 @@ def _process_transaction_with_context(
                         block_identifier=tx_context.block_number,
                     )
                     tx_context.user_discounts[user_address] = discount_percent
+                except (
+                    ValueError,
+                    RuntimeError,
+                    eth_abi.exceptions.DecodingError,
+                    ContractLogicError,
+                ):
+                    # Function may not exist (revision 4+), default to 0
+                    tx_context.user_discounts[user_address] = 0
 
     # Process all events in chronological order
     for event in tx_context.events:
@@ -2673,8 +2780,8 @@ def _process_transaction_with_context(
 def _process_staked_aave_event(
     context: EventHandlerContext,
     *,
-    discount_token: ChecksumAddress,
-    discount_rate_strategy: ChecksumAddress,
+    discount_token: ChecksumAddress | None,
+    discount_rate_strategy: ChecksumAddress | None,
     event_data: DebtMintEvent,
     user: AaveV3UsersTable,
     scaled_token_revision: int,
@@ -2688,6 +2795,10 @@ def _process_staked_aave_event(
 
     Uses pre-categorized stkAAVE events from TransactionContext.
     """
+
+    # Skip if discount mechanism is not supported (revision 4+)
+    if discount_token is None or discount_rate_strategy is None:
+        return None
 
     if VerboseConfig.is_verbose(
         user_address=user.address, tx_hash=event_in_process["transactionHash"]
@@ -3256,8 +3367,8 @@ def _process_staked_aave_transfer(
 def _process_gho_debt_mint(
     context: EventHandlerContext,
     *,
-    discount_token: ChecksumAddress,
-    discount_rate_strategy: ChecksumAddress,
+    discount_token: ChecksumAddress | None,
+    discount_rate_strategy: ChecksumAddress | None,
     event_data: DebtMintEvent,
     user: AaveV3UsersTable,
     scaled_token_revision: int,
@@ -3618,6 +3729,80 @@ def _process_gho_debt_mint(
                 f"value={event_data.value}, balance_increase={event_data.balance_increase}"
             )
             raise ValueError(msg)
+
+    elif scaled_token_revision >= 4:
+        # Revision 4+: Discount mechanism deprecated
+        # Standard borrow/repay/interest logic without discount
+        discount_scaled = 0  # No discount mechanism in revision 4+
+
+        if event_data.value > event_data.balance_increase:
+            # GHO BORROW - emitted in _mintScaled
+            # uint256 amountToMint = amount + balanceIncrease;
+            user_operation = UserOperation.GHO_BORROW
+            requested_amount = event_data.value - event_data.balance_increase
+
+            # uint256 amountScaled = amount.rayDiv(index);
+            amount_scaled = wad_ray_math_library.ray_div(
+                a=requested_amount,
+                b=event_data.index,
+            )
+
+            # No discount in revision 4+, balance_delta = amount_scaled
+            balance_delta = amount_scaled
+
+        elif event_data.balance_increase > event_data.value:
+            # GHO REPAY - emitted in _burnScaled
+            # uint256 amountToMint = balanceIncrease - amount;
+            user_operation = UserOperation.GHO_REPAY
+            requested_amount = event_data.balance_increase - event_data.value
+
+            # uint256 amountScaled = amount.rayDiv(index);
+            amount_scaled = wad_ray_math_library.ray_div(
+                a=requested_amount,
+                b=event_data.index,
+            )
+
+            # No discount in revision 4+, balance decreases by amount_scaled
+            # _burn(user, amountScaled.toUint128());
+            balance_delta = -amount_scaled
+
+        elif event_data.value == event_data.balance_increase:
+            # Pure interest accrual - no actual borrow/repay
+            # Emitted from interest accrual without user action
+            user_operation = UserOperation.GHO_INTEREST_ACCRUAL
+            requested_amount = 0
+
+            # Calculate interest accrual without discount
+            previous_scaled_balance = debt_position.balance
+            balance_increase = wad_ray_math_library.ray_mul(
+                a=previous_scaled_balance,
+                b=event_data.index,
+            ) - wad_ray_math_library.ray_mul(
+                a=previous_scaled_balance,
+                b=debt_position.last_index or 0,
+            )
+
+            # balanceIncrease is the interest accrued (in underlying)
+            # Convert back to scaled: balance_increase / index
+            balance_increase_scaled = wad_ray_math_library.ray_div(
+                a=balance_increase,
+                b=event_data.index,
+            )
+
+            balance_delta = balance_increase_scaled
+
+            # Update last_index
+            debt_position.last_index = event_data.index
+
+        else:
+            msg = (
+                "Unexpected Mint event state: "
+                f"value={event_data.value}, balance_increase={event_data.balance_increase}"
+            )
+            raise ValueError(msg)
+
+        # Note: For revision 4+, discount_rate_strategy is None, so
+        # _refresh_discount_rate returns early. No need to call it.
 
     else:
         msg = f"Unknown token revision: {scaled_token_revision}"
@@ -4023,10 +4208,19 @@ def _process_gho_debt_mint_event(
     )
 
     gho_asset = context.gho_asset
-    assert gho_asset.v_gho_discount_token is not None, "GHO discount token not initialized"
-    assert gho_asset.v_gho_discount_rate_strategy is not None, (
-        "GHO discount rate strategy not initialized"
-    )
+
+    # Discount mechanism is only supported in revisions 2 and 3
+    # Revision 4+ deprecates discounts, so these will be None
+    if _is_discount_supported(context.market):
+        assert gho_asset.v_gho_discount_token is not None, "GHO discount token not initialized"
+        assert gho_asset.v_gho_discount_rate_strategy is not None, (
+            "GHO discount rate strategy not initialized"
+        )
+        discount_token = gho_asset.v_gho_discount_token
+        discount_rate_strategy = gho_asset.v_gho_discount_rate_strategy
+    else:
+        discount_token = None
+        discount_rate_strategy = None
 
     user_starting_amount = debt_position.balance
 
@@ -4040,8 +4234,8 @@ def _process_gho_debt_mint_event(
 
     user_operation = _process_gho_debt_mint(
         context,
-        discount_token=gho_asset.v_gho_discount_token,
-        discount_rate_strategy=gho_asset.v_gho_discount_rate_strategy,
+        discount_token=discount_token,
+        discount_rate_strategy=discount_rate_strategy,
         event_data=DebtMintEvent(
             caller=caller_address,
             on_behalf_of=user.address,
@@ -4419,10 +4613,19 @@ def _process_gho_debt_burn_event(
     assert debt_position is not None
 
     gho_asset = context.gho_asset
-    assert gho_asset.v_gho_discount_token is not None, "GHO discount token not initialized"
-    assert gho_asset.v_gho_discount_rate_strategy is not None, (
-        "GHO discount rate strategy not initialized"
-    )
+
+    # Discount mechanism is only supported in revisions 2 and 3
+    # Revision 4+ deprecates discounts, so these will be None
+    if _is_discount_supported(context.market):
+        assert gho_asset.v_gho_discount_token is not None, "GHO discount token not initialized"
+        assert gho_asset.v_gho_discount_rate_strategy is not None, (
+            "GHO discount rate strategy not initialized"
+        )
+        discount_token = gho_asset.v_gho_discount_token
+        discount_rate_strategy = gho_asset.v_gho_discount_rate_strategy
+    else:
+        discount_token = None
+        discount_rate_strategy = None
 
     user_starting_amount = debt_position.balance
 
@@ -4442,8 +4645,8 @@ def _process_gho_debt_burn_event(
 
     user_operation = _process_gho_debt_burn(
         w3=context.w3,
-        discount_token=gho_asset.v_gho_discount_token,
-        discount_rate_strategy=gho_asset.v_gho_discount_rate_strategy,
+        discount_token=discount_token,
+        discount_rate_strategy=discount_rate_strategy,
         event_data=DebtBurnEvent(
             from_=from_address,
             target=target_address,
