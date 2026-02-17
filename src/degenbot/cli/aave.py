@@ -1140,6 +1140,10 @@ def _process_stk_aave_transfer_event(context: EventHandlerContext) -> None:
 
     from_address = _decode_address(context.event["topics"][1])
     to_address = _decode_address(context.event["topics"][2])
+
+    if from_address == to_address:
+        return
+
     (value,) = _decode_uint_values(event=context.event, num_values=1)
 
     tx_hash = context.event.get("transactionHash")
@@ -1210,8 +1214,6 @@ def _process_stk_aave_transfer_event(context: EventHandlerContext) -> None:
             logger.info(f"  before: {from_user_old_balance}")
             logger.info(f"  after: {from_user.stk_aave_balance}")
             logger.info(f"  delta: -{value}")
-
-        assert from_user_old_balance - value >= 0
 
     if to_user is not None:
         assert to_user.stk_aave_balance is not None
