@@ -21,6 +21,7 @@ import degenbot.aave.libraries.v3_1 as aave_library_v3_1
 import degenbot.aave.libraries.v3_2 as aave_library_v3_2
 import degenbot.aave.libraries.v3_3 as aave_library_v3_3
 import degenbot.aave.libraries.v3_4 as aave_library_v3_4
+import degenbot.aave.libraries.v3_5 as aave_library_v3_5
 from degenbot.aave.deployments import EthereumMainnetAaveV3
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
@@ -78,11 +79,11 @@ class UserOperation(Enum):
 # Rev 1: 0x3FEaB6F8510C73E05b8C0Fdf96Df012E3A144319
 # Rev 2: 0x7aa606b1B341fFEeAfAdbbE4A2992EFB35972775
 # Rev 3: 0x20cb2f303ede313e2cc44549ad8653a5e8c0050e
+#        GhoDiscountRateStrategy:
+#        0x4C38Ec4D1D2068540DfC11DFa4de41F733DDF812
+#        Discount Token: stkAAVE
+#        0x4da27a545c0c5B758a6BA100e3a049001de870f5
 # Rev 4: 0x9b2b73f9ddd830f82d61520388ccf4fc048f9953
-#        0x4da27a545c0c5B758a6BA100e3a049001de870f5 (discount token stkAAVE)
-
-# GhoDiscountRateStrategy
-# 0x4C38Ec4D1D2068540DfC11DFa4de41F733DDF812
 
 # Revision 4 deprecates the discount mechanism
 GHO_REVISION_DISCOUNT_DEPRECATED = 4
@@ -135,6 +136,12 @@ class TransactionContext:
     # Set of user addresses with stkAAVE Transfer events in this transaction
     # Used to skip balance initialization when events provide authoritative values
     stk_aave_transfer_users: set[ChecksumAddress] = field(default_factory=set)
+
+    # Track which pool events have been matched to Mint/Burn events.
+    # Key: pool event logIndex, Value: True if already matched
+    # This prevents matching multiple Mint events to the same Pool event when
+    # a transaction has multiple operations of the same type (e.g., two SUPPLY calls).
+    matched_pool_events: dict[int, bool] = field(default_factory=dict)
 
     def get_events_by_topic(self, topic: HexBytes) -> list[LogReceipt]:
         """Get all events in this transaction with the given topic."""
@@ -438,6 +445,10 @@ SCALED_TOKEN_REVISION_LIBRARIES: dict[TokenRevision, MathLibraries] = {
     4: MathLibraries(
         wad_ray=aave_library_v3_4.wad_ray_math,
         percentage=aave_library_v3_4.percentage_math,
+    ),
+    5: MathLibraries(
+        wad_ray=aave_library_v3_5.wad_ray_math,
+        percentage=aave_library_v3_5.percentage_math,
     ),
 }
 
@@ -2146,9 +2157,19 @@ def _process_scaled_token_operation(
     event: CollateralMintEvent | CollateralBurnEvent | DebtMintEvent | DebtBurnEvent,
     scaled_token_revision: int,
     position: AaveV3CollateralPositionsTable | AaveV3DebtPositionsTable,
+    scaled_delta: int | None = None,
 ) -> UserOperation:
     """
     Determine the user operation for scaled token events and apply balance delta to position.
+
+    Args:
+        event: The scaled token event data
+        scaled_token_revision: The token contract revision
+        position: The user's position to update
+        scaled_delta: Optional pre-calculated scaled amount delta. If provided, this value
+                     is used directly instead of deriving it from event.value and
+                     event.balance_increase (which can introduce rounding errors).
+                     This is used by scaled token revision 4+.
     """
 
     ray_math, _ = _get_math_libraries(scaled_token_revision)
@@ -2162,7 +2183,11 @@ def _process_scaled_token_operation(
                 operation = UserOperation.WITHDRAW
             else:
                 requested_amount = event.value - event.balance_increase
-                balance_delta = ray_math.ray_div(a=requested_amount, b=event.index)
+                if scaled_delta is not None:
+                    # Use pre-calculated scaled amount to avoid rounding errors
+                    balance_delta = scaled_delta
+                else:
+                    balance_delta = ray_math.ray_div(a=requested_amount, b=event.index)
                 operation = UserOperation.DEPOSIT
 
         case CollateralBurnEvent():
@@ -3851,6 +3876,9 @@ def _get_scaled_token_asset_by_address(
         token_type=TokenType.DEBT,
     )
 
+    if collateral_asset is not None and debt_asset is not None:
+        assert collateral_asset.id != debt_asset.id
+
     return collateral_asset, debt_asset
 
 
@@ -4090,6 +4118,10 @@ def _process_collateral_mint_event(
     # - mintToTreasury: Pool contract mints accrued fees to treasury (caller = Pool)
     reserve_address = get_checksum_address(collateral_asset.underlying_token.address)
 
+    # Track matched pool event and calculated scaled delta
+    matched_pool_event: LogReceipt | None = None
+    scaled_delta: int | None = None
+
     # Skip verification for pure interest accrual (value == balanceIncrease)
     # These mints don't have a corresponding Pool event
     if event_amount != balance_increase:
@@ -4109,8 +4141,14 @@ def _process_collateral_mint_event(
                 (AaveV3Event.REPAY.value, user.address),
             ]:
                 for pool_event in tx_context.pool_events:
+                    # Skip pool events that have already been matched to other Mint/Burn events
+                    if tx_context.matched_pool_events.get(pool_event["logIndex"], False):
+                        continue
                     if _matches_pool_event(pool_event, expected_type, check_user, reserve_address):
                         found = True
+                        matched_pool_event = pool_event
+                        # Mark this pool event as matched so it won't be used again
+                        tx_context.matched_pool_events[pool_event["logIndex"]] = True
                         break
                 if found:
                     break
@@ -4129,6 +4167,41 @@ def _process_collateral_mint_event(
             # This path should not be reached in normal operation with transaction-level processing
             pass
 
+    # For SUPPLY events, calculate scaled amount from raw underlying amount
+    # to avoid rounding errors from reverse-calculating from event.value
+    if (
+        matched_pool_event is not None
+        and matched_pool_event["topics"][0] == AaveV3Event.SUPPLY.value
+    ):
+        # SUPPLY event data: (address caller, uint256 amount)
+        # Note: reserve, onBehalfOf are indexed and in topics
+        (_, raw_amount) = eth_abi.abi.decode(
+            types=["address", "uint256"],
+            data=matched_pool_event["data"],
+        )
+        # Calculate scaled amount: ray_div(raw_amount, index)
+        # This matches the contract's calculation in getATokenMintScaledAmount
+        ray_math, _ = _get_math_libraries(collateral_asset.a_token_revision)
+        scaled_delta = ray_math.ray_div(a=raw_amount, b=index)
+    if (
+        matched_pool_event is not None
+        and matched_pool_event["topics"][0] == AaveV3Event.SUPPLY.value
+    ):
+        # SUPPLY event data: (address caller, uint256 amount)
+        # Note: reserve, onBehalfOf are indexed and in topics
+        (_, raw_amount) = eth_abi.abi.decode(
+            types=["address", "uint256"],
+            data=matched_pool_event["data"],
+        )
+        # Calculate scaled amount: ray_div(raw_amount, index)
+        # This matches the contract's calculation in getATokenMintScaledAmount
+        ray_math, _ = _get_math_libraries(collateral_asset.a_token_revision)
+        scaled_delta = ray_math.ray_div(a=raw_amount, b=index)
+        if VerboseConfig.is_verbose(user_address=user.address):
+            logger.info(
+                f"SUPPLY: raw_amount={raw_amount}, index={index}, scaled_delta={scaled_delta}"
+            )
+
     collateral_position = _get_or_create_collateral_position(
         session=session, user=user, asset_id=collateral_asset.id
     )
@@ -4143,6 +4216,7 @@ def _process_collateral_mint_event(
         ),
         scaled_token_revision=collateral_asset.a_token_revision,
         position=collateral_position,
+        scaled_delta=scaled_delta,
     )
 
     if VerboseConfig.is_verbose(
@@ -4422,6 +4496,7 @@ def _process_scaled_token_mint_event(context: EventHandlerContext) -> None:
                 index=index,
                 event=context.event,
                 caller_address=caller_address,
+                tx_context=context.tx_context,
             )
         except ValueError:
             # If collateral verification fails and we have a debt asset, try that
