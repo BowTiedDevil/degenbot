@@ -23,6 +23,13 @@ import degenbot.aave.libraries.v3_3 as aave_library_v3_3
 import degenbot.aave.libraries.v3_4 as aave_library_v3_4
 import degenbot.aave.libraries.v3_5 as aave_library_v3_5
 from degenbot.aave.deployments import EthereumMainnetAaveV3
+from degenbot.aave.processors import (
+    CollateralBurnEvent,
+    CollateralMintEvent,
+    DebtBurnEvent,
+    DebtMintEvent,
+    TokenProcessorFactory,
+)
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
 from degenbot.cli.utils import get_web3_from_config
@@ -2069,38 +2076,6 @@ def _verify_scaled_token_positions(
             )
 
 
-@dataclass(frozen=True, slots=True)
-class CollateralMintEvent:
-    value: int
-    balance_increase: int
-    index: int
-
-
-@dataclass(frozen=True, slots=True)
-class CollateralBurnEvent:
-    value: int
-    balance_increase: int
-    index: int
-
-
-@dataclass(frozen=True, slots=True)
-class DebtMintEvent:
-    caller: ChecksumAddress
-    on_behalf_of: ChecksumAddress
-    value: int
-    balance_increase: int
-    index: int
-
-
-@dataclass(frozen=True, slots=True)
-class DebtBurnEvent:
-    from_: ChecksumAddress
-    target: ChecksumAddress
-    value: int
-    balance_increase: int
-    index: int
-
-
 def _log_token_operation(
     *,
     user_operation: UserOperation,
@@ -2160,62 +2135,53 @@ def _process_scaled_token_operation(
     scaled_delta: int | None = None,
 ) -> UserOperation:
     """
-    Determine the user operation for scaled token events and apply balance delta to position.
+    Determine the user operation for scaled token events and apply the appropriate delta to the
+    position balance.
+
+    This function delegates to revision-specific processors for handling token events.
 
     Args:
         event: The scaled token event data
         scaled_token_revision: The token contract revision
         position: The user's position to update
-        scaled_delta: Optional pre-calculated scaled amount delta. If provided, this value
-                     is used directly instead of deriving it from event.value and
-                     event.balance_increase (which can introduce rounding errors).
-                     This is used by scaled token revision 4+.
+        scaled_delta: Optional pre-calculated scaled amount delta. If provided, this value is used
+            directly instead of deriving it from event.value and event.balance_increase (which can
+            introduce rounding errors). This is used by scaled token revision 4+.
     """
-
-    ray_math, _ = _get_math_libraries(scaled_token_revision)
-    operation: UserOperation
 
     match event:
         case CollateralMintEvent():
-            if event.balance_increase > event.value:
-                requested_amount = event.balance_increase - event.value
-                balance_delta = -ray_math.ray_div(a=requested_amount, b=event.index)
-                operation = UserOperation.WITHDRAW
-            else:
-                requested_amount = event.value - event.balance_increase
-                if scaled_delta is not None:
-                    # Use pre-calculated scaled amount to avoid rounding errors
-                    balance_delta = scaled_delta
-                else:
-                    balance_delta = ray_math.ray_div(a=requested_amount, b=event.index)
-                operation = UserOperation.DEPOSIT
+            processor = TokenProcessorFactory.get_collateral_processor(scaled_token_revision)
+            _, is_withdrawal = processor.process_mint_event(
+                event_data=event,
+                position=position,  # type: ignore[arg-type]
+                scaled_delta=scaled_delta,
+            )
+            return UserOperation.WITHDRAW if is_withdrawal else UserOperation.DEPOSIT
 
         case CollateralBurnEvent():
-            requested_amount = event.value + event.balance_increase
-            balance_delta = -ray_math.ray_div(a=requested_amount, b=event.index)
-            operation = UserOperation.WITHDRAW
+            processor = TokenProcessorFactory.get_collateral_processor(scaled_token_revision)
+            processor.process_burn_event(
+                event_data=event,
+                position=position,  # type: ignore[arg-type]
+            )
+            return UserOperation.WITHDRAW
 
         case DebtMintEvent():
-            if event.balance_increase > event.value:
-                requested_amount = event.balance_increase - event.value
-                balance_delta = -ray_math.ray_div(a=requested_amount, b=event.index)
-                operation = UserOperation.REPAY
-            else:
-                requested_amount = event.value - event.balance_increase
-                balance_delta = ray_math.ray_div(a=requested_amount, b=event.index)
-                operation = UserOperation.BORROW
+            processor = TokenProcessorFactory.get_debt_processor(scaled_token_revision)
+            _, is_repay = processor.process_mint_event(
+                event_data=event,
+                position=position,
+            )
+            return UserOperation.REPAY if is_repay else UserOperation.BORROW
 
         case DebtBurnEvent():
-            requested_amount = event.value + event.balance_increase
-            balance_delta = -ray_math.ray_div(a=requested_amount, b=event.index)
-            operation = UserOperation.REPAY
-
-    assert requested_amount >= 0
-
-    position.balance += balance_delta
-    position.last_index = event.index
-
-    return operation
+            processor = TokenProcessorFactory.get_debt_processor(scaled_token_revision)
+            processor.process_burn_event(
+                event_data=event,
+                position=position,  # type: ignore[arg-type]
+            )
+            return UserOperation.REPAY
 
 
 def _accrue_debt_on_action(
@@ -4179,24 +4145,15 @@ def _process_collateral_mint_event(
             types=["address", "uint256"],
             data=matched_pool_event["data"],
         )
-        # Calculate scaled amount: ray_div(raw_amount, index)
+        # Calculate scaled amount using processor
         # This matches the contract's calculation in getATokenMintScaledAmount
-        ray_math, _ = _get_math_libraries(collateral_asset.a_token_revision)
-        scaled_delta = ray_math.ray_div(a=raw_amount, b=index)
-    if (
-        matched_pool_event is not None
-        and matched_pool_event["topics"][0] == AaveV3Event.SUPPLY.value
-    ):
-        # SUPPLY event data: (address caller, uint256 amount)
-        # Note: reserve, onBehalfOf are indexed and in topics
-        (_, raw_amount) = eth_abi.abi.decode(
-            types=["address", "uint256"],
-            data=matched_pool_event["data"],
+        processor = TokenProcessorFactory.get_collateral_processor(
+            collateral_asset.a_token_revision
         )
-        # Calculate scaled amount: ray_div(raw_amount, index)
-        # This matches the contract's calculation in getATokenMintScaledAmount
-        ray_math, _ = _get_math_libraries(collateral_asset.a_token_revision)
-        scaled_delta = ray_math.ray_div(a=raw_amount, b=index)
+        scaled_delta = processor.calculate_scaled_amount(
+            raw_amount=raw_amount,
+            index=index,
+        )
         if VerboseConfig.is_verbose(user_address=user.address):
             logger.info(
                 f"SUPPLY: raw_amount={raw_amount}, index={index}, scaled_delta={scaled_delta}"
