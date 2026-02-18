@@ -5590,7 +5590,7 @@ def update_aave_market(
             no_progress=no_progress,
             user_addresses=users_in_chunk,
         )
-        # Cleanup: Delete zero-balance positions after verification
+
     _cleanup_zero_balance_positions(
         session=session,
         market=market,
