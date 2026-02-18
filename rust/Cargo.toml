@@ -22,14 +22,14 @@ name = "degenbot_rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-alloy-primitives = { version = "1.5" }
-num-bigint = { version = "0.4" }
-pyo3 = { version = "0.28", features = [ "abi3-py312", "extension-module", "num-bigint"] }
-thiserror = { version = "2.0" }
+alloy-primitives = { version = "^1.5" }
+num-bigint = { version = "^0.4" }
+pyo3 = { version = "^0.28", features = [ "abi3-py312", "extension-module", "num-bigint"] }
+thiserror = { version = "^2.0" }
 
 [dev-dependencies]
-proptest = "1.5"
-criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "^1.10"
+criterion = { version = "^0.8", features = ["html_reports"] }
 
 [[bench]]
 name = "tick_math_bench"
