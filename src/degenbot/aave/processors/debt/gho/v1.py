@@ -57,11 +57,11 @@ class GhoV1Processor(GhoDebtTokenProcessor):
         wad_ray_math = self._math_libs["wad_ray"]
 
         # Accrue debt with discount (stateless - doesn't mutate position)
-        discount_scaled = self._accrue_debt_on_action(
+        discount_scaled = self.accrue_debt_on_action(
             previous_scaled_balance=previous_balance,
             previous_index=previous_index,
             discount_percent=previous_discount,
-            index=event_data.index,
+            current_index=event_data.index,
         )
 
         if event_data.value > event_data.balance_increase:
@@ -136,11 +136,11 @@ class GhoV1Processor(GhoDebtTokenProcessor):
         )
 
         # Accrue debt with discount (stateless - doesn't mutate position)
-        discount_scaled = self._accrue_debt_on_action(
+        discount_scaled = self.accrue_debt_on_action(
             previous_scaled_balance=previous_balance,
             previous_index=previous_index,
             discount_percent=previous_discount,
-            index=event_data.index,
+            current_index=event_data.index,
         )
 
         # Matches Solidity: _burn(user, (amountScaled + discountScaled).toUint128())
@@ -156,12 +156,12 @@ class GhoV1Processor(GhoDebtTokenProcessor):
             should_refresh_discount=should_refresh_discount,
         )
 
-    def _accrue_debt_on_action(
+    def accrue_debt_on_action(
         self,
         previous_scaled_balance: int,
         previous_index: int,
         discount_percent: int,
-        index: int,
+        current_index: int,
     ) -> int:
         """
         Simulate _accrueDebtOnAction function (stateless version).
@@ -170,7 +170,7 @@ class GhoV1Processor(GhoDebtTokenProcessor):
             previous_scaled_balance: Balance before the action
             previous_index: The index at previous_scaled_balance calculation
             discount_percent: Current discount percentage
-            index: Current variable debt index
+            current_index: Current variable debt index
 
         Returns:
             The discount scaled amount
@@ -181,7 +181,7 @@ class GhoV1Processor(GhoDebtTokenProcessor):
         # Calculate balance increase
         balance_increase = wad_ray_math.ray_mul(
             a=previous_scaled_balance,
-            b=index,
+            b=current_index,
         ) - wad_ray_math.ray_mul(
             a=previous_scaled_balance,
             b=previous_index,
@@ -193,7 +193,7 @@ class GhoV1Processor(GhoDebtTokenProcessor):
                 value=balance_increase,
                 percentage=discount_percent,
             )
-            discount_scaled = wad_ray_math.ray_div(a=discount, b=index)
+            discount_scaled = wad_ray_math.ray_div(a=discount, b=current_index)
 
         return discount_scaled
 

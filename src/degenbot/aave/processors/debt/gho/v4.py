@@ -3,6 +3,8 @@
 Revision 4+ deprecates the discount mechanism entirely.
 """
 
+import typing
+
 import degenbot.aave.libraries.v3_4 as aave_library_v3_4
 from degenbot.aave.processors.base import (
     DebtBurnEvent,
@@ -176,3 +178,27 @@ class GhoV4Processor(GhoDebtTokenProcessor):
             a=scaled_balance,
             b=current_index,
         )
+
+    @typing.override
+    def accrue_debt_on_action(
+        self,
+        previous_scaled_balance: int,
+        previous_index: int,
+        discount_percent: int,
+        current_index: int,
+    ) -> int:
+        """Calculate debt accrual without discount.
+
+        In revision 4+, the discount mechanism is deprecated, so this
+        always returns 0.
+
+        Args:
+            previous_scaled_balance: Ignored
+            previous_index: Ignored
+            discount_percent: Ignored (no discount in rev 4+)
+            current_index: Ignored
+
+        Returns:
+            Always returns 0
+        """
+        return 0

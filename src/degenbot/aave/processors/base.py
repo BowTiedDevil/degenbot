@@ -310,3 +310,28 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
             The balance with discount applied
         """
         ...
+
+    def accrue_debt_on_action(
+        self,
+        previous_scaled_balance: int,
+        previous_index: int,
+        discount_percent: int,
+        current_index: int,
+    ) -> int:
+        """
+        Calculate debt accrual with discount.
+
+        Simulates the _accrueDebtOnAction function from the contract.
+        This is a stateless calculation - it returns the discount_scaled
+        amount without modifying any position state.
+
+        Args:
+            previous_scaled_balance: Balance before the action
+            previous_index: The index at previous_scaled_balance calculation
+            discount_percent: Current discount percentage
+            current_index: Current variable debt index
+
+        Returns:
+            The discount scaled amount (0 for revisions without discount support)
+        """
+        ...

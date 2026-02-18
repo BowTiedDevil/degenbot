@@ -50,11 +50,11 @@ class GhoV2Processor(GhoV1Processor):
         wad_ray_math = self._math_libs["wad_ray"]
 
         # Accrue debt with discount (stateless - uses inherited method)
-        discount_scaled = self._accrue_debt_on_action(
+        discount_scaled = self.accrue_debt_on_action(
             previous_scaled_balance=previous_balance,
             previous_index=previous_index,
             discount_percent=previous_discount,
-            index=event_data.index,
+            current_index=event_data.index,
         )
 
         if event_data.value > event_data.balance_increase:
@@ -155,11 +155,11 @@ class GhoV2Processor(GhoV1Processor):
         )
 
         # Accrue debt with discount (stateless - uses inherited method)
-        discount_scaled = self._accrue_debt_on_action(
+        discount_scaled = self.accrue_debt_on_action(
             previous_scaled_balance=previous_balance,
             previous_index=previous_index,
             discount_percent=previous_discount,
-            index=event_data.index,
+            current_index=event_data.index,
         )
 
         if requested_amount == balance_before_burn:

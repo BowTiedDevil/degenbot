@@ -2204,117 +2204,6 @@ def _process_scaled_token_operation(
             return UserOperation.REPAY
 
 
-def _accrue_debt_on_action(
-    *,
-    debt_position: AaveV3DebtPositionsTable,
-    percentage_math: PercentageMathLibrary,
-    wad_ray_math: WadRayMathLibrary,
-    previous_scaled_balance: int,
-    discount_percent: int,
-    index: int,
-    token_revision: int,
-) -> int:
-    """
-    Simulate the GhoVariableDebtToken _accrueDebtOnAction function.
-
-    Reference:
-    ```
-    /**
-    * @dev Accumulates debt of the user since last action.
-    * @dev It skips applying discount in case there is no balance increase or discount percent is
-           zero.
-    * @param user The address of the user
-    * @param previousScaledBalance The previous scaled balance of the user
-    * @param discountPercent The discount percent
-    * @param index The variable debt index of the reserve
-    * @return The increase in scaled balance since the last action of `user`
-    * @return The discounted amount in scaled balance off the balance increase
-    */
-    function _accrueDebtOnAction(
-        address user,
-        uint256 previousScaledBalance,
-        uint256 discountPercent,
-        uint256 index
-    ) internal returns (uint256, uint256) {
-        uint256 balanceIncrease = previousScaledBalance.rayMul(index) -
-            previousScaledBalance.rayMul(_userState[user].additionalData);
-
-        uint256 discountScaled = 0;
-        if (balanceIncrease != 0 && discountPercent != 0) {
-            uint256 discount = balanceIncrease.percentMul(discountPercent);
-            discountScaled = discount.rayDiv(index);
-            balanceIncrease = balanceIncrease - discount;
-        }
-
-        _userState[user].additionalData = index.toUint128();
-
-        _ghoUserState[user].accumulatedDebtInterest = (balanceIncrease +
-            _ghoUserState[user].accumulatedDebtInterest).toUint128();
-
-        return (balanceIncrease, discountScaled);
-    }
-    ```
-    """
-
-    if token_revision in {1, 2, 3}:
-        balance_increase = wad_ray_math.ray_mul(
-            a=previous_scaled_balance,
-            b=index,
-        ) - wad_ray_math.ray_mul(
-            a=previous_scaled_balance,
-            b=debt_position.last_index or 0,
-        )
-
-        discount = 0
-        discount_scaled = 0
-        if balance_increase != 0 and discount_percent != 0:
-            discount = percentage_math.percent_mul(
-                value=balance_increase,
-                percentage=discount_percent,
-            )
-            discount_scaled = wad_ray_math.ray_div(a=discount, b=index)
-            balance_increase -= discount
-
-            if VerboseConfig.is_verbose(
-                tx_hash=event_in_process.get("transactionHash") if event_in_process else None,
-            ):
-                logger.info("_accrue_debt_on_action:")
-                logger.info(f"  previous_scaled_balance={previous_scaled_balance}")
-                logger.info(f"  last_index={debt_position.last_index}")
-                logger.info(f"  current_index={index}")
-                logger.info(f"  balance_increase={balance_increase + discount}")
-                logger.info(f"  discount_percent={discount_percent}")
-                logger.info(f"  discount={discount}")
-                logger.info(f"  discount_scaled={discount_scaled}")
-
-        # Update last_index to match contract behavior:
-        # _userState[user].additionalData = index.toUint128(); # noqa: ERA001
-        debt_position.last_index = index
-
-    elif token_revision >= 4:  # noqa:PLR2004
-        # Revision 4+: Discount mechanism deprecated, _accrueDebtOnAction removed
-        # Simply calculate interest accrual without discount
-        balance_increase = wad_ray_math.ray_mul(
-            a=previous_scaled_balance,
-            b=index,
-        ) - wad_ray_math.ray_mul(
-            a=previous_scaled_balance,
-            b=debt_position.last_index or 0,
-        )
-
-        discount_scaled = 0
-
-        # Update last_index to match contract behavior:
-        # _userState[user].additionalData = index.toUint128(); # noqa: ERA001
-        debt_position.last_index = index
-
-    else:
-        msg = f"Unsupported token revision {token_revision}"
-        raise ValueError(msg)
-
-    return discount_scaled
-
-
 def _get_discount_rate(
     w3: Web3,
     discount_rate_strategy: ChecksumAddress,
@@ -2374,60 +2263,6 @@ def _refresh_discount_rate(
         debt_token_balance=debt_token_balance,
         discount_token_balance=discount_token_balance,
     )
-
-
-def _get_discounted_balance(
-    *,
-    scaled_balance: int,
-    previous_index: int,
-    current_index: int,
-    user: AaveV3UsersTable,
-    ray_math_module: WadRayMathLibrary,
-    percentage_math: PercentageMathLibrary,
-    discount_percent: int | None = None,
-) -> int:
-    """
-    Get the discounted balance for the user.
-
-    This effectively replicates the `super.BalanceOf(user)` call used in the `_burnScaled`
-    and `_mintScaled` function calls in GhoVariableDebtToken.sol (version 2).
-
-    Ref: 0x7aa606b1B341fFEeAfAdbbE4A2992EFB35972775 (mainnet)
-    """
-
-    if scaled_balance == 0:
-        return 0
-
-    # index = POOL.getReserveNormalizedVariableDebt(_underlyingAsset); #noqa:ERA001
-    # replaced by `current_index` argument
-
-    # previousIndex = _userState[user].additionalData; #noqa:ERA001
-    # replaced by `previous_index` argument
-
-    # uint256 balance = scaledBalance.rayMul(index);
-    balance = ray_math_module.ray_mul(
-        a=scaled_balance,
-        b=current_index,
-    )
-
-    if current_index == previous_index:
-        return balance
-
-    discount_percentage = discount_percent if discount_percent is not None else user.gho_discount
-
-    if discount_percentage != 0:
-        # uint256 balanceIncrease = balance - scaledBalance.rayMul(previousIndex);
-        balance_increase = balance - ray_math_module.ray_mul(
-            a=scaled_balance,
-            b=previous_index,
-        )
-
-        balance -= percentage_math.percent_mul(
-            value=balance_increase,
-            percentage=discount_percentage,
-        )
-
-    return balance
 
 
 def _process_transaction_with_context(
@@ -2685,7 +2520,7 @@ def _process_aave_stake(
 
     operation: UserOperation = UserOperation.AAVE_STAKED
 
-    wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
+    wad_ray_math_library, _ = _get_math_libraries(scaled_token_revision)
 
     assets, shares = _decode_uint_values(
         event=triggering_event,
@@ -2730,14 +2565,13 @@ def _process_aave_stake(
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
         # Use the OLD discount for interest accrual, matching contract behavior
-        recipient_discount_scaled = _accrue_debt_on_action(
-            debt_position=recipient_debt_position,
-            percentage_math=percentage_math_library,
-            wad_ray_math=wad_ray_math_library,
+        # Use stateless processor to calculate discount
+        gho_processor = TokenProcessorFactory.get_gho_debt_processor(scaled_token_revision)
+        recipient_discount_scaled = gho_processor.accrue_debt_on_action(
             previous_scaled_balance=recipient_previous_scaled_balance,
+            previous_index=recipient_debt_position.last_index or 0,
             discount_percent=old_discount,
-            index=event_data.index,
-            token_revision=scaled_token_revision,
+            current_index=event_data.index,
         )
 
         # _burn(recipient, discountScaled.toUint128()) # noqa:ERA001
@@ -2815,7 +2649,7 @@ def _process_aave_redeem(
 
     operation: UserOperation = UserOperation.AAVE_REDEEM
 
-    wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
+    wad_ray_math_library, _ = _get_math_libraries(scaled_token_revision)
 
     assets, shares = _decode_uint_values(
         event=triggering_event,
@@ -2869,14 +2703,13 @@ def _process_aave_redeem(
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
         # Use the OLD discount for interest accrual, matching contract behavior
-        sender_discount_scaled = _accrue_debt_on_action(
-            debt_position=sender_debt_position,
-            percentage_math=percentage_math_library,
-            wad_ray_math=wad_ray_math_library,
+        # Use stateless processor to calculate discount
+        gho_processor = TokenProcessorFactory.get_gho_debt_processor(scaled_token_revision)
+        sender_discount_scaled = gho_processor.accrue_debt_on_action(
             previous_scaled_balance=sender_previous_scaled_balance,
+            previous_index=sender_debt_position.last_index or 0,
             discount_percent=old_discount,
-            index=event_data.index,
-            token_revision=scaled_token_revision,
+            current_index=event_data.index,
         )
 
         # _burn(recipient, discountScaled.toUint128()) # noqa: ERA001
@@ -2941,7 +2774,7 @@ def _process_staked_aave_transfer(
     ```
     """
 
-    wad_ray_math_library, percentage_math_library = _get_math_libraries(scaled_token_revision)
+    wad_ray_math_library, _ = _get_math_libraries(scaled_token_revision)
 
     (amount_transferred,) = _decode_uint_values(
         event=triggering_event,
@@ -3051,14 +2884,13 @@ def _process_staked_aave_transfer(
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
         # Use the OLD discount for interest accrual, matching contract behavior
-        sender_discount_scaled = _accrue_debt_on_action(
-            debt_position=sender_debt_position,
-            percentage_math=percentage_math_library,
-            wad_ray_math=wad_ray_math_library,
+        # Use stateless processor to calculate discount
+        gho_processor = TokenProcessorFactory.get_gho_debt_processor(scaled_token_revision)
+        sender_discount_scaled = gho_processor.accrue_debt_on_action(
             previous_scaled_balance=sender_previous_scaled_balance,
+            previous_index=sender_debt_position.last_index or 0,
             discount_percent=sender_old_discount,
-            index=event_data.index,
-            token_revision=scaled_token_revision,
+            current_index=event_data.index,
         )
 
         # _burn(sender, discountScaled.toUint128()) # noqa: ERA001
@@ -3112,14 +2944,13 @@ def _process_staked_aave_transfer(
 
         # (uint256 balanceIncrease, uint256 discountScaled) = _accrueDebtOnAction(...)
         # Use the OLD discount for interest accrual, matching contract behavior
-        recipient_discount_scaled = _accrue_debt_on_action(
-            debt_position=recipient_debt_position,
-            percentage_math=percentage_math_library,
-            wad_ray_math=wad_ray_math_library,
+        # Use stateless processor to calculate discount
+        gho_processor = TokenProcessorFactory.get_gho_debt_processor(scaled_token_revision)
+        recipient_discount_scaled = gho_processor.accrue_debt_on_action(
             previous_scaled_balance=recipient_previous_scaled_balance,
+            previous_index=recipient_debt_position.last_index or 0,
             discount_percent=recipient_old_discount,
-            index=event_data.index,
-            token_revision=scaled_token_revision,
+            current_index=event_data.index,
         )
 
         # _burn(recipient, discountScaled.toUint128()) # noqa:ERA001
