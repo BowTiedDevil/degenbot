@@ -68,7 +68,6 @@ Chronological processing of blockchain events:
 - `_get_or_create_user()` - Get or initialize user record
 - `_get_or_create_collateral_position()` - Get or create collateral position
 - `_get_or_create_debt_position()` - Get or create debt position
-- `BlockStateCache` - Cache blockchain state within a block
 
 **Math Operations**
 - `_accrue_debt_on_action()` - Calculate balance increase with discount
