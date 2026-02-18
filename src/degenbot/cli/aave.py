@@ -2151,35 +2151,43 @@ def _process_scaled_token_operation(
 
     match event:
         case CollateralMintEvent():
-            processor = TokenProcessorFactory.get_collateral_processor(scaled_token_revision)
-            _, is_withdrawal = processor.process_mint_event(
+            assert isinstance(position, AaveV3CollateralPositionsTable)
+            collateral_processor = TokenProcessorFactory.get_collateral_processor(
+                scaled_token_revision
+            )
+            _, is_withdrawal = collateral_processor.process_mint_event(
                 event_data=event,
-                position=position,  # type: ignore[arg-type]
+                position=position,
                 scaled_delta=scaled_delta,
             )
             return UserOperation.WITHDRAW if is_withdrawal else UserOperation.DEPOSIT
 
         case CollateralBurnEvent():
-            processor = TokenProcessorFactory.get_collateral_processor(scaled_token_revision)
-            processor.process_burn_event(
+            assert isinstance(position, AaveV3CollateralPositionsTable)
+            collateral_processor = TokenProcessorFactory.get_collateral_processor(
+                scaled_token_revision
+            )
+            collateral_processor.process_burn_event(
                 event_data=event,
-                position=position,  # type: ignore[arg-type]
+                position=position,
             )
             return UserOperation.WITHDRAW
 
         case DebtMintEvent():
-            processor = TokenProcessorFactory.get_debt_processor(scaled_token_revision)
-            _, is_repay = processor.process_mint_event(
+            assert isinstance(position, AaveV3DebtPositionsTable)
+            debt_processor = TokenProcessorFactory.get_debt_processor(scaled_token_revision)
+            _, is_repay = debt_processor.process_mint_event(
                 event_data=event,
                 position=position,
             )
             return UserOperation.REPAY if is_repay else UserOperation.BORROW
 
         case DebtBurnEvent():
-            processor = TokenProcessorFactory.get_debt_processor(scaled_token_revision)
-            processor.process_burn_event(
+            assert isinstance(position, AaveV3DebtPositionsTable)
+            debt_processor = TokenProcessorFactory.get_debt_processor(scaled_token_revision)
+            debt_processor.process_burn_event(
                 event_data=event,
-                position=position,  # type: ignore[arg-type]
+                position=position,
             )
             return UserOperation.REPAY
 
@@ -2271,7 +2279,7 @@ def _accrue_debt_on_action(
         # _userState[user].additionalData = index.toUint128(); # noqa: ERA001
         debt_position.last_index = index
 
-    elif token_revision >= 4:
+    elif token_revision >= 4:  # noqa:PLR2004
         # Revision 4+: Discount mechanism deprecated, _accrueDebtOnAction removed
         # Simply calculate interest accrual without discount
         balance_increase = wad_ray_math.ray_mul(
@@ -2571,7 +2579,7 @@ def _process_gho_debt_burn(
             logger.info(f"{discount_scaled=}")
             logger.info(f"{user.gho_discount=}")
 
-    elif scaled_token_revision >= 4:
+    elif scaled_token_revision >= 4:  # noqa:PLR2004
         # Revision 4+: Discount mechanism deprecated
         discount_scaled = 0  # No discount mechanism in revision 4+
 
@@ -2588,7 +2596,7 @@ def _process_gho_debt_burn(
         previous_scaled_balance = debt_position.balance
 
         # No discount in revision 4+, simply burn amount_scaled
-        # _burn(user, amountScaled.toUint128());
+        # _burn(user, amountScaled.toUint128()); # noqa:ERA001
         balance_delta = -amount_scaled
 
         # No discount refresh needed for revision 4+
@@ -2630,7 +2638,8 @@ def _process_transaction_with_context(
     w3: Web3,
     gho_asset: AaveGhoTokenTable,
 ) -> None:
-    """Process all events in a transaction using pre-built TransactionContext.
+    """
+    Process all events in a transaction using pre-built TransactionContext.
 
     Events are processed in chronological order with assertions that classifying
     events were pre-fetched and exist in the transaction context.
@@ -3721,7 +3730,7 @@ def _process_gho_debt_mint(
             )
             raise ValueError(msg)
 
-    elif scaled_token_revision >= 4:
+    elif scaled_token_revision >= 4:  # noqa:PLR2004
         # Revision 4+: Discount mechanism deprecated
         # Standard borrow/repay/interest logic without discount
         discount_scaled = 0  # No discount mechanism in revision 4+
@@ -3754,7 +3763,7 @@ def _process_gho_debt_mint(
             )
 
             # No discount in revision 4+, balance decreases by amount_scaled
-            # _burn(user, amountScaled.toUint128());
+            # _burn(user, amountScaled.toUint128()); # noqa:ERA001
             balance_delta = -amount_scaled
 
         elif event_data.value == event_data.balance_increase:
@@ -5228,7 +5237,7 @@ def _build_transaction_contexts(
         elif topic == AaveV3Event.UPGRADED.value:
             ctx.upgraded_events.append(event)
         else:
-            msg = f"Could not identify topic: {topic}"
+            msg = f"Could not identify topic: {topic.to_0x_hex()}"
             raise ValueError(msg)
 
     return contexts
