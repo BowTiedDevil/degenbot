@@ -3,7 +3,7 @@ description: Debug Aave update failures
 agent: build
 ---
 
-!`DEGENBOT_VERBOSE_USERS=$ARGUMENTS uv run degenbot aave update --no-progress-bar --one-chunk 2>&1`
+!`DEGENBOT_VERBOSE_USERS=$ARGUMENTS uv run degenbot aave update --no-progress-bar --one-chunk --chunk 1 2>&1`
 
 ## DIRECTION: Investigate and debug this failed Aave update command. Find the root cause of the bug and fix it.
 
@@ -47,6 +47,3 @@ Append to @aave_debug_progress.md. Follow this format:
 - **Fix:** Code location and changes
 - **Key Insight:** Lesson learned for future debugging
 - **Refactoring:** Concise summary of proposed improvements to code that processes these transactions
-
-### 7. Cleanup
-- Remove leftover files in @.opencode/tmp
