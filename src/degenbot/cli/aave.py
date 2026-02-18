@@ -77,19 +77,6 @@ class UserOperation(Enum):
     STKAAVE_TRANSFER = "stkAAVE TRANSFER"
 
 
-# GhoVariableDebtToken
-# Rev 1: 0x3FEaB6F8510C73E05b8C0Fdf96Df012E3A144319
-# Rev 2: 0x7aa606b1B341fFEeAfAdbbE4A2992EFB35972775
-# Rev 3: 0x20cb2f303ede313e2cc44549ad8653a5e8c0050e
-#        GhoDiscountRateStrategy:
-#        0x4C38Ec4D1D2068540DfC11DFa4de41F733DDF812
-#        Discount Token: stkAAVE
-#        0x4da27a545c0c5B758a6BA100e3a049001de870f5
-# Rev 4: 0x9b2b73f9ddd830f82d61520388ccf4fc048f9953
-
-# Revision 4 deprecates the discount mechanism
-GHO_REVISION_DISCOUNT_DEPRECATED = 4
-
 GHO_VARIABLE_DEBT_TOKEN_ADDRESS = get_checksum_address("0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B")
 
 
@@ -1337,7 +1324,7 @@ def _process_scaled_token_upgrade_event(
         # Handle GHO discount deprecation on upgrade to revision 4+
         if (
             aave_debt_asset.v_token.address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS
-            and vtoken_revision >= GHO_REVISION_DISCOUNT_DEPRECATED
+            and vtoken_revision >= 4  # noqa: PLR2004
         ):
             gho_asset = _get_gho_asset(context.session, context.market)
             gho_asset.v_gho_discount_token = None
@@ -1360,7 +1347,7 @@ def _get_gho_vtoken_revision(market: AaveV3MarketTable) -> int | None:
 def _is_discount_supported(market: AaveV3MarketTable) -> bool:
     """Check if GHO discount mechanism is supported (revision 2 or 3)."""
     revision = _get_gho_vtoken_revision(market)
-    return revision is not None and revision < GHO_REVISION_DISCOUNT_DEPRECATED
+    return revision is not None and revision < 4  # noqa: PLR2004
 
 
 def _matches_pool_event(
