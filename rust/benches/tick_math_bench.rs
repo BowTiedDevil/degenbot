@@ -1,5 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use degenbot_rs::tick_math::{get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal};
+use std::hint::black_box;
 
 fn tick_to_price_benchmark(c: &mut Criterion) {
     c.bench_function("get_sqrt_ratio_at_tick(0)", |b| {
