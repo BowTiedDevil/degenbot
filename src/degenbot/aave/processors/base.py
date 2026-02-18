@@ -1,15 +1,9 @@
 """Base protocols and types for Aave token processors."""
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict
+from typing import ClassVar, Protocol, TypedDict
 
 from eth_typing import ChecksumAddress
-
-if TYPE_CHECKING:
-    from degenbot.database.models.aave import (
-        AaveV3CollateralPositionsTable,
-        AaveV3DebtPositionsTable,
-    )
 
 
 class PercentageMathLibrary(Protocol):
@@ -73,6 +67,51 @@ class DebtBurnEvent:
     index: int
 
 
+class ProcessingResult(Protocol):
+    """Protocol for processor results with balance delta and new index."""
+
+    balance_delta: int
+    new_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class MintResult:
+    """Result of processing a mint event (collateral or standard debt)."""
+
+    balance_delta: int
+    new_index: int
+    is_repay: bool  # True for repay/withdrawal, False for deposit/borrow
+
+
+@dataclass(frozen=True, slots=True)
+class BurnResult:
+    """Result of processing a burn event (collateral or standard debt)."""
+
+    balance_delta: int
+    new_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class GhoMintResult:
+    """Result of processing a GHO debt mint event."""
+
+    balance_delta: int
+    new_index: int
+    is_repay: bool
+    discount_scaled: int
+    should_refresh_discount: bool
+
+
+@dataclass(frozen=True, slots=True)
+class GhoBurnResult:
+    """Result of processing a GHO debt burn event."""
+
+    balance_delta: int
+    new_index: int
+    discount_scaled: int
+    should_refresh_discount: bool
+
+
 class TokenProcessor(Protocol):
     """Base protocol for all token processors."""
 
@@ -84,41 +123,49 @@ class TokenProcessor(Protocol):
 
 
 class CollateralTokenProcessor(TokenProcessor, Protocol):
-    """Protocol for collateral (aToken) processors."""
+    """Protocol for collateral (aToken) processors.
+
+    Processors are stateless - they calculate deltas and return results
+    without modifying position state. Callers must apply the results.
+    """
 
     def process_mint_event(
         self,
         event_data: CollateralMintEvent,
-        position: "AaveV3CollateralPositionsTable",
+        previous_balance: int,
+        previous_index: int,
         scaled_delta: int | None = None,
-    ) -> tuple[int, bool]:
+    ) -> MintResult:
         """
         Process a collateral mint event.
 
         Args:
             event_data: The mint event data
-            position: The user's collateral position to update
+            previous_balance: The user's balance before this event
+            previous_index: The index at previous_balance calculation
             scaled_delta: Optional pre-calculated scaled amount delta
 
         Returns:
-            Tuple of (balance_delta, is_withdrawal)
+            MintResult with balance_delta, new_index, and is_repay flag
         """
         ...
 
     def process_burn_event(
         self,
         event_data: CollateralBurnEvent,
-        position: "AaveV3CollateralPositionsTable",
-    ) -> int:
+        previous_balance: int,
+        previous_index: int,
+    ) -> BurnResult:
         """
         Process a collateral burn event.
 
         Args:
             event_data: The burn event data
-            position: The user's collateral position to update
+            previous_balance: The user's balance before this event
+            previous_index: The index at previous_balance calculation
 
         Returns:
-            The balance delta (negative for withdrawal)
+            BurnResult with balance_delta and new_index
         """
         ...
 
@@ -137,76 +184,109 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
 
 
 class DebtTokenProcessor(TokenProcessor, Protocol):
-    """Protocol for debt (vToken) processors."""
+    """Protocol for standard debt (vToken) processors.
+
+    This protocol is for non-GHO variable debt tokens.
+    GHO tokens have special discount handling and use GhoDebtTokenProcessor instead.
+
+    Processors are stateless - they calculate deltas and return results
+    without modifying position state. Callers must apply the results.
+    """
 
     def process_mint_event(
         self,
         event_data: DebtMintEvent,
-        position: "AaveV3DebtPositionsTable",
-        *,
-        previous_discount: int = 0,
-    ) -> tuple[int, bool] | tuple[int, bool, int]:
+        previous_balance: int,
+        previous_index: int,
+    ) -> MintResult:
         """
         Process a debt mint event.
 
         Args:
             event_data: The mint event data
-            position: The user's debt position to update
-            previous_discount: The discount percent before this transaction (GHO only)
+            previous_balance: The user's balance before this event
+            previous_index: The index at previous_balance calculation
 
         Returns:
-            Tuple of (balance_delta, is_repay) for standard tokens,
-            or (balance_delta, is_repay, discount_scaled) for GHO tokens
+            MintResult with balance_delta, new_index, and is_repay flag
         """
         ...
 
     def process_burn_event(
         self,
         event_data: DebtBurnEvent,
-        position: "AaveV3DebtPositionsTable",
-        *,
-        previous_discount: int = 0,
-    ) -> int | tuple[int, int]:
+        previous_balance: int,
+        previous_index: int,
+    ) -> BurnResult:
         """
         Process a debt burn event.
 
         Args:
             event_data: The burn event data
-            position: The user's debt position to update
-            previous_discount: The discount percent before this transaction (GHO only)
+            previous_balance: The user's balance before this event
+            previous_index: The index at previous_balance calculation
 
         Returns:
-            The balance delta (negative for repayment) for standard tokens,
-            or (balance_delta, discount_scaled) for GHO tokens
+            BurnResult with balance_delta and new_index
         """
         ...
 
 
-class GhoTokenProcessor(DebtTokenProcessor, Protocol):
-    """Protocol for GHO variable debt token processors."""
+class GhoDebtTokenProcessor(TokenProcessor, Protocol):
+    """Protocol for GHO variable debt token processors.
+
+    GHO debt tokens have special discount handling that requires additional
+    parameters and return values compared to standard vTokens.
+
+    Processors are stateless - they calculate deltas and return results
+    without modifying position state. Callers must apply the results.
+    """
 
     def supports_discount(self) -> bool:
         """Check if this revision supports the discount mechanism."""
         ...
 
-    def accrue_debt_on_action(
+    def process_mint_event(
         self,
-        position: "AaveV3DebtPositionsTable",
-        previous_scaled_balance: int,
-        discount_percent: int,
-        index: int,
-    ) -> int:
+        event_data: DebtMintEvent,
+        previous_balance: int,
+        previous_index: int,
+        previous_discount: int,
+    ) -> GhoMintResult:
         """
-        Simulate _accrueDebtOnAction function.
+        Process a GHO debt mint event.
 
         Args:
-            position: The user's debt position
-            previous_scaled_balance: Balance before the action
-            discount_percent: Current discount percentage
-            index: Current variable debt index
+            event_data: The mint event data
+            previous_balance: The user's balance before this event
+            previous_index: The index at previous_balance calculation
+            previous_discount: The discount percent before this transaction
 
         Returns:
-            The discount scaled amount
+            GhoMintResult with balance_delta, new_index, is_repay,
+            discount_scaled, and should_refresh_discount flag
+        """
+        ...
+
+    def process_burn_event(
+        self,
+        event_data: DebtBurnEvent,
+        previous_balance: int,
+        previous_index: int,
+        previous_discount: int,
+    ) -> GhoBurnResult:
+        """
+        Process a GHO debt burn event.
+
+        Args:
+            event_data: The burn event data
+            previous_balance: The user's balance before this event
+            previous_index: The index at previous_balance calculation
+            previous_discount: The discount percent before this transaction
+
+        Returns:
+            GhoBurnResult with balance_delta, new_index, discount_scaled,
+            and should_refresh_discount flag
         """
         ...
 

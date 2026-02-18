@@ -2155,40 +2155,52 @@ def _process_scaled_token_operation(
             collateral_processor = TokenProcessorFactory.get_collateral_processor(
                 scaled_token_revision
             )
-            _, is_withdrawal = collateral_processor.process_mint_event(
+            mint_result = collateral_processor.process_mint_event(
                 event_data=event,
-                position=position,
+                previous_balance=position.balance,
+                previous_index=position.last_index or 0,
                 scaled_delta=scaled_delta,
             )
-            return UserOperation.WITHDRAW if is_withdrawal else UserOperation.DEPOSIT
+            position.balance += mint_result.balance_delta
+            position.last_index = mint_result.new_index
+            return UserOperation.WITHDRAW if mint_result.is_repay else UserOperation.DEPOSIT
 
         case CollateralBurnEvent():
             assert isinstance(position, AaveV3CollateralPositionsTable)
             collateral_processor = TokenProcessorFactory.get_collateral_processor(
                 scaled_token_revision
             )
-            collateral_processor.process_burn_event(
+            burn_result = collateral_processor.process_burn_event(
                 event_data=event,
-                position=position,
+                previous_balance=position.balance,
+                previous_index=position.last_index or 0,
             )
+            position.balance += burn_result.balance_delta
+            position.last_index = burn_result.new_index
             return UserOperation.WITHDRAW
 
         case DebtMintEvent():
             assert isinstance(position, AaveV3DebtPositionsTable)
             debt_processor = TokenProcessorFactory.get_debt_processor(scaled_token_revision)
-            _, is_repay = debt_processor.process_mint_event(
+            debt_mint_result = debt_processor.process_mint_event(
                 event_data=event,
-                position=position,
+                previous_balance=position.balance,
+                previous_index=position.last_index or 0,
             )
-            return UserOperation.REPAY if is_repay else UserOperation.BORROW
+            position.balance += debt_mint_result.balance_delta
+            position.last_index = debt_mint_result.new_index
+            return UserOperation.REPAY if debt_mint_result.is_repay else UserOperation.BORROW
 
         case DebtBurnEvent():
             assert isinstance(position, AaveV3DebtPositionsTable)
             debt_processor = TokenProcessorFactory.get_debt_processor(scaled_token_revision)
-            debt_processor.process_burn_event(
+            debt_burn_result = debt_processor.process_burn_event(
                 event_data=event,
-                position=position,
+                previous_balance=position.balance,
+                previous_index=position.last_index or 0,
             )
+            position.balance += debt_burn_result.balance_delta
+            position.last_index = debt_burn_result.new_index
             return UserOperation.REPAY
 
 

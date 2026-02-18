@@ -1,17 +1,14 @@
 """Collateral token processor for revision 1."""
 
-from typing import TYPE_CHECKING
-
 import degenbot.aave.libraries.v3_1 as aave_library_v3_1
 from degenbot.aave.processors.base import (
+    BurnResult,
     CollateralBurnEvent,
     CollateralMintEvent,
     CollateralTokenProcessor,
     MathLibraries,
+    MintResult,
 )
-
-if TYPE_CHECKING:
-    from degenbot.database.models.aave import AaveV3CollateralPositionsTable
 
 
 class CollateralV1Processor(CollateralTokenProcessor):
@@ -33,9 +30,10 @@ class CollateralV1Processor(CollateralTokenProcessor):
     def process_mint_event(
         self,
         event_data: CollateralMintEvent,
-        position: "AaveV3CollateralPositionsTable",
+        previous_balance: int,  # noqa: ARG002
+        previous_index: int,  # noqa: ARG002
         scaled_delta: int | None = None,
-    ) -> tuple[int, bool]:
+    ) -> MintResult:
         """
         Process a collateral mint event.
 
@@ -46,11 +44,12 @@ class CollateralV1Processor(CollateralTokenProcessor):
 
         Args:
             event_data: The mint event data
-            position: The user's collateral position to update
+            previous_balance: The user's balance before this event
+            previous_index: The index at previous_balance calculation
             scaled_delta: Optional pre-calculated scaled amount delta
 
         Returns:
-            Tuple of (balance_delta, is_withdrawal)
+            MintResult with balance_delta, new_index, and is_repay flag
         """
         wad_ray_math = self._math_libs["wad_ray"]
 
@@ -62,7 +61,7 @@ class CollateralV1Processor(CollateralTokenProcessor):
                 a=requested_amount,
                 b=event_data.index,
             )
-            is_withdrawal = True
+            is_repay = True
         else:
             # Standard deposit - emitted in _mintScaled during supply
             requested_amount = event_data.value - event_data.balance_increase
@@ -74,18 +73,20 @@ class CollateralV1Processor(CollateralTokenProcessor):
                     a=requested_amount,
                     b=event_data.index,
                 )
-            is_withdrawal = False
+            is_repay = False
 
-        position.balance += balance_delta
-        position.last_index = event_data.index
-
-        return balance_delta, is_withdrawal
+        return MintResult(
+            balance_delta=balance_delta,
+            new_index=event_data.index,
+            is_repay=is_repay,
+        )
 
     def process_burn_event(
         self,
         event_data: CollateralBurnEvent,
-        position: "AaveV3CollateralPositionsTable",
-    ) -> int:
+        previous_balance: int,  # noqa: ARG002
+        previous_index: int,  # noqa: ARG002
+    ) -> BurnResult:
         """
         Process a collateral burn event.
 
@@ -93,10 +94,11 @@ class CollateralV1Processor(CollateralTokenProcessor):
 
         Args:
             event_data: The burn event data
-            position: The user's collateral position to update
+            previous_balance: The user's balance before this event
+            previous_index: The index at previous_balance calculation
 
         Returns:
-            The balance delta (negative for withdrawal)
+            BurnResult with balance_delta and new_index
         """
         wad_ray_math = self._math_libs["wad_ray"]
 
@@ -109,10 +111,10 @@ class CollateralV1Processor(CollateralTokenProcessor):
             b=event_data.index,
         )
 
-        position.balance += balance_delta
-        position.last_index = event_data.index
-
-        return balance_delta
+        return BurnResult(
+            balance_delta=balance_delta,
+            new_index=event_data.index,
+        )
 
     def calculate_scaled_amount(self, raw_amount: int, index: int) -> int:
         """

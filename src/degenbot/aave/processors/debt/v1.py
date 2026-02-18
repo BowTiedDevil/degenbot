@@ -1,17 +1,14 @@
 """Debt token processor for revision 1."""
 
-from typing import TYPE_CHECKING
-
 import degenbot.aave.libraries.v3_1 as aave_library_v3_1
 from degenbot.aave.processors.base import (
+    BurnResult,
     DebtBurnEvent,
     DebtMintEvent,
     DebtTokenProcessor,
     MathLibraries,
+    MintResult,
 )
-
-if TYPE_CHECKING:
-    from degenbot.database.models.aave import AaveV3DebtPositionsTable
 
 
 class DebtV1Processor(DebtTokenProcessor):
@@ -33,10 +30,9 @@ class DebtV1Processor(DebtTokenProcessor):
     def process_mint_event(
         self,
         event_data: DebtMintEvent,
-        position: "AaveV3DebtPositionsTable",
-        *,
-        previous_discount: int = 0,  # noqa: ARG002
-    ) -> tuple[int, bool]:
+        previous_balance: int,  # noqa: ARG002
+        previous_index: int,  # noqa: ARG002
+    ) -> MintResult:
         """
         Process a debt mint event.
 
@@ -46,11 +42,11 @@ class DebtV1Processor(DebtTokenProcessor):
 
         Args:
             event_data: The mint event data
-            position: The user's debt position to update
-            previous_discount: Unused (for GHO compatibility)
+            previous_balance: The user's balance before this event
+            previous_index: The index at previous_balance calculation
 
         Returns:
-            Tuple of (balance_delta, is_repay)
+            MintResult with balance_delta, new_index, and is_repay flag
         """
         wad_ray_math = self._math_libs["wad_ray"]
 
@@ -73,18 +69,18 @@ class DebtV1Processor(DebtTokenProcessor):
             )
             is_repay = True
 
-        position.balance += balance_delta
-        position.last_index = event_data.index
-
-        return balance_delta, is_repay
+        return MintResult(
+            balance_delta=balance_delta,
+            new_index=event_data.index,
+            is_repay=is_repay,
+        )
 
     def process_burn_event(
         self,
         event_data: DebtBurnEvent,
-        position: "AaveV3DebtPositionsTable",
-        *,
-        previous_discount: int = 0,  # noqa: ARG002
-    ) -> int:
+        previous_balance: int,  # noqa: ARG002
+        previous_index: int,  # noqa: ARG002
+    ) -> BurnResult:
         """
         Process a debt burn event.
 
@@ -92,11 +88,11 @@ class DebtV1Processor(DebtTokenProcessor):
 
         Args:
             event_data: The burn event data
-            previous_discount: Unused (for GHO compatibility)
-            position: The user's debt position to update
+            previous_balance: The user's balance before this event
+            previous_index: The index at previous_balance calculation
 
         Returns:
-            The balance delta (negative for repayment)
+            BurnResult with balance_delta and new_index
         """
         wad_ray_math = self._math_libs["wad_ray"]
 
@@ -109,7 +105,7 @@ class DebtV1Processor(DebtTokenProcessor):
             b=event_data.index,
         )
 
-        position.balance += balance_delta
-        position.last_index = event_data.index
-
-        return balance_delta
+        return BurnResult(
+            balance_delta=balance_delta,
+            new_index=event_data.index,
+        )

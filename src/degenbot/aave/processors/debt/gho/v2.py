@@ -1,17 +1,14 @@
 """GHO variable debt token processor for revisions 2-3."""
 
-from typing import TYPE_CHECKING
-
 import degenbot.aave.libraries.v3_2 as aave_library_v3_2
 from degenbot.aave.processors.base import (
     DebtBurnEvent,
     DebtMintEvent,
+    GhoBurnResult,
+    GhoMintResult,
     MathLibraries,
 )
 from degenbot.aave.processors.debt.gho.v1 import GhoV1Processor
-
-if TYPE_CHECKING:
-    from degenbot.database.models.aave import AaveV3DebtPositionsTable
 
 
 class GhoV2Processor(GhoV1Processor):
@@ -33,29 +30,29 @@ class GhoV2Processor(GhoV1Processor):
     def process_mint_event(
         self,
         event_data: DebtMintEvent,
-        position: "AaveV3DebtPositionsTable",
-        previous_discount: int = 0,
-    ) -> tuple[int, bool, int]:
+        previous_balance: int,
+        previous_index: int,
+        previous_discount: int,
+    ) -> GhoMintResult:
         """
         Process a GHO debt mint event with full discount support.
 
         Args:
             event_data: The mint event data
-            position: The user's debt position to update
+            previous_balance: The user's balance before this event
+            previous_index: The index at previous_balance calculation
             previous_discount: The discount percent before this transaction
 
         Returns:
-            Tuple of (balance_delta, is_repay, discount_scaled)
+            GhoMintResult with balance_delta, new_index, is_repay,
+            discount_scaled, and should_refresh_discount
         """
         wad_ray_math = self._math_libs["wad_ray"]
 
-        previous_scaled_balance = position.balance
-        previous_index = position.last_index or 0
-
-        # Accrue debt with discount
-        discount_scaled = self.accrue_debt_on_action(
-            position=position,
-            previous_scaled_balance=previous_scaled_balance,
+        # Accrue debt with discount (stateless - uses inherited method)
+        discount_scaled = self._accrue_debt_on_action(
+            previous_scaled_balance=previous_balance,
+            previous_index=previous_index,
             discount_percent=previous_discount,
             index=event_data.index,
         )
@@ -85,7 +82,7 @@ class GhoV2Processor(GhoV1Processor):
 
             # Get balance before burn with discount
             balance_before_burn = self.get_discounted_balance(
-                scaled_balance=previous_scaled_balance,
+                scaled_balance=previous_balance,
                 previous_index=previous_index,
                 current_index=event_data.index,
                 discount_percent=previous_discount,
@@ -93,7 +90,7 @@ class GhoV2Processor(GhoV1Processor):
 
             if requested_amount == balance_before_burn:
                 # Full repayment: burn all scaled balance
-                balance_delta = -previous_scaled_balance
+                balance_delta = -previous_balance
             else:
                 # Partial repayment
                 balance_delta = -(amount_scaled + discount_scaled)
@@ -105,27 +102,36 @@ class GhoV2Processor(GhoV1Processor):
             balance_delta = -discount_scaled
             is_repay = False
 
-        position.balance += balance_delta
-        position.last_index = event_data.index
+        # For GHO rev 2-3, always refresh discount after balance-changing operations
+        should_refresh_discount = True
 
-        return balance_delta, is_repay, discount_scaled
+        return GhoMintResult(
+            balance_delta=balance_delta,
+            new_index=event_data.index,
+            is_repay=is_repay,
+            discount_scaled=discount_scaled,
+            should_refresh_discount=should_refresh_discount,
+        )
 
     def process_burn_event(
         self,
         event_data: DebtBurnEvent,
-        position: "AaveV3DebtPositionsTable",
-        previous_discount: int = 0,
-    ) -> tuple[int, int]:
+        previous_balance: int,
+        previous_index: int,
+        previous_discount: int,
+    ) -> GhoBurnResult:
         """
         Process a GHO debt burn event with full discount support.
 
         Args:
             event_data: The burn event data
-            position: The user's debt position to update
+            previous_balance: The user's balance before this event
+            previous_index: The index at previous_balance calculation
             previous_discount: The discount percent before this transaction
 
         Returns:
-            Tuple of (balance_delta, discount_scaled)
+            GhoBurnResult with balance_delta, new_index, discount_scaled,
+            and should_refresh_discount
         """
         wad_ray_math = self._math_libs["wad_ray"]
 
@@ -138,36 +144,38 @@ class GhoV2Processor(GhoV1Processor):
             b=event_data.index,
         )
 
-        previous_scaled_balance = position.balance
-        previous_index = position.last_index or 0
-
         # Get balance before burn with discount
         balance_before_burn = self.get_discounted_balance(
-            scaled_balance=previous_scaled_balance,
+            scaled_balance=previous_balance,
             previous_index=previous_index,
             current_index=event_data.index,
             discount_percent=previous_discount,
         )
 
-        # Accrue debt with discount
-        discount_scaled = self.accrue_debt_on_action(
-            position=position,
-            previous_scaled_balance=previous_scaled_balance,
+        # Accrue debt with discount (stateless - uses inherited method)
+        discount_scaled = self._accrue_debt_on_action(
+            previous_scaled_balance=previous_balance,
+            previous_index=previous_index,
             discount_percent=previous_discount,
             index=event_data.index,
         )
 
         if requested_amount == balance_before_burn:
             # Full repayment: burn all scaled balance
-            balance_delta = -previous_scaled_balance
+            balance_delta = -previous_balance
         else:
             # Partial repayment
             balance_delta = -(amount_scaled + discount_scaled)
 
-        position.balance += balance_delta
-        position.last_index = event_data.index
+        # For GHO rev 2-3, always refresh discount after balance-changing operations
+        should_refresh_discount = True
 
-        return balance_delta, discount_scaled
+        return GhoBurnResult(
+            balance_delta=balance_delta,
+            new_index=event_data.index,
+            discount_scaled=discount_scaled,
+            should_refresh_discount=should_refresh_discount,
+        )
 
     def get_discounted_balance(
         self,

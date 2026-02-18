@@ -3,21 +3,18 @@
 Revision 4+ deprecates the discount mechanism entirely.
 """
 
-from typing import TYPE_CHECKING
-
 import degenbot.aave.libraries.v3_4 as aave_library_v3_4
 from degenbot.aave.processors.base import (
     DebtBurnEvent,
     DebtMintEvent,
-    GhoTokenProcessor,
+    GhoBurnResult,
+    GhoDebtTokenProcessor,
+    GhoMintResult,
     MathLibraries,
 )
 
-if TYPE_CHECKING:
-    from degenbot.database.models.aave import AaveV3DebtPositionsTable
 
-
-class GhoV4Processor(GhoTokenProcessor):
+class GhoV4Processor(GhoDebtTokenProcessor):
     """Processor for GHO VariableDebtToken revisions 4+.
 
     Revisions 4+ have the discount mechanism deprecated.
@@ -36,25 +33,28 @@ class GhoV4Processor(GhoTokenProcessor):
         """Get the math libraries for this revision."""
         return self._math_libs
 
-    def supports_discount(self) -> bool:
+    def supports_discount(self) -> bool:  # noqa: PLR6301
         """Revision 4+ does not support discount mechanism."""
         return False
 
     def process_mint_event(
         self,
         event_data: DebtMintEvent,
-        position: "AaveV3DebtPositionsTable",
-        previous_discount: int = 0,
-    ) -> tuple[int, bool, int]:
+        previous_balance: int,
+        previous_index: int,
+        previous_discount: int,  # noqa: ARG002
+    ) -> GhoMintResult:
         """Process a GHO debt mint event without discount.
 
         Args:
             event_data: The mint event data
-            position: The user's debt position to update
+            previous_balance: The user's balance before this event
+            previous_index: The index at previous_balance calculation
             previous_discount: Ignored (no discount in rev 4+)
 
         Returns:
-            Tuple of (balance_delta, is_repay, discount_scaled=0)
+            GhoMintResult with balance_delta, new_index, is_repay,
+            discount_scaled=0, and should_refresh_discount=False
         """
         wad_ray_math = self._math_libs["wad_ray"]
 
@@ -78,13 +78,12 @@ class GhoV4Processor(GhoTokenProcessor):
 
         else:
             # Pure interest accrual (value == balance_increase)
-            previous_scaled_balance = position.balance
             balance_increase = wad_ray_math.ray_mul(
-                a=previous_scaled_balance,
+                a=previous_balance,
                 b=event_data.index,
             ) - wad_ray_math.ray_mul(
-                a=previous_scaled_balance,
-                b=position.last_index or 0,
+                a=previous_balance,
+                b=previous_index,
             )
 
             # Convert back to scaled
@@ -96,31 +95,35 @@ class GhoV4Processor(GhoTokenProcessor):
             balance_delta = balance_increase_scaled
             is_repay = False
 
-            # Update last_index
-            position.last_index = event_data.index
+        # Revision 4+ never refreshes discount (discount is deprecated)
+        should_refresh_discount = False
 
-        position.balance += balance_delta
-        if event_data.value != event_data.balance_increase:
-            # Update last_index for non-interest-accrual events
-            position.last_index = event_data.index
-
-        return balance_delta, is_repay, 0
+        return GhoMintResult(
+            balance_delta=balance_delta,
+            new_index=event_data.index,
+            is_repay=is_repay,
+            discount_scaled=0,
+            should_refresh_discount=should_refresh_discount,
+        )
 
     def process_burn_event(
         self,
         event_data: DebtBurnEvent,
-        position: "AaveV3DebtPositionsTable",
-        previous_discount: int = 0,
-    ) -> tuple[int, int]:
+        previous_balance: int,  # noqa: ARG002
+        previous_index: int,  # noqa: ARG002
+        previous_discount: int,  # noqa: ARG002
+    ) -> GhoBurnResult:
         """Process a GHO debt burn event without discount.
 
         Args:
             event_data: The burn event data
-            position: The user's debt position to update
+            previous_balance: The user's balance before this event
+            previous_index: The index at previous_balance calculation
             previous_discount: Ignored (no discount in rev 4+)
 
         Returns:
-            Tuple of (balance_delta, discount_scaled=0)
+            GhoBurnResult with balance_delta, new_index, discount_scaled=0,
+            and should_refresh_discount=False
         """
         wad_ray_math = self._math_libs["wad_ray"]
 
@@ -134,53 +137,22 @@ class GhoV4Processor(GhoTokenProcessor):
             b=event_data.index,
         )
 
-        position.balance += balance_delta
-        position.last_index = event_data.index
+        # Revision 4+ never refreshes discount (discount is deprecated)
+        should_refresh_discount = False
 
-        return balance_delta, 0
-
-    def accrue_debt_on_action(
-        self,
-        position: "AaveV3DebtPositionsTable",
-        previous_scaled_balance: int,
-        discount_percent: int,
-        index: int,
-    ) -> int:
-        """Simulate _accrueDebtOnAction function (no-op in rev 4+).
-
-        Revision 4+ removed _accrueDebtOnAction.
-
-        Args:
-            position: The user's debt position
-            previous_scaled_balance: Balance before the action
-            discount_percent: Ignored (no discount in rev 4+)
-            index: Current variable debt index
-
-        Returns:
-            Always returns 0 (no discount)
-        """
-        wad_ray_math = self._math_libs["wad_ray"]
-
-        # Calculate interest accrual without discount
-        _ = wad_ray_math.ray_mul(
-            a=previous_scaled_balance,
-            b=index,
-        ) - wad_ray_math.ray_mul(
-            a=previous_scaled_balance,
-            b=position.last_index or 0,
+        return GhoBurnResult(
+            balance_delta=balance_delta,
+            new_index=event_data.index,
+            discount_scaled=0,
+            should_refresh_discount=should_refresh_discount,
         )
-
-        # Update last_index to match contract behavior
-        position.last_index = index
-
-        return 0
 
     def get_discounted_balance(
         self,
         scaled_balance: int,
-        previous_index: int,
+        previous_index: int,  # noqa: ARG002
         current_index: int,
-        discount_percent: int,
+        discount_percent: int,  # noqa: ARG002
     ) -> int:
         """Calculate balance without discount.
 
