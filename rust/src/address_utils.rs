@@ -41,11 +41,11 @@ use std::str::FromStr;
 /// println!("Checksummed: {}", checksummed);
 /// ```
 #[pyfunction(signature = (address))]
-pub fn to_checksum_address(address: &Bound<'_, PyAny>) -> PyResult<String> {
+pub fn to_checksum_address(py: Python<'_>, address: &Bound<'_, PyAny>) -> PyResult<String> {
     if let Ok(s) = address.extract::<&str>() {
         let addr = Address::from_str(s)
             .map_err(|e| PyErr::new::<PyValueError, _>(format!("Invalid address: {e}")))?;
-        return Ok(addr.to_checksum(None));
+        return Ok(py.detach(|| addr.to_checksum(None)));
     }
 
     if let Ok(bytes) = address.extract::<&[u8]>() {
@@ -53,7 +53,7 @@ pub fn to_checksum_address(address: &Bound<'_, PyAny>) -> PyResult<String> {
             return Err(PyErr::new::<PyValueError, _>("Address must be 20 bytes"));
         }
         let address = Address::from_slice(bytes);
-        return Ok(address.to_checksum(None));
+        return Ok(py.detach(|| address.to_checksum(None)));
     }
 
     Err(PyErr::new::<PyTypeError, _>(

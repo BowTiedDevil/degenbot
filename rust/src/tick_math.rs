@@ -118,16 +118,14 @@ const TICK_MASKS: [(U256, U256); 19] = uint!([
 /// println!("Tick 0 ratio: {}", ratio);
 /// ```
 #[pyfunction(signature = (tick))]
-pub fn get_sqrt_ratio_at_tick(tick: i32) -> PyResult<Py<PyAny>> {
-    let result = get_sqrt_ratio_at_tick_internal(tick)?;
+pub fn get_sqrt_ratio_at_tick(py: Python<'_>, tick: i32) -> PyResult<Py<PyAny>> {
+    let result = py.detach(|| get_sqrt_ratio_at_tick_internal(tick))?;
     let bytes: Vec<u8> = result.to_be_bytes::<20>().to_vec();
 
-    Python::attach(|py| {
-        let py_bytes = pyo3::types::PyBytes::new(py, &bytes);
-        let int_class = py.get_type::<pyo3::types::PyInt>();
-        let result = int_class.call_method1("from_bytes", (py_bytes, "big"))?;
-        Ok(result.unbind().into())
-    })
+    let py_bytes = pyo3::types::PyBytes::new(py, &bytes);
+    let int_class = py.get_type::<pyo3::types::PyInt>();
+    let result = int_class.call_method1("from_bytes", (py_bytes, "big"))?;
+    Ok(result.unbind().into())
 }
 
 /// Internal function to calculate sqrt ratio from tick.
@@ -201,10 +199,9 @@ pub fn get_sqrt_ratio_at_tick_internal(tick: i32) -> Result<U160, TickMathError>
 /// println!("Calculated tick: {}", tick);
 /// ```
 #[pyfunction(signature = (sqrt_price_x96))]
-pub fn get_tick_at_sqrt_ratio(
-    #[pyo3(from_py_with = extract_u160)] sqrt_price_x96: U160,
-) -> PyResult<i32> {
-    let tick = get_tick_at_sqrt_ratio_internal(sqrt_price_x96)?;
+pub fn get_tick_at_sqrt_ratio(py: Python<'_>, sqrt_price_x96: &Bound<'_, PyAny>) -> PyResult<i32> {
+    let sqrt_price = extract_u160(sqrt_price_x96)?;
+    let tick = py.detach(|| get_tick_at_sqrt_ratio_internal(sqrt_price))?;
     Ok(tick.as_i32())
 }
 
