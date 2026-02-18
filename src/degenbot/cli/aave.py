@@ -17,11 +17,6 @@ from web3 import Web3
 from web3.exceptions import ContractLogicError
 from web3.types import LogReceipt
 
-import degenbot.aave.libraries.v3_1 as aave_library_v3_1
-import degenbot.aave.libraries.v3_2 as aave_library_v3_2
-import degenbot.aave.libraries.v3_3 as aave_library_v3_3
-import degenbot.aave.libraries.v3_4 as aave_library_v3_4
-import degenbot.aave.libraries.v3_5 as aave_library_v3_5
 from degenbot.aave.deployments import EthereumMainnetAaveV3
 from degenbot.aave.processors import (
     CollateralBurnEvent,
@@ -434,30 +429,6 @@ class WadRayMathLibrary(Protocol):
 class MathLibraries(TypedDict):
     wad_ray: WadRayMathLibrary
     percentage: PercentageMathLibrary
-
-
-SCALED_TOKEN_REVISION_LIBRARIES: dict[TokenRevision, MathLibraries] = {
-    1: MathLibraries(
-        wad_ray=aave_library_v3_1.wad_ray_math,
-        percentage=aave_library_v3_1.percentage_math,
-    ),
-    2: MathLibraries(
-        wad_ray=aave_library_v3_2.wad_ray_math,
-        percentage=aave_library_v3_2.percentage_math,
-    ),
-    3: MathLibraries(
-        wad_ray=aave_library_v3_3.wad_ray_math,
-        percentage=aave_library_v3_3.percentage_math,
-    ),
-    4: MathLibraries(
-        wad_ray=aave_library_v3_4.wad_ray_math,
-        percentage=aave_library_v3_4.percentage_math,
-    ),
-    5: MathLibraries(
-        wad_ray=aave_library_v3_5.wad_ray_math,
-        percentage=aave_library_v3_5.percentage_math,
-    ),
-}
 
 
 def _decode_address(input_: bytes) -> ChecksumAddress:
@@ -1390,20 +1361,6 @@ def _is_discount_supported(market: AaveV3MarketTable) -> bool:
     """Check if GHO discount mechanism is supported (revision 2 or 3)."""
     revision = _get_gho_vtoken_revision(market)
     return revision is not None and revision < GHO_REVISION_DISCOUNT_DEPRECATED
-
-
-def _get_math_libraries(
-    token_revision: int,
-) -> tuple[WadRayMathLibrary, PercentageMathLibrary]:
-    """
-    Get both WadRayMath and PercentageMath libraries for the token revision.
-    """
-    try:
-        libs = SCALED_TOKEN_REVISION_LIBRARIES[token_revision]
-        return libs["wad_ray"], libs["percentage"]
-    except KeyError:
-        msg = f"Unsupported revision: {token_revision}"
-        raise ValueError(msg) from None
 
 
 def _matches_pool_event(
@@ -2520,8 +2477,6 @@ def _process_aave_stake(
 
     operation: UserOperation = UserOperation.AAVE_STAKED
 
-    wad_ray_math_library, _ = _get_math_libraries(scaled_token_revision)
-
     assets, shares = _decode_uint_values(
         event=triggering_event,
         num_values=2,
@@ -2600,7 +2555,7 @@ def _process_aave_stake(
                 discount_token_balance=recipient_new_discount_token_balance,
                 scaled_debt_balance=recipient_debt_position.balance,
                 debt_index=event_data.index,
-                wad_ray_math=wad_ray_math_library,
+                wad_ray_math=gho_processor.get_math_libraries()["wad_ray"],
             )
         recipient_new_discount_percent = recipient.gho_discount
 
@@ -2648,8 +2603,6 @@ def _process_aave_redeem(
     """
 
     operation: UserOperation = UserOperation.AAVE_REDEEM
-
-    wad_ray_math_library, _ = _get_math_libraries(scaled_token_revision)
 
     assets, shares = _decode_uint_values(
         event=triggering_event,
@@ -2728,7 +2681,7 @@ def _process_aave_redeem(
                 discount_token_balance=sender_discount_token_balance - requested_amount,
                 scaled_debt_balance=sender_debt_position.balance,
                 debt_index=event_data.index,
-                wad_ray_math=wad_ray_math_library,
+                wad_ray_math=gho_processor.get_math_libraries()["wad_ray"],
             )
         sender_new_discount_percent = sender.gho_discount
 
@@ -2773,8 +2726,6 @@ def _process_staked_aave_transfer(
     );
     ```
     """
-
-    wad_ray_math_library, _ = _get_math_libraries(scaled_token_revision)
 
     (amount_transferred,) = _decode_uint_values(
         event=triggering_event,
@@ -2909,7 +2860,7 @@ def _process_staked_aave_transfer(
                 discount_token_balance=sender_discount_token_balance,
                 scaled_debt_balance=sender_debt_position.balance,
                 debt_index=event_data.index,
-                wad_ray_math=wad_ray_math_library,
+                wad_ray_math=gho_processor.get_math_libraries()["wad_ray"],
             )
         sender_new_discount_percent = sender.gho_discount
 
@@ -2974,7 +2925,7 @@ def _process_staked_aave_transfer(
                 discount_token_balance=recipient_discount_token_balance,
                 scaled_debt_balance=recipient_new_scaled_balance,
                 debt_index=event_data.index,
-                wad_ray_math=wad_ray_math_library,
+                wad_ray_math=gho_processor.get_math_libraries()["wad_ray"],
             )
         recipient_new_discount_percent = recipient.gho_discount
 
