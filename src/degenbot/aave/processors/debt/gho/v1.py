@@ -7,6 +7,7 @@ from degenbot.aave.processors.base import (
     GhoBurnResult,
     GhoDebtTokenProcessor,
     GhoMintResult,
+    GhoUserOperation,
     MathLibraries,
 )
 
@@ -77,7 +78,7 @@ class GhoV1Processor(GhoDebtTokenProcessor):
             else:
                 balance_delta = -(discount_scaled - amount_scaled)
 
-            user_operation = "GHO BORROW"
+            user_operation = GhoUserOperation.GHO_BORROW
         else:
             # GHO REPAY: emitted in _burnScaled
             requested_amount = event_data.balance_increase - event_data.value
@@ -91,7 +92,7 @@ class GhoV1Processor(GhoDebtTokenProcessor):
             else:
                 balance_delta = discount_scaled - amount_scaled
 
-            user_operation = "GHO REPAY"
+            user_operation = GhoUserOperation.GHO_REPAY
 
         # For GHO rev 1, always refresh discount after balance-changing operations
         should_refresh_discount = True

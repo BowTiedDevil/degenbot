@@ -1,9 +1,18 @@
 """Base protocols and types for Aave token processors."""
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import ClassVar, Protocol, TypedDict
 
 from eth_typing import ChecksumAddress
+
+
+class GhoUserOperation(Enum):
+    """GHO user operation types for mint events."""
+
+    GHO_BORROW = "GHO BORROW"
+    GHO_REPAY = "GHO REPAY"
+    GHO_INTEREST_ACCRUAL = "GHO INTEREST ACCRUAL"
 
 
 class PercentageMathLibrary(Protocol):
@@ -97,7 +106,7 @@ class GhoMintResult:
 
     balance_delta: int
     new_index: int
-    user_operation: str  # "GHO BORROW", "GHO REPAY", or "GHO INTEREST ACCRUAL"
+    user_operation: GhoUserOperation
     discount_scaled: int
     should_refresh_discount: bool
 

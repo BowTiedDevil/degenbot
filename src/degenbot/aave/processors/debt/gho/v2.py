@@ -6,6 +6,7 @@ from degenbot.aave.processors.base import (
     DebtMintEvent,
     GhoBurnResult,
     GhoMintResult,
+    GhoUserOperation,
     MathLibraries,
 )
 from degenbot.aave.processors.debt.gho.v1 import GhoV1Processor
@@ -70,7 +71,7 @@ class GhoV2Processor(GhoV1Processor):
             else:
                 balance_delta = -(discount_scaled - amount_scaled)
 
-            user_operation = "GHO BORROW"
+            user_operation = GhoUserOperation.GHO_BORROW
 
         elif event_data.balance_increase > event_data.value:
             # GHO REPAY: emitted in _burnScaled
@@ -95,14 +96,14 @@ class GhoV2Processor(GhoV1Processor):
                 # Partial repayment
                 balance_delta = -(amount_scaled + discount_scaled)
 
-            user_operation = "GHO REPAY"
+            user_operation = GhoUserOperation.GHO_REPAY
 
         else:
             # Pure interest accrual (value == balance_increase)
             # Emitted from _accrueDebtOnAction during discount updates
             # The balance decreases by the discount amount (burned by contract)
             balance_delta = -discount_scaled
-            user_operation = "GHO INTEREST ACCRUAL"
+            user_operation = GhoUserOperation.GHO_INTEREST_ACCRUAL
 
         # For GHO rev 2-3, always refresh discount after balance-changing operations
         should_refresh_discount = True

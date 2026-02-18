@@ -3447,8 +3447,8 @@ def _process_gho_debt_mint_event(
     debt_position.balance += result.balance_delta
     debt_position.last_index = result.new_index
 
-    # Convert user_operation string to enum
-    user_operation = UserOperation(result.user_operation)
+    # Map GHO user operation to CLI user operation enum
+    user_operation = UserOperation(result.user_operation.value)
 
     # Handle discount refresh if needed and not already updated via event
     if (

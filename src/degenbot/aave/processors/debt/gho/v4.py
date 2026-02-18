@@ -12,6 +12,7 @@ from degenbot.aave.processors.base import (
     GhoBurnResult,
     GhoDebtTokenProcessor,
     GhoMintResult,
+    GhoUserOperation,
     MathLibraries,
 )
 
@@ -67,7 +68,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
                 a=requested_amount,
                 b=event_data.index,
             )
-            user_operation = "GHO BORROW"
+            user_operation = GhoUserOperation.GHO_BORROW
 
         elif event_data.balance_increase > event_data.value:
             # GHO REPAY: emitted in _burnScaled
@@ -76,7 +77,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
                 a=requested_amount,
                 b=event_data.index,
             )
-            user_operation = "GHO REPAY"
+            user_operation = GhoUserOperation.GHO_REPAY
 
         else:
             # Pure interest accrual (value == balance_increase)
@@ -95,7 +96,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
             )
 
             balance_delta = balance_increase_scaled
-            user_operation = "GHO INTEREST ACCRUAL"
+            user_operation = GhoUserOperation.GHO_INTEREST_ACCRUAL
 
         # Revision 4+ never refreshes discount (discount is deprecated)
         should_refresh_discount = False
