@@ -51,7 +51,7 @@ class GhoV1Processor(GhoDebtTokenProcessor):
             previous_discount: The discount percent before this transaction
 
         Returns:
-            GhoMintResult with balance_delta, new_index, is_repay,
+            GhoMintResult with balance_delta, new_index, user_operation,
             discount_scaled, and should_refresh_discount
         """
         wad_ray_math = self._math_libs["wad_ray"]
@@ -77,7 +77,7 @@ class GhoV1Processor(GhoDebtTokenProcessor):
             else:
                 balance_delta = -(discount_scaled - amount_scaled)
 
-            is_repay = False
+            user_operation = "GHO BORROW"
         else:
             # GHO REPAY: emitted in _burnScaled
             requested_amount = event_data.balance_increase - event_data.value
@@ -91,7 +91,7 @@ class GhoV1Processor(GhoDebtTokenProcessor):
             else:
                 balance_delta = discount_scaled - amount_scaled
 
-            is_repay = True
+            user_operation = "GHO REPAY"
 
         # For GHO rev 1, always refresh discount after balance-changing operations
         should_refresh_discount = True
@@ -99,7 +99,7 @@ class GhoV1Processor(GhoDebtTokenProcessor):
         return GhoMintResult(
             balance_delta=balance_delta,
             new_index=event_data.index,
-            is_repay=is_repay,
+            user_operation=user_operation,
             discount_scaled=discount_scaled,
             should_refresh_discount=should_refresh_discount,
         )

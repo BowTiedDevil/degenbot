@@ -44,7 +44,7 @@ class GhoV2Processor(GhoV1Processor):
             previous_discount: The discount percent before this transaction
 
         Returns:
-            GhoMintResult with balance_delta, new_index, is_repay,
+            GhoMintResult with balance_delta, new_index, user_operation,
             discount_scaled, and should_refresh_discount
         """
         wad_ray_math = self._math_libs["wad_ray"]
@@ -70,7 +70,7 @@ class GhoV2Processor(GhoV1Processor):
             else:
                 balance_delta = -(discount_scaled - amount_scaled)
 
-            is_repay = False
+            user_operation = "GHO BORROW"
 
         elif event_data.balance_increase > event_data.value:
             # GHO REPAY: emitted in _burnScaled
@@ -95,12 +95,14 @@ class GhoV2Processor(GhoV1Processor):
                 # Partial repayment
                 balance_delta = -(amount_scaled + discount_scaled)
 
-            is_repay = True
+            user_operation = "GHO REPAY"
 
         else:
             # Pure interest accrual (value == balance_increase)
+            # Emitted from _accrueDebtOnAction during discount updates
+            # The balance decreases by the discount amount (burned by contract)
             balance_delta = -discount_scaled
-            is_repay = False
+            user_operation = "GHO INTEREST ACCRUAL"
 
         # For GHO rev 2-3, always refresh discount after balance-changing operations
         should_refresh_discount = True
@@ -108,7 +110,7 @@ class GhoV2Processor(GhoV1Processor):
         return GhoMintResult(
             balance_delta=balance_delta,
             new_index=event_data.index,
-            is_repay=is_repay,
+            user_operation=user_operation,
             discount_scaled=discount_scaled,
             should_refresh_discount=should_refresh_discount,
         )

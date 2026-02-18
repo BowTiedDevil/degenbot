@@ -53,7 +53,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
             previous_discount: Ignored (no discount in rev 4+)
 
         Returns:
-            GhoMintResult with balance_delta, new_index, is_repay,
+            GhoMintResult with balance_delta, new_index, user_operation,
             discount_scaled=0, and should_refresh_discount=False
         """
         wad_ray_math = self._math_libs["wad_ray"]
@@ -65,7 +65,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
                 a=requested_amount,
                 b=event_data.index,
             )
-            is_repay = False
+            user_operation = "GHO BORROW"
 
         elif event_data.balance_increase > event_data.value:
             # GHO REPAY: emitted in _burnScaled
@@ -74,7 +74,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
                 a=requested_amount,
                 b=event_data.index,
             )
-            is_repay = True
+            user_operation = "GHO REPAY"
 
         else:
             # Pure interest accrual (value == balance_increase)
@@ -93,7 +93,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
             )
 
             balance_delta = balance_increase_scaled
-            is_repay = False
+            user_operation = "GHO INTEREST ACCRUAL"
 
         # Revision 4+ never refreshes discount (discount is deprecated)
         should_refresh_discount = False
@@ -101,7 +101,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         return GhoMintResult(
             balance_delta=balance_delta,
             new_index=event_data.index,
-            is_repay=is_repay,
+            user_operation=user_operation,
             discount_scaled=0,
             should_refresh_discount=should_refresh_discount,
         )

@@ -97,7 +97,7 @@ class GhoMintResult:
 
     balance_delta: int
     new_index: int
-    is_repay: bool
+    user_operation: str  # "GHO BORROW", "GHO REPAY", or "GHO INTEREST ACCRUAL"
     discount_scaled: int
     should_refresh_discount: bool
 

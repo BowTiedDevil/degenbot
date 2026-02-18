@@ -23,18 +23,19 @@ from degenbot.aave.processors.debt.v5 import DebtV5Processor
 class TokenProcessorFactory:
     """Factory for creating token processors by revision number."""
 
-    # AToken revisions: 1, 3, 4, 5 (rev 2 was skipped)
+    # AToken revisions: 1-5
     COLLATERAL_PROCESSORS: ClassVar[dict[int, type[CollateralTokenProcessor]]] = {
         1: CollateralV1Processor,
+        2: CollateralV1Processor,  # Same as rev 1
         3: CollateralV3Processor,
         4: CollateralV4Processor,
         5: CollateralV5Processor,
     }
 
-    # VToken revisions: 1, 3, 4, 5 (rev 2 was skipped)
-    # Standard vTokens (non-GHO)
+    # VToken revisions: 1-5 (standard vTokens, non-GHO)
     DEBT_PROCESSORS: ClassVar[dict[int, type[DebtTokenProcessor]]] = {
         1: DebtV1Processor,
+        2: DebtV1Processor,  # Same as rev 1
         3: DebtV3Processor,
         4: DebtV4Processor,
         5: DebtV5Processor,
