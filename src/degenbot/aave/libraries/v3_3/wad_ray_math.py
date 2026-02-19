@@ -44,6 +44,30 @@ def ray_div(a: int, b: int) -> int:
     return (a * RAY + (b // 2)) // b
 
 
+def ray_div_ceil(a: int, b: int) -> int:
+    """
+    Divides two ray, rounding UP to ensure result >= true value.
+    This matches Solidity ceiling division behavior for burns.
+    """
+    if b == 0:
+        raise EVMRevertError(error="ZERO_DIVISION")
+    if a > MAX_UINT256 // RAY:
+        raise EVMRevertError(error="DIV_INTERNAL")
+    return ((a * RAY) // b) + (((a * RAY) % b) != 0)
+
+
+def ray_div_floor(a: int, b: int) -> int:
+    """
+    Divides two ray, rounding DOWN (floor).
+    This matches Solidity floor division behavior for mints.
+    """
+    if b == 0:
+        raise EVMRevertError(error="ZERO_DIVISION")
+    if a > MAX_UINT256 // RAY:
+        raise EVMRevertError(error="DIV_INTERNAL")
+    return (a * RAY) // b
+
+
 def ray_to_wad(a: int) -> int:
     result = a // WAD_RAY_RATIO
     remainder = a % WAD_RAY_RATIO
