@@ -1319,7 +1319,9 @@ def _process_scaled_token_upgrade_event(
             return_types=["uint256"],
         )
         aave_debt_asset.v_token_revision = vtoken_revision
-        logger.info(f"Upgraded vToken revision to {vtoken_revision}")
+        logger.info(
+            f"Upgraded vToken revision for {aave_debt_asset.v_token.address} to {vtoken_revision}"
+        )
 
         # Handle GHO discount deprecation on upgrade to revision 4+
         if (
@@ -3209,13 +3211,30 @@ def _process_collateral_mint_event(
             pass
         elif tx_context is not None:
             # Use pre-fetched pool events from transaction context
-            # Try to find matching event: SUPPLY first, then WITHDRAW, then REPAY
+            # The matching logic depends on the relationship between value and balance_increase:
+            # - value > balance_increase: SUPPLY (user deposit)
+            # - balance_increase > value: WITHDRAW (interest accrual before withdraw)
+            # - value == balance_increase: skip (pure interest accrual)
             found = False
-            for expected_type, check_user in [
-                (AaveV3Event.SUPPLY.value, user.address),
-                (AaveV3Event.WITHDRAW.value, caller_address),
-                (AaveV3Event.REPAY.value, user.address),
-            ]:
+
+            # Determine which event type to match based on value vs balance_increase
+            if event_amount > balance_increase:
+                # Standard deposit - look for SUPPLY first
+                match_sequence = [
+                    (AaveV3Event.SUPPLY.value, user.address),
+                    (AaveV3Event.WITHDRAW.value, caller_address),
+                    (AaveV3Event.REPAY.value, user.address),
+                ]
+            else:
+                # balance_increase > value - interest accrual during withdraw
+                # Look for WITHDRAW first since this is a withdrawal operation
+                match_sequence = [
+                    (AaveV3Event.WITHDRAW.value, caller_address),
+                    (AaveV3Event.SUPPLY.value, user.address),
+                    (AaveV3Event.REPAY.value, user.address),
+                ]
+
+            for expected_type, check_user in match_sequence:
                 for pool_event in tx_context.pool_events:
                     # Skip pool events that have already been matched to other Mint/Burn events
                     if tx_context.matched_pool_events.get(pool_event["logIndex"], False):
