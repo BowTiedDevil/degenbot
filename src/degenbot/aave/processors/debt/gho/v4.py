@@ -24,6 +24,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
     """
 
     revision = 4
+    math_lib_version = "v3.4"
 
     def __init__(self) -> None:
         """Initialize with v3.4 math libraries."""
@@ -63,8 +64,10 @@ class GhoV4Processor(GhoDebtTokenProcessor):
 
         if event_data.value > event_data.balance_increase:
             # GHO BORROW: emitted in _mintScaled
+            # Revision 4+ uses ceiling division (ray_div_ceil) to match
+            # TokenMath.getVTokenMintScaledAmount behavior.
             requested_amount = event_data.value - event_data.balance_increase
-            balance_delta = wad_ray_math.ray_div(
+            balance_delta = wad_ray_math.ray_div_ceil(
                 a=requested_amount,
                 b=event_data.index,
             )
@@ -133,9 +136,10 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         # uint256 amountToBurn = amount - balanceIncrease
         requested_amount = event_data.value + event_data.balance_increase
 
-        # uint256 amountScaled = amount.rayDiv(index)
+        # uint256 amountScaled = amount.rayDivFloor(index)
+        # Revision 4+ uses floor division to match TokenMath.getVTokenBurnScaledAmount
         # No discount in rev 4+
-        balance_delta = -wad_ray_math.ray_div(
+        balance_delta = -wad_ray_math.ray_div_floor(
             a=requested_amount,
             b=event_data.index,
         )

@@ -18,6 +18,7 @@ from degenbot.aave.processors.debt.v1 import DebtV1Processor
 from degenbot.aave.processors.debt.v3 import DebtV3Processor
 from degenbot.aave.processors.debt.v4 import DebtV4Processor
 from degenbot.aave.processors.debt.v5 import DebtV5Processor
+from degenbot.logging import logger
 
 
 class TokenProcessorFactory:
@@ -71,7 +72,12 @@ class TokenProcessorFactory:
         if processor_class is None:
             msg = f"No processor for collateral revision {revision}"
             raise ValueError(msg)
-        return processor_class()
+        processor = processor_class()
+        logger.debug(
+            f"Created {processor_class.__name__} for aToken revision {revision} "
+            f"(math lib: {processor.math_lib_version})"
+        )
+        return processor
 
     @classmethod
     def get_debt_processor(cls, revision: int) -> DebtTokenProcessor:
@@ -93,7 +99,12 @@ class TokenProcessorFactory:
         if processor_class is None:
             msg = f"No processor for debt revision {revision}"
             raise ValueError(msg)
-        return processor_class()
+        processor = processor_class()
+        logger.debug(
+            f"Created {processor_class.__name__} for vToken revision {revision} "
+            f"(math lib: {processor.math_lib_version})"
+        )
+        return processor
 
     @classmethod
     def get_gho_debt_processor(cls, revision: int) -> GhoDebtTokenProcessor:
@@ -115,4 +126,9 @@ class TokenProcessorFactory:
         if processor_class is None:
             msg = f"No processor for GHO revision {revision}"
             raise ValueError(msg)
-        return processor_class()
+        processor = processor_class()
+        logger.debug(
+            f"Created {processor_class.__name__} for GHO vToken revision {revision} "
+            f"(math lib: {processor.math_lib_version})"
+        )
+        return processor

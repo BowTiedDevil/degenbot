@@ -19,6 +19,7 @@ class GhoV1Processor(GhoDebtTokenProcessor):
     """
 
     revision = 1
+    math_lib_version = "v3.1"
 
     def __init__(self) -> None:
         """Initialize with v3.1 math libraries."""

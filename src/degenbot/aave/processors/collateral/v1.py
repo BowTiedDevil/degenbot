@@ -15,6 +15,7 @@ class CollateralV1Processor(CollateralTokenProcessor):
     """Processor for AToken revision 1."""
 
     revision = 1
+    math_lib_version = "v3.1"
 
     def __init__(self) -> None:
         """Initialize with math libraries."""
@@ -86,6 +87,7 @@ class CollateralV1Processor(CollateralTokenProcessor):
         event_data: CollateralBurnEvent,
         previous_balance: int,  # noqa: ARG002
         previous_index: int,  # noqa: ARG002
+        scaled_delta: int | None = None,  # noqa: ARG002
     ) -> BurnResult:
         """
         Process a collateral burn event.
@@ -96,6 +98,7 @@ class CollateralV1Processor(CollateralTokenProcessor):
             event_data: The burn event data
             previous_balance: The user's balance before this event
             previous_index: The index at previous_balance calculation
+            scaled_delta: Unused for revisions 1-3 (calculated from event data)
 
         Returns:
             BurnResult with balance_delta and new_index
@@ -120,6 +123,10 @@ class CollateralV1Processor(CollateralTokenProcessor):
         """
         Calculate scaled amount from raw underlying amount.
 
+        Uses half-up rounding (ray_div) to match revision 1-3 AToken
+        behavior. These versions use WadRayMath.rayDiv which rounds
+        half up, not floor division.
+
         Args:
             raw_amount: The raw underlying token amount
             index: The current liquidity index
@@ -131,3 +138,18 @@ class CollateralV1Processor(CollateralTokenProcessor):
             a=raw_amount,
             b=index,
         )
+
+    def calculate_burn_scaled_amount(self, raw_amount: int, index: int) -> int:
+        """
+        Calculate scaled amount for burn operations (WITHDRAW).
+
+        For V1-V3, uses the same calculation as mint (standard ray_div).
+
+        Args:
+            raw_amount: The raw underlying token amount
+            index: The current liquidity index
+
+        Returns:
+            The scaled amount
+        """
+        return self.calculate_scaled_amount(raw_amount=raw_amount, index=index)

@@ -9,6 +9,7 @@ class CollateralV3Processor(CollateralV1Processor):
     """Processor for AToken revision 3."""
 
     revision = 3
+    math_lib_version = "v3.3"
 
     def __init__(self) -> None:
         """Initialize with v3.3 math libraries."""

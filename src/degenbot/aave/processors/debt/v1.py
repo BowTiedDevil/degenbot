@@ -15,6 +15,7 @@ class DebtV1Processor(DebtTokenProcessor):
     """Processor for VToken revision 1."""
 
     revision = 1
+    math_lib_version = "v3.1"
 
     def __init__(self) -> None:
         """Initialize with math libraries."""
@@ -32,6 +33,7 @@ class DebtV1Processor(DebtTokenProcessor):
         event_data: DebtMintEvent,
         previous_balance: int,  # noqa: ARG002
         previous_index: int,  # noqa: ARG002
+        scaled_delta: int | None = None,  # noqa: ARG002
     ) -> MintResult:
         """
         Process a debt mint event.
@@ -44,6 +46,7 @@ class DebtV1Processor(DebtTokenProcessor):
             event_data: The mint event data
             previous_balance: The user's balance before this event
             previous_index: The index at previous_balance calculation
+            scaled_delta: Unused for revisions 1-3 (calculated from event data)
 
         Returns:
             MintResult with balance_delta, new_index, and is_repay flag
@@ -75,11 +78,46 @@ class DebtV1Processor(DebtTokenProcessor):
             is_repay=is_repay,
         )
 
+    def calculate_scaled_amount(self, raw_amount: int, index: int) -> int:
+        """
+        Calculate scaled amount from raw underlying amount.
+
+        Uses standard ray_div (half up rounding) to match revision 1-3 vToken
+        behavior.
+
+        Args:
+            raw_amount: The raw underlying token amount
+            index: The current borrow index
+
+        Returns:
+            The scaled amount
+        """
+        return self._math_libs["wad_ray"].ray_div(
+            a=raw_amount,
+            b=index,
+        )
+
+    def calculate_mint_scaled_amount(self, raw_amount: int, index: int) -> int:
+        """
+        Calculate scaled amount for mint operations.
+
+        For V1, uses the same calculation as burn (standard ray_div).
+
+        Args:
+            raw_amount: The raw underlying token amount
+            index: The current borrow index
+
+        Returns:
+            The scaled amount
+        """
+        return self.calculate_scaled_amount(raw_amount=raw_amount, index=index)
+
     def process_burn_event(
         self,
         event_data: DebtBurnEvent,
         previous_balance: int,  # noqa: ARG002
         previous_index: int,  # noqa: ARG002
+        scaled_delta: int | None = None,  # noqa: ARG002
     ) -> BurnResult:
         """
         Process a debt burn event.
@@ -90,6 +128,7 @@ class DebtV1Processor(DebtTokenProcessor):
             event_data: The burn event data
             previous_balance: The user's balance before this event
             previous_index: The index at previous_balance calculation
+            scaled_delta: Unused for revisions 1-3 (calculated from event data)
 
         Returns:
             BurnResult with balance_delta and new_index

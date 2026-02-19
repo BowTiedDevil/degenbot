@@ -26,6 +26,8 @@ class WadRayMathLibrary(Protocol):
     """Protocol for Wad/Ray math operations."""
 
     def ray_div(self, a: int, b: int) -> int: ...
+    def ray_div_ceil(self, a: int, b: int) -> int: ...
+    def ray_div_floor(self, a: int, b: int) -> int: ...
     def ray_mul(self, a: int, b: int) -> int: ...
 
 
@@ -125,9 +127,23 @@ class TokenProcessor(Protocol):
     """Base protocol for all token processors."""
 
     revision: ClassVar[int]
+    math_lib_version: ClassVar[str]
 
     def get_math_libraries(self) -> MathLibraries:
         """Get the math libraries for this revision."""
+        ...
+
+    def calculate_scaled_amount(self, raw_amount: int, index: int) -> int:
+        """
+        Calculate scaled amount from raw underlying amount.
+
+        Args:
+            raw_amount: The raw underlying token amount
+            index: The current liquidity index
+
+        Returns:
+            The scaled amount
+        """
         ...
 
 
@@ -164,6 +180,7 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
         event_data: CollateralBurnEvent,
         previous_balance: int,
         previous_index: int,
+        scaled_delta: int | None = None,
     ) -> BurnResult:
         """
         Process a collateral burn event.
@@ -172,6 +189,10 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
             event_data: The burn event data
             previous_balance: The user's balance before this event
             previous_index: The index at previous_balance calculation
+            scaled_delta: Optional pre-calculated scaled amount delta for burn
+                operations. When provided, this value is used directly instead
+                of deriving from event_data. This is used by revision 4+ to
+                match the Pool's calculation using the original withdrawal amount.
 
         Returns:
             BurnResult with balance_delta and new_index
@@ -181,6 +202,25 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
     def calculate_scaled_amount(self, raw_amount: int, index: int) -> int:
         """
         Calculate scaled amount from raw underlying amount.
+
+        For debt tokens, this calculates the scaled amount for burn operations
+        (REPAY). For mint operations (BORROW), use calculate_mint_scaled_amount.
+
+        Args:
+            raw_amount: The raw underlying token amount
+            index: The current liquidity index
+
+        Returns:
+            The scaled amount
+        """
+        ...
+
+    def calculate_burn_scaled_amount(self, raw_amount: int, index: int) -> int:
+        """
+        Calculate scaled amount for burn operations (WITHDRAW).
+
+        This is used for collateral token burn operations which may use
+        different rounding (e.g., ceiling division) than mint operations.
 
         Args:
             raw_amount: The raw underlying token amount
@@ -207,6 +247,7 @@ class DebtTokenProcessor(TokenProcessor, Protocol):
         event_data: DebtMintEvent,
         previous_balance: int,
         previous_index: int,
+        scaled_delta: int | None = None,
     ) -> MintResult:
         """
         Process a debt mint event.
@@ -215,6 +256,10 @@ class DebtTokenProcessor(TokenProcessor, Protocol):
             event_data: The mint event data
             previous_balance: The user's balance before this event
             previous_index: The index at previous_balance calculation
+            scaled_delta: Optional pre-calculated scaled amount delta for borrow
+                operations. When provided, this value is used directly instead
+                of deriving from event_data. This is used by revision 4+ to
+                match the Pool's calculation using the original borrow amount.
 
         Returns:
             MintResult with balance_delta, new_index, and is_repay flag
@@ -226,6 +271,7 @@ class DebtTokenProcessor(TokenProcessor, Protocol):
         event_data: DebtBurnEvent,
         previous_balance: int,
         previous_index: int,
+        scaled_delta: int | None = None,
     ) -> BurnResult:
         """
         Process a debt burn event.
@@ -234,6 +280,10 @@ class DebtTokenProcessor(TokenProcessor, Protocol):
             event_data: The burn event data
             previous_balance: The user's balance before this event
             previous_index: The index at previous_balance calculation
+            scaled_delta: Optional pre-calculated scaled amount delta for burn
+                operations. When provided, this value is used directly instead
+                of deriving from event_data. This is used by revision 4+ to
+                match the Pool's calculation using the original paybackAmount.
 
         Returns:
             BurnResult with balance_delta and new_index
@@ -344,3 +394,24 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
             The discount scaled amount (0 for revisions without discount support)
         """
         ...
+
+
+__all__ = [
+    "BurnResult",
+    "CollateralBurnEvent",
+    "CollateralMintEvent",
+    "CollateralTokenProcessor",
+    "DebtBurnEvent",
+    "DebtMintEvent",
+    "DebtTokenProcessor",
+    "GhoBurnResult",
+    "GhoDebtTokenProcessor",
+    "GhoMintResult",
+    "GhoUserOperation",
+    "MathLibraries",
+    "MintResult",
+    "PercentageMathLibrary",
+    "ProcessingResult",
+    "TokenProcessor",
+    "WadRayMathLibrary",
+]

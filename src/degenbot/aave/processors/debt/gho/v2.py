@@ -20,6 +20,7 @@ class GhoV2Processor(GhoV1Processor):
     """
 
     revision = 2
+    math_lib_version = "v3.2"
 
     def __init__(self) -> None:
         """Initialize with v3.2 math libraries."""
