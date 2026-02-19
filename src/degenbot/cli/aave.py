@@ -4006,11 +4006,32 @@ def _process_standard_debt_burn_event(
         reserve_address=reserve_address,
     )
 
-    # Extract paybackAmount from REPAY event data (amount, useATokens)
-    (payback_amount, _) = eth_abi.abi.decode(
-        types=["uint256", "bool"],
-        data=pool_event["data"],
-    )
+    # Extract paybackAmount based on the actual event type
+    # The pool_event can be REPAY, LIQUIDATION_CALL, or DEFICIT_CREATED
+    pool_event_topic = pool_event["topics"][0]
+
+    if pool_event_topic == AaveV3Event.REPAY.value:
+        # REPAY: (uint256 amount, bool useATokens)
+        (payback_amount, _) = eth_abi.abi.decode(
+            types=["uint256", "bool"],
+            data=pool_event["data"],
+        )
+    elif pool_event_topic == AaveV3Event.LIQUIDATION_CALL.value:
+        # LIQUIDATION_CALL: (uint256 debtToCover, uint256 liquidatedCollateralAmount,
+        #                     address liquidator, bool receiveAToken)
+        (payback_amount, _, _, _) = eth_abi.abi.decode(
+            types=["uint256", "uint256", "address", "bool"],
+            data=pool_event["data"],
+        )
+    elif pool_event_topic == AaveV3Event.DEFICIT_CREATED.value:
+        # DEFICIT_CREATED: (uint256 amountCreated)
+        (payback_amount,) = eth_abi.abi.decode(
+            types=["uint256"],
+            data=pool_event["data"],
+        )
+    else:
+        msg = f"Unexpected event type: {pool_event_topic.to_0x_hex()}"
+        raise ValueError(msg)
 
     # Calculate scaled amount using the original paybackAmount
     # This matches the Pool's calculation: paybackAmount.getVTokenBurnScaledAmount(index)
