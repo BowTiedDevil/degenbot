@@ -79,7 +79,7 @@ class GhoV1Processor(GhoDebtTokenProcessor):
                 balance_delta = -(discount_scaled - amount_scaled)
 
             user_operation = GhoUserOperation.GHO_BORROW
-        else:
+        elif event_data.balance_increase > event_data.value:
             # GHO REPAY: emitted in _burnScaled
             requested_amount = event_data.balance_increase - event_data.value
             amount_scaled = wad_ray_math.ray_div(
@@ -93,6 +93,12 @@ class GhoV1Processor(GhoDebtTokenProcessor):
                 balance_delta = discount_scaled - amount_scaled
 
             user_operation = GhoUserOperation.GHO_REPAY
+        else:
+            # Pure interest accrual (value == balance_increase)
+            # Emitted from _accrueDebtOnAction during discount updates
+            # The balance decreases by the discount amount (burned by contract)
+            balance_delta = -discount_scaled
+            user_operation = GhoUserOperation.GHO_INTEREST_ACCRUAL
 
         # For GHO rev 1, always refresh discount after balance-changing operations
         should_refresh_discount = True
