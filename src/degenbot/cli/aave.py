@@ -2120,6 +2120,7 @@ def _process_scaled_token_operation(
                 event_data=event,
                 previous_balance=position.balance,
                 previous_index=position.last_index or 0,
+                scaled_delta=scaled_delta,
             )
             position.balance += burn_result.balance_delta
             position.last_index = burn_result.new_index
@@ -2132,6 +2133,7 @@ def _process_scaled_token_operation(
                 event_data=event,
                 previous_balance=position.balance,
                 previous_index=position.last_index or 0,
+                scaled_delta=scaled_delta,
             )
             position.balance += debt_mint_result.balance_delta
             position.last_index = debt_mint_result.new_index
@@ -2144,6 +2146,7 @@ def _process_scaled_token_operation(
                 event_data=event,
                 previous_balance=position.balance,
                 previous_index=position.last_index or 0,
+                scaled_delta=scaled_delta,
             )
             position.balance += debt_burn_result.balance_delta
             position.last_index = debt_burn_result.new_index
@@ -3522,12 +3525,15 @@ def _process_standard_debt_mint_event(
     # - REPAY: interest accrues before repayment, minting debt tokens first
     reserve_address = get_checksum_address(debt_asset.underlying_token.address)
 
+    scaled_delta: int | None = None
+
     # Skip verification for pure interest accrual (value == balanceIncrease)
     # These mints don't have a corresponding Pool event
     if event_amount != balance_increase:
         # Try with user.address first (most common case - BORROW)
+        pool_event: LogReceipt | None = None
         try:
-            _verify_pool_event_for_transaction(
+            pool_event = _verify_pool_event_for_transaction(
                 w3=w3,
                 market=market,
                 event=event,
@@ -3538,7 +3544,7 @@ def _process_standard_debt_mint_event(
         except ValueError:
             # If that fails, try with caller_address (adapter case)
             try:
-                _verify_pool_event_for_transaction(
+                pool_event = _verify_pool_event_for_transaction(
                     w3=w3,
                     market=market,
                     event=event,
@@ -3548,13 +3554,28 @@ def _process_standard_debt_mint_event(
                 )
             except ValueError:
                 # If no BORROW event, try REPAY (for interest accrual during repayment)
-                _verify_pool_event_for_transaction(
+                pool_event = _verify_pool_event_for_transaction(
                     w3=w3,
                     market=market,
                     event=event,
                     expected_event_type=AaveV3Event.REPAY.value,
                     user_address=user.address,
                     reserve_address=reserve_address,
+                )
+
+        # For BORROW operations, calculate scaled_delta from the borrow amount
+        # This matches the Pool's calculation: amount.getVTokenMintScaledAmount(index)
+        if pool_event is not None and pool_event["topics"][0] == AaveV3Event.BORROW.value:
+            (_, borrow_amount, _, _) = eth_abi.abi.decode(
+                types=["address", "uint256", "uint8", "uint256"],
+                data=pool_event["data"],
+            )
+            processor = TokenProcessorFactory.get_debt_processor(debt_asset.v_token_revision)
+            # V4+ uses ceiling division for mints
+            if hasattr(processor, "calculate_mint_scaled_amount"):
+                scaled_delta = processor.calculate_mint_scaled_amount(
+                    raw_amount=borrow_amount,
+                    index=index,
                 )
 
     debt_position = _get_or_create_debt_position(session=session, user=user, asset_id=debt_asset.id)
@@ -3571,6 +3592,7 @@ def _process_standard_debt_mint_event(
         ),
         scaled_token_revision=debt_asset.v_token_revision,
         position=debt_position,
+        scaled_delta=scaled_delta,
     )
 
     if VerboseConfig.is_verbose(
@@ -3742,9 +3764,12 @@ def _process_collateral_burn_event(
     # - REPAY with useATokens=true: burns aTokens directly (no WITHDRAW event)
     reserve_address = get_checksum_address(collateral_asset.underlying_token.address)
 
+    scaled_delta: int | None = None
+    pool_event: LogReceipt | None = None
+
     # Try WITHDRAW first (most common case)
     try:
-        _verify_pool_event_for_transaction(
+        pool_event = _verify_pool_event_for_transaction(
             w3=w3,
             market=market,
             event=event,
@@ -3755,7 +3780,7 @@ def _process_collateral_burn_event(
     except ValueError:
         try:
             # If no WITHDRAW event, try REPAY (for repay with aTokens)
-            _verify_pool_event_for_transaction(
+            pool_event = _verify_pool_event_for_transaction(
                 w3=w3,
                 market=market,
                 event=event,
@@ -3770,6 +3795,23 @@ def _process_collateral_burn_event(
                 market=market,
                 event=event,
                 user_address=user.address,
+            )
+
+    # For WITHDRAW operations, calculate scaled_delta from the withdrawal amount
+    if pool_event is not None and pool_event["topics"][0] == AaveV3Event.WITHDRAW.value:
+        # WITHDRAW event data: (uint256 amount)
+        (withdraw_amount,) = eth_abi.abi.decode(
+            types=["uint256"],
+            data=pool_event["data"],
+        )
+        processor = TokenProcessorFactory.get_collateral_processor(
+            collateral_asset.a_token_revision
+        )
+        # V4+ uses ceiling division for burns
+        if hasattr(processor, "calculate_burn_scaled_amount"):
+            scaled_delta = processor.calculate_burn_scaled_amount(
+                raw_amount=withdraw_amount,
+                index=index,
             )
 
     collateral_position = session.scalar(
@@ -3790,6 +3832,7 @@ def _process_collateral_burn_event(
         ),
         scaled_token_revision=collateral_asset.a_token_revision,
         position=collateral_position,
+        scaled_delta=scaled_delta,
     )
 
     if VerboseConfig.is_verbose(
@@ -3953,14 +3996,30 @@ def _process_standard_debt_burn_event(
 ) -> None:
     """Process a standard debt (vToken) burn event (non-GHO)."""
 
-    # Verify the corresponding Pool Repay event exists
-    _verify_pool_event_for_transaction(
+    reserve_address = get_checksum_address(debt_asset.underlying_token.address)
+
+    # Get the corresponding Pool Repay event
+    pool_event = _verify_pool_event_for_transaction(
         w3=w3,
         market=market,
         event=event,
         expected_event_type=AaveV3Event.REPAY.value,
         user_address=user.address,
-        reserve_address=get_checksum_address(debt_asset.underlying_token.address),
+        reserve_address=reserve_address,
+    )
+
+    # Extract paybackAmount from REPAY event data (amount, useATokens)
+    (payback_amount, _) = eth_abi.abi.decode(
+        types=["uint256", "bool"],
+        data=pool_event["data"],
+    )
+
+    # Calculate scaled amount using the original paybackAmount
+    # This matches the Pool's calculation: paybackAmount.getVTokenBurnScaledAmount(index)
+    processor = TokenProcessorFactory.get_debt_processor(debt_asset.v_token_revision)
+    scaled_delta = processor.calculate_scaled_amount(
+        raw_amount=payback_amount,
+        index=index,
     )
 
     debt_position = session.scalar(
@@ -3983,6 +4042,7 @@ def _process_standard_debt_burn_event(
         ),
         scaled_token_revision=debt_asset.v_token_revision,
         position=debt_position,
+        scaled_delta=scaled_delta,
     )
 
     if VerboseConfig.is_verbose(
