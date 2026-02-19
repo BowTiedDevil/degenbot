@@ -3,17 +3,18 @@ description: Debug Aave update failures
 agent: build
 ---
 
-!`DEGENBOT_VERBOSE_USERS=$ARGUMENTS uv run degenbot aave update --no-progress-bar --one-chunk --chunk 1 2>&1`
+!`DEGENBOT_DEBUG=1 DEGENBOT_VERBOSE_USERS=$ARGUMENTS uv run degenbot aave update --no-progress-bar --one-chunk --chunk 1 2>&1`
 
 ## DIRECTION: Investigate and debug this failed Aave update command. Find the root cause of the bug and fix it.
 
 ## PROCESS:
 ### 1. Gather Information
 - Parse the output to identify information about the events, processes, and state logs leading up to the failed verification
-- @evm-investigator Perform a thorough investigation of the transaction; use all known information about the blocks, transactions, and operations leading to the invalid state
+- @evm-investigator Perform a thorough investigation of the transaction; use all known information about the blocks, transactions, and operations leading to the invalid state. Determine the revision number for any implementation contracts involved in the transaction, e.g., AToken, VariableDebtToken, GHOVariableDebtToken, Pool, stkAAVE
 
 ### 2. Investigate Code
 - Determine the execution path leading to the error
+- Determine the revision of all versioned implementations, libraries, and processors that were used during processing. Check the reference contracts in @contract_reference/aave
 - Generate a failure hypothesis
 
 ### 3. Validate Execution Path and Failure Hypothesis
