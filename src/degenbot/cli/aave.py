@@ -1188,8 +1188,7 @@ def _process_stk_aave_transfer_event(context: EventHandlerContext) -> None:
 
     # Apply balance changes
     if from_user is not None:
-        assert from_user.stk_aave_balance is not None
-        assert from_user.stk_aave_balance >= 0
+        assert from_user.stk_aave_balance >= 0, f"{from_user.address} stkAAVE balance < 0!"
         from_user_old_balance = from_user.stk_aave_balance
         from_user.stk_aave_balance -= value
 
@@ -1200,8 +1199,7 @@ def _process_stk_aave_transfer_event(context: EventHandlerContext) -> None:
             logger.info(f"  delta: -{value}")
 
     if to_user is not None:
-        assert to_user.stk_aave_balance is not None
-        assert to_user.stk_aave_balance >= 0
+        assert to_user.stk_aave_balance >= 0, f"{to_user.address} stkAAVE balance < 0!"
         to_user_old_balance = to_user.stk_aave_balance
         to_user.stk_aave_balance += value
 
@@ -4258,8 +4256,8 @@ def _process_scaled_token_balance_transfer_event(
             block_info=f"{context.event['blockNumber']}.{context.event['logIndex']}",
         )
 
-    assert from_user_position.balance >= 0
-    assert to_user_position.balance >= 0
+    assert from_user_position.balance >= 0, f"{from_user.address} balance < 0!"
+    assert to_user_position.balance >= 0, f"{to_user.address} balance < 0!"
 
 
 def _event_sort_key(event: LogReceipt) -> tuple[int, int]:
