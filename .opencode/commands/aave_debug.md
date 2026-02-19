@@ -3,14 +3,14 @@ description: Debug Aave update failures
 agent: build
 ---
 
-!`DEGENBOT_DEBUG=1 DEGENBOT_VERBOSE_USERS=$ARGUMENTS uv run degenbot aave update --no-progress-bar --one-chunk --chunk 1 2>&1`
+!`DEGENBOT_DEBUG=1 DEGENBOT_VERBOSE_USERS=$ARGUMENTS uv run degenbot aave update --no-progress-bar --one-chunk`
 
 ## DIRECTION: Investigate and debug this failed Aave update command. Find the root cause of the bug and fix it.
 
 ## PROCESS:
 ### 1. Gather Information
 - Parse the output to identify information about the events, processes, and state logs leading up to the failed verification
-- @evm-investigator Perform a thorough investigation of the transaction; use all known information about the blocks, transactions, and operations leading to the invalid state. Determine the revision number for any implementation contracts involved in the transaction, e.g., AToken, VariableDebtToken, GHOVariableDebtToken, Pool, stkAAVE
+- @evm-investigator Perform a thorough investigation of the transaction; use all known information about the blocks, transactions, and operations leading to the invalid state; Determine the implementation address and associated revision for proxy contracts involved in the transaction, e.g., AToken, VariableDebtToken, GHOVariableDebtToken, Pool, stkAAVE
 
 ### 2. Investigate Code
 - Determine the execution path leading to the error
@@ -18,9 +18,9 @@ agent: build
 - Generate a failure hypothesis
 
 ### 3. Validate Execution Path and Failure Hypothesis
-- Consider enabling function call logging along the execution path by decorating functions and methods, e.g.,
+- Consider enabling function call logging along the execution path by decorating functions and methods with `log_function_call`, e.g.,
     ```python
-    @log_function_call  # added
+    @log_function_call
     def some_func(...): ...  
     ```
 - Determine if an debugging env var is useful:
