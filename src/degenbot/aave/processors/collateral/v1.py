@@ -63,7 +63,7 @@ class CollateralV1Processor(CollateralTokenProcessor):
                 b=event_data.index,
             )
             is_repay = True
-        else:
+        elif event_data.value > event_data.balance_increase:
             # Standard deposit - emitted in _mintScaled during supply
             requested_amount = event_data.value - event_data.balance_increase
             if scaled_delta is not None:
@@ -74,6 +74,13 @@ class CollateralV1Processor(CollateralTokenProcessor):
                     a=requested_amount,
                     b=event_data.index,
                 )
+            is_repay = False
+        else:
+            # Pure interest accrual: value == balance_increase
+            # Emitted when interest accrues without a deposit (e.g., before transfer).
+            # The user's scaled balance doesn't change - only the index updates.
+            # The interest tokens are minted via ERC20 Transfer, not via this Mint event.
+            balance_delta = 0
             is_repay = False
 
         return MintResult(
