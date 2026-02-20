@@ -3898,7 +3898,6 @@ def _process_standard_debt_burn_event(
             pool_event_candidate, AaveV3Event.REPAY.value, user.address, reserve_address
         ):
             pool_event = pool_event_candidate
-            tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
             break
 
     if pool_event is None:
@@ -3914,10 +3913,18 @@ def _process_standard_debt_burn_event(
 
     if pool_event_topic == AaveV3Event.REPAY.value:
         # REPAY: (uint256 amount, bool useATokens)
-        (payback_amount, _) = eth_abi.abi.decode(
-            types=["uint256", "bool"],
-            data=pool_event["data"],
+        payback_amount, use_a_tokens = cast(
+            "tuple[int, bool]",
+            eth_abi.abi.decode(
+                types=["uint256", "bool"],
+                data=pool_event["data"],
+            ),
         )
+        # Only mark as consumed if NOT using aTokens
+        # When useATokens=True, the same Repay event should also match
+        # the collateral aToken burn in _process_collateral_burn_event
+        if not use_a_tokens:
+            tx_context.matched_pool_events[pool_event["logIndex"]] = True
     elif pool_event_topic == AaveV3Event.LIQUIDATION_CALL.value:
         # LIQUIDATION_CALL: (uint256 debtToCover, uint256 liquidatedCollateralAmount,
         #                     address liquidator, bool receiveAToken)
