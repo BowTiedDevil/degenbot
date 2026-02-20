@@ -88,7 +88,7 @@ def test_calculate_discount_rate_full_discount(fork_mainnet_archive):
     w3 = fork_mainnet_archive.w3
 
     # Setup: discount token balance is large enough to cover debt
-    # GHO_DISCOUNTED_PER_DISCOUNT_TOKEN = 100e18
+    # GHO_DISCOUNTED_PER_DISCOUNT_TOKEN = 100e18  # noqa:ERA001
     # So if debt = 100e18 and discount_token = 1e18, discounted = 100e18 >= debt
     debt_balance = 100 * 10**18  # 100 GHO
     discount_token_balance = 2 * 10**18  # 2 stkAAVE - provides 200 GHO discount
@@ -152,7 +152,7 @@ def test_calculate_discount_rate_edge_cases(fork_mainnet_archive):
     w3 = fork_mainnet_archive.w3
 
     test_cases = [
-        # (debt_balance, discount_token_balance, description)
+        # (debt_balance, discount_token_balance, description) # noqa:ERA001
         (MIN_DEBT_TOKEN_BALANCE, MIN_DISCOUNT_TOKEN_BALANCE, "exact minimum balances"),
         (
             10 * MIN_DEBT_TOKEN_BALANCE,
@@ -198,9 +198,9 @@ def test_calculate_discount_rate_exact_coverage_threshold(fork_mainnet_archive):
     w3 = fork_mainnet_archive.w3
 
     # Find the exact point where discounted_balance == debt_balance
-    # discounted_balance = discount_token_balance * GHO_DISCOUNTED_PER_DISCOUNT_TOKEN / WAD
+    # discounted_balance = discount_token_balance * GHO_DISCOUNTED_PER_DISCOUNT_TOKEN / WAD # noqa:ERA001,E501
     # We want: discount_token_balance * 100e18 = debt_balance * 1e18
-    # So: discount_token_balance = debt_balance / 100
+    # So: discount_token_balance = debt_balance / 100 # noqa:ERA001
 
     debt_balance = 1000 * 10**18  # 1000 GHO
     # Exact amount needed for full coverage
