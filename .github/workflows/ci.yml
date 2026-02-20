@@ -93,8 +93,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -110,30 +110,11 @@ jobs:
             rust/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml', '**/requirements*.txt') }}
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install maturin pytest
-
-      - name: Create virtualenv and install deps
-        run: |
-          python -m venv .venv
-          source .venv/bin/activate
-          pip install uv
-          uv pip install -e . --group dev
+      - name: Sync dependencies
+        run: uv sync --group dev
 
       - name: Build and install Rust extension
-        run: |
-          source .venv/bin/activate
-          uv run maturin develop --release
+        run: uv run maturin develop --release
 
       - name: Run Rust-specific tests
-        run: |
-          source .venv/bin/activate
-          uv run pytest tests/rust -v -o addopts=
+        run: uv run pytest tests/rust -v -o addopts=
