@@ -45,6 +45,7 @@ Create a new report in @debug/aave. Follow this format:
 - **Fix:** Code location and changes
 - **Key Insight:** Lesson learned for future debugging
 - **Refactoring:** Concise summary of proposed improvements to code that processes these transactions
+- **Filename:** {four digit ID} - {issue title}
 
 ### 6. Improve
 - Review opportunities to refactor and clean up code that contributed to this failure
