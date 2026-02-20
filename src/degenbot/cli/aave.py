@@ -3639,6 +3639,7 @@ def _process_collateral_burn_event(
     # A SCALED_TOKEN_BURN can be triggered by:
     # - WITHDRAW: user withdraws collateral (has WITHDRAW event)
     # - REPAY with useATokens=true: burns aTokens directly (no WITHDRAW event)
+    # - LIQUIDATION_CALL: collateral seized during liquidation
     reserve_address = get_checksum_address(collateral_asset.underlying_token.address)
 
     pool_event: LogReceipt | None = None
@@ -3669,17 +3670,28 @@ def _process_collateral_burn_event(
             tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
             break
 
+        # Check for LIQUIDATION_CALL (collateral seized during liquidation)
+        elif event_topic == AaveV3Event.LIQUIDATION_CALL.value and _matches_pool_event(
+            pool_event_candidate, AaveV3Event.WITHDRAW.value, user.address, reserve_address
+        ):
+            pool_event = pool_event_candidate
+            # Note: LIQUIDATION_CALL events are not marked as consumed here
+            # because they may match multiple burn events (both debt and collateral)
+            break
+
     if pool_event is None:
         # No matching pool event found - this is an error condition
         msg = (
-            f"No matching WITHDRAW or REPAY event found for Burn event "
+            f"No matching WITHDRAW, REPAY, or LIQUIDATION_CALL event found for Burn event "
             f"at block {event['blockNumber']}, logIndex {event['logIndex']}"
         )
         raise ValueError(msg)
 
     # For WITHDRAW operations, calculate scaled_amount from the withdrawal amount
+    # For LIQUIDATION_CALL, calculate scaled_amount from the liquidatedCollateralAmount
     scaled_amount: int | None = None
-    if pool_event is not None and pool_event["topics"][0] == AaveV3Event.WITHDRAW.value:
+    pool_event_topic = pool_event["topics"][0]
+    if pool_event_topic == AaveV3Event.WITHDRAW.value:
         # WITHDRAW event data: (uint256 amount)
         (withdraw_amount,) = eth_abi.abi.decode(
             types=["uint256"],
@@ -3690,6 +3702,20 @@ def _process_collateral_burn_event(
         )
         scaled_amount = pool_processor.calculate_collateral_burn_scaled_amount(
             amount=withdraw_amount,
+            liquidity_index=index,
+        )
+    elif pool_event_topic == AaveV3Event.LIQUIDATION_CALL.value:
+        # LIQUIDATION_CALL event data: (uint256 debtToCover, uint256 liquidatedCollateralAmount,
+        #                               address liquidator, bool receiveAToken)
+        (_, liquidated_collateral_amount, _, _) = eth_abi.abi.decode(
+            types=["uint256", "uint256", "address", "bool"],
+            data=pool_event["data"],
+        )
+        pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
+            collateral_asset.a_token_revision
+        )
+        scaled_amount = pool_processor.calculate_collateral_burn_scaled_amount(
+            amount=liquidated_collateral_amount,
             liquidity_index=index,
         )
 
