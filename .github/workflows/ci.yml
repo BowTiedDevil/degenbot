@@ -121,14 +121,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install maturin pytest
 
-      - name: Create virtualenv for maturin
+      - name: Create virtualenv and install deps
         run: |
           python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install pytest eth-typing eth-utils
 
-      - name: Build Rust extension
+      - name: Build and install Rust extension
         run: |
           source .venv/bin/activate
-          maturin develop --release
+          maturin build --release
+          pip install rust/target/wheels/degenbot-*.whl --force-reinstall --no-deps
 
       - name: Run Rust-specific tests
         run: |
