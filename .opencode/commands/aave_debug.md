@@ -35,12 +35,8 @@ agent: build
 - Determine the root cause, e.g., a processing function failed to determine the correct value from an event, the database had a stale value, a previous processing action set a value incorrectly which was used by another processing action
 - Fix the error and run the update again to confirm it works
 
-### 5. Improve
-- @explore Review opportunities to refactor and clean up code that contributed to this failure
-- Write a stateless unit test to verify that the math operations, user operation determination, event matching logic, etc., matches the expectations following the onchain investigation and verified fix
-
-### 6. Document Findings
-Append to @aave_debug_progress.md. Follow this format:
+### 5. Document Findings
+Create a new report in @debug/aave. Follow this format:
 - **Issue:** Brief title
 - **Date:** Current date
 - **Symptom:** Error message verbatim
@@ -49,3 +45,7 @@ Append to @aave_debug_progress.md. Follow this format:
 - **Fix:** Code location and changes
 - **Key Insight:** Lesson learned for future debugging
 - **Refactoring:** Concise summary of proposed improvements to code that processes these transactions
+
+### 6. Improve
+- Review opportunities to refactor and clean up code that contributed to this failure
+- Write a stateless unit test to verify that the math operations, user operation determination, event matching logic, etc., matches the expectations following the onchain investigation and verified fix
