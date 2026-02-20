@@ -121,10 +121,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install maturin pytest
 
+      - name: Create virtualenv for maturin
+        run: |
+          python -m venv .venv
+
       - name: Build Rust extension
         run: |
-          maturin build --release
-          pip install rust/target/wheels/degenbot-*.whl
+          source .venv/bin/activate
+          maturin develop --release
 
       - name: Run Rust-specific tests
-        run: pytest tests/rust -v -o addopts=
+        run: |
+          source .venv/bin/activate
+          pytest tests/rust -v -o addopts=
