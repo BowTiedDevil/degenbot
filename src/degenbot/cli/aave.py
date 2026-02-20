@@ -18,6 +18,7 @@ from web3.exceptions import ContractLogicError
 from web3.types import LogReceipt
 
 from degenbot.aave.deployments import EthereumMainnetAaveV3
+from degenbot.aave.libraries.wad_ray_math import wad_mul
 from degenbot.aave.processors import (
     CollateralBurnEvent,
     CollateralMintEvent,
@@ -2031,39 +2032,42 @@ def _process_scaled_token_operation(
             return UserOperation.REPAY
 
 
-def _get_discount_rate(
-    w3: Web3,
-    discount_rate_strategy: ChecksumAddress,
-    debt_token_balance: int,
+GHO_DISCOUNTED_PER_DISCOUNT_TOKEN = 100 * 10**18
+DISCOUNT_RATE_BPS = 3000  # 30.00%
+MIN_DISCOUNT_TOKEN_BALANCE = 10**15
+MIN_DEBT_TOKEN_BALANCE = 10**18
+
+
+def calculate_gho_discount_rate(
+    debt_balance: int,
     discount_token_balance: int,
 ) -> int:
     """
-    Get the discount percentage from the discount rate strategy contract.
+    Calculate the GHO discount rate locally.
 
-    Calls calculateDiscountRate on the strategy contract with debt and discount token balances
-    to determine the user's interest discount percentage.
+    Replicates the logic from the GhoDiscountRateStrategy contract at mainnet address
+    0x4C38Ec4D1D2068540DfC11DFa4de41F733DDF812.
 
-    Returns 0 if discount mechanism is deprecated (revision 4+).
+    Returns the discount rate in basis points (10000 = 100.00%).
     """
-    new_discount_percentage: int
-    (new_discount_percentage,) = raw_call(
-        w3=w3,
-        address=discount_rate_strategy,
-        calldata=encode_function_calldata(
-            function_prototype="calculateDiscountRate(uint256,uint256)",
-            function_arguments=[debt_token_balance, discount_token_balance],
-        ),
-        return_types=["uint256"],
+    if discount_token_balance < MIN_DISCOUNT_TOKEN_BALANCE or debt_balance < MIN_DEBT_TOKEN_BALANCE:
+        return 0
+
+    discounted_balance = wad_mul(
+        a=discount_token_balance,
+        b=GHO_DISCOUNTED_PER_DISCOUNT_TOKEN,
     )
 
-    return new_discount_percentage
+    if discounted_balance >= debt_balance:
+        return DISCOUNT_RATE_BPS
+
+    return (discounted_balance * DISCOUNT_RATE_BPS) // debt_balance
 
 
 def _refresh_discount_rate(
     *,
-    w3: Web3,
     user: AaveV3UsersTable,
-    discount_rate_strategy: ChecksumAddress | None,
+    has_discount_rate_strategy: bool,
     discount_token_balance: int,
     scaled_debt_balance: int,
     debt_index: int,
@@ -2073,21 +2077,20 @@ def _refresh_discount_rate(
     Calculate and update the user's GHO discount rate.
 
     Calculates the debt token balance from scaled balance and index, then
-    fetches and applies the new discount rate from the strategy contract.
+    computes the discount rate locally using the same logic as the GhoDiscountRateStrategy
+    contract.
     """
 
     # Skip if discount mechanism is not supported (revision 4+)
-    if discount_rate_strategy is None:
+    if not has_discount_rate_strategy:
         return
 
     debt_token_balance = wad_ray_math.ray_mul(
         a=scaled_debt_balance,
         b=debt_index,
     )
-    user.gho_discount = _get_discount_rate(
-        w3=w3,
-        discount_rate_strategy=discount_rate_strategy,
-        debt_token_balance=debt_token_balance,
+    user.gho_discount = calculate_gho_discount_rate(
+        debt_balance=debt_token_balance,
         discount_token_balance=discount_token_balance,
     )
 
@@ -2419,9 +2422,8 @@ def _process_aave_stake(
                 log_index=context.event["logIndex"],
             )
             _refresh_discount_rate(
-                w3=context.w3,
                 user=recipient,
-                discount_rate_strategy=discount_rate_strategy,
+                has_discount_rate_strategy=discount_rate_strategy is not None,
                 discount_token_balance=recipient_new_discount_token_balance,
                 scaled_debt_balance=recipient_debt_position.balance,
                 debt_index=event_data.index,
@@ -2545,9 +2547,8 @@ def _process_aave_redeem(
             context.tx_context.discount_updated_users if context.tx_context else set()
         ):
             _refresh_discount_rate(
-                w3=context.w3,
                 user=sender,
-                discount_rate_strategy=discount_rate_strategy,
+                has_discount_rate_strategy=discount_rate_strategy is not None,
                 discount_token_balance=sender_discount_token_balance - requested_amount,
                 scaled_debt_balance=sender_debt_position.balance,
                 debt_index=event_data.index,
@@ -2724,9 +2725,8 @@ def _process_staked_aave_transfer(
             context.tx_context.discount_updated_users if context.tx_context else set()
         ):
             _refresh_discount_rate(
-                w3=context.w3,
                 user=sender,
-                discount_rate_strategy=discount_rate_strategy,
+                has_discount_rate_strategy=discount_rate_strategy is not None,
                 discount_token_balance=sender_discount_token_balance,
                 scaled_debt_balance=sender_debt_position.balance,
                 debt_index=event_data.index,
@@ -2789,9 +2789,8 @@ def _process_staked_aave_transfer(
             and recipient.address in context.tx_context.stk_aave_transfer_users
         ):
             _refresh_discount_rate(
-                w3=context.w3,
                 user=recipient,
-                discount_rate_strategy=discount_rate_strategy,
+                has_discount_rate_strategy=discount_rate_strategy is not None,
                 discount_token_balance=recipient_discount_token_balance,
                 scaled_debt_balance=recipient_new_scaled_balance,
                 debt_index=event_data.index,
@@ -3368,9 +3367,8 @@ def _process_gho_debt_mint_event(
             log_index=context.event["logIndex"],
         )
         _refresh_discount_rate(
-            w3=context.w3,
             user=user,
-            discount_rate_strategy=discount_rate_strategy,
+            has_discount_rate_strategy=discount_rate_strategy is not None,
             discount_token_balance=discount_token_balance,
             scaled_debt_balance=debt_position.balance,
             debt_index=index,
@@ -3872,9 +3870,8 @@ def _process_gho_debt_burn_event(
             log_index=context.event["logIndex"],
         )
         _refresh_discount_rate(
-            w3=context.w3,
             user=user,
-            discount_rate_strategy=discount_rate_strategy,
+            has_discount_rate_strategy=discount_rate_strategy is not None,
             discount_token_balance=discount_token_balance,
             scaled_debt_balance=debt_position.balance,
             debt_index=index,
