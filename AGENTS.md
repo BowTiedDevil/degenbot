@@ -17,10 +17,37 @@ For documentation read by humans and agents, see `docs/AGENTS.md`.
 - Resolve lint and type check warnings before committing
 
 ## Architecture
-- Domain packages: `src/degenbot/uniswap/`, `src/degenbot/curve/`, `src/degenbot/aave/`
-- Core utilities: `src/degenbot/exceptions/`, `src/degenbot/logging.py`
-- Type aliases: Domain-specific `types.py` files
-- Database: `src/degenbot/database/models/`, `src/degenbot/migrations/`
+
+**Domain packages:**
+- `src/degenbot/aave/` - Aave V3 lending protocol
+- `src/degenbot/arbitrage/` - Arbitrage cycle detection
+- `src/degenbot/curve/` - Curve stableswap pools
+- `src/degenbot/uniswap/` - Uniswap V2/V3/V4 DEX
+- `src/degenbot/aerodrome/` - Aerodrome V2/V3 DEX
+- `src/degenbot/camelot/` - Camelot DEX
+- `src/degenbot/pancakeswap/` - Pancakeswap V2/V3
+- `src/degenbot/solidly/` - Solidly-style DEX
+- `src/degenbot/sushiswap/` - Sushiswap V2/V3
+- `src/degenbot/swapbased/` - SwapBased V2
+
+**Core modules:**
+- `src/degenbot/cli/` - CLI commands (aave, database, exchange, pool)
+- `src/degenbot/connection/` - Web3 connection management
+- `src/degenbot/database/` - SQLite database with SQLAlchemy ORM
+- `src/degenbot/erc20/` - ERC20 token management
+- `src/degenbot/exceptions/` - Exception hierarchy
+- `src/degenbot/registry/` - Token and pool registries
+- `src/degenbot/types/` - Type aliases and abstract base classes
+- `src/degenbot/utils/` - Utility functions (Solady compression)
+- `src/degenbot/validation/` - EVM value validation with Pydantic
+
+**Top-level modules:**
+- `src/degenbot/anvil_fork.py` - Local fork testing infrastructure
+- `src/degenbot/chainlink.py` - Price oracle integration
+- `src/degenbot/config.py` - Application settings
+- `src/degenbot/functions.py` - General utility functions
+- `src/degenbot/logging.py` - Logging utilities
+- `src/degenbot/pathfinding.py` - Arbitrage path discovery
 
 When working with code from a specific module, check for an `AGENTS.md` file in that module's directory for module-specific conventions.
 

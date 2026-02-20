@@ -2,26 +2,35 @@
 
 ## Overview
 
-Aave V3 lending protocol implementation with multi-version library support for market management, position tracking, and GHO stablecoin integration.
+Aave V3 lending protocol implementation with processor-based architecture for market management, position tracking, and GHO stablecoin integration.
 
 ## Components
 
 **Core**
 - `deployments.py` - `AaveV3Deployment` dataclass with pool addresses by chain
-- `__init__.py` - Module exports
+- `__init__.py` - Empty (exports in `processors/__init__.py`)
 
 **Libraries** (`libraries/`)
-Version-specific math libraries matching Aave protocol revisions:
-- `v3_1/`, `v3_2/`, `v3_3/`, `v3_4/`, `v3_5/` - Math modules for each protocol version
-  - `wad_ray_math.py` - Ray math operations (27 decimal precision)
-  - `percentage_math.py` - Percentage calculations (4 decimal precision)
-  - `rounding.py` (v3_5 only) - Rounding utilities
+Math libraries ported from Aave protocol contracts:
+- `wad_ray_math.py` - Ray math with floor/ceil rounding variants (27 decimal precision)
+- `percentage_math.py` - 4-decimal percentage calculations
+- `token_math.py` - Pool contract TokenMath library (V1, V4, V5 implementations)
+
+**Processors** (`processors/`)
+Token processors by revision with factory pattern:
+- `base.py` - Protocols (`TokenProcessor`, `CollateralTokenProcessor`, `DebtTokenProcessor`, `GhoDebtTokenProcessor`)
+- `factory.py` - `TokenProcessorFactory`, `PoolProcessorFactory`
+- `pool.py` - `PoolProcessor` for scaled amount calculations before token operations
+- `collateral/` - v1, v3, v4, v5 collateral token processors
+- `debt/` - v1, v3, v4, v5 standard debt processors
+- `debt/gho/` - v1, v2, v4, v5, v6 GHO debt processors
 
 **CLI** (`../cli/aave.py`)
 Market synchronization and position tracking via blockchain event processing:
 - `aave update` - Sync active markets with database
 - `aave activate` - Enable market tracking
 - `aave deactivate` - Disable market tracking
+- Options: `--chunk`, `--to-block`, `--verify`, `--one-chunk`, `--no-progress-bar`
 
 ## Database Schema
 
@@ -40,17 +49,24 @@ Market synchronization and position tracking via blockchain event processing:
 **Scaled Balance Tracking**
 - Database stores scaled balances: `actual_balance = scaled * index`
 - Interest accrues automatically via index updates
-- Event processing derives scaled amounts from user amounts
+- Processors calculate scaled amounts using `TokenMath` protocol
 
 **Token Revisions**
-- Each aToken/vToken has a revision number (1-5) indicating contract version
-- Math operations use version-specific libraries
+- Each aToken/vToken has a revision number (1-6) indicating contract version
+- Math operations use version-specific processors via factory pattern
 - Upgrades tracked via `Upgraded` events
 
 **GHO Discount Mechanism**
 - GHO borrowers receive interest discounts based on stkAAVE holdings
 - Discount rate strategy contract calculates percentage
 - Balance updates trigger discount recalculation
+- GHO debt revisions 2+ support discount tracking
+
+**Processor Architecture**
+- Stateless calculation of balance deltas (no state modification)
+- `TokenProcessor` protocols define interface for each revision
+- `PoolProcessor` mirrors on-chain TokenMath calculations
+- Factory pattern selects correct processor by revision
 
 **Event Processing**
 Chronological processing of blockchain events:
@@ -62,31 +78,15 @@ Chronological processing of blockchain events:
 - `Upgraded` - Token contract upgrades
 - `DiscountTokenUpdated` / `DiscountRateStrategyUpdated` - GHO configuration
 
-## Helper Functions
+## Revision Mapping
 
-**State Management**
-- `_get_or_create_user()` - Get or initialize user record
-- `_get_or_create_collateral_position()` - Get or create collateral position
-- `_get_or_create_debt_position()` - Get or create debt position
-
-**Math Operations**
-- `_accrue_debt_on_action()` - Calculate balance increase with discount
-- `_accrue_debt_on_action_with_assertion()` - Wrapper with assertion
-- `_refresh_discount_rate()` - Update user's GHO discount rate
-- `_get_discounted_balance()` - Calculate balance with discount applied
-- `_get_math_libraries()` - Get version-specific math modules
-
-**Event Decoding**
-- `_decode_address()` - Decode address from event topics
-- `_decode_uint_values()` - Decode uint values from event data
-
-**Verification**
-- `_verify_scaled_token_positions()` - Verify positions match on-chain state
-- `_verify_gho_discount_amounts()` - Verify GHO discounts match contract
+- Pool revisions 1-3 → `TokenMathV1`
+- Pool revision 4 → `TokenMathV4` (first explicit rounding)
+- Pool revisions 5+ → `TokenMathV5` (same as V4)
 
 ## Design Patterns
 
-- Versioned libraries match Aave protocol upgrades (v3.1 through v3.5)
+- Processor architecture with factory pattern for version selection
 - Frozen dataclasses for deployment immutability
 - Scaled balance mechanics for efficient interest tracking
 - Chain-unique GHO tokens shared across markets

@@ -20,7 +20,7 @@ All documentation files must have YAML frontmatter:
 ```yaml
 ---
 title: Document Title
-category: cli | uniswap | curve | aave | arbitrage | meta
+category: cli | uniswap | curve | aave | arbitrage | erc20 | database | registry | types | meta
 tags:
   - tag1
   - tag2
