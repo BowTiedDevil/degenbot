@@ -382,11 +382,11 @@ mod tests {
     #[test]
     fn test_tickmath_negative_values() -> Result<(), Box<dyn Error>> {
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(-100000)?,
+            get_sqrt_ratio_at_tick_internal(-100_000)?,
             U160::from_str("533968626430936354154228408")?
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(-500000)?,
+            get_sqrt_ratio_at_tick_internal(-500_000)?,
             U160::from_str("1101692437043807371")?
         );
         Ok(())
@@ -395,11 +395,11 @@ mod tests {
     #[test]
     fn test_tickmath_positive_values() -> Result<(), Box<dyn Error>> {
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(100000)?,
+            get_sqrt_ratio_at_tick_internal(100_000)?,
             U160::from_str("11755562826496067164730007768450")?
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(500000)?,
+            get_sqrt_ratio_at_tick_internal(500_000)?,
             U160::from_str("5697689776495288729098254600827762987878")?
         );
         Ok(())
@@ -445,8 +445,8 @@ mod tests {
     #[test]
     fn test_tickmath_roundtrip() -> Result<(), Box<dyn Error>> {
         let ticks = [
-            -500000, -100000, -10000, -1000, -100, -10, -1, 0, 1, 10, 100, 1000, 10000, 100000,
-            500000,
+            -500_000, -100_000, -10_000, -1_000, -100, -10, -1, 0, 1, 10, 100, 1_000, 10_000,
+            100_000, 500_000,
         ];
 
         for tick in ticks {
@@ -459,17 +459,17 @@ mod tests {
 
     #[test]
     fn test_tickmath_boundary_roundtrip() -> Result<(), Box<dyn Error>> {
-        let min_ratio = get_sqrt_ratio_at_tick_internal(-887272)?;
+        let min_ratio = get_sqrt_ratio_at_tick_internal(-887_272)?;
         assert_eq!(
             get_tick_at_sqrt_ratio_internal(min_ratio)?,
-            I24::unchecked_from(-887272)
+            I24::unchecked_from(-887_272)
         );
 
-        let max_ratio = get_sqrt_ratio_at_tick_internal(887272)?;
+        let max_ratio = get_sqrt_ratio_at_tick_internal(887_272)?;
         let max_ratio_minus_one = U256::from(max_ratio) - U256::ONE;
         assert_eq!(
             get_tick_at_sqrt_ratio_internal(U160::from(max_ratio_minus_one))?,
-            I24::unchecked_from(887271)
+            I24::unchecked_from(887_271)
         );
         Ok(())
     }
@@ -482,23 +482,21 @@ mod proptests {
 
     proptest! {
         #[test]
-        fn roundtrip_any_valid_tick(tick in -887272i32..=887272i32) {
+        fn roundtrip_any_valid_tick(tick in -887_272_i32..=887_272_i32) {
             let ratio = get_sqrt_ratio_at_tick_internal(tick)?;
             let tick_back = get_tick_at_sqrt_ratio_internal(ratio)?;
             prop_assert_eq!(tick_back.as_i32(), tick);
         }
 
         #[test]
-        fn tick_produces_monotonically_increasing_prices(tick_a in -887272i32..=887272i32, tick_b in -887272i32..=887272i32) {
+        fn tick_produces_monotonically_increasing_prices(tick_a in -887_272_i32..=887_272_i32, tick_b in -887_272_i32..=887_272_i32) {
             let ratio_a = get_sqrt_ratio_at_tick_internal(tick_a)?;
             let ratio_b = get_sqrt_ratio_at_tick_internal(tick_b)?;
 
-            if tick_a < tick_b {
-                prop_assert!(ratio_a < ratio_b, "Price should increase with tick");
-            } else if tick_a > tick_b {
-                prop_assert!(ratio_a > ratio_b, "Price should decrease with tick");
-            } else {
-                prop_assert_eq!(ratio_a, ratio_b, "Same tick should produce same price");
+            match tick_a.cmp(&tick_b) {
+                std::cmp::Ordering::Less => prop_assert!(ratio_a < ratio_b, "Price should increase with tick"),
+                std::cmp::Ordering::Greater => prop_assert!(ratio_a > ratio_b, "Price should decrease with tick"),
+                std::cmp::Ordering::Equal => prop_assert_eq!(ratio_a, ratio_b, "Same tick should produce same price"),
             }
         }
 
