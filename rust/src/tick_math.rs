@@ -125,7 +125,7 @@ pub fn get_sqrt_ratio_at_tick(py: Python<'_>, tick: i32) -> PyResult<Py<PyAny>> 
     let py_bytes = pyo3::types::PyBytes::new(py, &bytes);
     let int_class = py.get_type::<pyo3::types::PyInt>();
     let result = int_class.call_method1("from_bytes", (py_bytes, "big"))?;
-    Ok(result.unbind().into())
+    Ok(result.unbind())
 }
 
 /// Internal function to calculate sqrt ratio from tick.
