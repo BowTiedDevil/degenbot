@@ -3787,7 +3787,10 @@ def _process_gho_debt_burn_event(
             pool_event_candidate, AaveV3Event.REPAY.value, user.address, reserve_address
         ):
             pool_event = pool_event_candidate
-            context.tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
+            # Only mark as consumed if NOT a LIQUIDATION_CALL event
+            # LIQUIDATION_CALL events should match both debt and collateral burns
+            if pool_event_candidate["topics"][0] != AaveV3Event.LIQUIDATION_CALL.value:
+                context.tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
             break
 
     if pool_event is None:
