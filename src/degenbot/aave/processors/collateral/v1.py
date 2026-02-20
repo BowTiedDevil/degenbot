@@ -33,7 +33,6 @@ class CollateralV1Processor(CollateralTokenProcessor):
         event_data: CollateralMintEvent,
         previous_balance: int,  # noqa: ARG002
         previous_index: int,  # noqa: ARG002
-        scaled_delta: int | None = None,
     ) -> MintResult:
         """
         Process a collateral mint event.
@@ -47,7 +46,6 @@ class CollateralV1Processor(CollateralTokenProcessor):
             event_data: The mint event data
             previous_balance: The user's balance before this event
             previous_index: The index at previous_balance calculation
-            scaled_delta: Optional pre-calculated scaled amount delta
 
         Returns:
             MintResult with balance_delta, new_index, and is_repay flag
@@ -65,11 +63,11 @@ class CollateralV1Processor(CollateralTokenProcessor):
             is_repay = True
         elif event_data.value > event_data.balance_increase:
             # Standard deposit - emitted in _mintScaled during supply
-            requested_amount = event_data.value - event_data.balance_increase
-            if scaled_delta is not None:
-                # Use pre-calculated scaled amount to avoid rounding errors
-                balance_delta = scaled_delta
+            if event_data.scaled_amount is not None:
+                # Use pre-calculated scaled amount from Pool contract
+                balance_delta = event_data.scaled_amount
             else:
+                requested_amount = event_data.value - event_data.balance_increase
                 balance_delta = wad_ray_math.ray_div(
                     a=requested_amount,
                     b=event_data.index,
@@ -94,7 +92,6 @@ class CollateralV1Processor(CollateralTokenProcessor):
         event_data: CollateralBurnEvent,
         previous_balance: int,  # noqa: ARG002
         previous_index: int,  # noqa: ARG002
-        scaled_delta: int | None = None,  # noqa: ARG002
     ) -> BurnResult:
         """
         Process a collateral burn event.
@@ -105,7 +102,6 @@ class CollateralV1Processor(CollateralTokenProcessor):
             event_data: The burn event data
             previous_balance: The user's balance before this event
             previous_index: The index at previous_balance calculation
-            scaled_delta: Unused for revisions 1-3 (calculated from event data)
 
         Returns:
             BurnResult with balance_delta and new_index
@@ -125,38 +121,3 @@ class CollateralV1Processor(CollateralTokenProcessor):
             balance_delta=balance_delta,
             new_index=event_data.index,
         )
-
-    def calculate_scaled_amount(self, raw_amount: int, index: int) -> int:
-        """
-        Calculate scaled amount from raw underlying amount.
-
-        Uses half-up rounding (ray_div) to match revision 1-3 AToken
-        behavior. These versions use WadRayMath.rayDiv which rounds
-        half up, not floor division.
-
-        Args:
-            raw_amount: The raw underlying token amount
-            index: The current liquidity index
-
-        Returns:
-            The scaled amount
-        """
-        return self._math_libs["wad_ray"].ray_div(
-            a=raw_amount,
-            b=index,
-        )
-
-    def calculate_burn_scaled_amount(self, raw_amount: int, index: int) -> int:
-        """
-        Calculate scaled amount for burn operations (WITHDRAW).
-
-        For V1-V3, uses the same calculation as mint (standard ray_div).
-
-        Args:
-            raw_amount: The raw underlying token amount
-            index: The current liquidity index
-
-        Returns:
-            The scaled amount
-        """
-        return self.calculate_scaled_amount(raw_amount=raw_amount, index=index)

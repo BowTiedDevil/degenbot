@@ -23,6 +23,7 @@ from degenbot.aave.processors import (
     CollateralMintEvent,
     DebtBurnEvent,
     DebtMintEvent,
+    PoolProcessorFactory,
     TokenProcessorFactory,
 )
 from degenbot.checksum_cache import get_checksum_address
@@ -131,6 +132,12 @@ class TransactionContext:
     # This prevents matching multiple Mint events to the same Pool event when
     # a transaction has multiple operations of the same type (e.g., two SUPPLY calls).
     matched_pool_events: dict[int, bool] = field(default_factory=dict)
+
+    # Track Mint events that have been matched to BalanceTransfer events.
+    # Key: Mint event logIndex, Value: True if matched to a BalanceTransfer
+    # This prevents double-counting when interest accrual Mint events are followed
+    # by BalanceTransfer events representing the same value (e.g., flash loans).
+    matched_mint_to_transfer: dict[int, bool] = field(default_factory=dict)
 
     def get_events_by_topic(self, topic: HexBytes) -> list[LogReceipt]:
         """Get all events in this transaction with the given topic."""
@@ -1188,6 +1195,7 @@ def _process_stk_aave_transfer_event(context: EventHandlerContext) -> None:
 
     # Apply balance changes
     if from_user is not None:
+        assert from_user.stk_aave_balance is not None
         assert from_user.stk_aave_balance >= 0, f"{from_user.address} stkAAVE balance < 0!"
         from_user_old_balance = from_user.stk_aave_balance
         from_user.stk_aave_balance -= value
@@ -1199,6 +1207,7 @@ def _process_stk_aave_transfer_event(context: EventHandlerContext) -> None:
             logger.info(f"  delta: -{value}")
 
     if to_user is not None:
+        assert to_user.stk_aave_balance is not None
         assert to_user.stk_aave_balance >= 0, f"{to_user.address} stkAAVE balance < 0!"
         to_user_old_balance = to_user.stk_aave_balance
         to_user.stk_aave_balance += value
@@ -2076,7 +2085,6 @@ def _process_scaled_token_operation(
     event: CollateralMintEvent | CollateralBurnEvent | DebtMintEvent | DebtBurnEvent,
     scaled_token_revision: int,
     position: AaveV3CollateralPositionsTable | AaveV3DebtPositionsTable,
-    scaled_delta: int | None = None,
 ) -> UserOperation:
     """
     Determine the user operation for scaled token events and apply the appropriate delta to the
@@ -2088,9 +2096,6 @@ def _process_scaled_token_operation(
         event: The scaled token event data
         scaled_token_revision: The token contract revision
         position: The user's position to update
-        scaled_delta: Optional pre-calculated scaled amount delta. If provided, this value is used
-            directly instead of deriving it from event.value and event.balance_increase (which can
-            introduce rounding errors). This is used by scaled token revision 4+.
     """
 
     match event:
@@ -2103,7 +2108,6 @@ def _process_scaled_token_operation(
                 event_data=event,
                 previous_balance=position.balance,
                 previous_index=position.last_index or 0,
-                scaled_delta=scaled_delta,
             )
             position.balance += mint_result.balance_delta
             position.last_index = mint_result.new_index
@@ -2118,7 +2122,6 @@ def _process_scaled_token_operation(
                 event_data=event,
                 previous_balance=position.balance,
                 previous_index=position.last_index or 0,
-                scaled_delta=scaled_delta,
             )
             position.balance += burn_result.balance_delta
             position.last_index = burn_result.new_index
@@ -2131,7 +2134,6 @@ def _process_scaled_token_operation(
                 event_data=event,
                 previous_balance=position.balance,
                 previous_index=position.last_index or 0,
-                scaled_delta=scaled_delta,
             )
             position.balance += debt_mint_result.balance_delta
             position.last_index = debt_mint_result.new_index
@@ -2144,7 +2146,6 @@ def _process_scaled_token_operation(
                 event_data=event,
                 previous_balance=position.balance,
                 previous_index=position.last_index or 0,
-                scaled_delta=scaled_delta,
             )
             position.balance += debt_burn_result.balance_delta
             position.last_index = debt_burn_result.new_index
@@ -3199,7 +3200,6 @@ def _process_collateral_mint_event(
 
     # Track matched pool event and calculated scaled delta
     matched_pool_event: LogReceipt | None = None
-    scaled_delta: int | None = None
 
     # Skip verification for pure interest accrual (value == balanceIncrease)
     # These mints don't have a corresponding Pool event
@@ -3265,6 +3265,7 @@ def _process_collateral_mint_event(
 
     # For SUPPLY events, calculate scaled amount from raw underlying amount
     # to avoid rounding errors from reverse-calculating from event.value
+    scaled_amount: int | None = None
     if (
         matched_pool_event is not None
         and matched_pool_event["topics"][0] == AaveV3Event.SUPPLY.value
@@ -3275,18 +3276,18 @@ def _process_collateral_mint_event(
             types=["address", "uint256"],
             data=matched_pool_event["data"],
         )
-        # Calculate scaled amount using processor
+        # Calculate scaled amount using PoolProcessor
         # This matches the contract's calculation in getATokenMintScaledAmount
-        processor = TokenProcessorFactory.get_collateral_processor(
+        pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
             collateral_asset.a_token_revision
         )
-        scaled_delta = processor.calculate_scaled_amount(
-            raw_amount=raw_amount,
-            index=index,
+        scaled_amount = pool_processor.calculate_collateral_mint_scaled_amount(
+            amount=raw_amount,
+            liquidity_index=index,
         )
         if VerboseConfig.is_verbose(user_address=user.address):
             logger.info(
-                f"SUPPLY: raw_amount={raw_amount}, index={index}, scaled_delta={scaled_delta}"
+                f"SUPPLY: raw_amount={raw_amount}, index={index}, scaled_amount={scaled_amount}"
             )
 
     collateral_position = _get_or_create_collateral_position(
@@ -3300,10 +3301,10 @@ def _process_collateral_mint_event(
             value=event_amount,
             balance_increase=balance_increase,
             index=index,
+            scaled_amount=scaled_amount,
         ),
         scaled_token_revision=collateral_asset.a_token_revision,
         position=collateral_position,
-        scaled_delta=scaled_delta,
     )
 
     if VerboseConfig.is_verbose(
@@ -3342,10 +3343,12 @@ def _process_gho_debt_mint_event(
     # because Pool BORROW events reference the underlying asset
     # Skip verification for pure interest accrual (value == balanceIncrease)
     # These mints don't have a corresponding Pool event
+    pool_event: LogReceipt | None = None
+
     if event_amount != balance_increase:
         reserve_address = get_checksum_address(debt_asset.underlying_token.address)
         try:
-            _verify_pool_event_for_transaction(
+            pool_event = _verify_pool_event_for_transaction(
                 w3=context.w3,
                 market=context.market,
                 event=context.event,
@@ -3355,7 +3358,7 @@ def _process_gho_debt_mint_event(
             )
         except ValueError:
             # If no BORROW event, try REPAY (for interest accrual during repayment)
-            _verify_pool_event_for_transaction(
+            pool_event = _verify_pool_event_for_transaction(
                 w3=context.w3,
                 market=context.market,
                 event=context.event,
@@ -3363,6 +3366,22 @@ def _process_gho_debt_mint_event(
                 user_address=user.address,
                 reserve_address=reserve_address,
             )
+
+    # For BORROW operations, calculate scaled_amount from the borrow amount
+    # This matches the Pool's calculation via TokenMath.getVTokenMintScaledAmount
+    scaled_amount: int | None = None
+    if pool_event is not None and pool_event["topics"][0] == AaveV3Event.BORROW.value:
+        (_, borrow_amount, _, _) = eth_abi.abi.decode(
+            types=["address", "uint256", "uint8", "uint256"],
+            data=pool_event["data"],
+        )
+        pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
+            debt_asset.v_token_revision
+        )
+        scaled_amount = pool_processor.calculate_debt_mint_scaled_amount(
+            amount=borrow_amount,
+            borrow_index=index,
+        )
 
     debt_position = _get_or_create_debt_position(
         session=context.session, user=user, asset_id=debt_asset.id
@@ -3444,6 +3463,7 @@ def _process_gho_debt_mint_event(
             value=event_amount,
             balance_increase=balance_increase,
             index=index,
+            scaled_amount=scaled_amount,
         ),
         previous_balance=debt_position.balance,
         previous_index=debt_position.last_index or 0,
@@ -3523,7 +3543,7 @@ def _process_standard_debt_mint_event(
     # - REPAY: interest accrues before repayment, minting debt tokens first
     reserve_address = get_checksum_address(debt_asset.underlying_token.address)
 
-    scaled_delta: int | None = None
+    scaled_amount: int | None = None
 
     # Skip verification for pure interest accrual (value == balanceIncrease)
     # These mints don't have a corresponding Pool event
@@ -3561,20 +3581,20 @@ def _process_standard_debt_mint_event(
                     reserve_address=reserve_address,
                 )
 
-        # For BORROW operations, calculate scaled_delta from the borrow amount
+        # For BORROW operations, calculate scaled_amount from the borrow amount
         # This matches the Pool's calculation: amount.getVTokenMintScaledAmount(index)
         if pool_event is not None and pool_event["topics"][0] == AaveV3Event.BORROW.value:
             (_, borrow_amount, _, _) = eth_abi.abi.decode(
                 types=["address", "uint256", "uint8", "uint256"],
                 data=pool_event["data"],
             )
-            processor = TokenProcessorFactory.get_debt_processor(debt_asset.v_token_revision)
-            # V4+ uses ceiling division for mints
-            if hasattr(processor, "calculate_mint_scaled_amount"):
-                scaled_delta = processor.calculate_mint_scaled_amount(
-                    raw_amount=borrow_amount,
-                    index=index,
-                )
+            pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
+                debt_asset.v_token_revision
+            )
+            scaled_amount = pool_processor.calculate_debt_mint_scaled_amount(
+                amount=borrow_amount,
+                borrow_index=index,
+            )
 
     debt_position = _get_or_create_debt_position(session=session, user=user, asset_id=debt_asset.id)
 
@@ -3587,10 +3607,10 @@ def _process_standard_debt_mint_event(
             value=event_amount,
             balance_increase=balance_increase,
             index=index,
+            scaled_amount=scaled_amount,
         ),
         scaled_token_revision=debt_asset.v_token_revision,
         position=debt_position,
-        scaled_delta=scaled_delta,
     )
 
     if VerboseConfig.is_verbose(
@@ -3754,6 +3774,7 @@ def _process_collateral_burn_event(
     index: int,
     event: LogReceipt,
     w3: Web3,
+    tx_context: TransactionContext | None = None,
 ) -> None:
     """Process a collateral (aToken) burn event."""
 
@@ -3762,55 +3783,113 @@ def _process_collateral_burn_event(
     # - REPAY with useATokens=true: burns aTokens directly (no WITHDRAW event)
     reserve_address = get_checksum_address(collateral_asset.underlying_token.address)
 
-    scaled_delta: int | None = None
     pool_event: LogReceipt | None = None
 
-    # Try WITHDRAW first (most common case)
-    try:
-        pool_event = _verify_pool_event_for_transaction(
-            w3=w3,
-            market=market,
-            event=event,
-            expected_event_type=AaveV3Event.WITHDRAW.value,
-            user_address=user.address,
-            reserve_address=reserve_address,
-        )
-    except ValueError:
+    if tx_context is not None:
+        # Use pre-fetched pool events from transaction context
+        # Track matched pool events to handle multiple burns in one transaction
+        for pool_event_candidate in tx_context.pool_events:
+            # Skip pool events that have already been matched to other Burn events
+            if tx_context.matched_pool_events.get(pool_event_candidate["logIndex"], False):
+                continue
+
+            event_topic = pool_event_candidate["topics"][0]
+
+            # Try WITHDRAW first (most common case)
+            if event_topic == AaveV3Event.WITHDRAW.value:
+                if _matches_pool_event(
+                    pool_event_candidate, AaveV3Event.WITHDRAW.value, user.address, reserve_address
+                ):
+                    pool_event = pool_event_candidate
+                    tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
+                    break
+
+            # If no WITHDRAW, try REPAY (for repay with aTokens)
+            elif event_topic == AaveV3Event.REPAY.value and _matches_pool_event(
+                pool_event_candidate, AaveV3Event.REPAY.value, user.address, reserve_address
+            ):
+                pool_event = pool_event_candidate
+                tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
+                break
+
+        if pool_event is None:
+            # If no matching event in tx_context, fall back to deprecated method
+            # This handles cases where tx_context doesn't have pre-fetched pool events
+            try:
+                pool_event = _verify_pool_event_for_transaction(
+                    w3=w3,
+                    market=market,
+                    event=event,
+                    expected_event_type=AaveV3Event.WITHDRAW.value,
+                    user_address=user.address,
+                    reserve_address=reserve_address,
+                )
+            except ValueError:
+                try:
+                    # If no WITHDRAW event, try REPAY (for repay with aTokens)
+                    pool_event = _verify_pool_event_for_transaction(
+                        w3=w3,
+                        market=market,
+                        event=event,
+                        expected_event_type=AaveV3Event.REPAY.value,
+                        user_address=user.address,
+                        reserve_address=reserve_address,
+                    )
+                except ValueError:
+                    # If no REPAY event, check for AddressSet (for UMBRELLA setup)
+                    _verify_address_set_for_transaction(
+                        w3=w3,
+                        market=market,
+                        event=event,
+                        user_address=user.address,
+                    )
+    else:
+        # Fallback to deprecated method (for backward compatibility)
+        # Try WITHDRAW first (most common case)
         try:
-            # If no WITHDRAW event, try REPAY (for repay with aTokens)
             pool_event = _verify_pool_event_for_transaction(
                 w3=w3,
                 market=market,
                 event=event,
-                expected_event_type=AaveV3Event.REPAY.value,
+                expected_event_type=AaveV3Event.WITHDRAW.value,
                 user_address=user.address,
                 reserve_address=reserve_address,
             )
         except ValueError:
-            # If no REPAY event, check for AddressSet (for UMBRELLA setup)
-            _verify_address_set_for_transaction(
-                w3=w3,
-                market=market,
-                event=event,
-                user_address=user.address,
-            )
+            try:
+                # If no WITHDRAW event, try REPAY (for repay with aTokens)
+                pool_event = _verify_pool_event_for_transaction(
+                    w3=w3,
+                    market=market,
+                    event=event,
+                    expected_event_type=AaveV3Event.REPAY.value,
+                    user_address=user.address,
+                    reserve_address=reserve_address,
+                )
+            except ValueError:
+                # If no REPAY event, check for AddressSet (for UMBRELLA setup)
+                _verify_address_set_for_transaction(
+                    w3=w3,
+                    market=market,
+                    event=event,
+                    user_address=user.address,
+                )
 
-    # For WITHDRAW operations, calculate scaled_delta from the withdrawal amount
+    # For WITHDRAW operations, calculate scaled_amount from the withdrawal amount
+    scaled_amount: int | None = None
     if pool_event is not None and pool_event["topics"][0] == AaveV3Event.WITHDRAW.value:
         # WITHDRAW event data: (uint256 amount)
         (withdraw_amount,) = eth_abi.abi.decode(
             types=["uint256"],
             data=pool_event["data"],
         )
-        processor = TokenProcessorFactory.get_collateral_processor(
+        pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
             collateral_asset.a_token_revision
         )
-        # V4+ uses ceiling division for burns
-        if hasattr(processor, "calculate_burn_scaled_amount"):
-            scaled_delta = processor.calculate_burn_scaled_amount(
-                raw_amount=withdraw_amount,
-                index=index,
-            )
+        scaled_amount = pool_processor.calculate_collateral_burn_scaled_amount(
+            amount=withdraw_amount,
+            liquidity_index=index,
+        )
 
     collateral_position = session.scalar(
         select(AaveV3CollateralPositionsTable).where(
@@ -3827,10 +3906,10 @@ def _process_collateral_burn_event(
             value=event_amount,
             balance_increase=balance_increase,
             index=index,
+            scaled_amount=scaled_amount,
         ),
         scaled_token_revision=collateral_asset.a_token_revision,
         position=collateral_position,
-        scaled_delta=scaled_delta,
     )
 
     if VerboseConfig.is_verbose(
@@ -4035,10 +4114,12 @@ def _process_standard_debt_burn_event(
 
     # Calculate scaled amount using the original paybackAmount
     # This matches the Pool's calculation: paybackAmount.getVTokenBurnScaledAmount(index)
-    processor = TokenProcessorFactory.get_debt_processor(debt_asset.v_token_revision)
-    scaled_delta = processor.calculate_scaled_amount(
-        raw_amount=payback_amount,
-        index=index,
+    pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
+        debt_asset.v_token_revision
+    )
+    scaled_amount = pool_processor.calculate_debt_burn_scaled_amount(
+        amount=payback_amount,
+        borrow_index=index,
     )
 
     debt_position = session.scalar(
@@ -4058,10 +4139,10 @@ def _process_standard_debt_burn_event(
             value=event_amount,
             balance_increase=balance_increase,
             index=index,
+            scaled_amount=scaled_amount,
         ),
         scaled_token_revision=debt_asset.v_token_revision,
         position=debt_position,
-        scaled_delta=scaled_delta,
     )
 
     if VerboseConfig.is_verbose(
@@ -4128,6 +4209,7 @@ def _process_scaled_token_burn_event(context: EventHandlerContext) -> None:
             index=index,
             event=context.event,
             w3=context.w3,
+            tx_context=context.tx_context,
         )
 
     elif debt_asset is not None:
@@ -4254,11 +4336,40 @@ def _process_scaled_token_balance_transfer_event(
     if event_amount == 0:
         return
 
+    # Check if this BalanceTransfer TO user matches a preceding Mint event
+    # with pure interest accrual (value == balanceIncrease). This happens in
+    # flash loan scenarios where interest is minted and then transferred.
+    # In such cases, the Mint already added the scaled amount, so we should
+    # NOT add the raw amount again via BalanceTransfer.
+    skip_to_user_balance_update = False
+    if context.tx_context is not None:
+        for prior_event in context.tx_context.get_prior_events(context.event):
+            prior_topic = prior_event["topics"][0]
+            if prior_topic == AaveV3Event.SCALED_TOKEN_MINT.value:
+                # Check if this Mint event has value == balanceIncrease (pure interest)
+                prior_value, prior_balance_increase, prior_index = _decode_uint_values(
+                    event=prior_event, num_values=3
+                )
+                if (
+                    prior_value == prior_balance_increase  # Pure interest accrual
+                    and prior_value == event_amount  # Same value as BalanceTransfer
+                    and prior_index == index  # Same index
+                    and not context.tx_context.matched_mint_to_transfer.get(
+                        prior_event["logIndex"], False
+                    )  # Not already matched
+                ):
+                    # This BalanceTransfer represents the same value as the Mint
+                    # Skip the balance update for the TO user
+                    skip_to_user_balance_update = True
+                    context.tx_context.matched_mint_to_transfer[prior_event["logIndex"]] = True
+                    break
+
     from_user_starting_amount = from_user_position.balance
     from_user_position.balance -= event_amount
 
     to_user_starting_amount = to_user_position.balance
-    to_user_position.balance += event_amount
+    if not skip_to_user_balance_update:
+        to_user_position.balance += event_amount
 
     if VerboseConfig.is_verbose(
         user_address=from_address,

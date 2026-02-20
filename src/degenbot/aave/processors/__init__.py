@@ -20,6 +20,7 @@ from degenbot.aave.processors.base import (
     WadRayMathLibrary,
 )
 from degenbot.aave.processors.factory import TokenProcessorFactory
+from degenbot.aave.processors.pool import PoolProcessor, PoolProcessorFactory
 
 __all__ = [
     "BurnResult",
@@ -36,6 +37,8 @@ __all__ = [
     "MathLibraries",
     "MintResult",
     "PercentageMathLibrary",
+    "PoolProcessor",
+    "PoolProcessorFactory",
     "ProcessingResult",
     "TokenProcessor",
     "TokenProcessorFactory",

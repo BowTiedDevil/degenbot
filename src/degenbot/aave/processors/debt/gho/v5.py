@@ -122,14 +122,16 @@ class GhoV5Processor(GhoDebtTokenProcessor):
             # to match TokenMath.getVTokenMintScaledAmount behavior.
             # This ensures the protocol never underaccounts the user's debt.
             #
-            # When processing BORROW events, the scaled_delta should be pre-calculated
-            # using calculate_mint_scaled_amount() from the original borrow amount
-            # extracted from the BORROW event, not derived from the Mint event values.
-            requested_amount = event_data.value - event_data.balance_increase
-            balance_delta = wad_ray_math.ray_div_ceil(
-                a=requested_amount,
-                b=event_data.index,
-            )
+            # When processing BORROW events, use scaled_amount from Pool contract
+            # if available to ensure exact matching with on-chain calculations.
+            if event_data.scaled_amount is not None:
+                balance_delta = event_data.scaled_amount
+            else:
+                requested_amount = event_data.value - event_data.balance_increase
+                balance_delta = wad_ray_math.ray_div_ceil(
+                    a=requested_amount,
+                    b=event_data.index,
+                )
             user_operation = GhoUserOperation.GHO_BORROW
 
         elif event_data.balance_increase > event_data.value:
@@ -194,15 +196,22 @@ class GhoV5Processor(GhoDebtTokenProcessor):
             GhoBurnResult with balance_delta, new_index, discount_scaled=0,
             and should_refresh_discount=False
         """
+        # Use pre-calculated scaled amount from Pool contract if available
+        if event_data.scaled_amount is not None:
+            return GhoBurnResult(
+                balance_delta=-event_data.scaled_amount,
+                new_index=event_data.index,
+                discount_scaled=0,
+                should_refresh_discount=False,
+            )
+
         wad_ray_math = self._math_libs["wad_ray"]
 
         # uint256 amountToBurn = amount - balanceIncrease
         requested_amount = event_data.value + event_data.balance_increase
 
         # Revision 5+ uses floor division (ray_div_floor) via TokenMath.getVTokenBurnScaledAmount
-        # to prevent over-burning of vTokens. When processing REPAY burn events,
-        # the scaled_delta should be pre-calculated using calculate_burn_scaled_amount()
-        # from the original payback amount in the REPAY event.
+        # to prevent over-burning of vTokens.
         # No discount in rev 5+
         balance_delta = -wad_ray_math.ray_div_floor(
             a=requested_amount,

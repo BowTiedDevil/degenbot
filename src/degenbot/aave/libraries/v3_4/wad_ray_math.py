@@ -68,6 +68,29 @@ def ray_div_floor(a: int, b: int) -> int:
     return (a * RAY) // b
 
 
+def ray_mul_floor(a: int, b: int) -> int:
+    """
+    Multiplies two ray, rounding DOWN (floor).
+    """
+    if b != 0:
+        limit = MAX_UINT256 // b
+        if a > limit:
+            raise EVMRevertError(error="MUL_OVERFLOW")
+    return (a * b) // RAY
+
+
+def ray_mul_ceil(a: int, b: int) -> int:
+    """
+    Multiplies two ray, rounding UP (ceiling).
+    """
+    if b != 0:
+        limit = MAX_UINT256 // b
+        if a > limit:
+            raise EVMRevertError(error="MUL_OVERFLOW")
+    product = a * b
+    return (product // RAY) + ((product % RAY) != 0)
+
+
 def ray_to_wad(a: int) -> int:
     result = a // WAD_RAY_RATIO
     remainder = a % WAD_RAY_RATIO
