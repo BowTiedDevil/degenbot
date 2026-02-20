@@ -124,7 +124,7 @@ jobs:
       - name: Build Rust extension
         run: |
           maturin build --release
-          pip install target/wheels/*.whl
+          pip install target/wheels/degenbot-*.whl
 
       - name: Run Rust-specific tests
         run: pytest tests/rust -v
