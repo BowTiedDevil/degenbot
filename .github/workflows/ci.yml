@@ -125,16 +125,15 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          pip install --upgrade pip
-          pip install pytest eth-typing eth-utils
+          pip install uv
+          uv pip install -e . --group dev
 
       - name: Build and install Rust extension
         run: |
           source .venv/bin/activate
-          maturin build --release
-          pip install rust/target/wheels/degenbot-*.whl --force-reinstall --no-deps
+          uv run maturin develop --release
 
       - name: Run Rust-specific tests
         run: |
           source .venv/bin/activate
-          pytest tests/rust -v -o addopts=
+          uv run pytest tests/rust -v -o addopts=
