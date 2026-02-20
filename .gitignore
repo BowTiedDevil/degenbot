@@ -168,9 +168,6 @@ cython_debug/
 # VSCode
 .vscode
 
-# uv
-uv.lock
-
 # Opencode
 opencode.json
 .opencode/plans
