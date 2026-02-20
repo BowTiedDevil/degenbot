@@ -2,11 +2,11 @@ import random
 from decimal import Decimal, getcontext
 from math import floor, log
 
-import degenbot_rs
 import hypothesis
 import hypothesis.strategies
 import pytest
 
+import degenbot_rs
 from degenbot.constants import MAX_UINT160, MIN_UINT160
 from degenbot.exceptions.evm import EVMRevertError
 from degenbot.uniswap.v3_libraries.tick_math import (
