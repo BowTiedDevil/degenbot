@@ -14,6 +14,7 @@ related_files:
   - ../../src/degenbot/aave/libraries/v3_5/wad_ray_math.py
   - ../../src/degenbot/aave/libraries/v3_5/types.py
   - ../../src/degenbot/aave/libraries/v3_5/rounding.py
+  - ../../src/degenbot/aave/processors/debt/gho/v4.py
 complexity: complex
 ---
 
@@ -56,6 +57,39 @@ GHO is Aave's stablecoin with discounted borrowing based on stkAAVE holdings. Th
 
 - **Revision 1**: Uses `_accrueDebtOnAction()` for discount accounting
 - **Revision 2**: Uses `_get_discounted_balance()` with enhanced balance calculation
+- **Revision 4+**: Discount mechanism deprecated, uses different rounding for mint operations
+
+### GHO V4+ Rounding Differences
+
+**Critical**: GHO V4+ uses **different rounding** than standard vTokens V4+:
+
+| Operation | Standard vToken V4+ | GHO vToken V4+ |
+|-----------|---------------------|----------------|
+| BORROW (mint) | `ray_div_ceil` (ceiling) | `ray_div_floor` (floor) |
+| REPAY (burn) | `ray_div_floor` (floor) | `ray_div_floor` (floor) |
+
+This difference exists because GHO deprecated the discount mechanism in revision 4, which changed the rounding requirements in the Pool contract.
+
+When processing GHO BORROW events, always pre-calculate the scaled amount using `calculate_mint_scaled_amount()` from the original borrow amount (extracted from the BORROW event), then pass it to `process_mint_event()`:
+
+```python
+processor = TokenProcessorFactory.get_gho_debt_processor(revision=6)
+
+# Pre-calculate from BORROW event
+borrow_amount = ...  # From BORROW event
+scaled_delta = processor.calculate_mint_scaled_amount(
+    raw_amount=borrow_amount,
+    index=index,
+)
+
+# Process Mint event with pre-calculated value
+result = processor.process_mint_event(
+    event_data=mint_event,
+    previous_balance=previous_balance,
+    previous_index=previous_index,
+    previous_discount=0,  # Ignored for V4+
+)
+```
 
 ### GHO Processing
 
@@ -414,16 +448,37 @@ The code supports multiple Aave V3 token revisions through the `SCALED_TOKEN_REV
 
 | Revision | Library Path | WadRayMath Features |
 |----------|--------------|---------------------|
-| 1 | `v3_1/wad_ray_math.py` | Initial implementation |
-| 2 | `v3_2/wad_ray_math.py` | Enhanced operations |
-| 3 | `v3_3/wad_ray_math.py` | Enhanced operations |
-| 4 | `v3_4/wad_ray_math.py` | Enhanced operations |
+| 1 | `v3_1/wad_ray_math.py` | Standard half-up rounding |
+| 2 | `v3_2/wad_ray_math.py` | Standard half-up rounding |
+| 3 | `v3_3/wad_ray_math.py` | Standard half-up rounding |
+| 4 | `v3_4/wad_ray_math.py` | Explicit floor/ceil functions added |
+| 5 | `v3_5/wad_ray_math.py` | Rounding enum support |
+
+### Rounding Functions by Revision
+
+**Revisions 1-3**: Only `ray_div()` with half-up rounding
+
+**Revisions 4+**: Added explicit rounding functions:
+- `ray_div_floor(a, b)` - Round down
+- `ray_div_ceil(a, b)` - Round up
+
+**V5 only**: Supports rounding enum via `ray_div(a, b, rounding=...)`
+
+### Rounding by Token Type and Operation
+
+| Token Type | Revision | Mint (Supply/Borrow) | Burn (Withdraw/Repay) |
+|------------|----------|---------------------|---------------------|
+| aToken | 1-3 | `ray_div` (half-up) | `ray_div` (half-up) |
+| aToken | 4+ | `ray_div_floor` | `ray_div_ceil` |
+| vToken | 1-3 | `ray_div` (half-up) | `ray_div` (half-up) |
+| vToken | 4+ | `ray_div_ceil` | `ray_div_floor` |
+| GHO vToken | 4+ | `ray_div_floor` ⚠️ | `ray_div_floor` |
+
+⚠️ **Important**: GHO V4+ uses `ray_div_floor` for BORROW (mint), unlike standard vTokens V4+ which use `ray_div_ceil`.
 
 Revision-specific functions:
 - `_get_math_libraries(token_revision)` - Returns WadRayMath and PercentageMath libraries for a given revision
 - Used in `_process_scaled_token_operation()`, `_accrue_debt_on_action()`, and GHO-specific functions
-
-**Note**: The `v3_5` directory contains Python ports with explicit rounding control but is not currently mapped in the revision libraries.
 
 ## Related Functions
 
