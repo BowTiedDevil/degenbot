@@ -122,7 +122,9 @@ jobs:
           pip install maturin pytest
 
       - name: Build Rust extension
-        run: maturin develop
+        run: |
+          maturin build --release
+          pip install target/wheels/*.whl
 
       - name: Run Rust-specific tests
         run: pytest tests/rust -v
