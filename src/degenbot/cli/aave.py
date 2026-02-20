@@ -237,7 +237,7 @@ class EventHandlerContext:
     session: Session
     gho_asset: AaveGhoTokenTable
     contract_address: ChecksumAddress
-    tx_context: TransactionContext | None = None
+    tx_context: TransactionContext
 
 
 class VerboseConfig:
@@ -1439,127 +1439,6 @@ def _matches_pool_event(
             return reserve_address in {event_debt_asset, event_collateral_asset}
 
     return False
-
-
-def _verify_pool_event_for_transaction(
-    *,
-    w3: Web3,
-    market: AaveV3MarketTable,
-    event: LogReceipt,
-    expected_event_type: HexBytes,
-    user_address: ChecksumAddress,
-    reserve_address: ChecksumAddress,
-) -> LogReceipt:
-    """
-    DEPRECATED: Use _assert_pool_event_exists with TransactionContext instead.
-
-    This function is kept for backward compatibility during the transition.
-    It fetches Pool events on-demand, which is less efficient than using
-    pre-fetched events from TransactionContext.
-
-    TODO: Remove this function once all callers have been updated to use
-    TransactionContext-based assertions.
-    """
-    pool_contract = _get_contract(market=market, contract_name="POOL")
-
-    pool_events = fetch_logs_retrying(
-        w3=w3,
-        start_block=event["blockNumber"],
-        end_block=event["blockNumber"],
-        address=[pool_contract.address],
-        topic_signature=[
-            [
-                AaveV3Event.BORROW.value,
-                AaveV3Event.REPAY.value,
-                AaveV3Event.SUPPLY.value,
-                AaveV3Event.WITHDRAW.value,
-                AaveV3Event.LIQUIDATION_CALL.value,
-                AaveV3Event.DEFICIT_CREATED.value,
-            ],
-        ],
-    )
-
-    tx_hash = event["transactionHash"]
-
-    for pool_event in pool_events:
-        if pool_event["transactionHash"] != tx_hash:
-            continue
-
-        event_topic = pool_event["topics"][0]
-
-        # Allow LIQUIDATION_CALL when expecting REPAY or WITHDRAW
-        # Allow DEFICIT_CREATED when expecting REPAY (bad debt write-off during liquidation)
-        if (
-            event_topic != expected_event_type
-            and not (
-                event_topic == AaveV3Event.LIQUIDATION_CALL.value
-                and expected_event_type in {AaveV3Event.REPAY.value, AaveV3Event.WITHDRAW.value}
-            )
-            and not (
-                event_topic == AaveV3Event.DEFICIT_CREATED.value
-                and expected_event_type == AaveV3Event.REPAY.value
-            )
-        ):
-            continue
-
-        if _matches_pool_event(pool_event, expected_event_type, user_address, reserve_address):
-            return pool_event
-
-    # No matching event found
-    event_name = "UNKNOWN"
-    if expected_event_type == AaveV3Event.BORROW.value:
-        event_name = "BORROW"
-    elif expected_event_type == AaveV3Event.REPAY.value:
-        event_name = "REPAY"
-    elif expected_event_type == AaveV3Event.SUPPLY.value:
-        event_name = "SUPPLY"
-    elif expected_event_type == AaveV3Event.WITHDRAW.value:
-        event_name = "WITHDRAW"
-
-    msg = (
-        f"Expected {event_name} event for user {user_address} with reserve {reserve_address} "
-        f"in transaction {tx_hash.to_0x_hex()} but no matching event found."
-    )
-    raise ValueError(msg)
-
-
-def _verify_address_set_for_transaction(
-    w3: Web3,
-    market: AaveV3MarketTable,
-    event: LogReceipt,
-    user_address: ChecksumAddress,
-) -> LogReceipt:
-    """
-    Verify that an AddressSet event exists for the given user in the transaction.
-
-    This is used to validate that a contract address was registered as a system
-    contract (e.g., UMBRELLA) before processing burns for that address.
-    """
-    provider_contract = _get_contract(market=market, contract_name="POOL_ADDRESS_PROVIDER")
-
-    provider_events = fetch_logs_retrying(
-        w3=w3,
-        start_block=event["blockNumber"],
-        end_block=event["blockNumber"],
-        address=[provider_contract.address],
-        topic_signature=[[AaveV3Event.ADDRESS_SET.value]],
-    )
-
-    tx_hash = event["transactionHash"]
-
-    for provider_event in provider_events:
-        if provider_event["transactionHash"] != tx_hash:
-            continue
-
-        new_address = _decode_address(provider_event["topics"][3])
-        if new_address == user_address:
-            return provider_event
-
-    msg = (
-        f"Expected AddressSet event for user {user_address} "
-        f"in transaction {tx_hash.to_0x_hex()} but no matching event found."
-    )
-    raise ValueError(msg)
 
 
 def _get_or_create_user(
@@ -3186,7 +3065,7 @@ def _process_collateral_mint_event(
     index: int,
     event: LogReceipt,
     caller_address: ChecksumAddress,
-    tx_context: TransactionContext | None = None,
+    tx_context: TransactionContext,
 ) -> None:
     """Process a collateral (aToken) mint event."""
 
@@ -3210,7 +3089,7 @@ def _process_collateral_mint_event(
         if caller_address == pool_contract.address:
             # Skip verification for treasury mints - they have no SUPPLY/WITHDRAW event
             pass
-        elif tx_context is not None:
+        else:
             # Use pre-fetched pool events from transaction context
             # The matching logic depends on the relationship between value and balance_increase:
             # - value > balance_increase: SUPPLY (user deposit)
@@ -3258,10 +3137,6 @@ def _process_collateral_mint_event(
                     f"Available: {available}"
                 )
                 raise AssertionError(msg)
-        else:
-            # Fallback: try each event type in order
-            # This path should not be reached in normal operation with transaction-level processing
-            pass
 
     # For SUPPLY events, calculate scaled amount from raw underlying amount
     # to avoid rounding errors from reverse-calculating from event.value
@@ -3347,25 +3222,24 @@ def _process_gho_debt_mint_event(
 
     if event_amount != balance_increase:
         reserve_address = get_checksum_address(debt_asset.underlying_token.address)
-        try:
-            pool_event = _verify_pool_event_for_transaction(
-                w3=context.w3,
-                market=context.market,
-                event=context.event,
-                expected_event_type=AaveV3Event.BORROW.value,
-                user_address=user.address,
-                reserve_address=reserve_address,
-            )
-        except ValueError:
-            # If no BORROW event, try REPAY (for interest accrual during repayment)
-            pool_event = _verify_pool_event_for_transaction(
-                w3=context.w3,
-                market=context.market,
-                event=context.event,
-                expected_event_type=AaveV3Event.REPAY.value,
-                user_address=user.address,
-                reserve_address=reserve_address,
-            )
+
+        # Use pre-fetched pool events from transaction context
+        # Try BORROW first (most common case), then REPAY (for interest accrual)
+        for expected_type in [AaveV3Event.BORROW.value, AaveV3Event.REPAY.value]:
+            for pool_event_candidate in context.tx_context.pool_events:
+                # Skip pool events that have already been matched
+                if context.tx_context.matched_pool_events.get(
+                    pool_event_candidate["logIndex"], False
+                ):
+                    continue
+                if _matches_pool_event(
+                    pool_event_candidate, expected_type, user.address, reserve_address
+                ):
+                    pool_event = pool_event_candidate
+                    context.tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
+                    break
+            if pool_event is not None:
+                break
 
     # For BORROW operations, calculate scaled_amount from the borrow amount
     # This matches the Pool's calculation via TokenMath.getVTokenMintScaledAmount
@@ -3524,7 +3398,6 @@ def _process_gho_debt_mint_event(
 def _process_standard_debt_mint_event(
     *,
     session: Session,
-    market: AaveV3MarketTable,
     user: AaveV3UsersTable,
     debt_asset: AaveV3AssetsTable,
     token_address: ChecksumAddress,
@@ -3533,7 +3406,7 @@ def _process_standard_debt_mint_event(
     index: int,
     caller_address: ChecksumAddress,
     event: LogReceipt,
-    w3: Web3,
+    tx_context: TransactionContext,
 ) -> None:
     """Process a standard debt (vToken) mint event (non-GHO)."""
 
@@ -3550,36 +3423,25 @@ def _process_standard_debt_mint_event(
     if event_amount != balance_increase:
         # Try with user.address first (most common case - BORROW)
         pool_event: LogReceipt | None = None
-        try:
-            pool_event = _verify_pool_event_for_transaction(
-                w3=w3,
-                market=market,
-                event=event,
-                expected_event_type=AaveV3Event.BORROW.value,
-                user_address=user.address,
-                reserve_address=reserve_address,
-            )
-        except ValueError:
-            # If that fails, try with caller_address (adapter case)
-            try:
-                pool_event = _verify_pool_event_for_transaction(
-                    w3=w3,
-                    market=market,
-                    event=event,
-                    expected_event_type=AaveV3Event.BORROW.value,
-                    user_address=caller_address,
-                    reserve_address=reserve_address,
-                )
-            except ValueError:
-                # If no BORROW event, try REPAY (for interest accrual during repayment)
-                pool_event = _verify_pool_event_for_transaction(
-                    w3=w3,
-                    market=market,
-                    event=event,
-                    expected_event_type=AaveV3Event.REPAY.value,
-                    user_address=user.address,
-                    reserve_address=reserve_address,
-                )
+
+        # Try BORROW first with user.address, then caller_address, then REPAY
+        for expected_type, check_user in [
+            (AaveV3Event.BORROW.value, user.address),
+            (AaveV3Event.BORROW.value, caller_address),
+            (AaveV3Event.REPAY.value, user.address),
+        ]:
+            for pool_event_candidate in tx_context.pool_events:
+                # Skip pool events that have already been matched
+                if tx_context.matched_pool_events.get(pool_event_candidate["logIndex"], False):
+                    continue
+                if _matches_pool_event(
+                    pool_event_candidate, expected_type, check_user, reserve_address
+                ):
+                    pool_event = pool_event_candidate
+                    tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
+                    break
+            if pool_event is not None:
+                break
 
         # For BORROW operations, calculate scaled_amount from the borrow amount
         # This matches the Pool's calculation: amount.getVTokenMintScaledAmount(index)
@@ -3713,7 +3575,6 @@ def _process_scaled_token_mint_event(context: EventHandlerContext) -> None:
                 else:
                     _process_standard_debt_mint_event(
                         session=context.session,
-                        market=context.market,
                         user=user,
                         debt_asset=debt_asset,
                         token_address=token_address,
@@ -3722,7 +3583,7 @@ def _process_scaled_token_mint_event(context: EventHandlerContext) -> None:
                         index=index,
                         caller_address=caller_address,
                         event=context.event,
-                        w3=context.w3,
+                        tx_context=context.tx_context,
                     )
             else:
                 raise
@@ -3742,7 +3603,6 @@ def _process_scaled_token_mint_event(context: EventHandlerContext) -> None:
         else:
             _process_standard_debt_mint_event(
                 session=context.session,
-                market=context.market,
                 user=user,
                 debt_asset=debt_asset,
                 token_address=token_address,
@@ -3751,7 +3611,7 @@ def _process_scaled_token_mint_event(context: EventHandlerContext) -> None:
                 index=index,
                 caller_address=caller_address,
                 event=context.event,
-                w3=context.w3,
+                tx_context=context.tx_context,
             )
 
     else:
@@ -3765,7 +3625,6 @@ def _process_scaled_token_mint_event(context: EventHandlerContext) -> None:
 def _process_collateral_burn_event(
     *,
     session: Session,
-    market: AaveV3MarketTable,
     user: AaveV3UsersTable,
     collateral_asset: AaveV3AssetsTable,
     token_address: ChecksumAddress,
@@ -3773,8 +3632,7 @@ def _process_collateral_burn_event(
     balance_increase: int,
     index: int,
     event: LogReceipt,
-    w3: Web3,
-    tx_context: TransactionContext | None = None,
+    tx_context: TransactionContext,
 ) -> None:
     """Process a collateral (aToken) burn event."""
 
@@ -3785,95 +3643,39 @@ def _process_collateral_burn_event(
 
     pool_event: LogReceipt | None = None
 
-    if tx_context is not None:
-        # Use pre-fetched pool events from transaction context
-        # Track matched pool events to handle multiple burns in one transaction
-        for pool_event_candidate in tx_context.pool_events:
-            # Skip pool events that have already been matched to other Burn events
-            if tx_context.matched_pool_events.get(pool_event_candidate["logIndex"], False):
-                continue
+    # Use pre-fetched pool events from transaction context
+    # Track matched pool events to handle multiple burns in one transaction
+    for pool_event_candidate in tx_context.pool_events:
+        # Skip pool events that have already been matched to other Burn events
+        if tx_context.matched_pool_events.get(pool_event_candidate["logIndex"], False):
+            continue
 
-            event_topic = pool_event_candidate["topics"][0]
+        event_topic = pool_event_candidate["topics"][0]
 
-            # Try WITHDRAW first (most common case)
-            if event_topic == AaveV3Event.WITHDRAW.value:
-                if _matches_pool_event(
-                    pool_event_candidate, AaveV3Event.WITHDRAW.value, user.address, reserve_address
-                ):
-                    pool_event = pool_event_candidate
-                    tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
-                    break
-
-            # If no WITHDRAW, try REPAY (for repay with aTokens)
-            elif event_topic == AaveV3Event.REPAY.value and _matches_pool_event(
-                pool_event_candidate, AaveV3Event.REPAY.value, user.address, reserve_address
+        # Try WITHDRAW first (most common case)
+        if event_topic == AaveV3Event.WITHDRAW.value:
+            if _matches_pool_event(
+                pool_event_candidate, AaveV3Event.WITHDRAW.value, user.address, reserve_address
             ):
                 pool_event = pool_event_candidate
                 tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
                 break
 
-        if pool_event is None:
-            # If no matching event in tx_context, fall back to deprecated method
-            # This handles cases where tx_context doesn't have pre-fetched pool events
-            try:
-                pool_event = _verify_pool_event_for_transaction(
-                    w3=w3,
-                    market=market,
-                    event=event,
-                    expected_event_type=AaveV3Event.WITHDRAW.value,
-                    user_address=user.address,
-                    reserve_address=reserve_address,
-                )
-            except ValueError:
-                try:
-                    # If no WITHDRAW event, try REPAY (for repay with aTokens)
-                    pool_event = _verify_pool_event_for_transaction(
-                        w3=w3,
-                        market=market,
-                        event=event,
-                        expected_event_type=AaveV3Event.REPAY.value,
-                        user_address=user.address,
-                        reserve_address=reserve_address,
-                    )
-                except ValueError:
-                    # If no REPAY event, check for AddressSet (for UMBRELLA setup)
-                    _verify_address_set_for_transaction(
-                        w3=w3,
-                        market=market,
-                        event=event,
-                        user_address=user.address,
-                    )
-    else:
-        # Fallback to deprecated method (for backward compatibility)
-        # Try WITHDRAW first (most common case)
-        try:
-            pool_event = _verify_pool_event_for_transaction(
-                w3=w3,
-                market=market,
-                event=event,
-                expected_event_type=AaveV3Event.WITHDRAW.value,
-                user_address=user.address,
-                reserve_address=reserve_address,
-            )
-        except ValueError:
-            try:
-                # If no WITHDRAW event, try REPAY (for repay with aTokens)
-                pool_event = _verify_pool_event_for_transaction(
-                    w3=w3,
-                    market=market,
-                    event=event,
-                    expected_event_type=AaveV3Event.REPAY.value,
-                    user_address=user.address,
-                    reserve_address=reserve_address,
-                )
-            except ValueError:
-                # If no REPAY event, check for AddressSet (for UMBRELLA setup)
-                _verify_address_set_for_transaction(
-                    w3=w3,
-                    market=market,
-                    event=event,
-                    user_address=user.address,
-                )
+        # If no WITHDRAW, try REPAY (for repay with aTokens)
+        elif event_topic == AaveV3Event.REPAY.value and _matches_pool_event(
+            pool_event_candidate, AaveV3Event.REPAY.value, user.address, reserve_address
+        ):
+            pool_event = pool_event_candidate
+            tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
+            break
+
+    if pool_event is None:
+        # No matching pool event found - this is an error condition
+        msg = (
+            f"No matching WITHDRAW or REPAY event found for Burn event "
+            f"at block {event['blockNumber']}, logIndex {event['logIndex']}"
+        )
+        raise ValueError(msg)
 
     # For WITHDRAW operations, calculate scaled_amount from the withdrawal amount
     scaled_amount: int | None = None
@@ -3948,14 +3750,26 @@ def _process_gho_debt_burn_event(
     # Use the underlying GHO token address, not the variable debt token address
     # because Pool REPAY events reference the underlying asset
     reserve_address = get_checksum_address(debt_asset.underlying_token.address)
-    _verify_pool_event_for_transaction(
-        w3=context.w3,
-        market=context.market,
-        event=context.event,
-        expected_event_type=AaveV3Event.REPAY.value,
-        user_address=user.address,
-        reserve_address=reserve_address,
-    )
+
+    # Find matching REPAY event from pre-fetched pool events
+    pool_event: LogReceipt | None = None
+    for pool_event_candidate in context.tx_context.pool_events:
+        # Skip pool events that have already been matched
+        if context.tx_context.matched_pool_events.get(pool_event_candidate["logIndex"], False):
+            continue
+        if _matches_pool_event(
+            pool_event_candidate, AaveV3Event.REPAY.value, user.address, reserve_address
+        ):
+            pool_event = pool_event_candidate
+            context.tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
+            break
+
+    if pool_event is None:
+        msg = (
+            f"No matching REPAY event found for GHO debt burn in tx "
+            f"{context.tx_context.tx_hash.hex()}. User: {user.address}, Reserve: {reserve_address}"
+        )
+        raise ValueError(msg)
 
     debt_position = context.session.scalar(
         select(AaveV3DebtPositionsTable).where(
@@ -4059,7 +3873,6 @@ def _process_gho_debt_burn_event(
 def _process_standard_debt_burn_event(
     *,
     session: Session,
-    market: AaveV3MarketTable,
     user: AaveV3UsersTable,
     debt_asset: AaveV3AssetsTable,
     token_address: ChecksumAddress,
@@ -4069,21 +3882,31 @@ def _process_standard_debt_burn_event(
     from_address: ChecksumAddress,
     target_address: ChecksumAddress,
     event: LogReceipt,
-    w3: Web3,
+    tx_context: TransactionContext,
 ) -> None:
     """Process a standard debt (vToken) burn event (non-GHO)."""
 
     reserve_address = get_checksum_address(debt_asset.underlying_token.address)
 
-    # Get the corresponding Pool Repay event
-    pool_event = _verify_pool_event_for_transaction(
-        w3=w3,
-        market=market,
-        event=event,
-        expected_event_type=AaveV3Event.REPAY.value,
-        user_address=user.address,
-        reserve_address=reserve_address,
-    )
+    # Get the corresponding Pool Repay event from pre-fetched pool events
+    pool_event: LogReceipt | None = None
+    for pool_event_candidate in tx_context.pool_events:
+        # Skip pool events that have already been matched
+        if tx_context.matched_pool_events.get(pool_event_candidate["logIndex"], False):
+            continue
+        if _matches_pool_event(
+            pool_event_candidate, AaveV3Event.REPAY.value, user.address, reserve_address
+        ):
+            pool_event = pool_event_candidate
+            tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
+            break
+
+    if pool_event is None:
+        msg = (
+            f"No matching REPAY event found for debt burn in tx {tx_context.tx_hash.hex()}. "
+            f"User: {user.address}, Reserve: {reserve_address}"
+        )
+        raise ValueError(msg)
 
     # Extract paybackAmount based on the actual event type
     # The pool_event can be REPAY, LIQUIDATION_CALL, or DEFICIT_CREATED
@@ -4200,7 +4023,6 @@ def _process_scaled_token_burn_event(context: EventHandlerContext) -> None:
     if collateral_asset is not None:
         _process_collateral_burn_event(
             session=context.session,
-            market=context.market,
             user=user,
             collateral_asset=collateral_asset,
             token_address=token_address,
@@ -4208,7 +4030,6 @@ def _process_scaled_token_burn_event(context: EventHandlerContext) -> None:
             balance_increase=balance_increase,
             index=index,
             event=context.event,
-            w3=context.w3,
             tx_context=context.tx_context,
         )
 
@@ -4228,7 +4049,6 @@ def _process_scaled_token_burn_event(context: EventHandlerContext) -> None:
         else:
             _process_standard_debt_burn_event(
                 session=context.session,
-                market=context.market,
                 user=user,
                 debt_asset=debt_asset,
                 token_address=token_address,
@@ -4238,7 +4058,7 @@ def _process_scaled_token_burn_event(context: EventHandlerContext) -> None:
                 from_address=from_address,
                 target_address=target_address,
                 event=context.event,
-                w3=context.w3,
+                tx_context=context.tx_context,
             )
 
     else:
