@@ -127,4 +127,4 @@ jobs:
           pip install rust/target/wheels/degenbot-*.whl
 
       - name: Run Rust-specific tests
-        run: pytest tests/rust -v
+        run: pytest tests/rust -v -o addopts=
