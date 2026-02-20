@@ -1,7 +1,7 @@
 import pytest
 from hypothesis import given, strategies
 
-from degenbot.aave.libraries.v3_4.percentage_math import (
+from degenbot.aave.libraries.percentage_math import (
     HALF_PERCENTAGE_FACTOR,
     PERCENTAGE_FACTOR,
     percent_div,

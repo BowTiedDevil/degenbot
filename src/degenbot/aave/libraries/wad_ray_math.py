@@ -1,4 +1,5 @@
-from degenbot.aave.libraries.v3_5.rounding import Rounding
+from enum import Enum
+
 from degenbot.constants import MAX_UINT256
 from degenbot.exceptions.evm import EVMRevertError
 
@@ -12,6 +13,11 @@ HALF_RAY = 5 * 10**26
 
 # Ratio to convert between Wad and Ray
 WAD_RAY_RATIO = 10**9
+
+
+class Rounding(Enum):
+    FLOOR = 0
+    CEIL = 1
 
 
 def _raise_on_overflow(value: int) -> None:

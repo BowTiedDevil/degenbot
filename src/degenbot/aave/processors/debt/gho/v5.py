@@ -1,4 +1,5 @@
-"""GHO variable debt token processor for revisions 5+.
+"""
+GHO variable debt token processor for revisions 5+.
 
 Revisions 5+ deprecate the discount mechanism and use explicit floor/ceil
 division via the TokenMath library.
@@ -6,7 +7,7 @@ division via the TokenMath library.
 
 import typing
 
-import degenbot.aave.libraries.v3_5 as aave_library_v3_5
+import degenbot.aave.libraries as aave_library_v3_5
 from degenbot.aave.processors.base import (
     DebtBurnEvent,
     DebtMintEvent,

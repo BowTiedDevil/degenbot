@@ -1,6 +1,6 @@
 """Collateral token processor for revision 5."""
 
-import degenbot.aave.libraries.v3_5 as aave_library_v3_5
+import degenbot.aave.libraries as aave_library_v3_5
 from degenbot.aave.processors.base import (
     BurnResult,
     CollateralBurnEvent,

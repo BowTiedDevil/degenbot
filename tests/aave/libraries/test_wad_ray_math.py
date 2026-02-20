@@ -2,7 +2,7 @@ import hypothesis
 import hypothesis.strategies
 import pytest
 
-from degenbot.aave.libraries.v3_5.wad_ray_math import (
+from degenbot.aave.libraries.wad_ray_math import (
     HALF_RAY,
     HALF_WAD,
     RAY,

@@ -1,6 +1,6 @@
 """GHO variable debt token processor for revisions 2-3."""
 
-import degenbot.aave.libraries.v3_2 as aave_library_v3_2
+import degenbot.aave.libraries as aave_library
 from degenbot.aave.processors.base import (
     DebtBurnEvent,
     DebtMintEvent,
@@ -25,8 +25,8 @@ class GhoV2Processor(GhoV1Processor):
     def __init__(self) -> None:
         """Initialize with v3.2 math libraries."""
         self._math_libs = MathLibraries(
-            wad_ray=aave_library_v3_2.wad_ray_math,
-            percentage=aave_library_v3_2.percentage_math,
+            wad_ray=aave_library.wad_ray_math,
+            percentage=aave_library.percentage_math,
         )
 
     def process_mint_event(

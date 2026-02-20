@@ -8,7 +8,7 @@ from token processors since the calculations originate in the Pool contract.
 from abc import abstractmethod
 from typing import ClassVar, Protocol
 
-from degenbot.aave.libraries import v3_1, v3_4, v3_5
+from degenbot.aave.libraries import wad_ray_math
 
 
 class TokenMath(Protocol):
@@ -86,31 +86,31 @@ class TokenMathV1:
 
     def get_collateral_mint_scaled_amount(self, amount: int, liquidity_index: int) -> int:
         """Standard half-up rounding for collateral mint."""
-        return v3_1.wad_ray_math.ray_div(amount, liquidity_index)
+        return wad_ray_math.ray_div(amount, liquidity_index)
 
     def get_collateral_burn_scaled_amount(self, amount: int, liquidity_index: int) -> int:
         """Standard half-up rounding for collateral burn."""
-        return v3_1.wad_ray_math.ray_div(amount, liquidity_index)
+        return wad_ray_math.ray_div(amount, liquidity_index)
 
     def get_collateral_transfer_scaled_amount(self, amount: int, liquidity_index: int) -> int:
         """Standard half-up rounding for collateral transfer."""
-        return v3_1.wad_ray_math.ray_div(amount, liquidity_index)
+        return wad_ray_math.ray_div(amount, liquidity_index)
 
     def get_collateral_balance(self, scaled_amount: int, liquidity_index: int) -> int:
         """Standard half-up rounding for collateral balance."""
-        return v3_1.wad_ray_math.ray_mul(scaled_amount, liquidity_index)
+        return wad_ray_math.ray_mul(scaled_amount, liquidity_index)
 
     def get_debt_mint_scaled_amount(self, amount: int, borrow_index: int) -> int:
         """Standard half-up rounding for debt mint."""
-        return v3_1.wad_ray_math.ray_div(amount, borrow_index)
+        return wad_ray_math.ray_div(amount, borrow_index)
 
     def get_debt_burn_scaled_amount(self, amount: int, borrow_index: int) -> int:
         """Standard half-up rounding for debt burn."""
-        return v3_1.wad_ray_math.ray_div(amount, borrow_index)
+        return wad_ray_math.ray_div(amount, borrow_index)
 
     def get_debt_balance(self, scaled_amount: int, borrow_index: int) -> int:
         """Standard half-up rounding for debt balance."""
-        return v3_1.wad_ray_math.ray_mul(scaled_amount, borrow_index)
+        return wad_ray_math.ray_mul(scaled_amount, borrow_index)
 
 
 class TokenMathV4:
@@ -122,31 +122,31 @@ class TokenMathV4:
 
     def get_collateral_mint_scaled_amount(self, amount: int, liquidity_index: int) -> int:
         """Floor rounding: minted aTokens <= supplied amount."""
-        return v3_4.wad_ray_math.ray_div_floor(amount, liquidity_index)
+        return wad_ray_math.ray_div_floor(amount, liquidity_index)
 
     def get_collateral_burn_scaled_amount(self, amount: int, liquidity_index: int) -> int:
         """Ceil rounding: ensure sufficient balance reduction."""
-        return v3_4.wad_ray_math.ray_div_ceil(amount, liquidity_index)
+        return wad_ray_math.ray_div_ceil(amount, liquidity_index)
 
     def get_collateral_transfer_scaled_amount(self, amount: int, liquidity_index: int) -> int:
         """Ceil rounding: ensure recipient gets at least requested."""
-        return v3_4.wad_ray_math.ray_div_ceil(amount, liquidity_index)
+        return wad_ray_math.ray_div_ceil(amount, liquidity_index)
 
     def get_collateral_balance(self, scaled_amount: int, liquidity_index: int) -> int:
         """Floor rounding: prevent over-accounting."""
-        return v3_4.wad_ray_math.ray_mul_floor(scaled_amount, liquidity_index)
+        return wad_ray_math.ray_mul_floor(scaled_amount, liquidity_index)
 
     def get_debt_mint_scaled_amount(self, amount: int, borrow_index: int) -> int:
         """Ceil rounding: never underaccount user's debt."""
-        return v3_4.wad_ray_math.ray_div_ceil(amount, borrow_index)
+        return wad_ray_math.ray_div_ceil(amount, borrow_index)
 
     def get_debt_burn_scaled_amount(self, amount: int, borrow_index: int) -> int:
         """Floor rounding: prevent over-burning."""
-        return v3_4.wad_ray_math.ray_div_floor(amount, borrow_index)
+        return wad_ray_math.ray_div_floor(amount, borrow_index)
 
     def get_debt_balance(self, scaled_amount: int, borrow_index: int) -> int:
         """Ceil rounding: prevent under-accounting."""
-        return v3_4.wad_ray_math.ray_mul_ceil(scaled_amount, borrow_index)
+        return wad_ray_math.ray_mul_ceil(scaled_amount, borrow_index)
 
 
 class TokenMathV5:
@@ -157,31 +157,31 @@ class TokenMathV5:
 
     def get_collateral_mint_scaled_amount(self, amount: int, liquidity_index: int) -> int:
         """Floor rounding: minted aTokens <= supplied amount."""
-        return v3_5.wad_ray_math.ray_div_floor(amount, liquidity_index)
+        return wad_ray_math.ray_div_floor(amount, liquidity_index)
 
     def get_collateral_burn_scaled_amount(self, amount: int, liquidity_index: int) -> int:
         """Ceil rounding: ensure sufficient balance reduction."""
-        return v3_5.wad_ray_math.ray_div_ceil(amount, liquidity_index)
+        return wad_ray_math.ray_div_ceil(amount, liquidity_index)
 
     def get_collateral_transfer_scaled_amount(self, amount: int, liquidity_index: int) -> int:
         """Ceil rounding: ensure recipient gets at least requested."""
-        return v3_5.wad_ray_math.ray_div_ceil(amount, liquidity_index)
+        return wad_ray_math.ray_div_ceil(amount, liquidity_index)
 
     def get_collateral_balance(self, scaled_amount: int, liquidity_index: int) -> int:
         """Floor rounding: prevent over-accounting."""
-        return v3_5.wad_ray_math.ray_mul_floor(scaled_amount, liquidity_index)
+        return wad_ray_math.ray_mul_floor(scaled_amount, liquidity_index)
 
     def get_debt_mint_scaled_amount(self, amount: int, borrow_index: int) -> int:
         """Ceil rounding: never underaccount user's debt."""
-        return v3_5.wad_ray_math.ray_div_ceil(amount, borrow_index)
+        return wad_ray_math.ray_div_ceil(amount, borrow_index)
 
     def get_debt_burn_scaled_amount(self, amount: int, borrow_index: int) -> int:
         """Floor rounding: prevent over-burning."""
-        return v3_5.wad_ray_math.ray_div_floor(amount, borrow_index)
+        return wad_ray_math.ray_div_floor(amount, borrow_index)
 
     def get_debt_balance(self, scaled_amount: int, borrow_index: int) -> int:
         """Ceil rounding: prevent under-accounting."""
-        return v3_5.wad_ray_math.ray_mul_ceil(scaled_amount, borrow_index)
+        return wad_ray_math.ray_mul_ceil(scaled_amount, borrow_index)
 
 
 class TokenMathFactory:
