@@ -4350,10 +4350,14 @@ def _process_scaled_token_balance_transfer_event(
                 prior_value, prior_balance_increase, prior_index = _decode_uint_values(
                     event=prior_event, num_values=3
                 )
+                # Mint event: topics[2] = onBehalfOf (recipient)
+                prior_on_behalf_of = _decode_address(prior_event["topics"][2])
                 if (
                     prior_value == prior_balance_increase  # Pure interest accrual
                     and prior_value == event_amount  # Same value as BalanceTransfer
                     and prior_index == index  # Same index
+                    and prior_on_behalf_of
+                    == to_address  # Mint recipient matches transfer recipient
                     and not context.tx_context.matched_mint_to_transfer.get(
                         prior_event["logIndex"], False
                     )  # Not already matched
