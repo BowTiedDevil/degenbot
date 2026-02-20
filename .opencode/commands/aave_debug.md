@@ -3,19 +3,19 @@ description: Debug Aave update failures
 agent: build
 ---
 
-!`DEGENBOT_DEBUG=1 DEGENBOT_VERBOSE_USERS=$ARGUMENTS uv run degenbot aave update --no-progress-bar --one-chunk`
+!`DEGENBOT_DEBUG=1 DEGENBOT_VERBOSE_USERS=$ARGUMENTS uv run degenbot aave update --no-progress-bar --one-chunk --chunk 1 2>&1`
 
 ## DIRECTION: Investigate and debug this failed Aave update command. Find the root cause of the bug and fix it.
 
 ## PROCESS:
 ### 1. Gather Information
 - Parse the output to identify information about the events, processes, and state logs leading up to the failed verification
-- @evm-investigator Perform a thorough investigation of the transaction; use all known information about the blocks, transactions, and operations leading to the invalid state; Determine the implementation address and associated revision for proxy contracts involved in the transaction, e.g., AToken, VariableDebtToken, GHOVariableDebtToken, Pool, stkAAVE
+- @evm-investigator Perform a thorough investigation of the transaction; use all known information about the blocks, transactions, and operations leading to the invalid state; Determine the implementation address and associated revision for proxy contracts involved in the transaction, e.g., AToken, VariableDebtToken, GHOVariableDebtToken, Pool, stkAAVE; use contract source code in @contract_reference/aave if available
 
 ### 2. Investigate Code
 - Determine the execution path leading to the error
 - Determine the revision of all versioned implementations, libraries, and processors that were used during processing. Check the reference contracts in @contract_reference/aave
-- Generate a failure hypothesis
+- Make a failure hypothesis
 
 ### 3. Validate Execution Path and Failure Hypothesis
 - Consider enabling function call logging along the execution path by decorating functions and methods with `log_function_call`, e.g.,
@@ -37,6 +37,7 @@ agent: build
 
 ### 5. Improve
 - @explore Review opportunities to refactor and clean up code that contributed to this failure
+- Write a stateless unit test to verify that the math operations, user operation determination, event matching logic, etc., matches the expectations following the onchain investigation and verified fix
 
 ### 6. Document Findings
 Append to @aave_debug_progress.md. Follow this format:
