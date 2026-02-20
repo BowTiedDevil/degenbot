@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from itertools import starmap
 from typing import cast
 
 from degenbot.balancer.libraries.constants import ONE
@@ -54,9 +55,7 @@ def _upscale_array(amounts: list[int], scaling_factors: Sequence[int]) -> None:
     *mutates* the `amounts` array.
     """
 
-    amounts = [
-        mul_down(amount, factor) for amount, factor in zip(amounts, scaling_factors, strict=True)
-    ]
+    amounts = list(starmap(mul_down, zip(amounts, scaling_factors, strict=True)))
 
 
 def _downscale_down_array(amounts: list[int], scaling_factors: list[int]) -> None:
@@ -65,9 +64,7 @@ def _downscale_down_array(amounts: list[int], scaling_factors: list[int]) -> Non
     instead *mutates* the `amounts` array.
     """
 
-    amounts = [
-        div_down(amount, factor) for amount, factor in zip(amounts, scaling_factors, strict=True)
-    ]
+    amounts = list(starmap(div_down, zip(amounts, scaling_factors, strict=True)))
 
 
 def _downscale_up_array(amounts: list[int], scaling_factors: list[int]) -> None:
@@ -76,9 +73,7 @@ def _downscale_up_array(amounts: list[int], scaling_factors: list[int]) -> None:
     instead *mutates* the `amounts` array.
     """
 
-    amounts = [
-        div_up(amount, factor) for amount, factor in zip(amounts, scaling_factors, strict=True)
-    ]
+    amounts = list(starmap(div_up, zip(amounts, scaling_factors, strict=True)))
 
 
 def _compute_scaling_factor(token: Erc20Token) -> int:
