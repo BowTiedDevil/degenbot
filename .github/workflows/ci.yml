@@ -113,6 +113,9 @@ jobs:
             rust/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Update lock
+        run: uv lock
+      
       - name: Sync dependencies
         run: uv sync --locked --dev --all-extras
 
