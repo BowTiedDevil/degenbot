@@ -1,13 +1,12 @@
-"""GHO variable debt token processor for revision 4.
+"""GHO variable debt token processor for revisions 5+.
 
-Revision 4 deprecates the discount mechanism and uses standard rayDiv
-(rounding half up) like earlier revisions. Floor division was added
-in revision 5.
+Revisions 5+ deprecate the discount mechanism and use explicit floor/ceil
+division via the TokenMath library.
 """
 
 import typing
 
-import degenbot.aave.libraries.v3_4 as aave_library_v3_4
+import degenbot.aave.libraries.v3_5 as aave_library_v3_5
 from degenbot.aave.processors.base import (
     DebtBurnEvent,
     DebtMintEvent,
@@ -19,21 +18,22 @@ from degenbot.aave.processors.base import (
 )
 
 
-class GhoV4Processor(GhoDebtTokenProcessor):
-    """Processor for GHO VariableDebtToken revision 4.
+class GhoV5Processor(GhoDebtTokenProcessor):
+    """Processor for GHO VariableDebtToken revisions 5+.
 
-    Revision 4 has the discount mechanism deprecated and uses standard
-    rayDiv (rounding half up). Floor division was added in revision 5.
+    Revisions 5+ have the discount mechanism deprecated and use explicit
+    floor (ray_div_floor) and ceiling (ray_div_ceil) division functions
+    from the TokenMath library.
     """
 
-    revision = 4
-    math_lib_version = "v3.4"
+    revision = 5
+    math_lib_version = "v3.5"
 
     def __init__(self) -> None:
-        """Initialize with v3.4 math libraries."""
+        """Initialize with v3.5 math libraries."""
         self._math_libs = MathLibraries(
-            wad_ray=aave_library_v3_4.wad_ray_math,
-            percentage=aave_library_v3_4.percentage_math,
+            wad_ray=aave_library_v3_5.wad_ray_math,
+            percentage=aave_library_v3_5.percentage_math,
         )
 
     def get_math_libraries(self) -> MathLibraries:
@@ -41,15 +41,14 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         return self._math_libs
 
     def supports_discount(self) -> bool:  # noqa: PLR6301
-        """Revision 4+ does not support discount mechanism."""
+        """Revision 5+ does not support discount mechanism."""
         return False
 
     def calculate_mint_scaled_amount(self, raw_amount: int, index: int) -> int:
         """Calculate scaled amount from raw underlying amount for mint operations.
 
-        GHO revision 4 uses standard rayDiv (rounding half up) since the discount
-        mechanism was deprecated. The _mintScaled function in the revision 4
-        contract calls amount.rayDiv(index) without any special rounding.
+        GHO V5+ uses ceiling division (ray_div_ceil) for mint operations to match
+        TokenMath.getVTokenMintScaledAmount behavior in the Pool contract.
 
         This method should be called before process_mint_event() to pre-calculate
         the scaled_delta parameter from the original borrow amount, ensuring
@@ -62,7 +61,29 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         Returns:
             The scaled amount (amountScaled)
         """
-        return self._math_libs["wad_ray"].ray_div(
+        return self._math_libs["wad_ray"].ray_div_ceil(
+            a=raw_amount,
+            b=index,
+        )
+
+    def calculate_burn_scaled_amount(self, raw_amount: int, index: int) -> int:
+        """Calculate scaled amount from raw underlying amount for burn operations.
+
+        GHO V5+ uses floor division (ray_div_floor) for burn operations to match
+        TokenMath.getVTokenBurnScaledAmount behavior in the Pool contract.
+
+        This method should be called before process_burn_event() to pre-calculate
+        the scaled_delta parameter from the original payback amount, ensuring
+        consistent rounding with on-chain calculations.
+
+        Args:
+            raw_amount: The raw underlying amount (unscaled)
+            index: The variable debt index
+
+        Returns:
+            The scaled amount (amountScaled)
+        """
+        return self._math_libs["wad_ray"].ray_div_floor(
             a=raw_amount,
             b=index,
         )
@@ -79,13 +100,14 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         For accurate balance tracking, the scaled_delta parameter should be
         pre-calculated using calculate_mint_scaled_amount() from the original
         borrow amount (extracted from the BORROW event). This ensures the
-        rounding matches the on-chain Pool contract calculation.
+        rounding matches the on-chain TokenMath.getVTokenMintScaledAmount
+        calculation which uses ceiling division.
 
         Args:
             event_data: The mint event data from the token contract
             previous_balance: The user's scaled balance before this event
             previous_index: The index at previous_balance calculation
-            previous_discount: Ignored (no discount in rev 4+)
+            previous_discount: Ignored (no discount in rev 5+)
 
         Returns:
             GhoMintResult with balance_delta, new_index, user_operation,
@@ -96,14 +118,15 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         if event_data.value > event_data.balance_increase:
             # GHO BORROW: emitted in _mintScaled
             #
-            # Revision 4 uses standard rayDiv (rounding half up) via _mintScaled.
-            # The contract calls amount.rayDiv(index) without floor division.
+            # Revision 5+ uses ceiling division (ray_div_ceil) for BORROW
+            # to match TokenMath.getVTokenMintScaledAmount behavior.
+            # This ensures the protocol never underaccounts the user's debt.
             #
             # When processing BORROW events, the scaled_delta should be pre-calculated
             # using calculate_mint_scaled_amount() from the original borrow amount
             # extracted from the BORROW event, not derived from the Mint event values.
             requested_amount = event_data.value - event_data.balance_increase
-            balance_delta = wad_ray_math.ray_div(
+            balance_delta = wad_ray_math.ray_div_ceil(
                 a=requested_amount,
                 b=event_data.index,
             )
@@ -111,8 +134,12 @@ class GhoV4Processor(GhoDebtTokenProcessor):
 
         elif event_data.balance_increase > event_data.value:
             # GHO REPAY: emitted in _burnScaled
+            #
+            # Revision 5+ uses floor division (ray_div_floor) for REPAY
+            # to match TokenMath.getVTokenBurnScaledAmount behavior.
+            # This prevents over-burning of vTokens.
             requested_amount = event_data.balance_increase - event_data.value
-            balance_delta = -wad_ray_math.ray_div(
+            balance_delta = -wad_ray_math.ray_div_floor(
                 a=requested_amount,
                 b=event_data.index,
             )
@@ -137,7 +164,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
             balance_delta = balance_increase_scaled
             user_operation = GhoUserOperation.GHO_INTEREST_ACCRUAL
 
-        # Revision 4+ never refreshes discount (discount is deprecated)
+        # Revision 5+ never refreshes discount (discount is deprecated)
         should_refresh_discount = False
 
         return GhoMintResult(
@@ -161,7 +188,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
             event_data: The burn event data
             previous_balance: The user's balance before this event
             previous_index: The index at previous_balance calculation
-            previous_discount: Ignored (no discount in rev 4+)
+            previous_discount: Ignored (no discount in rev 5+)
 
         Returns:
             GhoBurnResult with balance_delta, new_index, discount_scaled=0,
@@ -172,15 +199,17 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         # uint256 amountToBurn = amount - balanceIncrease
         requested_amount = event_data.value + event_data.balance_increase
 
-        # uint256 amountScaled = amount.rayDiv(index)
-        # Revision 4 uses standard rayDiv (rounding half up) via _burnScaled.
-        # No discount in rev 4.
-        balance_delta = -wad_ray_math.ray_div(
+        # Revision 5+ uses floor division (ray_div_floor) via TokenMath.getVTokenBurnScaledAmount
+        # to prevent over-burning of vTokens. When processing REPAY burn events,
+        # the scaled_delta should be pre-calculated using calculate_burn_scaled_amount()
+        # from the original payback amount in the REPAY event.
+        # No discount in rev 5+
+        balance_delta = -wad_ray_math.ray_div_floor(
             a=requested_amount,
             b=event_data.index,
         )
 
-        # Revision 4+ never refreshes discount (discount is deprecated)
+        # Revision 5+ never refreshes discount (discount is deprecated)
         should_refresh_discount = False
 
         return GhoBurnResult(
@@ -199,13 +228,13 @@ class GhoV4Processor(GhoDebtTokenProcessor):
     ) -> int:
         """Calculate balance without discount.
 
-        In revision 4+, this simply returns rayMul(scaled_balance, current_index).
+        In revision 5+, this simply returns rayMul(scaled_balance, current_index).
 
         Args:
             scaled_balance: The scaled balance
             previous_index: Ignored
             current_index: The current debt index
-            discount_percent: Ignored (no discount in rev 4+)
+            discount_percent: Ignored (no discount in rev 5+)
 
         Returns:
             The balance without discount
@@ -230,13 +259,13 @@ class GhoV4Processor(GhoDebtTokenProcessor):
     ) -> int:
         """Calculate debt accrual without discount.
 
-        In revision 4+, the discount mechanism is deprecated, so this
+        In revision 5+, the discount mechanism is deprecated, so this
         always returns 0.
 
         Args:
             previous_scaled_balance: Ignored
             previous_index: Ignored
-            discount_percent: Ignored (no discount in rev 4+)
+            discount_percent: Ignored (no discount in rev 5+)
             current_index: Ignored
 
         Returns:

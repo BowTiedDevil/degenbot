@@ -1,6 +1,6 @@
 """Factory for creating token processors by revision."""
 
-from typing import ClassVar
+from typing import Any, ClassVar, cast
 
 from degenbot.aave.processors.base import (
     CollateralTokenProcessor,
@@ -14,6 +14,7 @@ from degenbot.aave.processors.collateral.v5 import CollateralV5Processor
 from degenbot.aave.processors.debt.gho.v1 import GhoV1Processor
 from degenbot.aave.processors.debt.gho.v2 import GhoV2Processor
 from degenbot.aave.processors.debt.gho.v4 import GhoV4Processor
+from degenbot.aave.processors.debt.gho.v5 import GhoV5Processor
 from degenbot.aave.processors.debt.v1 import DebtV1Processor
 from degenbot.aave.processors.debt.v3 import DebtV3Processor
 from degenbot.aave.processors.debt.v4 import DebtV4Processor
@@ -45,14 +46,15 @@ class TokenProcessorFactory:
     # GHO VariableDebtToken revisions: 1-6
     # GHO is special because it has discount handling
     # rev 2-3 share implementation (discount support)
-    # rev 4+ share implementation (discount deprecated)
-    GHO_DEBT_PROCESSORS: ClassVar[dict[int, type[GhoDebtTokenProcessor]]] = {
+    # rev 4 uses standard rayDiv (discount deprecated, no floor division)
+    # rev 5+ uses explicit floor/ceil division (discount deprecated)
+    GHO_DEBT_PROCESSORS: ClassVar[dict[int, type[Any]]] = {
         1: GhoV1Processor,
         2: GhoV2Processor,
         3: GhoV2Processor,  # Same as rev 2
         4: GhoV4Processor,
-        5: GhoV4Processor,  # Same as rev 4
-        6: GhoV4Processor,  # Same as rev 4
+        5: GhoV5Processor,
+        6: GhoV5Processor,  # Same as rev 5
     }
 
     @classmethod
@@ -126,7 +128,7 @@ class TokenProcessorFactory:
         if processor_class is None:
             msg = f"No processor for GHO revision {revision}"
             raise ValueError(msg)
-        processor = processor_class()
+        processor = cast("GhoDebtTokenProcessor", processor_class())
         logger.debug(
             f"Created {processor_class.__name__} for GHO vToken revision {revision} "
             f"(math lib: {processor.math_lib_version})"
