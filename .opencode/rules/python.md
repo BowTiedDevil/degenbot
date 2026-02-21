@@ -1,6 +1,5 @@
 # Python Rules
 
-
 ## Docstrings
 Minimal PEP 257. Additional detail follows a blank line if needed. Type hints supersede parameter docs. No reST/Sphinx tags:
 ```python
