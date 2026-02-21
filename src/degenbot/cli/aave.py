@@ -29,6 +29,10 @@ from degenbot.aave.processors import (
 )
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
+from degenbot.cli.aave_event_matching import (
+    EventMatcher,
+    ScaledTokenEventType,
+)
 from degenbot.cli.utils import get_web3_from_config
 from degenbot.constants import ERC_1967_IMPLEMENTATION_SLOT, ZERO_ADDRESS
 from degenbot.database import db_session
@@ -3649,90 +3653,57 @@ def _process_collateral_burn_event(
     event: LogReceipt,
     tx_context: TransactionContext,
 ) -> None:
-    """Process a collateral (aToken) burn event."""
+    """Process a collateral (aToken) burn event using EventMatcher.
 
-    # A SCALED_TOKEN_BURN can be triggered by:
-    # - WITHDRAW: user withdraws collateral (has WITHDRAW event)
-    # - REPAY with useATokens=true: burns aTokens directly (no WITHDRAW event)
-    # - LIQUIDATION_CALL: collateral seized during liquidation
+    Uses EventMatcher to find matching Pool events (WITHDRAW, REPAY, or LIQUIDATION_CALL)
+    and extracts the appropriate scaled amount based on the matched event type.
+
+    See debug/aave/0008, 0009 for consumption patterns.
+    """
     reserve_address = get_checksum_address(collateral_asset.underlying_token.address)
 
-    pool_event: LogReceipt | None = None
+    # Use EventMatcher to find matching pool event
+    # EventMatcher handles LIQUIDATION_CALL reuse (Bug #0009, #0010)
+    # and REPAY conditional consumption (Bug #0008)
+    matcher = EventMatcher(tx_context)
+    result = matcher.find_matching_pool_event(
+        event_type=ScaledTokenEventType.COLLATERAL_BURN,
+        user_address=user.address,
+        reserve_address=reserve_address,
+    )
 
-    # Use pre-fetched pool events from transaction context
-    # Track matched pool events to handle multiple burns in one transaction
-    for pool_event_candidate in tx_context.pool_events:
-        # Skip pool events that have already been matched to other Burn events
-        if tx_context.matched_pool_events.get(pool_event_candidate["logIndex"], False):
-            continue
-
-        event_topic = pool_event_candidate["topics"][0]
-
-        # Try WITHDRAW first (most common case)
-        if event_topic == AaveV3Event.WITHDRAW.value:
-            if _matches_pool_event(
-                pool_event_candidate, AaveV3Event.WITHDRAW.value, user.address, reserve_address
-            ):
-                pool_event = pool_event_candidate
-                tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
-                break
-
-        # If no WITHDRAW, try REPAY (for repay with aTokens)
-        elif event_topic == AaveV3Event.REPAY.value and _matches_pool_event(
-            pool_event_candidate, AaveV3Event.REPAY.value, user.address, reserve_address
-        ):
-            pool_event = pool_event_candidate
-            tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
-            break
-
-        # Check for LIQUIDATION_CALL (collateral seized during liquidation)
-        elif event_topic == AaveV3Event.LIQUIDATION_CALL.value and _matches_pool_event(
-            pool_event_candidate, AaveV3Event.WITHDRAW.value, user.address, reserve_address
-        ):
-            pool_event = pool_event_candidate
-            # Note: LIQUIDATION_CALL events are not marked as consumed here
-            # because they may match multiple burn events (both debt and collateral)
-            break
-
-    if pool_event is None:
-        # No matching pool event found - this is an error condition
+    if result is None:
         msg = (
             f"No matching WITHDRAW, REPAY, or LIQUIDATION_CALL event found for Burn event "
             f"at block {event['blockNumber']}, logIndex {event['logIndex']}"
         )
         raise ValueError(msg)
 
-    # For WITHDRAW operations, calculate scaled_amount from the withdrawal amount
-    # For LIQUIDATION_CALL, calculate scaled_amount from the liquidatedCollateralAmount
+    # Extract scaled_amount based on matched pool event type
     scaled_amount: int | None = None
+    pool_event = result["pool_event"]
+    extraction_data = result["extraction_data"]
     pool_event_topic = pool_event["topics"][0]
+
+    pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
+        collateral_asset.a_token_revision
+    )
+
     if pool_event_topic == AaveV3Event.WITHDRAW.value:
-        # WITHDRAW event data: (uint256 amount)
-        (withdraw_amount,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=pool_event["data"],
-        )
-        pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
-            collateral_asset.a_token_revision
-        )
+        # WITHDRAW event: use raw_amount
+        raw_amount = extraction_data["raw_amount"]
         scaled_amount = pool_processor.calculate_collateral_burn_scaled_amount(
-            amount=withdraw_amount,
+            amount=raw_amount,
             liquidity_index=index,
         )
     elif pool_event_topic == AaveV3Event.LIQUIDATION_CALL.value:
-        # LIQUIDATION_CALL event data: (uint256 debtToCover, uint256 liquidatedCollateralAmount,
-        #                               address liquidator, bool receiveAToken)
-        (_, liquidated_collateral_amount, _, _) = eth_abi.abi.decode(
-            types=["uint256", "uint256", "address", "bool"],
-            data=pool_event["data"],
-        )
-        pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
-            collateral_asset.a_token_revision
-        )
+        # LIQUIDATION_CALL event: use liquidated_collateral amount
+        liquidated_amount = extraction_data["liquidated_collateral"]
         scaled_amount = pool_processor.calculate_collateral_burn_scaled_amount(
-            amount=liquidated_collateral_amount,
+            amount=liquidated_amount,
             liquidity_index=index,
         )
+    # REPAY events don't provide scaled_amount (handled by debt burn)
 
     collateral_position = session.scalar(
         select(AaveV3CollateralPositionsTable).where(
@@ -3927,26 +3898,30 @@ def _process_standard_debt_burn_event(
     event: LogReceipt,
     tx_context: TransactionContext,
 ) -> None:
-    """Process a standard debt (vToken) burn event (non-GHO)."""
+    """Process a standard debt (vToken) burn event (non-GHO) using EventMatcher.
 
+    Uses EventMatcher to find matching Pool events (REPAY, LIQUIDATION_CALL, or DEFICIT_CREATED)
+    and handles edge cases like debt burns without matching Pool events (flash loan liquidations).
+
+    See debug/aave/0008, 0010, 0012a, 0013 for consumption patterns and edge cases.
+    """
     reserve_address = get_checksum_address(debt_asset.underlying_token.address)
 
-    # Get the corresponding Pool Repay event from pre-fetched pool events
-    pool_event: LogReceipt | None = None
-    for pool_event_candidate in tx_context.pool_events:
-        # Skip pool events that have already been matched
-        if tx_context.matched_pool_events.get(pool_event_candidate["logIndex"], False):
-            continue
-        if _matches_pool_event(
-            pool_event_candidate, AaveV3Event.REPAY.value, user.address, reserve_address
-        ):
-            pool_event = pool_event_candidate
-            break
+    # Use EventMatcher to find matching pool event
+    # EventMatcher handles LIQUIDATION_CALL/DEFICIT_CREATED reuse (Bug #0010, #0013)
+    # and REPAY conditional consumption (Bug #0008)
+    matcher = EventMatcher(tx_context)
+    result = matcher.find_matching_pool_event(
+        event_type=ScaledTokenEventType.DEBT_BURN,
+        user_address=user.address,
+        reserve_address=reserve_address,
+    )
 
-    if pool_event is None:
+    if result is None:
         # Edge case: debt burn without matching Pool event
         # This can occur in flash loan liquidations, protocol upgrades, or bad debt forgiveness
         # where the debt token is burned directly without going through Pool.repay()
+        # See debug/aave/0013
         logger.warning(
             f"No matching REPAY/LIQUIDATION_CALL/DEFICIT_CREATED event found for debt burn "
             f"in tx {tx_context.tx_hash.hex()}. User: {user.address}, Reserve: {reserve_address}. "
@@ -3956,43 +3931,22 @@ def _process_standard_debt_burn_event(
         # the scaled amount
         scaled_amount = event_amount
     else:
-        # Extract paybackAmount based on the actual event type
-        # The pool_event can be REPAY, LIQUIDATION_CALL, or DEFICIT_CREATED
-        pool_event_topic = pool_event["topics"][0]
+        # Extract payback amount based on matched event type
+        extraction_data = result["extraction_data"]
+        pool_event_topic = result["pool_event"]["topics"][0]
 
         if pool_event_topic == AaveV3Event.REPAY.value:
-            # REPAY: (uint256 amount, bool useATokens)
-            payback_amount, use_a_tokens = cast(
-                "tuple[int, bool]",
-                eth_abi.abi.decode(
-                    types=["uint256", "bool"],
-                    data=pool_event["data"],
-                ),
-            )
-            # Only mark as consumed if NOT using aTokens
-            # When useATokens=True, the same Repay event should also match
-            # the collateral aToken burn in _process_collateral_burn_event
-            if not use_a_tokens:
-                tx_context.matched_pool_events[pool_event["logIndex"]] = True
+            payback_amount = extraction_data["raw_amount"]
+            # EventMatcher already handles consumption based on useATokens flag
         elif pool_event_topic == AaveV3Event.LIQUIDATION_CALL.value:
-            # LIQUIDATION_CALL event data: (uint256 debtToCover, uint256 liquidatedCollateralAmount,
-            #                               address liquidator, bool receiveAToken)
-            (payback_amount, _, _, _) = eth_abi.abi.decode(
-                types=["uint256", "uint256", "address", "bool"],
-                data=pool_event["data"],
-            )
+            payback_amount = extraction_data["debt_to_cover"]
         elif pool_event_topic == AaveV3Event.DEFICIT_CREATED.value:
-            # DEFICIT_CREATED: (uint256 amountCreated)
-            (payback_amount,) = eth_abi.abi.decode(
-                types=["uint256"],
-                data=pool_event["data"],
-            )
+            payback_amount = extraction_data["amount_created"]
         else:
             msg = f"Unexpected event type: {pool_event_topic.to_0x_hex()}"
             raise ValueError(msg)
 
         # Calculate scaled amount using the original paybackAmount
-        # This matches the Pool's calculation: paybackAmount.getVTokenBurnScaledAmount(index)
         pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
             debt_asset.v_token_revision
         )
