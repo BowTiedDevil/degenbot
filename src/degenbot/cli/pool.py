@@ -604,6 +604,26 @@ def apply_v4_liquidity_updates(
             session.execute(stmt)
 
 
+def _get_or_create_token(
+    session: Session,
+    chain_id: int,
+    address: ChecksumAddress,
+) -> Erc20TokenTable:
+    if (
+        token := session.scalar(
+            select(Erc20TokenTable).where(
+                Erc20TokenTable.chain == chain_id,
+                Erc20TokenTable.address == address,
+            )
+        )
+    ) is None:
+        token = Erc20TokenTable(chain=chain_id, address=address)
+        session.add(token)
+        session.flush()
+
+    return token
+
+
 def base_aerodrome_v2_pool_updater(
     w3: Web3,
     start_block: int,
@@ -640,33 +660,8 @@ def base_aerodrome_v2_pool_updater(
 
             (stable,) = abi_decode(["bool"], new_pool_event["topics"][3])
 
-            token0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token0,
-                )
-            )
-            token1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token1,
-                )
-            )
-
-            if token0_in_db is None:
-                token0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token0,
-                )
-                session.add(token0_in_db)
-                session.flush()
-            if token1_in_db is None:
-                token1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token1,
-                )
-                session.add(token1_in_db)
-                session.flush()
+            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
+            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
@@ -737,33 +732,8 @@ def base_aerodrome_v3_pool_updater(
             (pool_address,) = abi_decode(types=["address"], data=new_pool_event["data"])
             pool_address = get_checksum_address(pool_address)
 
-            token0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token0,
-                )
-            )
-            token1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token1,
-                )
-            )
-
-            if token0_in_db is None:
-                token0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token0,
-                )
-                session.add(token0_in_db)
-                session.flush()
-            if token1_in_db is None:
-                token1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token1,
-                )
-                session.add(token1_in_db)
-                session.flush()
+            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
+            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
 
             (fee,) = raw_call(
                 w3=w3,
@@ -824,33 +794,8 @@ def base_pancakeswap_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token0,
-                )
-            )
-            token1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token1,
-                )
-            )
-
-            if token0_in_db is None:
-                token0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token0,
-                )
-                session.add(token0_in_db)
-                session.flush()
-            if token1_in_db is None:
-                token1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token1,
-                )
-                session.add(token1_in_db)
-                session.flush()
+            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
+            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
@@ -907,33 +852,8 @@ def base_pancakeswap_v3_pool_updater(
 
             (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
 
-            token0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token0,
-                )
-            )
-            token1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token1,
-                )
-            )
-
-            if token0_in_db is None:
-                token0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token0,
-                )
-                session.add(token0_in_db)
-                session.flush()
-            if token1_in_db is None:
-                token1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token1,
-                )
-                session.add(token1_in_db)
-                session.flush()
+            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
+            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
 
             tick_spacing, pool_address = abi_decode(
                 types=["int24", "address"],
@@ -989,33 +909,8 @@ def base_sushiswap_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token0,
-                )
-            )
-            token1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token1,
-                )
-            )
-
-            if token0_in_db is None:
-                token0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token0,
-                )
-                session.add(token0_in_db)
-                session.flush()
-            if token1_in_db is None:
-                token1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token1,
-                )
-                session.add(token1_in_db)
-                session.flush()
+            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
+            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
@@ -1072,33 +967,8 @@ def base_sushiswap_v3_pool_updater(
 
             (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
 
-            token0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token0,
-                )
-            )
-            token1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token1,
-                )
-            )
-
-            if token0_in_db is None:
-                token0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token0,
-                )
-                session.add(token0_in_db)
-                session.flush()
-            if token1_in_db is None:
-                token1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token1,
-                )
-                session.add(token1_in_db)
-                session.flush()
+            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
+            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
 
             tick_spacing, pool_address = abi_decode(
                 types=["int24", "address"],
@@ -1154,33 +1024,8 @@ def base_swapbased_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token0,
-                )
-            )
-            token1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token1,
-                )
-            )
-
-            if token0_in_db is None:
-                token0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token0,
-                )
-                session.add(token0_in_db)
-                session.flush()
-            if token1_in_db is None:
-                token1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token1,
-                )
-                session.add(token1_in_db)
-                session.flush()
+            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
+            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
@@ -1209,7 +1054,7 @@ def base_uniswap_v2_pool_updater(
     session: Session,
 ) -> None:
     """
-    Fetch new Uniswap V2 liquidity pools deployed on Base mainnet and add their metadata to the DB.
+    Fetch new Uniswap V2 liquidity pools deployed on Base mainnet and add their metadata to DB.
     """
 
     database_type = UniswapV2PoolTable
@@ -1234,33 +1079,8 @@ def base_uniswap_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token0,
-                )
-            )
-            token1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token1,
-                )
-            )
-
-            if token0_in_db is None:
-                token0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token0,
-                )
-                session.add(token0_in_db)
-                session.flush()
-            if token1_in_db is None:
-                token1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token1,
-                )
-                session.add(token1_in_db)
-                session.flush()
+            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
+            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
@@ -1317,33 +1137,8 @@ def base_uniswap_v3_pool_updater(
 
             (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
 
-            token0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token0,
-                )
-            )
-            token1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token1,
-                )
-            )
-
-            if token0_in_db is None:
-                token0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token0,
-                )
-                session.add(token0_in_db)
-                session.flush()
-            if token1_in_db is None:
-                token1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token1,
-                )
-                session.add(token1_in_db)
-                session.flush()
+            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
+            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
 
             tick_spacing, pool_address = abi_decode(
                 types=["int24", "address"],
@@ -1407,33 +1202,8 @@ def base_uniswap_v4_pool_updater(
             currency0 = get_checksum_address(currency0)
             currency1 = get_checksum_address(currency1)
 
-            currency0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == currency0,
-                )
-            )
-            currency1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == currency1,
-                )
-            )
-
-            if currency0_in_db is None:
-                currency0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=currency0,
-                )
-                session.add(currency0_in_db)
-                session.flush()
-            if currency1_in_db is None:
-                currency1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=currency1,
-                )
-                session.add(currency1_in_db)
-                session.flush()
+            currency0_in_db = _get_or_create_token(session, exchange.chain_id, currency0)
+            currency1_in_db = _get_or_create_token(session, exchange.chain_id, currency1)
 
             fee, tick_spacing, hooks = abi_decode(
                 ["uint24", "int24", "address"],
@@ -1490,33 +1260,8 @@ def ethereum_pancakeswap_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token0,
-                )
-            )
-            token1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token1,
-                )
-            )
-
-            if token0_in_db is None:
-                token0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token0,
-                )
-                session.add(token0_in_db)
-                session.flush()
-            if token1_in_db is None:
-                token1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token1,
-                )
-                session.add(token1_in_db)
-                session.flush()
+            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
+            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
@@ -1573,33 +1318,8 @@ def ethereum_pancakeswap_v3_pool_updater(
 
             (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
 
-            token0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token0,
-                )
-            )
-            token1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token1,
-                )
-            )
-
-            if token0_in_db is None:
-                token0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token0,
-                )
-                session.add(token0_in_db)
-                session.flush()
-            if token1_in_db is None:
-                token1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token1,
-                )
-                session.add(token1_in_db)
-                session.flush()
+            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
+            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
 
             tick_spacing, pool_address = abi_decode(
                 types=["int24", "address"],
@@ -1655,33 +1375,8 @@ def ethereum_sushiswap_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token0,
-                )
-            )
-            token1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token1,
-                )
-            )
-
-            if token0_in_db is None:
-                token0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token0,
-                )
-                session.add(token0_in_db)
-                session.flush()
-            if token1_in_db is None:
-                token1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token1,
-                )
-                session.add(token1_in_db)
-                session.flush()
+            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
+            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
@@ -1738,33 +1433,8 @@ def ethereum_sushiswap_v3_pool_updater(
 
             (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
 
-            token0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token0,
-                )
-            )
-            token1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token1,
-                )
-            )
-
-            if token0_in_db is None:
-                token0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token0,
-                )
-                session.add(token0_in_db)
-                session.flush()
-            if token1_in_db is None:
-                token1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token1,
-                )
-                session.add(token1_in_db)
-                session.flush()
+            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
+            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
 
             tick_spacing, pool_address = abi_decode(
                 types=["int24", "address"],
@@ -1820,33 +1490,8 @@ def ethereum_uniswap_v2_pool_updater(
             token0 = get_checksum_address(token0)
             token1 = get_checksum_address(token1)
 
-            token0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token0,
-                )
-            )
-            token1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token1,
-                )
-            )
-
-            if token0_in_db is None:
-                token0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token0,
-                )
-                session.add(token0_in_db)
-                session.flush()
-            if token1_in_db is None:
-                token1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token1,
-                )
-                session.add(token1_in_db)
-                session.flush()
+            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
+            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
 
             pool_address, _ = abi_decode(
                 types=["address", "uint256"],
@@ -1875,7 +1520,7 @@ def ethereum_uniswap_v3_pool_updater(
     session: Session,
 ) -> None:
     """
-    Fetch new Uniswap V3 liquidity pools deployed on Ethereum mainnet and add their metadata to the
+    Fetch new Uniswap V3 liquidity pools deployed on Ethereum mainnet and add their metadata to
     DB.
     """
 
@@ -1903,33 +1548,8 @@ def ethereum_uniswap_v3_pool_updater(
 
             (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
 
-            token0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token0,
-                )
-            )
-            token1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == token1,
-                )
-            )
-
-            if token0_in_db is None:
-                token0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token0,
-                )
-                session.add(token0_in_db)
-                session.flush()
-            if token1_in_db is None:
-                token1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=token1,
-                )
-                session.add(token1_in_db)
-                session.flush()
+            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
+            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
 
             tick_spacing, pool_address = abi_decode(
                 types=["int24", "address"],
@@ -1993,33 +1613,8 @@ def ethereum_uniswap_v4_pool_updater(
             currency0 = get_checksum_address(currency0)
             currency1 = get_checksum_address(currency1)
 
-            currency0_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == currency0,
-                )
-            )
-            currency1_in_db = session.scalar(
-                select(Erc20TokenTable).where(
-                    Erc20TokenTable.chain == exchange.chain_id,
-                    Erc20TokenTable.address == currency1,
-                )
-            )
-
-            if currency0_in_db is None:
-                currency0_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=currency0,
-                )
-                session.add(currency0_in_db)
-                session.flush()
-            if currency1_in_db is None:
-                currency1_in_db = Erc20TokenTable(
-                    chain=exchange.chain_id,
-                    address=currency1,
-                )
-                session.add(currency1_in_db)
-                session.flush()
+            currency0_in_db = _get_or_create_token(session, exchange.chain_id, currency0)
+            currency1_in_db = _get_or_create_token(session, exchange.chain_id, currency1)
 
             fee, tick_spacing, hooks = abi_decode(
                 ["uint24", "int24", "address"],
@@ -2074,13 +1669,13 @@ def pool_update(chunk_size: int, to_block: str) -> None:
     Update liquidity pool information for activated exchanges.
     """
 
-    with db_session() as session, logging_redirect_tqdm(loggers=[logger]):  # noqa:PLR1702
+    with db_session() as session, logging_redirect_tqdm(loggers=[logger]):
         active_chains = set(
             session.scalars(select(ExchangeTable.chain_id).where(ExchangeTable.active)).all()
         )
 
         for chain_id in active_chains:
-            w3 = get_web3_from_config(chain_id)
+            w3 = get_web3_from_config(chain_id=chain_id)
 
             active_exchanges = session.scalars(
                 select(ExchangeTable).where(
@@ -2221,8 +1816,8 @@ def pool_update(chunk_size: int, to_block: str) -> None:
                             session=session,
                         )
 
-                # At this point, all exchanges have been updated and the invariant checks have passed,
-                # so stamp the update block and commit to the DB
+                # At this point, all exchanges have been updated and the invariant checks have
+                # passed, so stamp the update block and commit to the DB
                 for exchange in exchanges_to_update:
                     exchange.last_update_block = working_end_block
                 exchanges_to_update.clear()
