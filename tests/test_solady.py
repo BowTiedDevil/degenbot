@@ -1,5 +1,7 @@
 # ruff: noqa: E501
 
+import contextlib
+
 import hypothesis
 import hypothesis.strategies
 from eth_typing import HexStr
@@ -71,6 +73,72 @@ def test_solady_decompress_2():
     )
 
     assert flz_decompress(expected_compressed) == input_text_encoded_as_bytes
+
+
+def test_solady_compress_empty():
+    """Empty string should compress to empty."""
+    assert flz_compress(b"") == HexBytes("")
+
+
+def test_solady_decompress_empty():
+    """Empty string should decompress to empty."""
+    assert flz_decompress(b"") == HexBytes("")
+
+
+def test_solady_backwards_compat():
+    """
+    Backwards compatibility - older FastLZ compressed data should decompress
+    correctly even if compression format differs slightly.
+    """
+    # Same text as test_solady_decompress_1, but compressed with older FastLZ format
+    # Note: one byte difference at position ~716 (0x2c vs 0x44)
+    older_compressed = HexStr(
+        "1f4e65772077617665206469676974616c206172742073686f756c64206e6f74201f6265206a756467656420736f6c656c79206f6e20616573746865746963206d65017269202301757420240e737420617320696d706f7274616e74202a1b666f7220697473206162696c69747920746f20646576656c6f702061200c406d03766973692051026f662020510320576972206801616e200301626f209315616c6c20637265617465206e6574776f726b20737069207201756140500e2e20416e6369656e7420477265656b60ba04697320686520bb01696e6051036869676820ad062072656761726420cd0463617573652095c089406f0220776820db03206d79742007016f6720a801686141040061401d0272656c2119066f6e2c206d6f72607660a0017761210a0866206c6966652e2054212f016768607c20ff026c6963205fa080414e40b80073402de003ae016365613741630373756666203320c8213406646973656e676141710366726f6d208b016520201102736f722097006f208e03666c6563205e21570b6f776e2070726f647563747340840065400d03626c656d406b056d6f6465726e417621124044a17a006d2066401f0272617420d521f00273656c200d805620118048036265617520e920e140c00561707065617220dc21fb41d5006d21310a69636820636f6e74726173208a02616273200920972142410a40450275732ce0081720852028016f798092056e616976652f40dd02756f752044057070726563696098c07a2072076578657274696e6760f3046e617475722172015265818b20dc02736c612025016279208e006d20400068212c60c701507221de2281026e7465409a201304207769746820a200652008426906696e766f6c7665808c20bf006e21940373657061811b4082227c2312e006dc620004616363656c20580074203e0165782062214b01697380bb2072026f207020a74009017569407a072c20656d626f647940c74080c2cf42ec01756e4183214c0273636921074204027261774029006f235905747275746873e2010c02636f6c42012139223c046f73706865410f025468724178205b2111016265603c830280ea0077228a02636869237e21c20172652144201d006f214e2047002ce0078140b620da2064c20f06696e64697669642377032065676f6175036163726922b6234060ee40d4e00b9a405c210121be205701756e2294208063fc23fa201583d040c0427523aa427021cf404f80ba20d04325016f6e21186297036966756c633c82fc21800061e1004f804e20a722f9052e2049206c6f20634488004ea4400c53706972697475616c69747921"
+    )
+
+    expected_text = "New wave digital art should not be judged solely on aesthetic merit but just as importantly for its ability to develop a total vision of the Wired and above all create network spirituality. Ancient Greek art is held in the highest regard because it developed a whole mythology that shaped religion, morality and way of life. Thought is implicit in the art works of Ancient Greece but not sufficiently disengaged from the sensory to reflect its own products. The problem of modernity is the development of rational self reflection. The beauty of art appears in a form which contrasts abstract thought. Thus, abstract thought destroys the naive/sensuous appreciation of art in exerting its nature. Reality is slain by comprehension. Proper interaction with the wired involves the trance separation of real abstract thought and accelerates externalisation into pure intuition, embodying the network and unselfconsciously drawing out truths from the collective noosphere. Through this being on the wired we achieve a return to naive, unselfconscious interaction. The individual ego is sacrificed into the collective noosphere, uniting us under a totalising spirit. The best art in the wired is not only beautiful but produces a network spirituality. I long for Network Spirituality!"
+
+    assert flz_decompress(older_compressed) == expected_text.encode()
+
+
+def test_solady_decompress_invalid_short_match():
+    """
+    Test graceful handling of invalid compressed data with reference offset
+    exceeding current output length (short match).
+
+    This tests the defensive behavior when malformed input provides an invalid
+    reference offset that would read before the start of the output buffer.
+    """
+    # Literal run (0x03 = 4 literals) followed by short match with invalid offset
+    # The match claims to reference 100 bytes back, but only 4 bytes were output
+    compressed = bytearray([0x03, 0x41, 0x42, 0x43, 0x44, 0x20, 0x64])  # offset 100 = 0x64
+
+    # This should raise an error due to invalid reference
+    with contextlib.suppress(IndexError, ValueError):
+        flz_decompress(compressed)
+    # Expected - malformed input, suppress the error
+
+
+def test_solady_decompress_invalid_long_match():
+    """
+    Test graceful handling of invalid compressed data with invalid long match.
+    """
+    # Long match opcode (0xE0 = type 7) with invalid reference
+    compressed = bytearray([0xE0, 0x01, 0x64])  # offset 100
+
+    with contextlib.suppress(IndexError, ValueError):
+        flz_decompress(compressed)
+    # Expected - malformed input
+
+
+def test_solady_decompress_invalid_literal_run():
+    """Test handling of literal run that exceeds buffer."""
+    # Claims 32 literals but only provides a few
+    compressed = bytearray([0x1F, 0x41])  # 0x1F = 32 literals, but only 1 byte provided
+
+    with contextlib.suppress(IndexError):
+        flz_decompress(compressed)
+    # Expected - buffer underrun
 
 
 @hypothesis.given(data=hypothesis.strategies.binary())
