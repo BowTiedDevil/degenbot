@@ -3801,11 +3801,6 @@ def _process_standard_debt_burn_event(
         # This can occur in flash loan liquidations, protocol upgrades, or bad debt forgiveness
         # where the debt token is burned directly without going through Pool.repay()
         # See debug/aave/0013
-        logger.warning(
-            f"No matching REPAY/LIQUIDATION_CALL/DEFICIT_CREATED event found for debt burn "
-            f"in tx {tx_context.tx_hash.hex()}. User: {user.address}, Reserve: {reserve_address}. "
-            f"Processing debt burn using event data directly."
-        )
         # When no Pool event exists, the event_amount from the Burn event is already
         # the scaled amount
         scaled_amount = event_amount
