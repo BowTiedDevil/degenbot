@@ -782,3 +782,228 @@ class TestEdgeCases:
             check_users=[user2],
         )
         assert result2 is not None
+
+
+class TestDebtMintEventMatching:
+    """Test debt mint event matching patterns."""
+
+    def create_mock_tx_context(self, pool_events: list[LogReceipt]) -> MagicMock:
+        """Create a mock TransactionContext with pool events."""
+        tx_context = MagicMock()
+        tx_context.pool_events = pool_events
+        tx_context.matched_pool_events = {}
+        return tx_context
+
+    def test_standard_borrow_matches_with_user_address(self):
+        """Normal BORROW where onBehalfOf equals user.address."""
+        user_address = _decode_address(
+            HexBytes("0x0000000000000000000000001111111111111111111111111111111111111111")
+        )
+        reserve_address = _decode_address(
+            HexBytes("0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+        )
+
+        borrow_event = {
+            "topics": [
+                AaveV3Event.BORROW.value,
+                HexBytes(
+                    "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+                ),  # reserve
+                HexBytes(
+                    "0x0000000000000000000000001111111111111111111111111111111111111111"
+                ),  # onBehalfOf=user
+            ],
+            "logIndex": 100,
+            "data": HexBytes(
+                "0x0000000000000000000000000000000000000000000000000000000000000000"  # caller
+                "0000000000000000000000000000000000000000000000000000000005f5e100"  # amount=100M
+                "0000000000000000000000000000000000000000000000000000000000000002"  # interestRateMode=2
+                "0000000000000000000000000000000000000000000000000000000000000000"  # borrowRate
+            ),
+        }
+
+        tx_context = self.create_mock_tx_context([borrow_event])
+        matcher = EventMatcher(tx_context)
+
+        result = matcher.find_matching_pool_event(
+            event_type=ScaledTokenEventType.DEBT_MINT,
+            user_address=user_address,
+            reserve_address=reserve_address,
+        )
+
+        assert result is not None
+        assert result["pool_event"] == borrow_event
+        assert result["should_consume"] is True, "BORROW should be consumed"
+        assert result["extraction_data"]["raw_amount"] == 100_000_000
+        assert 100 in tx_context.matched_pool_events
+
+    def test_adapter_borrow_matches_with_caller_address(self):
+        """Adapter pattern where onBehalfOf is the adapter, not user."""
+        user_address = _decode_address(
+            HexBytes("0x0000000000000000000000001111111111111111111111111111111111111111")
+        )
+        adapter_address = _decode_address(
+            HexBytes("0x0000000000000000000000002222222222222222222222222222222222222222")
+        )
+        reserve_address = _decode_address(
+            HexBytes("0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+        )
+
+        # Borrow event has onBehalfOf=adapter (the caller), not user
+        borrow_event = {
+            "topics": [
+                AaveV3Event.BORROW.value,
+                HexBytes("0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+                HexBytes(
+                    "0x0000000000000000000000002222222222222222222222222222222222222222"
+                ),  # onBehalfOf=adapter
+            ],
+            "logIndex": 100,
+            "data": HexBytes(
+                "0x0000000000000000000000000000000000000000000000000000000000000000"
+                "0000000000000000000000000000000000000000000000000000000005f5e100"
+                "0000000000000000000000000000000000000000000000000000000000000002"
+                "0000000000000000000000000000000000000000000000000000000000000000"
+            ),
+        }
+
+        tx_context = self.create_mock_tx_context([borrow_event])
+        matcher = EventMatcher(tx_context)
+
+        # First try with user.address - should not match
+        result1 = matcher.find_matching_pool_event(
+            event_type=ScaledTokenEventType.DEBT_MINT,
+            user_address=user_address,
+            reserve_address=reserve_address,
+        )
+        assert result1 is None, "Should not match with user.address when onBehalfOf is adapter"
+
+        # Try with caller_address (adapter) - should match
+        result2 = matcher.find_matching_pool_event(
+            event_type=ScaledTokenEventType.DEBT_MINT,
+            user_address=user_address,
+            reserve_address=reserve_address,
+            check_users=[adapter_address],  # This enables adapter pattern
+        )
+
+        assert result2 is not None
+        assert result2["pool_event"] == borrow_event
+        assert result2["extraction_data"]["raw_amount"] == 100_000_000
+
+    def test_liquidation_debt_mint_matches_liquidation_call(self):
+        """Liquidation where liquidator borrows - matches LIQUIDATION_CALL."""
+        liquidator = _decode_address(
+            HexBytes("0x0000000000000000000000001111111111111111111111111111111111111111")
+        )
+        debt_reserve = _decode_address(
+            HexBytes("0x00000000000000000000000040d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f")
+        )
+
+        liquidation_event = {
+            "topics": [
+                AaveV3Event.LIQUIDATION_CALL.value,
+                HexBytes(
+                    "0x000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+                ),  # collateralAsset
+                HexBytes(
+                    "0x00000000000000000000000040d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f"
+                ),  # debtAsset
+                HexBytes(
+                    "0x0000000000000000000000001111111111111111111111111111111111111111"
+                ),  # user=liquidator
+            ],
+            "logIndex": 100,
+            "data": HexBytes(
+                "0000000000000000000000000000000000000000000000000000000000ad7dcb"  # debtToCover
+                "0000000000000000000000000000000000000000000000000000000000003a98"  # liquidatedCollateral
+                "000000000000000000000000e27bfd9d354e7e0f7c5ef2fea0cd9c3af3533a32"  # liquidator
+                "0000000000000000000000000000000000000000000000000000000000000000"  # receiveAToken
+            ),
+        }
+
+        tx_context = self.create_mock_tx_context([liquidation_event])
+        matcher = EventMatcher(tx_context)
+
+        result = matcher.find_matching_pool_event(
+            event_type=ScaledTokenEventType.DEBT_MINT,
+            user_address=liquidator,
+            reserve_address=debt_reserve,
+        )
+
+        assert result is not None
+        assert result["pool_event"] == liquidation_event
+        assert result["should_consume"] is False, "LIQUIDATION_CALL should not be consumed"
+        assert 100 not in tx_context.matched_pool_events
+        assert result["extraction_data"]["debt_to_cover"] == 11_369_931
+
+    def test_borrow_takes_priority_over_repay(self):
+        """If both BORROW and REPAY available, BORROW should match first."""
+        user_address = _decode_address(
+            HexBytes("0x0000000000000000000000001111111111111111111111111111111111111111")
+        )
+        reserve_address = _decode_address(
+            HexBytes("0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+        )
+
+        # Both events available - BORROW should be tried first
+        repay_event = {
+            "topics": [
+                AaveV3Event.REPAY.value,
+                HexBytes("0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+                HexBytes("0x0000000000000000000000001111111111111111111111111111111111111111"),
+            ],
+            "logIndex": 100,
+            "data": HexBytes(
+                "0000000000000000000000000000000000000000000000000000000005f5e100"
+                "0000000000000000000000000000000000000000000000000000000000000000"
+            ),
+        }
+
+        borrow_event = {
+            "topics": [
+                AaveV3Event.BORROW.value,
+                HexBytes("0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+                HexBytes("0x0000000000000000000000001111111111111111111111111111111111111111"),
+            ],
+            "logIndex": 101,
+            "data": HexBytes(
+                "0000000000000000000000000000000000000000000000000000000000000000"
+                "0000000000000000000000000000000000000000000000000000000005f5e100"
+                "0000000000000000000000000000000000000000000000000000000000000002"
+                "0000000000000000000000000000000000000000000000000000000000000000"
+            ),
+        }
+
+        tx_context = self.create_mock_tx_context([repay_event, borrow_event])
+        matcher = EventMatcher(tx_context)
+
+        result = matcher.find_matching_pool_event(
+            event_type=ScaledTokenEventType.DEBT_MINT,
+            user_address=user_address,
+            reserve_address=reserve_address,
+        )
+
+        assert result is not None
+        # BORROW is first in MatchConfig, so it should match
+        assert result["pool_event"] == borrow_event
+        assert result["extraction_data"]["raw_amount"] == 100_000_000
+
+    def test_no_match_returns_none(self):
+        """When no pool event matches, EventMatcher returns None (handler continues)."""
+        user_address = _decode_address(
+            HexBytes("0x0000000000000000000000001111111111111111111111111111111111111111")
+        )
+        reserve_address = _decode_address(
+            HexBytes("0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+        )
+
+        tx_context = self.create_mock_tx_context([])
+        matcher = EventMatcher(tx_context)
+
+        result = matcher.find_matching_pool_event(
+            event_type=ScaledTokenEventType.DEBT_MINT,
+            user_address=user_address,
+            reserve_address=reserve_address,
+        )
+
+        assert result is None

@@ -3419,12 +3419,13 @@ def _process_standard_debt_mint_event(
     event: LogReceipt,
     tx_context: TransactionContext,
 ) -> None:
-    """Process a standard debt (vToken) mint event (non-GHO)."""
+    """Process a standard debt (vToken) mint event (non-GHO) using EventMatcher.
 
-    # A SCALED_TOKEN_MINT for debt can be triggered by:
-    # - BORROW: onBehalfOf is usually the user, but when borrowed via an adapter,
-    #   onBehalfOf can be the adapter (caller)
-    # - REPAY: interest accrues before repayment, minting debt tokens first
+    Uses EventMatcher to find matching Pool events (BORROW, REPAY, or LIQUIDATION_CALL)
+    and extracts the appropriate scaled amount for BORROW operations.
+
+    See debug/aave/ for event matching patterns and consumption rules.
+    """
     reserve_address = get_checksum_address(debt_asset.underlying_token.address)
 
     scaled_amount: int | None = None
@@ -3432,43 +3433,24 @@ def _process_standard_debt_mint_event(
     # Skip verification for pure interest accrual (value == balanceIncrease)
     # These mints don't have a corresponding Pool event
     if event_amount != balance_increase:
-        # Try with user.address first (most common case - BORROW)
-        pool_event: LogReceipt | None = None
-
-        # Try BORROW first with user.address, then caller_address, then REPAY
-        for expected_type, check_user in [
-            (AaveV3Event.BORROW.value, user.address),
-            (AaveV3Event.BORROW.value, caller_address),
-            (AaveV3Event.REPAY.value, user.address),
-        ]:
-            for pool_event_candidate in tx_context.pool_events:
-                # Skip pool events that have already been matched
-                if tx_context.matched_pool_events.get(pool_event_candidate["logIndex"], False):
-                    continue
-                    if _matches_pool_event(
-                        pool_event_candidate, expected_type, check_user, reserve_address
-                    ):
-                        pool_event = pool_event_candidate
-                        # Only mark as consumed if NOT a LIQUIDATION_CALL or REPAY event
-                        # LIQUIDATION_CALL events should match multiple operations in liquidations
-                        # REPAY events should match debt burns (for repay with aTokens)
-                        event_topic = pool_event_candidate["topics"][0]
-                        if event_topic not in {
-                            AaveV3Event.LIQUIDATION_CALL.value,
-                            AaveV3Event.REPAY.value,
-                        }:
-                            tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
-                        break
-            if pool_event is not None:
-                break
+        # Use EventMatcher to find matching pool event
+        # EventMatcher handles consumption based on event type:
+        # - BORROW: consumed
+        # - LIQUIDATION_CALL/REPAY: not consumed (reusable)
+        matcher = EventMatcher(tx_context)
+        result = matcher.find_matching_pool_event(
+            event_type=ScaledTokenEventType.DEBT_MINT,
+            user_address=user.address,
+            reserve_address=reserve_address,
+            check_users=[caller_address],  # For adapter pattern (onBehalfOf=adapter)
+        )
 
         # For BORROW operations, calculate scaled_amount from the borrow amount
         # This matches the Pool's calculation: amount.getVTokenMintScaledAmount(index)
-        if pool_event is not None and pool_event["topics"][0] == AaveV3Event.BORROW.value:
-            (_, borrow_amount, _, _) = eth_abi.abi.decode(
-                types=["address", "uint256", "uint8", "uint256"],
-                data=pool_event["data"],
-            )
+        # If no pool event found (e.g., interest accrual patterns), scaled_amount remains None
+        # and the processor will calculate it from event data
+        if result is not None and result["pool_event"]["topics"][0] == AaveV3Event.BORROW.value:
+            borrow_amount = result["extraction_data"]["raw_amount"]
             pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
                 debt_asset.v_token_revision
             )
