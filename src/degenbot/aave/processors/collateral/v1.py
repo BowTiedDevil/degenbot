@@ -74,11 +74,11 @@ class CollateralV1Processor(CollateralTokenProcessor):
                 )
             is_repay = False
         else:
-            # Pure interest accrual: value == balance_increase
-            # Emitted when interest accrues without a deposit (e.g., before transfer).
-            # The user's scaled balance doesn't change - only the index updates.
-            # The interest tokens are minted via ERC20 Transfer, not via this Mint event.
-            balance_delta = 0
+            # value == balance_increase: deposit amount equals accrued interest, OR
+            # pure interest accrual without a deposit (e.g., before transfer).
+            # If scaled_amount is provided from a matched SUPPLY event, it's a deposit.
+            # Otherwise, it's pure interest accrual where only the index updates.
+            balance_delta = event_data.scaled_amount if event_data.scaled_amount is not None else 0
             is_repay = False
 
         return MintResult(

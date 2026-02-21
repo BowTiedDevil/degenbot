@@ -283,7 +283,8 @@ class EventMatcher:
         """Mark a pool event as consumed."""
         self.tx_context.matched_pool_events[pool_event["logIndex"]] = True
 
-    def _should_consume(self, pool_event: LogReceipt, config: MatchConfig) -> bool:
+    @staticmethod
+    def _should_consume(pool_event: LogReceipt, config: MatchConfig) -> bool:
         """Determine if a matched pool event should be consumed.
 
         Args:
@@ -303,8 +304,8 @@ class EventMatcher:
             return True
         return True
 
+    @staticmethod
     def _matches_pool_event(
-        self,
         pool_event: LogReceipt,
         expected_type: AaveV3Event,
         user_address: ChecksumAddress,
@@ -373,7 +374,11 @@ class EventMatcher:
                 return event_user == user_address and event_reserve == reserve_address
 
         elif expected_type == AaveV3Event.SUPPLY:
-            # SUPPLY: topics[1]=reserve, topics[2]=onBehalfOf
+            # SUPPLY: topics[1]=reserve, topics[2]=onBehalfOf, topics[3]=referralCode
+            # Aave V3 Supply event format (4 topics):
+            #   Supply(address indexed reserve, address indexed onBehalfOf,
+            #          uint16 indexed referralCode, address caller, uint256 amount)
+            # topics[3] is referralCode (uint16), NOT an address - do not decode as address!
             event_reserve = _decode_address(pool_event["topics"][1])
             event_on_behalf_of = _decode_address(pool_event["topics"][2])
             return event_on_behalf_of == user_address and event_reserve == reserve_address
@@ -414,6 +419,7 @@ class EventMatcher:
         reserve_address: ChecksumAddress,
         *,
         check_users: list[ChecksumAddress] | None = None,
+        max_log_index: int | None = None,
     ) -> EventMatchResult | None:
         """Find a matching pool event for a scaled token event.
 
@@ -426,6 +432,9 @@ class EventMatcher:
             user_address: Primary user address to match
             reserve_address: Reserve/token address to match
             check_users: Optional additional user addresses to try (e.g., caller_address)
+            max_log_index: Optional maximum logIndex for pool events. Pool events with
+                logIndex > max_log_index will be skipped. This prevents matching a
+                scaled token event to a pool event that occurs later in the transaction.
 
         Returns:
             EventMatchResult with pool_event, should_consume flag, and extraction_data,
@@ -455,9 +464,19 @@ class EventMatcher:
                 events_of_type = event_index.get(expected_type.value, [])
 
                 for pool_event in events_of_type:
+                    # Skip events that occur after the scaled token event
+                    if max_log_index is not None and pool_event["logIndex"] > max_log_index:
+                        continue
+
                     if self._is_consumed(pool_event):
                         logger.debug(
                             f"Skipping consumed event at logIndex {pool_event['logIndex']}"
+                        )
+                        continue
+
+                    if self._is_consumed(pool_event):
+                        print(
+                            f"DEBUG: Skipping - event already consumed at logIndex {pool_event['logIndex']}"
                         )
                         continue
 

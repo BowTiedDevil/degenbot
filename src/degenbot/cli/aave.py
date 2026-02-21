@@ -144,6 +144,13 @@ class TransactionContext:
     # by BalanceTransfer events representing the same value (e.g., flash loans).
     matched_mint_to_transfer: dict[int, bool] = field(default_factory=dict)
 
+    # Track Burn events that should be skipped because they correspond to the immediate
+    # burn pattern from a BalanceTransfer (e.g., ParaSwap adapter receiving and immediately
+    # burning aTokens). Key: Burn event logIndex, Value: True if should be skipped.
+    # This prevents negative balances when the recipient never actually held the tokens.
+    # ref: Bug #0020
+    skipped_burn_events: dict[int, bool] = field(default_factory=dict)
+
     def get_events_by_topic(self, topic: HexBytes) -> list[LogReceipt]:
         """Get all events in this transaction with the given topic."""
         return [e for e in self.events if e["topics"][0] == topic]
@@ -151,6 +158,10 @@ class TransactionContext:
     def get_prior_events(self, event: LogReceipt) -> list[LogReceipt]:
         """Get all events in this transaction that occurred before the given event."""
         return [e for e in self.events if e["logIndex"] < event["logIndex"]]
+
+    def get_subsequent_events(self, event: LogReceipt) -> list[LogReceipt]:
+        """Get all events in this transaction that occurred after the given event."""
+        return [e for e in self.events if e["logIndex"] > event["logIndex"]]
 
     def get_effective_discount_at_log_index(
         self,
@@ -2993,12 +3004,12 @@ def _process_collateral_mint_event(
     Uses EventMatcher to find matching Pool events (SUPPLY, WITHDRAW, or LIQUIDATION_CALL)
     with special handling for:
     - Treasury mints (caller is Pool contract) - skip matching
-    - Interest accrual (value == balance_increase) - skip matching
     - Match order based on value vs balance_increase:
-      * value > balance_increase: Try SUPPLY first (deposit)
+      * value >= balance_increase: Try SUPPLY first (deposit)
       * balance_increase > value: Try WITHDRAW first (withdraw with interest)
 
     See debug/aave/0002 for value vs balance_increase matching logic.
+    See debug/aave/0019 for value == balance_increase deposit case.
     """
     reserve_address = get_checksum_address(collateral_asset.underlying_token.address)
 
@@ -3006,9 +3017,10 @@ def _process_collateral_mint_event(
     matched_pool_event: LogReceipt | None = None
     extraction_data: dict[str, int] = {}
 
-    # Skip verification for pure interest accrual (value == balance_increase)
-    # These mints don't have a corresponding Pool event
-    if event_amount != balance_increase:
+    # Always attempt to match pool events, even when value == balance_increase.
+    # This handles the edge case where deposit amount equals accrued interest.
+    # See debug/aave/0019 for details.
+    if True:  # Always match, changed from: event_amount != balance_increase
         # Check if this is a mintToTreasury call (caller is the Pool contract itself)
         # The Pool contract emits MintedToTreasury events, not SUPPLY/WITHDRAW
         pool_contract = _get_contract(market=market, contract_name="POOL")
@@ -3030,31 +3042,37 @@ def _process_collateral_mint_event(
             matcher = EventMatcher(tx_context)
 
             # Determine which event type to try first based on value vs balance_increase
-            if event_amount > balance_increase:
+            # Use >= to handle the edge case where deposit amount equals accrued interest
+            if event_amount >= balance_increase:
                 # Standard deposit - SUPPLY is most likely
                 # Try: SUPPLY -> WITHDRAW -> LIQUIDATION_CALL (per MatchConfig order)
+                # Note: SUPPLY events come AFTER Mint events in transaction logs, so we
+                # don't restrict by max_log_index for deposits. The SUPPLY event confirms
+                # the deposit operation that created the minted tokens.
                 result = matcher.find_matching_pool_event(
                     event_type=ScaledTokenEventType.COLLATERAL_MINT,
                     user_address=user.address,
                     reserve_address=reserve_address,
                     check_users=[caller_address],
+                    # No max_log_index - SUPPLY comes AFTER Mint event
                 )
             else:
                 # balance_increase > value - interest accrual during withdraw
                 # Try WITHDRAW first since this is likely a withdrawal operation
-                # We need custom match order, so we'll do two-phase matching
+                # WITHDRAW events come BEFORE Burn events, so restrict by max_log_index
                 result = matcher.find_matching_pool_event(
                     event_type=ScaledTokenEventType.COLLATERAL_MINT,
                     user_address=caller_address,  # Try caller first for withdraw
                     reserve_address=reserve_address,
                     check_users=[user.address],
+                    max_log_index=event["logIndex"],
                 )
 
             if result is not None:
                 matched_pool_event = result["pool_event"]
                 extraction_data = result["extraction_data"]
-            else:
-                # No matching Pool event found - raise ValueError to allow fallback to debt mint
+            elif event_amount > balance_increase:
+                # No matching Pool event found for a deposit - this is an error
                 # The caller catches ValueError and tries debt processing if available
                 available = [e["topics"][0].hex()[:10] for e in tx_context.pool_events]
                 msg = (
@@ -3063,6 +3081,9 @@ def _process_collateral_mint_event(
                     f"Available: {available}"
                 )
                 raise ValueError(msg)
+            # If event_amount <= balance_increase and no match found, proceed with
+            # scaled_amount=None. This handles edge cases like value == balance_increase
+            # deposits via routers. See debug/aave/0019
 
     # For SUPPLY events, calculate scaled amount from raw underlying amount
     # to avoid rounding errors from reverse-calculating from event.value
@@ -3077,10 +3098,21 @@ def _process_collateral_mint_event(
         pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
             collateral_asset.a_token_revision
         )
-        scaled_amount = pool_processor.calculate_collateral_mint_scaled_amount(
+        calculated_scaled_amount = pool_processor.calculate_collateral_mint_scaled_amount(
             amount=raw_amount,
             liquidity_index=index,
         )
+        # When value == balance_increase, validate that the calculated scaled amount
+        # equals the event value. If not, this SUPPLY event doesn't match this Mint
+        # event (e.g., the Mint is pure interest accrual before a transfer, not a deposit).
+        # This prevents incorrectly matching unrelated SUPPLY events.
+        # ref: Bug #0024
+        if event_amount == balance_increase and calculated_scaled_amount != event_amount:
+            # This is not a matching SUPPLY event - it's pure interest accrual
+            matched_pool_event = None
+            scaled_amount = None
+        else:
+            scaled_amount = calculated_scaled_amount
         if VerboseConfig.is_verbose(user_address=user.address):
             logger.info(
                 f"SUPPLY: raw_amount={raw_amount}, index={index}, scaled_amount={scaled_amount}"
@@ -3157,6 +3189,7 @@ def _process_gho_debt_mint_event(
             user_address=user.address,
             reserve_address=reserve_address,
             check_users=[caller_address],  # For adapter pattern (onBehalfOf=adapter)
+            max_log_index=context.event["logIndex"],
         )
 
         # For BORROW operations, calculate scaled_amount from the borrow amount
@@ -3345,6 +3378,7 @@ def _process_standard_debt_mint_event(
             user_address=user.address,
             reserve_address=reserve_address,
             check_users=[caller_address],  # For adapter pattern (onBehalfOf=adapter)
+            max_log_index=event["logIndex"],
         )
 
         # For BORROW operations, calculate scaled_amount from the borrow amount
@@ -3554,6 +3588,7 @@ def _process_collateral_burn_event(
         event_type=ScaledTokenEventType.COLLATERAL_BURN,
         user_address=user.address,
         reserve_address=reserve_address,
+        max_log_index=event["logIndex"],
     )
 
     # Extract scaled_amount based on matched pool event type
@@ -3659,6 +3694,7 @@ def _process_gho_debt_burn_event(
         event_type=ScaledTokenEventType.GHO_DEBT_BURN,
         user_address=user.address,
         reserve_address=reserve_address,
+        max_log_index=context.event["logIndex"],
     )
 
     if result is None:
@@ -3797,6 +3833,7 @@ def _process_standard_debt_burn_event(
         event_type=ScaledTokenEventType.DEBT_BURN,
         user_address=user.address,
         reserve_address=reserve_address,
+        max_log_index=event["logIndex"],
     )
 
     if result is None:
@@ -3888,6 +3925,14 @@ def _process_scaled_token_burn_event(context: EventHandlerContext) -> None:
     );
     ```
     """
+
+    # Skip burn events that were marked for skipping by BalanceTransfer processing
+    # (e.g., when a contract receives aTokens via BalanceTransfer and immediately burns them)
+    # ref: Bug #0020
+    if context.tx_context is not None and context.tx_context.skipped_burn_events.get(
+        context.event["logIndex"], False
+    ):
+        return
 
     from_address = _decode_address(context.event["topics"][1])
     target_address = _decode_address(context.event["topics"][2])
@@ -4076,8 +4121,44 @@ def _process_scaled_token_balance_transfer_event(
                     context.tx_context.matched_mint_to_transfer[prior_event["logIndex"]] = True
                     break
 
+    # Check if this is a BalanceTransfer to a contract that immediately burns the tokens
+    # (e.g., ParaSwap adapters). In this case, the tokens actually leave the FROM user's
+    # position and are burned by the recipient. The FROM user's balance SHOULD be reduced
+    # because the tokens are transferred away. The TO user's balance should NOT be increased
+    # because they immediately burn the tokens and don't actually hold them.
+    # ref: TX 0x4a88a8c6a43b5df2ee59ebcf266225fbc5b876f202009422f0f9d05cc4915f35
+    skip_from_user_balance_update = False
+    if context.tx_context is not None:
+        # Only check the next few events for immediate burns, not all subsequent events
+        # This prevents incorrectly skipping balance updates when the recipient burns
+        # their own tokens later in the transaction (e.g., for withdrawal).
+        subsequent_events = context.tx_context.get_subsequent_events(context.event)
+        # Check only up to 5 subsequent events for immediate burn
+        for subsequent_event in subsequent_events[:5]:
+            subsequent_topic = subsequent_event["topics"][0]
+            if (
+                subsequent_topic == AaveV3Event.SCALED_TOKEN_BURN.value
+                and _decode_address(subsequent_event["topics"][1]) == to_address
+            ):
+                # The recipient burns the tokens immediately after receiving them
+                # Only skip if the burn amount equals the transfer amount (indicating
+                # immediate burn of received tokens, not a withdrawal of own tokens)
+                # Burn event data: (value, balanceIncrease, index)
+                burn_value, _, _ = _decode_uint_values(event=subsequent_event, num_values=3)
+                if burn_value == event_amount:
+                    # The FROM user's balance SHOULD be reduced because the tokens actually
+                    # leave their position (the recipient burns them). Only skip the TO
+                    # user's balance update since they don't actually hold the tokens.
+                    # ref: Bug #0020
+                    skip_to_user_balance_update = True
+                    # Mark the burn event to be skipped so it doesn't process later
+                    # and cause a negative balance
+                    context.tx_context.skipped_burn_events[subsequent_event["logIndex"]] = True
+                    break
+
     from_user_starting_amount = from_user_position.balance
-    from_user_position.balance -= event_amount
+    if not skip_from_user_balance_update:
+        from_user_position.balance -= event_amount
 
     to_user_starting_amount = to_user_position.balance
     if not skip_to_user_balance_update:

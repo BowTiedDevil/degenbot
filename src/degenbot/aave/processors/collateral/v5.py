@@ -154,11 +154,11 @@ class CollateralV5Processor(CollateralV1Processor):
                 )
             is_repay = False
         else:
-            # Pure interest accrual: value == balance_increase
-            # This represents interest being added to total supply, but the user's
-            # scaled balance doesn't change - only the index updates.
-            # The balance_delta should be 0, not the scaled amount.
-            balance_delta = 0
+            # value == balance_increase: deposit amount equals accrued interest, OR
+            # pure interest accrual without a deposit (e.g., before transfer).
+            # If scaled_delta is provided from a matched SUPPLY event, it's a deposit.
+            # Otherwise, it's pure interest accrual where only the index updates.
+            balance_delta = scaled_delta if scaled_delta is not None else 0
             is_repay = False
 
         return MintResult(
