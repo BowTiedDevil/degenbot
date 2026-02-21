@@ -1108,3 +1108,63 @@ class TestCollateralMintEventMatching:
         assert result["should_consume"] is False, "LIQUIDATION_CALL should not be consumed"
         assert 100 not in tx_context.matched_pool_events
         assert result["extraction_data"]["liquidated_collateral"] == 15_000
+
+    def test_repay_with_atokens_excess_collateral_mint_matches_repay(self):
+        """repayWithATokens with excess: collateral mint matches REPAY event.
+
+        When a user repays with aTokens and over-pays (or due to interest accrual),
+        excess aTokens are minted back to the user. This collateral mint must match
+        the REPAY event, which is also shared with the debt burn.
+
+        Transaction pattern (0x31dff401... from debug/aave/0015):
+        - User calls repayWithATokens() with aToken amount > actual debt
+        - VariableDebtToken Burn event (debt repayment)
+        - AToken Mint event (excess aTokens returned) - COLLATERAL_MINT
+        - Pool Repay event (shared between both operations)
+
+        See debug/aave/0015 for transaction details.
+        """
+        user = _decode_address(
+            HexBytes("0x0000000000000000000000008899fAEd2e1b0e9b7F41E08b79bE71eC3d1f9EC1")
+        )
+        weth_reserve = _decode_address(
+            HexBytes("0x000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+        )
+
+        # Single REPAY event shared between debt burn and collateral mint
+        # repayWithATokens() with excess aTokens returned
+        repay_event = {
+            "topics": [
+                AaveV3Event.REPAY.value,
+                HexBytes(
+                    "0x000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+                ),  # reserve=WETH
+                HexBytes(
+                    "0x0000000000000000000000008899fAEd2e1b0e9b7F41E08b79bE71eC3d1f9EC1"
+                ),  # user
+            ],
+            "logIndex": 55,
+            "data": HexBytes(
+                "0x000000000000000000000000000000000000000000000000000006b22a949618"  # amount=7,362,288,326,168
+                "0000000000000000000000000000000000000000000000000000000000000001"  # useATokens=True
+            ),
+        }
+
+        tx_context = self.create_mock_tx_context([repay_event])
+        matcher = EventMatcher(tx_context)
+
+        # Collateral mint should match the REPAY event
+        result = matcher.find_matching_pool_event(
+            event_type=ScaledTokenEventType.COLLATERAL_MINT,
+            user_address=user,
+            reserve_address=weth_reserve,
+        )
+
+        assert result is not None, "Collateral mint should match REPAY event"
+        assert result["pool_event"] == repay_event
+        assert result["should_consume"] is False, (
+            "REPAY should not be consumed by collateral mint (shared with debt burn)"
+        )
+        assert 55 not in tx_context.matched_pool_events
+        assert result["extraction_data"]["raw_amount"] == 7_362_288_326_168
+        assert result["extraction_data"]["use_a_tokens"] == 1

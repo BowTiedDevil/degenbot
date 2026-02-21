@@ -19,6 +19,7 @@ References:
 - Bug #0012b: Collateral Operations Consume LIQUIDATION_CALL Events
 - Bug #0013: Debt Burn Without Matching Pool Event
 - Bug #0014: BalanceTransfer Skipped After Pure Interest Mint
+- Bug #0015: Collateral Mint Events Miss REPAY Matching for repayWithATokens
 """
 
 from collections.abc import Callable
@@ -165,15 +166,18 @@ class EventMatcher:
     # See debug/aave/ for bug reports justifying each configuration
     CONFIGS: ClassVar[dict[ScaledTokenEventType, MatchConfig]] = {
         # Collateral Mint: Can match SUPPLY (deposit), WITHDRAW (interest before withdraw),
-        # or LIQUIDATION_CALL (liquidator receiving collateral)
+        # LIQUIDATION_CALL (liquidator receiving collateral), or REPAY (excess aTokens returned
+        # during repayWithATokens)
         # SUPPLY/WITHDRAW: consumed (single-purpose)
         # LIQUIDATION_CALL: never consumed (shared across liquidation operations)
-        # See debug/aave/0011
+        # REPAY: never consumed (may be shared with debt burns for repay-with-aTokens)
+        # See debug/aave/0011, 0015
         ScaledTokenEventType.COLLATERAL_MINT: MatchConfig(
             target_event=ScaledTokenEventType.COLLATERAL_MINT,
             pool_event_types=[
                 AaveV3Event.SUPPLY,
                 AaveV3Event.WITHDRAW,
+                AaveV3Event.REPAY,
                 AaveV3Event.LIQUIDATION_CALL,
             ],
             consumption_policy=EventConsumptionPolicy.CONDITIONAL,
@@ -581,15 +585,20 @@ def _should_consume_collateral_mint_pool_event(pool_event: LogReceipt) -> bool:
     Consumption rules:
     - SUPPLY: Always consumed (single-purpose event)
     - WITHDRAW: Always consumed (single-purpose event)
+    - REPAY: Never consumed (shared with debt burns for repay-with-aTokens)
     - LIQUIDATION_CALL: Never consumed (shared across liquidation operations)
 
     See debug/aave/0011 for LIQUIDATION_CALL matching in collateral mints.
+    See debug/aave/0015 for REPAY matching in repayWithATokens.
     """
     event_topic = pool_event["topics"][0]
 
-    # LIQUIDATION_CALL is never consumed because it must be available
-    # to match multiple operations in liquidation transactions
-    if event_topic == AaveV3Event.LIQUIDATION_CALL.value:
+    # LIQUIDATION_CALL and REPAY are never consumed because they must be available
+    # to match multiple operations (liquidations or repay-with-aTokens transactions)
+    if event_topic in {
+        AaveV3Event.LIQUIDATION_CALL.value,
+        AaveV3Event.REPAY.value,
+    }:
         return False
 
     # SUPPLY and WITHDRAW are consumable
