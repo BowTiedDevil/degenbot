@@ -1,6 +1,6 @@
 //! Error types for tick math calculations.
 
-use pyo3::{PyErr, exceptions::PyValueError};
+use pyo3::{exceptions::PyValueError, PyErr};
 
 /// Errors that can occur during tick math calculations.
 #[derive(Debug, thiserror::Error)]
