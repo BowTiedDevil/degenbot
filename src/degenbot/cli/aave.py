@@ -4212,10 +4212,11 @@ def _process_scaled_token_balance_transfer_event(
     if event_amount == 0:
         return
 
-    # Check if this BalanceTransfer TO user matches a preceding Mint event
-    # with pure interest accrual (value == balanceIncrease). This happens in
-    # flash loan scenarios where interest is minted and then transferred.
-    # In such cases, the Mint already added the scaled amount, so we should
+    # Check if this BalanceTransfer TO user matches a preceding Mint event from
+    # an actual deposit (value != balanceIncrease). When value == balanceIncrease,
+    # it's pure interest accrual and the Mint returns balance_delta=0, so the
+    # BalanceTransfer must still be processed. When value != balanceIncrease, the
+    # Mint is from a SUPPLY and already added the scaled amount, so we should
     # NOT add the raw amount again via BalanceTransfer.
     skip_to_user_balance_update = False
     if context.tx_context is not None:
@@ -4229,7 +4230,7 @@ def _process_scaled_token_balance_transfer_event(
                 # Mint event: topics[2] = onBehalfOf (recipient)
                 prior_on_behalf_of = _decode_address(prior_event["topics"][2])
                 if (
-                    prior_value == prior_balance_increase  # Pure interest accrual
+                    prior_value != prior_balance_increase  # Not pure interest (actual deposit)
                     and prior_value == event_amount  # Same value as BalanceTransfer
                     and prior_index == index  # Same index
                     and prior_on_behalf_of
