@@ -3070,22 +3070,27 @@ def _process_collateral_mint_event(
     caller_address: ChecksumAddress,
     tx_context: TransactionContext,
 ) -> None:
-    """Process a collateral (aToken) mint event."""
+    """Process a collateral (aToken) mint event using EventMatcher.
 
-    # A SCALED_TOKEN_MINT can be triggered by:
-    # - SUPPLY: user supplies collateral, onBehalfOf = user
-    # - WITHDRAW: user withdraws, interest is minted first, caller = withdraw initiator
-    # - REPAY: repayWithATokens accrues interest first, then repays with aTokens
-    # - Interest accrual: value == balanceIncrease (no Pool event)
-    # - mintToTreasury: Pool contract mints accrued fees to treasury (caller = Pool)
+    Uses EventMatcher to find matching Pool events (SUPPLY, WITHDRAW, or LIQUIDATION_CALL)
+    with special handling for:
+    - Treasury mints (caller is Pool contract) - skip matching
+    - Interest accrual (value == balance_increase) - skip matching
+    - Match order based on value vs balance_increase:
+      * value > balance_increase: Try SUPPLY first (deposit)
+      * balance_increase > value: Try WITHDRAW first (withdraw with interest)
+
+    See debug/aave/0002 for value vs balance_increase matching logic.
+    """
     reserve_address = get_checksum_address(collateral_asset.underlying_token.address)
 
     # Track matched pool event and calculated scaled delta
     matched_pool_event: LogReceipt | None = None
+    extraction_data: dict[str, int] = {}
 
-    # Skip verification for pure interest accrual (value == balanceIncrease)
+    # Skip verification for pure interest accrual (value == balance_increase)
     # These mints don't have a corresponding Pool event
-    if event_amount != balance_increase:  # noqa:PLR1702
+    if event_amount != balance_increase:
         # Check if this is a mintToTreasury call (caller is the Pool contract itself)
         # The Pool contract emits MintedToTreasury events, not SUPPLY/WITHDRAW
         pool_contract = _get_contract(market=market, contract_name="POOL")
@@ -3093,73 +3098,64 @@ def _process_collateral_mint_event(
             # Skip verification for treasury mints - they have no SUPPLY/WITHDRAW event
             pass
         else:
-            # Use pre-fetched pool events from transaction context
-            # The matching logic depends on the relationship between value and balance_increase:
+            # Use EventMatcher to find matching pool event
+            # EventMatcher handles consumption based on event type:
+            # - SUPPLY/WITHDRAW: consumed
+            # - LIQUIDATION_CALL: not consumed (reusable)
+            #
+            # Match order depends on value vs balance_increase (Bug #0002):
             # - value > balance_increase: SUPPLY (user deposit)
-            # - balance_increase > value: WITHDRAW (interest accrual before withdraw)
-            # - value == balance_increase: skip (pure interest accrual)
-            found = False
+            # - balance_increase > value: WITHDRAW (interest before withdraw)
+            #
+            # Note: REPAY is intentionally NOT matched by collateral mints (Bug #0002)
+            # REPAY events should only match collateral BURN events.
+            matcher = EventMatcher(tx_context)
 
-            # Determine which event type to match based on value vs balance_increase
+            # Determine which event type to try first based on value vs balance_increase
             if event_amount > balance_increase:
-                # Standard deposit - look for SUPPLY first
-                # Note: REPAY is intentionally NOT included here because REPAY events
-                # should only match collateral BURN events (for repay with aTokens),
-                # not collateral MINT events. Including REPAY would cause it to be
-                # consumed by mints, leaving burns without a matching event.
-                match_sequence = [
-                    (AaveV3Event.SUPPLY.value, user.address),
-                    (AaveV3Event.WITHDRAW.value, caller_address),
-                ]
+                # Standard deposit - SUPPLY is most likely
+                # Try: SUPPLY -> WITHDRAW -> LIQUIDATION_CALL (per MatchConfig order)
+                result = matcher.find_matching_pool_event(
+                    event_type=ScaledTokenEventType.COLLATERAL_MINT,
+                    user_address=user.address,
+                    reserve_address=reserve_address,
+                    check_users=[caller_address],
+                )
             else:
                 # balance_increase > value - interest accrual during withdraw
-                # Look for WITHDRAW first since this is a withdrawal operation
-                match_sequence = [
-                    (AaveV3Event.WITHDRAW.value, caller_address),
-                    (AaveV3Event.SUPPLY.value, user.address),
-                ]
+                # Try WITHDRAW first since this is likely a withdrawal operation
+                # We need custom match order, so we'll do two-phase matching
+                result = matcher.find_matching_pool_event(
+                    event_type=ScaledTokenEventType.COLLATERAL_MINT,
+                    user_address=caller_address,  # Try caller first for withdraw
+                    reserve_address=reserve_address,
+                    check_users=[user.address],
+                )
 
-            for expected_type, check_user in match_sequence:
-                for pool_event in tx_context.pool_events:
-                    # Skip pool events that have already been matched to other Mint/Burn events
-                    if tx_context.matched_pool_events.get(pool_event["logIndex"], False):
-                        continue
-                    if _matches_pool_event(pool_event, expected_type, check_user, reserve_address):
-                        found = True
-                        matched_pool_event = pool_event
-                        # Only mark as consumed if NOT a LIQUIDATION_CALL event
-                        # LIQUIDATION_CALL events should match both debt and collateral operations
-                        if pool_event["topics"][0] != AaveV3Event.LIQUIDATION_CALL.value:
-                            tx_context.matched_pool_events[pool_event["logIndex"]] = True
-                        break
-                if found:
-                    break
-
-            if not found:
-                # No matching Pool event found - this is an error
+            if result is not None:
+                matched_pool_event = result["pool_event"]
+                extraction_data = result["extraction_data"]
+            else:
+                # No matching Pool event found - raise ValueError to allow fallback to debt mint
+                # The caller catches ValueError and tries debt processing if available
                 available = [e["topics"][0].hex()[:10] for e in tx_context.pool_events]
                 msg = (
                     f"No matching Pool event for collateral mint in tx {tx_context.tx_hash.hex()}. "
                     f"User: {user.address}, Reserve: {reserve_address}. "
                     f"Available: {available}"
                 )
-                raise AssertionError(msg)
+                raise ValueError(msg)
 
     # For SUPPLY events, calculate scaled amount from raw underlying amount
     # to avoid rounding errors from reverse-calculating from event.value
+    # EventMatcher extracts this data automatically
     scaled_amount: int | None = None
     if (
         matched_pool_event is not None
         and matched_pool_event["topics"][0] == AaveV3Event.SUPPLY.value
     ):
-        # SUPPLY event data: (address caller, uint256 amount)
-        # Note: reserve, onBehalfOf are indexed and in topics
-        (_, raw_amount) = eth_abi.abi.decode(
-            types=["address", "uint256"],
-            data=matched_pool_event["data"],
-        )
-        # Calculate scaled amount using PoolProcessor
-        # This matches the contract's calculation in getATokenMintScaledAmount
+        # Use extracted raw_amount from EventMatcher
+        raw_amount = extraction_data["raw_amount"]
         pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
             collateral_asset.a_token_revision
         )
@@ -3559,7 +3555,7 @@ def _process_scaled_token_mint_event(context: EventHandlerContext) -> None:
                 caller_address=caller_address,
                 tx_context=context.tx_context,
             )
-        except ValueError:
+        except (ValueError, AssertionError):
             # If collateral verification fails and we have a debt asset, try that
             if debt_asset is not None:
                 if token_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
@@ -4523,7 +4519,9 @@ def update_aave_market(
     3. User Event Processing: Process transactions with assertions that classifying events exist
     """
 
-    logger.info(f"Updating market {market.id}: block range {start_block}-{end_block}")
+    logger.info(
+        f"Updating market {market.id}: chain {market.chain_id}, block range {start_block:,} - {end_block:,}"
+    )
 
     # Phase 1
     for event in _fetch_address_provider_events(

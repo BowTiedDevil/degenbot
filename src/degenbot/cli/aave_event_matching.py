@@ -33,6 +33,7 @@ from web3.types import LogReceipt
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
+from degenbot.logging import logger
 
 
 class TransactionContext(Protocol):
@@ -99,9 +100,9 @@ class ScaledTokenEventType(Enum):
 class AaveV3Event(Enum):
     """Aave V3 Pool event types."""
 
-    SUPPLY = HexBytes("0x2b6273e6f0fa15f64ef78aa1694d6f7ae38c189c7171f23a017b33b7e999d8ba")
+    SUPPLY = HexBytes("0x2b627736bca15cd5381dcf80b0bf11fd197d01a037c52b927a881a10fb73ba61")
     WITHDRAW = HexBytes("0x3115d1449a7b732c986cba18244e897a450f61e1bb8d589cd2e69e6c8924f9f7")
-    BORROW = HexBytes("0xb3d0d7ef5a47277f3e0f221c703c5211c82f36a578144e97ae28acd5b7c77983")
+    BORROW = HexBytes("0xb3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0")
     REPAY = HexBytes("0xa534c8dbe71f871f9f3530e97a74601fea17b426cae02e1c5aee42c96c784051")
     LIQUIDATION_CALL = HexBytes(
         "0xe413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286"
@@ -165,7 +166,8 @@ class EventMatcher:
     CONFIGS: ClassVar[dict[ScaledTokenEventType, MatchConfig]] = {
         # Collateral Mint: Can match SUPPLY (deposit), WITHDRAW (interest before withdraw),
         # or LIQUIDATION_CALL (liquidator receiving collateral)
-        # LIQUIDATION_CALL is never consumed (shared across operations)
+        # SUPPLY/WITHDRAW: consumed (single-purpose)
+        # LIQUIDATION_CALL: never consumed (shared across liquidation operations)
         # See debug/aave/0011
         ScaledTokenEventType.COLLATERAL_MINT: MatchConfig(
             target_event=ScaledTokenEventType.COLLATERAL_MINT,
@@ -174,7 +176,8 @@ class EventMatcher:
                 AaveV3Event.WITHDRAW,
                 AaveV3Event.LIQUIDATION_CALL,
             ],
-            consumption_policy=EventConsumptionPolicy.REUSABLE,
+            consumption_policy=EventConsumptionPolicy.CONDITIONAL,
+            consumption_condition=lambda e: _should_consume_collateral_mint_pool_event(e),
         ),
         # Collateral Burn: Can match WITHDRAW (withdrawal), REPAY (repay with aTokens),
         # or LIQUIDATION_CALL (collateral seized)
@@ -436,9 +439,19 @@ class EventMatcher:
 
                 for pool_event in events_of_type:
                     if self._is_consumed(pool_event):
+                        logger.debug(
+                            f"Skipping consumed event at logIndex {pool_event['logIndex']}"
+                        )
                         continue
 
-                    if self._matches_pool_event(pool_event, expected_type, user, reserve_address):
+                    matches = self._matches_pool_event(
+                        pool_event, expected_type, user, reserve_address
+                    )
+                    if matches:
+                        logger.debug(
+                            f"Matched {expected_type.name} event at logIndex {pool_event['logIndex']} "
+                            f"for user {user}"
+                        )
                         should_consume = self._should_consume(pool_event, config)
                         if should_consume:
                             self._mark_consumed(pool_event)
@@ -452,6 +465,11 @@ class EventMatcher:
                         )
 
         # No match found
+        logger.debug(
+            f"No matching event found for {event_type.name}. "
+            f"Tried users: {users_to_check}, reserve: {reserve_address}. "
+            f"Available pool events: {len(self.tx_context.pool_events)}"
+        )
         return None
 
     def _extract_event_data(
@@ -554,6 +572,27 @@ def _should_consume_collateral_burn_pool_event(pool_event: LogReceipt) -> bool:
         return not use_a_tokens
 
     # WITHDRAW and other events are consumable
+    return True
+
+
+def _should_consume_collateral_mint_pool_event(pool_event: LogReceipt) -> bool:
+    """Determine if a collateral mint's pool event should be consumed.
+
+    Consumption rules:
+    - SUPPLY: Always consumed (single-purpose event)
+    - WITHDRAW: Always consumed (single-purpose event)
+    - LIQUIDATION_CALL: Never consumed (shared across liquidation operations)
+
+    See debug/aave/0011 for LIQUIDATION_CALL matching in collateral mints.
+    """
+    event_topic = pool_event["topics"][0]
+
+    # LIQUIDATION_CALL is never consumed because it must be available
+    # to match multiple operations in liquidation transactions
+    if event_topic == AaveV3Event.LIQUIDATION_CALL.value:
+        return False
+
+    # SUPPLY and WITHDRAW are consumable
     return True
 
 

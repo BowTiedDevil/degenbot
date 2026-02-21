@@ -1007,3 +1007,104 @@ class TestDebtMintEventMatching:
         )
 
         assert result is None
+
+
+class TestCollateralMintEventMatching:
+    """Test collateral mint event matching patterns.
+
+    See debug/aave/0002 for value vs balance_increase matching logic.
+    """
+
+    def create_mock_tx_context(self, pool_events: list[LogReceipt]) -> MagicMock:
+        """Create a mock TransactionContext with pool events."""
+        tx_context = MagicMock()
+        tx_context.pool_events = pool_events
+        tx_context.matched_pool_events = {}
+        return tx_context
+
+    def test_standard_supply_matches_first(self):
+        """Standard deposit: value > balance_increase, SUPPLY matches first."""
+        user_address = _decode_address(
+            HexBytes("0x0000000000000000000000001111111111111111111111111111111111111111")
+        )
+        reserve_address = _decode_address(
+            HexBytes("0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+        )
+
+        supply_event = {
+            "topics": [
+                AaveV3Event.SUPPLY.value,
+                HexBytes(
+                    "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+                ),  # reserve
+                HexBytes(
+                    "0x0000000000000000000000001111111111111111111111111111111111111111"
+                ),  # onBehalfOf=user
+            ],
+            "logIndex": 100,
+            "data": HexBytes(
+                "0x0000000000000000000000000000000000000000000000000000000000000000"  # caller
+                "0000000000000000000000000000000000000000000000000000000005f5e100"  # amount=100M
+            ),
+        }
+
+        tx_context = self.create_mock_tx_context([supply_event])
+        matcher = EventMatcher(tx_context)
+
+        result = matcher.find_matching_pool_event(
+            event_type=ScaledTokenEventType.COLLATERAL_MINT,
+            user_address=user_address,
+            reserve_address=reserve_address,
+        )
+
+        assert result is not None
+        assert result["pool_event"] == supply_event
+        assert result["should_consume"] is True, "SUPPLY should be consumed"
+        assert result["extraction_data"]["raw_amount"] == 100_000_000
+        assert 100 in tx_context.matched_pool_events
+
+    def test_liquidation_collateral_mint_matches_liquidation_call(self):
+        """Liquidator receives collateral as aTokens: matches LIQUIDATION_CALL."""
+        liquidator = _decode_address(
+            HexBytes("0x0000000000000000000000001111111111111111111111111111111111111111")
+        )
+        collateral_reserve = _decode_address(
+            HexBytes("0x000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
+        )
+
+        liquidation_event = {
+            "topics": [
+                AaveV3Event.LIQUIDATION_CALL.value,
+                HexBytes(
+                    "0x000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+                ),  # collateralAsset
+                HexBytes(
+                    "0x00000000000000000000000040d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f"
+                ),  # debtAsset
+                HexBytes(
+                    "0x0000000000000000000000001111111111111111111111111111111111111111"
+                ),  # user=liquidator
+            ],
+            "logIndex": 100,
+            "data": HexBytes(
+                "0000000000000000000000000000000000000000000000000000000000ad7dcb"  # debtToCover
+                "0000000000000000000000000000000000000000000000000000000000003a98"  # liquidatedCollateral=15,000
+                "000000000000000000000000e27bfd9d354e7e0f7c5ef2fea0cd9c3af3533a32"  # liquidator
+                "0000000000000000000000000000000000000000000000000000000000000001"  # receiveAToken=True
+            ),
+        }
+
+        tx_context = self.create_mock_tx_context([liquidation_event])
+        matcher = EventMatcher(tx_context)
+
+        result = matcher.find_matching_pool_event(
+            event_type=ScaledTokenEventType.COLLATERAL_MINT,
+            user_address=liquidator,
+            reserve_address=collateral_reserve,
+        )
+
+        assert result is not None
+        assert result["pool_event"] == liquidation_event
+        assert result["should_consume"] is False, "LIQUIDATION_CALL should not be consumed"
+        assert 100 not in tx_context.matched_pool_events
+        assert result["extraction_data"]["liquidated_collateral"] == 15_000
