@@ -3436,7 +3436,10 @@ def _process_standard_debt_mint_event(
                     pool_event_candidate, expected_type, check_user, reserve_address
                 ):
                     pool_event = pool_event_candidate
-                    tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
+                    # Only mark as consumed if NOT a LIQUIDATION_CALL event
+                    # LIQUIDATION_CALL events should match both debt mint and collateral mint
+                    if pool_event_candidate["topics"][0] != AaveV3Event.LIQUIDATION_CALL.value:
+                        tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
                     break
             if pool_event is not None:
                 break
