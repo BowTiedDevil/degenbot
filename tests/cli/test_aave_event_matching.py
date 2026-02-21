@@ -15,6 +15,8 @@ Test Coverage:
 from typing import cast
 from unittest.mock import MagicMock
 
+import eth_abi
+from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from web3.types import LogReceipt
 
@@ -1324,3 +1326,158 @@ class TestGHOLiquidationWithDeficitCreated:
 
         result = _should_consume_gho_debt_burn_pool_event(cast("LogReceipt", deficit_created_event))
         assert result is False, "DeficitCreated should never be consumed for GHO burns"
+
+
+class TestGHODebtBurnEventOrdering:
+    """Test GHO debt burn matching handles internal call pattern.
+
+    Aave V3 emits token events during Pool function execution, not after.
+    For GHO debt repayments, the Burn event (from debtToken) occurs before
+    the Repay event (from Pool), which is counterintuitive but correct.
+
+    This is because Pool.repay() internally calls debtToken.burn(), and the
+    debt contract emits its event before Pool.repay() continues to emit its
+    own event.
+
+    See debug/aave/0025 for transaction details and fix.
+    """
+
+    def create_mock_tx_context(self, pool_events: list[LogReceipt]) -> MagicMock:
+        """Create a mock TransactionContext with pool events."""
+        tx_context = MagicMock()
+        tx_context.pool_events = pool_events
+        tx_context.matched_pool_events = {}
+        return tx_context
+
+    def create_repay_event(
+        self, reserve_address: ChecksumAddress, user_address: ChecksumAddress, log_index: int
+    ) -> LogReceipt:
+        """Create a mock REPAY event with proper encoding."""
+        # REPAY: data=(uint256 amount, bool useATokens)
+        # 77967076299900000000 in hex = 0x4a5c1d9072f662000 (32 bytes padded)
+        amount_hex = "0000000000000000000000000000000000000000000000000004a5c1d9072f662000"
+        use_atokens_hex = "0000000000000000000000000000000000000000000000000000000000000000"
+        encoded_data = HexBytes(amount_hex + use_atokens_hex)
+
+        return cast(
+            "LogReceipt",
+            {
+                "topics": [
+                    AaveV3Event.REPAY.value,
+                    HexBytes(reserve_address),
+                    HexBytes(user_address),
+                ],
+                "logIndex": log_index,
+                "data": encoded_data,
+            },
+        )
+
+    def test_gho_debt_burn_matches_repay_with_later_log_index(self):
+        """GHO debt burn should match REPAY even when REPAY has higher logIndex.
+
+        Transaction: 0x6bde612c958454ffc86fd2a4ed59ddd63906ef0dc21320ec41b52661193b0205
+        Block: 17699406
+
+        Event flow (simplified):
+        - Log 179: GHO Debt Token Burn (during Pool.repay() execution)
+        - Log 180: ReserveDataUpdated
+        - Log 184: Pool Repay event (after debtToken.burn() completes)
+
+        The Burn event occurs at logIndex 179, but the matching REPAY
+        occurs at logIndex 184. Without removing max_log_index constraint,
+        the REPAY event would be skipped.
+
+        This test verifies the fix: removing max_log_index allows matching
+        GHO debt burns to REPAY events regardless of ordering.
+        """
+        user_address = _decode_address(
+            HexBytes("0x000000000000000000000000b17bc7ad0e0f73db0dfe60e508445c237832a369")
+        )
+        gho_reserve = _decode_address(
+            HexBytes("0x00000000000000000000000040d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f")
+        )
+
+        # Pool REPAY event at logIndex 184 (AFTER the burn event)
+        repay_event = self.create_repay_event(gho_reserve, user_address, 184)
+
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [repay_event]))
+        matcher = EventMatcher(tx_context)
+
+        # Simulate that the burn event occurred at logIndex 179
+        # The matching should succeed even though REPAY is at 184 > 179
+        result = matcher.find_matching_pool_event(
+            event_type=ScaledTokenEventType.GHO_DEBT_BURN,
+            user_address=user_address,
+            reserve_address=gho_reserve,
+        )
+
+        assert result is not None, "GHO debt burn should match REPAY event"
+        assert result["pool_event"] == repay_event
+        assert result["should_consume"] is True, "REPAY should be consumed when useATokens=False"
+        assert 184 in tx_context.matched_pool_events, "REPAY event should be marked as consumed"
+        assert result["extraction_data"]["raw_amount"] == 77_967_076_299_900_000_000
+        assert result["extraction_data"]["use_a_tokens"] == 0
+
+    def test_gho_debt_burn_matches_repay_with_earlier_log_index(self):
+        """GHO debt burn should also match REPAY when REPAY has lower logIndex.
+
+        This is the opposite case - ensure we didn't break the standard
+        scenario where events occur in expected order.
+        """
+        user_address = _decode_address(
+            HexBytes("0x000000000000000000000000b17bc7ad0e0f73db0dfe60e508445c237832a369")
+        )
+        gho_reserve = _decode_address(
+            HexBytes("0x00000000000000000000000040d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f")
+        )
+
+        # Pool REPAY event at logIndex 175 (BEFORE the burn event)
+        repay_event = self.create_repay_event(gho_reserve, user_address, 175)
+
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [repay_event]))
+        matcher = EventMatcher(tx_context)
+
+        result = matcher.find_matching_pool_event(
+            event_type=ScaledTokenEventType.GHO_DEBT_BURN,
+            user_address=user_address,
+            reserve_address=gho_reserve,
+        )
+
+        assert result is not None, "GHO debt burn should match REPAY event"
+        assert result["pool_event"] == repay_event
+        assert result["should_consume"] is True
+
+    def test_gho_debt_burn_repay_mixed_with_other_events(self):
+        """GHO debt burn matching in complex transactions with multiple events.
+
+        This tests realistic scenarios where the transaction contains
+        multiple pool events (e.g., other users' REPAY events).
+        """
+        user_address = _decode_address(
+            HexBytes("0x000000000000000000000000b17bc7ad0e0f73db0dfe60e508445c237832a369")
+        )
+        gho_reserve = _decode_address(
+            HexBytes("0x00000000000000000000000040d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f")
+        )
+        other_user = _decode_address(
+            HexBytes("0x000000000000000000000000aaaaaa7ada777aa7ada777aa7ada777aa7ada777")
+        )
+
+        # REPAY for different user (should not match)
+        other_repay = self.create_repay_event(gho_reserve, other_user, 182)
+
+        # Target REPAY for GHO (correct user and reserve)
+        gho_repay = self.create_repay_event(gho_reserve, user_address, 184)
+
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [other_repay, gho_repay]))
+        matcher = EventMatcher(tx_context)
+
+        result = matcher.find_matching_pool_event(
+            event_type=ScaledTokenEventType.GHO_DEBT_BURN,
+            user_address=user_address,
+            reserve_address=gho_reserve,
+        )
+
+        assert result is not None
+        assert result["pool_event"] == gho_repay
+        assert result["pool_event"]["logIndex"] == 184
