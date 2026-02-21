@@ -12,22 +12,24 @@ Test Coverage:
 - Interest accrual patterns (pure interest Mint events)
 """
 
+from typing import cast
 from unittest.mock import MagicMock
 
 from hexbytes import HexBytes
 from web3.types import LogReceipt
 
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli.aave_event_matching import (
     AaveV3Event,
     EventConsumptionPolicy,
     EventMatcher,
     EventMatchError,
-    MatchConfig,
     ScaledTokenEventType,
-    _decode_address,
-    _should_consume_collateral_burn_pool_event,
-    _should_consume_debt_burn_pool_event,
-    _should_consume_debt_mint_pool_event,
+    _decode_address,  # noqa: PLC2701
+    _should_consume_collateral_burn_pool_event,  # noqa: PLC2701
+    _should_consume_debt_burn_pool_event,  # noqa: PLC2701
+    _should_consume_debt_mint_pool_event,  # noqa: PLC2701
+    _should_consume_gho_debt_burn_pool_event,  # noqa: PLC2701
 )
 
 
@@ -39,12 +41,6 @@ class TestEventConsumptionPolicies:
 
         See debug/aave/0010, 0011, 0012a for bugs caused by consuming LIQUIDATION_CALL.
         """
-        config = MatchConfig(
-            target_event=ScaledTokenEventType.COLLATERAL_BURN,
-            pool_event_types=[AaveV3Event.LIQUIDATION_CALL],
-            consumption_policy=EventConsumptionPolicy.REUSABLE,
-        )
-
         pool_event = {
             "topics": [AaveV3Event.LIQUIDATION_CALL.value],
             "logIndex": 100,
@@ -56,8 +52,7 @@ class TestEventConsumptionPolicies:
             ),
         }
 
-        matcher = MagicMock()
-        result = _should_consume_collateral_burn_pool_event(pool_event)
+        result = _should_consume_collateral_burn_pool_event(cast("LogReceipt", pool_event))
         assert result is False, "LIQUIDATION_CALL should never be consumed"
 
     def test_deficit_created_never_consumed(self):
@@ -73,10 +68,10 @@ class TestEventConsumptionPolicies:
             ),
         }
 
-        result = _should_consume_debt_burn_pool_event(pool_event)
+        result = _should_consume_debt_burn_pool_event(cast("LogReceipt", pool_event))
         assert result is False, "DEFICIT_CREATED should never be consumed"
 
-    def test_repay_consumed_when_useATokens_false(self):
+    def test_repay_consumed_when_use_atokens_false(self):
         """REPAY events should be consumed when useATokens=False.
 
         See debug/aave/0008 for repay-with-aTokens pattern.
@@ -90,10 +85,10 @@ class TestEventConsumptionPolicies:
             ),
         }
 
-        result = _should_consume_collateral_burn_pool_event(pool_event)
+        result = _should_consume_collateral_burn_pool_event(cast("LogReceipt", pool_event))
         assert result is True, "REPAY should be consumed when useATokens=False"
 
-    def test_repay_not_consumed_when_useATokens_true(self):
+    def test_repay_not_consumed_when_use_atokens_true(self):
         """REPAY events should NOT be consumed when useATokens=True.
 
         When useATokens=True, the REPAY event must match both debt burn
@@ -110,7 +105,7 @@ class TestEventConsumptionPolicies:
             ),
         }
 
-        result = _should_consume_collateral_burn_pool_event(pool_event)
+        result = _should_consume_collateral_burn_pool_event(cast("LogReceipt", pool_event))
         assert result is False, "REPAY should NOT be consumed when useATokens=True"
 
     def test_withdraw_always_consumed(self):
@@ -123,7 +118,7 @@ class TestEventConsumptionPolicies:
             ),
         }
 
-        result = _should_consume_collateral_burn_pool_event(pool_event)
+        result = _should_consume_collateral_burn_pool_event(cast("LogReceipt", pool_event))
         assert result is True, "WITHDRAW should always be consumed"
 
     def test_borrow_always_consumed(self):
@@ -139,7 +134,7 @@ class TestEventConsumptionPolicies:
             ),
         }
 
-        result = _should_consume_debt_mint_pool_event(pool_event)
+        result = _should_consume_debt_mint_pool_event(cast("LogReceipt", pool_event))
         assert result is True, "BORROW should always be consumed"
 
 
@@ -189,7 +184,7 @@ class TestLiquidationCallConsumptionPattern:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([liquidation_call_event])
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [liquidation_call_event]))
         matcher = EventMatcher(tx_context)
 
         user_address = _decode_address(
@@ -255,7 +250,7 @@ class TestLiquidationCallConsumptionPattern:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([liquidation_call_event])
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [liquidation_call_event]))
         matcher = EventMatcher(tx_context)
 
         liquidator = _decode_address(
@@ -304,7 +299,7 @@ class TestRepayWithATokensPattern:
         tx_context.matched_pool_events = {}
         return tx_context
 
-    def test_repay_shared_when_useATokens_true(self):
+    def test_repay_shared_when_use_atokens_true(self):
         """REPAY should be shared between debt burn and collateral burn when useATokens=True."""
         repay_event = {
             "topics": [
@@ -323,7 +318,7 @@ class TestRepayWithATokensPattern:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([repay_event])
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [repay_event]))
         matcher = EventMatcher(tx_context)
 
         user_address = _decode_address(
@@ -358,7 +353,7 @@ class TestRepayWithATokensPattern:
         assert result2["pool_event"] == repay_event
         assert result2["should_consume"] is False
 
-    def test_repay_consumed_when_useATokens_false(self):
+    def test_repay_consumed_when_use_atokens_false(self):
         """REPAY should be consumed when useATokens=False (normal repayment)."""
         repay_event = {
             "topics": [
@@ -373,7 +368,7 @@ class TestRepayWithATokensPattern:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([repay_event])
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [repay_event]))
         matcher = EventMatcher(tx_context)
 
         user_address = _decode_address(
@@ -433,7 +428,9 @@ class TestEventMatchingOrder:
             "data": HexBytes("0000000000000000000000000000000000000000000000000000000005f5e100"),
         }
 
-        tx_context = self.create_mock_tx_context([supply_event, withdraw_event])
+        tx_context = self.create_mock_tx_context(
+            cast("list[LogReceipt]", [supply_event, withdraw_event])
+        )
         matcher = EventMatcher(tx_context)
 
         user_address = _decode_address(
@@ -477,7 +474,9 @@ class TestEventMatchingOrder:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([withdraw_event, repay_event])
+        tx_context = self.create_mock_tx_context(
+            cast("list[LogReceipt]", [withdraw_event, repay_event])
+        )
         matcher = EventMatcher(tx_context)
 
         user_address = _decode_address(
@@ -522,7 +521,7 @@ class TestEventDataExtraction:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([supply_event])
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [supply_event]))
         matcher = EventMatcher(tx_context)
 
         user_address = _decode_address(
@@ -541,7 +540,7 @@ class TestEventDataExtraction:
         assert result is not None
         assert result["extraction_data"]["raw_amount"] == 100_000_000
 
-    def test_extract_repay_useATokens(self):
+    def test_extract_repay_use_atokens(self):
         """Extract useATokens flag from REPAY event."""
         repay_event = {
             "topics": [
@@ -556,7 +555,7 @@ class TestEventDataExtraction:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([repay_event])
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [repay_event]))
         matcher = EventMatcher(tx_context)
 
         user_address = _decode_address(
@@ -600,7 +599,7 @@ class TestEventDataExtraction:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([liquidation_event])
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [liquidation_event]))
         matcher = EventMatcher(tx_context)
 
         user_address = _decode_address(
@@ -626,19 +625,26 @@ class TestEventMatchError:
 
     def test_error_includes_context(self):
         """EventMatchError should include transaction context."""
+        user_address = _decode_address(
+            HexBytes("0x0000000000000000000000004490db0fc0e8de7c7192f12f9c5e8409e7cadda2")
+        )
+        reserve_address = _decode_address(
+            HexBytes("0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+        )
+        assert user_address is not None
+        assert reserve_address is not None
+
         error = EventMatchError(
             "No matching event found",
             tx_hash=HexBytes("0x1234"),
-            user_address=_decode_address(
-                HexBytes("0x0000000000000000000000004490db0fc0e8de7c7192f12f9c5e8409e7cadda2")
-            ),
-            reserve_address=_decode_address(
-                HexBytes("0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
-            ),
+            user_address=user_address,
+            reserve_address=reserve_address,
             available_events=["0xe413a321", "0x2b6273e6"],
         )
 
         assert error.tx_hash == HexBytes("0x1234")
+        assert error.user_address is not None
+        assert error.reserve_address is not None
         assert "0x4490db".lower() in error.user_address.lower()
         assert "0xa0b869".lower() in error.reserve_address.lower()
         assert len(error.available_events) == 2
@@ -727,14 +733,14 @@ class TestEdgeCases:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([supply_event])
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [supply_event]))
         tx_context.matched_pool_events[100] = True  # Mark as consumed
         matcher = EventMatcher(tx_context)
 
         result = matcher.find_matching_pool_event(
             event_type=ScaledTokenEventType.COLLATERAL_MINT,
-            user_address="0x4490db0fc0e8de7c7192f12f9c5e8409e7cadda2",
-            reserve_address="0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            user_address=get_checksum_address("0x4490db0fc0e8de7c7192f12f9c5e8409e7cadda2"),
+            reserve_address=get_checksum_address("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
         )
 
         assert result is None, "Should not match already consumed event"
@@ -757,10 +763,8 @@ class TestEdgeCases:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([supply_event])
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [supply_event]))
         matcher = EventMatcher(tx_context)
-
-        from degenbot.checksum_cache import get_checksum_address
 
         user1 = get_checksum_address("0x1111111111111111111111111111111111111111")
         user2 = get_checksum_address("0x2222222222222222222222222222222222222222")
@@ -822,7 +826,7 @@ class TestDebtMintEventMatching:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([borrow_event])
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [borrow_event]))
         matcher = EventMatcher(tx_context)
 
         result = matcher.find_matching_pool_event(
@@ -867,7 +871,7 @@ class TestDebtMintEventMatching:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([borrow_event])
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [borrow_event]))
         matcher = EventMatcher(tx_context)
 
         # First try with user.address - should not match
@@ -921,7 +925,7 @@ class TestDebtMintEventMatching:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([liquidation_event])
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [liquidation_event]))
         matcher = EventMatcher(tx_context)
 
         result = matcher.find_matching_pool_event(
@@ -974,7 +978,9 @@ class TestDebtMintEventMatching:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([repay_event, borrow_event])
+        tx_context = self.create_mock_tx_context(
+            cast("list[LogReceipt]", [repay_event, borrow_event])
+        )
         matcher = EventMatcher(tx_context)
 
         result = matcher.find_matching_pool_event(
@@ -1048,7 +1054,7 @@ class TestCollateralMintEventMatching:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([supply_event])
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [supply_event]))
         matcher = EventMatcher(tx_context)
 
         result = matcher.find_matching_pool_event(
@@ -1094,7 +1100,7 @@ class TestCollateralMintEventMatching:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([liquidation_event])
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [liquidation_event]))
         matcher = EventMatcher(tx_context)
 
         result = matcher.find_matching_pool_event(
@@ -1150,7 +1156,7 @@ class TestCollateralMintEventMatching:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([repay_event])
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [repay_event]))
         matcher = EventMatcher(tx_context)
 
         # Collateral mint should match the REPAY event
@@ -1247,7 +1253,9 @@ class TestGHOLiquidationWithDeficitCreated:
             ),
         }
 
-        tx_context = self.create_mock_tx_context([deficit_created_event, liquidation_event])
+        tx_context = self.create_mock_tx_context(
+            cast("list[LogReceipt]", [deficit_created_event, liquidation_event])
+        )
         matcher = EventMatcher(tx_context)
 
         # GHO debt burn should match DeficitCreated event
@@ -1290,7 +1298,7 @@ class TestGHOLiquidationWithDeficitCreated:
             "data": HexBytes("0x00000000000000000000000000000000000000000000000000048e1b04ae78ec"),
         }
 
-        tx_context = self.create_mock_tx_context([deficit_created_event])
+        tx_context = self.create_mock_tx_context(cast("list[LogReceipt]", [deficit_created_event]))
         matcher = EventMatcher(tx_context)
 
         result = matcher.find_matching_pool_event(
@@ -1308,13 +1316,11 @@ class TestGHOLiquidationWithDeficitCreated:
         Similar to LIQUIDATION_CALL, DeficitCreated may affect multiple positions
         and should remain available for other operations.
         """
-        from degenbot.cli.aave_event_matching import _should_consume_gho_debt_burn_pool_event
-
         deficit_created_event = {
             "topics": [AaveV3Event.DEFICIT_CREATED.value],
             "logIndex": 662,
             "data": HexBytes("0x00000000000000000000000000000000000000000000000000048e1b04ae78ec"),
         }
 
-        result = _should_consume_gho_debt_burn_pool_event(deficit_created_event)
+        result = _should_consume_gho_debt_burn_pool_event(cast("LogReceipt", deficit_created_event))
         assert result is False, "DeficitCreated should never be consumed for GHO burns"

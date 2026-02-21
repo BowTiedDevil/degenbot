@@ -3556,38 +3556,41 @@ def _process_collateral_burn_event(
         reserve_address=reserve_address,
     )
 
-    if result is None:
-        msg = (
-            f"No matching WITHDRAW, REPAY, or LIQUIDATION_CALL event found for Burn event "
-            f"at block {event['blockNumber']}, logIndex {event['logIndex']}"
-        )
-        raise ValueError(msg)
-
     # Extract scaled_amount based on matched pool event type
     scaled_amount: int | None = None
-    pool_event = result["pool_event"]
-    extraction_data = result["extraction_data"]
-    pool_event_topic = pool_event["topics"][0]
 
-    pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
-        collateral_asset.a_token_revision
-    )
+    if result is None:
+        # Edge case: collateral burn without matching Pool event
+        # This can occur in protocol upgrades, direct aToken burns, or other
+        # edge cases where the collateral is burned without going through
+        # Pool.withdraw(), Pool.repay(), or Pool.liquidationCall()
+        # When no Pool event exists, use the event_amount directly
+        # The event_amount from the Burn event is already the scaled amount
+        scaled_amount = event_amount
+    else:
+        pool_event = result["pool_event"]
+        extraction_data = result["extraction_data"]
+        pool_event_topic = pool_event["topics"][0]
 
-    if pool_event_topic == AaveV3Event.WITHDRAW.value:
-        # WITHDRAW event: use raw_amount
-        raw_amount = extraction_data["raw_amount"]
-        scaled_amount = pool_processor.calculate_collateral_burn_scaled_amount(
-            amount=raw_amount,
-            liquidity_index=index,
+        pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
+            collateral_asset.a_token_revision
         )
-    elif pool_event_topic == AaveV3Event.LIQUIDATION_CALL.value:
-        # LIQUIDATION_CALL event: use liquidated_collateral amount
-        liquidated_amount = extraction_data["liquidated_collateral"]
-        scaled_amount = pool_processor.calculate_collateral_burn_scaled_amount(
-            amount=liquidated_amount,
-            liquidity_index=index,
-        )
-    # REPAY events don't provide scaled_amount (handled by debt burn)
+
+        if pool_event_topic == AaveV3Event.WITHDRAW.value:
+            # WITHDRAW event: use raw_amount
+            raw_amount = extraction_data["raw_amount"]
+            scaled_amount = pool_processor.calculate_collateral_burn_scaled_amount(
+                amount=raw_amount,
+                liquidity_index=index,
+            )
+        elif pool_event_topic == AaveV3Event.LIQUIDATION_CALL.value:
+            # LIQUIDATION_CALL event: use liquidated_collateral amount
+            liquidated_amount = extraction_data["liquidated_collateral"]
+            scaled_amount = pool_processor.calculate_collateral_burn_scaled_amount(
+                amount=liquidated_amount,
+                liquidity_index=index,
+            )
+        # REPAY events don't provide scaled_amount (handled by debt burn)
 
     collateral_position = session.scalar(
         select(AaveV3CollateralPositionsTable).where(
@@ -4418,7 +4421,8 @@ def update_aave_market(
     """
 
     logger.info(
-        f"Updating market {market.id}: chain {market.chain_id}, block range {start_block:,} - {end_block:,}"
+        f"Updating market {market.id}: chain {market.chain_id}, "
+        f"block range {start_block:,} - {end_block:,}"
     )
 
     # Phase 1
