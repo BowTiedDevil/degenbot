@@ -118,14 +118,9 @@ const TICK_MASKS: [(U256, U256); 19] = uint!([
 /// println!("Tick 0 ratio: {}", ratio);
 /// ```
 #[pyfunction(signature = (tick))]
-pub fn get_sqrt_ratio_at_tick(py: Python<'_>, tick: i32) -> PyResult<Py<PyAny>> {
+pub fn get_sqrt_ratio_at_tick(py: Python<'_>, tick: i32) -> PyResult<BigUint> {
     let result = py.detach(|| get_sqrt_ratio_at_tick_internal(tick))?;
-    let bytes: Vec<u8> = result.to_be_bytes::<20>().to_vec();
-
-    let py_bytes = pyo3::types::PyBytes::new(py, &bytes);
-    let int_class = py.get_type::<pyo3::types::PyInt>();
-    let result = int_class.call_method1("from_bytes", (py_bytes, "big"))?;
-    Ok(result.unbind())
+    Ok(BigUint::from_bytes_be(&result.to_be_bytes::<20>()))
 }
 
 /// Internal function to calculate sqrt ratio from tick.
