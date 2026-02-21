@@ -1364,88 +1364,6 @@ def _is_discount_supported(market: AaveV3MarketTable) -> bool:
     return revision is not None and revision < 4  # noqa: PLR2004
 
 
-def _matches_pool_event(
-    event: LogReceipt,
-    expected_type: HexBytes,
-    user_address: ChecksumAddress,
-    reserve_address: ChecksumAddress,
-) -> bool:
-    """Check if a Pool event matches the expected type and parameters."""
-    event_topic = event["topics"][0]
-    # Allow LIQUIDATION_CALL when expecting REPAY or WITHDRAW
-    # Allow DEFICIT_CREATED when expecting REPAY (bad debt write-off during liquidation)
-    if (
-        event_topic != expected_type
-        and not (
-            event_topic == AaveV3Event.LIQUIDATION_CALL.value
-            and expected_type in {AaveV3Event.REPAY.value, AaveV3Event.WITHDRAW.value}
-        )
-        and not (
-            event_topic == AaveV3Event.DEFICIT_CREATED.value
-            and expected_type == AaveV3Event.REPAY.value
-        )
-    ):
-        return False
-
-    if expected_type == AaveV3Event.BORROW.value:
-        event_reserve = _decode_address(event["topics"][1])
-        event_on_behalf_of = _decode_address(event["topics"][2])
-        (_, _, interest_rate_mode, _) = eth_abi.abi.decode(
-            types=["address", "uint256", "uint8", "uint256"],
-            data=event["data"],
-        )
-        return (
-            event_on_behalf_of == user_address
-            and event_reserve == reserve_address
-            and interest_rate_mode == 2  # Variable rate # noqa: PLR2004
-        )
-
-    if expected_type == AaveV3Event.REPAY.value:
-        if event_topic == AaveV3Event.REPAY.value:
-            # Normal REPAY event matching
-            event_reserve = _decode_address(event["topics"][1])
-            event_user = _decode_address(event["topics"][2])
-            return event_user == user_address and event_reserve == reserve_address
-        if event_topic == AaveV3Event.LIQUIDATION_CALL.value:
-            # Liquidation matching - match on debtAsset
-            event_debt_asset = _decode_address(event["topics"][2])
-            event_user = _decode_address(event["topics"][3])
-            return event_user == user_address and event_debt_asset == reserve_address
-        if event_topic == AaveV3Event.DEFICIT_CREATED.value:
-            # DeficitCreated matching - debt written off as bad debt during liquidation
-            event_user = _decode_address(event["topics"][1])
-            event_reserve = _decode_address(event["topics"][2])
-            return event_user == user_address and event_reserve == reserve_address
-
-    elif expected_type == AaveV3Event.SUPPLY.value:
-        event_reserve = _decode_address(event["topics"][1])
-        event_on_behalf_of = _decode_address(event["topics"][2])
-        return event_on_behalf_of == user_address and event_reserve == reserve_address
-
-    if expected_type == AaveV3Event.WITHDRAW.value:
-        if event_topic == AaveV3Event.WITHDRAW.value:
-            # Normal WITHDRAW event matching
-            event_reserve = _decode_address(event["topics"][1])
-            event_user = _decode_address(event["topics"][2])
-            return event_user == user_address and event_reserve == reserve_address
-        if event_topic == AaveV3Event.LIQUIDATION_CALL.value:
-            # Liquidation matching - match on collateralAsset
-            event_collateral_asset = _decode_address(event["topics"][1])
-            event_user = _decode_address(event["topics"][3])
-            return event_user == user_address and event_collateral_asset == reserve_address
-
-    if expected_type == AaveV3Event.LIQUIDATION_CALL.value:
-        event_collateral_asset = _decode_address(event["topics"][1])
-        event_debt_asset = _decode_address(event["topics"][2])
-        event_user = _decode_address(event["topics"][3])
-        # When expecting REPAY, match on debtAsset
-        # When expecting WITHDRAW, match on collateralAsset
-        if event_user == user_address:
-            return reserve_address in {event_debt_asset, event_collateral_asset}
-
-    return False
-
-
 def _get_or_create_user(
     *,
     context: EventHandlerContext,
@@ -3214,56 +3132,44 @@ def _process_gho_debt_mint_event(
     index: int,
     caller_address: ChecksumAddress,
 ) -> None:
-    """Process a GHO debt (vToken) mint event."""
+    """Process a GHO debt (vToken) mint event using EventMatcher.
 
-    # Verify the corresponding Pool Borrow event exists for GHO
-    # Use the underlying GHO token address, not the variable debt token address
-    # because Pool BORROW events reference the underlying asset
+    Uses EventMatcher to find matching Pool events (BORROW or REPAY)
+    and extracts the appropriate scaled amount for BORROW operations.
+    Handles GHO-specific logic like discount calculation and stkAAVE staking events.
+
+    See debug/aave/0012b for GHO event matching patterns.
+    """
+    reserve_address = get_checksum_address(debt_asset.underlying_token.address)
+
+    scaled_amount: int | None = None
+
     # Skip verification for pure interest accrual (value == balanceIncrease)
     # These mints don't have a corresponding Pool event
-    pool_event: LogReceipt | None = None
-
     if event_amount != balance_increase:
-        reserve_address = get_checksum_address(debt_asset.underlying_token.address)
+        # Use EventMatcher to find matching pool event
+        # EventMatcher handles consumption based on event type:
+        # - BORROW: consumed
+        # - REPAY: not consumed (reusable for GHO)
+        matcher = EventMatcher(context.tx_context)
+        result = matcher.find_matching_pool_event(
+            event_type=ScaledTokenEventType.GHO_DEBT_MINT,
+            user_address=user.address,
+            reserve_address=reserve_address,
+            check_users=[caller_address],  # For adapter pattern (onBehalfOf=adapter)
+        )
 
-        # Use pre-fetched pool events from transaction context
-        # Try BORROW first (most common case), then REPAY (for interest accrual)
-        for expected_type in [AaveV3Event.BORROW.value, AaveV3Event.REPAY.value]:
-            for pool_event_candidate in context.tx_context.pool_events:
-                # Skip pool events that have already been matched
-                if context.tx_context.matched_pool_events.get(
-                    pool_event_candidate["logIndex"], False
-                ):
-                    continue
-                if _matches_pool_event(
-                    pool_event_candidate, expected_type, user.address, reserve_address
-                ):
-                    pool_event = pool_event_candidate
-                    # Only mark as consumed if NOT a LIQUIDATION_CALL event
-                    # LIQUIDATION_CALL events should match both debt and collateral operations
-                    if pool_event_candidate["topics"][0] != AaveV3Event.LIQUIDATION_CALL.value:
-                        context.tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = (
-                            True
-                        )
-                    break
-            if pool_event is not None:
-                break
-
-    # For BORROW operations, calculate scaled_amount from the borrow amount
-    # This matches the Pool's calculation via TokenMath.getVTokenMintScaledAmount
-    scaled_amount: int | None = None
-    if pool_event is not None and pool_event["topics"][0] == AaveV3Event.BORROW.value:
-        (_, borrow_amount, _, _) = eth_abi.abi.decode(
-            types=["address", "uint256", "uint8", "uint256"],
-            data=pool_event["data"],
-        )
-        pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
-            debt_asset.v_token_revision
-        )
-        scaled_amount = pool_processor.calculate_debt_mint_scaled_amount(
-            amount=borrow_amount,
-            borrow_index=index,
-        )
+        # For BORROW operations, calculate scaled_amount from the borrow amount
+        # This matches the Pool's calculation: amount.getVTokenMintScaledAmount(index)
+        if result is not None and result["pool_event"]["topics"][0] == AaveV3Event.BORROW.value:
+            borrow_amount = result["extraction_data"]["raw_amount"]
+            pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
+                debt_asset.v_token_revision
+            )
+            scaled_amount = pool_processor.calculate_debt_mint_scaled_amount(
+                amount=borrow_amount,
+                borrow_index=index,
+            )
 
     debt_position = _get_or_create_debt_position(
         session=context.session, user=user, asset_id=debt_asset.id
@@ -3338,7 +3244,7 @@ def _process_gho_debt_mint_event(
 
     # Process the GHO mint event using the appropriate processor
     gho_processor = TokenProcessorFactory.get_gho_debt_processor(debt_asset.v_token_revision)
-    result = gho_processor.process_mint_event(
+    gho_result = gho_processor.process_mint_event(
         event_data=DebtMintEvent(
             caller=caller_address,
             on_behalf_of=user.address,
@@ -3353,15 +3259,15 @@ def _process_gho_debt_mint_event(
     )
 
     # Apply the calculated balance delta and update index
-    debt_position.balance += result.balance_delta
-    debt_position.last_index = result.new_index
+    debt_position.balance += gho_result.balance_delta
+    debt_position.last_index = gho_result.new_index
 
     # Map GHO user operation to CLI user operation enum
-    user_operation = UserOperation(result.user_operation.value)
+    user_operation = UserOperation(gho_result.user_operation.value)
 
     # Handle discount refresh if needed and not already updated via event
     if (
-        result.should_refresh_discount
+        gho_result.should_refresh_discount
         and discount_token is not None
         and user.address
         not in (context.tx_context.discount_updated_users if context.tx_context else set())
@@ -3734,32 +3640,27 @@ def _process_gho_debt_burn_event(
     from_address: ChecksumAddress,
     target_address: ChecksumAddress,
 ) -> None:
-    """Process a GHO debt (vToken) burn event."""
+    """Process a GHO debt (vToken) burn event using EventMatcher.
 
-    # Verify the corresponding Pool Repay event exists for GHO
-    # Use the underlying GHO token address, not the variable debt token address
-    # because Pool REPAY events reference the underlying asset
+    Uses EventMatcher to find matching Pool events (REPAY or LIQUIDATION_CALL)
+    and handles GHO-specific logic like discount calculation.
+
+    See debug/aave/0010 for GHO event matching patterns.
+    """
     reserve_address = get_checksum_address(debt_asset.underlying_token.address)
 
-    # Find matching REPAY event from pre-fetched pool events
-    pool_event: LogReceipt | None = None
-    for pool_event_candidate in context.tx_context.pool_events:
-        # Skip pool events that have already been matched
-        if context.tx_context.matched_pool_events.get(pool_event_candidate["logIndex"], False):
-            continue
-        if _matches_pool_event(
-            pool_event_candidate, AaveV3Event.REPAY.value, user.address, reserve_address
-        ):
-            pool_event = pool_event_candidate
-            # Only mark as consumed if NOT a LIQUIDATION_CALL event
-            # LIQUIDATION_CALL events should match both debt and collateral burns
-            if pool_event_candidate["topics"][0] != AaveV3Event.LIQUIDATION_CALL.value:
-                context.tx_context.matched_pool_events[pool_event_candidate["logIndex"]] = True
-            break
+    # Use EventMatcher to find matching pool event
+    # EventMatcher handles LIQUIDATION_CALL reuse (Bug #0010)
+    matcher = EventMatcher(context.tx_context)
+    result = matcher.find_matching_pool_event(
+        event_type=ScaledTokenEventType.GHO_DEBT_BURN,
+        user_address=user.address,
+        reserve_address=reserve_address,
+    )
 
-    if pool_event is None:
+    if result is None:
         msg = (
-            f"No matching REPAY event found for GHO debt burn in tx "
+            f"No matching REPAY/LIQUIDATION_CALL event found for GHO debt burn in tx "
             f"{context.tx_context.tx_hash.hex()}. User: {user.address}, Reserve: {reserve_address}"
         )
         raise ValueError(msg)
@@ -3799,7 +3700,7 @@ def _process_gho_debt_burn_event(
 
     # Process the GHO burn event using the appropriate processor
     gho_processor = TokenProcessorFactory.get_gho_debt_processor(debt_asset.v_token_revision)
-    result = gho_processor.process_burn_event(
+    gho_result = gho_processor.process_burn_event(
         event_data=DebtBurnEvent(
             from_=from_address,
             target=target_address,
@@ -3813,15 +3714,15 @@ def _process_gho_debt_burn_event(
     )
 
     # Apply the calculated balance delta and update index
-    debt_position.balance += result.balance_delta
-    debt_position.last_index = result.new_index
+    debt_position.balance += gho_result.balance_delta
+    debt_position.last_index = gho_result.new_index
 
     # GHO burn events are always REPAY operations
     user_operation = UserOperation.GHO_REPAY
 
     # Handle discount refresh if needed and not already updated via event
     if (
-        result.should_refresh_discount
+        gho_result.should_refresh_discount
         and discount_token is not None
         and user.address
         not in (context.tx_context.discount_updated_users if context.tx_context else set())
