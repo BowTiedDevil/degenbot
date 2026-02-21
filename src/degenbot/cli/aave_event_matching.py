@@ -108,7 +108,7 @@ class AaveV3Event(Enum):
     LIQUIDATION_CALL = HexBytes(
         "0xe413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286"
     )
-    DEFICIT_CREATED = HexBytes("0x2bcc7b2bb2ba85c2e6384e005b16394960f7a4c3985ca87f3533247744e0ec12")
+    DEFICIT_CREATED = HexBytes("0x2bccfb3fad376d59d7accf970515eb77b2f27b082c90ed0fb15583dd5a942699")
 
 
 @dataclass(frozen=True)
@@ -236,13 +236,19 @@ class EventMatcher:
             consumption_policy=EventConsumptionPolicy.CONDITIONAL,
             consumption_condition=lambda e: _should_consume_gho_debt_mint_pool_event(e),
         ),
-        # GHO Debt Burn: Can match REPAY or LIQUIDATION_CALL
-        # LIQUIDATION_CALL never consumed
-        # See debug/aave/0010
+        # GHO Debt Burn: Can match REPAY, LIQUIDATION_CALL, or DEFICIT_CREATED
+        # LIQUIDATION_CALL and DEFICIT_CREATED never consumed (shared across operations)
+        # DEFICIT_CREATED is used for GHO liquidations (bad debt write-off mechanism)
+        # See debug/aave/0010, 0016
         ScaledTokenEventType.GHO_DEBT_BURN: MatchConfig(
             target_event=ScaledTokenEventType.GHO_DEBT_BURN,
-            pool_event_types=[AaveV3Event.REPAY, AaveV3Event.LIQUIDATION_CALL],
-            consumption_policy=EventConsumptionPolicy.REUSABLE,
+            pool_event_types=[
+                AaveV3Event.REPAY,
+                AaveV3Event.LIQUIDATION_CALL,
+                AaveV3Event.DEFICIT_CREATED,
+            ],
+            consumption_policy=EventConsumptionPolicy.CONDITIONAL,
+            consumption_condition=lambda e: _should_consume_gho_debt_burn_pool_event(e),
         ),
     }
 
@@ -391,6 +397,13 @@ class EventMatcher:
             event_user = _decode_address(pool_event["topics"][3])
             if event_user == user_address:
                 return reserve_address in {event_debt_asset, event_collateral_asset}
+
+        elif expected_type == AaveV3Event.DEFICIT_CREATED:
+            # DEFICIT_CREATED: topics[1]=user, topics[2]=asset, data=(uint256 amountCreated)
+            # Used for GHO liquidations and bad debt write-offs
+            event_user = _decode_address(pool_event["topics"][1])
+            event_asset = _decode_address(pool_event["topics"][2])
+            return event_user == user_address and event_asset == reserve_address
 
         return False
 
@@ -685,12 +698,17 @@ def _should_consume_gho_debt_burn_pool_event(pool_event: LogReceipt) -> bool:
     Consumption rules:
     - REPAY: Consumed (GHO has no useATokens flag, always single-purpose)
     - LIQUIDATION_CALL: Never consumed (shared across liquidation operations)
+    - DEFICIT_CREATED: Never consumed (bad debt write-off may affect multiple positions)
 
     See debug/aave/0010 for LIQUIDATION_CALL preservation in GHO burns.
+    See debug/aave/0016 for DEFICIT_CREATED handling in GHO liquidations.
     """
     event_topic = pool_event["topics"][0]
 
-    if event_topic == AaveV3Event.LIQUIDATION_CALL.value:
+    if event_topic in {
+        AaveV3Event.LIQUIDATION_CALL.value,
+        AaveV3Event.DEFICIT_CREATED.value,
+    }:
         return False
 
     return True

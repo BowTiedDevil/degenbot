@@ -4125,6 +4125,7 @@ def _fetch_pool_events(
                 AaveV3Event.BORROW.value,
                 AaveV3Event.REPAY.value,
                 AaveV3Event.LIQUIDATION_CALL.value,
+                AaveV3Event.DEFICIT_CREATED.value,
                 AaveV3Event.RESERVE_DATA_UPDATED.value,
                 AaveV3Event.USER_E_MODE_SET.value,
             ]
@@ -4302,6 +4303,7 @@ def _build_transaction_contexts(
             AaveV3Event.BORROW.value,
             AaveV3Event.REPAY.value,
             AaveV3Event.LIQUIDATION_CALL.value,
+            AaveV3Event.DEFICIT_CREATED.value,
         }:
             ctx.pool_events.append(event)
         elif topic == AaveV3Event.STAKED.value:

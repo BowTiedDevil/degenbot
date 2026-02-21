@@ -1168,3 +1168,153 @@ class TestCollateralMintEventMatching:
         assert 55 not in tx_context.matched_pool_events
         assert result["extraction_data"]["raw_amount"] == 7_362_288_326_168
         assert result["extraction_data"]["use_a_tokens"] == 1
+
+
+class TestGHOLiquidationWithDeficitCreated:
+    """Test GHO debt burn matching with DeficitCreated events.
+
+    GHO uses a different liquidation mechanism than standard Aave assets.
+    While standard assets emit LiquidationCall events, GHO liquidations
+    emit DeficitCreated events instead.
+
+    See debug/aave/0016 for transaction details.
+    """
+
+    def create_mock_tx_context(self, pool_events: list[LogReceipt]) -> MagicMock:
+        """Create a mock TransactionContext with pool events."""
+        tx_context = MagicMock()
+        tx_context.pool_events = pool_events
+        tx_context.matched_pool_events = {}
+        return tx_context
+
+    def test_gho_debt_burn_matches_deficit_created(self):
+        """GHO debt burn during liquidation should match DeficitCreated event.
+
+        Transaction: 0x0affc26fff867c734add4067a257ce189f0188aa5c9783489311a5edbb56c306
+        Block: 22127030
+
+        Event flow:
+        - Log 660-661: GHO Debt Token Burn (~1.28 GHO)
+        - Log 662: DeficitCreated event for GHO
+        - Log 664: LiquidationCall event for USDC/WBTC (different asset)
+
+        The GHO debt burn should match the DeficitCreated event, not LiquidationCall.
+        """
+        user_address = _decode_address(
+            HexBytes("0x000000000000000000000000fb2788b2a3a0242429fd9ee2b151e149e3b244ec")
+        )
+        gho_reserve = _decode_address(
+            HexBytes("0x00000000000000000000000040d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f")
+        )
+
+        # DeficitCreated event for GHO liquidation
+        deficit_created_event = {
+            "topics": [
+                AaveV3Event.DEFICIT_CREATED.value,
+                HexBytes(
+                    "0x000000000000000000000000fb2788b2a3a0242429fd9ee2b151e149e3b244ec"
+                ),  # user
+                HexBytes(
+                    "0x00000000000000000000000040d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f"
+                ),  # asset=GHO
+            ],
+            "logIndex": 662,
+            "data": HexBytes(
+                "0x00000000000000000000000000000000000000000000000000048e1b04ae78ec"  # amountCreated=1,282,800,003,371,564 wei (~1.28 GHO)
+            ),
+        }
+
+        # Separate LiquidationCall for WBTC debt (different asset)
+        liquidation_event = {
+            "topics": [
+                AaveV3Event.LIQUIDATION_CALL.value,
+                HexBytes(
+                    "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+                ),  # collateralAsset=USDC
+                HexBytes(
+                    "0x0000000000000000000000002260fac5e5542a773aa44fbcfedf7c193bc2c599"
+                ),  # debtAsset=WBTC
+                HexBytes(
+                    "0x000000000000000000000000fb2788b2a3a0242429fd9ee2b151e149e3b244ec"
+                ),  # user
+            ],
+            "logIndex": 664,
+            "data": HexBytes(
+                "000000000000000000000000000000000000000000000000000000000000008e"  # debtToCover=142 wei WBTC
+                "000000000000000000000000000000000000000000000000000000000001f387"  # liquidatedCollateral=128,167 wei USDC
+                "000000000000000000000000f00e2de0e78dff055a92ad4719a179ce275b6ef7"  # liquidator
+                "0000000000000000000000000000000000000000000000000000000000000001"  # receiveAToken=True
+            ),
+        }
+
+        tx_context = self.create_mock_tx_context([deficit_created_event, liquidation_event])
+        matcher = EventMatcher(tx_context)
+
+        # GHO debt burn should match DeficitCreated event
+        result = matcher.find_matching_pool_event(
+            event_type=ScaledTokenEventType.GHO_DEBT_BURN,
+            user_address=user_address,
+            reserve_address=gho_reserve,
+        )
+
+        assert result is not None, "GHO debt burn should match DeficitCreated event"
+        assert result["pool_event"] == deficit_created_event
+        assert result["should_consume"] is False, "DeficitCreated should not be consumed"
+        assert 662 not in tx_context.matched_pool_events
+        assert result["extraction_data"]["amount_created"] == 1_282_146_600_646_892
+
+    def test_gho_debt_burn_prefers_deficit_created_over_liquidation_call(self):
+        """When both DeficitCreated and LiquidationCall exist, GHO burn should match DeficitCreated first.
+
+        In multi-asset liquidations, both event types may exist.
+        GHO debt burns should prioritize DeficitCreated matching.
+        """
+        user_address = _decode_address(
+            HexBytes("0x000000000000000000000000fb2788b2a3a0242429fd9ee2b151e149e3b244ec")
+        )
+        gho_reserve = _decode_address(
+            HexBytes("0x00000000000000000000000040d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f")
+        )
+
+        # DeficitCreated should be checked before LIQUIDATION_CALL in the config order
+        # Current config: [REPAY, LIQUIDATION_CALL, DEFICIT_CREATED]
+        # So LIQUIDATION_CALL is checked before DEFICIT_CREATED
+        # But LIQUIDATION_CALL won't match because GHO is not the debtAsset in this tx
+        deficit_created_event = {
+            "topics": [
+                AaveV3Event.DEFICIT_CREATED.value,
+                HexBytes("0x000000000000000000000000fb2788b2a3a0242429fd9ee2b151e149e3b244ec"),
+                HexBytes("0x00000000000000000000000040d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f"),
+            ],
+            "logIndex": 662,
+            "data": HexBytes("0x00000000000000000000000000000000000000000000000000048e1b04ae78ec"),
+        }
+
+        tx_context = self.create_mock_tx_context([deficit_created_event])
+        matcher = EventMatcher(tx_context)
+
+        result = matcher.find_matching_pool_event(
+            event_type=ScaledTokenEventType.GHO_DEBT_BURN,
+            user_address=user_address,
+            reserve_address=gho_reserve,
+        )
+
+        assert result is not None
+        assert result["pool_event"] == deficit_created_event
+
+    def test_deficit_created_never_consumed_for_gho_burn(self):
+        """DeficitCreated events should never be consumed for GHO debt burns.
+
+        Similar to LIQUIDATION_CALL, DeficitCreated may affect multiple positions
+        and should remain available for other operations.
+        """
+        from degenbot.cli.aave_event_matching import _should_consume_gho_debt_burn_pool_event
+
+        deficit_created_event = {
+            "topics": [AaveV3Event.DEFICIT_CREATED.value],
+            "logIndex": 662,
+            "data": HexBytes("0x00000000000000000000000000000000000000000000000000048e1b04ae78ec"),
+        }
+
+        result = _should_consume_gho_debt_burn_pool_event(deficit_created_event)
+        assert result is False, "DeficitCreated should never be consumed for GHO burns"
