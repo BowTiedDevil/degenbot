@@ -5,7 +5,7 @@ agent: build
 
 !`DEGENBOT_DEBUG=1 DEGENBOT_VERBOSE_USERS=$ARGUMENTS uv run degenbot aave update --no-progress-bar --one-chunk --chunk 1 2>&1`
 
-## DIRECTION: Investigate and debug this failed Aave update command. Find the root cause of the bug and fix it.
+## DIRECTION: Investigate and debug this failed Aave update command. Find the root cause of the bug and fix it. The Aave update command for this debugging session is **`uv run degenbot aave update --no-progress-bar --one-chunk --chunk 1 2>&1`**.
 
 ## PROCESS:
 ### 1. Gather Information
@@ -29,11 +29,11 @@ agent: build
     - `DEGENBOT_VERBOSE_ALL=1`
     - `DEGENBOT_DEBUG=1`
     - `DEGENBOT_DEBUG_FUNCTION_CALLS=1` which will show function call logs
-- Run the updater again with selected verbosity env vars prepended
+- Run the update command with selected verbosity env vars prepended
 
 ### 4. Validate & Fix
 - Determine the root cause, e.g., a processing function failed to determine the correct value from an event, the database had a stale value, a previous processing action set a value incorrectly which was used by another processing action
-- Fix the error and run the update again to confirm it works
+- Apply a fix to resolve the bug, then run the update command again to confirm the fix was successful
 
 ### 5. Document Findings
 Create a new report in @debug/aave. Follow this format:
@@ -49,4 +49,4 @@ Create a new report in @debug/aave. Follow this format:
 
 ### 6. Improve
 - Review opportunities to refactor and clean up code that contributed to this failure
-- Write a stateless unit test to verify that the math operations, user operation determination, event matching logic, etc., matches the expectations following the onchain investigation and verified fix
+- Use the investigation report and transaction details to write a stateless unit test to verify that the math operations, user operation determination, event matching logic, etc., match the expectations.
