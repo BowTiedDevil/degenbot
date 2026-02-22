@@ -661,18 +661,18 @@ def deactivate_mainnet_aave_v3(
     show_default=True,
     help="The maximum number of blocks to process before committing changes to the database.",
 )
-@click.option(
-    "--to-block",
-    "to_block",
-    default="latest:-64",
-    show_default=True,
-    help=(
-        "The last block in the update range. Must be a valid block identifier: "
-        "'earliest', 'finalized', 'safe', 'latest', 'pending'. An identifier can be given with an "
-        "optional offset, e.g. 'latest:-64' stops 64 blocks before the chain tip, "
-        "'safe:128' stops 128 blocks after the last 'safe' block."
-    ),
-)
+# @click.option(
+#     "--to-block",
+#     "to_block",
+#     default="latest:-64",
+#     show_default=True,
+#     help=(
+#         "The last block in the update range. Must be a valid block identifier: "
+#         "'earliest', 'finalized', 'safe', 'latest', 'pending'. An identifier can be given with an "
+#         "optional offset, e.g. 'latest:-64' stops 64 blocks before the chain tip, "
+#         "'safe:128' stops 128 blocks after the last 'safe' block."
+#     ),
+# )
 @click.option(
     "--verify",
     "verify",
@@ -703,7 +703,7 @@ def deactivate_mainnet_aave_v3(
 def aave_update(
     *,
     chunk_size: int,
-    to_block: str,
+    to_block: str = "latest:-64",
     verify: bool,
     stop_after_one_chunk: bool,
     no_progress: bool,
