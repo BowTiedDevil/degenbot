@@ -148,6 +148,38 @@ class EventFactory:
         }
 
     @staticmethod
+    def create_borrow_event(
+        *,
+        reserve: str,
+        user: str,
+        on_behalf_of: str,
+        amount: int,
+        log_index: int,
+    ) -> LogReceipt:
+        """Create a BORROW pool event."""
+
+        topics = [
+            AaveV3PoolEvent.BORROW.value,
+            HexBytes("0x" + "0" * 24 + reserve[2:]),
+            HexBytes("0x" + "0" * 24 + on_behalf_of[2:]),
+        ]
+
+        # BORROW data: caller, amount, interestRateMode, borrowRate
+        data = eth_abi.encode(
+            ["address", "uint256", "uint8", "uint256"],
+            [get_checksum_address(user), amount, 2, 0],
+        )
+
+        return {
+            "address": get_checksum_address("0x" + "0" * 40),
+            "topics": topics,
+            "data": HexBytes(data),
+            "logIndex": log_index,
+            "blockNumber": 1000000,
+            "transactionHash": HexBytes("0x" + "00" * 32),
+        }
+
+    @staticmethod
     def create_collateral_mint_event(
         user: str, amount: int, balance_increase: int, log_index: int
     ) -> LogReceipt:
@@ -920,3 +952,118 @@ class TestOperationValidation:
         # Validation should pass - no exception raised
         tx_ops.validate([liquidation_event, collateral_transfer_event])
         assert op.is_valid()
+
+
+class TestBug0013InterestAccrualMintMatching:
+    """Test for Bug #0013: Interest accrual mint incorrectly matched to BORROW operation.
+
+    Issue: When a transaction contains multiple GHO debt mint events, including
+    an interest accrual mint (where value == balance_increase) and an actual
+    borrow mint (where value > balance_increase), the parser incorrectly
+    matched the interest accrual mint to the BORROW operation instead of the
+    actual borrow mint.
+
+    Reference: debug/aave/0013 - Interest Accrual Mint Matched to Borrow
+    Transaction: 0x1116737166520b7c1dfb24a1f42c135fd37179fa6e9b016dcaa16419930a0743
+    Block: 18076682
+    User: 0x4bd5Eb24EB381DE15a168F213E16c32924Cd65D0
+    """
+
+    def test_gho_borrow_with_interest_accrual_mint(self):
+        """Test that BORROW operation matches actual borrow mint, not interest accrual."""
+        user = get_checksum_address("0x4bd5Eb24EB381DE15a168F213E16c32924Cd65D0")
+
+        # Create debt token to reserve mapping for GHO
+        debt_token_to_reserve = {
+            GHO_VARIABLE_DEBT_TOKEN_ADDRESS: GHO_TOKEN_ADDRESS,
+        }
+
+        # First mint event: Interest accrual (value == balance_increase)
+        # LogIndex 78 from actual transaction
+        interest_accrual_mint = EventFactory.create_debt_mint_event(
+            user=user,
+            amount=974800826599076528,  # 0.97 GHO
+            balance_increase=974800826599076528,  # Same as amount (interest accrual)
+            log_index=78,
+        )
+        # Change address to GHO variable debt token
+        interest_accrual_mint["address"] = GHO_VARIABLE_DEBT_TOKEN_ADDRESS
+
+        # Third mint event: Actual borrow (value > balance_increase)
+        # LogIndex 112 from actual transaction - the actual 1010 GHO borrow
+        borrow_mint = EventFactory.create_debt_mint_event(
+            user=user,
+            amount=1010000000000000000000,  # 1010 GHO
+            balance_increase=0,  # 0 (actual borrow)
+            log_index=112,
+        )
+        # Change address to GHO variable debt token
+        borrow_mint["address"] = GHO_VARIABLE_DEBT_TOKEN_ADDRESS
+
+        # BORROW pool event
+        # LogIndex 114 from actual transaction
+        borrow_event = EventFactory.create_borrow_event(
+            reserve=GHO_TOKEN_ADDRESS,
+            user=user,
+            on_behalf_of=user,
+            amount=1000000000000000000000,  # 1000 GHO borrowed
+            log_index=114,
+        )
+
+        # Create parser with debt token mapping
+        parser = TransactionOperationsParser(
+            token_type_mapping={},
+            debt_token_to_reserve=debt_token_to_reserve,
+        )
+
+        events = [interest_accrual_mint, borrow_mint, borrow_event]
+        tx_ops = parser.parse(events, HexBytes("0x" + "00" * 32))
+
+        # Should have 2 operations:
+        # 1. INTEREST_ACCRUAL for the interest accrual mint
+        # 2. GHO_BORROW for the actual borrow
+        assert len(tx_ops.operations) == 2, f"Expected 2 operations, got {len(tx_ops.operations)}"
+
+        # Find the BORROW operation
+        borrow_ops = [
+            op for op in tx_ops.operations if op.operation_type == OperationType.GHO_BORROW
+        ]
+        assert len(borrow_ops) == 1, "Should have exactly 1 GHO_BORROW operation"
+        borrow_op = borrow_ops[0]
+
+        # The BORROW operation should have exactly 1 scaled token event
+        assert len(borrow_op.scaled_token_events) == 1, "BORROW should have 1 scaled token event"
+
+        # That event should be the actual borrow mint (logIndex 112), not interest accrual (logIndex 78)
+        matched_mint = borrow_op.scaled_token_events[0]
+        assert matched_mint.event["logIndex"] == 112, (
+            f"BORROW should match mint at logIndex 112 (actual borrow), "
+            f"but matched mint at logIndex {matched_mint.event['logIndex']}"
+        )
+        assert matched_mint.amount == 1010000000000000000000, (
+            f"Matched mint should have amount=1010 GHO (actual borrow), "
+            f"but got amount={matched_mint.amount}"
+        )
+
+        # Find the INTEREST_ACCRUAL operation
+        interest_ops = [
+            op for op in tx_ops.operations if op.operation_type == OperationType.INTEREST_ACCRUAL
+        ]
+        assert len(interest_ops) == 1, "Should have exactly 1 INTEREST_ACCRUAL operation"
+        interest_op = interest_ops[0]
+
+        # The INTEREST_ACCRUAL operation should have the interest accrual mint (logIndex 78)
+        assert len(interest_op.scaled_token_events) == 1, (
+            "INTEREST_ACCRUAL should have 1 scaled token event"
+        )
+        interest_mint = interest_op.scaled_token_events[0]
+        assert interest_mint.event["logIndex"] == 78, (
+            f"INTEREST_ACCRUAL should have mint at logIndex 78, "
+            f"but has mint at logIndex {interest_mint.event['logIndex']}"
+        )
+        assert interest_mint.amount == interest_mint.balance_increase, (
+            "Interest accrual mint should have amount == balance_increase"
+        )
+
+        # Validation should pass
+        tx_ops.validate(events)

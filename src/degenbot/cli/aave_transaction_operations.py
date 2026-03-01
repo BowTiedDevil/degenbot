@@ -922,6 +922,11 @@ class TransactionOperationsParser:
                 not is_gho and ev.event_type == "DEBT_MINT"
             ):
                 if ev.user_address == on_behalf_of:
+                    # Skip interest accrual mints (amount == balance_increase)
+                    # These should be handled by INTEREST_ACCRUAL operations
+                    # Only match actual borrow mints (amount > balance_increase)
+                    if ev.amount == ev.balance_increase:
+                        continue
                     # Match by token address to handle flash loan scenarios
                     # where same user has multiple mints for different assets
                     # If debt_token_to_reserve mapping is provided, use it for matching
@@ -1290,15 +1295,16 @@ class TransactionOperationsParser:
             # Skip DEBT_MINT in liquidation transactions - these may be
             # protocol operations that should not create INTEREST_ACCRUAL.
             # For borrow/repay transactions, only skip if it's not interest
-            # accrual (balance_increase > amount). Interest accrual can occur
+            # accrual (balance_increase >= amount). Interest accrual can occur
             # during any transaction type including flash loans.
             if ev.event_type in {"DEBT_MINT", "GHO_DEBT_MINT"}:
                 if has_liquidation:
                     continue
-                # Interest accrual: balance_increase > amount (net interest after repayment)
-                # This occurs in _burnScaled when interest > repayment amount
+                # Interest accrual: balance_increase >= amount
+                # - balance_increase > amount: net interest after repayment (in _burnScaled)
+                # - balance_increase == amount: pure interest accrual (in _accrueDebtOnAction)
                 # Always process interest accrual, regardless of transaction type
-                is_interest_accrual = ev.balance_increase > ev.amount
+                is_interest_accrual = ev.balance_increase >= ev.amount
                 if is_interest_accrual:
                     # Process as INTEREST_ACCRUAL
                     pass
