@@ -8,15 +8,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from eth_abi.abi import decode
-from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
-from web3.types import LogReceipt
 
 from degenbot.aave.events import AaveV3PoolEvent, AaveV3ScaledTokenEvent
 from degenbot.checksum_cache import get_checksum_address
+
+if TYPE_CHECKING:
+    from eth_typing import ChecksumAddress
+    from web3.types import LogReceipt
 
 
 def _topic_to_address(topic: HexBytes | str) -> ChecksumAddress:
@@ -384,6 +386,7 @@ class TransactionOperationsParser:
         gho_token_address: ChecksumAddress | None = None,
         token_type_mapping: dict[ChecksumAddress, str] | None = None,
         pool_address: ChecksumAddress | None = None,
+        debt_token_to_reserve: dict[ChecksumAddress, ChecksumAddress] | None = None,
     ):
         """Initialize parser.
 
@@ -394,6 +397,8 @@ class TransactionOperationsParser:
                                Keys are token addresses, values are "aToken" or "vToken".
             pool_address: Address of the Aave Pool contract.
                          Used to detect mintToTreasury operations.
+            debt_token_to_reserve: Mapping of debt token addresses to their underlying reserve addresses.
+                                  Used to correctly match debt burns with repay events in flash loan scenarios.
         """
         self.gho_token_address = gho_token_address or GHO_VARIABLE_DEBT_TOKEN_ADDRESS
         # Normalize token type mapping keys to checksum addresses
@@ -401,6 +406,24 @@ class TransactionOperationsParser:
             get_checksum_address(k): v for k, v in (token_type_mapping or {}).items()
         }
         self.pool_address = pool_address
+        # Normalize debt token to reserve mapping
+        self.debt_token_to_reserve = {
+            get_checksum_address(k): get_checksum_address(v)
+            for k, v in (debt_token_to_reserve or {}).items()
+        }
+
+    def _get_reserve_for_debt_token(
+        self, debt_token_address: ChecksumAddress
+    ) -> ChecksumAddress | None:
+        """Get the underlying reserve address for a debt token.
+
+        Args:
+            debt_token_address: The debt token (vToken) address.
+
+        Returns:
+            The underlying reserve asset address, or None if not found.
+        """
+        return self.debt_token_to_reserve.get(get_checksum_address(debt_token_address))
 
     def parse(self, events: list[LogReceipt], tx_hash: HexBytes) -> TransactionOperations:
         """Parse events into operations."""
@@ -888,6 +911,8 @@ class TransactionOperationsParser:
         is_gho = reserve == GHO_TOKEN_ADDRESS
 
         # Find debt mint
+        # For flash loan scenarios (same user, multiple mints in one tx),
+        # we need to match by token address to ensure correct pairing
         debt_mint = None
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
@@ -897,8 +922,19 @@ class TransactionOperationsParser:
                 not is_gho and ev.event_type == "DEBT_MINT"
             ):
                 if ev.user_address == on_behalf_of:
-                    debt_mint = ev
-                    break
+                    # Match by token address to handle flash loan scenarios
+                    # where same user has multiple mints for different assets
+                    # If debt_token_to_reserve mapping is provided, use it for matching
+                    if self.debt_token_to_reserve:
+                        mint_token_address = get_checksum_address(ev.event["address"])
+                        reserve_asset = self._get_reserve_for_debt_token(mint_token_address)
+                        if reserve_asset and reserve_asset.lower() == reserve.lower():
+                            debt_mint = ev
+                            break
+                    else:
+                        # Fallback to old behavior if mapping not provided
+                        debt_mint = ev
+                        break
 
         scaled_token_events = [debt_mint] if debt_mint else []
         op_type = OperationType.GHO_BORROW if is_gho else OperationType.BORROW
@@ -946,6 +982,8 @@ class TransactionOperationsParser:
         is_gho = reserve == GHO_TOKEN_ADDRESS
 
         # Find debt burn (normal case)
+        # For flash loan scenarios (same user, multiple burns in one tx),
+        # we need to match by token address to ensure correct pairing
         debt_burn = None
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
@@ -959,8 +997,19 @@ class TransactionOperationsParser:
             else:
                 if ev.event_type in {"DEBT_BURN", "UNKNOWN_BURN"}:
                     if ev.user_address == user:
-                        debt_burn = ev
-                        break
+                        # Match by token address to handle flash loan scenarios
+                        # where same user has multiple burns for different assets
+                        # If debt_token_to_reserve mapping is provided, use it for matching
+                        if self.debt_token_to_reserve:
+                            burn_token_address = get_checksum_address(ev.event["address"])
+                            reserve_asset = self._get_reserve_for_debt_token(burn_token_address)
+                            if reserve_asset and reserve_asset.lower() == reserve.lower():
+                                debt_burn = ev
+                                break
+                        else:
+                            # Fallback to old behavior if mapping not provided
+                            debt_burn = ev
+                            break
 
         scaled_token_events = [debt_burn] if debt_burn else []
 
@@ -1251,42 +1300,41 @@ class TransactionOperationsParser:
                 if has_repay and not has_collateral_burn and ev.balance_increase <= ev.amount:
                     continue
 
-            # Interest accrual: balance_increase > 0
+            # Interest accrual: process all unassigned mint events
             # Note: For pure interest, amount == balance_increase
             # But sometimes amount < balance_increase (small deposit + interest)
-            # We capture all mints with balance_increase > 0 that aren't already assigned
-            if ev.balance_increase > 0:
-                # Look for matching Transfer event from ZERO_ADDRESS (interest accrual)
-                # For mints from ZERO_ADDRESS, the target_address is the recipient (user)
-                # Match by amount if it's a pure interest accrual, or by target_address if there's a deposit
-                transfer_events = []
-                for transfer_ev in scaled_events:
-                    if (
-                        transfer_ev.event_type == "COLLATERAL_TRANSFER"
-                        and transfer_ev.from_address == ZERO_ADDRESS
-                        and transfer_ev.target_address == ev.user_address
-                        and transfer_ev.event["address"] == ev.event["address"]
-                        and transfer_ev.event["logIndex"] not in assigned_indices
-                        and transfer_ev.event["logIndex"] not in local_assigned
-                    ):
-                        # For pure interest, Transfer amount matches Mint amount
-                        # For deposit + interest, Transfer amount may be less than Mint amount
-                        if transfer_ev.amount == ev.amount or transfer_ev.amount < ev.amount:
-                            transfer_events.append(transfer_ev.event)
-                            local_assigned.add(transfer_ev.event["logIndex"])
-                            break  # Only match one transfer per mint
+            # Include dust mints (balance_increase == 0) which still need to update last_index
+            # Look for matching Transfer event from ZERO_ADDRESS (interest accrual)
+            # For mints from ZERO_ADDRESS, the target_address is the recipient (user)
+            # Match by amount if it's a pure interest accrual, or by target_address if there's a deposit
+            transfer_events = []
+            for transfer_ev in scaled_events:
+                if (
+                    transfer_ev.event_type == "COLLATERAL_TRANSFER"
+                    and transfer_ev.from_address == ZERO_ADDRESS
+                    and transfer_ev.target_address == ev.user_address
+                    and transfer_ev.event["address"] == ev.event["address"]
+                    and transfer_ev.event["logIndex"] not in assigned_indices
+                    and transfer_ev.event["logIndex"] not in local_assigned
+                ):
+                    # For pure interest, Transfer amount matches Mint amount
+                    # For deposit + interest, Transfer amount may be less than Mint amount
+                    if transfer_ev.amount == ev.amount or transfer_ev.amount < ev.amount:
+                        transfer_events.append(transfer_ev.event)
+                        local_assigned.add(transfer_ev.event["logIndex"])
+                        break  # Only match one transfer per mint
 
-                operations.append(
-                    Operation(
-                        operation_id=operation_id,
-                        operation_type=OperationType.INTEREST_ACCRUAL,
-                        pool_event=None,
-                        scaled_token_events=[ev],
-                        transfer_events=transfer_events,
-                        balance_transfer_events=[],
-                    )
+            operations.append(
+                Operation(
+                    operation_id=operation_id,
+                    operation_type=OperationType.INTEREST_ACCRUAL,
+                    pool_event=None,
+                    scaled_token_events=[ev],
+                    transfer_events=transfer_events,
+                    balance_transfer_events=[],
                 )
-                operation_id += 1
+            )
+            operation_id += 1
 
         return operations
 
@@ -1678,7 +1726,13 @@ class TransactionOperationsParser:
         return errors
 
     def _validate_interest_accrual(self, op: Operation) -> list[str]:
-        """Validate INTEREST_ACCRUAL operation."""
+        """Validate INTEREST_ACCRUAL operation.
+
+        Interest accrual operations have no pool event. The scaled token event
+        represents pure interest accrual where amount == balance_increase.
+        Also includes dust mints (balance_increase == 0) from discount updates
+        that still need to update the user's last_index.
+        """
         errors = []
 
         # Should have no pool event (interest accrual is standalone)
@@ -1691,16 +1745,8 @@ class TransactionOperationsParser:
                 f"Expected 1 scaled token event for INTEREST_ACCRUAL, got {len(op.scaled_token_events)}"
             )
 
-        # The event should be a mint with balance_increase > 0
-        # Note: For pure interest, amount == balance_increase
-        # But sometimes amount < balance_increase (small deposit + interest)
-        if op.scaled_token_events:
-            ev = op.scaled_token_events[0]
-            if ev.balance_increase == 0:
-                errors.append(
-                    f"INTEREST_ACCRUAL event should have balance_increase > 0, "
-                    f"got balance_increase={ev.balance_increase}"
-                )
+        # Allow both interest accrual (balance_increase > 0) and dust mints (balance_increase == 0)
+        # Dust mints occur during discount updates and still need to update last_index
 
         return errors
 

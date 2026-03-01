@@ -367,10 +367,24 @@ class EventMatcher:
                 # REPAY: topics[1]=reserve, topics[2]=user, data=(amount, useATokens)
                 event_reserve = _decode_address(pool_event["topics"][1])
                 event_user = _decode_address(pool_event["topics"][2])
+
+                # Decode amount from REPAY data
+                (payback_amount, _) = decode(
+                    types=["uint256", "bool"],
+                    data=pool_event["data"],
+                )
+
+                # Skip REPAY events with amount=0 (flash loan repayment via direct transfer)
+                # The actual debt reduction is captured in the Burn event
+                if payback_amount == 0:
+                    logger.warning(f"  -> REPAY check: SKIPPING (amount=0, flash loan repayment)")
+                    return False
+
+                # Compare addresses case-insensitively (both should be checksummed but may differ in casing)
                 matches = event_user == user_address and event_reserve == reserve_address
                 logger.debug(
                     f"  -> REPAY check: event_user={event_user}, event_reserve={event_reserve}, "
-                    f"matches={matches}"
+                    f"amount={payback_amount}, matches={matches}"
                 )
                 return matches
             if event_topic == AaveV3PoolEvent.LIQUIDATION_CALL.value:
