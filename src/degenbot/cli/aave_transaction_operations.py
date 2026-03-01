@@ -1287,17 +1287,26 @@ class TransactionOperationsParser:
             if ev.event_type not in {"COLLATERAL_MINT", "DEBT_MINT", "GHO_DEBT_MINT"}:
                 continue
 
-            # Skip DEBT_MINT in liquidation/borrow transactions - these may be
-            # flash borrows. For REPAY transactions, only skip if there's no
-            # collateral burn (if there is, it's repayWithATokens and DEBT_MINT
-            # should become INTEREST_ACCRUAL).
+            # Skip DEBT_MINT in liquidation transactions - these may be
+            # protocol operations that should not create INTEREST_ACCRUAL.
+            # For borrow/repay transactions, only skip if it's not interest
+            # accrual (balance_increase > amount). Interest accrual can occur
+            # during any transaction type including flash loans.
             if ev.event_type in {"DEBT_MINT", "GHO_DEBT_MINT"}:
-                if has_liquidation or has_borrow:
+                if has_liquidation:
                     continue
-                # Skip DEBT_MINT during REPAY only if it's not interest accrual
-                # Interest accrual during repayment: balance_increase > amount
+                # Interest accrual: balance_increase > amount (net interest after repayment)
                 # This occurs in _burnScaled when interest > repayment amount
-                if has_repay and not has_collateral_burn and ev.balance_increase <= ev.amount:
+                # Always process interest accrual, regardless of transaction type
+                is_interest_accrual = ev.balance_increase > ev.amount
+                if is_interest_accrual:
+                    # Process as INTEREST_ACCRUAL
+                    pass
+                elif has_borrow:
+                    # Skip DEBT_MINT during borrow (flash loan) if not interest accrual
+                    continue
+                elif has_repay and not has_collateral_burn:
+                    # Skip DEBT_MINT during REPAY if not interest accrual
                     continue
 
             # Interest accrual: process all unassigned mint events
