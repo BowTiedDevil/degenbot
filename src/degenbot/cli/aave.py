@@ -132,6 +132,10 @@ class TransactionContext:
     # Used to skip balance initialization when events provide authoritative values
     stk_aave_transfer_users: set[ChecksumAddress] = field(default_factory=set)
 
+    # Track which stkAAVE transfer events have been processed (by log index)
+    # This prevents double-counting in pending delta calculations
+    processed_stk_aave_transfers: set[int] = field(default_factory=set)
+
     # Pool events for EventMatcher (filtered from events)
     pool_events: list[LogReceipt] = field(default_factory=list)
 
@@ -221,6 +225,10 @@ class TransactionContext:
             transfer_log_index = event["logIndex"]
             # Only consider transfers that occur AFTER the current event
             if transfer_log_index <= log_index:
+                continue
+
+            # Skip transfers that have already been processed (balance already updated)
+            if transfer_log_index in self.processed_stk_aave_transfers:
                 continue
 
             from_addr = _decode_address(event["topics"][1])
@@ -1143,6 +1151,10 @@ def _process_stk_aave_transfer_event(
             f"after: {to_user.stk_aave_balance}, "
             f"delta: +{value}"
         )
+
+    # Mark this transfer as processed to prevent double-counting in pending delta calculations
+    if tx_context is not None:
+        tx_context.processed_stk_aave_transfers.add(event["logIndex"])
 
 
 def _process_reserve_data_update_event(
