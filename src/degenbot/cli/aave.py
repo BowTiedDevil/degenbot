@@ -690,7 +690,7 @@ def aave_update(
                     market.last_update_block = working_end_block
 
                 # Perform full verification when the chunk spans a verification interval
-                full_verification_interval = 50_000
+                full_verification_interval = 250_000
                 if (
                     verify
                     and working_end_block // full_verification_interval
