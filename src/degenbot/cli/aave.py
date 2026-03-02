@@ -1,3 +1,4 @@
+import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from operator import itemgetter
@@ -664,7 +665,7 @@ def aave_update(
                             no_progress=no_progress,
                         )
                     except Exception as e:
-                        logger.exception("FAILED UPDATE!")
+                        logger.exception("")
 
                         # Log structured exception data for autonomous analysis
                         if aave_debug_logger.is_enabled():
@@ -681,7 +682,7 @@ def aave_update(
                             )
                             aave_debug_logger.close()
 
-                        raise
+                        sys.exit(1)
 
                 # At this point, all markets have been updated and the invariant checks have
                 # passed, so stamp the update block and commit to the DB
