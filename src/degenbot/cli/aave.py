@@ -1693,6 +1693,7 @@ def _get_current_borrow_index_from_pool(
         The current borrow index, or None if the call fails
     """
     try:
+        borrow_index: int
         (borrow_index,) = raw_call(
             w3=w3,
             address=pool_address,

@@ -377,7 +377,7 @@ class EventMatcher:
                 # Skip REPAY events with amount=0 (flash loan repayment via direct transfer)
                 # The actual debt reduction is captured in the Burn event
                 if payback_amount == 0:
-                    logger.warning(f"  -> REPAY check: SKIPPING (amount=0, flash loan repayment)")
+                    logger.warning("  -> REPAY check: SKIPPING (amount=0, flash loan repayment)")
                     return False
 
                 # Compare addresses case-insensitively (both should be checksummed but may differ in casing)
@@ -510,11 +510,8 @@ class EventMatcher:
         """
         config = self.CONFIGS.get(event_type)
         if config is None:
-            raise EventMatchError(
-                f"Unknown scaled token event type: {event_type}",
-                user_address=user_address,
-                reserve_address=reserve_address,
-            )
+            msg = f"Unknown scaled token event type: {event_type}"
+            raise EventMatchError(msg, user_address=user_address, reserve_address=reserve_address)
 
         # DEBUG: Log entry into event matching
         logger.debug(
@@ -720,16 +717,17 @@ def _should_consume_collateral_mint_pool_event(pool_event: LogReceipt) -> bool:
     """
     event_topic = pool_event["topics"][0]
 
-    # LIQUIDATION_CALL and REPAY are never consumed because they must be available
-    # to match multiple operations (liquidations or repay-with-aTokens transactions)
-    if event_topic in {
+    assert event_topic in {
         AaveV3PoolEvent.LIQUIDATION_CALL.value,
         AaveV3PoolEvent.REPAY.value,
-    }:
-        return False
+        AaveV3PoolEvent.SUPPLY.value,
+        AaveV3PoolEvent.WITHDRAW.value,
+    }
 
-    # SUPPLY and WITHDRAW are consumable
-    return True
+    return event_topic not in {
+        AaveV3PoolEvent.LIQUIDATION_CALL.value,
+        AaveV3PoolEvent.REPAY.value,
+    }
 
 
 def _should_consume_debt_mint_pool_event(pool_event: LogReceipt) -> bool:
@@ -745,15 +743,16 @@ def _should_consume_debt_mint_pool_event(pool_event: LogReceipt) -> bool:
     """
     event_topic = pool_event["topics"][0]
 
-    # REPAY and LIQUIDATION_CALL are never consumed by debt mints
-    # because they need to be available for other operations
-    if event_topic in {
+    assert event_topic in {
+        AaveV3PoolEvent.BORROW.value,
         AaveV3PoolEvent.REPAY.value,
         AaveV3PoolEvent.LIQUIDATION_CALL.value,
-    }:
-        return False
+    }
 
-    return True
+    return event_topic not in {
+        AaveV3PoolEvent.REPAY.value,
+        AaveV3PoolEvent.LIQUIDATION_CALL.value,
+    }
 
 
 def _should_consume_debt_burn_pool_event(pool_event: LogReceipt) -> bool:
@@ -799,11 +798,12 @@ def _should_consume_gho_debt_mint_pool_event(pool_event: LogReceipt) -> bool:
     """
     event_topic = pool_event["topics"][0]
 
-    # REPAY is never consumed by GHO debt mints
-    if event_topic == AaveV3PoolEvent.REPAY.value:
-        return False
+    assert event_topic in {
+        AaveV3PoolEvent.BORROW.value,
+        AaveV3PoolEvent.REPAY.value,
+    }
 
-    return True
+    return event_topic is not AaveV3PoolEvent.REPAY.value
 
 
 def _should_consume_gho_debt_burn_pool_event(pool_event: LogReceipt) -> bool:
@@ -819,13 +819,16 @@ def _should_consume_gho_debt_burn_pool_event(pool_event: LogReceipt) -> bool:
     """
     event_topic = pool_event["topics"][0]
 
-    if event_topic in {
+    assert event_topic in {
+        AaveV3PoolEvent.BORROW.value,
         AaveV3PoolEvent.LIQUIDATION_CALL.value,
         AaveV3PoolEvent.DEFICIT_CREATED.value,
-    }:
-        return False
+    }
 
-    return True
+    return event_topic not in {
+        AaveV3PoolEvent.LIQUIDATION_CALL.value,
+        AaveV3PoolEvent.DEFICIT_CREATED.value,
+    }
 
 
 def _decode_address(topic: HexBytes) -> ChecksumAddress:
@@ -845,7 +848,7 @@ class OperationAwareEventMatcher:
     eliminating the need for max_log_index and temporal ordering checks.
     """
 
-    def __init__(self, operation: Operation):
+    def __init__(self, operation: Operation) -> None:
         """Initialize matcher with operation context.
 
         Args:
@@ -885,13 +888,12 @@ class OperationAwareEventMatcher:
             OperationType.BALANCE_TRANSFER: self._match_balance_transfer,
         }
 
-        matcher = matchers.get(self.operation.operation_type)
-        if matcher:
-            result = matcher(scaled_event)
-            return result
-
-        # Default matching for unknown operation types
-        return self._default_match(scaled_event)
+        matcher = matchers.get(
+            self.operation.operation_type,
+            # Default matching for unknown operation types
+            self._default_match,
+        )
+        return matcher(scaled_event)
 
     def _match_supply(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """Match supply operation."""
@@ -1040,7 +1042,7 @@ class OperationAwareEventMatcher:
         # data=(address user, uint256 amount)
         if self.operation.pool_event is None:
             return {"raw_amount": 0}
-        user, raw_amount = decode(
+        _, raw_amount = decode(
             types=["address", "uint256"],
             data=self.operation.pool_event["data"],
         )
