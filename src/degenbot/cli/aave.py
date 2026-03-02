@@ -1498,74 +1498,18 @@ def _get_or_create_collateral_position(
     session: Session,
     user: AaveV3UsersTable,
     asset_id: int,
-    token_address: ChecksumAddress | None = None,
-    w3: Web3 | None = None,
-    block_number: int | None = None,
 ) -> AaveV3CollateralPositionsTable:
-    """Get existing collateral position or create new one.
-
-    When token_address, w3, and block_number are provided, initializes the position
-    with the on-chain balance at the previous block. This handles users (including
-    treasury) who have existing positions that were established before we started tracking.
     """
-    # Check if position already exists
-    for position in user.collateral_positions:
-        if position.asset_id == asset_id:
-            return position
+    Get existing collateral position or create new one with zero balance.
+    """
 
-    # Position doesn't exist - fetch on-chain balance before creating
-    on_chain_balance = 0
-    if token_address is not None and w3 is not None and block_number is not None:
-        try:
-            (on_chain_balance,) = raw_call(
-                w3=w3,
-                address=token_address,
-                calldata=encode_function_calldata(
-                    function_prototype="scaledBalanceOf(address)",
-                    function_arguments=[user.address],
-                ),
-                return_types=["uint256"],
-                block_identifier=block_number - 1,
-            )
-            if on_chain_balance > 0:
-                logger.debug(
-                    f"Initializing new collateral position for user {user.address} "
-                    f"asset_id={asset_id} with on-chain balance {on_chain_balance}"
-                )
-        except (ValueError, RuntimeError, ContractLogicError) as e:
-            # If we can't verify, log warning but continue with 0 balance
-            logger.warning(
-                f"Could not fetch on-chain balance for user {user.address} "
-                f"at block {block_number - 1}: {e}"
-            )
-
-    # Also fetch the last_index for proper interest accrual
-    last_index = None
-    if token_address is not None and w3 is not None and block_number is not None:
-        try:
-            (last_index,) = raw_call(
-                w3=w3,
-                address=token_address,
-                calldata=encode_function_calldata(
-                    function_prototype="getPreviousIndex(address)",
-                    function_arguments=[user.address],
-                ),
-                return_types=["uint256"],
-                block_identifier=block_number - 1,
-            )
-        except (ValueError, RuntimeError, ContractLogicError):
-            last_index = None
-
-    # Create new position with on-chain balance and index (or 0/None if unavailable)
-    new_position = AaveV3CollateralPositionsTable(
-        user_id=user.id,
+    return _get_or_create_position(
+        session=session,
+        user=user,
         asset_id=asset_id,
-        balance=on_chain_balance,
-        last_index=last_index,
+        positions=user.collateral_positions,
+        position_table=AaveV3CollateralPositionsTable,
     )
-    session.add(new_position)
-    user.collateral_positions.append(new_position)
-    return new_position
 
 
 def _get_or_create_debt_position(
@@ -1573,7 +1517,10 @@ def _get_or_create_debt_position(
     user: AaveV3UsersTable,
     asset_id: int,
 ) -> AaveV3DebtPositionsTable:
-    """Get existing debt position or create new one with zero balance."""
+    """
+    Get existing debt position or create new one with zero balance.
+    """
+
     return _get_or_create_position(
         session=session,
         user=user,
@@ -2647,12 +2594,7 @@ def _process_collateral_mint_with_match(
 
     # Get or create collateral position
     collateral_position = _get_or_create_collateral_position(
-        session=session,
-        user=user,
-        asset_id=collateral_asset.id,
-        token_address=token_address,
-        w3=w3,
-        block_number=scaled_event.event["blockNumber"],
+        session=session, user=user, asset_id=collateral_asset.id
     )
 
     # Calculate scaled amount using PoolProcessor for revision 4+
@@ -2732,12 +2674,7 @@ def _process_collateral_burn_with_match(
 
     # Get collateral position
     collateral_position = _get_or_create_collateral_position(
-        session=session,
-        user=user,
-        asset_id=collateral_asset.id,
-        token_address=token_address,
-        w3=w3,
-        block_number=scaled_event.event["blockNumber"],
+        session=session, user=user, asset_id=collateral_asset.id
     )
 
     # Calculate scaled amount using PoolProcessor for revision 4+
@@ -3244,12 +3181,7 @@ def _process_collateral_transfer_with_match(
 
     # Get sender's position
     sender_position = _get_or_create_collateral_position(
-        session=session,
-        user=sender,
-        asset_id=collateral_asset.id,
-        token_address=token_address,
-        w3=w3,
-        block_number=scaled_event.event["blockNumber"],
+        session=session, user=sender, asset_id=collateral_asset.id
     )
 
     # Determine transfer amount
@@ -3321,12 +3253,7 @@ def _process_collateral_transfer_with_match(
         )
 
         recipient_position = _get_or_create_collateral_position(
-            session=session,
-            user=recipient,
-            asset_id=collateral_asset.id,
-            token_address=token_address,
-            w3=w3,
-            block_number=scaled_event.event["blockNumber"],
+            session=session, user=recipient, asset_id=collateral_asset.id
         )
         recipient_position.balance += transfer_amount
 
