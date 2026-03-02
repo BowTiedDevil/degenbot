@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from operator import itemgetter
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 
 import click
 import eth_abi.abi
@@ -2717,9 +2717,6 @@ def _process_operation(
                 match_result=match_result,
             )
 
-        # Event consumption is tracked internally by the matcher
-        pass
-
 
 def _process_collateral_mint_with_match(
     *,
@@ -3315,25 +3312,25 @@ def _process_collateral_transfer_with_match(
     if scaled_event.index == 0 and tx_context:
         # Check if there's a corresponding collateral burn in this transaction
         # Filter burn events from tx_context.events
-        for event in tx_context.events:
-            if event["topics"][0] != AaveV3ScaledTokenEvent.BURN.value:
+        for evt in tx_context.events:
+            if evt["topics"][0] != AaveV3ScaledTokenEvent.BURN.value:
                 continue
             # Skip GHO debt burns (collateral burns are all other burns)
-            if get_checksum_address(event["address"]) == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
+            if get_checksum_address(evt["address"]) == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
                 continue
-            if get_checksum_address(event["address"]) == get_checksum_address(
+            if get_checksum_address(evt["address"]) == get_checksum_address(
                 scaled_event.event["address"]
             ):
                 # Found a collateral burn for the same token in this transaction
                 # The burn user is in topics[1] of the SCALED_TOKEN_BURN event
-                burn_user = get_checksum_address("0x" + event["topics"][1].hex()[-40:])
+                burn_user = get_checksum_address("0x" + evt["topics"][1].hex()[-40:])
                 if burn_user == scaled_event.from_address:
                     # Check if the amounts match - if so, this transfer represents
                     # the same deduction as the burn (e.g., collateral to liquidator)
                     # and should be skipped to avoid double-counting
                     # Burn event data: amount (32 bytes), balanceIncrease (32 bytes),
                     # index (32 bytes)
-                    burn_amount = int.from_bytes(event["data"][:32], "big")
+                    burn_amount = int.from_bytes(evt["data"][:32], "big")
                     if burn_amount == scaled_event.amount:
                         # Skip this transfer as the burn will handle the balance reduction
                         return
