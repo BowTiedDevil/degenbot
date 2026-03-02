@@ -762,6 +762,27 @@ def aave_update(
                 # passed, so stamp the update block and commit to the DB
                 for market in markets_to_update:
                     market.last_update_block = working_end_block
+
+                # Perform full verification when the chunk spans a verification interval
+                full_verification_interval = 50_000
+                if (
+                    verify
+                    and working_end_block // full_verification_interval
+                    != working_start_block // full_verification_interval
+                ):
+                    for market in markets_to_update:
+                        _verify_all_positions(
+                            w3=w3,
+                            market=market,
+                            session=session,
+                            block_number=working_end_block,
+                            no_progress=no_progress,
+                        )
+
+                _cleanup_zero_balance_positions(
+                    session=session, market=market, no_progress=no_progress
+                )
+
                 markets_to_update.clear()
                 session.commit()
 
@@ -1827,6 +1848,81 @@ def _cleanup_zero_balance_positions(
         disable=no_progress,
     ):
         session.delete(position)
+
+
+def _verify_all_positions(
+    *,
+    w3: Web3,
+    market: AaveV3MarketTable,
+    session: Session,
+    block_number: int,
+    no_progress: bool,
+) -> None:
+    """
+    Verify all positions in the market against on-chain state.
+
+    This performs a comprehensive verification of all collateral positions,
+    debt positions, stkAAVE balances, and GHO discount amounts for the
+    entire market.
+
+    Args:
+        w3: Web3 instance for blockchain calls
+        market: The Aave V3 market to verify
+        session: Database session
+        block_number: The block number to verify against
+        no_progress: If True, disable progress bars
+    """
+
+    logger.info(f"Performing full verification of all positions at block {block_number:,}")
+
+    session.flush()
+
+    # Verify all collateral positions
+    _verify_scaled_token_positions(
+        w3=w3,
+        market=market,
+        session=session,
+        position_table=AaveV3CollateralPositionsTable,
+        block_number=block_number,
+        no_progress=no_progress,
+        user_addresses=None,
+    )
+
+    # Verify all debt positions
+    _verify_scaled_token_positions(
+        w3=w3,
+        market=market,
+        session=session,
+        position_table=AaveV3DebtPositionsTable,
+        block_number=block_number,
+        no_progress=no_progress,
+        user_addresses=None,
+    )
+
+    # Get GHO asset for stkAAVE and discount verification
+    gho_asset = _get_gho_asset(session=session, market=market)
+
+    # Verify all stkAAVE balances
+    _verify_stk_aave_balances(
+        w3=w3,
+        session=session,
+        market=market,
+        gho_asset=gho_asset,
+        block_number=block_number,
+        no_progress=no_progress,
+        user_addresses=None,
+    )
+
+    # Verify all GHO discount amounts
+    _verify_gho_discount_amounts(
+        w3=w3,
+        session=session,
+        market=market,
+        gho_asset=gho_asset,
+        block_number=block_number,
+        no_progress=no_progress,
+        user_addresses=None,
+    )
 
 
 def _verify_scaled_token_positions(
@@ -4305,12 +4401,6 @@ def update_aave_market(
                 no_progress=no_progress,
                 user_addresses=users_to_verify,
             )
-
-    _cleanup_zero_balance_positions(
-        session=session,
-        market=market,
-        no_progress=no_progress,
-    )
 
     logger.info(
         f"Market {market.id} (chain {market.chain_id}) successfully updated to block {end_block:,}"
