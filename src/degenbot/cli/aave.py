@@ -2346,6 +2346,26 @@ def _process_transaction(
             logger.debug(f"  BalanceTransfer event: logIndex={balance_transfer_ev['logIndex']}")
     logger.debug("=== END OPERATIONS ===\n")
 
+    # Process stkAAVE transfers BEFORE operations to ensure stkAAVE balances
+    # are up-to-date when GHO debt operations calculate discount rates.
+    # This handles cases where stkAAVE transfers (e.g., rewards claims) occur
+    # before GHO mint/burn events in the same transaction.
+    if gho_asset and gho_asset.v_gho_discount_token:
+        discount_token = gho_asset.v_gho_discount_token
+        for event in tx_context.events:
+            topic = event["topics"][0]
+            event_address = get_checksum_address(event["address"])
+            if topic == ERC20Event.TRANSFER.value and event_address == discount_token:
+                _process_stk_aave_transfer_event(
+                    event=event,
+                    market=market,
+                    session=session,
+                    w3=w3,
+                    gho_asset=gho_asset,
+                    contract_address=event_address,
+                    tx_context=tx_context,
+                )
+
     # Process each operation
     for operation in sorted_operations:
         _process_operation(
@@ -2439,18 +2459,9 @@ def _process_transaction(
                 contract_address=event_address,
                 tx_context=tx_context,
             )
-        elif topic == ERC20Event.TRANSFER.value and event_address == (
-            gho_asset.v_gho_discount_token if gho_asset else None
-        ):
-            _process_stk_aave_transfer_event(
-                event=event,
-                market=market,
-                session=session,
-                w3=w3,
-                gho_asset=gho_asset,
-                contract_address=event_address,
-                tx_context=tx_context,
-            )
+        # Note: stkAAVE transfers are processed before operations (see above)
+        # to ensure stkAAVE balances are up-to-date when GHO operations calculate
+        # discount rates. They should not be processed again here.
 
 
 def _process_operation(
