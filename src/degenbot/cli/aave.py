@@ -2486,7 +2486,12 @@ def _process_operation(
             )
 
     # Process each scaled token event in the operation
-    for scaled_event in operation.scaled_token_events:
+    # Sort by log index to ensure events are processed in chronological order
+    sorted_scaled_events = sorted(
+        operation.scaled_token_events,
+        key=lambda e: e.event["logIndex"],
+    )
+    for scaled_event in sorted_scaled_events:
         event = scaled_event.event
         contract_address = get_checksum_address(event["address"])
 
@@ -3296,7 +3301,12 @@ def _process_collateral_transfer_with_match(
     # Update sender's balance
     sender_position.balance -= transfer_amount
 
-    if transfer_index > 0:
+    # Only update last_index if the new index is greater than the current one
+    # This prevents a transfer with a paired BalanceTransfer (which has the index
+    # from when the transfer occurred) from overwriting a higher index set by
+    # a subsequent operation (like a burn) that occurred later in the transaction
+    current_sender_index = sender_position.last_index or 0
+    if transfer_index > 0 and transfer_index > current_sender_index:
         sender_position.last_index = transfer_index
 
     # Handle recipient
