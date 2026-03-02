@@ -664,6 +664,74 @@ class TestOperationValidation:
         # Validation should pass - no exception raised
         tx_ops.validate([debt_mint_event, liquidation_event, collateral_burn_event])
 
+    def test_liquidation_with_interest_accrual_mint(self):
+        """Liquidation correctly processes interest accrual mint events.
+
+        Regression test for issue #0015 - Interest accrual mints during liquidation
+        were being skipped, causing debt balance mismatches.
+        Transaction: 0xcb087ea4d8d1b7c890318c3eccd7f730f24a1f1b55b25c156b9649e543de0588
+        """
+        user = get_checksum_address("0x09D86D566092bEc46D449e72087ee788937599D2")
+        collateral_asset = get_checksum_address("0xc011a73ee8576fb46f5e1c5751ca3b9fe0af2a6f")
+        debt_asset = get_checksum_address("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+
+        # Interest accrual mint (balance_increase >= amount)
+        interest_mint_event = EventFactory.create_debt_mint_event(
+            user=user,
+            amount=11627951177,
+            balance_increase=33823939319,  # >= amount, indicates interest accrual
+            log_index=102,
+        )
+
+        liquidation_event = EventFactory.create_liquidation_call_event(
+            collateral_asset=collateral_asset,
+            debt_asset=debt_asset,
+            user=user,
+            debt_to_cover=22195988142,
+            liquidated_collateral=9048585995794641865737,
+            log_index=100,
+        )
+
+        collateral_burn_event = EventFactory.create_collateral_burn_event(
+            user=user,
+            amount=9048585995794641865737,
+            balance_increase=11005547540567006197,
+            log_index=104,
+        )
+
+        parser = TransactionOperationsParser(token_type_mapping=TEST_TOKEN_TYPE_MAPPING)
+        tx_ops = parser.parse(
+            [interest_mint_event, liquidation_event, collateral_burn_event],
+            HexBytes("0x" + "00" * 32),
+        )
+
+        # Should have 2 operations: INTEREST_ACCRUAL and LIQUIDATION
+        assert len(tx_ops.operations) == 2
+
+        # Find operations by type
+        interest_ops = [
+            op for op in tx_ops.operations if op.operation_type == OperationType.INTEREST_ACCRUAL
+        ]
+        liquidation_ops = [
+            op for op in tx_ops.operations if op.operation_type == OperationType.LIQUIDATION
+        ]
+
+        assert len(interest_ops) == 1, (
+            f"Expected 1 INTEREST_ACCRUAL operation, got {len(interest_ops)}"
+        )
+        assert len(liquidation_ops) == 1, (
+            f"Expected 1 LIQUIDATION operation, got {len(liquidation_ops)}"
+        )
+
+        interest_op = interest_ops[0]
+        assert len(interest_op.scaled_token_events) == 1
+
+        liquidation_op = liquidation_ops[0]
+        assert len(liquidation_op.scaled_token_events) == 1  # collateral burn
+
+        # Validation should pass
+        tx_ops.validate([interest_mint_event, liquidation_event, collateral_burn_event])
+
     def test_repay_with_zero_debt_burns_validates(self):
         """Interest-only repayment has 0 debt burns (only interest accrual mint)."""
         # Regression test for issue #0029

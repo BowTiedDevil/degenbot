@@ -1297,8 +1297,6 @@ class TransactionOperationsParser:
             # accrual (balance_increase >= amount). Interest accrual can occur
             # during any transaction type including flash loans.
             if ev.event_type in {"DEBT_MINT", "GHO_DEBT_MINT"}:
-                if has_liquidation:
-                    continue
                 # Interest accrual: balance_increase >= amount
                 # - balance_increase > amount: net interest after repayment (in _burnScaled)
                 # - balance_increase == amount: pure interest accrual (in _accrueDebtOnAction)
@@ -1307,6 +1305,9 @@ class TransactionOperationsParser:
                 if is_interest_accrual:
                     # Process as INTEREST_ACCRUAL
                     pass
+                elif has_liquidation:
+                    # Skip non-interest mints during liquidation (e.g., flash borrows)
+                    continue
                 elif has_borrow:
                     # Skip DEBT_MINT during borrow (flash loan) if not interest accrual
                     continue
