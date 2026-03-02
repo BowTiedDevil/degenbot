@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from operator import itemgetter
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 import click
 import eth_abi.abi
@@ -235,81 +235,6 @@ class TransactionContext:
 
 
 event_in_process: LogReceipt
-
-
-class VerboseConfig:
-    """Runtime configurable verbose logging settings for Aave event processing."""
-
-    all_enabled: ClassVar[bool] = False
-    users: ClassVar[set[ChecksumAddress]] = set()
-    transactions: ClassVar[set[HexBytes]] = set()
-
-    @classmethod
-    def toggle_all(cls, *, enabled: bool | None = None) -> bool:
-        """Toggle or set VERBOSE_ALL. Returns the new state."""
-        if enabled is None:
-            cls.all_enabled = not cls.all_enabled
-        else:
-            cls.all_enabled = enabled
-        return cls.all_enabled
-
-    @classmethod
-    def add_user(cls, user_address: ChecksumAddress) -> None:
-        """Add a user address to VERBOSE_USERS."""
-        cls.users.add(user_address)
-
-    @classmethod
-    def remove_user(cls, user_address: ChecksumAddress) -> None:
-        """Remove a user address from VERBOSE_USERS."""
-        cls.users.discard(user_address)
-
-    @classmethod
-    def clear_users(cls) -> None:
-        """Clear all users from VERBOSE_USERS."""
-        cls.users.clear()
-
-    @classmethod
-    def add_transaction(cls, tx_hash: HexBytes | str) -> None:
-        """Add a transaction hash to VERBOSE_TX."""
-        if isinstance(tx_hash, str):
-            tx_hash = HexBytes(tx_hash)
-        cls.transactions.add(tx_hash)
-
-    @classmethod
-    def remove_transaction(cls, tx_hash: HexBytes | str) -> None:
-        """Remove a transaction hash from VERBOSE_TX."""
-        if isinstance(tx_hash, str):
-            tx_hash = HexBytes(tx_hash)
-        cls.transactions.discard(tx_hash)
-
-    @classmethod
-    def clear_transactions(cls) -> None:
-        """Clear all transactions from VERBOSE_TX."""
-        cls.transactions.clear()
-
-    @classmethod
-    def is_verbose(
-        cls,
-        user_address: ChecksumAddress | None = None,
-        tx_hash: HexBytes | None = None,
-    ) -> bool:
-        """Check if verbose logging should be enabled for the given context."""
-        return (
-            cls.all_enabled
-            or (user_address is not None and user_address in cls.users)
-            or (tx_hash is not None and tx_hash in cls.transactions)
-        )
-
-
-def _log_if_verbose(
-    user_address: ChecksumAddress,
-    tx_hash: HexBytes | None,
-    *messages: str,
-) -> None:
-    """Log messages if verbose mode is enabled for the given context."""
-    if VerboseConfig.is_verbose(user_address=user_address, tx_hash=tx_hash):
-        for msg in messages:
-            logger.info(msg)
 
 
 class WadRayMathLibrary(Protocol):
@@ -1139,12 +1064,7 @@ def _process_stk_aave_transfer_event(
 
     (value,) = _decode_uint_values(event=event, num_values=1)
 
-    tx_hash = event.get("transactionHash")
-
-    if VerboseConfig.is_verbose(
-        user_address=from_address, tx_hash=tx_hash
-    ) or VerboseConfig.is_verbose(user_address=to_address, tx_hash=tx_hash):
-        logger.info(f"stkAAVE transfer: {from_address} -> {to_address}, value={value}")
+    logger.debug(f"stkAAVE transfer: {from_address} -> {to_address}, value={value}")
 
     # Get or create users involved in the transfer
     block_number = event["blockNumber"]
@@ -1204,23 +1124,24 @@ def _process_stk_aave_transfer_event(
         from_user_old_balance = from_user.stk_aave_balance
         from_user.stk_aave_balance -= value
 
-        if VerboseConfig.is_verbose(user_address=from_address, tx_hash=tx_hash):
-            logger.info(f"stkAAVE balance update: {from_address}")
-            logger.info(f"  before: {from_user_old_balance}")
-            logger.info(f"  after: {from_user.stk_aave_balance}")
-            logger.info(f"  delta: -{value}")
-
+        logger.debug(
+            f"stkAAVE balance update: {from_address}, "
+            f"before: {from_user_old_balance}, "
+            f"after: {from_user.stk_aave_balance}, "
+            f"delta: -{value}"
+        )
     if to_user is not None:
         assert to_user.stk_aave_balance is not None
         assert to_user.stk_aave_balance >= 0, f"{to_user.address} stkAAVE balance < 0!"
         to_user_old_balance = to_user.stk_aave_balance
         to_user.stk_aave_balance += value
 
-        if VerboseConfig.is_verbose(user_address=to_address, tx_hash=tx_hash):
-            logger.info(f"stkAAVE balance update: {to_address}")
-            logger.info(f"  before: {to_user_old_balance}")
-            logger.info(f"  after: {to_user.stk_aave_balance}")
-            logger.info(f"  delta: +{value}")
+        logger.debug(
+            f"stkAAVE balance update: {to_address}"
+            f"before: {to_user_old_balance}, "
+            f"after: {to_user.stk_aave_balance}, "
+            f"delta: +{value}"
+        )
 
 
 def _process_reserve_data_update_event(
@@ -3713,35 +3634,16 @@ def _process_discount_percent_updated_event(
         gho_asset=gho_asset,
     )
 
-    if VerboseConfig.is_verbose(
-        user_address=user_address, tx_hash=event_in_process["transactionHash"]
-    ):
-        logger.info(f"DiscountPercentUpdated: {user_address}")
-        logger.info(
-            f"  BEFORE UPDATE: user.id={user.id}, "
-            f"user.gho_discount={user.gho_discount}, id(user)={id(user)}"
-        )
-
     # With transaction-level processing, the discount is updated here
     # and subsequent Mint/Burn events in the same transaction will see
     # the updated value
-    if VerboseConfig.is_verbose(
-        user_address=user_address, tx_hash=event_in_process["transactionHash"]
-    ):
-        logger.info(
-            f"DiscountPercentUpdated for {user_address}: "
-            f"{user.gho_discount} -> {new_discount_percent} "
-            f"(user.id={user.id})"
-        )
+    logger.debug(
+        f"DiscountPercentUpdated for {user_address}: "
+        f"{user.gho_discount} -> {new_discount_percent} "
+        f"(user.id={user.id})"
+    )
     user.gho_discount = new_discount_percent
     session.flush()  # Ensure the discount update is visible to subsequent queries
-
-    if VerboseConfig.is_verbose(
-        user_address=user_address, tx_hash=event_in_process["transactionHash"]
-    ):
-        logger.info(f"DiscountPercentUpdated: {user_address}")
-        logger.info(f"  old_discount_percent={old_discount_percent}")
-        logger.info(f"  new_discount_percent={new_discount_percent}")
 
 
 def _event_sort_key(event: LogReceipt) -> tuple[int, int]:
