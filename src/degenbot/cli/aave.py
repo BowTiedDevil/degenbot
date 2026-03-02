@@ -1283,7 +1283,26 @@ def _process_scaled_token_upgrade_event(
             gho_asset_db = _get_gho_asset(session, market)
             gho_asset_db.v_gho_discount_token = None
             gho_asset_db.v_gho_discount_rate_strategy = None
-            logger.info(f"GHO discount mechanism deprecated at revision {vtoken_revision}")
+
+            # Reset all users' GHO discount to 0 since discount mechanism is deprecated
+            for user in (
+                session
+                .execute(
+                    select(AaveV3UsersTable).where(
+                        AaveV3UsersTable.market_id == market.id,
+                        AaveV3UsersTable.gho_discount != 0,
+                    )
+                )
+                .scalars()
+                .all()
+            ):
+                user.gho_discount = 0
+            logger.info(
+                f"GHO discount mechanism deprecated at revision {vtoken_revision}. "
+                "Set GHO discounts to 0"
+            )
+            session.flush()
+
     else:
         token_address = get_checksum_address(event["address"])
         msg = f"Unknown token type for address {token_address}. Expected aToken or vToken."
@@ -1618,7 +1637,10 @@ def _verify_gho_discount_amounts(
     """
 
     # Skip verification if discount mechanism is not supported (revision 4+)
-    if not _is_discount_supported(market):
+    revision = _get_gho_vtoken_revision(market)
+    logger.debug(f"Verifying GHO discounts: revision={revision}, market.id={market.id}")
+    if revision is None or revision >= 4:
+        logger.debug(f"Skipping GHO discount verification (revision {revision} < 4 not met)")
         return
 
     if gho_asset.v_gho_discount_token is None:
