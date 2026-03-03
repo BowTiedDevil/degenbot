@@ -2611,6 +2611,105 @@ def _process_operation(
                 match_result=match_result,
             )
 
+    # Process transfer_events that represent burns (ERC20 Transfer to zero address)
+    # These are added to operations like WITHDRAW but need to be processed to update balances
+    # Only process for WITHDRAW and REPAY operations where these transfers represent burns
+    if operation.operation_type in {
+        OperationType.WITHDRAW,
+        OperationType.REPAY,
+        OperationType.REPAY_WITH_ATOKENS,
+    }:
+        for transfer_event in operation.transfer_events:
+            _process_transfer_event_burn(
+                event=transfer_event,
+                market=market,
+                session=session,
+                w3=w3,
+                gho_asset=gho_asset,
+                tx_context=tx_context,
+            )
+
+
+def _process_transfer_event_burn(
+    *,
+    event: LogReceipt,
+    market: AaveV3MarketTable,
+    session: Session,
+    w3: Web3,
+    gho_asset: AaveGhoTokenTable,
+    tx_context: TransactionContext,
+) -> None:
+    """Process an ERC20 Transfer event to zero address (representing a burn).
+
+        This handles the case where a withdrawal/repay operation includes an ERC20 Transfer
+    to the zero address instead of a SCALED_TOKEN_BURN event. The transfer represents
+        a burn and should reduce the user's collateral balance.
+    """
+    token_address = get_checksum_address(event["address"])
+    from_address = _decode_address(event["topics"][1])
+    to_address = _decode_address(event["topics"][2])
+    (amount,) = eth_abi.abi.decode(["uint256"], data=event["data"])
+
+    # Only process transfers to zero address (burns)
+    if to_address != ZERO_ADDRESS:
+        return
+
+    # Skip GHO debt tokens - those are handled separately
+    if token_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
+        return
+
+    # Get the user whose balance is being burned
+    user = _get_or_create_user(
+        session=session,
+        market=market,
+        user_address=from_address,
+        w3=w3,
+        block_number=event["blockNumber"],
+        gho_asset=gho_asset,
+    )
+
+    # Get collateral asset
+    collateral_asset, _ = _get_scaled_token_asset_by_address(
+        market=market,
+        token_address=token_address,
+    )
+
+    if collateral_asset is None:
+        return
+
+    # Get collateral position - use query instead of get_or_create to check existence
+    collateral_position = session.scalar(
+        select(AaveV3CollateralPositionsTable).where(
+            AaveV3CollateralPositionsTable.user_id == user.id,
+            AaveV3CollateralPositionsTable.asset_id == collateral_asset.id,
+        )
+    )
+
+    # Only process if position exists and has sufficient balance
+    # If position doesn't exist or has insufficient balance, skip
+    # This can happen when transfer_events are added to operations but the
+    # transfer is not actually a burn of the user's collateral (e.g., adapter burning)
+    if collateral_position is None:
+        logger.debug(
+            f"Skipping transfer burn: no position for user={from_address}, token={token_address}"
+        )
+        return
+
+    if collateral_position.balance < amount:
+        logger.debug(
+            f"Skipping transfer burn: insufficient balance for user={from_address}, "
+            f"token={token_address}, balance={collateral_position.balance}, amount={amount}"
+        )
+        return
+
+    # Reduce the balance by the transfer amount
+    collateral_position.balance -= amount
+
+    logger.debug(
+        f"Processed transfer burn: user={from_address}, token={token_address}, amount={amount}, "
+        f"new_balance={collateral_position.balance}"
+    )
+
 
 def _process_collateral_mint_with_match(
     *,
@@ -3205,7 +3304,8 @@ def _process_collateral_transfer_with_match(
     # burn event will handle the actual balance reduction.
     # For liquidations, skip transfers that have a matching burn (same amount, same user)
     # as they represent the same deduction (collateral to liquidator).
-    # But don't skip transfers to treasury (different amount) as they're separate deductions.
+    # But don't skip transfers to adapters or other contracts that hold the tokens
+    # temporarily - only skip transfers that go directly to the Pool or zero address.
     if scaled_event.index == 0 and tx_context:
         # Check if there's a corresponding collateral burn in this transaction
         # Filter burn events from tx_context.events
@@ -3229,8 +3329,12 @@ def _process_collateral_transfer_with_match(
                     # index (32 bytes)
                     burn_amount = int.from_bytes(evt["data"][:32], "big")
                     if burn_amount == scaled_event.amount:
-                        # Skip this transfer as the burn will handle the balance reduction
-                        return
+                        # Only skip if the transfer target is the zero address (direct burn)
+                        # or the Pool (burn via Pool). Don't skip transfers to adapters
+                        # or other intermediate contracts that hold the tokens.
+                        if scaled_event.target_address == ZERO_ADDRESS:
+                            # Skip this transfer as the burn will handle the balance reduction
+                            return
 
     # Get sender
     sender = _get_or_create_user(
