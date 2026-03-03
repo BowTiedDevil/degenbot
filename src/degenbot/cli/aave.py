@@ -124,10 +124,6 @@ class TransactionContext:
         default_factory=dict
     )
 
-    # Set of user addresses that have DiscountPercentUpdated events in this transaction
-    # Used to skip _refresh_discount_rate calls when the event provides the authoritative value
-    discount_updated_users: set[ChecksumAddress] = field(default_factory=set)
-
     # Set of user addresses with stkAAVE Transfer events in this transaction
     # Used to skip balance initialization when events provide authoritative values
     stk_aave_transfer_users: set[ChecksumAddress] = field(default_factory=set)
@@ -135,24 +131,6 @@ class TransactionContext:
     # Track which stkAAVE transfer events have been processed (by log index)
     # This prevents double-counting in pending delta calculations
     processed_stk_aave_transfers: set[int] = field(default_factory=set)
-
-    # Pool events for EventMatcher (filtered from events)
-    pool_events: list[LogReceipt] = field(default_factory=list)
-
-    # Track which pool events have been consumed by EventMatcher
-    matched_pool_events: dict[int, bool] = field(default_factory=dict)
-
-    def get_events_by_topic(self, topic: HexBytes) -> list[LogReceipt]:
-        """Get all events in this transaction with the given topic."""
-        return [e for e in self.events if e["topics"][0] == topic]
-
-    def get_prior_events(self, event: LogReceipt) -> list[LogReceipt]:
-        """Get all events in this transaction that occurred before the given event."""
-        return [e for e in self.events if e["logIndex"] < event["logIndex"]]
-
-    def get_subsequent_events(self, event: LogReceipt) -> list[LogReceipt]:
-        """Get all events in this transaction that occurred after the given event."""
-        return [e for e in self.events if e["logIndex"] > event["logIndex"]]
 
     def get_effective_discount_at_log_index(
         self,
@@ -2155,9 +2133,6 @@ def _process_transaction(
         if topic == AaveV3GhoDebtTokenEvent.DISCOUNT_PERCENT_UPDATED.value:
             user_address = _decode_address(event["topics"][1])
             (old_discount_percent,) = eth_abi.abi.decode(types=["uint256"], data=event["data"])
-            tx_context.discount_updated_users.add(user_address)
-
-            # Store update with its log index to track discount changes over time
             if user_address not in tx_context.discount_updates_by_log_index:
                 tx_context.discount_updates_by_log_index[user_address] = []
             tx_context.discount_updates_by_log_index[user_address].append((
