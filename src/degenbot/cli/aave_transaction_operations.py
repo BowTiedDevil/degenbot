@@ -914,13 +914,22 @@ class TransactionOperationsParser:
         reserve = self._decode_address(borrow_event["topics"][1])
         on_behalf_of = self._decode_address(borrow_event["topics"][2])
 
+        # Decode borrow amount from event data
+        # BORROW: data=(address caller, uint256 amount, uint8 interestRateMode, uint256 borrowRate, uint16 referralCode)
+        _, borrow_amount, _, _ = decode(
+            types=["address", "uint256", "uint8", "uint256"],
+            data=borrow_event["data"],
+        )
+
         # Check if GHO
         is_gho = reserve == GHO_TOKEN_ADDRESS
 
         # Find debt mint
         # For flash loan scenarios (same user, multiple mints in one tx),
-        # we need to match by token address to ensure correct pairing
+        # we need to match by token address AND amount to ensure correct pairing
         debt_mint = None
+        fallback_mint = None  # Fallback for when exact amount match fails
+
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
                 continue
@@ -941,12 +950,27 @@ class TransactionOperationsParser:
                     mint_token_address = get_checksum_address(ev.event["address"])
                     reserve_asset = self._get_reserve_for_debt_token(mint_token_address)
                     if reserve_asset and reserve_asset.lower() == reserve.lower():
-                        debt_mint = ev
-                        break
+                        # First try exact amount match for correct pairing
+                        # when multiple mints exist for the same user/token
+                        if ev.amount == borrow_amount:
+                            debt_mint = ev
+                            break
+                        # Store first matching mint as fallback
+                        if fallback_mint is None:
+                            fallback_mint = ev
                 else:
                     # Fallback to old behavior if mapping not provided
-                    debt_mint = ev
-                    break
+                    # Match by amount when possible
+                    if ev.amount == borrow_amount:
+                        debt_mint = ev
+                        break
+                    # Store first matching mint as fallback
+                    if fallback_mint is None:
+                        fallback_mint = ev
+
+        # Use fallback if no exact match found
+        if debt_mint is None and fallback_mint is not None:
+            debt_mint = fallback_mint
 
         scaled_token_events = [debt_mint] if debt_mint else []
         op_type = OperationType.GHO_BORROW if is_gho else OperationType.BORROW

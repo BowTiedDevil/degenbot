@@ -237,7 +237,11 @@ class EventFactory:
 
     @staticmethod
     def create_debt_mint_event(
-        user: str, amount: int, balance_increase: int, log_index: int
+        user: str,
+        amount: int,
+        balance_increase: int,
+        log_index: int,
+        contract_address: str | None = None,
     ) -> LogReceipt:
         """Create a debt Mint event (interest accrual)."""
 
@@ -255,7 +259,7 @@ class EventFactory:
         )
 
         return {
-            "address": TEST_DEBT_TOKEN,
+            "address": contract_address if contract_address else TEST_DEBT_TOKEN,
             "topics": topics,
             "data": HexBytes(data),
             "logIndex": log_index,
@@ -1133,5 +1137,165 @@ class TestBug0013InterestAccrualMintMatching:
             "Interest accrual mint should have amount == balance_increase"
         )
 
+        # Validation should pass
+        tx_ops.validate(events)
+
+
+class TestBug0022BorrowAmountMatching:
+    """Test for issue #0022: Borrow should match debt mint by amount.
+    
+    When multiple debt mints exist for the same user in a transaction,
+    the borrow operation should match the mint with the same amount value.
+    """
+
+    def test_borrow_matches_debt_mint_by_amount(self):
+        """BORROW operation matches DEBT_MINT with same amount.
+        
+        Regression test for issue #0022.
+        Transaction: 0x37416a998da98779737e6c62607defcf9d0a7fbfd38651e54b8c058710eb3992
+        
+        When multiple debt mints exist for the same user/token,
+        the borrow should match the mint with the same amount.
+        """
+        user = get_checksum_address("0xB22e3d2418C2B909C14883F35EA0BDcBA566e9c6")
+        weth_reserve = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+        variable_debt_weth = get_checksum_address("0xeA51d7853EEFb32b6ee06b1C12E6dcCA88Be0fFE")
+        
+        # Token type mapping
+        token_type_mapping = {
+            variable_debt_weth: "vToken",
+        }
+        
+        # Debt token to reserve mapping
+        debt_token_to_reserve = {
+            variable_debt_weth: weth_reserve,
+        }
+        
+        # Small interest accrual mint (log 182 in original tx)
+        # This has value != balance_increase (interest accrual before repay)
+        small_mint = EventFactory.create_debt_mint_event(
+            user=user,
+            amount=266163817852323386,
+            balance_increase=266164750831695501,  # Slightly larger than amount
+            log_index=182,
+            contract_address=variable_debt_weth,
+        )
+        
+        # Large flash loan borrow mint (log 187 in original tx)
+        # This has balance_increase=0 (pure borrow)
+        large_mint = EventFactory.create_debt_mint_event(
+            user=user,
+            amount=614800334026855555114,
+            balance_increase=0,
+            log_index=187,
+            contract_address=variable_debt_weth,
+        )
+        
+        # Borrow event (log 189 in original tx)
+        # Amount matches the large mint
+        borrow_event = EventFactory.create_borrow_event(
+            reserve=weth_reserve,
+            user=user,
+            on_behalf_of=user,
+            amount=614800334026855555114,
+            log_index=189,
+        )
+        
+        parser = TransactionOperationsParser(
+            token_type_mapping=token_type_mapping,
+            debt_token_to_reserve=debt_token_to_reserve,
+        )
+        
+        events = [small_mint, large_mint, borrow_event]
+        tx_ops = parser.parse(events, HexBytes("0x" + "00" * 32))
+        
+        # Should have 2 operations: BORROW and INTEREST_ACCRUAL
+        assert len(tx_ops.operations) == 2, f"Expected 2 operations, got {len(tx_ops.operations)}"
+        
+        # Find the BORROW operation
+        borrow_ops = [
+            op for op in tx_ops.operations 
+            if op.operation_type == OperationType.BORROW
+        ]
+        assert len(borrow_ops) == 1, "Should have exactly 1 BORROW operation"
+        
+        borrow_op = borrow_ops[0]
+        # Should have exactly 1 scaled token event
+        assert len(borrow_op.scaled_token_events) == 1, "BORROW should have 1 scaled token event"
+        
+        # Should match the large mint (same amount as borrow)
+        matched_mint = borrow_op.scaled_token_events[0]
+        assert matched_mint.event["logIndex"] == 187, (
+            f"BORROW should match mint at logIndex 187 (large borrow), "
+            f"but matched mint at logIndex {matched_mint.event['logIndex']}"
+        )
+        assert matched_mint.amount == 614800334026855555114, (
+            f"Matched mint should have amount=614800334026855555114, "
+            f"but got amount={matched_mint.amount}"
+        )
+        
+        # The small mint should be in a separate INTEREST_ACCRUAL operation
+        interest_ops = [
+            op for op in tx_ops.operations 
+            if op.operation_type == OperationType.INTEREST_ACCRUAL
+        ]
+        assert len(interest_ops) == 1, "Should have exactly 1 INTEREST_ACCRUAL operation"
+        assert len(interest_ops[0].scaled_token_events) == 1
+        interest_mint = interest_ops[0].scaled_token_events[0]
+        assert interest_mint.event["logIndex"] == 182, (
+            f"INTEREST_ACCRUAL should have mint at logIndex 182, "
+            f"but has mint at logIndex {interest_mint.event['logIndex']}"
+        )
+        assert interest_mint.amount == 266163817852323386
+        
+        # Validation should pass
+        tx_ops.validate(events)
+
+    def test_borrow_uses_fallback_when_no_exact_match(self):
+        """BORROW falls back to first matching mint when no exact amount match."""
+        user = get_checksum_address("0x" + "1" * 40)
+        reserve = get_checksum_address("0x" + "2" * 40)
+        debt_token = get_checksum_address("0x" + "3" * 40)
+        
+        token_type_mapping = {debt_token: "vToken"}
+        debt_token_to_reserve = {debt_token: reserve}
+        
+        # Create mint with different amount than borrow
+        mint = EventFactory.create_debt_mint_event(
+            user=user,
+            amount=1000,
+            balance_increase=0,
+            log_index=100,
+            contract_address=debt_token,
+        )
+        
+        # Create borrow with different amount (no exact match)
+        borrow_event = EventFactory.create_borrow_event(
+            reserve=reserve,
+            user=user,
+            on_behalf_of=user,
+            amount=2000,  # Different from mint amount
+            log_index=200,
+        )
+        
+        parser = TransactionOperationsParser(
+            token_type_mapping=token_type_mapping,
+            debt_token_to_reserve=debt_token_to_reserve,
+        )
+        
+        events = [mint, borrow_event]
+        tx_ops = parser.parse(events, HexBytes("0x" + "00" * 32))
+        
+        # Should still create a BORROW operation using fallback
+        borrow_ops = [
+            op for op in tx_ops.operations 
+            if op.operation_type == OperationType.BORROW
+        ]
+        assert len(borrow_ops) == 1, "Should have BORROW operation via fallback"
+        
+        # Should use the fallback mint (even though amounts don't match)
+        borrow_op = borrow_ops[0]
+        assert len(borrow_op.scaled_token_events) == 1
+        
         # Validation should pass
         tx_ops.validate(events)
