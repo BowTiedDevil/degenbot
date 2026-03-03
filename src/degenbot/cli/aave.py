@@ -3312,13 +3312,13 @@ def _process_collateral_transfer_with_match(
                 transfer_amount = bt_amount
                 transfer_index = bt_index
                 matched_balance_transfer = True
-                print(
-                    f"DEBUG: Using BalanceTransfer amount {bt_amount} for transfer from {bt_from} at log {bt_log_index}"
+                logger.debug(
+                    f"Using BalanceTransfer amount {bt_amount} for transfer from {bt_from} at log {bt_log_index}"
                 )
                 break
 
     if not matched_balance_transfer:
-        print(
+        logger.debug(
             f"DEBUG: No BalanceTransfer match for transfer from {scaled_event.from_address} amount {scaled_event.amount} at log {scaled_event.event['logIndex']}"
         )
         # Only use scaled_event values if no BalanceTransfer match found
