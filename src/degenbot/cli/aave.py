@@ -3199,16 +3199,12 @@ def _process_collateral_transfer_with_match(
     if scaled_event.from_address == ZERO_ADDRESS:
         return
 
-    # Skip ERC20 transfers that correspond to collateral burns in repayWithATokens
-    # When useATokens=true, the aTokens are transferred to the Pool and then burned.
-    # The ERC20 Transfer event represents this internal transfer, but the collateral
-    # burn event will handle the actual balance reduction.
-    # For liquidations, skip transfers that have a matching burn (same amount, same user)
-    # as they represent the same deduction (collateral to liquidator).
-    # But don't skip transfers to treasury (different amount) as they're separate deductions.
-    if scaled_event.index == 0 and tx_context:
-        # Check if there's a corresponding collateral burn in this transaction
-        # Filter burn events from tx_context.events
+    # Skip ERC20 transfers that correspond to direct collateral burns.
+    # Only skip when the transfer target is the zero address (direct burn).
+    # Transfers to adapters, pools, or other intermediate contracts should be
+    # processed normally as they represent actual balance movements.
+    if scaled_event.index == 0 and scaled_event.target_address == ZERO_ADDRESS and tx_context:
+        # Check if there's a corresponding SCALED_TOKEN_BURN for this direct burn
         for evt in tx_context.events:
             if evt["topics"][0] != AaveV3ScaledTokenEvent.BURN.value:
                 continue
@@ -3218,18 +3214,13 @@ def _process_collateral_transfer_with_match(
             if get_checksum_address(evt["address"]) == get_checksum_address(
                 scaled_event.event["address"]
             ):
-                # Found a collateral burn for the same token in this transaction
                 # The burn user is in topics[1] of the SCALED_TOKEN_BURN event
                 burn_user = get_checksum_address("0x" + evt["topics"][1].hex()[-40:])
                 if burn_user == scaled_event.from_address:
-                    # Check if the amounts match - if so, this transfer represents
-                    # the same deduction as the burn (e.g., collateral to liquidator)
-                    # and should be skipped to avoid double-counting
-                    # Burn event data: amount (32 bytes), balanceIncrease (32 bytes),
-                    # index (32 bytes)
+                    # Check if the amounts match
                     burn_amount = int.from_bytes(evt["data"][:32], "big")
                     if burn_amount == scaled_event.amount:
-                        # Skip this transfer as the burn will handle the balance reduction
+                        # Skip this direct burn as the SCALED_TOKEN_BURN will handle it
                         return
 
     # Get sender
