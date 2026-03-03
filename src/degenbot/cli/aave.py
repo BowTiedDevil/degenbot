@@ -2530,6 +2530,28 @@ def _process_operation(
                 )
             continue
 
+        # Handle IMPLICIT_BORROW operations - DEBT_MINT without BORROW event
+        # These occur in flash loans and other internal Pool operations
+        if match_result is None and operation.operation_type == OperationType.IMPLICIT_BORROW:
+            if scaled_event.event_type in {"DEBT_MINT", "GHO_DEBT_MINT"}:
+                _process_debt_mint_with_match(
+                    event=event,
+                    market=market,
+                    session=session,
+                    w3=w3,
+                    gho_asset=gho_asset,
+                    contract_address=contract_address,
+                    tx_context=tx_context,
+                    operation=operation,
+                    scaled_event=scaled_event,
+                    match_result={
+                        "pool_event": None,
+                        "extraction_data": {},
+                        "should_consume": False,
+                    },
+                )
+            continue
+
         if match_result is None:
             msg = f"No match for {scaled_event.event_type} in operation {operation.operation_id}"
             raise ValueError(msg)

@@ -91,6 +91,9 @@ class OperationType(Enum):
     INTEREST_ACCRUAL = auto()  # Mint/Burn with no pool event
     BALANCE_TRANSFER = auto()  # Standalone BalanceTransfer
     MINT_TO_TREASURY = auto()  # Pool minting aTokens to treasury (no SUPPLY event)
+    IMPLICIT_BORROW = (
+        auto()
+    )  # DEBT_MINT without BORROW event (e.g., flash loans, internal operations)
     UNKNOWN = auto()
 
 
@@ -1292,29 +1295,39 @@ class TransactionOperationsParser:
             if ev.event_type not in {"COLLATERAL_MINT", "DEBT_MINT", "GHO_DEBT_MINT"}:
                 continue
 
-            # Skip DEBT_MINT in liquidation transactions - these may be
-            # protocol operations that should not create INTEREST_ACCRUAL.
-            # For borrow/repay transactions, only skip if it's not interest
-            # accrual (balance_increase >= amount). Interest accrual can occur
-            # during any transaction type including flash loans.
+            # Handle DEBT_MINT events based on type
+            # These may be implicit borrows in transactions without BORROW events
+            # (e.g., flash loans, internal Pool operations)
             if ev.event_type in {"DEBT_MINT", "GHO_DEBT_MINT"}:
                 # Interest accrual: balance_increase >= amount
                 # - balance_increase > amount: net interest after repayment (in _burnScaled)
                 # - balance_increase == amount: pure interest accrual (in _accrueDebtOnAction)
-                # Always process interest accrual, regardless of transaction type
                 is_interest_accrual = ev.balance_increase >= ev.amount
-                if is_interest_accrual:
-                    # Process as INTEREST_ACCRUAL
-                    pass
-                elif has_liquidation:
-                    # Skip non-interest mints during liquidation (e.g., flash borrows)
-                    continue
-                elif has_borrow:
-                    # Skip DEBT_MINT during borrow (flash loan) if not interest accrual
-                    continue
-                elif has_repay and not has_collateral_burn:
-                    # Skip DEBT_MINT during REPAY if not interest accrual
-                    continue
+                # Pure borrow: balance_increase == 0 (no interest accrued)
+                is_pure_borrow = ev.balance_increase == 0
+
+                if not is_interest_accrual:
+                    # This is either a pure borrow or borrow with interest
+                    # Skip during liquidation/flash loans as those are handled separately
+                    if has_liquidation or has_borrow:
+                        continue
+                    # For pure borrows (balance_increase == 0), create IMPLICIT_BORROW
+                    if is_pure_borrow:
+                        operations.append(
+                            Operation(
+                                operation_id=operation_id,
+                                operation_type=OperationType.IMPLICIT_BORROW,
+                                pool_event=None,
+                                scaled_token_events=[ev],
+                                transfer_events=[],
+                                balance_transfer_events=[],
+                            )
+                        )
+                        operation_id += 1
+                        continue
+                    # Borrow with interest (0 < balance_increase < amount) falls through
+                    # to be processed as INTEREST_ACCRUAL
+                # Interest accrual falls through to be processed below
 
             # Interest accrual: process all unassigned mint events
             # Note: For pure interest, amount == balance_increase
