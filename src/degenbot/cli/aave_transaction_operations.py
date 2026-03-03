@@ -17,6 +17,7 @@ from hexbytes import HexBytes
 from degenbot.aave.events import AaveV3PoolEvent, AaveV3ScaledTokenEvent
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.logging import logger
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
@@ -1393,6 +1394,10 @@ class TransactionOperationsParser:
                 continue
 
             # This is a mint to treasury - create operation
+            logger.debug(
+                f"Creating MINT_TO_TREASURY for event at logIndex {ev.event['logIndex']}, "
+                f"user={ev.user_address}, amount={ev.amount}"
+            )
             operations.append(
                 Operation(
                     operation_id=operation_id,

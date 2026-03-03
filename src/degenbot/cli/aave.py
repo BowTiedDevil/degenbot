@@ -2678,6 +2678,19 @@ def _process_collateral_mint_with_match(
             amount=raw_amount,
             liquidity_index=scaled_event.index,
         )
+    elif operation.operation_type == OperationType.MINT_TO_TREASURY:
+        # For MINT_TO_TREASURY, the Mint event amount is the actual minted amount
+        # (post-interest), while the MintedToTreasury Pool event shows pre-interest.
+        # The Transfer event from address(0) is skipped, so we must calculate
+        # the scaled amount from the Mint event data here.
+        # Formula: scaled_amount = (value - balance_increase) / index
+        # This gives the principal amount converted to scaled balance.
+        collateral_processor = TokenProcessorFactory.get_collateral_processor(
+            collateral_asset.a_token_revision
+        )
+        wad_ray_math = collateral_processor.get_math_libraries()["wad_ray"]
+        principal_amount = scaled_event.amount - scaled_event.balance_increase
+        scaled_amount = wad_ray_math.ray_div(principal_amount, scaled_event.index)
 
     _process_scaled_token_operation(
         event=CollateralMintEvent(
@@ -3252,46 +3265,50 @@ def _process_collateral_transfer_with_match(
     transfer_index = scaled_event.index
 
     # Check if we have a paired BalanceTransfer event
+    # For liquidation transfers, the BalanceTransfer amount is the actual scaled balance
+    # while the ERC20 Transfer amount includes accrued interest
+    matched_balance_transfer = False
     if operation and operation.balance_transfer_events:
-        # Decode the BalanceTransfer event to get the amount and liquidity index
-        # Use BalanceTransfer amount when available (includes interest accrual)
-        bt_event = operation.balance_transfer_events[0]
-        bt_amount, bt_index = _decode_uint_values(event=bt_event, num_values=2)
+        for bt_event in operation.balance_transfer_events:
+            # Check if this BalanceTransfer is for the same token and from the same user
+            # and is close to the ERC20 Transfer event in log index (within 3 logs)
+            bt_from = get_checksum_address("0x" + bt_event["topics"][1].hex()[-40:])
+            bt_to = get_checksum_address("0x" + bt_event["topics"][2].hex()[-40:])
+            bt_token = get_checksum_address(bt_event["address"])
+            bt_log_index = bt_event["logIndex"]
+            transfer_log_index = scaled_event.event["logIndex"]
 
-        # Use BalanceTransfer amount (more accurate with interest)
-        transfer_amount = bt_amount
-        transfer_index = bt_index
-    elif scaled_event.index > 0:
-        # Standalone BalanceTransfer - scale the amount using PoolProcessor for revision 4+
-        if collateral_asset.a_token_revision >= 4:
-            pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
-                collateral_asset.a_token_revision
-            )
-            transfer_amount = pool_processor.calculate_collateral_transfer_scaled_amount(
-                amount=scaled_event.amount,
-                liquidity_index=scaled_event.index,
-            )
+            # Match by token, from address, and log index proximity
+            if (
+                bt_token == token_address
+                and bt_from == scaled_event.from_address
+                and bt_to == scaled_event.target_address
+                and abs(bt_log_index - transfer_log_index) <= 3
+            ):
+                # Found matching BalanceTransfer - use its amount (scaled balance without interest)
+                bt_amount, bt_index = _decode_uint_values(event=bt_event, num_values=2)
+                transfer_amount = bt_amount
+                transfer_index = bt_index
+                matched_balance_transfer = True
+                print(
+                    f"DEBUG: Using BalanceTransfer amount {bt_amount} for transfer from {bt_from} at log {bt_log_index}"
+                )
+                break
+
+    if not matched_balance_transfer:
+        print(
+            f"DEBUG: No BalanceTransfer match for transfer from {scaled_event.from_address} amount {scaled_event.amount} at log {scaled_event.event['logIndex']}"
+        )
+        # Only use scaled_event values if no BalanceTransfer match found
+        if scaled_event.index > 0:
+            # Standalone BalanceTransfer - amount is already the scaled balance
+            transfer_amount = scaled_event.amount
+            transfer_index = scaled_event.index
         else:
-            # Revision 1-3: standard ray_div
-            transfer_amount = scaled_event.amount * scaled_event.index // 10**27
-    # Standalone ERC20 Transfer without BalanceTransfer event
-    # Need to scale the amount using the current liquidity index
-    elif collateral_asset.a_token_revision >= 4:
-        pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
-            collateral_asset.a_token_revision
-        )
-        # Get liquidity index from the asset's reserve data
-        liquidity_index = int(collateral_asset.liquidity_index)
-        transfer_amount = pool_processor.calculate_collateral_transfer_scaled_amount(
-            amount=scaled_event.amount,
-            liquidity_index=liquidity_index,
-        )
-        transfer_index = liquidity_index
-    else:
-        # Revision 1-3: standard ray_div using asset's liquidity index
-        liquidity_index = int(collateral_asset.liquidity_index)
-        transfer_amount = scaled_event.amount * liquidity_index // 10**27
-        transfer_index = liquidity_index
+            # Standalone ERC20 Transfer - amount is the aToken amount (includes interest)
+            # For transfers to treasury, this over-counts by the accrued interest
+            transfer_amount = scaled_event.amount
+            transfer_index = int(collateral_asset.liquidity_index)
 
     # Update sender's balance
     sender_position.balance -= transfer_amount
