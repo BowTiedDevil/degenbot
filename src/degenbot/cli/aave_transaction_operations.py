@@ -1315,6 +1315,23 @@ class TransactionOperationsParser:
                 operation_id += 1
                 continue
 
+            # Handle unassigned collateral burn events
+            # These can occur in umbrella/staking operations where aTokens are
+            # burned without a corresponding WITHDRAW pool event (e.g., stkwaEthUSDC creation)
+            if ev.event_type == "COLLATERAL_BURN":
+                operations.append(
+                    Operation(
+                        operation_id=operation_id,
+                        operation_type=OperationType.INTEREST_ACCRUAL,
+                        pool_event=None,
+                        scaled_token_events=[ev],
+                        transfer_events=[],
+                        balance_transfer_events=[],
+                    )
+                )
+                operation_id += 1
+                continue
+
             # Only process mint events that represent interest accrual
             if ev.event_type not in {"COLLATERAL_MINT", "DEBT_MINT", "GHO_DEBT_MINT"}:
                 continue
