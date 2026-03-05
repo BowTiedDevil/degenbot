@@ -40,7 +40,7 @@ def database_backup() -> None:
             raise click.Abort from None
 
 
-@database.command("reset")
+@database.command("reset", hidden=True)
 @click.option(
     "--force",
     is_flag=True,
