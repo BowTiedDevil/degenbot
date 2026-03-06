@@ -172,3 +172,8 @@ cython_debug/
 .opencode/plans
 .opencode/tmp
 .ignore
+
+# SQLite
+*.db
+*.db.bak
+*.sqlite
