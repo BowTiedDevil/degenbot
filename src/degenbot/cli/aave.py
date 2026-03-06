@@ -3183,7 +3183,12 @@ def _process_collateral_transfer_with_match(
 
     # Skip BalanceTransfer events that are tracked in balance_transfer_events
     # These will be handled by their paired ERC20 Transfer events
-    if scaled_event.index > 0 and operation and operation.balance_transfer_events:
+    if (
+        scaled_event.index is not None
+        and scaled_event.index > 0
+        and operation
+        and operation.balance_transfer_events
+    ):
         for bt_event in operation.balance_transfer_events:
             if bt_event["logIndex"] == scaled_event.event["logIndex"]:
                 # This BalanceTransfer is paired with an ERC20 Transfer
@@ -3205,7 +3210,7 @@ def _process_collateral_transfer_with_match(
     # Only skip when the transfer target is the zero address (direct burn).
     # Transfers to adapters, pools, or other intermediate contracts should be
     # processed normally as they represent actual balance movements.
-    if scaled_event.index == 0 and scaled_event.target_address == ZERO_ADDRESS and tx_context:
+    if scaled_event.index is None and scaled_event.target_address == ZERO_ADDRESS and tx_context:
         # Check if there's a corresponding SCALED_TOKEN_BURN for this direct burn
         for evt in tx_context.events:
             if evt["topics"][0] != AaveV3ScaledTokenEvent.BURN.value:
@@ -3290,7 +3295,7 @@ def _process_collateral_transfer_with_match(
             f"DEBUG: No BalanceTransfer match for transfer from {scaled_event.from_address} amount {scaled_event.amount} at log {scaled_event.event['logIndex']}"
         )
         # Only use scaled_event values if no BalanceTransfer match found
-        if scaled_event.index > 0:
+        if scaled_event.index is not None and scaled_event.index > 0:
             # Standalone BalanceTransfer - amount is already the scaled balance
             transfer_amount = scaled_event.amount
             transfer_index = scaled_event.index

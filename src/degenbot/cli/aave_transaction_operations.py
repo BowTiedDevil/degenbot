@@ -135,8 +135,8 @@ class ScaledTokenEvent:
     from_address: ChecksumAddress | None  # For Burn events
     target_address: ChecksumAddress | None  # For Burn events
     amount: int
-    balance_increase: int
-    index: int
+    balance_increase: int | None
+    index: int | None
 
     @property
     def is_interest_accrual(self) -> bool:
@@ -723,8 +723,8 @@ class TransactionOperationsParser:
                 from_address=from_addr,
                 target_address=to_addr,
                 amount=amount,
-                balance_increase=0,  # Transfer doesn't have balanceIncrease
-                index=0,  # Transfer doesn't have index
+                balance_increase=None,  # Transfer doesn't have balanceIncrease
+                index=None,  # Transfer doesn't have index
             )
         except Exception:
             return None
@@ -796,7 +796,7 @@ class TransactionOperationsParser:
                 ev.event_type == "COLLATERAL_MINT",
                 ev.user_address == on_behalf_of,
                 ev.event["logIndex"] not in assigned_indices,
-                ev.amount > ev.balance_increase,
+                ev.balance_increase is not None and ev.amount > ev.balance_increase,
             ]):
                 collateral_mint = ev
                 break
@@ -869,7 +869,7 @@ class TransactionOperationsParser:
                 if all([
                     ev.event_type == "COLLATERAL_MINT",
                     ev.user_address == user,
-                    ev.balance_increase > 0,
+                    ev.balance_increase is not None and ev.balance_increase > 0,
                     ev.event["address"] == burn_token_address,
                 ]):
                     interest_mints.append(ev)
@@ -1075,7 +1075,7 @@ class TransactionOperationsParser:
                     # and is for the same token as the collateral burn
                     if all([
                         ev.event_type == "COLLATERAL_TRANSFER",
-                        ev.index > 0,
+                        ev.index is not None and ev.index > 0,
                         ev.from_address == user,
                         ev.event["address"] == collateral_burn.event["address"],
                     ]):
@@ -1176,7 +1176,7 @@ class TransactionOperationsParser:
                 scaled_token_events.append(transfer)
                 # Track BalanceTransfer events separately so ERC20 Transfers can use
                 # them for proper scaling during processing
-                if transfer.index > 0:
+                if transfer.index is not None and transfer.index > 0:
                     balance_transfer_events.append(transfer.event)
 
         op_type = OperationType.GHO_LIQUIDATION if is_gho else OperationType.LIQUIDATION
@@ -1511,9 +1511,9 @@ class TransactionOperationsParser:
             }:
                 continue
 
-            # Check if this is an ERC20 Transfer event (index=0 means no index from event)
+            # Check if this is an ERC20 Transfer event (index=None means no index from event)
             # BalanceTransfer events have index > 0
-            is_erc20_transfer = ev.index == 0
+            is_erc20_transfer = ev.index is None
 
             balance_transfer_event: ScaledTokenEvent | None = None
 
@@ -1529,7 +1529,8 @@ class TransactionOperationsParser:
                         continue
 
                     # Check if this is a BalanceTransfer event (has index > 0)
-                    if bt_ev.index == 0:
+                    # ERC20 Transfer events have index=None, so skip those
+                    if bt_ev.index is None:
                         continue
 
                     # Check if from/to addresses match and it's the same token
@@ -1550,7 +1551,8 @@ class TransactionOperationsParser:
                     for op in existing_operations:
                         for bt_ev in op.scaled_token_events:
                             # Check if this is a BalanceTransfer event (has index > 0)
-                            if bt_ev.index == 0:
+                            # ERC20 Transfer events have index=None, so skip those
+                            if bt_ev.index is None:
                                 continue
 
                             # Check if from/to addresses match and it's the same token
