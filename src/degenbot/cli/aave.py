@@ -49,6 +49,7 @@ from degenbot.cli.aave_transaction_operations import (
     TransactionValidationError,
 )
 from degenbot.cli.utils import get_web3_from_config
+from degenbot.config import settings
 from degenbot.constants import ERC_1967_IMPLEMENTATION_SLOT, ZERO_ADDRESS
 from degenbot.database import db_session
 from degenbot.database.models.aave import (
@@ -61,6 +62,7 @@ from degenbot.database.models.aave import (
     AaveV3UsersTable,
 )
 from degenbot.database.models.erc20 import Erc20TokenTable
+from degenbot.database.operations import backup_sqlite_database
 from degenbot.exceptions import DegenbotValueError
 from degenbot.functions import (
     encode_function_calldata,
@@ -705,6 +707,13 @@ def aave_update(
                             block_number=working_end_block,
                             show_progress=show_progress,
                         )
+
+                    backup_sqlite_database(
+                        settings.database.path,
+                        suffix=f"{working_end_block}",
+                        skip_confirmation=True,
+                    )
+                    logger.info(f"Created database backup at block {working_end_block:,}")
 
                 _cleanup_zero_balance_positions(
                     session=session, market=market, show_progress=show_progress

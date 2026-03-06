@@ -21,21 +21,30 @@ def database() -> None:
 
 
 @database.command("backup")
-def database_backup() -> None:
-    """
-    Back up the database.
-    """
+def database_backup(
+    prefix: str | None = None,
+    suffix: str | None = None,
+) -> None:
+    """Back up the database."""
 
     try:
-        backup_sqlite_database(settings.database.path)
+        backup_sqlite_database(
+            settings.database.path,
+            prefix=prefix,
+            suffix=suffix,
+        )
     except BackupExists as exc:
         user_confirm = click.confirm(
-            f"An existing backup was found at {exc.path}. Do you want to remove it and continue?",
+            f"An existing backup was found at {exc.path}. Do you want to replace it?",
             default=False,
         )
         if user_confirm:
             exc.path.unlink()
-            backup_sqlite_database(settings.database.path)
+            backup_sqlite_database(
+                settings.database.path,
+                prefix=prefix,
+                suffix=suffix,
+            )
         else:
             raise click.Abort from None
 

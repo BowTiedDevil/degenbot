@@ -12,11 +12,23 @@ from degenbot.exceptions.database import BackupExists
 from degenbot.logging import logger
 
 
-def backup_sqlite_database(db_path: pathlib.Path) -> None:
+def backup_sqlite_database(
+    db_path: pathlib.Path,
+    *,
+    prefix: str | None = None,
+    suffix: str | None = None,
+    skip_confirmation: bool = False,
+) -> None:
     assert db_path.exists()
 
-    backup_path = pathlib.Path(db_path).with_suffix(db_path.suffix + ".bak")
-    if backup_path.exists():
+    backup_path = db_path
+
+    if prefix is not None:
+        backup_path = backup_path.with_stem(f"{prefix}-{backup_path.stem}")
+    if suffix is not None:
+        backup_path = backup_path.with_stem(f"{backup_path.stem}-{suffix}")
+
+    if backup_path.exists() and not skip_confirmation:
         raise BackupExists(path=backup_path)
 
     engine = create_engine(
