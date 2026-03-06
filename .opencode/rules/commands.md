@@ -1,5 +1,4 @@
 # Commands
-
 - `uv run pytest tests/...::test_name` - Run specific test
 - `uv run pytest` - Run all tests
 - `uv run pytest -n0` - Run without parallelization

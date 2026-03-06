@@ -1,10 +1,20 @@
-# Python Rules
+# Python Design Rules
+
+## Patterns 
+- Use `Protocol` for interfaces (`Publisher`, `Subscriber`)
+- Mixins for shared functionality (`PublisherMixin`)
+- Use `dataclass(slots=True, frozen=True)` for value objects passed between functions
+- Prefer `TypedDict` if key and value types are known
 
 ## Docstrings
-Minimal PEP 257. Additional detail follows a blank line if needed. Type hints supersede parameter docs. No reST/Sphinx tags:
+Minimal PEP 257. Type hints supersede parameter docs. No reST/Sphinx tags:
 ```python
 class EVMRevertError(DegenbotError):
-    """Raised when a simulated EVM contract operation would revert."""
+    """
+    Raised when a simulated EVM contract operation would revert.
+    
+    [additional detail as needed]
+    """
 ```
 
 ## Error Handling
@@ -13,18 +23,9 @@ class EVMRevertError(DegenbotError):
 - Catch specific exceptions (`except TimeoutError:`), avoid broad catches
 
 ## Logging
-- Import and use `logger` from `src/degenbot/logging.py`
+- Use `degenbot.logger`
 
 ## Testing
-- Add comment to complex tests describing "what" and "why"
-- Create a test double (PascalCase with `Fake` prefix) instead of mocking
-- Add reusable fixtures in `conftest.py`
-- Add mark for chain-specific tests: `@pytest.mark.arbitrum`, `@pytest.mark.base`, `@pytest.mark.ethereum`
+- Add docstring to complex tests describing "what" and "why"
+- Create a test double with `Fake` prefix instead of mocking
 
-## Design Patterns
-- Use `Protocol` for interfaces (`Publisher`, `Subscriber`)
-- Mixins for shared functionality (`PublisherMixin`)
-- `@functools.lru_cache` for expensive functions
-- `WeakSet` for subscriber references in pub/sub
-- Use `dataclass(slots=True, frozen=True)` for value objects passed between functions
-- Prefer `TypedDict` if key and value types are known
