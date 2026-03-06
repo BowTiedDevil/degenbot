@@ -481,12 +481,14 @@ def deactivate_mainnet_aave_v3(
     help="Stop processing after the first chunk.",
 )
 @click.option(
-    "--no-progress-bar",
-    "no_progress",
+    "--progress-bar",
+    "show_progress",
     is_flag=True,
-    default=False,
+    default=True,
     show_default=True,
-    help="Disable progress bars.",
+    help="Show progress bars.",
+    envvar="DEGENBOT_PROGRESS_BAR",
+    show_envvar=True,
 )
 @click.option(
     "--debug-output",
@@ -500,7 +502,7 @@ def aave_update(
     to_block: str,
     verify: bool,
     stop_after_one_chunk: bool,
-    no_progress: bool,
+    show_progress: bool,
     debug_output: str | None,
 ) -> None:
     """
@@ -594,7 +596,7 @@ def aave_update(
                 total=last_block - initial_start_block + 1,
                 bar_format="{desc} {percentage:3.1f}% |{bar}|",
                 leave=False,
-                disable=no_progress,
+                disable=not show_progress,
             )
 
             block_pbar.n = working_start_block - initial_start_block
@@ -648,7 +650,7 @@ def aave_update(
                             market=market,
                             session=session,
                             verify=verify,
-                            no_progress=no_progress,
+                            show_progress=show_progress,
                         )
                     except Exception as e:
                         logger.exception("")
@@ -688,11 +690,11 @@ def aave_update(
                             market=market,
                             session=session,
                             block_number=working_end_block,
-                            no_progress=no_progress,
+                            show_progress=show_progress,
                         )
 
                 _cleanup_zero_balance_positions(
-                    session=session, market=market, no_progress=no_progress
+                    session=session, market=market, show_progress=show_progress
                 )
 
                 markets_to_update.clear()
@@ -1616,7 +1618,7 @@ def _verify_gho_discount_amounts(
     market: AaveV3MarketTable,
     gho_asset: AaveGhoTokenTable,
     block_number: int,
-    no_progress: bool,
+    show_progress: bool,
     user_addresses: set[ChecksumAddress] | None = None,
 ) -> None:
     """
@@ -1649,7 +1651,7 @@ def _verify_gho_discount_amounts(
         users_to_verify,
         desc="Verifying GHO discount amounts",
         leave=False,
-        disable=no_progress,
+        disable=not show_progress,
     ):
         try:
             (discount_percent,) = raw_call(
@@ -1681,7 +1683,7 @@ def _verify_stk_aave_balances(
     market: AaveV3MarketTable,
     gho_asset: AaveGhoTokenTable,
     block_number: int,
-    no_progress: bool,
+    show_progress: bool,
     user_addresses: set[ChecksumAddress] | None = None,
 ) -> None:
     """
@@ -1712,7 +1714,7 @@ def _verify_stk_aave_balances(
         users_to_verify,
         desc="Verifying stkAAVE balances",
         leave=False,
-        disable=no_progress,
+        disable=not show_progress,
     ):
         assert user.stk_aave_balance is not None
 
@@ -1738,7 +1740,7 @@ def _cleanup_zero_balance_positions(
     *,
     session: Session,
     market: AaveV3MarketTable,
-    no_progress: bool,
+    show_progress: bool,
 ) -> None:
     """
     Delete all zero-balance debt and collateral positions for the market.
@@ -1761,7 +1763,7 @@ def _cleanup_zero_balance_positions(
         collateral_positions,
         desc="Cleaning up zero-balance collateral positions",
         leave=False,
-        disable=no_progress,
+        disable=not show_progress,
     ):
         session.delete(position)
 
@@ -1779,7 +1781,7 @@ def _cleanup_zero_balance_positions(
         debt_positions,
         desc="Cleaning up zero-balance debt positions",
         leave=False,
-        disable=no_progress,
+        disable=not show_progress,
     ):
         session.delete(position)
 
@@ -1790,7 +1792,7 @@ def _verify_all_positions(
     market: AaveV3MarketTable,
     session: Session,
     block_number: int,
-    no_progress: bool,
+    show_progress: bool,
 ) -> None:
     """
     Verify all positions in the market against on-chain state.
@@ -1818,7 +1820,7 @@ def _verify_all_positions(
         session=session,
         position_table=AaveV3CollateralPositionsTable,
         block_number=block_number,
-        no_progress=no_progress,
+        show_progress=show_progress,
         user_addresses=None,
     )
 
@@ -1829,7 +1831,7 @@ def _verify_all_positions(
         session=session,
         position_table=AaveV3DebtPositionsTable,
         block_number=block_number,
-        no_progress=no_progress,
+        show_progress=show_progress,
         user_addresses=None,
     )
 
@@ -1843,7 +1845,7 @@ def _verify_all_positions(
         market=market,
         gho_asset=gho_asset,
         block_number=block_number,
-        no_progress=no_progress,
+        show_progress=show_progress,
         user_addresses=None,
     )
 
@@ -1854,7 +1856,7 @@ def _verify_all_positions(
         market=market,
         gho_asset=gho_asset,
         block_number=block_number,
-        no_progress=no_progress,
+        show_progress=show_progress,
         user_addresses=None,
     )
 
@@ -1866,7 +1868,7 @@ def _verify_scaled_token_positions(
     session: Session,
     position_table: type[AaveV3CollateralPositionsTable | AaveV3DebtPositionsTable],
     block_number: int,
-    no_progress: bool,
+    show_progress: bool,
     user_addresses: set[ChecksumAddress] | None = None,
 ) -> None:
     """
@@ -1905,7 +1907,7 @@ def _verify_scaled_token_positions(
         users_to_verify,
         desc=desc,
         leave=False,
-        disable=no_progress,
+        disable=not show_progress,
     ):
         if user.address == ZERO_ADDRESS:
             logger.error("SKIPPED ZERO ADDRESS!")
@@ -3997,7 +3999,7 @@ def update_aave_market(
     market: AaveV3MarketTable,
     session: Session,
     verify: bool,
-    no_progress: bool,
+    show_progress: bool,
 ) -> None:
     """
     Update the Aave V3 market.
@@ -4241,7 +4243,7 @@ def update_aave_market(
         sorted_tx_contexts,
         desc="Processing transactions",
         leave=False,
-        disable=no_progress,
+        disable=not show_progress,
     ):
         current_block = tx_context.block_number
 
@@ -4266,7 +4268,7 @@ def update_aave_market(
                     session=session,
                     position_table=AaveV3CollateralPositionsTable,
                     block_number=last_verified_block,
-                    no_progress=no_progress,
+                    show_progress=show_progress,
                     user_addresses=users_to_verify,
                 )
                 _verify_scaled_token_positions(
@@ -4275,7 +4277,7 @@ def update_aave_market(
                     session=session,
                     position_table=AaveV3DebtPositionsTable,
                     block_number=last_verified_block,
-                    no_progress=no_progress,
+                    show_progress=show_progress,
                     user_addresses=users_to_verify,
                 )
                 _verify_stk_aave_balances(
@@ -4284,7 +4286,7 @@ def update_aave_market(
                     market=market,
                     gho_asset=gho_asset,
                     block_number=last_verified_block,
-                    no_progress=no_progress,
+                    show_progress=show_progress,
                     user_addresses=users_to_verify,
                 )
                 _verify_gho_discount_amounts(
@@ -4293,7 +4295,7 @@ def update_aave_market(
                     market=market,
                     gho_asset=gho_asset,
                     block_number=last_verified_block,
-                    no_progress=no_progress,
+                    show_progress=show_progress,
                     user_addresses=users_to_verify,
                 )
 
@@ -4324,7 +4326,7 @@ def update_aave_market(
                 session=session,
                 position_table=AaveV3CollateralPositionsTable,
                 block_number=last_verified_block,
-                no_progress=no_progress,
+                show_progress=show_progress,
                 user_addresses=users_to_verify,
             )
             _verify_scaled_token_positions(
@@ -4333,7 +4335,7 @@ def update_aave_market(
                 session=session,
                 position_table=AaveV3DebtPositionsTable,
                 block_number=last_verified_block,
-                no_progress=no_progress,
+                show_progress=show_progress,
                 user_addresses=users_to_verify,
             )
             _verify_stk_aave_balances(
@@ -4342,7 +4344,7 @@ def update_aave_market(
                 market=market,
                 gho_asset=gho_asset,
                 block_number=last_verified_block,
-                no_progress=no_progress,
+                show_progress=show_progress,
                 user_addresses=users_to_verify,
             )
             _verify_gho_discount_amounts(
@@ -4351,7 +4353,7 @@ def update_aave_market(
                 market=market,
                 gho_asset=gho_asset,
                 block_number=last_verified_block,
-                no_progress=no_progress,
+                show_progress=show_progress,
                 user_addresses=users_to_verify,
             )
 
