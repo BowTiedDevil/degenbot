@@ -132,6 +132,19 @@ class TransactionContext:
     # This prevents double-counting in pending delta calculations
     processed_stk_aave_transfers: set[int] = field(default_factory=set)
 
+    # Track BalanceTransfer events that have been processed in this transaction.
+    # Key: (token_address, recipient_address), Value: (log_index, scaled_amount)
+    # Used to match burns with preceding transfers for exact amount cancellation.
+    processed_balance_transfers: dict[tuple[ChecksumAddress, ChecksumAddress], tuple[int, int]] = (
+        field(default_factory=dict)
+    )
+
+    # Track modified positions to ensure we use the same object across operations.
+    # Key: (user_address, asset_id), Value: position object
+    modified_positions: dict[
+        tuple[ChecksumAddress, int], AaveV3CollateralPositionsTable | AaveV3DebtPositionsTable
+    ] = field(default_factory=dict)
+
     def get_effective_discount_at_log_index(
         self,
         user_address: ChecksumAddress,
@@ -587,7 +600,7 @@ def aave_update(
 
             if initial_start_block > last_block:
                 msg = (
-                    f"Chain {chain_id}: --to-block ({last_block}) must be greater than the "
+                    f"Chain {chain_id}: --to-block must be greater than the "
                     f"market's last update block ({initial_start_block - 1})."
                 )
                 raise ValueError(msg)
@@ -1433,18 +1446,46 @@ def _get_or_create_position[T: AaveV3CollateralPositionsTable | AaveV3DebtPositi
     asset_id: int,
     positions: list[T],
     position_table: type[T],
+    tx_context: TransactionContext | None = None,
+    relationship_attr: str | None = None,
 ) -> T:
     """
     Get existing position or create new one with zero balance.
     """
 
-    for position in positions:
-        if position.asset_id == asset_id:
-            return position
+    # Check if we have a tracked position for this user/asset in this transaction
+    if tx_context is not None:
+        user_address = get_checksum_address(user.address)
+        cache_key = (user_address, asset_id)
+        if cache_key in tx_context.modified_positions:
+            return cast("T", tx_context.modified_positions[cache_key])
 
+    # Query the database directly for the position
+    existing_position = session.scalar(
+        select(position_table).where(
+            position_table.user_id == user.id,
+            position_table.asset_id == asset_id,
+        )
+    )
+
+    if existing_position is not None:
+        # Track this position for the rest of the transaction
+        if tx_context is not None:
+            user_address = get_checksum_address(user.address)
+            tx_context.modified_positions[(user_address, asset_id)] = existing_position
+        return existing_position
+
+    # Create new position if none exists
     new_position = cast("T", position_table(user_id=user.id, asset_id=asset_id, balance=0))
     session.add(new_position)
-    positions.append(new_position)
+    session.flush()
+    # Expire the relationship collection to prevent stale data
+    if relationship_attr is not None:
+        session.expire(user, [relationship_attr])
+    # Track the new position
+    if tx_context is not None:
+        user_address = get_checksum_address(user.address)
+        tx_context.modified_positions[(user_address, asset_id)] = new_position
     return new_position
 
 
@@ -1452,6 +1493,7 @@ def _get_or_create_collateral_position(
     session: Session,
     user: AaveV3UsersTable,
     asset_id: int,
+    tx_context: TransactionContext | None = None,
 ) -> AaveV3CollateralPositionsTable:
     """
     Get existing collateral position or create new one with zero balance.
@@ -1463,6 +1505,8 @@ def _get_or_create_collateral_position(
         asset_id=asset_id,
         positions=user.collateral_positions,
         position_table=AaveV3CollateralPositionsTable,
+        tx_context=tx_context,
+        relationship_attr="collateral_positions",
     )
 
 
@@ -1470,6 +1514,7 @@ def _get_or_create_debt_position(
     session: Session,
     user: AaveV3UsersTable,
     asset_id: int,
+    tx_context: TransactionContext | None = None,
 ) -> AaveV3DebtPositionsTable:
     """
     Get existing debt position or create new one with zero balance.
@@ -1481,6 +1526,8 @@ def _get_or_create_debt_position(
         asset_id=asset_id,
         positions=user.debt_positions,
         position_table=AaveV3DebtPositionsTable,
+        tx_context=tx_context,
+        relationship_attr="debt_positions",
     )
 
 
@@ -2007,6 +2054,9 @@ def _process_scaled_token_operation(
                 previous_balance=position.balance,
                 previous_index=position.last_index or 0,
             )
+            logger.debug(
+                f"_process_scaled_token_operation burn: delta={burn_result.balance_delta}, new_balance={position.balance + burn_result.balance_delta}"
+            )
             position.balance += burn_result.balance_delta
             position.last_index = burn_result.new_index
             return UserOperation.WITHDRAW
@@ -2018,6 +2068,7 @@ def _process_scaled_token_operation(
                 event_data=event,
                 previous_balance=position.balance,
                 previous_index=position.last_index or 0,
+                scaled_delta=event.scaled_amount,
             )
             position.balance += debt_mint_result.balance_delta
             position.last_index = debt_mint_result.new_index
@@ -2301,6 +2352,9 @@ def _process_transaction(
 
     # Process each operation
     for operation in sorted_operations:
+        logger.debug(
+            f"Processing operation {operation.operation_id}: {operation.operation_type.name}"
+        )
         _process_operation(
             operation=operation,
             tx_context=tx_context,
@@ -2656,7 +2710,7 @@ def _process_collateral_mint_with_match(
 
     # Get or create collateral position
     collateral_position = _get_or_create_collateral_position(
-        session=session, user=user, asset_id=collateral_asset.id
+        session=session, user=user, asset_id=collateral_asset.id, tx_context=tx_context
     )
 
     # Calculate scaled amount using PoolProcessor for revision 4+
@@ -2749,7 +2803,7 @@ def _process_collateral_burn_with_match(
 
     # Get collateral position
     collateral_position = _get_or_create_collateral_position(
-        session=session, user=user, asset_id=collateral_asset.id
+        session=session, user=user, asset_id=collateral_asset.id, tx_context=tx_context
     )
 
     # Calculate scaled amount using PoolProcessor for revision 4+
@@ -2762,7 +2816,89 @@ def _process_collateral_burn_with_match(
     if raw_amount is None:
         raw_amount = extraction_data.get("liquidated_collateral")
 
-    if raw_amount is not None and collateral_asset.a_token_revision >= 4:
+    # Check if this burn follows a BalanceTransfer to the same user in the same transaction
+    # If so, use the BalanceTransfer amount to ensure they cancel out exactly
+    # ref: Bug #0026 - BalanceTransfer followed by Withdraw must use matching amounts
+    if tx_context is not None and scaled_event.user_address is not None:
+        # First, check if we have a tracked BalanceTransfer for this user/token
+        # This is set when a transfer to this user was skipped (contract receives and burns)
+        tracked_key = (token_address, scaled_event.user_address)
+        if tracked_key in tx_context.processed_balance_transfers:
+            tracked_log_index, tracked_amount = tx_context.processed_balance_transfers[tracked_key]
+            # Only use if it happened before this burn
+            if tracked_log_index < scaled_event.event["logIndex"]:
+                scaled_amount = tracked_amount
+                logger.debug(
+                    f"Using tracked BalanceTransfer amount {tracked_amount} for burn at "
+                    f"log {scaled_event.event['logIndex']} (transfer was at log {tracked_log_index})"
+                )
+
+        # If no tracked transfer found and this is a WITHDRAW operation,
+        # search through events for a paired BalanceTransfer.
+        # Only apply BalanceTransfer matching for WITHDRAW operations where the
+        # BalanceTransfer is part of the same atomic operation.
+        # ref: Issue #0030 - Don't match BalanceTransfer for non-WITHDRAW burns
+        if (
+            scaled_amount is None
+            and operation is not None
+            and operation.operation_type == OperationType.WITHDRAW
+        ):
+            # Search all transaction events for a BalanceTransfer to this user
+            # that happened before this burn, and find the closest one to the burn
+            burn_log_index = scaled_event.event["logIndex"]
+            closest_bt_amount = None
+            closest_bt_log_index = -1
+
+            for evt in tx_context.events:
+                if evt["logIndex"] >= burn_log_index:
+                    # Skip events at or after the burn
+                    continue
+                if evt["topics"][0] != AaveV3ScaledTokenEvent.BALANCE_TRANSFER.value:
+                    continue
+                if get_checksum_address(evt["address"]) != token_address:
+                    continue
+                # Check if this BalanceTransfer was TO this user
+                to_addr = get_checksum_address("0x" + evt["topics"][2].hex()[-40:])
+                if to_addr == scaled_event.user_address:
+                    # Track the closest BalanceTransfer to the burn
+                    if evt["logIndex"] > closest_bt_log_index:
+                        closest_bt_log_index = evt["logIndex"]
+                        closest_bt_amount, _ = _decode_uint_values(event=evt, num_values=2)
+
+            # Use the closest BalanceTransfer if found
+            if closest_bt_amount is not None:
+                scaled_amount = closest_bt_amount
+                logger.debug(
+                    f"Using preceding BalanceTransfer amount {closest_bt_amount} for burn at "
+                    f"log {burn_log_index} to match transfer at log {closest_bt_log_index}"
+                )
+
+    # If this is a WITHDRAW operation and no BalanceTransfer amount was found,
+    # use the raw_amount from the Withdraw event to ensure accurate balance updates.
+    # The Burn event value may differ by 1 wei due to rounding, but the Withdraw amount
+    # is the authoritative value that should be used for balance updates.
+    # ref: Bug #0026 and #0027 - Withdraw must use Withdraw event amount only when
+    # no BalanceTransfer is present. If a BalanceTransfer was found, use its amount
+    # to ensure exact cancellation.
+    if operation is not None and operation.operation_type == OperationType.WITHDRAW:
+        if scaled_amount is None and raw_amount is not None:
+            # Calculate scaled amount from Withdraw event's raw_amount
+            if collateral_asset.a_token_revision >= 4:
+                pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
+                    collateral_asset.a_token_revision
+                )
+                scaled_amount = pool_processor.calculate_collateral_burn_scaled_amount(
+                    amount=raw_amount,
+                    liquidity_index=scaled_event.index,
+                )
+            else:
+                # For revisions 1-3, use standard ray_div
+                scaled_amount = raw_amount * 10**27 // (scaled_event.index or 1)
+            logger.debug(
+                f"Using Withdraw raw_amount {raw_amount} to calculate scaled_amount {scaled_amount}"
+            )
+
+    if scaled_amount is None and raw_amount is not None and collateral_asset.a_token_revision >= 4:
         pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
             collateral_asset.a_token_revision
         )
@@ -2780,6 +2916,9 @@ def _process_collateral_burn_with_match(
         ),
         scaled_token_revision=collateral_asset.a_token_revision,
         position=collateral_position,
+    )
+    logger.debug(
+        f"After burn position id={id(collateral_position)}, balance={collateral_position.balance}"
     )
 
     # Update last_index
@@ -3176,6 +3315,13 @@ def _process_collateral_transfer_with_match(
     logger.debug(
         f"Processing _process_collateral_transfer_with_match at block {event['blockNumber']}"
     )
+    logger.debug(
+        f"Processing _process_collateral_transfer_with_match at block {event['blockNumber']}"
+    )
+    logger.debug(
+        f"  Event: logIndex={scaled_event.event['logIndex']}, type={scaled_event.event_type}, "
+        f"index={scaled_event.index}, from={scaled_event.from_address}, to={scaled_event.target_address}"
+    )
 
     # Skip if addresses are missing
     if scaled_event.from_address is None or scaled_event.target_address is None:
@@ -3183,6 +3329,7 @@ def _process_collateral_transfer_with_match(
 
     # Skip BalanceTransfer events that are tracked in balance_transfer_events
     # These will be handled by their paired ERC20 Transfer events
+    # ref: Issue #0030 - Standalone BalanceTransfer events should NOT be skipped
     if (
         scaled_event.index is not None
         and scaled_event.index > 0
@@ -3193,7 +3340,18 @@ def _process_collateral_transfer_with_match(
             if bt_event["logIndex"] == scaled_event.event["logIndex"]:
                 # This BalanceTransfer is paired with an ERC20 Transfer
                 # Skip it - the ERC20 Transfer will handle the balance change
+                logger.debug(
+                    f"Skipping paired BalanceTransfer at log {scaled_event.event['logIndex']}"
+                )
                 return
+
+    # Log standalone BalanceTransfer processing
+    if scaled_event.index is not None and scaled_event.index > 0:
+        logger.debug(
+            f"Processing standalone BalanceTransfer at log {scaled_event.event['logIndex']} "
+            f"from {scaled_event.from_address} to {scaled_event.target_address} "
+            f"amount {scaled_event.amount}"
+        )
 
     # Skip transfers that are part of REPAY_WITH_ATOKENS operations
     # These transfers represent the internal movement of aTokens before burning,
@@ -3252,7 +3410,7 @@ def _process_collateral_transfer_with_match(
 
     # Get sender's position
     sender_position = _get_or_create_collateral_position(
-        session=session, user=sender, asset_id=collateral_asset.id
+        session=session, user=sender, asset_id=collateral_asset.id, tx_context=tx_context
     )
 
     # Determine transfer amount
@@ -3292,7 +3450,7 @@ def _process_collateral_transfer_with_match(
 
     if not matched_balance_transfer:
         logger.debug(
-            f"DEBUG: No BalanceTransfer match for transfer from {scaled_event.from_address} amount {scaled_event.amount} at log {scaled_event.event['logIndex']}"
+            f"No BalanceTransfer match for transfer from {scaled_event.from_address} amount {scaled_event.amount} at log {scaled_event.event['logIndex']}"
         )
         # Only use scaled_event values if no BalanceTransfer match found
         if scaled_event.index is not None and scaled_event.index > 0:
@@ -3317,23 +3475,118 @@ def _process_collateral_transfer_with_match(
         sender_position.last_index = transfer_index
 
     # Handle recipient
-    if scaled_event.target_address != ZERO_ADDRESS:
-        recipient = _get_or_create_user(
-            session=session,
-            gho_asset=gho_asset,
-            market=market,
-            user_address=scaled_event.target_address,
-            w3=w3,
-            block_number=scaled_event.event["blockNumber"],
+    if scaled_event.target_address != ZERO_ADDRESS:  # noqa:PLR1702
+        # Check if the recipient immediately burns the tokens (without a WITHDRAW operation)
+        # Only apply this skip logic to ERC20 Transfers (index is None or 0), NOT to
+        # BalanceTransfer events (index > 0). BalanceTransfer events represent the actual
+        # movement of scaled balances and must always be processed.
+        # Also, don't skip if this ERC20 Transfer has a paired BalanceTransfer event,
+        # as the BalanceTransfer represents the actual balance movement.
+        # ref: Issue #0026 - Don't skip if the burn is part of a WITHDRAW operation
+        # ref: Issue #0030 - BalanceTransfer events must always update recipient balance
+        skip_recipient_update = False
+        has_paired_balance_transfer = (
+            operation is not None
+            and operation.balance_transfer_events
+            and any(
+                bt_event["logIndex"] > scaled_event.event["logIndex"]
+                for bt_event in operation.balance_transfer_events
+            )
         )
+        if (
+            tx_context is not None
+            and (scaled_event.index is None or scaled_event.index == 0)
+            and not has_paired_balance_transfer
+        ):
+            transfer_log_index = scaled_event.event["logIndex"]
+            # Check if there's a WITHDRAW pool event anywhere in the transaction
+            # If so, this is part of a withdrawal and we should NOT skip the recipient update
+            has_withdraw_in_tx = any(
+                evt["topics"][0] == AaveV3PoolEvent.WITHDRAW.value for evt in tx_context.events
+            )
+            if not has_withdraw_in_tx:
+                # No WITHDRAW in transaction - check if recipient burns immediately
+                for evt in tx_context.events:
+                    # Only check events after the transfer
+                    if evt["logIndex"] <= transfer_log_index:
+                        continue
+                    # Check for SCALED_TOKEN_BURN from the same recipient
+                    if evt["topics"][0] == AaveV3ScaledTokenEvent.BURN.value:
+                        burn_user = get_checksum_address("0x" + evt["topics"][1].hex()[-40:])
+                        if burn_user == scaled_event.target_address:
+                            skip_recipient_update = True
+                            logger.debug(
+                                f"Skipping recipient balance update for {scaled_event.target_address} "
+                                f"because they immediately burn the received tokens"
+                            )
+                            break
 
-        recipient_position = _get_or_create_collateral_position(
-            session=session, user=recipient, asset_id=collateral_asset.id
-        )
-        recipient_position.balance += transfer_amount
+        if not skip_recipient_update:
+            recipient = _get_or_create_user(
+                session=session,
+                gho_asset=gho_asset,
+                market=market,
+                user_address=scaled_event.target_address,
+                w3=w3,
+                block_number=scaled_event.event["blockNumber"],
+            )
 
-        if transfer_index > 0:
-            recipient_position.last_index = transfer_index
+            recipient_position = _get_or_create_collateral_position(
+                session=session, user=recipient, asset_id=collateral_asset.id, tx_context=tx_context
+            )
+            recipient_position.balance += transfer_amount
+
+            if transfer_index > 0:
+                recipient_position.last_index = transfer_index
+
+        # Track this BalanceTransfer for potential matching with subsequent burns
+        # This allows exact cancellation when the recipient burns the transferred tokens
+        # ref: Bug #0026
+        # Only track if we have an actual BalanceTransfer (matched_balance_transfer=True)
+        # or if this is a standalone BalanceTransfer event (index > 0)
+        # IMPORTANT: Only track if we actually updated the recipient's balance.
+        # If the recipient update was skipped (e.g., because they immediately burn),
+        # tracking the BalanceTransfer would cause the burn to use the wrong amount.
+        # ref: Bug #0029
+        if tx_context is not None and not skip_recipient_update:
+            should_track = False
+            track_log_index = None
+            track_amount = None
+
+            if operation and operation.balance_transfer_events and matched_balance_transfer:
+                # Use the BalanceTransfer event's data for tracking
+                bt_event = operation.balance_transfer_events[0]
+                track_amount, _ = _decode_uint_values(event=bt_event, num_values=2)
+                track_log_index = bt_event["logIndex"]
+                should_track = True
+                logger.debug(
+                    f"Tracking BalanceTransfer via operation: token={token_address}, recipient={scaled_event.target_address}, amount={track_amount}, log={track_log_index}"
+                )
+            elif scaled_event.index is not None and scaled_event.index > 0:
+                # Standalone BalanceTransfer (no paired ERC20 Transfer)
+                track_amount = transfer_amount
+                track_log_index = scaled_event.event["logIndex"]
+                should_track = True
+                logger.debug(
+                    f"Tracking standalone BalanceTransfer: token={token_address}, recipient={scaled_event.target_address}, amount={track_amount}, log={track_log_index}"
+                )
+
+            if should_track and track_log_index is not None and track_amount is not None:
+                tx_context.processed_balance_transfers[
+                    token_address,
+                    scaled_event.target_address,
+                ] = (
+                    track_log_index,
+                    track_amount,
+                )
+                # Standalone BalanceTransfer (no paired ERC20 Transfer)
+                tx_context.processed_balance_transfers[
+                    token_address,
+                    scaled_event.target_address,
+                ] = (
+                    scaled_event.event["logIndex"],
+                    transfer_amount,
+                )
 
 
 def _process_debt_transfer_with_match(
@@ -4201,7 +4454,7 @@ def update_aave_market(
                     logger.info(
                         f"Fetched discount token from contract: {discount_token_from_contract}"
                     )
-            except Exception as e:
+            except Exception as e:  # noqa:BLE001
                 logger.debug(f"Could not fetch discount token from contract: {e}")
 
         all_events.extend(

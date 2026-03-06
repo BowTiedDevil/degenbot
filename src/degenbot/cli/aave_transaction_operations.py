@@ -442,6 +442,7 @@ class TransactionOperationsParser:
             )
 
         block_number = events[0]["blockNumber"]
+        self._current_tx_hash = tx_hash
 
         # Step 1: Identify pool events (anchors for operations)
         pool_events = self._extract_pool_events(events)
@@ -1340,6 +1341,8 @@ class TransactionOperationsParser:
             # These may be implicit borrows in transactions without BORROW events
             # (e.g., flash loans, internal Pool operations)
             if ev.event_type in {"DEBT_MINT", "GHO_DEBT_MINT"}:
+                assert ev.balance_increase is not None
+
                 # Interest accrual: balance_increase >= amount
                 # - balance_increase > amount: net interest after repayment (in _burnScaled)
                 # - balance_increase == amount: pure interest accrual (in _accrueDebtOnAction)
@@ -1498,7 +1501,7 @@ class TransactionOperationsParser:
         operation_id = starting_operation_id
         local_assigned: set[int] = set()  # Track assignments within this function
 
-        for ev in scaled_events:
+        for ev in scaled_events:  # noqa:PLR1702
             # Skip already assigned events (both externally and locally)
             if ev.event["logIndex"] in assigned_indices or ev.event["logIndex"] in local_assigned:
                 continue
@@ -1585,6 +1588,40 @@ class TransactionOperationsParser:
             )
             operation_id += 1
 
+        # Process standalone BalanceTransfer events (no paired ERC20 Transfer)
+        # These can occur when rewards are distributed directly via BalanceTransfer
+        # ref: Issue #0030 - Standalone BalanceTransfer events must be processed
+        for ev in scaled_events:
+            # Skip already assigned events
+            if ev.event["logIndex"] in assigned_indices or ev.event["logIndex"] in local_assigned:
+                continue
+
+            # Only process BalanceTransfer events (index > 0 indicates BalanceTransfer)
+            if ev.index is None or ev.index == 0:
+                continue
+
+            # Only process transfer event types
+            if ev.event_type not in {
+                "COLLATERAL_TRANSFER",
+                "DEBT_TRANSFER",
+                "GHO_DEBT_TRANSFER",
+            }:
+                continue
+
+            # Create BALANCE_TRANSFER operation for standalone BalanceTransfer
+            operations.append(
+                Operation(
+                    operation_id=operation_id,
+                    operation_type=OperationType.BALANCE_TRANSFER,
+                    pool_event=None,
+                    scaled_token_events=[ev],
+                    transfer_events=[],
+                    balance_transfer_events=[],
+                )
+            )
+            local_assigned.add(ev.event["logIndex"])
+            operation_id += 1
+
         # Update the assigned_indices set with locally assigned events
         assigned_indices.update(local_assigned)
 
@@ -1613,9 +1650,18 @@ class TransactionOperationsParser:
         validator = validators.get(op.operation_type)
         if validator:
             errors.extend(validator(op))
+        else:
+            msg = f"No validator found for {op.operation_type}"
+            raise TransactionValidationError(msg)
 
-        # Set validation errors
-        object.__setattr__(op, "validation_errors", errors)
+        if errors:
+            raise TransactionValidationError(
+                message=f"Operation {op.operation_id} ({op.operation_type.name}) validation failed:\n"
+                + "\n".join(errors),
+                tx_hash=self._current_tx_hash,
+                events=op.get_all_events(),
+                operations=[op],
+            )
 
     def _validate_supply(self, op: Operation) -> list[str]:
         """Validate SUPPLY operation."""
