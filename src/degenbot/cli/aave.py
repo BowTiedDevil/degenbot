@@ -667,7 +667,7 @@ def aave_update(
                             verify=verify,
                             show_progress=show_progress,
                         )
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001
                         logger.exception("")
 
                         # Log structured exception data for autonomous analysis
