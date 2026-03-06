@@ -1,5 +1,5 @@
 {
-    "ethereum": "http://192.168.10.3:8545",
-    "mainnet": "http://192.168.10.3:8545",
-    "1": "http://192.168.10.3:8545"
+    "ethereum": "http://node:8545",
+    "mainnet": "http://node:8545",
+    "1": "http://node:8545"
 }
