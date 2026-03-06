@@ -176,4 +176,6 @@ cython_debug/
 # SQLite
 *.db
 *.db.bak
+*.db-shm
+*.db-wal
 *.sqlite
