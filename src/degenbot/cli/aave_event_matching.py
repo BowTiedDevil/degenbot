@@ -820,7 +820,7 @@ def _should_consume_gho_debt_burn_pool_event(pool_event: LogReceipt) -> bool:
     event_topic = pool_event["topics"][0]
 
     assert event_topic in {
-        AaveV3PoolEvent.BORROW.value,
+        AaveV3PoolEvent.REPAY.value,
         AaveV3PoolEvent.LIQUIDATION_CALL.value,
         AaveV3PoolEvent.DEFICIT_CREATED.value,
     }
