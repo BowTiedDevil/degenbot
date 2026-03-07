@@ -3,24 +3,21 @@
 Provides machine-parseable debug output for autonomous agent analysis.
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import os
 import sys
 import traceback
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import Any, ClassVar, Self
 
+from eth_typing import ChainId
 from hexbytes import HexBytes
+from web3.types import LogReceipt
 
-if TYPE_CHECKING:
-    from eth_typing import ChainId
-    from web3.types import LogReceipt
-
-    from degenbot.cli.aave import TransactionContext
+from degenbot.cli.aave import TransactionContext
 
 
 class AaveDebugLogger:
@@ -616,7 +613,7 @@ class AaveDebugLogger:
         debt_asset: str,
         debt_to_cover: int,
         liquidated_collateral: int,
-        scaled_events: list[str],
+        scaled_events: Sequence[str],
         block_number: int,
         tx_hash: HexBytes | str,
     ) -> None:
