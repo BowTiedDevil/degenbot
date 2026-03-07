@@ -494,6 +494,8 @@ def deactivate_mainnet_aave_v3(
     default=False,
     show_default=True,
     help="Stop processing after the first chunk.",
+    envvar="DEGENBOT_ONE_CHUNK",
+    show_envvar=True,
 )
 @click.option(
     "--progress-bar",
@@ -708,6 +710,7 @@ def aave_update(
                             show_progress=show_progress,
                         )
 
+                    session.commit()
                     backup_sqlite_database(
                         settings.database.path,
                         suffix=f"{working_end_block}",
@@ -2443,12 +2446,12 @@ def _process_operation(
         event = scaled_event.event
 
         # Find match within operation context
-        match_result = matcher.find_match(scaled_event)
+        match_result = matcher.find_match()
 
         # Handle MINT_TO_TREASURY operations specially - they don't have pool events
         # so we process them directly without matching
         if match_result is None and operation.operation_type == OperationType.MINT_TO_TREASURY:
-            if scaled_event.event_type == "COLLATERAL_MINT":
+            if scaled_event.event_type == "collateral_mint":
                 _process_collateral_mint_with_match(
                     event=event,
                     tx_context=tx_context,
@@ -2465,7 +2468,7 @@ def _process_operation(
         # Handle IMPLICIT_BORROW operations - DEBT_MINT without BORROW event
         # These occur in flash loans and other internal Pool operations
         if match_result is None and operation.operation_type == OperationType.IMPLICIT_BORROW:
-            if scaled_event.event_type in {"DEBT_MINT", "GHO_DEBT_MINT"}:
+            if scaled_event.event_type in {"debt_mint", "gho_debt_mint"}:
                 _process_debt_mint_with_match(
                     event=event,
                     tx_context=tx_context,
@@ -2491,7 +2494,7 @@ def _process_operation(
             raise ValueError(msg)
 
         # Route to appropriate handler based on event type
-        if scaled_event.event_type == "COLLATERAL_MINT":
+        if scaled_event.event_type == "collateral_mint":
             _process_collateral_mint_with_match(
                 event=event,
                 tx_context=tx_context,
@@ -2499,7 +2502,7 @@ def _process_operation(
                 scaled_event=scaled_event,
                 match_result=match_result,
             )
-        elif scaled_event.event_type == "COLLATERAL_BURN":
+        elif scaled_event.event_type == "collateral_burn":
             _process_collateral_burn_with_match(
                 event=event,
                 tx_context=tx_context,
@@ -2507,7 +2510,7 @@ def _process_operation(
                 scaled_event=scaled_event,
                 match_result=match_result,
             )
-        elif scaled_event.event_type in {"DEBT_MINT", "GHO_DEBT_MINT"}:
+        elif scaled_event.event_type in {"debt_mint", "gho_debt_mint"}:
             _process_debt_mint_with_match(
                 event=event,
                 tx_context=tx_context,
@@ -2515,7 +2518,7 @@ def _process_operation(
                 scaled_event=scaled_event,
                 match_result=match_result,
             )
-        elif scaled_event.event_type in {"DEBT_BURN", "GHO_DEBT_BURN"}:
+        elif scaled_event.event_type in {"debt_burn", "gho_debt_burn"}:
             _process_debt_burn_with_match(
                 event=event,
                 tx_context=tx_context,
@@ -2523,21 +2526,21 @@ def _process_operation(
                 scaled_event=scaled_event,
                 match_result=match_result,
             )
-        elif scaled_event.event_type == "COLLATERAL_TRANSFER":
+        elif scaled_event.event_type == "collateral_transfer":
             _process_collateral_transfer(
                 event=event,
                 tx_context=tx_context,
                 operation=operation,
                 scaled_event=scaled_event,
             )
-        elif scaled_event.event_type in {"DEBT_TRANSFER", "GHO_DEBT_TRANSFER"}:
+        elif scaled_event.event_type in {"debt_transfer", "gho_debt_transfer"}:
             _process_debt_transfer(
                 event=event,
                 tx_context=tx_context,
                 operation=operation,
                 scaled_event=scaled_event,
             )
-        elif scaled_event.event_type == "DISCOUNT_TRANSFER":
+        elif scaled_event.event_type == "discount_transfer":
             # stkAAVE transfers are processed separately to update user balances
             # before GHO debt operations calculate discount rates. They don't
             # affect Aave market positions directly.

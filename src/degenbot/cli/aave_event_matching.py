@@ -34,7 +34,7 @@ from web3.types import LogReceipt
 
 from degenbot.aave.events import AaveV3PoolEvent
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.cli.aave_transaction_operations import Operation, OperationType, ScaledTokenEvent
+from degenbot.cli.aave_transaction_operations import Operation, OperationType
 from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 
@@ -869,10 +869,7 @@ class OperationAwareEventMatcher:
         """
         self.operation = operation
 
-    def find_match(
-        self,
-        scaled_event: ScaledTokenEvent,
-    ) -> EventMatchResult | None:
+    def find_match(self) -> EventMatchResult | None:
         """
         Find pool event match within operation context.
 
