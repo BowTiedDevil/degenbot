@@ -222,6 +222,7 @@ dev = [
 ]
 
 [tool.uv]
+link-mode = "copy"
 cache-keys = [
     {file = "pyproject.toml"}, 
     {file = "rust/Cargo.toml"}, 

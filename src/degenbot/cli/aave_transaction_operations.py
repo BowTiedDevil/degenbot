@@ -21,7 +21,10 @@ from degenbot.logging import logger
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
+    from sqlalchemy.orm import Session
     from web3.types import LogReceipt
+
+    from degenbot.database.models.aave import AaveV3AssetsTable, AaveV3MarketTable
 
 
 def _topic_to_address(topic: HexBytes | str) -> ChecksumAddress:
@@ -94,6 +97,7 @@ class OperationType(Enum):
     IMPLICIT_BORROW = (
         auto()
     )  # DEBT_MINT without BORROW event (e.g., flash loans, internal operations)
+    STKAAVE_TRANSFER = auto()  # stkAAVE (GHO Discount Token) transfer
     UNKNOWN = auto()
 
 
@@ -126,7 +130,9 @@ class AssetFlow:
 
 @dataclass(frozen=True)
 class ScaledTokenEvent:
-    """Wrapper for scaled token events with decoded data."""
+    """
+    Wrapper for scaled token events with human-readable decoded data.
+    """
 
     event: LogReceipt
     event_type: str  # "COLLATERAL_MINT", "COLLATERAL_BURN", "DEBT_MINT", etc.
@@ -150,6 +156,10 @@ class ScaledTokenEvent:
     @property
     def is_debt(self) -> bool:
         return self.event_type.startswith("DEBT") or self.event_type.startswith("GHO")
+
+    @property
+    def is_discount(self) -> bool:
+        return self.event_type.startswith("DISCOUNT")
 
     @property
     def is_mint(self) -> bool:
@@ -194,10 +204,10 @@ class Operation:
             events.append(self.pool_event)
             seen_log_indices.add(self.pool_event["logIndex"])
 
-        for ev in self.scaled_token_events:
-            if ev.event["logIndex"] not in seen_log_indices:
-                events.append(ev.event)
-                seen_log_indices.add(ev.event["logIndex"])
+        for scaled_token_event in self.scaled_token_events:
+            if scaled_token_event.event["logIndex"] not in seen_log_indices:
+                events.append(scaled_token_event.event)
+                seen_log_indices.add(scaled_token_event.event["logIndex"])
 
         for ev in self.transfer_events:
             if ev["logIndex"] not in seen_log_indices:
@@ -314,13 +324,14 @@ class TransactionValidationError(Exception):
 
         # Add data
         data_str = event["data"].hex()
-        if len(data_str) > 60:
+        if len(data_str) > 60:  # noqa:PLR2004
             data_str = data_str[:30] + "..." + data_str[-30:]
         lines.extend((f"    Data: {data_str}", ""))
 
         return lines
 
-    def _format_operation(self, op: Operation) -> list[str]:
+    @staticmethod
+    def _format_operation(op: Operation) -> list[str]:
         """Format a single operation for display."""
         lines = [
             f"Operation {op.operation_id}: {op.operation_type.name}",
@@ -349,7 +360,8 @@ class TransactionValidationError(Exception):
         lines.append("")
         return lines
 
-    def _get_event_name(self, topic: HexBytes) -> str:
+    @staticmethod
+    def _get_event_name(topic: HexBytes) -> str:
         """Get human-readable event name from topic."""
         for pool_event in AaveV3PoolEvent:
             if pool_event.value == topic:
@@ -361,21 +373,16 @@ class TransactionValidationError(Exception):
             return "Transfer"
         return "UNKNOWN"
 
-    def _try_decode_address(self, topic: HexBytes | str) -> ChecksumAddress | None:
+    @staticmethod
+    def _try_decode_address(topic: HexBytes | str) -> ChecksumAddress | None:
         """Try to decode topic as address.
 
         Handles both HexBytes objects (with .hex() method) and strings.
         """
         try:
-            # Handle both HexBytes (has .hex() method) and strings
-            if isinstance(topic, str):
-                # Already a hex string, extract last 40 chars
-                hex_str = topic[-40:]
-            else:
-                # HexBytes object, call .hex() method
-                hex_str = topic.hex()[-40:]
+            hex_str = topic[-40:] if isinstance(topic, str) else topic.hex()[-40:]
             return get_checksum_address("0x" + hex_str)
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             return None
 
 
@@ -389,34 +396,53 @@ class TransactionOperationsParser:
 
     def __init__(
         self,
+        market: AaveV3MarketTable,
+        session: Session,
         gho_token_address: ChecksumAddress | None = None,
-        token_type_mapping: dict[ChecksumAddress, str] | None = None,
         pool_address: ChecksumAddress | None = None,
-        debt_token_to_reserve: dict[ChecksumAddress, ChecksumAddress] | None = None,
     ) -> None:
         """Initialize parser.
 
         Args:
+            market: Aave V3 market with assets containing aToken and vToken relationships.
+            session: SQLAlchemy session for database queries.
             gho_token_address: Address of GHO variable debt token.
-                              Defaults to mainnet address if not provided.
-            token_type_mapping: Mapping of token addresses to their types.
-                               Keys are token addresses, values are "aToken" or "vToken".
+                Defaults to mainnet address if not provided.
             pool_address: Address of the Aave Pool contract.
-                         Used to detect mintToTreasury operations.
-            debt_token_to_reserve: Mapping of debt token addresses to their underlying reserve addresses.
-                                  Used to correctly match debt burns with repay events in flash loan scenarios.
+                Used to detect mintToTreasury operations.
         """
+        self.market = market
+        self.session = session
         self.gho_token_address = gho_token_address or GHO_VARIABLE_DEBT_TOKEN_ADDRESS
-        # Normalize token type mapping keys to checksum addresses
-        self.token_type_mapping = {
-            get_checksum_address(k): v for k, v in (token_type_mapping or {}).items()
-        }
         self.pool_address = pool_address
-        # Normalize debt token to reserve mapping
-        self.debt_token_to_reserve = {
-            get_checksum_address(k): get_checksum_address(v)
-            for k, v in (debt_token_to_reserve or {}).items()
-        }
+
+    def _get_token_type(self, token_address: ChecksumAddress) -> str | None:
+        """
+        Get token type (aToken or vToken) for a given token address.
+
+        Args:
+            token_address: The token address to look up.
+
+        Returns:
+            "aToken", "vToken", "GHO Discount" or None if not found in market assets.
+        """
+
+        from degenbot.cli.aave import _get_gho_asset
+
+        checksum_addr = get_checksum_address(token_address)
+        for asset in self.market.assets:
+            if asset.a_token and get_checksum_address(asset.a_token.address) == checksum_addr:
+                return "aToken"
+            if asset.v_token and get_checksum_address(asset.v_token.address) == checksum_addr:
+                return "vToken"
+
+        if (
+            checksum_addr
+            == _get_gho_asset(session=self.session, market=self.market).v_gho_discount_token
+        ):
+            return "GHO Discount Token"
+
+        return None
 
     def _get_reserve_for_debt_token(
         self, debt_token_address: ChecksumAddress
@@ -429,7 +455,31 @@ class TransactionOperationsParser:
         Returns:
             The underlying reserve asset address, or None if not found.
         """
-        return self.debt_token_to_reserve.get(get_checksum_address(debt_token_address))
+        checksum_addr = get_checksum_address(debt_token_address)
+        for asset in self.market.assets:
+            if asset.v_token and get_checksum_address(asset.v_token.address) == checksum_addr:
+                return get_checksum_address(asset.underlying_token.address)
+        return None
+
+    def _get_a_token_asset_by_reserve(
+        self, reserve_address: ChecksumAddress
+    ) -> AaveV3AssetsTable | None:
+        """Get the aToken asset for a given reserve address.
+
+        Args:
+            reserve_address: The underlying reserve asset address.
+
+        Returns:
+            The AaveV3AssetsTable containing the aToken, or None if not found.
+        """
+        checksum_addr = get_checksum_address(reserve_address)
+        for asset in self.market.assets:
+            if (
+                asset.underlying_token
+                and get_checksum_address(asset.underlying_token.address) == checksum_addr
+            ):
+                return asset
+        return None
 
     def parse(self, events: list[LogReceipt], tx_hash: HexBytes) -> TransactionOperations:
         """Parse events into operations."""
@@ -524,7 +574,8 @@ class TransactionOperationsParser:
             unassigned_events=unassigned_events,
         )
 
-    def _extract_pool_events(self, events: list[LogReceipt]) -> list[LogReceipt]:
+    @staticmethod
+    def _extract_pool_events(events: list[LogReceipt]) -> list[LogReceipt]:
         """Extract pool-level events (SUPPLY, WITHDRAW, etc.)."""
         pool_topics = {
             AaveV3PoolEvent.SUPPLY.value.hex(),
@@ -571,81 +622,88 @@ class TransactionOperationsParser:
         return sorted(result, key=lambda e: e.event["logIndex"])
 
     def _decode_mint_event(self, event: LogReceipt) -> ScaledTokenEvent | None:
-        """Decode a Mint event."""
-        try:
-            caller = _topic_to_address(event["topics"][1])
-            user = _topic_to_address(event["topics"][2])
-            # Convert hex string to bytes for eth_abi.decode
-            amount, balance_increase, index = decode(
-                ["uint256", "uint256", "uint256"], _decode_hex_data(event["data"])
-            )
+        """
+        Decode a Mint event.
 
-            # Determine event type based on token type
-            token_address = get_checksum_address(event["address"])
-            if token_address == self.gho_token_address:
-                event_type = "GHO_DEBT_MINT"
+        Event definition:
+            event Mint(
+                address indexed caller,
+                address indexed onBehalfOf,
+                uint256 value,
+                uint256 balanceIncrease,
+                uint256 index
+            );
+        """
+
+        caller = _topic_to_address(event["topics"][1])
+        user = _topic_to_address(event["topics"][2])
+        # Convert hex string to bytes for eth_abi.decode
+        amount, balance_increase, index = decode(
+            ["uint256", "uint256", "uint256"], _decode_hex_data(event["data"])
+        )
+
+        # Determine event type based on token type
+        token_address = get_checksum_address(event["address"])
+        if token_address == self.gho_token_address:
+            event_type = "GHO_DEBT_MINT"
+        else:
+            # Use token type lookup to determine if this is a collateral or debt mint
+            token_type = self._get_token_type(token_address)
+            if token_type == "aToken":  # noqa:S105
+                event_type = "COLLATERAL_MINT"
+            elif token_type == "vToken":  # noqa:S105
+                event_type = "DEBT_MINT"
             else:
-                # Use token type mapping to determine if this is a collateral or debt mint
-                token_type = self.token_type_mapping.get(token_address)
-                if token_type == "aToken":
-                    event_type = "COLLATERAL_MINT"
-                elif token_type == "vToken":
-                    event_type = "DEBT_MINT"
-                else:
-                    # Fallback for unknown tokens - default to collateral
-                    event_type = "COLLATERAL_MINT"
+                msg = "Unknown token type!"
+                raise ValueError(msg)
 
-            return ScaledTokenEvent(
-                event=event,
-                event_type=event_type,
-                user_address=user,
-                caller_address=caller,
-                from_address=None,
-                target_address=None,
-                amount=amount,
-                balance_increase=balance_increase,
-                index=index,
-            )
-        except Exception:
-            return None
+        return ScaledTokenEvent(
+            event=event,
+            event_type=event_type,
+            user_address=user,
+            caller_address=caller,
+            from_address=None,
+            target_address=None,
+            amount=amount,
+            balance_increase=balance_increase,
+            index=index,
+        )
 
     def _decode_burn_event(self, event: LogReceipt) -> ScaledTokenEvent | None:
         """Decode a Burn event."""
-        try:
-            from_addr = _topic_to_address(event["topics"][1])
-            target = _topic_to_address(event["topics"][2])
-            amount, balance_increase, index = decode(
-                ["uint256", "uint256", "uint256"], _decode_hex_data(event["data"])
-            )
 
-            # Determine event type based on token type
-            token_address = get_checksum_address(event["address"])
-            if token_address == self.gho_token_address:
-                event_type = "GHO_DEBT_BURN"
+        from_addr = _topic_to_address(event["topics"][1])
+        target = _topic_to_address(event["topics"][2])
+        amount, balance_increase, index = decode(
+            ["uint256", "uint256", "uint256"], _decode_hex_data(event["data"])
+        )
+
+        # Determine event type based on token type
+        token_address = get_checksum_address(event["address"])
+        if token_address == self.gho_token_address:
+            event_type = "GHO_DEBT_BURN"
+        else:
+            # Use token type lookup to determine if this is a collateral or debt burn
+            token_type = self._get_token_type(token_address)
+            if token_type == "aToken":  # noqa:S105
+                event_type = "COLLATERAL_BURN"
+            elif token_type == "vToken":  # noqa:S105
+                event_type = "DEBT_BURN"
             else:
-                # Use token type mapping to determine if this is a collateral or debt burn
-                token_type = self.token_type_mapping.get(token_address)
-                if token_type == "aToken":
-                    event_type = "COLLATERAL_BURN"
-                elif token_type == "vToken":
-                    event_type = "DEBT_BURN"
-                else:
-                    # Fallback for unknown tokens
-                    event_type = "UNKNOWN_BURN"
+                msg = "Unknown burn event!"
+                raise ValueError(msg)
 
-            return ScaledTokenEvent(
-                event=event,
-                event_type=event_type,
-                user_address=from_addr,
-                caller_address=None,
-                from_address=from_addr,
-                target_address=target,
-                amount=amount,
-                balance_increase=balance_increase,
-                index=index,
-            )
-        except Exception:
-            return None
+        return ScaledTokenEvent(
+            event=event,
+            event_type=event_type,
+            user_address=from_addr,
+            caller_address=None,
+            from_address=from_addr,
+            target_address=target,
+            amount=amount,
+            balance_increase=balance_increase,
+            index=index,
+        )
 
     def _decode_balance_transfer_event(self, event: LogReceipt) -> ScaledTokenEvent | None:
         """Decode a BalanceTransfer event.
@@ -653,41 +711,37 @@ class TransactionOperationsParser:
         BalanceTransfer events represent internal scaled balance movements in aTokens.
         During liquidations, collateral may be transferred to the treasury instead of burned.
         """
-        try:
-            from_addr = _topic_to_address(event["topics"][1])
-            to_addr = _topic_to_address(event["topics"][2])
-            # BalanceTransfer data: amount, index
-            amount, index = decode(["uint256", "uint256"], _decode_hex_data(event["data"]))
 
-            # Determine event type based on token type
-            token_address = get_checksum_address(event["address"])
-            if token_address == self.gho_token_address:
-                # GHO doesn't have BalanceTransfer events, but handle just in case
-                event_type = "GHO_DEBT_TRANSFER"
-            else:
-                # Use token type mapping to determine if this is collateral or debt
-                token_type = self.token_type_mapping.get(token_address)
-                if token_type == "aToken":
-                    event_type = "COLLATERAL_TRANSFER"
-                elif token_type == "vToken":
-                    event_type = "DEBT_TRANSFER"
-                else:
-                    # Fallback for unknown tokens
-                    event_type = "UNKNOWN_TRANSFER"
+        from_addr = _topic_to_address(event["topics"][1])
+        to_addr = _topic_to_address(event["topics"][2])
+        # BalanceTransfer data: amount, index
+        amount, index = decode(["uint256", "uint256"], _decode_hex_data(event["data"]))
 
-            return ScaledTokenEvent(
-                event=event,
-                event_type=event_type,
-                user_address=from_addr,  # The user whose balance decreased
-                caller_address=None,
-                from_address=from_addr,
-                target_address=to_addr,
-                amount=amount,
-                balance_increase=0,  # BalanceTransfer doesn't have balanceIncrease
-                index=index,
-            )
-        except Exception:
-            return None
+        # Determine event type based on token type
+        token_address = get_checksum_address(event["address"])
+
+        # Use token type lookup to determine if this is collateral or debt
+        token_type = self._get_token_type(token_address)
+
+        if token_type == "aToken":  # noqa:S105
+            event_type = "COLLATERAL_TRANSFER"
+        elif token_type == "vToken":  # noqa:S105
+            event_type = "DEBT_TRANSFER"
+        else:
+            msg = "Unknown token type!"
+            raise ValueError(msg)
+
+        return ScaledTokenEvent(
+            event=event,
+            event_type=event_type,
+            user_address=from_addr,  # The user whose balance decreased
+            caller_address=None,
+            from_address=from_addr,
+            target_address=to_addr,
+            amount=amount,
+            balance_increase=0,  # BalanceTransfer doesn't have balanceIncrease
+            index=index,
+        )
 
     def _decode_transfer_event(self, event: LogReceipt) -> ScaledTokenEvent | None:
         """Decode an ERC20 Transfer event for aTokens/vTokens.
@@ -695,40 +749,40 @@ class TransactionOperationsParser:
         Transfer events are standard ERC20 events that occur when aTokens or vTokens
         are transferred between users (e.g., user -> aggregator).
         """
-        try:
-            from_addr = _topic_to_address(event["topics"][1])
-            to_addr = _topic_to_address(event["topics"][2])
-            # Transfer data: amount
-            (amount,) = decode(["uint256"], _decode_hex_data(event["data"]))
 
-            # Determine event type based on token type
-            token_address = get_checksum_address(event["address"])
-            if token_address == self.gho_token_address:
-                event_type = "GHO_DEBT_TRANSFER"
+        from_addr = _topic_to_address(event["topics"][1])
+        to_addr = _topic_to_address(event["topics"][2])
+        # Transfer data: amount
+        (amount,) = decode(["uint256"], _decode_hex_data(event["data"]))
+
+        # Determine event type based on token type
+        token_address = get_checksum_address(event["address"])
+        if token_address == self.gho_token_address:
+            event_type = "GHO_DEBT_TRANSFER"
+        else:
+            # Use token type lookup to determine if this is collateral or debt
+            token_type = self._get_token_type(token_address)
+            if token_type == "aToken":  # noqa:S105
+                event_type = "COLLATERAL_TRANSFER"
+            elif token_type == "vToken":  # noqa:S105
+                event_type = "DEBT_TRANSFER"
+            elif token_type == "GHO Discount Token":  # noqa:S105
+                event_type = "DISCOUNT_TRANSFER"
             else:
-                # Use token type mapping to determine if this is collateral or debt
-                token_type = self.token_type_mapping.get(token_address)
-                if token_type == "aToken":
-                    event_type = "COLLATERAL_TRANSFER"
-                elif token_type == "vToken":
-                    event_type = "DEBT_TRANSFER"
-                else:
-                    # Fallback for unknown tokens
-                    event_type = "UNKNOWN_TRANSFER"
+                msg = f"Unknown token type: {token_type} @ {token_address}"
+                raise ValueError(msg)
 
-            return ScaledTokenEvent(
-                event=event,
-                event_type=event_type,
-                user_address=from_addr,  # The user whose balance decreased
-                caller_address=None,
-                from_address=from_addr,
-                target_address=to_addr,
-                amount=amount,
-                balance_increase=None,  # Transfer doesn't have balanceIncrease
-                index=None,  # Transfer doesn't have index
-            )
-        except Exception:
-            return None
+        return ScaledTokenEvent(
+            event=event,
+            event_type=event_type,
+            user_address=from_addr,  # The user whose balance decreased
+            caller_address=None,
+            from_address=from_addr,
+            target_address=to_addr,
+            amount=amount,
+            balance_increase=None,  # Transfer doesn't have balanceIncrease
+            index=None,  # Transfer doesn't have index
+        )
 
     def _create_operation_from_pool_event(
         self,
@@ -737,95 +791,132 @@ class TransactionOperationsParser:
         scaled_events: list[ScaledTokenEvent],
         all_events: list[LogReceipt],
         assigned_indices: set[int],
-    ) -> Operation | None:
+    ) -> Operation:
         """Create operation starting from a pool event."""
         topic = _get_topic_str(pool_event["topics"][0])
 
         if topic == AaveV3PoolEvent.SUPPLY.value.hex():
             return self._create_supply_operation(
-                operation_id, pool_event, scaled_events, all_events, assigned_indices
+                operation_id=operation_id,
+                supply_event=pool_event,
+                scaled_events=scaled_events,
+                assigned_indices=assigned_indices,
             )
         if topic == AaveV3PoolEvent.WITHDRAW.value.hex():
             return self._create_withdraw_operation(
-                operation_id, pool_event, scaled_events, all_events, assigned_indices
+                operation_id=operation_id,
+                withdraw_event=pool_event,
+                scaled_events=scaled_events,
+                assigned_indices=assigned_indices,
             )
         if topic == AaveV3PoolEvent.BORROW.value.hex():
             return self._create_borrow_operation(
-                operation_id, pool_event, scaled_events, all_events, assigned_indices
+                operation_id=operation_id,
+                borrow_event=pool_event,
+                scaled_events=scaled_events,
+                assigned_indices=assigned_indices,
             )
         if topic == AaveV3PoolEvent.REPAY.value.hex():
             return self._create_repay_operation(
-                operation_id, pool_event, scaled_events, all_events, assigned_indices
+                operation_id=operation_id,
+                repay_event=pool_event,
+                scaled_events=scaled_events,
+                assigned_indices=assigned_indices,
             )
         if topic == AaveV3PoolEvent.LIQUIDATION_CALL.value.hex():
             return self._create_liquidation_operation(
-                operation_id, pool_event, scaled_events, all_events, assigned_indices
+                operation_id=operation_id,
+                liquidation_event=pool_event,
+                scaled_events=scaled_events,
+                assigned_indices=assigned_indices,
             )
         if topic == AaveV3PoolEvent.DEFICIT_CREATED.value.hex():
             return self._create_deficit_operation(
-                operation_id, pool_event, scaled_events, all_events, assigned_indices
+                operation_id=operation_id,
+                deficit_event=pool_event,
+                scaled_events=scaled_events,
+                all_events=all_events,
+                assigned_indices=assigned_indices,
             )
 
-        return None
+        msg = f"Could not determine operation from event topic {topic}"
+        raise ValueError(msg)
 
     def _create_supply_operation(
         self,
         operation_id: int,
         supply_event: LogReceipt,
         scaled_events: list[ScaledTokenEvent],
-        all_events: list[LogReceipt],
         assigned_indices: set[int],
     ) -> Operation:
-        """Create SUPPLY operation."""
-        # Decode SUPPLY event
-        # Supply(address indexed reserve, address user, address indexed onBehalfOf,
-        #        uint256 amount, uint16 indexed referralCode)
-        # topics[1] = reserve, topics[2] = onBehalfOf, topics[3] = referralCode
-        # data = (user [32 bytes], amount [32 bytes])
-        reserve = self._decode_address(supply_event["topics"][1])
+        """
+        Create SUPPLY operation.
+
+        Event definition:
+            event Supply(
+                address indexed reserve,
+                address user,
+                address indexed onBehalfOf,
+                uint256 amount,
+                uint16 indexed referralCode
+            );
+        """
+
+        assert supply_event["topics"][0] == AaveV3PoolEvent.SUPPLY.value
+
         on_behalf_of = self._decode_address(supply_event["topics"][2])
+        _user, supply_amount = decode(types=["address", "uint256"], data=supply_event["data"])
 
         # Find collateral mint for this user
         # For SUPPLY: look for mints where value > balance_increase (standard deposit)
         # Match on onBehalfOf (beneficiary) from the SUPPLY event, which corresponds
         # to the user_address in the collateral mint event
-        collateral_mint = None
-        for ev in scaled_events:
-            # Only match mints that represent deposits (value > balance_increase)
-            # Mints where balance_increase > value are interest accrual for withdrawals
-            if all([
-                ev.event_type == "COLLATERAL_MINT",
-                ev.user_address == on_behalf_of,
-                ev.event["logIndex"] not in assigned_indices,
-                ev.balance_increase is not None and ev.amount > ev.balance_increase,
-            ]):
-                collateral_mint = ev
-                break
 
-        scaled_token_events = [collateral_mint] if collateral_mint else []
+        for ev in scaled_events:
+            if ev.event["logIndex"] in assigned_indices:
+                continue
+            if ev.event_type != "COLLATERAL_MINT":
+                continue
+            if ev.user_address != on_behalf_of:
+                continue
+            if ev.balance_increase is None:
+                continue
+            if supply_amount != ev.amount - ev.balance_increase:
+                continue
+
+            collateral_mint = ev
+            break
+
+        assert collateral_mint is not None
 
         # Also look for matching Transfer events from zero address (ERC20 mint)
         # These represent the same supply operation
         # Match on onBehalfOf (beneficiary) as the target of the transfer
         transfer_events = []
-        if collateral_mint:
-            for ev in scaled_events:
-                if all([
-                    ev.event_type == "COLLATERAL_TRANSFER",
-                    ev.from_address == ZERO_ADDRESS,
-                    ev.target_address == on_behalf_of,
-                    ev.amount == collateral_mint.amount,
-                    ev.event["address"] == collateral_mint.event["address"],
-                    ev.event["logIndex"] not in assigned_indices,
-                ]):
-                    transfer_events.append(ev.event)
-                    break  # Only match one transfer per mint
+        for ev in scaled_events:
+            if ev.event["logIndex"] in assigned_indices:
+                continue
+            if ev.from_address != ZERO_ADDRESS:
+                continue
+            if ev.target_address != on_behalf_of:
+                continue
+            if ev.event_type != "COLLATERAL_TRANSFER":
+                continue
+            if ev.amount is None or ev.amount != collateral_mint.amount:
+                continue
+            if ev.event["address"] != collateral_mint.event["address"]:
+                continue
+
+            transfer_events.append(ev.event)
+            break
+
+        assert len(transfer_events) == 1
 
         return Operation(
             operation_id=operation_id,
             operation_type=OperationType.SUPPLY,
             pool_event=supply_event,
-            scaled_token_events=scaled_token_events,
+            scaled_token_events=[collateral_mint],
             transfer_events=transfer_events,
             balance_transfer_events=[],
         )
@@ -835,69 +926,106 @@ class TransactionOperationsParser:
         operation_id: int,
         withdraw_event: LogReceipt,
         scaled_events: list[ScaledTokenEvent],
-        all_events: list[LogReceipt],
         assigned_indices: set[int],
     ) -> Operation:
-        """Create WITHDRAW operation."""
-        # Decode WITHDRAW event
-        reserve = self._decode_address(withdraw_event["topics"][1])
+        """
+        Create WITHDRAW operation.
+
+        Event definition:
+            event Withdraw(
+                address indexed reserve,
+                address indexed user,
+                address indexed to,
+                uint256 amount
+            );
+        """
+
+        assert withdraw_event["topics"][0] == AaveV3PoolEvent.WITHDRAW.value
+
         user = self._decode_address(withdraw_event["topics"][2])
-        (amount,) = decode(["uint256"], _decode_hex_data(withdraw_event["data"]))
 
-        # Find collateral burn for this user
-        collateral_burn = None
-        for ev in scaled_events:
-            if all([
-                ev.event_type in {"COLLATERAL_BURN", "UNKNOWN_BURN"},
-                ev.user_address == user,
-                ev.event["logIndex"] not in assigned_indices,
-            ]):
-                collateral_burn = ev
-                break
+        withdraw_amount: int
+        (withdraw_amount,) = decode(types=["uint256"], data=withdraw_event["data"])
 
-        # Find interest accrual mints for this user
-        # During withdrawals, interest accrues before the burn (balance_increase > 0)
-        # Only match mints for the same token as the burn
+        # Find interest accrual mint for this operation (may not exist)
         interest_mints: list[ScaledTokenEvent] = []
-        if collateral_burn:
-            burn_token_address = collateral_burn.event["address"]
+        for ev in scaled_events:
+            if ev.event["logIndex"] in assigned_indices:
+                continue
+            if ev.event_type != "COLLATERAL_MINT":
+                continue
+            if ev.user_address != user:
+                continue
+            if ev.index is None:
+                continue
+            if (
+                ev.balance_increase is not None
+                and withdraw_amount != ev.balance_increase - ev.amount
+            ):
+                continue
+            interest_mints.append(ev)
+            break
+
+        # Find collateral burn for this operation (may not exist)
+        collateral_burns: list[ScaledTokenEvent] = []
+        for ev in scaled_events:
+            if ev.event["logIndex"] in assigned_indices:
+                continue
+            if ev.event_type != "COLLATERAL_BURN":
+                continue
+            if ev.user_address != user:
+                continue
+            if ev.index is None:
+                continue
+            if (
+                ev.balance_increase is not None
+                and withdraw_amount != ev.amount + ev.balance_increase
+            ):
+                continue
+            collateral_burns.append(ev)
+            break
+
+        if not collateral_burns and not interest_mints:
+            msg = f"Withdraw found without a Burn or Mint!\n{withdraw_event=}"
+            raise ValueError(msg)
+
+        # Look for matching Transfer events:
+        # A Burn will correspond to a Transfer event with a ZERO_ADDRESS destination
+        # A Mint will correspond to a Transfer event with a ZERO_ADDRESS source
+
+        transfer_events: list[LogReceipt] = []
+
+        if interest_mints:
             for ev in scaled_events:
                 if ev.event["logIndex"] in assigned_indices:
                     continue
+                if ev.event_type != "COLLATERAL_TRANSFER":
+                    continue
+                if ev.from_address != ZERO_ADDRESS:
+                    continue
 
-                # Interest accrual mints have balance_increase > 0
-                # and must be for the same token as the burn
-                if all([
-                    ev.event_type == "COLLATERAL_MINT",
-                    ev.user_address == user,
-                    ev.balance_increase is not None and ev.balance_increase > 0,
-                    ev.event["address"] == burn_token_address,
-                ]):
-                    interest_mints.append(ev)
-
-        # Also look for matching Transfer events to zero address (ERC20 burn)
-        # These represent the same withdrawal operation
-        transfer_events = []
-        for ev in scaled_events:
-            if all([
-                ev.event_type == "COLLATERAL_TRANSFER",
-                ev.from_address == user,
-                ev.target_address == ZERO_ADDRESS,
-                ev.event["logIndex"] not in assigned_indices,
-            ]):
                 transfer_events.append(ev.event)
-                break  # Only match one transfer per burn
+                break  # Only match one transfer per Mint
 
-        scaled_token_events: list[ScaledTokenEvent] = []
-        if collateral_burn:
-            scaled_token_events.append(collateral_burn)
-        scaled_token_events.extend(interest_mints)
+        if collateral_burns:
+            for ev in scaled_events:
+                if ev.event["logIndex"] in assigned_indices:
+                    continue
+                if ev.event_type != "COLLATERAL_TRANSFER":
+                    continue
+                if ev.target_address != ZERO_ADDRESS:
+                    continue
+
+                transfer_events.append(ev.event)
+                break  # Only match one transfer per Burn
+
+        assert len(transfer_events) == 1, f"{withdraw_event}"
 
         return Operation(
             operation_id=operation_id,
             operation_type=OperationType.WITHDRAW,
             pool_event=withdraw_event,
-            scaled_token_events=scaled_token_events,
+            scaled_token_events=interest_mints + collateral_burns,
             transfer_events=transfer_events,
             balance_transfer_events=[],
         )
@@ -907,96 +1035,93 @@ class TransactionOperationsParser:
         operation_id: int,
         borrow_event: LogReceipt,
         scaled_events: list[ScaledTokenEvent],
-        all_events: list[LogReceipt],
         assigned_indices: set[int],
     ) -> Operation:
-        """Create BORROW operation."""
-        # Decode BORROW event
+        """
+        Create BORROW operation.
+
+        Event definition:
+            event Borrow(
+                address indexed reserve,
+                address user,
+                address indexed onBehalfOf,
+                uint256 amount,
+                uint8 interestRateMode,
+                uint256 borrowRate,
+                uint16 indexed referralCode
+            );
+        """
+
+        assert borrow_event["topics"][0] == AaveV3PoolEvent.BORROW.value
+
         reserve = self._decode_address(borrow_event["topics"][1])
         on_behalf_of = self._decode_address(borrow_event["topics"][2])
-
-        # Decode borrow amount from event data
-        # BORROW: data=(address caller, uint256 amount, uint8 interestRateMode, uint256 borrowRate, uint16 referralCode)
-        _, borrow_amount, _, _ = decode(
+        _user, borrow_amount, _interest_rate_mode, _borrow_rate = decode(
             types=["address", "uint256", "uint8", "uint256"],
             data=borrow_event["data"],
         )
 
-        # Check if GHO
         is_gho = reserve == GHO_TOKEN_ADDRESS
 
-        # Find debt mint
-        # For flash loan scenarios (same user, multiple mints in one tx),
-        # we need to match by token address AND amount to ensure correct pairing
+        # Match the borrow to the associated debt mint operation
         debt_mint = None
-        fallback_mint = None  # Fallback for when exact amount match fails
-
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
                 continue
+            if ev.user_address != on_behalf_of:
+                continue
+            if is_gho and ev.event_type != "GHO_DEBT_MINT":
+                continue
+            if not is_gho and ev.event_type != "DEBT_MINT":
+                continue
+            if ev.balance_increase is None:
+                continue
 
-            if ev.user_address == on_behalf_of and any([
-                is_gho and ev.event_type == "GHO_DEBT_MINT",
-                not is_gho and ev.event_type == "DEBT_MINT",
-            ]):
-                # Skip interest accrual mints (amount == balance_increase)
-                # These should be handled by INTEREST_ACCRUAL operations
-                # Only match actual borrow mints (amount > balance_increase)
-                if ev.amount == ev.balance_increase:
-                    continue
-                # Match by token address to handle flash loan scenarios
-                # where same user has multiple mints for different assets
-                # If debt_token_to_reserve mapping is provided, use it for matching
-                if self.debt_token_to_reserve:
-                    mint_token_address = get_checksum_address(ev.event["address"])
-                    reserve_asset = self._get_reserve_for_debt_token(mint_token_address)
-                    if reserve_asset and reserve_asset.lower() == reserve.lower():
-                        # First try exact amount match for correct pairing
-                        # when multiple mints exist for the same user/token
-                        if ev.amount == borrow_amount:
-                            debt_mint = ev
-                            break
-                        # Store first matching mint as fallback
-                        if fallback_mint is None:
-                            fallback_mint = ev
-                else:
-                    # Fallback to old behavior if mapping not provided
-                    # Match by amount when possible
-                    if ev.amount == borrow_amount:
-                        debt_mint = ev
-                        break
-                    # Store first matching mint as fallback
-                    if fallback_mint is None:
-                        fallback_mint = ev
+            reserve_asset = self._get_reserve_for_debt_token(
+                get_checksum_address(ev.event["address"])
+            )
 
-        # Use fallback if no exact match found
-        if debt_mint is None and fallback_mint is not None:
-            debt_mint = fallback_mint
+            if reserve_asset is None or reserve_asset != reserve:
+                continue
+            if borrow_amount != ev.amount - ev.balance_increase:
+                continue
 
-        scaled_token_events = [debt_mint] if debt_mint else []
+            debt_mint = ev
+            break
+
+        if debt_mint is None:
+            msg = f"Could not create BORROW operation for event {borrow_event}"
+            raise ValueError(msg)
+
         op_type = OperationType.GHO_BORROW if is_gho else OperationType.BORROW
 
         # Also look for matching Transfer events from zero address (ERC20 mint)
         # These represent the same borrow operation
         transfer_events = []
-        if debt_mint:
-            for ev in scaled_events:
-                if all([
-                    ev.event_type == "DEBT_TRANSFER",
-                    ev.from_address == ZERO_ADDRESS,
-                    ev.target_address == on_behalf_of,
-                    ev.amount == debt_mint.amount,
-                    ev.event["address"] == debt_mint.event["address"],
-                    ev.event["logIndex"] not in assigned_indices,
-                ]):
-                    transfer_events.append(ev.event)
-                    break  # Only match one transfer per mint
+        for ev in scaled_events:
+            if ev.event["logIndex"] in assigned_indices:
+                continue
+            if ev.from_address != ZERO_ADDRESS:
+                continue
+            if ev.target_address != on_behalf_of:
+                continue
+            if ev.amount != debt_mint.amount:
+                continue
+            if ev.event_type not in {"DEBT_TRANSFER", "GHO_DEBT_TRANSFER"}:
+                continue
+            if ev.event["address"] != debt_mint.event["address"]:
+                continue
+
+            transfer_events.append(ev.event)
+            break  # Only match one transfer per mint
+
+        assert len(transfer_events) == 1
 
         return Operation(
             operation_id=operation_id,
             operation_type=op_type,
             pool_event=borrow_event,
-            scaled_token_events=scaled_token_events,
+            scaled_token_events=[debt_mint],
             transfer_events=transfer_events,
             balance_transfer_events=[],
         )
@@ -1006,66 +1131,97 @@ class TransactionOperationsParser:
         operation_id: int,
         repay_event: LogReceipt,
         scaled_events: list[ScaledTokenEvent],
-        all_events: list[LogReceipt],
         assigned_indices: set[int],
     ) -> Operation:
-        """Create REPAY operation."""
-        # Decode REPAY event
+        """
+        Create REPAY operation.
+
+        Event definition:
+            event Repay(
+                address indexed reserve,
+                address indexed user,
+                address indexed repayer,
+                uint256 amount,
+                bool useATokens
+            );
+        """
+
         reserve = self._decode_address(repay_event["topics"][1])
         user = self._decode_address(repay_event["topics"][2])
-        _, use_a_tokens = decode(["uint256", "bool"], _decode_hex_data(repay_event["data"]))
+        repay_amount, use_a_tokens = decode(
+            types=["uint256", "bool"],
+            data=_decode_hex_data(
+                repay_event["data"],
+            ),
+        )
+
+        scaled_token_events = []
 
         is_gho = reserve == GHO_TOKEN_ADDRESS
 
-        # Find debt burn (normal case)
-        # For flash loan scenarios (same user, multiple burns in one tx),
-        # we need to match by token address to ensure correct pairing
-        debt_burn = None
+        debt_burn_event: ScaledTokenEvent | None = None
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
                 continue
+            if is_gho and ev.event_type != "GHO_DEBT_BURN":
+                continue
+            if not is_gho and ev.event_type != "DEBT_BURN":
+                continue
+            if ev.user_address != user:
+                continue
 
-            if is_gho:
-                if ev.event_type == "GHO_DEBT_BURN":
-                    if ev.user_address == user:
-                        debt_burn = ev
-                        break
-            elif ev.event_type in {"DEBT_BURN", "UNKNOWN_BURN"}:
-                if ev.user_address == user:
-                    # Match by token address to handle flash loan scenarios
-                    # where same user has multiple burns for different assets
-                    # If debt_token_to_reserve mapping is provided, use it for matching
-                    if self.debt_token_to_reserve:
-                        burn_token_address = get_checksum_address(ev.event["address"])
-                        reserve_asset = self._get_reserve_for_debt_token(burn_token_address)
-                        if reserve_asset and reserve_asset.lower() == reserve.lower():
-                            debt_burn = ev
-                            break
-                    else:
-                        # Fallback to old behavior if mapping not provided
-                        debt_burn = ev
-                        break
+            reserve_asset = self._get_reserve_for_debt_token(
+                get_checksum_address(ev.event["address"])
+            )
 
-        scaled_token_events = [debt_burn] if debt_burn else []
+            if reserve_asset != reserve:
+                continue
+            if ev.balance_increase is not None and repay_amount != ev.amount + ev.balance_increase:
+                continue
 
-        # If use_a_tokens, also look for collateral burn and corresponding BalanceTransfer
+            debt_burn_event = ev
+            scaled_token_events.append(debt_burn_event)
+            break
+
+        debt_mint_event: ScaledTokenEvent | None = None
+        for ev in scaled_events:
+            if ev.event["logIndex"] in assigned_indices:
+                continue
+            if is_gho and ev.event_type != "GHO_DEBT_MINT":
+                continue
+            if not is_gho and ev.event_type != "DEBT_MINT":
+                continue
+            if ev.user_address != user:
+                continue
+
+            reserve_asset = self._get_reserve_for_debt_token(
+                get_checksum_address(ev.event["address"])
+            )
+
+            if reserve_asset != reserve:
+                continue
+            if ev.balance_increase is not None and repay_amount != ev.balance_increase - ev.amount:
+                continue
+
+            debt_mint_event = ev
+            scaled_token_events.append(debt_mint_event)
+            break
+
+        assert debt_burn_event is not None or debt_mint_event is not None, f"{repay_event}"
+
         balance_transfer_events: list[LogReceipt] = []
+        collateral_burns: list[ScaledTokenEvent] = []
+
         if use_a_tokens and not is_gho:
-            collateral_burn = None
+            # Look for collateral burn and corresponding BalanceTransfer
             for ev in scaled_events:
                 if ev.event["logIndex"] in assigned_indices:
                     continue
                 if ev.event_type == "COLLATERAL_BURN" and ev.user_address == user:
-                    collateral_burn = ev
+                    collateral_burns.append(ev)
                     break
 
-            if collateral_burn:
-                scaled_token_events.append(collateral_burn)
-                # Note: We intentionally do NOT include debt_mint here.
-                # The debt_mint is for interest accrual and should be a separate
-                # operation or handled as unassigned, not grouped with this
-                # repayWithATokens operation which should only have 1 debt event.
-
+            if collateral_burns:
                 # Also look for the corresponding BalanceTransfer event
                 # When repaying with aTokens, the aTokens are transferred to the Pool
                 # and then burned. The BalanceTransfer represents this internal transfer.
@@ -1074,14 +1230,22 @@ class TransactionOperationsParser:
                         continue
                     # Check if this BalanceTransfer is from the user
                     # and is for the same token as the collateral burn
-                    if all([
-                        ev.event_type == "COLLATERAL_TRANSFER",
-                        ev.index is not None and ev.index > 0,
-                        ev.from_address == user,
-                        ev.event["address"] == collateral_burn.event["address"],
-                    ]):
-                        balance_transfer_events.append(ev.event)
-                        break
+                    if ev.event_type != "COLLATERAL_TRANSFER":
+                        continue
+                    if ev.index is None:
+                        continue
+                    if ev.from_address != user:
+                        continue
+
+                    asset = self._get_a_token_asset_by_reserve(reserve)
+                    assert asset is not None
+                    atoken_address = asset.a_token.address
+
+                    if ev.event["address"] != atoken_address:
+                        continue
+
+                    balance_transfer_events.append(ev.event)
+                    break
 
                 op_type = OperationType.REPAY_WITH_ATOKENS
             else:
@@ -1089,21 +1253,46 @@ class TransactionOperationsParser:
         else:
             op_type = OperationType.GHO_REPAY if is_gho else OperationType.REPAY
 
+        scaled_token_events.extend(collateral_burns)
+
         # Also look for matching Transfer events to zero address (ERC20 burn)
         # These represent the same repay operation
         transfer_events = []
-        if debt_burn:
+        if debt_burn_event:
             for ev in scaled_events:
-                if all([
-                    ev.event_type == "DEBT_TRANSFER",
-                    ev.from_address == user,
-                    ev.target_address == ZERO_ADDRESS,
-                    ev.amount == debt_burn.amount,
-                    ev.event["address"] == debt_burn.event["address"],
-                    ev.event["logIndex"] not in assigned_indices,
-                ]):
-                    transfer_events.append(ev.event)
-                    break  # Only match one transfer per burn
+                if ev.event["logIndex"] in assigned_indices:
+                    continue
+                if ev.event_type not in {"DEBT_TRANSFER", "GHO_DEBT_TRANSFER"}:
+                    continue
+                if ev.from_address != user:
+                    continue
+                if ev.target_address != ZERO_ADDRESS:
+                    continue
+                if ev.amount != debt_burn_event.amount:
+                    continue
+
+                transfer_events.append(ev.event)
+                break  # Only match one transfer per burn
+
+        if debt_mint_event:
+            for ev in scaled_events:
+                if ev.event["logIndex"] in assigned_indices:
+                    continue
+                if ev.event_type not in {"DEBT_TRANSFER", "GHO_DEBT_TRANSFER"}:
+                    continue
+                if ev.from_address != ZERO_ADDRESS:
+                    continue
+                if ev.target_address != user:
+                    continue
+                if ev.amount != debt_mint_event.amount:
+                    continue
+
+                transfer_events.append(ev.event)
+                break  # Only match one transfer per burn
+
+        assert len(transfer_events) == (debt_mint_event is not None) + (
+            debt_burn_event is not None
+        ), f"{repay_event['transactionHash'].to_0x_hex()}: {transfer_events}"
 
         return Operation(
             operation_id=operation_id,
@@ -1119,56 +1308,74 @@ class TransactionOperationsParser:
         operation_id: int,
         liquidation_event: LogReceipt,
         scaled_events: list[ScaledTokenEvent],
-        all_events: list[LogReceipt],
         assigned_indices: set[int],
     ) -> Operation:
-        """Create LIQUIDATION operation."""
-        # Decode LIQUIDATION_CALL
+        """
+        Create LIQUIDATION operation.
+
+        Event definition:
+            event LiquidationCall(
+                address indexed collateralAsset,
+                address indexed debtAsset,
+                address indexed user,
+                uint256 debtToCover,
+                uint256 liquidatedCollateralAmount,
+                address liquidator,
+                bool receiveAToken
+            );
+        """
+        # WIP: clean this up
+
         _collateral_asset = self._decode_address(liquidation_event["topics"][1])
         debt_asset = self._decode_address(liquidation_event["topics"][2])
         user = self._decode_address(liquidation_event["topics"][3])
+        _debt_to_cover, _liquidated_collateral_amount, _liquidator, _receive_a_token = decode(
+            types=["uint256", "uint256", "address", "bool"],
+            data=liquidation_event["data"],
+        )
 
         is_gho = debt_asset == GHO_TOKEN_ADDRESS
 
-        # Find debt burn (standard liquidation)
-        debt_burn = None
+        debt_burn: ScaledTokenEvent | None = None
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
                 continue
+            if ev.user_address != user:
+                continue
+            if is_gho and ev.event_type != "GHO_DEBT_BURN":
+                continue
+            if not is_gho and ev.event_type != "DEBT_BURN":
+                continue
 
-            if ev.user_address == user and any([
-                is_gho and ev.event_type == "GHO_DEBT_BURN",
-                not is_gho and ev.event_type in {"DEBT_BURN", "UNKNOWN_BURN"},
-            ]):
-                debt_burn = ev
-                break
+            debt_burn = ev
+            break
+        assert debt_burn is not None
 
         # Find collateral burn and/or transfer(s)
         # During liquidations, borrower may have BOTH collateral burned AND multiple transfers
-        collateral_burn = None
+
         collateral_transfers: list[ScaledTokenEvent] = []
+        collateral_burn: ScaledTokenEvent | None = None
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
                 continue
 
-            if ev.event_type in {"COLLATERAL_BURN", "UNKNOWN_BURN"}:
-                if ev.user_address == user and not collateral_burn:
+            if ev.event_type == "COLLATERAL_BURN":
+                if ev.user_address == user:
                     collateral_burn = ev
             elif ev.event_type == "COLLATERAL_TRANSFER":
                 if ev.user_address == user:
                     collateral_transfers.append(ev)
-            elif ev.event_type == "UNKNOWN_TRANSFER" and ev.user_address == user:
-                # Fallback: when token address isn't in mapping, BalanceTransfer
-                # decodes as UNKNOWN_TRANSFER. Match by user address - if the
-                # transfer is FROM the liquidated user, it's likely collateral.
-                collateral_transfers.append(ev)
+            else:
+                continue
+        assert collateral_burn is not None
 
         scaled_token_events: list[ScaledTokenEvent] = []
         balance_transfer_events: list[LogReceipt] = []
-        if debt_burn:
-            scaled_token_events.append(debt_burn)
-        if collateral_burn:
-            scaled_token_events.append(collateral_burn)
+
+        # Add the debt burn and collateral burn to scaled_token_events
+        scaled_token_events.extend((debt_burn, collateral_burn))
+
         if collateral_transfers:
             # Add all collateral transfers to scaled_token_events
             # Both ERC20 Transfers (index=0) and BalanceTransfer events (index>0)
@@ -1199,7 +1406,15 @@ class TransactionOperationsParser:
         all_events: list[LogReceipt],
         assigned_indices: set[int],
     ) -> Operation:
-        """Create DEFICIT_CREATED operation.
+        """
+        Create DEFICIT_CREATED operation.
+
+        Event definition:
+            event DeficitCreated(
+                address indexed user,
+                address indexed debtAsset,
+                uint256 amountCreated
+            );
 
         DEFICIT_CREATED indicates bad debt write-off. When the asset is GHO,
         it's a GHO flash loan that requires a debt burn. For other assets,
@@ -1210,6 +1425,9 @@ class TransactionOperationsParser:
         burn should be matched to the LIQUIDATION_CALL operation, not a
         separate flash loan operation.
         """
+
+        raise ValueError("DEFICIT_CREATED")
+
         user = self._decode_address(deficit_event["topics"][1])
         asset = self._decode_address(deficit_event["topics"][2])
 
@@ -1255,8 +1473,8 @@ class TransactionOperationsParser:
             balance_transfer_events=[],
         )
 
+    @staticmethod
     def _create_interest_accrual_operations(
-        self,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         starting_operation_id: int,
@@ -1287,9 +1505,7 @@ class TransactionOperationsParser:
             ev["topics"][0] == AaveV3PoolEvent.LIQUIDATION_CALL.value for ev in all_events
         )
         has_borrow = any(ev["topics"][0] == AaveV3PoolEvent.BORROW.value for ev in all_events)
-        has_repay = any(ev["topics"][0] == AaveV3PoolEvent.REPAY.value for ev in all_events)
-        # Check if there's a collateral burn in the transaction (indicates repayWithATokens)
-        has_collateral_burn = any(ev.event_type == "COLLATERAL_BURN" for ev in scaled_events)
+
         operations: list[Operation] = []
         operation_id = starting_operation_id
         local_assigned: set[int] = set()
@@ -1379,23 +1595,26 @@ class TransactionOperationsParser:
             # Include dust mints (balance_increase == 0) which still need to update last_index
             # Look for matching Transfer event from ZERO_ADDRESS (interest accrual)
             # For mints from ZERO_ADDRESS, the target_address is the recipient (user)
-            # Match by amount if it's a pure interest accrual, or by target_address if there's a deposit
+            # Match by amount if it's a pure interest accrual, or by target_address if there's a
+            # deposit
             transfer_events = []
             for transfer_ev in scaled_events:
                 if (
-                    transfer_ev.event_type == "COLLATERAL_TRANSFER"
+                    transfer_ev.event_type == "COLLATERAL_TRANSFER"  # noqa:PLR0916
                     and transfer_ev.from_address == ZERO_ADDRESS
                     and transfer_ev.target_address == ev.user_address
                     and transfer_ev.event["address"] == ev.event["address"]
                     and transfer_ev.event["logIndex"] not in assigned_indices
                     and transfer_ev.event["logIndex"] not in local_assigned
+                    and (
+                        # For pure interest, Transfer amount matches Mint amount
+                        # For deposit + interest, Transfer amount may be less than Mint amount
+                        transfer_ev.amount == ev.amount or transfer_ev.amount < ev.amount
+                    )
                 ):
-                    # For pure interest, Transfer amount matches Mint amount
-                    # For deposit + interest, Transfer amount may be less than Mint amount
-                    if transfer_ev.amount == ev.amount or transfer_ev.amount < ev.amount:
-                        transfer_events.append(transfer_ev.event)
-                        local_assigned.add(transfer_ev.event["logIndex"])
-                        break  # Only match one transfer per mint
+                    transfer_events.append(transfer_ev.event)
+                    local_assigned.add(transfer_ev.event["logIndex"])
+                    break  # Only match one transfer per mint
 
             operations.append(
                 Operation(
@@ -1469,8 +1688,8 @@ class TransactionOperationsParser:
 
         return operations
 
+    @staticmethod
     def _create_transfer_operations(
-        self,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         starting_operation_id: int,
@@ -1492,7 +1711,7 @@ class TransactionOperationsParser:
             assigned_indices: Set of log indices already assigned to operations
             starting_operation_id: The next available operation ID
             existing_operations: Operations already created (for finding BalanceTransfer events
-                               that were assigned to LIQUIDATION operations)
+                that were assigned to LIQUIDATION operations)
 
         Returns:
             List of TRANSFER operations for unassigned transfer events
@@ -1511,6 +1730,7 @@ class TransactionOperationsParser:
                 "COLLATERAL_TRANSFER",
                 "DEBT_TRANSFER",
                 "GHO_DEBT_TRANSFER",
+                "DISCOUNT_TRANSFER",
             }:
                 continue
 
@@ -1523,7 +1743,6 @@ class TransactionOperationsParser:
             if is_erc20_transfer:
                 # Look for a corresponding BalanceTransfer event
                 # BalanceTransfer events are decoded from SCALED_TOKEN_BALANCE_TRANSFER topic
-                # and have index > 0
                 for bt_ev in scaled_events:
                     if (
                         bt_ev.event["logIndex"] in assigned_indices
@@ -1531,7 +1750,6 @@ class TransactionOperationsParser:
                     ):
                         continue
 
-                    # Check if this is a BalanceTransfer event (has index > 0)
                     # ERC20 Transfer events have index=None, so skip those
                     if bt_ev.index is None:
                         continue
@@ -1576,10 +1794,16 @@ class TransactionOperationsParser:
             if balance_transfer_event:
                 balance_transfer_events.append(balance_transfer_event.event)
 
+            # Determine operation type based on event type
+            if ev.event_type == "DISCOUNT_TRANSFER":
+                operation_type = OperationType.STKAAVE_TRANSFER
+            else:
+                operation_type = OperationType.BALANCE_TRANSFER
+
             operations.append(
                 Operation(
                     operation_id=operation_id,
-                    operation_type=OperationType.BALANCE_TRANSFER,
+                    operation_type=operation_type,
                     pool_event=None,
                     scaled_token_events=[ev],
                     transfer_events=[],
@@ -1605,14 +1829,21 @@ class TransactionOperationsParser:
                 "COLLATERAL_TRANSFER",
                 "DEBT_TRANSFER",
                 "GHO_DEBT_TRANSFER",
+                "DISCOUNT_TRANSFER",
             }:
                 continue
 
-            # Create BALANCE_TRANSFER operation for standalone BalanceTransfer
+            # Determine operation type based on event type
+            if ev.event_type == "DISCOUNT_TRANSFER":
+                operation_type = OperationType.STKAAVE_TRANSFER
+            else:
+                operation_type = OperationType.BALANCE_TRANSFER
+
+            # Create operation for standalone BalanceTransfer
             operations.append(
                 Operation(
                     operation_id=operation_id,
-                    operation_type=OperationType.BALANCE_TRANSFER,
+                    operation_type=operation_type,
                     pool_event=None,
                     scaled_token_events=[ev],
                     transfer_events=[],
@@ -1645,25 +1876,29 @@ class TransactionOperationsParser:
             OperationType.INTEREST_ACCRUAL: self._validate_interest_accrual,
             OperationType.BALANCE_TRANSFER: self._validate_balance_transfer,
             OperationType.MINT_TO_TREASURY: self._validate_mint_to_treasury,
+            OperationType.STKAAVE_TRANSFER: self._validate_stkaave_transfer,
         }
 
         validator = validators.get(op.operation_type)
         if validator:
             errors.extend(validator(op))
         else:
-            msg = f"No validator found for {op.operation_type}"
-            raise TransactionValidationError(msg)
+            msg = f"No validator found for {op.operation_type}!"
+            raise ValueError(msg)
 
         if errors:
             raise TransactionValidationError(
-                message=f"Operation {op.operation_id} ({op.operation_type.name}) validation failed:\n"
-                + "\n".join(errors),
+                message=(
+                    f"Operation {op.operation_id} ({op.operation_type.name}) validation failed:\n"
+                    + "\n".join(errors)
+                ),
                 tx_hash=self._current_tx_hash,
                 events=op.get_all_events(),
                 operations=[op],
             )
 
-    def _validate_supply(self, op: Operation) -> list[str]:
+    @staticmethod
+    def _validate_supply(op: Operation) -> list[str]:
         """Validate SUPPLY operation."""
         errors = []
 
@@ -1678,7 +1913,8 @@ class TransactionOperationsParser:
 
         return errors
 
-    def _validate_withdraw(self, op: Operation) -> list[str]:
+    @staticmethod
+    def _validate_withdraw(op: Operation) -> list[str]:
         """Validate WITHDRAW operation."""
         errors = []
 
@@ -1702,7 +1938,8 @@ class TransactionOperationsParser:
 
         return errors
 
-    def _validate_borrow(self, op: Operation) -> list[str]:
+    @staticmethod
+    def _validate_borrow(op: Operation) -> list[str]:
         """Validate BORROW operation."""
         errors = []
 
@@ -1728,7 +1965,8 @@ class TransactionOperationsParser:
 
         return errors
 
-    def _validate_repay(self, op: Operation) -> list[str]:
+    @staticmethod
+    def _validate_repay(op: Operation) -> list[str]:
         """Validate REPAY operation."""
         errors = []
 
@@ -1743,7 +1981,8 @@ class TransactionOperationsParser:
 
         return errors
 
-    def _validate_repay_with_atokens(self, op: Operation) -> list[str]:
+    @staticmethod
+    def _validate_repay_with_atokens(op: Operation) -> list[str]:
         """Validate REPAY_WITH_ATOKENS operation."""
         errors = []
 
@@ -1753,7 +1992,8 @@ class TransactionOperationsParser:
 
         # Should have 0 or 1 debt events (burn or mint) and 1 collateral burn
         # Note: When interest exceeds repayment, debt mints instead of burns
-        # Note: In some edge cases, debt burn may not be emitted if debt is fully covered by interest
+        # Note: In some edge cases, debt burn may not be emitted if debt is fully covered by
+        # interest
         debt_events = [e for e in op.scaled_token_events if e.is_debt]
         collateral_burns = [e for e in op.scaled_token_events if e.is_collateral and e.is_burn]
 
@@ -1800,14 +2040,15 @@ class TransactionOperationsParser:
         if len(debt_burns) > 1:
             errors.append(
                 f"Expected 0 or 1 debt burns for LIQUIDATION, got {len(debt_burns)}. "
-                f"DEBUG NOTE: Check if debt/collateral events are being assigned to wrong operations. "
-                f"Current debt burns: {[e.event['logIndex'] for e in debt_burns]}. "
+                f"DEBUG NOTE: Check if debt/collateral events are being assigned to wrong "
+                f"operations. Current debt burns: {[e.event['logIndex'] for e in debt_burns]}. "
                 f"User in LIQUIDATION_CALL: {self._decode_address(op.pool_event['topics'][3])}"
             )
 
         if len(collateral_events) < 1:
             errors.append(
-                f"Expected at least 1 collateral event (burn or transfer) for LIQUIDATION, got {len(collateral_events)}. "
+                f"Expected at least 1 collateral event (burn or transfer) for LIQUIDATION, "
+                f"got {len(collateral_events)}. "
                 f"DEBUG NOTE: Check collateral asset matching and user address consistency. "
                 f"Current collateral events: {[e.event['logIndex'] for e in collateral_events]}. "
                 f"User in LIQUIDATION_CALL: {self._decode_address(op.pool_event['topics'][3])}"
@@ -1829,7 +2070,8 @@ class TransactionOperationsParser:
 
         return errors
 
-    def _validate_flash_loan(self, op: Operation) -> list[str]:
+    @staticmethod
+    def _validate_flash_loan(op: Operation) -> list[str]:
         """Validate FLASH_LOAN (DEFICIT_CREATED) operation."""
         errors = []
 
@@ -1847,7 +2089,8 @@ class TransactionOperationsParser:
 
         return errors
 
-    def _validate_interest_accrual(self, op: Operation) -> list[str]:
+    @staticmethod
+    def _validate_interest_accrual(op: Operation) -> list[str]:
         """Validate INTEREST_ACCRUAL operation.
 
         Interest accrual operations have no pool event. The scaled token event
@@ -1864,7 +2107,8 @@ class TransactionOperationsParser:
         # Should have exactly 1 scaled token event (the mint)
         if len(op.scaled_token_events) != 1:
             errors.append(
-                f"Expected 1 scaled token event for INTEREST_ACCRUAL, got {len(op.scaled_token_events)}"
+                f"Expected 1 scaled token event for INTEREST_ACCRUAL, "
+                f"got {len(op.scaled_token_events)}"
             )
 
         # Allow both interest accrual (balance_increase > 0) and dust mints (balance_increase == 0)
@@ -1872,7 +2116,8 @@ class TransactionOperationsParser:
 
         return errors
 
-    def _validate_balance_transfer(self, op: Operation) -> list[str]:
+    @staticmethod
+    def _validate_balance_transfer(op: Operation) -> list[str]:
         """Validate BALANCE_TRANSFER operation."""
         errors = []
 
@@ -1883,7 +2128,8 @@ class TransactionOperationsParser:
         # Should have exactly 1 scaled token event (the transfer)
         if len(op.scaled_token_events) != 1:
             errors.append(
-                f"Expected 1 scaled token event for BALANCE_TRANSFER, got {len(op.scaled_token_events)}"
+                f"Expected 1 scaled token event for BALANCE_TRANSFER, "
+                f"got {len(op.scaled_token_events)}"
             )
 
         # The event should be a transfer event
@@ -1896,7 +2142,8 @@ class TransactionOperationsParser:
 
         return errors
 
-    def _validate_mint_to_treasury(self, op: Operation) -> list[str]:
+    @staticmethod
+    def _validate_mint_to_treasury(op: Operation) -> list[str]:
         """Validate MINT_TO_TREASURY operation."""
         errors = []
 
@@ -1907,7 +2154,8 @@ class TransactionOperationsParser:
         # Should have exactly 1 scaled token event (the mint)
         if len(op.scaled_token_events) != 1:
             errors.append(
-                f"Expected 1 scaled token event for MINT_TO_TREASURY, got {len(op.scaled_token_events)}"
+                f"Expected 1 scaled token event for MINT_TO_TREASURY, "
+                f"got {len(op.scaled_token_events)}"
             )
 
         # The event should be a collateral mint
@@ -1920,7 +2168,34 @@ class TransactionOperationsParser:
 
         return errors
 
-    def _decode_address(self, topic: HexBytes | str) -> ChecksumAddress:
+    @staticmethod
+    def _validate_stkaave_transfer(op: Operation) -> list[str]:
+        """Validate STKAAVE_TRANSFER operation."""
+        errors = []
+
+        # Should have no pool event (transfers are standalone ERC20 events)
+        if op.pool_event is not None:
+            errors.append("STKAAVE_TRANSFER should not have a pool event")
+
+        # Should have exactly 1 scaled token event (the transfer)
+        if len(op.scaled_token_events) != 1:
+            errors.append(
+                f"Expected 1 scaled token event for STKAAVE_TRANSFER, "
+                f"got {len(op.scaled_token_events)}"
+            )
+
+        # The event should be a discount transfer
+        if op.scaled_token_events:
+            ev = op.scaled_token_events[0]
+            if ev.event_type != "DISCOUNT_TRANSFER":
+                errors.append(
+                    f"STKAAVE_TRANSFER event should be DISCOUNT_TRANSFER, got {ev.event_type}"
+                )
+
+        return errors
+
+    @staticmethod
+    def _decode_address(topic: HexBytes | str) -> ChecksumAddress:
         """Decode topic as address."""
         return _topic_to_address(topic)
 
@@ -1939,7 +2214,7 @@ class TransactionOperations:
         block_number: int,
         operations: list[Operation],
         unassigned_events: list[LogReceipt],
-    ):
+    ) -> None:
         self.tx_hash = tx_hash
         self.block_number = block_number
         self.operations = operations
@@ -1989,7 +2264,8 @@ class TransactionOperations:
                 operations=self.operations,
             )
 
-    def _is_required_pool_event(self, event: LogReceipt) -> bool:
+    @staticmethod
+    def _is_required_pool_event(event: LogReceipt) -> bool:
         """Check if an event must be part of an operation."""
         pool_topics = {
             AaveV3PoolEvent.SUPPLY.value,

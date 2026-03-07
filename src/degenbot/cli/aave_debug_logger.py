@@ -5,13 +5,14 @@ Provides machine-parseable debug output for autonomous agent analysis.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
 import traceback
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 from hexbytes import HexBytes
 
@@ -29,18 +30,16 @@ class AaveDebugLogger:
     Each log entry includes timestamp, level, context, and structured data.
     """
 
-    _instance: ClassVar[AaveDebugLogger | None] = None
-    _initialized: bool = False
+    _instance: ClassVar[Self]
 
-    def __new__(cls) -> AaveDebugLogger:
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
+    def __new__(cls) -> Self:
+        with contextlib.suppress(AttributeError):
+            return cls._instance
+
+        cls._instance = super().__new__(cls)
         return cls._instance
 
     def __init__(self) -> None:
-        if self._initialized:
-            return
-        self._initialized = True
         self._output_path: Path | None = None
         self._file_handle: Any = None
         self._chain_id: ChainId | None = None
@@ -273,7 +272,8 @@ class AaveDebugLogger:
 
         self._write_entry(entry)
 
-    def _serialize_tx_context(self, context: TransactionContext) -> dict[str, Any]:
+    @staticmethod
+    def _serialize_tx_context(context: TransactionContext) -> dict[str, Any]:
         """Serialize TransactionContext to a JSON-serializable dict."""
         event_topics: list[str] = []
         for event in context.events:
@@ -293,15 +293,14 @@ class AaveDebugLogger:
                 continue
 
             topic = topics[0]
-            if isinstance(topic, HexBytes):
-                topic_hex = topic.hex()
-            else:
-                topic_hex = str(topic)
+            topic_hex = topic.hex() if isinstance(topic, HexBytes) else str(topic)
+
+            # TODO: clean up this whole chunk
 
             # SCALED_TOKEN_MINT: topics[2] = onBehalfOf (user)
             if (
                 topic_hex == "458f5fa412d0f69b08dd84872b0215675cc67bc1d5b6fd93300a1c3878b86196"
-                and len(topics) >= 3
+                and len(topics) >= 3  # noqa:PLR2004
             ):
                 user_addr = (
                     "0x" + topics[2].hex()[-40:]
@@ -312,7 +311,7 @@ class AaveDebugLogger:
             # SCALED_TOKEN_BURN: topics[1] = from (user)
             elif (
                 topic_hex == "4cf25bc1d991c17529c25213d3cc0cda295eeaad5f13f361969b12ea48015f90"
-                and len(topics) >= 2
+                and len(topics) >= 2  # noqa:PLR2004
             ):
                 user_addr = (
                     "0x" + topics[1].hex()[-40:]
@@ -323,7 +322,7 @@ class AaveDebugLogger:
             # SCALED_TOKEN_BALANCE_TRANSFER: topics[1] = from, topics[2] = to
             elif (
                 topic_hex == "4beccb90f994c31aced7a23b5611020728a23d8ec5cddd1a3e9d97b96fda8666"
-                and len(topics) >= 3
+                and len(topics) >= 3  # noqa:PLR2004
             ):
                 from_addr = (
                     "0x" + topics[1].hex()[-40:]
@@ -346,7 +345,7 @@ class AaveDebugLogger:
                     "2b627736bca15cd5381dcf80b0bf11fd197d01a037c52b927a881a10fb73ba61",  # SUPPLY
                     "3115d1449a7b732c986cba18244e897a450f61e1bb8d589cd2e69e6c8924f9f7",  # WITHDRAW
                 }
-                and len(topics) >= 3
+                and len(topics) >= 3  # noqa:PLR2004
             ):
                 user_addr = (
                     "0x" + topics[2].hex()[-40:]
@@ -357,7 +356,7 @@ class AaveDebugLogger:
             # LIQUIDATION_CALL: topics[3] = user
             elif (
                 topic_hex == "e413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286"
-                and len(topics) >= 4
+                and len(topics) >= 4  # noqa:PLR2004
             ):
                 user_addr = (
                     "0x" + topics[3].hex()[-40:]
@@ -368,18 +367,10 @@ class AaveDebugLogger:
             # DISCOUNT_PERCENT_UPDATED: topics[1] = user
             elif (
                 topic_hex == "74ab9665e7c36c29ddb78ef88a3e2eac73d35b8b16de7bc573e313e320104956"
-                and len(topics) >= 2
-            ):
-                user_addr = (
-                    "0x" + topics[1].hex()[-40:]
-                    if isinstance(topics[1], HexBytes)
-                    else str(topics[1])[-40:]
-                )
-                user_addresses.add(user_addr.lower())
-            # USER_E_MODE_SET: topics[1] = user
-            elif (
+                and len(topics) >= 2  # noqa:PLR2004
+            ) or (
                 topic_hex == "d728da875fc88944cbf17638bcbe4af0eedaef63becd1d1c57cc097eb4608d84"
-                and len(topics) >= 2
+                and len(topics) >= 2  # noqa:PLR2004
             ):
                 user_addr = (
                     "0x" + topics[1].hex()[-40:]
@@ -397,10 +388,11 @@ class AaveDebugLogger:
             "event_topics": event_topics,
             "user_discounts_count": len(context.user_discounts),
             "discount_updates_count": len(context.discount_updates_by_log_index),
-            "user_addresses": sorted(list(user_addresses)),
+            "user_addresses": sorted(user_addresses),
         }
 
-    def _serialize_event(self, event: LogReceipt) -> dict[str, Any]:
+    @staticmethod
+    def _serialize_event(event: LogReceipt) -> dict[str, Any]:
         """Serialize a LogReceipt event to JSON-serializable dict."""
         if event is None:
             return {}
