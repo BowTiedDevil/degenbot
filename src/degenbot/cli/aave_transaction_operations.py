@@ -1257,8 +1257,8 @@ class TransactionOperationsParser:
         *,
         operation_id: int,
         repay_event: LogReceipt,
-        reserve: str,
-        user: str,
+        reserve: ChecksumAddress,
+        user: ChecksumAddress,
         repay_amount: int,
         is_gho: bool,
         repay_log_index: int,
@@ -1314,8 +1314,8 @@ class TransactionOperationsParser:
         *,
         operation_id: int,
         repay_event: LogReceipt,
-        reserve: str,
-        user: str,
+        reserve: ChecksumAddress,
+        user: ChecksumAddress,
         repay_amount: int,
         repay_log_index: int,
         scaled_events: list[ScaledTokenEvent],
@@ -1374,8 +1374,8 @@ class TransactionOperationsParser:
     def _find_matching_debt_burn(
         self,
         *,
-        user: str,
-        reserve: str,
+        user: ChecksumAddress,
+        reserve: ChecksumAddress,
         repay_amount: int,
         is_gho: bool,
         scaled_events: list[ScaledTokenEvent],
@@ -1410,7 +1410,7 @@ class TransactionOperationsParser:
     @staticmethod
     def _find_matching_collateral_burn(
         *,
-        user: str,
+        user: ChecksumAddress,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
     ) -> ScaledTokenEvent | None:
@@ -1433,7 +1433,7 @@ class TransactionOperationsParser:
     @staticmethod
     def _find_debt_transfer_to_zero(
         *,
-        user: str,
+        user: ChecksumAddress,
         amount: int,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
@@ -1462,8 +1462,8 @@ class TransactionOperationsParser:
     def _find_balance_transfer_for_repay(
         self,
         *,
-        user: str,
-        reserve: str,
+        user: ChecksumAddress,
+        reserve: ChecksumAddress,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
     ) -> LogReceipt | None:
