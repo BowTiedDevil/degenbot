@@ -1,25 +1,5 @@
-"""Aave V3 event matching framework.
-
-Centralizes pool event matching logic for scaled token events (Mint/Burn).
-This module provides a declarative, testable approach to matching Aave V3
-Pool events with scaled token events, handling complex edge cases like:
-- Liquidation transactions (LIQUIDATION_CALL shared across multiple operations)
-- Repay with aTokens (REPAY event shared across debt and collateral burns)
-- Flash loan liquidations (debt burns without matching Pool events)
-
-See debug/aave/ for detailed transaction examples and bug reports.
-
-References:
-- Bug #0002: Mint Events Incorrectly Match SUPPLY Instead of WITHDRAW
-- Bug #0008: Repay with aTokens - Duplicate Burn Events Match Same Repay Event
-- Bug #0009: Collateral Burn Events Miss LiquidationCall Matching
-- Bug #0010: GHO Debt Burn Consumes LiquidationCall Event Blocking Collateral Burn
-- Bug #0011: Collateral Mint Events Miss LiquidationCall Matching
-- Bug #0012a: Collateral Burn Fails When LIQUIDATION_CALL Already Consumed
-- Bug #0012b: Collateral Operations Consume LIQUIDATION_CALL Events
-- Bug #0013: Debt Burn Without Matching Pool Event
-- Bug #0014: BalanceTransfer Skipped After Pure Interest Mint
-- Bug #0015: Collateral Mint Events Miss REPAY Matching for repayWithATokens
+"""
+Aave V3 event matching framework.
 """
 
 from collections.abc import Callable
