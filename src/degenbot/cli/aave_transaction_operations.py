@@ -1,5 +1,4 @@
-"""Aave V3 transaction operation parser.
-
+"""
 Parses transaction events into logical operations based on asset flows.
 Provides strict validation with detailed plain-text error reporting.
 """
@@ -15,10 +14,10 @@ from eth_abi.abi import decode
 from hexbytes import HexBytes
 from sqlalchemy import select
 
-from degenbot.aave.events import AaveV3PoolEvent, AaveV3ScaledTokenEvent
+from degenbot.aave.events import AaveV3PoolEvent, AaveV3ScaledTokenEvent, ERC20Event
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.database.models.aave import AaveV3AssetsTable
+from degenbot.database.models.aave import AaveGhoTokenTable, AaveV3AssetsTable
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.logging import logger
 
@@ -119,9 +118,6 @@ GHO_TOKEN_ADDRESS = get_checksum_address("0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE
 
 # GHO Variable Debt Token Address (Ethereum Mainnet)
 GHO_VARIABLE_DEBT_TOKEN_ADDRESS = get_checksum_address("0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B")
-
-# Token event topic hashes
-TRANSFER_TOPIC = HexBytes("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
 
 
 @dataclass(frozen=True)
@@ -372,7 +368,7 @@ class TransactionValidationError(Exception):
         for scaled_token_event in AaveV3ScaledTokenEvent:
             if scaled_token_event.value == topic:
                 return scaled_token_event.name
-        if topic == TRANSFER_TOPIC:
+        if topic == ERC20Event.TRANSFER.value:
             return "Transfer"
         return "UNKNOWN"
 
@@ -426,40 +422,46 @@ class TransactionOperationsParser:
         Returns:
             "aToken", "vToken", "GHO Discount" or None if not found in market assets.
         """
-        from degenbot.cli.aave import _get_gho_asset
 
-        checksum_addr = get_checksum_address(token_address)
+        token_address = get_checksum_address(token_address)
 
         # Query database directly to avoid stale ORM cache
         # Check for aToken match
-        a_token_stmt = (
-            select(AaveV3AssetsTable)
-            .join(AaveV3AssetsTable.a_token)
-            .where(
-                AaveV3AssetsTable.market_id == self.market.id,
-                Erc20TokenTable.address == checksum_addr,
+
+        if (
+            self.session.scalar(
+                select(AaveV3AssetsTable)
+                .join(AaveV3AssetsTable.a_token)
+                .where(
+                    AaveV3AssetsTable.market_id == self.market.id,
+                    Erc20TokenTable.address == token_address,
+                )
             )
-        )
-        if self.session.scalar(a_token_stmt) is not None:
+            is not None
+        ):
             return "aToken"
 
         # Check for vToken match
-        v_token_stmt = (
-            select(AaveV3AssetsTable)
-            .join(AaveV3AssetsTable.v_token)
-            .where(
-                AaveV3AssetsTable.market_id == self.market.id,
-                Erc20TokenTable.address == checksum_addr,
+        if (
+            self.session.scalar(
+                select(AaveV3AssetsTable)
+                .join(AaveV3AssetsTable.v_token)
+                .where(
+                    AaveV3AssetsTable.market_id == self.market.id,
+                    Erc20TokenTable.address == token_address,
+                )
             )
-        )
-        if self.session.scalar(v_token_stmt) is not None:
+            is not None
+        ):
             return "vToken"
 
         # Check for GHO Discount Token
-        if (
-            checksum_addr
-            == _get_gho_asset(session=self.session, market=self.market).v_gho_discount_token
-        ):
+        gho_asset = self.session.scalar(
+            select(AaveGhoTokenTable)
+            .join(Erc20TokenTable)
+            .where(Erc20TokenTable.chain == self.market.chain_id)
+        )
+        if gho_asset is not None and token_address == gho_asset.v_gho_discount_token:
             return "GHO Discount Token"
 
         return None
@@ -480,7 +482,7 @@ class TransactionOperationsParser:
         checksum_addr = get_checksum_address(debt_token_address)
 
         # Query database directly to avoid stale ORM cache
-        stmt = (
+        asset = self.session.scalar(
             select(AaveV3AssetsTable)
             .join(AaveV3AssetsTable.v_token)
             .where(
@@ -488,7 +490,6 @@ class TransactionOperationsParser:
                 Erc20TokenTable.address == checksum_addr,
             )
         )
-        asset = self.session.scalar(stmt)
         if asset is not None:
             return get_checksum_address(asset.underlying_token.address)
         return None
@@ -496,20 +497,13 @@ class TransactionOperationsParser:
     def _get_a_token_asset_by_reserve(
         self, reserve_address: ChecksumAddress
     ) -> AaveV3AssetsTable | None:
-        """Get the aToken asset for a given reserve address.
-
-        Queries the database directly to avoid stale ORM relationship cache issues.
-
-        Args:
-            reserve_address: The underlying reserve asset address.
-
-        Returns:
-            The AaveV3AssetsTable containing the aToken, or None if not found.
         """
+        Get the aToken asset for a given reserve address.
+        """
+
         checksum_addr = get_checksum_address(reserve_address)
 
-        # Query database directly to avoid stale ORM cache
-        stmt = (
+        return self.session.scalar(
             select(AaveV3AssetsTable)
             .join(AaveV3AssetsTable.underlying_token)
             .where(
@@ -517,7 +511,6 @@ class TransactionOperationsParser:
                 Erc20TokenTable.address == checksum_addr,
             )
         )
-        return self.session.scalar(stmt)
 
     def parse(self, events: list[LogReceipt], tx_hash: HexBytes) -> TransactionOperations:
         """Parse events into operations."""
@@ -598,7 +591,8 @@ class TransactionOperationsParser:
         unassigned_events = [
             e
             for e in events
-            if e["logIndex"] not in assigned_log_indices and e["topics"][0] != TRANSFER_TOPIC
+            if e["logIndex"] not in assigned_log_indices
+            and e["topics"][0] != ERC20Event.TRANSFER.value
         ]
 
         # Step 5: Validate all operations
@@ -651,8 +645,9 @@ class TransactionOperationsParser:
                 if ev:
                     result.append(ev)
 
-            elif topic == TRANSFER_TOPIC.hex():
-                # Handle ERC20 Transfer events for aTokens and vTokens
+            elif topic == ERC20Event.TRANSFER.value.hex():
+                # Handle ERC20 Transfer events for aTokens, vTokens, and the GHO discount token if
+                # that mechanism is active.
                 ev = self._decode_transfer_event(event)
                 if ev:
                     result.append(ev)
@@ -782,10 +777,11 @@ class TransactionOperationsParser:
         )
 
     def _decode_transfer_event(self, event: LogReceipt) -> ScaledTokenEvent | None:
-        """Decode an ERC20 Transfer event for aTokens/vTokens.
-
-        Transfer events are standard ERC20 events that occur when aTokens or vTokens
-        are transferred between users (e.g., user -> aggregator).
+        """
+        Decode an ERC20 Transfer event for three specific token types:
+            - aToken
+            - vToken
+            - GHO vToken discount token
         """
 
         from_addr = _topic_to_address(event["topics"][1])
@@ -805,10 +801,10 @@ class TransactionOperationsParser:
             elif token_type == "vToken":  # noqa:S105
                 event_type = ScaledTokenEventType.DEBT_TRANSFER
             elif token_type == "GHO Discount Token":  # noqa:S105
+                # This is active only when the GHO vToken discount mechanism is active
                 event_type = ScaledTokenEventType.DISCOUNT_TRANSFER
             else:
-                msg = f"Unknown token type: {token_type} @ {token_address}"
-                raise ValueError(msg)
+                return None
 
         return ScaledTokenEvent(
             event=event,
@@ -831,44 +827,44 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
     ) -> Operation | None:
         """Create operation starting from a pool event."""
-        topic = _get_topic_str(pool_event["topics"][0])
+        topic = pool_event["topics"][0]
 
-        if topic == AaveV3PoolEvent.SUPPLY.value.hex():
+        if topic == AaveV3PoolEvent.SUPPLY.value:
             return self._create_supply_operation(
                 operation_id=operation_id,
                 supply_event=pool_event,
                 scaled_events=scaled_events,
                 assigned_indices=assigned_indices,
             )
-        if topic == AaveV3PoolEvent.WITHDRAW.value.hex():
+        if topic == AaveV3PoolEvent.WITHDRAW.value:
             return self._create_withdraw_operation(
                 operation_id=operation_id,
                 withdraw_event=pool_event,
                 scaled_events=scaled_events,
                 assigned_indices=assigned_indices,
             )
-        if topic == AaveV3PoolEvent.BORROW.value.hex():
+        if topic == AaveV3PoolEvent.BORROW.value:
             return self._create_borrow_operation(
                 operation_id=operation_id,
                 borrow_event=pool_event,
                 scaled_events=scaled_events,
                 assigned_indices=assigned_indices,
             )
-        if topic == AaveV3PoolEvent.REPAY.value.hex():
+        if topic == AaveV3PoolEvent.REPAY.value:
             return self._create_repay_operation(
                 operation_id=operation_id,
                 repay_event=pool_event,
                 scaled_events=scaled_events,
                 assigned_indices=assigned_indices,
             )
-        if topic == AaveV3PoolEvent.LIQUIDATION_CALL.value.hex():
+        if topic == AaveV3PoolEvent.LIQUIDATION_CALL.value:
             return self._create_liquidation_operation(
                 operation_id=operation_id,
                 liquidation_event=pool_event,
                 scaled_events=scaled_events,
                 assigned_indices=assigned_indices,
             )
-        if topic == AaveV3PoolEvent.DEFICIT_CREATED.value.hex():
+        if topic == AaveV3PoolEvent.DEFICIT_CREATED.value:
             return self._create_deficit_operation(
                 operation_id=operation_id,
                 deficit_event=pool_event,
@@ -877,7 +873,7 @@ class TransactionOperationsParser:
                 assigned_indices=assigned_indices,
             )
 
-        msg = f"Could not determine operation from event topic {topic}"
+        msg = f"Could not determine operation from event topic {topic!r}"
         raise ValueError(msg)
 
     def _create_supply_operation(
@@ -1052,8 +1048,18 @@ class TransactionOperationsParser:
         )
 
         if not collateral_burns and not interest_mints:
-            msg = f"Withdraw found without a Burn or Mint!\n{withdraw_event=}"
-            raise ValueError(msg)
+            logger.debug(
+                f"WITHDRAW at logIndex={withdraw_event['logIndex']} has no matching "
+                f"burn/mint event, creating minimal operation"
+            )
+            return Operation(
+                operation_id=operation_id,
+                operation_type=OperationType.WITHDRAW,
+                pool_event=withdraw_event,
+                scaled_token_events=[],
+                transfer_events=[],
+                balance_transfer_events=[],
+            )
 
         # Look for matching Transfer events:
         # A Burn will correspond to a Transfer event with a ZERO_ADDRESS destination
@@ -1536,7 +1542,6 @@ class TransactionOperationsParser:
 
             debt_burn = ev
             break
-        assert debt_burn is not None
 
         # Find collateral burn and/or transfer(s)
         # During liquidations, borrower may have BOTH collateral burned AND multiple transfers
@@ -1555,13 +1560,23 @@ class TransactionOperationsParser:
                     collateral_transfers.append(ev)
             else:
                 continue
-        assert collateral_burn is not None
+        # A liquidation requires at least one collateral event (burn or transfer)
+        # Collateral may be transferred to treasury instead of burned when protocol takes fee
+        assert collateral_burn is not None or collateral_transfers, (
+            f"Expected at least 1 collateral event (burn or transfer) for liquidation. "
+            f"User: {user}, scaled_events: {[e.event['logIndex'] for e in scaled_events]}"
+        )
 
         scaled_token_events: list[ScaledTokenEvent] = []
         balance_transfer_events: list[LogReceipt] = []
 
         # Add the debt burn and collateral burn to scaled_token_events
-        scaled_token_events.extend((debt_burn, collateral_burn))
+        # Note: debt_burn may be None for flash loan liquidations
+        # Note: collateral_burn may be None when collateral is transferred to treasury
+        if collateral_burn is not None:
+            scaled_token_events.append(collateral_burn)
+        if debt_burn is not None:
+            scaled_token_events.append(debt_burn)
 
         if collateral_transfers:
             # Add all collateral transfers to scaled_token_events
@@ -1612,8 +1627,6 @@ class TransactionOperationsParser:
         burn should be matched to the LIQUIDATION_CALL operation, not a
         separate flash loan operation.
         """
-
-        raise ValueError("DEFICIT_CREATED")
 
         user = self._decode_address(deficit_event["topics"][1])
         asset = self._decode_address(deficit_event["topics"][2])
@@ -2079,6 +2092,10 @@ class TransactionOperationsParser:
         validator = validators.get(op.operation_type)
         if validator:
             errors.extend(validator(op))
+        elif op.operation_type == OperationType.UNKNOWN:
+            # UNKNOWN operations are intentionally unprocessed placeholders
+            # (e.g., DEFICIT_CREATED events that are part of liquidations)
+            pass
         else:
             msg = f"No validator found for {op.operation_type}!"
             raise ValueError(msg)

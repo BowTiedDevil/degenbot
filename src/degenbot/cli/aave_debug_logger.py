@@ -3,24 +3,28 @@
 Provides machine-parseable debug output for autonomous agent analysis.
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import os
 import sys
 import traceback
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import Any, ClassVar, Self
 
+import eth_abi.abi
+from eth_typing import ChainId
 from hexbytes import HexBytes
+from web3.types import LogReceipt
 
-if TYPE_CHECKING:
-    from eth_typing import ChainId
-    from web3.types import LogReceipt
-
-    from degenbot.cli.aave import TransactionContext
+from degenbot.aave.events import (
+    AaveV3GhoDebtTokenEvent,
+    AaveV3PoolEvent,
+    AaveV3ScaledTokenEvent,
+    ERC20Event,
+)
+from degenbot.cli.aave_types import TransactionContext
 
 
 class AaveDebugLogger:
@@ -157,7 +161,7 @@ class AaveDebugLogger:
             "timestamp": datetime.now(tz=UTC).isoformat(),
             "level": level.upper(),
             "message": message,
-            "tx_hash": tx_hash.hex() if isinstance(tx_hash, HexBytes) else tx_hash,
+            "tx_hash": tx_hash.to_0x_hex() if isinstance(tx_hash, HexBytes) else tx_hash,
             "block_number": block_number,
             "user_address": user_address,
             "event_type": event_type,
@@ -194,7 +198,7 @@ class AaveDebugLogger:
         entry: dict[str, Any] = {
             "type": "transaction_start",
             "timestamp": datetime.now(tz=UTC).isoformat(),
-            "tx_hash": tx_hash.hex() if isinstance(tx_hash, HexBytes) else tx_hash,
+            "tx_hash": tx_hash.to_0x_hex() if isinstance(tx_hash, HexBytes) else tx_hash,
             "block_number": block_number,
             "event_count": event_count,
         }
@@ -226,7 +230,7 @@ class AaveDebugLogger:
         entry = {
             "type": "transaction_end",
             "timestamp": datetime.now(tz=UTC).isoformat(),
-            "tx_hash": tx_hash.hex() if isinstance(tx_hash, HexBytes) else tx_hash,
+            "tx_hash": tx_hash.to_0x_hex() if isinstance(tx_hash, HexBytes) else tx_hash,
             "block_number": block_number,
             "success": success,
             "duration_ms": duration_ms,
@@ -280,10 +284,7 @@ class AaveDebugLogger:
             topics = event.get("topics", [])
             if topics:
                 first_topic = topics[0]
-                if isinstance(first_topic, HexBytes):
-                    event_topics.append(first_topic.hex())
-                else:
-                    event_topics.append(str(first_topic))
+                event_topics.append(first_topic.to_0x_hex())
 
         # Extract all user addresses from transaction events
         user_addresses: set[str] = set()
@@ -293,94 +294,192 @@ class AaveDebugLogger:
                 continue
 
             topic = topics[0]
-            topic_hex = topic.hex() if isinstance(topic, HexBytes) else str(topic)
 
-            # TODO: clean up this whole chunk
+            if topic == AaveV3ScaledTokenEvent.MINT.value:
+                """
+                Event definition:
+                    event Mint(
+                        address indexed caller,
+                        address indexed onBehalfOf,
+                        uint256 value,
+                        uint256 balanceIncrease,
+                        uint256 index
+                    );
+                """
+                assert len(topics) == 3  # noqa:PLR2004
+                (user_addr,) = eth_abi.abi.decode(types=["address"], data=event["topics"][2])
+                assert user_addr == "0x" + topics[2].hex()[-40:]
+                user_addresses.add(user_addr)
 
-            # SCALED_TOKEN_MINT: topics[2] = onBehalfOf (user)
-            if (
-                topic_hex == "458f5fa412d0f69b08dd84872b0215675cc67bc1d5b6fd93300a1c3878b86196"
-                and len(topics) >= 3  # noqa:PLR2004
-            ):
-                user_addr = (
-                    "0x" + topics[2].hex()[-40:]
-                    if isinstance(topics[2], HexBytes)
-                    else str(topics[2])[-40:]
-                )
-                user_addresses.add(user_addr.lower())
-            # SCALED_TOKEN_BURN: topics[1] = from (user)
-            elif (
-                topic_hex == "4cf25bc1d991c17529c25213d3cc0cda295eeaad5f13f361969b12ea48015f90"
-                and len(topics) >= 2  # noqa:PLR2004
-            ):
-                user_addr = (
-                    "0x" + topics[1].hex()[-40:]
-                    if isinstance(topics[1], HexBytes)
-                    else str(topics[1])[-40:]
-                )
-                user_addresses.add(user_addr.lower())
-            # SCALED_TOKEN_BALANCE_TRANSFER: topics[1] = from, topics[2] = to
-            elif (
-                topic_hex == "4beccb90f994c31aced7a23b5611020728a23d8ec5cddd1a3e9d97b96fda8666"
-                and len(topics) >= 3  # noqa:PLR2004
-            ):
-                from_addr = (
-                    "0x" + topics[1].hex()[-40:]
-                    if isinstance(topics[1], HexBytes)
-                    else str(topics[1])[-40:]
-                )
-                to_addr = (
-                    "0x" + topics[2].hex()[-40:]
-                    if isinstance(topics[2], HexBytes)
-                    else str(topics[2])[-40:]
-                )
-                user_addresses.add(from_addr.lower())
-                user_addresses.add(to_addr.lower())
-            # BORROW/REPAY/SUPPLY/WITHDRAW: topics[2] = onBehalfOf (user)
-            elif (
-                topic_hex
-                in {
-                    "b3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0",  # BORROW
-                    "a534c8dbe71f871f9f3530e97a74601fea17b426cae02e1c5aee42c96c784051",  # REPAY
-                    "2b627736bca15cd5381dcf80b0bf11fd197d01a037c52b927a881a10fb73ba61",  # SUPPLY
-                    "3115d1449a7b732c986cba18244e897a450f61e1bb8d589cd2e69e6c8924f9f7",  # WITHDRAW
-                }
-                and len(topics) >= 3  # noqa:PLR2004
-            ):
-                user_addr = (
-                    "0x" + topics[2].hex()[-40:]
-                    if isinstance(topics[2], HexBytes)
-                    else str(topics[2])[-40:]
-                )
-                user_addresses.add(user_addr.lower())
-            # LIQUIDATION_CALL: topics[3] = user
-            elif (
-                topic_hex == "e413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286"
-                and len(topics) >= 4  # noqa:PLR2004
-            ):
-                user_addr = (
-                    "0x" + topics[3].hex()[-40:]
-                    if isinstance(topics[3], HexBytes)
-                    else str(topics[3])[-40:]
-                )
-                user_addresses.add(user_addr.lower())
-            # DISCOUNT_PERCENT_UPDATED: topics[1] = user
-            elif (
-                topic_hex == "74ab9665e7c36c29ddb78ef88a3e2eac73d35b8b16de7bc573e313e320104956"
-                and len(topics) >= 2  # noqa:PLR2004
-            ) or (
-                topic_hex == "d728da875fc88944cbf17638bcbe4af0eedaef63becd1d1c57cc097eb4608d84"
-                and len(topics) >= 2  # noqa:PLR2004
-            ):
-                user_addr = (
-                    "0x" + topics[1].hex()[-40:]
-                    if isinstance(topics[1], HexBytes)
-                    else str(topics[1])[-40:]
-                )
-                user_addresses.add(user_addr.lower())
+            elif topic == AaveV3ScaledTokenEvent.BURN.value:
+                """
+                Event definition:
+                    event Burn(
+                        address indexed from,
+                        address indexed target,
+                        uint256 value,
+                        uint256 balanceIncrease,
+                        uint256 index
+                    );
+                """
+                assert len(topics) == 3  # noqa:PLR2004
+                (user_addr,) = eth_abi.abi.decode(types=["address"], data=event["topics"][1])
+                assert user_addr == "0x" + topics[1].hex()[-40:]
+                user_addresses.add(user_addr)
+
+            elif topic == AaveV3ScaledTokenEvent.BALANCE_TRANSFER.value:
+                """
+                Event definition:
+                    event BalanceTransfer(
+                        address indexed from,
+                        address indexed to,
+                        uint256 value,
+                        uint256 index
+                    );
+                """
+                assert len(topics) == 3  # noqa:PLR2004
+                (from_addr,) = eth_abi.abi.decode(types=["address"], data=event["topics"][1])
+                (to_addr,) = eth_abi.abi.decode(types=["address"], data=event["topics"][2])
+                assert from_addr == "0x" + topics[1].hex()[-40:]
+                assert to_addr == "0x" + topics[2].hex()[-40:]
+                user_addresses.add(from_addr)
+                user_addresses.add(to_addr)
+
+            elif topic == AaveV3PoolEvent.DEFICIT_CREATED.value:
+                """
+                Event definition:
+                    event DeficitCreated(
+                        address indexed user,
+                        address indexed debtAsset,
+                        uint256 amountCreated
+                    );
+                """
+                assert len(topics) == 3  # noqa:PLR2004
+                (user_addr,) = eth_abi.abi.decode(types=["address"], data=event["topics"][1])
+                assert user_addr == "0x" + topics[1].hex()[-40:]
+                user_addresses.add(user_addr)
+
+            elif topic == AaveV3PoolEvent.BORROW.value:
+                """
+                Event definition:
+                    event Borrow(
+                        address indexed reserve,
+                        address user,
+                        address indexed onBehalfOf,
+                        uint256 amount,
+                        DataTypes.InterestRateMode interestRateMode,
+                        uint256 borrowRate,
+                        uint16 indexed referralCode
+                    );
+                """
+                assert len(topics) == 4  # noqa:PLR2004
+                (user_addr,) = eth_abi.abi.decode(types=["address"], data=event["topics"][2])
+                assert user_addr == "0x" + topics[2].hex()[-40:]
+                user_addresses.add(user_addr)
+
+            elif topic == AaveV3PoolEvent.REPAY.value:
+                """
+                Event definition:
+                    event Repay(
+                        address indexed reserve,
+                        address indexed user,
+                        address indexed repayer,
+                        uint256 amount,
+                        bool useATokens
+                    );
+                """
+                assert len(topics) == 4  # noqa:PLR2004
+                (user_addr,) = eth_abi.abi.decode(types=["address"], data=event["topics"][2])
+                assert user_addr == "0x" + topics[2].hex()[-40:]
+                user_addresses.add(user_addr)
+
+            elif topic == AaveV3PoolEvent.SUPPLY.value:
+                """
+                Event definition:
+                    event Supply(
+                        address indexed reserve,
+                        address user,
+                        address indexed onBehalfOf,
+                        uint256 amount,
+                        uint16 indexed referralCode
+                    );
+                """
+                assert len(topics) == 4  # noqa:PLR2004
+                (user_addr,) = eth_abi.abi.decode(types=["address"], data=event["topics"][2])
+                assert user_addr == "0x" + topics[2].hex()[-40:]
+                user_addresses.add(user_addr)
+
+            elif topic == AaveV3PoolEvent.WITHDRAW.value:
+                """
+                Event definition:
+                    event Withdraw(
+                        address indexed reserve,
+                        address indexed user,
+                        address indexed to,
+                        uint256 amount
+                    );
+                """
+                assert len(topics) == 4  # noqa:PLR2004
+                (user_addr,) = eth_abi.abi.decode(types=["address"], data=event["topics"][2])
+                assert user_addr == "0x" + topics[2].hex()[-40:]
+                user_addresses.add(user_addr)
+
+            elif topic == AaveV3PoolEvent.LIQUIDATION_CALL.value:
+                """
+                Event definition:
+                    event LiquidationCall(
+                        address indexed collateralAsset,
+                        address indexed debtAsset,
+                        address indexed user,
+                        uint256 debtToCover,
+                        uint256 liquidatedCollateralAmount,
+                        address liquidator,
+                        bool receiveAToken
+                    );
+                """
+                assert len(topics) == 4  # noqa:PLR2004
+                (user_addr,) = eth_abi.abi.decode(types=["address"], data=event["topics"][3])
+                assert user_addr == "0x" + topics[3].hex()[-40:]
+                user_addresses.add(user_addr)
+
+            elif topic == AaveV3GhoDebtTokenEvent.DISCOUNT_PERCENT_UPDATED.value:
+                """
+                Event definition:
+                    event DiscountPercentUpdated(
+                        address indexed user,
+                        uint256 oldDiscountPercent,
+                        uint256 indexed newDiscountPercent
+                    );
+                """
+                assert len(topics) == 2  # noqa:PLR2004
+                (user_addr,) = eth_abi.abi.decode(types=["address"], data=event["topics"][1])
+                assert user_addr == "0x" + topics[1].hex()[-40:]
+                user_addresses.add(user_addr)
+
+            elif topic == AaveV3PoolEvent.USER_E_MODE_SET.value:
+                """
+                Event definition:
+                    event UserEModeSet(
+                        address indexed user,
+                        uint8 categoryId
+                    );
+                """
+                assert len(topics) == 2  # noqa:PLR2004
+                (user_addr,) = eth_abi.abi.decode(types=["address"], data=event["topics"][1])
+                assert user_addr == "0x" + topics[1].hex()[-40:]
+                user_addresses.add(user_addr)
+
+            elif topic in {
+                AaveV3PoolEvent.RESERVE_DATA_UPDATED.value,
+                ERC20Event.TRANSFER.value,
+            }:
+                pass
+            else:
+                msg = f"UNKNOWN EVENT: {topic.to_0x_hex()}"
+                raise ValueError(msg)
 
         return {
-            "tx_hash": context.tx_hash.hex()
+            "tx_hash": context.tx_hash.to_0x_hex()
             if isinstance(context.tx_hash, HexBytes)
             else str(context.tx_hash),
             "block_number": context.block_number,
@@ -400,19 +499,15 @@ class AaveDebugLogger:
         return {
             "address": event.get("address"),
             "blockNumber": event.get("blockNumber"),
-            "blockHash": event.get("blockHash").hex()
+            "blockHash": event.get("blockHash").to_0x_hex()
             if isinstance(event.get("blockHash"), HexBytes)
             else event.get("blockHash"),
-            "transactionHash": event.get("transactionHash").hex()
+            "transactionHash": event.get("transactionHash").to_0x_hex()
             if isinstance(event.get("transactionHash"), HexBytes)
             else event.get("transactionHash"),
             "logIndex": event.get("logIndex"),
-            "topics": [
-                t.hex() if isinstance(t, HexBytes) else str(t) for t in event.get("topics", [])
-            ],
-            "data": event.get("data").hex()
-            if isinstance(event.get("data"), (HexBytes, bytes))
-            else event.get("data"),
+            "topics": [t.to_0x_hex() for t in event.get("topics", [])],
+            "data": event["data"].to_0x_hex(),
         }
 
     def log_block_boundary(
@@ -473,7 +568,7 @@ class AaveDebugLogger:
             "timestamp": datetime.now(tz=UTC).isoformat(),
             "user_address": user_address,
             "block_number": block_number,
-            "tx_hash": tx_hash.hex() if isinstance(tx_hash, HexBytes) else tx_hash,
+            "tx_hash": tx_hash.to_0x_hex() if isinstance(tx_hash, HexBytes) else tx_hash,
         }
 
         if gho_discount is not None:
@@ -521,7 +616,7 @@ class AaveDebugLogger:
             "position_type": position_type,
             "token_address": token_address,
             "block_number": block_number,
-            "tx_hash": tx_hash.hex() if isinstance(tx_hash, HexBytes) else tx_hash,
+            "tx_hash": tx_hash.to_0x_hex() if isinstance(tx_hash, HexBytes) else tx_hash,
             "operation": operation,
             "balance_before": balance_before,
             "balance_after": balance_after,
@@ -600,7 +695,7 @@ class AaveDebugLogger:
             "debt_to_cover": debt_to_cover,
             "liquidated_collateral": liquidated_collateral,
             "block_number": block_number,
-            "tx_hash": tx_hash.hex() if isinstance(tx_hash, HexBytes) else tx_hash,
+            "tx_hash": tx_hash.to_0x_hex() if isinstance(tx_hash, HexBytes) else tx_hash,
             "is_gho": is_gho,
         }
 
@@ -616,7 +711,7 @@ class AaveDebugLogger:
         debt_asset: str,
         debt_to_cover: int,
         liquidated_collateral: int,
-        scaled_events: list[str],
+        scaled_events: Sequence[str],
         block_number: int,
         tx_hash: HexBytes | str,
     ) -> None:
@@ -649,7 +744,7 @@ class AaveDebugLogger:
             "liquidated_collateral": liquidated_collateral,
             "scaled_events": scaled_events,
             "block_number": block_number,
-            "tx_hash": tx_hash.hex() if isinstance(tx_hash, HexBytes) else tx_hash,
+            "tx_hash": tx_hash.to_0x_hex() if isinstance(tx_hash, HexBytes) else tx_hash,
         }
 
         self._write_entry(entry)
@@ -691,7 +786,7 @@ class AaveDebugLogger:
             "matched_amount": matched_amount,
             "extraction_data": extraction_data,
             "block_number": block_number,
-            "tx_hash": tx_hash.hex() if isinstance(tx_hash, HexBytes) else tx_hash,
+            "tx_hash": tx_hash.to_0x_hex() if isinstance(tx_hash, HexBytes) else tx_hash,
         }
 
         self._write_entry(entry)
@@ -745,7 +840,7 @@ class AaveDebugLogger:
             "collateral_transfers": collateral_transfers,
             "verified": verified,
             "block_number": block_number,
-            "tx_hash": tx_hash.hex() if isinstance(tx_hash, HexBytes) else tx_hash,
+            "tx_hash": tx_hash.to_0x_hex() if isinstance(tx_hash, HexBytes) else tx_hash,
         }
 
         self._write_entry(entry)
