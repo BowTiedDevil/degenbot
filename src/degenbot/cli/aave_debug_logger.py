@@ -20,6 +20,7 @@ from web3.types import LogReceipt
 
 from degenbot.aave.events import (
     AaveV3GhoDebtTokenEvent,
+    AaveV3PoolConfigEvent,
     AaveV3PoolEvent,
     AaveV3ScaledTokenEvent,
     ERC20Event,
@@ -470,6 +471,7 @@ class AaveDebugLogger:
                 user_addresses.add(user_addr)
 
             elif topic in {
+                AaveV3PoolConfigEvent.UPGRADED.value,
                 AaveV3PoolEvent.RESERVE_DATA_UPDATED.value,
                 ERC20Event.TRANSFER.value,
             }:
