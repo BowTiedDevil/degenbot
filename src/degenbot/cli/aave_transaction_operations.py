@@ -17,7 +17,7 @@ from sqlalchemy import select
 from degenbot.aave.events import AaveV3PoolEvent, AaveV3ScaledTokenEvent, ERC20Event
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.database.models.aave import AaveGhoTokenTable, AaveV3AssetsTable
+from degenbot.database.models.aave import AaveGhoTokenTable, AaveV3AssetsTable, AaveV3ContractsTable
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.logging import logger
 
@@ -494,6 +494,18 @@ class TransactionOperationsParser:
             return get_checksum_address(asset.underlying_token.address)
         return None
 
+    def _get_pool_revision(self) -> int:
+        """Get the Pool contract revision from the market."""
+        pool_contract = self.session.scalar(
+            select(AaveV3ContractsTable).where(
+                AaveV3ContractsTable.market_id == self.market.id,
+                AaveV3ContractsTable.name == "POOL",
+            )
+        )
+        assert pool_contract is not None
+        assert pool_contract.revision is not None
+        return pool_contract.revision
+
     def _get_a_token_asset_by_reserve(
         self, reserve_address: ChecksumAddress
     ) -> AaveV3AssetsTable | None:
@@ -531,6 +543,9 @@ class TransactionOperationsParser:
         # Step 2: Identify and decode scaled token events
         scaled_events = self._extract_scaled_token_events(events)
 
+        # Get pool revision for amount scaling
+        pool_revision = self._get_pool_revision()
+
         # Step 3: Group into operations
         operations: list[Operation] = []
         assigned_log_indices: set[int] = set()
@@ -542,6 +557,7 @@ class TransactionOperationsParser:
                 scaled_events=scaled_events,
                 all_events=events,
                 assigned_indices=assigned_log_indices,
+                pool_revision=pool_revision,
             )
             if operation:
                 operations.append(operation)
@@ -825,6 +841,7 @@ class TransactionOperationsParser:
         scaled_events: list[ScaledTokenEvent],
         all_events: list[LogReceipt],
         assigned_indices: set[int],
+        pool_revision: int,
     ) -> Operation | None:
         """Create operation starting from a pool event."""
         topic = pool_event["topics"][0]
@@ -835,6 +852,7 @@ class TransactionOperationsParser:
                 supply_event=pool_event,
                 scaled_events=scaled_events,
                 assigned_indices=assigned_indices,
+                pool_revision=pool_revision,
             )
         if topic == AaveV3PoolEvent.WITHDRAW.value:
             return self._create_withdraw_operation(
@@ -842,6 +860,7 @@ class TransactionOperationsParser:
                 withdraw_event=pool_event,
                 scaled_events=scaled_events,
                 assigned_indices=assigned_indices,
+                pool_revision=pool_revision,
             )
         if topic == AaveV3PoolEvent.BORROW.value:
             return self._create_borrow_operation(
@@ -849,6 +868,7 @@ class TransactionOperationsParser:
                 borrow_event=pool_event,
                 scaled_events=scaled_events,
                 assigned_indices=assigned_indices,
+                pool_revision=pool_revision,
             )
         if topic == AaveV3PoolEvent.REPAY.value:
             return self._create_repay_operation(
@@ -856,6 +876,7 @@ class TransactionOperationsParser:
                 repay_event=pool_event,
                 scaled_events=scaled_events,
                 assigned_indices=assigned_indices,
+                pool_revision=pool_revision,
             )
         if topic == AaveV3PoolEvent.LIQUIDATION_CALL.value:
             return self._create_liquidation_operation(
@@ -863,6 +884,7 @@ class TransactionOperationsParser:
                 liquidation_event=pool_event,
                 scaled_events=scaled_events,
                 assigned_indices=assigned_indices,
+                pool_revision=pool_revision,
             )
         if topic == AaveV3PoolEvent.DEFICIT_CREATED.value:
             return self._create_deficit_operation(
@@ -871,6 +893,7 @@ class TransactionOperationsParser:
                 scaled_events=scaled_events,
                 all_events=all_events,
                 assigned_indices=assigned_indices,
+                pool_revision=pool_revision,
             )
 
         msg = f"Could not determine operation from event topic {topic!r}"
@@ -882,6 +905,7 @@ class TransactionOperationsParser:
         supply_event: LogReceipt,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
+        pool_revision: int,
     ) -> Operation:
         """
         Create SUPPLY operation.
@@ -915,13 +939,26 @@ class TransactionOperationsParser:
                 continue
             if ev.balance_increase is None:
                 continue
-            if supply_amount != ev.amount - ev.balance_increase:
+            if ev.index is None:
+                continue
+
+            # Calculate expected mint principal
+            expected_principal = (
+                # Pool revision 9 began pre-scaling the amount with flooring ray division.
+                # Calculating it exactly requires knowledge of the position, so this workaround
+                # considers a 1 wei difference acceptable
+                {supply_amount - 1, supply_amount}
+                if pool_revision >= 9  # noqa:PLR2004
+                else {supply_amount}
+            )
+
+            if ev.amount - ev.balance_increase not in expected_principal:
                 continue
 
             collateral_mint = ev
             break
 
-        assert collateral_mint is not None
+        assert collateral_mint is not None, supply_event["transactionHash"].to_0x_hex()
 
         # Also look for matching Transfer events from zero address (ERC20 mint)
         # These represent the same supply operation
@@ -961,6 +998,7 @@ class TransactionOperationsParser:
         withdraw_event: LogReceipt,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
+        pool_revision: int,
     ) -> Operation:
         """
         Create WITHDRAW operation.
@@ -1027,7 +1065,19 @@ class TransactionOperationsParser:
             if ev.index is None:
                 logger.debug(f"WITHDRAW: Skipping logIndex={ev.event['logIndex']} - index is None")
                 continue
-            expected_amount = ev.amount + (ev.balance_increase or 0)
+            if ev.balance_increase is None:
+                logger.debug(
+                    f"WITHDRAW: Skipping logIndex={ev.event['logIndex']} - balance_increase is None"
+                )
+                continue
+
+            expected_amount = (
+                # ev.amount + ev.balance_increase - 1
+                # if pool_revision >= 9
+                # else
+                ev.amount + ev.balance_increase
+            )
+
             logger.debug(
                 f"WITHDRAW: Checking logIndex={ev.event['logIndex']}: amount={ev.amount}, "
                 f"balance_inc={ev.balance_increase}, expected_total={expected_amount}, "
@@ -1108,6 +1158,7 @@ class TransactionOperationsParser:
         borrow_event: LogReceipt,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
+        pool_revision: int,
     ) -> Operation:
         """
         Create BORROW operation.
@@ -1155,7 +1206,10 @@ class TransactionOperationsParser:
 
             if reserve_asset is None or reserve_asset != reserve:
                 continue
-            if borrow_amount != ev.amount - ev.balance_increase:
+            if borrow_amount not in {
+                ev.amount - ev.balance_increase - 1,
+                ev.amount - ev.balance_increase,
+            }:
                 continue
 
             debt_mint = ev
@@ -1207,6 +1261,7 @@ class TransactionOperationsParser:
         repay_event: LogReceipt,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
+        pool_revision: int,
     ) -> Operation:
         """
         Create REPAY operation.
@@ -1503,6 +1558,7 @@ class TransactionOperationsParser:
         liquidation_event: LogReceipt,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
+        pool_revision: int,
     ) -> Operation:
         """
         Create LIQUIDATION operation.
@@ -1607,6 +1663,7 @@ class TransactionOperationsParser:
         scaled_events: list[ScaledTokenEvent],
         all_events: list[LogReceipt],
         assigned_indices: set[int],
+        pool_revision: int,
     ) -> Operation:
         """
         Create DEFICIT_CREATED operation.
