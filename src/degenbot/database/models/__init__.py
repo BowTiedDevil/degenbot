@@ -2,12 +2,12 @@ from .base import Address, Base, BigInteger, IntMappedToString
 
 # isort: split
 from .aave import (
-    AaveV3AssetsTable,
-    AaveV3CollateralPositionsTable,
-    AaveV3ContractsTable,
-    AaveV3DebtPositionsTable,
-    AaveV3MarketTable,
-    AaveV3UsersTable,
+    AaveV3Asset,
+    AaveV3CollateralPosition,
+    AaveV3Contract,
+    AaveV3DebtPosition,
+    AaveV3Market,
+    AaveV3User,
 )
 from .erc20 import Erc20TokenTable
 from .pools import (
@@ -32,12 +32,12 @@ from .pools import (
 )
 
 __all__ = (
-    "AaveV3AssetsTable",
-    "AaveV3CollateralPositionsTable",
-    "AaveV3ContractsTable",
-    "AaveV3DebtPositionsTable",
-    "AaveV3MarketTable",
-    "AaveV3UsersTable",
+    "AaveV3Asset",
+    "AaveV3CollateralPosition",
+    "AaveV3Contract",
+    "AaveV3DebtPosition",
+    "AaveV3Market",
+    "AaveV3User",
     "Address",
     "AerodromeV2PoolTable",
     "AerodromeV3PoolTable",

@@ -17,7 +17,7 @@ from sqlalchemy import select
 from degenbot.aave.events import AaveV3PoolEvent, AaveV3ScaledTokenEvent, ERC20Event
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.database.models.aave import AaveGhoTokenTable, AaveV3AssetsTable, AaveV3ContractsTable
+from degenbot.database.models.aave import AaveGhoToken, AaveV3Asset, AaveV3Contract
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.logging import logger
 
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
     from web3.types import LogReceipt
 
-    from degenbot.database.models.aave import AaveV3MarketTable
+    from degenbot.database.models.aave import AaveV3Market
 
 
 def _topic_to_address(topic: HexBytes | str) -> ChecksumAddress:
@@ -393,7 +393,7 @@ class TransactionOperationsParser:
 
     def __init__(
         self,
-        market: AaveV3MarketTable,
+        market: AaveV3Market,
         session: Session,
         gho_token_address: ChecksumAddress | None = None,
         pool_address: ChecksumAddress | None = None,
@@ -433,10 +433,10 @@ class TransactionOperationsParser:
 
         if (
             self.session.scalar(
-                select(AaveV3AssetsTable)
-                .join(AaveV3AssetsTable.a_token)
+                select(AaveV3Asset)
+                .join(AaveV3Asset.a_token)
                 .where(
-                    AaveV3AssetsTable.market_id == self.market.id,
+                    AaveV3Asset.market_id == self.market.id,
                     Erc20TokenTable.address == token_address,
                 )
             )
@@ -447,10 +447,10 @@ class TransactionOperationsParser:
         # Check for vToken match
         if (
             self.session.scalar(
-                select(AaveV3AssetsTable)
-                .join(AaveV3AssetsTable.v_token)
+                select(AaveV3Asset)
+                .join(AaveV3Asset.v_token)
                 .where(
-                    AaveV3AssetsTable.market_id == self.market.id,
+                    AaveV3Asset.market_id == self.market.id,
                     Erc20TokenTable.address == token_address,
                 )
             )
@@ -460,7 +460,7 @@ class TransactionOperationsParser:
 
         # Check for GHO Discount Token
         gho_asset = self.session.scalar(
-            select(AaveGhoTokenTable)
+            select(AaveGhoToken)
             .join(Erc20TokenTable)
             .where(Erc20TokenTable.chain == self.market.chain_id)
         )
@@ -486,10 +486,10 @@ class TransactionOperationsParser:
 
         # Query database directly to avoid stale ORM cache
         asset = self.session.scalar(
-            select(AaveV3AssetsTable)
-            .join(AaveV3AssetsTable.v_token)
+            select(AaveV3Asset)
+            .join(AaveV3Asset.v_token)
             .where(
-                AaveV3AssetsTable.market_id == self.market.id,
+                AaveV3Asset.market_id == self.market.id,
                 Erc20TokenTable.address == checksum_addr,
             )
         )
@@ -500,18 +500,16 @@ class TransactionOperationsParser:
     def _get_pool_revision(self) -> int:
         """Get the Pool contract revision from the market."""
         pool_contract = self.session.scalar(
-            select(AaveV3ContractsTable).where(
-                AaveV3ContractsTable.market_id == self.market.id,
-                AaveV3ContractsTable.name == "POOL",
+            select(AaveV3Contract).where(
+                AaveV3Contract.market_id == self.market.id,
+                AaveV3Contract.name == "POOL",
             )
         )
         assert pool_contract is not None
         assert pool_contract.revision is not None
         return pool_contract.revision
 
-    def _get_a_token_asset_by_reserve(
-        self, reserve_address: ChecksumAddress
-    ) -> AaveV3AssetsTable | None:
+    def _get_a_token_asset_by_reserve(self, reserve_address: ChecksumAddress) -> AaveV3Asset | None:
         """
         Get the aToken asset for a given reserve address.
         """
@@ -519,10 +517,10 @@ class TransactionOperationsParser:
         checksum_addr = get_checksum_address(reserve_address)
 
         return self.session.scalar(
-            select(AaveV3AssetsTable)
-            .join(AaveV3AssetsTable.underlying_token)
+            select(AaveV3Asset)
+            .join(AaveV3Asset.underlying_token)
             .where(
-                AaveV3AssetsTable.market_id == self.market.id,
+                AaveV3Asset.market_id == self.market.id,
                 Erc20TokenTable.address == checksum_addr,
             )
         )

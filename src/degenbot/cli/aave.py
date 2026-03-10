@@ -53,13 +53,13 @@ from degenbot.config import settings
 from degenbot.constants import ERC_1967_IMPLEMENTATION_SLOT, ZERO_ADDRESS
 from degenbot.database import db_session
 from degenbot.database.models.aave import (
-    AaveGhoTokenTable,
-    AaveV3AssetsTable,
-    AaveV3CollateralPositionsTable,
-    AaveV3ContractsTable,
-    AaveV3DebtPositionsTable,
-    AaveV3MarketTable,
-    AaveV3UsersTable,
+    AaveGhoToken,
+    AaveV3Asset,
+    AaveV3CollateralPosition,
+    AaveV3Contract,
+    AaveV3DebtPosition,
+    AaveV3Market,
+    AaveV3User,
 )
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.operations import backup_sqlite_database
@@ -225,16 +225,16 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
 
     with db_session() as session:
         market = session.scalar(
-            select(AaveV3MarketTable).where(
-                AaveV3MarketTable.chain_id == chain_id,
-                AaveV3MarketTable.name == market_name,
+            select(AaveV3Market).where(
+                AaveV3Market.chain_id == chain_id,
+                AaveV3Market.name == market_name,
             )
         )
 
         if market is not None:
             market.active = True
         else:
-            market = AaveV3MarketTable(
+            market = AaveV3Market(
                 chain_id=chain_id,
                 name=market_name,
                 active=True,
@@ -245,7 +245,7 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
             session.add(market)
             session.flush()
             session.add(
-                AaveV3ContractsTable(
+                AaveV3Contract(
                     market_id=market.id,
                     name="POOL_ADDRESS_PROVIDER",
                     address=EthereumMainnetAaveV3.pool_address_provider,
@@ -271,10 +271,10 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
 
             if (
                 gho_entry := session.scalar(
-                    select(AaveGhoTokenTable).where(AaveGhoTokenTable.token_id == gho_token.id)
+                    select(AaveGhoToken).where(AaveGhoToken.token_id == gho_token.id)
                 )
             ) is None:
-                gho_entry = AaveGhoTokenTable(token_id=gho_token.id)
+                gho_entry = AaveGhoToken(token_id=gho_token.id)
                 session.add(gho_entry)
 
         session.commit()
@@ -302,9 +302,9 @@ def deactivate_mainnet_aave_v3(
 
     with db_session() as session:
         market = session.scalar(
-            select(AaveV3MarketTable).where(
-                AaveV3MarketTable.chain_id == chain_id,
-                AaveV3MarketTable.name == market_name,
+            select(AaveV3Market).where(
+                AaveV3Market.chain_id == chain_id,
+                AaveV3Market.name == market_name,
             )
         )
 
@@ -414,9 +414,9 @@ def aave_update(
     with db_session() as session, logging_redirect_tqdm(loggers=[logger]):  # noqa: PLR1702
         active_chains = set(
             session.scalars(
-                select(AaveV3MarketTable.chain_id).where(
-                    AaveV3MarketTable.active,
-                    AaveV3MarketTable.name.contains("aave"),
+                select(AaveV3Market.chain_id).where(
+                    AaveV3Market.active,
+                    AaveV3Market.name.contains("aave"),
                 )
             ).all()
         )
@@ -429,10 +429,10 @@ def aave_update(
             w3 = get_web3_from_config(chain_id=chain_id)
 
             active_markets = session.scalars(
-                select(AaveV3MarketTable).where(
-                    AaveV3MarketTable.active,
-                    AaveV3MarketTable.chain_id == chain_id,
-                    AaveV3MarketTable.name.contains("aave"),
+                select(AaveV3Market).where(
+                    AaveV3Market.active,
+                    AaveV3Market.chain_id == chain_id,
+                    AaveV3Market.name.contains("aave"),
                 )
             ).all()
 
@@ -485,7 +485,7 @@ def aave_update(
 
             block_pbar.n = working_start_block - initial_start_block
 
-            markets_to_update: set[AaveV3MarketTable] = set()
+            markets_to_update: set[AaveV3Market] = set()
 
             while True:
                 # Cap the working end block at the lowest of:
@@ -604,7 +604,7 @@ def aave_update(
 def _process_asset_initialization_event(
     w3: Web3,
     event: LogReceipt,
-    market: AaveV3MarketTable,
+    market: AaveV3Market,
     session: Session,
 ) -> None:
     """
@@ -700,7 +700,7 @@ def _process_asset_initialization_event(
         return_types=["uint256"],
     )
 
-    new_asset = AaveV3AssetsTable(
+    new_asset = AaveV3Asset(
         market_id=market.id,
         underlying_asset_id=erc20_token_in_db.id,
         a_token_id=a_token.id,
@@ -809,7 +809,7 @@ def _process_discount_rate_strategy_updated_event(
 
 def _get_or_init_stk_aave_balance(
     *,
-    user: AaveV3UsersTable,
+    user: AaveV3User,
     discount_token: ChecksumAddress | None,
     block_number: int,
     w3: Web3,
@@ -1004,7 +1004,7 @@ def _process_stk_aave_transfer_event(
 def _process_reserve_data_update_event(
     *,
     event: LogReceipt,
-    market: AaveV3MarketTable,
+    market: AaveV3Market,
 ) -> None:
     """
     Process a ReserveDataUpdated event to update asset rates and indices.
@@ -1134,9 +1134,9 @@ def _process_scaled_token_upgrade_event(
             for user in (
                 tx_context.session
                 .execute(
-                    select(AaveV3UsersTable).where(
-                        AaveV3UsersTable.market_id == tx_context.market.id,
-                        AaveV3UsersTable.gho_discount != 0,
+                    select(AaveV3User).where(
+                        AaveV3User.market_id == tx_context.market.id,
+                        AaveV3User.gho_discount != 0,
                     )
                 )
                 .scalars()
@@ -1155,7 +1155,7 @@ def _process_scaled_token_upgrade_event(
         raise ValueError(msg)
 
 
-def _get_gho_vtoken_revision(market: AaveV3MarketTable) -> int | None:
+def _get_gho_vtoken_revision(market: AaveV3Market) -> int | None:
     """Get the GHO vToken revision from market assets."""
     for asset in market.assets:
         if asset.v_token and asset.v_token.address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
@@ -1163,7 +1163,7 @@ def _get_gho_vtoken_revision(market: AaveV3MarketTable) -> int | None:
     return None
 
 
-def _is_discount_supported(market: AaveV3MarketTable) -> bool:
+def _is_discount_supported(market: AaveV3Market) -> bool:
     """Check if GHO discount mechanism is supported (revision 2 or 3)."""
     revision = _get_gho_vtoken_revision(market)
     return revision is not None and revision < 4  # noqa: PLR2004
@@ -1174,7 +1174,7 @@ def _get_or_create_user(
     tx_context: TransactionContext,
     user_address: ChecksumAddress,
     block_number: int,
-) -> AaveV3UsersTable:
+) -> AaveV3User:
     """
     Get existing user or create new one with default e_mode.
 
@@ -1184,9 +1184,9 @@ def _get_or_create_user(
     """
 
     user = tx_context.session.scalar(
-        select(AaveV3UsersTable).where(
-            AaveV3UsersTable.address == user_address,
-            AaveV3UsersTable.market_id == tx_context.market.id,
+        select(AaveV3User).where(
+            AaveV3User.address == user_address,
+            AaveV3User.market_id == tx_context.market.id,
         )
     )
 
@@ -1244,7 +1244,7 @@ def _get_or_create_user(
                 e_mode=0,
             )
 
-        user = AaveV3UsersTable(
+        user = AaveV3User(
             market_id=tx_context.market.id,
             address=user_address,
             e_mode=0,
@@ -1280,10 +1280,10 @@ def _get_or_create_erc20_token(
     return token
 
 
-def _get_or_create_position[T: AaveV3CollateralPositionsTable | AaveV3DebtPositionsTable](
+def _get_or_create_position[T: AaveV3CollateralPosition | AaveV3DebtPosition](
     *,
     session: Session,
-    user: AaveV3UsersTable,
+    user: AaveV3User,
     asset_id: int,
     position_table: type[T],
     tx_context: TransactionContext | None = None,
@@ -1331,10 +1331,10 @@ def _get_or_create_position[T: AaveV3CollateralPositionsTable | AaveV3DebtPositi
 
 def _get_or_create_collateral_position(
     session: Session,
-    user: AaveV3UsersTable,
+    user: AaveV3User,
     asset_id: int,
     tx_context: TransactionContext | None = None,
-) -> AaveV3CollateralPositionsTable:
+) -> AaveV3CollateralPosition:
     """
     Get existing collateral position or create new one with zero balance.
     """
@@ -1343,7 +1343,7 @@ def _get_or_create_collateral_position(
         session=session,
         user=user,
         asset_id=asset_id,
-        position_table=AaveV3CollateralPositionsTable,
+        position_table=AaveV3CollateralPosition,
         tx_context=tx_context,
         relationship_attr="collateral_positions",
     )
@@ -1351,10 +1351,10 @@ def _get_or_create_collateral_position(
 
 def _get_or_create_debt_position(
     session: Session,
-    user: AaveV3UsersTable,
+    user: AaveV3User,
     asset_id: int,
     tx_context: TransactionContext | None = None,
-) -> AaveV3DebtPositionsTable:
+) -> AaveV3DebtPosition:
     """
     Get existing debt position or create new one with zero balance.
     """
@@ -1363,7 +1363,7 @@ def _get_or_create_debt_position(
         session=session,
         user=user,
         asset_id=asset_id,
-        position_table=AaveV3DebtPositionsTable,
+        position_table=AaveV3DebtPosition,
         tx_context=tx_context,
         relationship_attr="debt_positions",
     )
@@ -1371,8 +1371,8 @@ def _get_or_create_debt_position(
 
 def _get_gho_asset(
     session: Session,
-    market: AaveV3MarketTable,
-) -> AaveGhoTokenTable:
+    market: AaveV3Market,
+) -> AaveGhoToken:
     """
     Get GHO token asset for a given market.
 
@@ -1380,9 +1380,7 @@ def _get_gho_asset(
     a single GHO token. Query by chain_id to retrieve the shared configuration.
     """
     gho_asset = session.scalar(
-        select(AaveGhoTokenTable)
-        .join(Erc20TokenTable)
-        .where(Erc20TokenTable.chain == market.chain_id)
+        select(AaveGhoToken).join(Erc20TokenTable).where(Erc20TokenTable.chain == market.chain_id)
     )
     if gho_asset is None:
         msg = (
@@ -1395,7 +1393,7 @@ def _get_gho_asset(
 
 def _fetch_discount_token_from_contract(
     w3: Web3,
-    gho_asset: AaveGhoTokenTable,
+    gho_asset: AaveGhoToken,
     block_number: int,
 ) -> ChecksumAddress | None:
     """Fetch the discount token address from the GHO vToken contract.
@@ -1427,9 +1425,9 @@ def _fetch_discount_token_from_contract(
 
 
 def _get_contract(
-    market: AaveV3MarketTable,
+    market: AaveV3Market,
     contract_name: str,
-) -> AaveV3ContractsTable:
+) -> AaveV3Contract:
     """
     Get contract by name for a given market.
     """
@@ -1441,10 +1439,10 @@ def _get_contract(
 
 
 def _get_asset_by_token_type(
-    market: AaveV3MarketTable,
+    market: AaveV3Market,
     token_address: ChecksumAddress,
     token_type: TokenType,
-) -> AaveV3AssetsTable | None:
+) -> AaveV3Asset | None:
     """
     Get AaveV3 asset by aToken (collateral) or vToken (debt) address.
     """
@@ -1500,8 +1498,8 @@ def _verify_gho_discount_amounts(
     *,
     w3: Web3,
     session: Session,
-    market: AaveV3MarketTable,
-    gho_asset: AaveGhoTokenTable,
+    market: AaveV3Market,
+    gho_asset: AaveGhoToken,
     block_number: int,
     show_progress: bool,
     user_addresses: set[ChecksumAddress] | None = None,
@@ -1526,9 +1524,9 @@ def _verify_gho_discount_amounts(
     if user_addresses is not None and len(user_addresses) == 0:
         return
 
-    stmt = select(AaveV3UsersTable).where(AaveV3UsersTable.market_id == market.id)
+    stmt = select(AaveV3User).where(AaveV3User.market_id == market.id)
     if user_addresses is not None:
-        stmt = stmt.where(AaveV3UsersTable.address.in_(user_addresses))
+        stmt = stmt.where(AaveV3User.address.in_(user_addresses))
 
     users_to_verify = session.scalars(stmt).all()
 
@@ -1565,8 +1563,8 @@ def _verify_stk_aave_balances(
     *,
     w3: Web3,
     session: Session,
-    market: AaveV3MarketTable,
-    gho_asset: AaveGhoTokenTable,
+    market: AaveV3Market,
+    gho_asset: AaveGhoToken,
     block_number: int,
     show_progress: bool,
     user_addresses: set[ChecksumAddress] | None = None,
@@ -1586,12 +1584,12 @@ def _verify_stk_aave_balances(
 
     discount_token = gho_asset.v_gho_discount_token
 
-    stmt = select(AaveV3UsersTable).where(
-        AaveV3UsersTable.market_id == market.id,
-        AaveV3UsersTable.stk_aave_balance.is_not(None),
+    stmt = select(AaveV3User).where(
+        AaveV3User.market_id == market.id,
+        AaveV3User.stk_aave_balance.is_not(None),
     )
     if user_addresses is not None:
-        stmt = stmt.where(AaveV3UsersTable.address.in_(user_addresses))
+        stmt = stmt.where(AaveV3User.address.in_(user_addresses))
 
     users_to_verify = session.scalars(stmt).all()
 
@@ -1624,7 +1622,7 @@ def _verify_stk_aave_balances(
 def _cleanup_zero_balance_positions(
     *,
     session: Session,
-    market: AaveV3MarketTable,
+    market: AaveV3Market,
     show_progress: bool,
 ) -> None:
     """
@@ -1636,11 +1634,11 @@ def _cleanup_zero_balance_positions(
 
     # Delete zero-balance collateral positions
     collateral_positions = session.scalars(
-        select(AaveV3CollateralPositionsTable)
-        .join(AaveV3UsersTable)
+        select(AaveV3CollateralPosition)
+        .join(AaveV3User)
         .where(
-            AaveV3UsersTable.market_id == market.id,
-            AaveV3CollateralPositionsTable.balance == 0,
+            AaveV3User.market_id == market.id,
+            AaveV3CollateralPosition.balance == 0,
         )
     ).all()
 
@@ -1654,11 +1652,11 @@ def _cleanup_zero_balance_positions(
 
     # Delete zero-balance debt positions
     debt_positions = session.scalars(
-        select(AaveV3DebtPositionsTable)
-        .join(AaveV3UsersTable)
+        select(AaveV3DebtPosition)
+        .join(AaveV3User)
         .where(
-            AaveV3UsersTable.market_id == market.id,
-            AaveV3DebtPositionsTable.balance == 0,
+            AaveV3User.market_id == market.id,
+            AaveV3DebtPosition.balance == 0,
         )
     ).all()
 
@@ -1674,7 +1672,7 @@ def _cleanup_zero_balance_positions(
 def _verify_all_positions(
     *,
     w3: Web3,
-    market: AaveV3MarketTable,
+    market: AaveV3Market,
     session: Session,
     block_number: int,
     show_progress: bool,
@@ -1703,7 +1701,7 @@ def _verify_all_positions(
         w3=w3,
         market=market,
         session=session,
-        position_table=AaveV3CollateralPositionsTable,
+        position_table=AaveV3CollateralPosition,
         block_number=block_number,
         show_progress=show_progress,
         user_addresses=None,
@@ -1714,7 +1712,7 @@ def _verify_all_positions(
         w3=w3,
         market=market,
         session=session,
-        position_table=AaveV3DebtPositionsTable,
+        position_table=AaveV3DebtPosition,
         block_number=block_number,
         show_progress=show_progress,
         user_addresses=None,
@@ -1749,9 +1747,9 @@ def _verify_all_positions(
 def _verify_scaled_token_positions(
     *,
     w3: Web3,
-    market: AaveV3MarketTable,
+    market: AaveV3Market,
     session: Session,
-    position_table: type[AaveV3CollateralPositionsTable | AaveV3DebtPositionsTable],
+    position_table: type[AaveV3CollateralPosition | AaveV3DebtPosition],
     block_number: int,
     show_progress: bool,
     user_addresses: set[ChecksumAddress] | None = None,
@@ -1765,7 +1763,7 @@ def _verify_scaled_token_positions(
 
     desc = (
         "Verifying collateral positions"
-        if position_table is AaveV3CollateralPositionsTable
+        if position_table is AaveV3CollateralPosition
         else "Verifying debt positions"
     )
 
@@ -1774,7 +1772,7 @@ def _verify_scaled_token_positions(
 
     # Log verification start
     if aave_debug_logger.is_enabled() and user_addresses is not None:
-        position_type = "collateral" if position_table is AaveV3CollateralPositionsTable else "debt"
+        position_type = "collateral" if position_table is AaveV3CollateralPosition else "debt"
         aave_debug_logger.log_verification_start(
             block_number=block_number,
             user_addresses=[addr.lower() for addr in user_addresses],
@@ -1782,9 +1780,9 @@ def _verify_scaled_token_positions(
         )
 
     # Query users for this market
-    stmt = select(AaveV3UsersTable).where(AaveV3UsersTable.market_id == market.id)
+    stmt = select(AaveV3User).where(AaveV3User.market_id == market.id)
     if user_addresses is not None:
-        stmt = stmt.where(AaveV3UsersTable.address.in_(user_addresses))
+        stmt = stmt.where(AaveV3User.address.in_(user_addresses))
 
     users_to_verify = session.scalars(stmt).all()
 
@@ -1801,11 +1799,11 @@ def _verify_scaled_token_positions(
         for position in session.scalars(
             select(position_table).where(position_table.user_id == user.id)
         ):
-            position = cast("AaveV3CollateralPositionsTable | AaveV3DebtPositionsTable", position)
+            position = cast("AaveV3CollateralPosition | AaveV3DebtPosition", position)
 
-            if position_table is AaveV3CollateralPositionsTable:
+            if position_table is AaveV3CollateralPosition:
                 token_address = get_checksum_address(position.asset.a_token.address)
-            elif position_table is AaveV3DebtPositionsTable:
+            elif position_table is AaveV3DebtPosition:
                 token_address = get_checksum_address(position.asset.v_token.address)
             else:
                 msg = f"Unknown position table type: {position_table}"
@@ -1824,7 +1822,7 @@ def _verify_scaled_token_positions(
 
             assert actual_scaled_balance == position.balance, (
                 f"User {user.address}: "
-                f"{'collateral' if position_table is AaveV3CollateralPositionsTable else 'debt'} "
+                f"{'collateral' if position_table is AaveV3CollateralPosition else 'debt'} "
                 f"balance ({position.balance}) does not match scaled token contract "
                 f"({actual_scaled_balance}) @ {token_address} at block {block_number}"
             )
@@ -1842,7 +1840,7 @@ def _verify_scaled_token_positions(
 
             assert actual_last_index == position.last_index, (
                 f"User {user.address}: "
-                f"{'collateral' if position_table is AaveV3CollateralPositionsTable else 'debt'} "
+                f"{'collateral' if position_table is AaveV3CollateralPosition else 'debt'} "
                 f"last_index ({position.last_index}) does not match contract "
                 f"({actual_last_index}) @ {token_address} at block {block_number}"
             )
@@ -1851,7 +1849,7 @@ def _verify_scaled_token_positions(
 def _process_scaled_token_operation(
     event: CollateralMintEvent | CollateralBurnEvent | DebtMintEvent | DebtBurnEvent,
     scaled_token_revision: int,
-    position: AaveV3CollateralPositionsTable | AaveV3DebtPositionsTable,
+    position: AaveV3CollateralPosition | AaveV3DebtPosition,
 ) -> UserOperation:
     """
     Determine the user operation for scaled token events and apply the appropriate delta to the
@@ -1872,7 +1870,7 @@ def _process_scaled_token_operation(
 
     match event:
         case CollateralMintEvent():
-            assert isinstance(position, AaveV3CollateralPositionsTable)
+            assert isinstance(position, AaveV3CollateralPosition)
             collateral_processor = TokenProcessorFactory.get_collateral_processor(
                 scaled_token_revision
             )
@@ -1886,7 +1884,7 @@ def _process_scaled_token_operation(
             return UserOperation.WITHDRAW if mint_result.is_repay else UserOperation.DEPOSIT
 
         case CollateralBurnEvent():
-            assert isinstance(position, AaveV3CollateralPositionsTable)
+            assert isinstance(position, AaveV3CollateralPosition)
             collateral_processor = TokenProcessorFactory.get_collateral_processor(
                 scaled_token_revision
             )
@@ -1904,7 +1902,7 @@ def _process_scaled_token_operation(
             return UserOperation.WITHDRAW
 
         case DebtMintEvent():
-            assert isinstance(position, AaveV3DebtPositionsTable)
+            assert isinstance(position, AaveV3DebtPosition)
             debt_processor = TokenProcessorFactory.get_debt_processor(scaled_token_revision)
             debt_mint_result: MintResult = debt_processor.process_mint_event(
                 event_data=event,
@@ -1917,7 +1915,7 @@ def _process_scaled_token_operation(
             return UserOperation.REPAY if debt_mint_result.is_repay else UserOperation.BORROW
 
         case DebtBurnEvent():
-            assert isinstance(position, AaveV3DebtPositionsTable)
+            assert isinstance(position, AaveV3DebtPosition)
             debt_processor = TokenProcessorFactory.get_debt_processor(scaled_token_revision)
             debt_burn_result: BurnResult = debt_processor.process_burn_event(
                 event_data=event,
@@ -1964,7 +1962,7 @@ def calculate_gho_discount_rate(
 
 def _refresh_discount_rate(
     *,
-    user: AaveV3UsersTable,
+    user: AaveV3User,
     has_discount_rate_strategy: bool,
     discount_token_balance: int,
     scaled_debt_balance: int,
@@ -2056,9 +2054,9 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 # transaction, use the OLD discount value that was in effect at the
                 # start of the transaction (before any updates in this tx)
                 user = tx_context.session.scalar(
-                    select(AaveV3UsersTable).where(
-                        AaveV3UsersTable.address == user_address,
-                        AaveV3UsersTable.market_id == tx_context.market.id,
+                    select(AaveV3User).where(
+                        AaveV3User.address == user_address,
+                        AaveV3User.market_id == tx_context.market.id,
                     )
                 )
                 if user is not None:
@@ -3418,9 +3416,9 @@ def _process_debt_transfer(
 
 
 def _get_scaled_token_asset_by_address(
-    market: AaveV3MarketTable,
+    market: AaveV3Market,
     token_address: ChecksumAddress,
-) -> tuple[AaveV3AssetsTable | None, AaveV3AssetsTable | None]:
+) -> tuple[AaveV3Asset | None, AaveV3Asset | None]:
     """
     Get collateral and debt assets by token address.
     """
@@ -3454,8 +3452,8 @@ def _get_all_scaled_token_addresses(
         session.scalars(
             select(Erc20TokenTable.address)
             .join(
-                AaveV3AssetsTable,
-                AaveV3AssetsTable.a_token_id == Erc20TokenTable.id,
+                AaveV3Asset,
+                AaveV3Asset.a_token_id == Erc20TokenTable.id,
             )
             .where(Erc20TokenTable.chain == chain_id)
         ).all()
@@ -3465,8 +3463,8 @@ def _get_all_scaled_token_addresses(
         session.scalars(
             select(Erc20TokenTable.address)
             .join(
-                AaveV3AssetsTable,
-                AaveV3AssetsTable.v_token_id == Erc20TokenTable.id,
+                AaveV3Asset,
+                AaveV3Asset.v_token_id == Erc20TokenTable.id,
             )
             .where(Erc20TokenTable.chain == chain_id)
         ).all()
@@ -3486,8 +3484,8 @@ def _get_debt_token_addresses(
         session.scalars(
             select(Erc20TokenTable.address)
             .join(
-                AaveV3AssetsTable,
-                AaveV3AssetsTable.v_token_id == Erc20TokenTable.id,
+                AaveV3Asset,
+                AaveV3Asset.v_token_id == Erc20TokenTable.id,
             )
             .where(Erc20TokenTable.chain == chain_id)
         ).all()
@@ -3497,7 +3495,7 @@ def _get_debt_token_addresses(
 def _update_contract_revision(
     *,
     w3: Web3,
-    market: AaveV3MarketTable,
+    market: AaveV3Market,
     contract_name: str,
     new_address: ChecksumAddress,
     revision_function_prototype: str,
@@ -3525,7 +3523,7 @@ def _process_proxy_creation_event(
     *,
     w3: Web3,
     session: Session,
-    market: AaveV3MarketTable,
+    market: AaveV3Market,
     event: LogReceipt,
     proxy_name: str,
     proxy_id: bytes,
@@ -3545,9 +3543,7 @@ def _process_proxy_creation_event(
     implementation_address = _decode_address(event["topics"][3])
 
     if (
-        session.scalar(
-            select(AaveV3ContractsTable).where(AaveV3ContractsTable.address == proxy_address)
-        )
+        session.scalar(select(AaveV3Contract).where(AaveV3Contract.address == proxy_address))
         is not None
     ):
         return
@@ -3563,7 +3559,7 @@ def _process_proxy_creation_event(
     )
 
     market.contracts.append(
-        AaveV3ContractsTable(
+        AaveV3Contract(
             market_id=market.id,
             name=proxy_name,
             address=proxy_address,
@@ -3575,7 +3571,7 @@ def _process_proxy_creation_event(
 def _process_umbrella_creation_event(
     *,
     session: Session,
-    market: AaveV3MarketTable,
+    market: AaveV3Market,
     event: LogReceipt,
     proxy_name: str,
     proxy_id: bytes,
@@ -3598,15 +3594,13 @@ def _process_umbrella_creation_event(
     new_address = _decode_address(event["topics"][3])
 
     if (
-        session.scalar(
-            select(AaveV3ContractsTable).where(AaveV3ContractsTable.address == new_address)
-        )
+        session.scalar(select(AaveV3Contract).where(AaveV3Contract.address == new_address))
         is not None
     ):
         return
 
     market.contracts.append(
-        AaveV3ContractsTable(
+        AaveV3Contract(
             market_id=market.id,
             name=proxy_name,
             address=new_address,
@@ -3813,10 +3807,10 @@ def _fetch_discount_config_events(
 def _build_transaction_contexts(
     *,
     events: list[LogReceipt],
-    market: AaveV3MarketTable,
+    market: AaveV3Market,
     session: Session,
     w3: Web3,
-    gho_asset: AaveGhoTokenTable,
+    gho_asset: AaveGhoToken,
     known_scaled_token_addresses: set[ChecksumAddress],
     known_debt_token_addresses: set[ChecksumAddress],
     pool_address: ChecksumAddress,
@@ -3970,7 +3964,7 @@ def update_aave_market(
     w3: Web3,
     start_block: int,
     end_block: int,
-    market: AaveV3MarketTable,
+    market: AaveV3Market,
     session: Session,
     verify: bool,
     show_progress: bool,
@@ -4050,7 +4044,7 @@ def update_aave_market(
 
             if old_pool_data_provider_address == ZERO_ADDRESS:
                 session.add(
-                    AaveV3ContractsTable(
+                    AaveV3Contract(
                         market_id=market.id,
                         name="POOL_DATA_PROVIDER",
                         address=new_pool_data_provider_address,
@@ -4058,8 +4052,8 @@ def update_aave_market(
                 )
             else:
                 pool_data_provider = session.scalar(
-                    select(AaveV3ContractsTable).where(
-                        AaveV3ContractsTable.address == old_pool_data_provider_address
+                    select(AaveV3Contract).where(
+                        AaveV3Contract.address == old_pool_data_provider_address
                     )
                 )
                 assert pool_data_provider is not None
@@ -4240,7 +4234,7 @@ def update_aave_market(
                     w3=w3,
                     market=market,
                     session=session,
-                    position_table=AaveV3CollateralPositionsTable,
+                    position_table=AaveV3CollateralPosition,
                     block_number=last_verified_block,
                     show_progress=show_progress,
                     user_addresses=users_to_verify,
@@ -4249,7 +4243,7 @@ def update_aave_market(
                     w3=w3,
                     market=market,
                     session=session,
-                    position_table=AaveV3DebtPositionsTable,
+                    position_table=AaveV3DebtPosition,
                     block_number=last_verified_block,
                     show_progress=show_progress,
                     user_addresses=users_to_verify,
@@ -4292,7 +4286,7 @@ def update_aave_market(
                 w3=w3,
                 market=market,
                 session=session,
-                position_table=AaveV3CollateralPositionsTable,
+                position_table=AaveV3CollateralPosition,
                 block_number=last_verified_block,
                 show_progress=show_progress,
                 user_addresses=users_to_verify,
@@ -4301,7 +4295,7 @@ def update_aave_market(
                 w3=w3,
                 market=market,
                 session=session,
-                position_table=AaveV3DebtPositionsTable,
+                position_table=AaveV3DebtPosition,
                 block_number=last_verified_block,
                 show_progress=show_progress,
                 user_addresses=users_to_verify,

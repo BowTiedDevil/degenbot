@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from .erc20 import Erc20TokenTable
 
 
-class AaveV3MarketTable(Base):
+class AaveV3Market(Base):
     __tablename__ = "aave_v3_markets"
 
     id: Mapped[PrimaryKeyInt]
@@ -20,18 +20,18 @@ class AaveV3MarketTable(Base):
     last_update_block: Mapped[int | None]
 
     # Relationships
-    contracts: Mapped[list["AaveV3ContractsTable"]] = relationship(
-        "AaveV3ContractsTable",
+    contracts: Mapped[list["AaveV3Contract"]] = relationship(
+        "AaveV3Contract",
         back_populates="market",
         cascade="all",
     )
-    users: Mapped[list["AaveV3UsersTable"]] = relationship(
-        "AaveV3UsersTable",
+    users: Mapped[list["AaveV3User"]] = relationship(
+        "AaveV3User",
         back_populates="market",
         cascade="all",
     )
-    assets: Mapped[list["AaveV3AssetsTable"]] = relationship(
-        "AaveV3AssetsTable",
+    assets: Mapped[list["AaveV3Asset"]] = relationship(
+        "AaveV3Asset",
         back_populates="market",
         cascade="all",
     )
@@ -48,11 +48,11 @@ class AaveV3MarketTable(Base):
 
 ForeignKeyAaveMarketId = Annotated[
     int,
-    mapped_column(ForeignKey(AaveV3MarketTable.id), index=True),
+    mapped_column(ForeignKey(AaveV3Market.id), index=True),
 ]
 
 
-class AaveV3ContractsTable(Base):
+class AaveV3Contract(Base):
     __tablename__ = "aave_v3_contracts"
 
     id: Mapped[PrimaryKeyInt]
@@ -63,13 +63,13 @@ class AaveV3ContractsTable(Base):
     revision: Mapped[int | None]
 
     # Relationships
-    market: Mapped["AaveV3MarketTable"] = relationship(
-        "AaveV3MarketTable",
+    market: Mapped["AaveV3Market"] = relationship(
+        "AaveV3Market",
         back_populates="contracts",
     )
 
 
-class AaveV3UsersTable(Base):
+class AaveV3User(Base):
     __tablename__ = "aave_v3_users"
 
     id: Mapped[PrimaryKeyInt]
@@ -81,17 +81,17 @@ class AaveV3UsersTable(Base):
     stk_aave_balance: Mapped[BigInteger | None]
 
     # Relationships
-    market: Mapped["AaveV3MarketTable"] = relationship(
-        "AaveV3MarketTable",
+    market: Mapped["AaveV3Market"] = relationship(
+        "AaveV3Market",
         back_populates="users",
     )
-    collateral_positions: Mapped[list["AaveV3CollateralPositionsTable"]] = relationship(
-        "AaveV3CollateralPositionsTable",
+    collateral_positions: Mapped[list["AaveV3CollateralPosition"]] = relationship(
+        "AaveV3CollateralPosition",
         back_populates="user",
         cascade="all",
     )
-    debt_positions: Mapped[list["AaveV3DebtPositionsTable"]] = relationship(
-        "AaveV3DebtPositionsTable",
+    debt_positions: Mapped[list["AaveV3DebtPosition"]] = relationship(
+        "AaveV3DebtPosition",
         back_populates="user",
         cascade="all",
     )
@@ -108,19 +108,19 @@ class AaveV3UsersTable(Base):
 
 ForeignKeyAaveUserId = Annotated[
     int,
-    mapped_column(ForeignKey(AaveV3UsersTable.id), index=True),
+    mapped_column(ForeignKey(AaveV3User.id), index=True),
 ]
 
 
 Index(
     "ix_aave_users_address_market",
-    AaveV3UsersTable.address,
-    AaveV3UsersTable.market_id,
+    AaveV3User.address,
+    AaveV3User.market_id,
     unique=True,
 )
 
 
-class AaveV3AssetsTable(Base):
+class AaveV3Asset(Base):
     __tablename__ = "aave_v3_assets"
 
     id: Mapped[PrimaryKeyInt]
@@ -138,29 +138,29 @@ class AaveV3AssetsTable(Base):
     borrow_rate: Mapped[BigInteger]
 
     # Relationships
-    market: Mapped["AaveV3MarketTable"] = relationship(
-        "AaveV3MarketTable",
+    market: Mapped["AaveV3Market"] = relationship(
+        "AaveV3Market",
         back_populates="assets",
     )
     underlying_token: Mapped["Erc20TokenTable"] = relationship(
         "Erc20TokenTable",
-        foreign_keys="AaveV3AssetsTable.underlying_asset_id",
+        foreign_keys="AaveV3Asset.underlying_asset_id",
     )
     a_token: Mapped["Erc20TokenTable"] = relationship(
         "Erc20TokenTable",
-        foreign_keys="AaveV3AssetsTable.a_token_id",
+        foreign_keys="AaveV3Asset.a_token_id",
     )
     v_token: Mapped["Erc20TokenTable"] = relationship(
         "Erc20TokenTable",
-        foreign_keys="AaveV3AssetsTable.v_token_id",
+        foreign_keys="AaveV3Asset.v_token_id",
     )
-    collateral_positions: Mapped[list["AaveV3CollateralPositionsTable"]] = relationship(
-        "AaveV3CollateralPositionsTable",
+    collateral_positions: Mapped[list["AaveV3CollateralPosition"]] = relationship(
+        "AaveV3CollateralPosition",
         back_populates="asset",
         cascade="all",
     )
-    debt_positions: Mapped[list["AaveV3DebtPositionsTable"]] = relationship(
-        "AaveV3DebtPositionsTable",
+    debt_positions: Mapped[list["AaveV3DebtPosition"]] = relationship(
+        "AaveV3DebtPosition",
         back_populates="asset",
         cascade="all",
     )
@@ -178,18 +178,18 @@ class AaveV3AssetsTable(Base):
 
 Index(
     "ix_aave_assets_underlying_asset_market",
-    AaveV3AssetsTable.underlying_asset_id,
-    AaveV3AssetsTable.market_id,
+    AaveV3Asset.underlying_asset_id,
+    AaveV3Asset.market_id,
     unique=True,
 )
 
 ForeignKeyAaveAssetId = Annotated[
     int,
-    mapped_column(ForeignKey(AaveV3AssetsTable.id), index=True),
+    mapped_column(ForeignKey(AaveV3Asset.id), index=True),
 ]
 
 
-class AaveV3CollateralPositionsTable(Base):
+class AaveV3CollateralPosition(Base):
     __tablename__ = "aave_v3_collateral_positions"
 
     id: Mapped[PrimaryKeyInt]
@@ -200,14 +200,14 @@ class AaveV3CollateralPositionsTable(Base):
     last_index: Mapped[BigInteger | None]
 
     # Relationships
-    user: Mapped["AaveV3UsersTable"] = relationship(
-        "AaveV3UsersTable",
-        foreign_keys="AaveV3CollateralPositionsTable.user_id",
+    user: Mapped["AaveV3User"] = relationship(
+        "AaveV3User",
+        foreign_keys="AaveV3CollateralPosition.user_id",
         back_populates="collateral_positions",
     )
-    asset: Mapped["AaveV3AssetsTable"] = relationship(
-        "AaveV3AssetsTable",
-        foreign_keys="AaveV3CollateralPositionsTable.asset_id",
+    asset: Mapped["AaveV3Asset"] = relationship(
+        "AaveV3Asset",
+        foreign_keys="AaveV3CollateralPosition.asset_id",
         back_populates="collateral_positions",
     )
 
@@ -223,13 +223,13 @@ class AaveV3CollateralPositionsTable(Base):
 
 Index(
     "ix_aave_collateral_position_user_asset",
-    AaveV3CollateralPositionsTable.user_id,
-    AaveV3CollateralPositionsTable.asset_id,
+    AaveV3CollateralPosition.user_id,
+    AaveV3CollateralPosition.asset_id,
     unique=True,
 )
 
 
-class AaveV3DebtPositionsTable(Base):
+class AaveV3DebtPosition(Base):
     __tablename__ = "aave_v3_debt_positions"
 
     id: Mapped[PrimaryKeyInt]
@@ -240,14 +240,14 @@ class AaveV3DebtPositionsTable(Base):
     last_index: Mapped[BigInteger | None]
 
     # Relationships
-    user: Mapped["AaveV3UsersTable"] = relationship(
-        "AaveV3UsersTable",
-        foreign_keys="AaveV3DebtPositionsTable.user_id",
+    user: Mapped["AaveV3User"] = relationship(
+        "AaveV3User",
+        foreign_keys="AaveV3DebtPosition.user_id",
         back_populates="debt_positions",
     )
-    asset: Mapped["AaveV3AssetsTable"] = relationship(
-        "AaveV3AssetsTable",
-        foreign_keys="AaveV3DebtPositionsTable.asset_id",
+    asset: Mapped["AaveV3Asset"] = relationship(
+        "AaveV3Asset",
+        foreign_keys="AaveV3DebtPosition.asset_id",
         back_populates="debt_positions",
     )
 
@@ -263,13 +263,13 @@ class AaveV3DebtPositionsTable(Base):
 
 Index(
     "ix_aave_debt_position_user_asset",
-    AaveV3DebtPositionsTable.user_id,
-    AaveV3DebtPositionsTable.asset_id,
+    AaveV3DebtPosition.user_id,
+    AaveV3DebtPosition.asset_id,
     unique=True,
 )
 
 
-class AaveGhoTokenTable(Base):
+class AaveGhoToken(Base):
     """
     GHO token attributes for Aave V3 markets.
 
@@ -294,5 +294,5 @@ class AaveGhoTokenTable(Base):
     # Relationships
     token: Mapped["Erc20TokenTable"] = relationship(
         "Erc20TokenTable",
-        foreign_keys="AaveGhoTokenTable.token_id",
+        foreign_keys="AaveGhoToken.token_id",
     )

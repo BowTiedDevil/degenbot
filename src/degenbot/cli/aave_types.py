@@ -12,10 +12,10 @@ from web3.types import LogReceipt
 from degenbot.aave.events import ERC20Event
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.aave import (
-    AaveGhoTokenTable,
-    AaveV3CollateralPositionsTable,
-    AaveV3DebtPositionsTable,
-    AaveV3MarketTable,
+    AaveGhoToken,
+    AaveV3CollateralPosition,
+    AaveV3DebtPosition,
+    AaveV3Market,
 )
 
 
@@ -36,9 +36,9 @@ class TransactionContext:
     tx_hash: HexBytes
     block_number: int
     events: list[LogReceipt]
-    market: AaveV3MarketTable
+    market: AaveV3Market
     session: Session
-    gho_asset: AaveGhoTokenTable
+    gho_asset: AaveGhoToken
 
     # Snapshot of user discount percents at the start of transaction processing
     # Key: user address, Value: discount percent at transaction start
@@ -69,7 +69,7 @@ class TransactionContext:
     # Track modified positions to ensure we use the same object across operations.
     # Key: (user_address, asset_id), Value: position object
     modified_positions: dict[
-        tuple[ChecksumAddress, int], AaveV3CollateralPositionsTable | AaveV3DebtPositionsTable
+        tuple[ChecksumAddress, int], AaveV3CollateralPosition | AaveV3DebtPosition
     ] = field(default_factory=dict)
 
     def get_effective_discount_at_log_index(
