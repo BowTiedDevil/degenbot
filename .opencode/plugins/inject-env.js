@@ -4,6 +4,7 @@ export const InjectEnvPlugin = async () => {
       output.env.DEGENBOT_DEBUG = "true"
       output.env.DEGENBOT_PROGRESS_BAR = "false"
       output.env.DEGENBOT_ONE_CHUNK = "true"
+      output.env.DEGENBOT_COVERAGE = "true"
     },
   }
 }

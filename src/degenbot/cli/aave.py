@@ -8,6 +8,7 @@ import click
 import eth_abi.abi
 import eth_abi.exceptions
 import tqdm
+from coverage import Coverage
 from eth_typing import ChainId, ChecksumAddress
 from hexbytes import HexBytes
 from sqlalchemy import select
@@ -380,6 +381,23 @@ def deactivate_mainnet_aave_v3(
     default=None,
     help="Path to write structured JSON debug output for machine analysis.",
 )
+@click.option(
+    "--coverage",
+    "enable_coverage",
+    is_flag=True,
+    default=True,
+    show_default=True,
+    help="Enable code coverage tracking for this run.",
+    envvar="DEGENBOT_COVERAGE",
+    show_envvar=True,
+)
+@click.option(
+    "--coverage-output",
+    "coverage_output",
+    default="htmlcov/aave-update",
+    show_default=True,
+    help="Directory for coverage HTML report.",
+)
 def aave_update(
     *,
     chunk_size: int,
@@ -388,6 +406,8 @@ def aave_update(
     stop_after_one_chunk: bool,
     show_progress: bool,
     debug_output: str | None,
+    enable_coverage: bool,
+    coverage_output: str,
 ) -> None:
     """
     Update positions for active Aave markets.
@@ -400,205 +420,217 @@ def aave_update(
         to_block: Target block identifier (e.g., 'latest', 'latest:-64', 'finalized:128').
         verify: If True, verify position balances at every block boundary.
         stop_after_one_chunk: If True, stop after processing the first chunk.
-        no_progress: If True, disable progress bars.
+        show_progress: Toggle display of progress bars.
         debug_output: Path to write structured JSON debug output.
     """
 
-    # Configure debug logger if path provided
-    if debug_output:
-        aave_debug_logger.configure(
-            output_path=Path(debug_output),
-        )
-        logger.info(f"Debug output enabled: {debug_output}")
+    cov: Coverage | None = None
+    if enable_coverage:
+        cov = Coverage(include=["**/cli/aave*.py"], config_file=False)
+        cov.start()
+        logger.info("Code coverage tracking enabled")
 
-    with db_session() as session, logging_redirect_tqdm(loggers=[logger]):  # noqa: PLR1702
-        active_chains = set(
-            session.scalars(
-                select(AaveV3Market.chain_id).where(
-                    AaveV3Market.active,
-                    AaveV3Market.name.contains("aave"),
-                )
-            ).all()
-        )
+    try:  # noqa:PLR1702
+        if debug_output:
+            aave_debug_logger.configure(
+                output_path=Path(debug_output),
+            )
+            logger.info(f"Debug output enabled: {debug_output}")
 
-        if not active_chains:
-            msg = "No active Aave markets found."
-            raise DegenbotValueError(msg)
-
-        for chain_id in active_chains:
-            w3 = get_web3_from_config(chain_id=chain_id)
-
-            active_markets = session.scalars(
-                select(AaveV3Market).where(
-                    AaveV3Market.active,
-                    AaveV3Market.chain_id == chain_id,
-                    AaveV3Market.name.contains("aave"),
-                )
-            ).all()
-
-            if not active_markets:
-                click.echo(f"No active Aave markets on chain {chain_id}.")
-                continue
-
-            initial_start_block = working_start_block = min(
-                0 if market.last_update_block is None else market.last_update_block + 1
-                for market in active_markets
+        with db_session() as session, logging_redirect_tqdm(loggers=[logger]):  # noqa: PLR1702
+            active_chains = set(
+                session.scalars(
+                    select(AaveV3Market.chain_id).where(
+                        AaveV3Market.active,
+                        AaveV3Market.name.contains("aave"),
+                    )
+                ).all()
             )
 
-            if to_block.isdigit():
-                last_block = int(to_block)
-            else:
-                if ":" in to_block:
-                    parts = to_block.split(":", 1)
-                    block_tag, offset = cast("tuple[BlockParams,str]", parts)
-                    block_offset = int(offset.strip())
-                else:
-                    block_tag = cast("BlockParams", to_block)
-                    block_offset = 0
+            if not active_chains:
+                msg = "No active Aave markets found."
+                raise DegenbotValueError(msg)
 
-                if block_tag not in {"latest", "earliest", "pending", "safe", "finalized"}:
-                    msg = f"Invalid block tag: {block_tag}"
+            for chain_id in active_chains:
+                w3 = get_web3_from_config(chain_id=chain_id)
+
+                active_markets = session.scalars(
+                    select(AaveV3Market).where(
+                        AaveV3Market.active,
+                        AaveV3Market.chain_id == chain_id,
+                        AaveV3Market.name.contains("aave"),
+                    )
+                ).all()
+
+                if not active_markets:
+                    click.echo(f"No active Aave markets on chain {chain_id}.")
+                    continue
+
+                initial_start_block = working_start_block = min(
+                    0 if market.last_update_block is None else market.last_update_block + 1
+                    for market in active_markets
+                )
+
+                if to_block.isdigit():
+                    last_block = int(to_block)
+                else:
+                    if ":" in to_block:
+                        parts = to_block.split(":", 1)
+                        block_tag, offset = cast("tuple[BlockParams,str]", parts)
+                        block_offset = int(offset.strip())
+                    else:
+                        block_tag = cast("BlockParams", to_block)
+                        block_offset = 0
+
+                    if block_tag not in {"latest", "earliest", "pending", "safe", "finalized"}:
+                        msg = f"Invalid block tag: {block_tag}"
+                        raise ValueError(msg)
+
+                    last_block = (
+                        get_number_for_block_identifier(identifier=block_tag, w3=w3) + block_offset
+                    )
+
+                current_block_number = get_number_for_block_identifier(identifier="latest", w3=w3)
+                if last_block > current_block_number:
+                    msg = f"{to_block} is ahead of the current chain tip."
                     raise ValueError(msg)
 
-                last_block = (
-                    get_number_for_block_identifier(identifier=block_tag, w3=w3) + block_offset
+                if initial_start_block > last_block:
+                    msg = (
+                        f"Chain {chain_id}: --to-block must be greater than the "
+                        f"market's last update block ({initial_start_block - 1})."
+                    )
+                    raise ValueError(msg)
+
+                block_pbar = tqdm.tqdm(
+                    total=last_block - initial_start_block + 1,
+                    bar_format="{desc} {percentage:3.1f}% |{bar}|",
+                    leave=False,
+                    disable=not show_progress,
                 )
 
-            current_block_number = get_number_for_block_identifier(identifier="latest", w3=w3)
-            if last_block > current_block_number:
-                msg = f"{to_block} is ahead of the current chain tip."
-                raise ValueError(msg)
+                block_pbar.n = working_start_block - initial_start_block
 
-            if initial_start_block > last_block:
-                msg = (
-                    f"Chain {chain_id}: --to-block must be greater than the "
-                    f"market's last update block ({initial_start_block - 1})."
-                )
-                raise ValueError(msg)
+                markets_to_update: set[AaveV3Market] = set()
 
-            block_pbar = tqdm.tqdm(
-                total=last_block - initial_start_block + 1,
-                bar_format="{desc} {percentage:3.1f}% |{bar}|",
-                leave=False,
-                disable=not show_progress,
-            )
+                while True:
+                    # Cap the working end block at the lowest of:
+                    # - the safe block for the chain
+                    # - the end of the working chunk size
+                    # - all update blocks for active markets
+                    working_end_block = min(
+                        [last_block]
+                        + [working_start_block + chunk_size - 1]
+                        + [
+                            market.last_update_block
+                            for market in active_markets
+                            if market.last_update_block is not None
+                            if market.last_update_block > working_start_block
+                        ],
+                    )
+                    assert working_end_block >= working_start_block
 
-            block_pbar.n = working_start_block - initial_start_block
+                    block_pbar.set_description(
+                        f"Processing block range {working_start_block:,} -> {working_end_block:,}"
+                    )
+                    block_pbar.refresh()
 
-            markets_to_update: set[AaveV3Market] = set()
-
-            while True:
-                # Cap the working end block at the lowest of:
-                # - the safe block for the chain
-                # - the end of the working chunk size
-                # - all update blocks for active markets
-                working_end_block = min(
-                    [last_block]
-                    + [working_start_block + chunk_size - 1]
-                    + [
-                        market.last_update_block
+                    markets_to_update = {
+                        market
                         for market in active_markets
-                        if market.last_update_block is not None
-                        if market.last_update_block > working_start_block
-                    ],
-                )
-                assert working_end_block >= working_start_block
-
-                block_pbar.set_description(
-                    f"Processing block range {working_start_block:,} -> {working_end_block:,}"
-                )
-                block_pbar.refresh()
-
-                markets_to_update = {
-                    market
-                    for market in active_markets
-                    if (
-                        market.last_update_block is None
-                        or market.last_update_block + 1 == working_start_block
-                    )
-                }
-
-                for market in markets_to_update:
-                    # Configure debug logger for this market
-                    if aave_debug_logger.is_enabled():
-                        aave_debug_logger.configure(
-                            chain_id=ChainId(chain_id),
-                            market_id=market.id,
+                        if (
+                            market.last_update_block is None
+                            or market.last_update_block + 1 == working_start_block
                         )
+                    }
 
-                    try:
-                        update_aave_market(
-                            w3=w3,
-                            start_block=working_start_block,
-                            end_block=working_end_block,
-                            market=market,
-                            session=session,
-                            verify=verify,
-                            show_progress=show_progress,
-                        )
-                    except Exception as e:  # noqa: BLE001
-                        logger.exception("")
-
-                        # Log structured exception data for autonomous analysis
-                        if aave_debug_logger.is_enabled():
-                            extra_context = {
-                                "chain_id": chain_id,
-                                "market_id": market.id,
-                                "market_name": market.name,
-                                "start_block": working_start_block,
-                                "end_block": working_end_block,
-                            }
-                            aave_debug_logger.log_exception(
-                                exc=e,
-                                extra_context=extra_context,
-                            )
-                            aave_debug_logger.close()
-
-                        sys.exit(1)
-
-                # At this point, all markets have been updated and the invariant checks have
-                # passed, so stamp the update block and commit to the DB
-                for market in markets_to_update:
-                    market.last_update_block = working_end_block
-
-                # Perform full verification when the chunk spans a verification interval
-                full_verification_interval = 250_000
-                if (
-                    verify
-                    and working_end_block // full_verification_interval
-                    != working_start_block // full_verification_interval
-                ):
                     for market in markets_to_update:
-                        _verify_all_positions(
-                            w3=w3,
-                            market=market,
-                            session=session,
-                            block_number=working_end_block,
-                            show_progress=show_progress,
+                        # Configure debug logger for this market
+                        if aave_debug_logger.is_enabled():
+                            aave_debug_logger.configure(
+                                chain_id=ChainId(chain_id),
+                                market_id=market.id,
+                            )
+
+                        try:
+                            update_aave_market(
+                                w3=w3,
+                                start_block=working_start_block,
+                                end_block=working_end_block,
+                                market=market,
+                                session=session,
+                                verify=verify,
+                                show_progress=show_progress,
+                            )
+                        except Exception as e:  # noqa: BLE001
+                            logger.exception("")
+
+                            # Log structured exception data for autonomous analysis
+                            if aave_debug_logger.is_enabled():
+                                extra_context = {
+                                    "chain_id": chain_id,
+                                    "market_id": market.id,
+                                    "market_name": market.name,
+                                    "start_block": working_start_block,
+                                    "end_block": working_end_block,
+                                }
+                                aave_debug_logger.log_exception(
+                                    exc=e,
+                                    extra_context=extra_context,
+                                )
+                                aave_debug_logger.close()
+
+                            sys.exit(1)
+
+                    # At this point, all markets have been updated and the invariant checks have
+                    # passed, so stamp the update block and commit to the DB
+                    for market in markets_to_update:
+                        market.last_update_block = working_end_block
+
+                    # Perform full verification when the chunk spans a verification interval
+                    full_verification_interval = 250_000
+                    if (
+                        verify
+                        and working_end_block // full_verification_interval
+                        != working_start_block // full_verification_interval
+                    ):
+                        for market in markets_to_update:
+                            _verify_all_positions(
+                                w3=w3,
+                                market=market,
+                                session=session,
+                                block_number=working_end_block,
+                                show_progress=show_progress,
+                            )
+
+                        session.commit()
+                        backup_sqlite_database(
+                            settings.database.path,
+                            suffix=f"{working_end_block}",
+                            skip_confirmation=True,
                         )
+                        logger.info(f"Created database backup at block {working_end_block:,}")
 
-                    session.commit()
-                    backup_sqlite_database(
-                        settings.database.path,
-                        suffix=f"{working_end_block}",
-                        skip_confirmation=True,
+                    _cleanup_zero_balance_positions(
+                        session=session, market=market, show_progress=show_progress
                     )
-                    logger.info(f"Created database backup at block {working_end_block:,}")
 
-                _cleanup_zero_balance_positions(
-                    session=session, market=market, show_progress=show_progress
-                )
+                    markets_to_update.clear()
+                    session.commit()
 
-                markets_to_update.clear()
-                session.commit()
+                    if working_end_block == last_block or stop_after_one_chunk:
+                        break
+                    working_start_block = working_end_block + 1
 
-                if working_end_block == last_block or stop_after_one_chunk:
-                    break
-                working_start_block = working_end_block + 1
+                    block_pbar.n = working_end_block - initial_start_block
 
-                block_pbar.n = working_end_block - initial_start_block
+                block_pbar.close()
 
-            block_pbar.close()
+    finally:
+        if cov is not None:
+            cov.stop()
+            cov.html_report(directory=coverage_output)
+            logger.info(f"Coverage report saved to {coverage_output}")
 
 
 def _process_asset_initialization_event(
