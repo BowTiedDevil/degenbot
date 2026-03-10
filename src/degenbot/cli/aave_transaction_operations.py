@@ -181,6 +181,9 @@ class Operation:
     operation_id: int
     operation_type: OperationType
 
+    # Contract revisions at time of operation
+    pool_revision: int
+
     # Core events
     pool_event: LogReceipt | None
     scaled_token_events: list[ScaledTokenEvent]
@@ -570,6 +573,7 @@ class TransactionOperationsParser:
             scaled_events=scaled_events,
             assigned_indices=assigned_log_indices,
             starting_operation_id=len(operations),
+            pool_revision=pool_revision,
         )
         operations.extend(mint_to_treasury_ops)
         assigned_log_indices.update(
@@ -584,6 +588,7 @@ class TransactionOperationsParser:
             assigned_indices=assigned_log_indices,
             starting_operation_id=len(operations),
             all_events=events,
+            pool_revision=pool_revision,
         )
         operations.extend(interest_accrual_ops)
         assigned_log_indices.update(
@@ -600,6 +605,7 @@ class TransactionOperationsParser:
             assigned_indices=assigned_log_indices,
             starting_operation_id=len(operations),
             existing_operations=operations,
+            pool_revision=pool_revision,
         )
         operations.extend(transfer_ops)
 
@@ -986,6 +992,7 @@ class TransactionOperationsParser:
         return Operation(
             operation_id=operation_id,
             operation_type=OperationType.SUPPLY,
+            pool_revision=pool_revision,
             pool_event=supply_event,
             scaled_token_events=[collateral_mint],
             transfer_events=transfer_events,
@@ -1105,6 +1112,7 @@ class TransactionOperationsParser:
             return Operation(
                 operation_id=operation_id,
                 operation_type=OperationType.WITHDRAW,
+                pool_revision=pool_revision,
                 pool_event=withdraw_event,
                 scaled_token_events=[],
                 transfer_events=[],
@@ -1146,6 +1154,7 @@ class TransactionOperationsParser:
         return Operation(
             operation_id=operation_id,
             operation_type=OperationType.WITHDRAW,
+            pool_revision=pool_revision,
             pool_event=withdraw_event,
             scaled_token_events=interest_mints + collateral_burns,
             transfer_events=transfer_events,
@@ -1249,6 +1258,7 @@ class TransactionOperationsParser:
         return Operation(
             operation_id=operation_id,
             operation_type=op_type,
+            pool_revision=pool_revision,
             pool_event=borrow_event,
             scaled_token_events=[debt_mint],
             transfer_events=transfer_events,
@@ -1299,6 +1309,7 @@ class TransactionOperationsParser:
                 repay_log_index=repay_log_index,
                 scaled_events=scaled_events,
                 assigned_indices=assigned_indices,
+                pool_revision=pool_revision,
             )
 
         return self._create_standard_repay_operation(
@@ -1311,6 +1322,7 @@ class TransactionOperationsParser:
             repay_log_index=repay_log_index,
             scaled_events=scaled_events,
             assigned_indices=assigned_indices,
+            pool_revision=pool_revision,
         )
 
     def _create_standard_repay_operation(
@@ -1325,6 +1337,7 @@ class TransactionOperationsParser:
         repay_log_index: int,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
+        pool_revision: int,
     ) -> Operation:
         """
         Create standard REPAY or GHO_REPAY operation (debt burn).
@@ -1347,6 +1360,7 @@ class TransactionOperationsParser:
             return Operation(
                 operation_id=operation_id,
                 operation_type=OperationType.GHO_REPAY if is_gho else OperationType.REPAY,
+                pool_revision=pool_revision,
                 pool_event=repay_event,
                 scaled_token_events=[],
                 transfer_events=[],
@@ -1364,6 +1378,7 @@ class TransactionOperationsParser:
         return Operation(
             operation_id=operation_id,
             operation_type=OperationType.GHO_REPAY if is_gho else OperationType.REPAY,
+            pool_revision=pool_revision,
             pool_event=repay_event,
             scaled_token_events=scaled_token_events,
             transfer_events=transfer_events,
@@ -1381,6 +1396,7 @@ class TransactionOperationsParser:
         repay_log_index: int,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
+        pool_revision: int,
     ) -> Operation:
         """Create REPAY_WITH_ATOKENS operation (debt burn + collateral burn + balance transfer)."""
 
@@ -1426,6 +1442,7 @@ class TransactionOperationsParser:
         return Operation(
             operation_id=operation_id,
             operation_type=OperationType.REPAY_WITH_ATOKENS,
+            pool_revision=pool_revision,
             pool_event=repay_event,
             scaled_token_events=scaled_token_events,
             transfer_events=[],
@@ -1650,6 +1667,7 @@ class TransactionOperationsParser:
         return Operation(
             operation_id=operation_id,
             operation_type=op_type,
+            pool_revision=pool_revision,
             pool_event=liquidation_event,
             scaled_token_events=scaled_token_events,
             transfer_events=[],
@@ -1724,6 +1742,7 @@ class TransactionOperationsParser:
         return Operation(
             operation_id=operation_id,
             operation_type=operation_type,
+            pool_revision=pool_revision,
             pool_event=deficit_event,
             scaled_token_events=scaled_token_events,
             transfer_events=[],
@@ -1736,6 +1755,7 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         starting_operation_id: int,
         all_events: list[LogReceipt],
+        pool_revision: int,
     ) -> list[Operation]:
         """Create INTEREST_ACCRUAL operations for unassigned interest events.
 
@@ -1783,6 +1803,7 @@ class TransactionOperationsParser:
                     Operation(
                         operation_id=operation_id,
                         operation_type=OperationType.INTEREST_ACCRUAL,
+                        pool_revision=pool_revision,
                         pool_event=None,
                         scaled_token_events=[ev],
                         transfer_events=[],
@@ -1800,6 +1821,7 @@ class TransactionOperationsParser:
                     Operation(
                         operation_id=operation_id,
                         operation_type=OperationType.INTEREST_ACCRUAL,
+                        pool_revision=pool_revision,
                         pool_event=None,
                         scaled_token_events=[ev],
                         transfer_events=[],
@@ -1844,6 +1866,7 @@ class TransactionOperationsParser:
                             Operation(
                                 operation_id=operation_id,
                                 operation_type=OperationType.IMPLICIT_BORROW,
+                                pool_revision=pool_revision,
                                 pool_event=None,
                                 scaled_token_events=[ev],
                                 transfer_events=[],
@@ -1887,6 +1910,7 @@ class TransactionOperationsParser:
                 Operation(
                     operation_id=operation_id,
                     operation_type=OperationType.INTEREST_ACCRUAL,
+                    pool_revision=pool_revision,
                     pool_event=None,
                     scaled_token_events=[ev],
                     transfer_events=transfer_events,
@@ -1902,6 +1926,7 @@ class TransactionOperationsParser:
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         starting_operation_id: int,
+        pool_revision: int,
     ) -> list[Operation]:
         """Create MINT_TO_TREASURY operations for unassigned scaled token mints to the Pool.
 
@@ -1945,6 +1970,7 @@ class TransactionOperationsParser:
                 Operation(
                     operation_id=operation_id,
                     operation_type=OperationType.MINT_TO_TREASURY,
+                    pool_revision=pool_revision,
                     pool_event=None,
                     scaled_token_events=[ev],
                     transfer_events=[],
@@ -1961,6 +1987,7 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         starting_operation_id: int,
         existing_operations: list[Operation],
+        pool_revision: int,
     ) -> list[Operation]:
         """Create TRANSFER operations for unassigned transfer events.
 
@@ -2071,6 +2098,7 @@ class TransactionOperationsParser:
                 Operation(
                     operation_id=operation_id,
                     operation_type=operation_type,
+                    pool_revision=pool_revision,
                     pool_event=None,
                     scaled_token_events=[ev],
                     transfer_events=[],
@@ -2111,6 +2139,7 @@ class TransactionOperationsParser:
                 Operation(
                     operation_id=operation_id,
                     operation_type=operation_type,
+                    pool_revision=pool_revision,
                     pool_event=None,
                     scaled_token_events=[ev],
                     transfer_events=[],

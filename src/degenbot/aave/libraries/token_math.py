@@ -193,6 +193,11 @@ class TokenMathFactory:
         3: TokenMathV1,
         4: TokenMathV4,
         5: TokenMathV5,
+        6: TokenMathV5,
+        7: TokenMathV5,
+        8: TokenMathV5,
+        9: TokenMathV5,
+        10: TokenMathV5,
     }
 
     @classmethod
