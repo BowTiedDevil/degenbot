@@ -4325,6 +4325,4 @@ def update_aave_market(
                 user_addresses=users_to_verify,
             )
 
-    logger.info(
-        f"Market {market.id} (chain {market.chain_id}) successfully updated to block {end_block:,}"
-    )
+    logger.info(f"{market} successfully updated to block {end_block:,}")
