@@ -3515,6 +3515,8 @@ def _update_contract_revision(
     contract = _get_contract(market=market, contract_name=contract_name)
     contract.revision = revision
 
+    logger.info(f"Upgraded revision for {contract.name} to {revision}")
+
 
 def _process_proxy_creation_event(
     *,
