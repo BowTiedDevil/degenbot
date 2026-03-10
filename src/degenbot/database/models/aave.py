@@ -36,6 +36,15 @@ class AaveV3MarketTable(Base):
         cascade="all",
     )
 
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"chain_id={self.chain_id!r}, "
+            f"name={self.name!r}, "
+            f"active={self.active!r}"
+            f")"
+        )
+
 
 ForeignKeyAaveMarketId = Annotated[
     int,
@@ -86,6 +95,15 @@ class AaveV3UsersTable(Base):
         back_populates="user",
         cascade="all",
     )
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"market={self.market!r}, "
+            f"address={self.address!r}, "
+            f"e_mode={self.e_mode!r}"
+            f")"
+        )
 
 
 ForeignKeyAaveUserId = Annotated[
@@ -147,6 +165,16 @@ class AaveV3AssetsTable(Base):
         cascade="all",
     )
 
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"market={self.market!r}, "
+            f"underlying_token={self.underlying_token!r}, "
+            f"a_token={self.a_token!r}, "
+            f"v_token={self.v_token!r}"
+            f")"
+        )
+
 
 Index(
     "ix_aave_assets_underlying_asset_market",
@@ -183,6 +211,15 @@ class AaveV3CollateralPositionsTable(Base):
         back_populates="collateral_positions",
     )
 
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"user={self.user!r}, "
+            f"asset={self.asset!r}, "
+            f"balance={self.balance!r}"
+            f")"
+        )
+
 
 Index(
     "ix_aave_collateral_position_user_asset",
@@ -213,6 +250,15 @@ class AaveV3DebtPositionsTable(Base):
         foreign_keys="AaveV3DebtPositionsTable.asset_id",
         back_populates="debt_positions",
     )
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"user={self.user!r}, "
+            f"asset={self.asset!r}, "
+            f"balance={self.balance!r}"
+            f")"
+        )
 
 
 Index(
