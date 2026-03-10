@@ -14,7 +14,7 @@ from web3.types import LogReceipt
 
 from degenbot.aave.events import AaveV3PoolEvent
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.cli.aave_transaction_operations import Operation, OperationType
+from degenbot.cli.aave_transaction_operations import Operation, OperationType, ScaledTokenEventType
 from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 
@@ -67,17 +67,6 @@ class EventConsumptionPolicy(Enum):
     CONSUMABLE = auto()
     REUSABLE = auto()
     CONDITIONAL = auto()
-
-
-class ScaledTokenEventType(Enum):
-    """Types of scaled token events that require pool event matching."""
-
-    COLLATERAL_MINT = auto()
-    COLLATERAL_BURN = auto()
-    DEBT_MINT = auto()
-    DEBT_BURN = auto()
-    GHO_DEBT_MINT = auto()
-    GHO_DEBT_BURN = auto()
 
 
 @dataclass(frozen=True)
