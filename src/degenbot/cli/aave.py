@@ -1865,7 +1865,10 @@ def _process_scaled_token_operation(
         position: The user's position to update
     """
 
-    logger.debug(f"Processing scaled token operation for revision {scaled_token_revision}")
+    logger.debug(
+        f"Processing scaled token operation ({type(event).__name__}) for revision {scaled_token_revision}"
+    )
+    logger.debug(position)
 
     match event:
         case CollateralMintEvent():
@@ -2459,9 +2462,7 @@ def _process_collateral_mint_with_match(
         raw_amount = extraction_data.get("liquidated_collateral")
 
     if raw_amount is not None and collateral_asset.a_token_revision >= 4:  # noqa:PLR2004
-        pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
-            collateral_asset.a_token_revision
-        )
+        pool_processor = PoolProcessorFactory.get_pool_processor(operation.pool_revision)
         assert scaled_event.index is not None
         scaled_amount = pool_processor.calculate_collateral_mint_scaled_amount(
             amount=raw_amount,
@@ -2620,9 +2621,7 @@ def _process_collateral_burn_with_match(
     ):
         # Calculate scaled amount from Withdraw event's raw_amount
         if collateral_asset.a_token_revision >= 4:  # noqa:PLR2004
-            pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
-                collateral_asset.a_token_revision
-            )
+            pool_processor = PoolProcessorFactory.get_pool_processor(operation.pool_revision)
             assert scaled_event.index is not None
             scaled_amount = pool_processor.calculate_collateral_burn_scaled_amount(
                 amount=raw_amount,
@@ -2636,9 +2635,7 @@ def _process_collateral_burn_with_match(
         )
 
     if scaled_amount is None and raw_amount is not None and collateral_asset.a_token_revision >= 4:  # noqa:PLR2004
-        pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
-            collateral_asset.a_token_revision
-        )
+        pool_processor = PoolProcessorFactory.get_pool_processor(operation.pool_revision)
 
         assert scaled_event.index is not None
         scaled_amount = pool_processor.calculate_collateral_burn_scaled_amount(
@@ -2741,9 +2738,7 @@ def _process_debt_mint_with_match(
         raw_amount = extraction_data.get("debt_to_cover")
 
     if raw_amount is not None:
-        pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
-            debt_asset.v_token_revision
-        )
+        pool_processor = PoolProcessorFactory.get_pool_processor(operation.pool_revision)
         assert scaled_event.index is not None
         scaled_amount = pool_processor.calculate_debt_mint_scaled_amount(
             amount=raw_amount,
@@ -2820,6 +2815,7 @@ def _process_debt_mint_with_match(
         # Use standard debt processor for non-GHO tokens
         assert scaled_event.balance_increase is not None
         assert scaled_event.index is not None
+        logger.debug(f"_process_debt_burn_with_match: handling with standard debt processor")
         _process_scaled_token_operation(
             event=DebtMintEvent(
                 caller=scaled_event.caller_address or scaled_event.user_address,
@@ -2898,11 +2894,12 @@ def _process_debt_burn_with_match(
     if raw_amount is None and not is_liquidation:
         raw_amount = extraction_data.get("debt_to_cover")
 
+    logger.debug(f"_process_debt_burn_with_match: vToken revision = {debt_asset.v_token_revision}")
+    logger.debug(f"_process_debt_burn_with_match: raw_amount = {raw_amount}")
+
     if raw_amount is not None and debt_asset.v_token_revision >= 4:  # noqa:PLR2004
         assert scaled_event.index is not None
-        pool_processor = PoolProcessorFactory.get_pool_processor_for_token_revision(
-            debt_asset.v_token_revision
-        )
+        pool_processor = PoolProcessorFactory.get_pool_processor(operation.pool_revision)
         scaled_amount = pool_processor.calculate_debt_burn_scaled_amount(
             amount=raw_amount,
             borrow_index=scaled_event.index,
@@ -2978,6 +2975,12 @@ def _process_debt_burn_with_match(
         # Use standard debt processor for non-GHO tokens
         assert scaled_event.balance_increase is not None
         assert scaled_event.index is not None
+        logger.debug(f"_process_debt_burn_with_match: handling with standard debt processor")
+        logger.debug(f"_process_debt_burn_with_match: scaled_event.amount = {scaled_event.amount}")
+        logger.debug(
+            f"_process_debt_burn_with_match: scaled_event.balance_increase = {scaled_event.balance_increase}"
+        )
+        logger.debug(f"_process_debt_burn_with_match: scaled_event.index = {scaled_event.index}")
         _process_scaled_token_operation(
             event=DebtBurnEvent(
                 from_=scaled_event.from_address or scaled_event.user_address,
@@ -3982,7 +3985,7 @@ def update_aave_market(
     3. User Event Processing: Process transactions with assertions that classifying events exist
     """
 
-    logger.info(
+    logger.debug(
         f"Updating {market.name} (chain {market.chain_id}): "
         f"block range {start_block:,} - {end_block:,}"
     )
