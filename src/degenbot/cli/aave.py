@@ -47,7 +47,7 @@ from degenbot.cli.aave_transaction_operations import (
     TransactionValidationError,
 )
 from degenbot.cli.aave_types import TransactionContext
-from degenbot.cli.aave_utils import _decode_address
+from degenbot.cli.aave_utils import decode_address
 from degenbot.cli.utils import get_web3_from_config
 from degenbot.config import settings
 from degenbot.constants import ERC_1967_IMPLEMENTATION_SLOT, ZERO_ADDRESS
@@ -118,22 +118,23 @@ def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress
     Returns a set of all user addresses (senders, recipients, onBehalfOf, etc.)
     that are involved in the event.
     """
+
     user_addresses: set[ChecksumAddress] = set()
     topic = event["topics"][0]
 
     if topic == AaveV3ScaledTokenEvent.MINT.value:
-        user_addresses.add(_decode_address(event["topics"][2]))
+        user_addresses.add(decode_address(event["topics"][2]))
 
     elif topic == AaveV3ScaledTokenEvent.BURN.value:
-        user_addresses.add(_decode_address(event["topics"][1]))
+        user_addresses.add(decode_address(event["topics"][1]))
 
     elif topic == AaveV3ScaledTokenEvent.BALANCE_TRANSFER.value:
-        user_addresses.add(_decode_address(event["topics"][1]))
-        user_addresses.add(_decode_address(event["topics"][2]))
+        user_addresses.add(decode_address(event["topics"][1]))
+        user_addresses.add(decode_address(event["topics"][2]))
 
     elif topic == ERC20Event.TRANSFER.value:
-        from_addr = _decode_address(event["topics"][1])
-        to_addr = _decode_address(event["topics"][2])
+        from_addr = decode_address(event["topics"][1])
+        to_addr = decode_address(event["topics"][2])
         if from_addr != ZERO_ADDRESS:
             user_addresses.add(from_addr)
         if to_addr != ZERO_ADDRESS:
@@ -144,7 +145,7 @@ def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress
         AaveV3PoolEvent.USER_E_MODE_SET.value,
         AaveV3PoolEvent.DEFICIT_CREATED.value,
     }:
-        user_addresses.add(_decode_address(event["topics"][1]))
+        user_addresses.add(decode_address(event["topics"][1]))
 
     elif topic in {
         AaveV3PoolEvent.BORROW.value,
@@ -152,14 +153,14 @@ def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress
         AaveV3PoolEvent.SUPPLY.value,
         AaveV3PoolEvent.WITHDRAW.value,
     }:
-        user_addresses.add(_decode_address(event["topics"][2]))
+        user_addresses.add(decode_address(event["topics"][2]))
 
     elif topic == AaveV3PoolEvent.LIQUIDATION_CALL.value:
-        user_addresses.add(_decode_address(event["topics"][3]))
+        user_addresses.add(decode_address(event["topics"][3]))
 
     elif topic in {AaveV3StkAaveEvent.STAKED.value, AaveV3StkAaveEvent.REDEEM.value}:
-        user_addresses.add(_decode_address(event["topics"][1]))
-        user_addresses.add(_decode_address(event["topics"][2]))
+        user_addresses.add(decode_address(event["topics"][1]))
+        user_addresses.add(decode_address(event["topics"][2]))
 
     return user_addresses
 
@@ -605,8 +606,8 @@ def _process_asset_initialization_event(
 
     logger.debug(f"Processing asset initialization event at block {event['blockNumber']}")
 
-    asset_address = _decode_address(event["topics"][1])
-    a_token_address = _decode_address(event["topics"][2])
+    asset_address = decode_address(event["topics"][1])
+    a_token_address = decode_address(event["topics"][2])
 
     # Note: stableDebtToken is deprecated in Aave V3 and no longer used, so is ignored
     (_, v_token_address, _) = eth_abi.abi.decode(
@@ -717,7 +718,7 @@ def _process_user_e_mode_set_event(
 
     logger.debug(f"Processing user E-mode set event for user at block {event['blockNumber']}")
 
-    user_address = _decode_address(event["topics"][1])
+    user_address = decode_address(event["topics"][1])
 
     (e_mode,) = eth_abi.abi.decode(types=["uint8"], data=event["data"])
 
@@ -748,8 +749,8 @@ def _process_discount_token_updated_event(
 
     logger.debug(f"Processing discount token updated event at block {event['blockNumber']}")
 
-    old_discount_token_address = _decode_address(event["topics"][1])
-    new_discount_token_address = _decode_address(event["topics"][2])
+    old_discount_token_address = decode_address(event["topics"][1])
+    new_discount_token_address = decode_address(event["topics"][2])
 
     tx_context.gho_asset.v_gho_discount_token = new_discount_token_address
 
@@ -777,8 +778,8 @@ def _process_discount_rate_strategy_updated_event(
 
     logger.debug(f"Processing discount rate strategy updated event at block {event['blockNumber']}")
 
-    old_discount_rate_strategy_address = _decode_address(event["topics"][1])
-    new_discount_rate_strategy_address = _decode_address(event["topics"][2])
+    old_discount_rate_strategy_address = decode_address(event["topics"][1])
+    new_discount_rate_strategy_address = decode_address(event["topics"][2])
 
     tx_context.gho_asset.v_gho_discount_rate_strategy = new_discount_rate_strategy_address
 
@@ -878,8 +879,8 @@ def _process_stk_aave_transfer_event(
 
     assert contract_address == tx_context.gho_asset.v_gho_discount_token
 
-    from_address = _decode_address(event["topics"][1])
-    to_address = _decode_address(event["topics"][2])
+    from_address = decode_address(event["topics"][1])
+    to_address = decode_address(event["topics"][2])
 
     if from_address == to_address:
         return
@@ -983,7 +984,7 @@ def _process_reserve_data_update_event(
 
     logger.debug(f"Processing reserve data update event at block {event['blockNumber']}")
 
-    reserve_asset_address = _decode_address(event["topics"][1])
+    reserve_asset_address = decode_address(event["topics"][1])
 
     asset_in_db = None
     for asset in market.assets:
@@ -1036,7 +1037,7 @@ def _process_scaled_token_upgrade_event(
 
     logger.debug(f"Processing scaled token upgrade event at block {event['blockNumber']}")
 
-    new_implementation_address = _decode_address(event["topics"][1])
+    new_implementation_address = decode_address(event["topics"][1])
 
     if (
         aave_collateral_asset := _get_asset_by_token_type(
@@ -1780,10 +1781,12 @@ def _verify_scaled_token_positions(
             )
 
             assert actual_scaled_balance == position.balance, (
-                f"User {user.address}: "
-                f"{'collateral' if position_table is AaveV3CollateralPosition else 'debt'} "
-                f"balance ({position.balance}) does not match scaled token contract "
-                f"({actual_scaled_balance}) @ {token_address} at block {block_number}"
+                f"Balance verification failure for {position.asset}. "
+                f"User {position.user} scaled balance ({position.balance}) does not match contract "
+                f"balance ({actual_scaled_balance}) at block {block_number}"
+                # f"{'collateral' if position_table is AaveV3CollateralPosition else 'debt'} "
+                # f"balance  does not match scaled token contract "
+                # f"({actual_scaled_balance}) @ {token_address} at block {block_number}"
             )
 
             (actual_last_index,) = raw_call(
@@ -1888,12 +1891,6 @@ def _process_scaled_token_operation(
             return UserOperation.REPAY
 
 
-GHO_DISCOUNTED_PER_DISCOUNT_TOKEN = 100 * 10**18
-DISCOUNT_RATE_BPS = 3000  # 30.00%
-MIN_DISCOUNT_TOKEN_BALANCE = 10**15
-MIN_DEBT_TOKEN_BALANCE = 10**18
-
-
 def calculate_gho_discount_rate(
     debt_balance: int,
     discount_token_balance: int,
@@ -1906,18 +1903,24 @@ def calculate_gho_discount_rate(
 
     Returns the discount rate in basis points (10000 = 100.00%).
     """
-    if discount_token_balance < MIN_DISCOUNT_TOKEN_BALANCE or debt_balance < MIN_DEBT_TOKEN_BALANCE:
+
+    gho_discounted_per_discount_token = 100 * 10**18
+    discount_rate_bps = 3000  # 30.00%
+    min_discount_token_balance = 10**15
+    min_debt_token_balance = 10**18
+
+    if discount_token_balance < min_discount_token_balance or debt_balance < min_debt_token_balance:
         return 0
 
     discounted_balance = wad_mul(
         a=discount_token_balance,
-        b=GHO_DISCOUNTED_PER_DISCOUNT_TOKEN,
+        b=gho_discounted_per_discount_token,
     )
 
     if discounted_balance >= debt_balance:
-        return DISCOUNT_RATE_BPS
+        return discount_rate_bps
 
-    return (discounted_balance * DISCOUNT_RATE_BPS) // debt_balance
+    return (discounted_balance * discount_rate_bps) // debt_balance
 
 
 def _refresh_discount_rate(
@@ -1952,14 +1955,10 @@ def _refresh_discount_rate(
 
 
 def _process_transaction(tx_context: TransactionContext) -> None:
-    """Process transaction using operation-based parsing.
-
-    This is the new operation-aware event processing flow that parses
-    events into logical operations before processing. It provides:
-    - Strict validation with detailed error reporting
-    - Pattern-aware event matching
-    - Better handling of complex transactions (liquidations, repay with aTokens)
     """
+    Process transaction using operation-based parsing.
+    """
+
     # Log transaction start for debugging
     if aave_debug_logger.is_enabled():
         aave_debug_logger.log_transaction_start(
@@ -1977,7 +1976,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
     for event in tx_context.events:
         topic = event["topics"][0]
         if topic == AaveV3GhoDebtTokenEvent.DISCOUNT_PERCENT_UPDATED.value:
-            user_address = _decode_address(event["topics"][1])
+            user_address = decode_address(event["topics"][1])
             (old_discount_percent,) = eth_abi.abi.decode(types=["uint256"], data=event["data"])
             if user_address not in tx_context.discount_updates_by_log_index:
                 tx_context.discount_updates_by_log_index[user_address] = []
@@ -2006,9 +2005,9 @@ def _process_transaction(tx_context: TransactionContext) -> None:
             # Mint event: topics[1] = caller, topics[2] = onBehalfOf (user)
             # Burn event: topics[1] = from (user), topics[2] = target
             if topic == AaveV3ScaledTokenEvent.MINT.value:
-                user_address = _decode_address(event["topics"][2])
+                user_address = decode_address(event["topics"][2])
             else:  # SCALED_TOKEN_BURN
-                user_address = _decode_address(event["topics"][1])
+                user_address = decode_address(event["topics"][1])
             if user_address not in tx_context.user_discounts:
                 # If there are DiscountPercentUpdated events for this user in this
                 # transaction, use the OLD discount value that was in effect at the
@@ -3521,8 +3520,8 @@ def _process_proxy_creation_event(
     if decoded_proxy_id != proxy_id:
         return
 
-    proxy_address = _decode_address(event["topics"][2])
-    implementation_address = _decode_address(event["topics"][3])
+    proxy_address = decode_address(event["topics"][2])
+    implementation_address = decode_address(event["topics"][3])
 
     if (
         session.scalar(select(AaveV3Contract).where(AaveV3Contract.address == proxy_address))
@@ -3573,7 +3572,7 @@ def _process_umbrella_creation_event(
     if decoded_proxy_id != proxy_id:
         return
 
-    new_address = _decode_address(event["topics"][3])
+    new_address = decode_address(event["topics"][3])
 
     if (
         session.scalar(select(AaveV3Contract).where(AaveV3Contract.address == new_address))
@@ -3615,7 +3614,7 @@ def _process_discount_percent_updated_event(
         f"Processing _process_discount_percent_updated_event at block {event['blockNumber']}"
     )
 
-    user_address = _decode_address(event["topics"][1])
+    user_address = decode_address(event["topics"][1])
 
     (_old_discount_percent,) = eth_abi.abi.decode(types=["uint256"], data=event["data"])
     (new_discount_percent,) = eth_abi.abi.decode(types=["uint256"], data=event["topics"][2])
@@ -3860,8 +3859,8 @@ def _build_transaction_contexts(
         if topic == ERC20Event.TRANSFER.value and event_address == (
             gho_asset.v_gho_discount_token if gho_asset else None
         ):
-            from_addr = _decode_address(event["topics"][1])
-            to_addr = _decode_address(event["topics"][2])
+            from_addr = decode_address(event["topics"][1])
+            to_addr = decode_address(event["topics"][2])
             if from_addr != ZERO_ADDRESS:
                 ctx.stk_aave_transfer_users.add(from_addr)
             if to_addr != ZERO_ADDRESS:
@@ -4002,7 +4001,7 @@ def update_aave_market(
                 w3=w3,
                 market=market,
                 contract_name="POOL",
-                new_address=_decode_address(event["topics"][2]),
+                new_address=decode_address(event["topics"][2]),
                 revision_function_prototype="POOL_REVISION",
             )
         elif topic == AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value:
@@ -4010,7 +4009,7 @@ def update_aave_market(
                 w3=w3,
                 market=market,
                 contract_name="POOL_CONFIGURATOR",
-                new_address=_decode_address(event["topics"][2]),
+                new_address=decode_address(event["topics"][2]),
                 revision_function_prototype="CONFIGURATOR_REVISION",
             )
         elif topic == AaveV3PoolConfigEvent.POOL_DATA_PROVIDER_UPDATED.value:
@@ -4124,10 +4123,10 @@ def update_aave_market(
             topic = event["topics"][0]
             if topic == AaveV3GhoDebtTokenEvent.DISCOUNT_TOKEN_UPDATED.value:
                 # Update the discount token directly
-                new_discount_token_address = _decode_address(event["topics"][2])
+                new_discount_token_address = decode_address(event["topics"][2])
                 gho_asset.v_gho_discount_token = new_discount_token_address
                 logger.info(
-                    f"SET NEW DISCOUNT TOKEN: {_decode_address(event['topics'][1])} -> "
+                    f"SET NEW DISCOUNT TOKEN: {decode_address(event['topics'][1])} -> "
                     f"{new_discount_token_address}"
                 )
 

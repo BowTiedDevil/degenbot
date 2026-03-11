@@ -16,20 +16,11 @@ from web3.types import LogReceipt
 
 from degenbot.aave.events import AaveV3PoolEvent, AaveV3ScaledTokenEvent, ERC20Event
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.database.models.aave import AaveGhoToken, AaveV3Asset, AaveV3Contract, AaveV3Market
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.logging import logger
-
-
-def _topic_to_address(topic: HexBytes) -> ChecksumAddress:
-    """
-    Extract Ethereum address from event topic.
-    """
-
-    address: str
-    (address,) = eth_abi.abi.decode(types=["address"], data=topic)
-    return get_checksum_address(address)
 
 
 def _decode_hex_data(data: str | HexBytes) -> bytes:
@@ -39,16 +30,6 @@ def _decode_hex_data(data: str | HexBytes) -> bytes:
     if isinstance(data, str) and data.startswith("0x"):
         data = data[2:]
     return bytes.fromhex(data)
-
-
-def _get_topic_str(topic: HexBytes | str) -> str:
-    """Convert topic to hex string without 0x prefix.
-
-    Handles both HexBytes objects (from web3.py) and hex strings (from JSON).
-    """
-    if isinstance(topic, str):
-        return topic.lstrip("0x")
-    return topic.hex()
 
 
 class OperationType(Enum):
@@ -665,44 +646,49 @@ class TransactionOperationsParser:
 
     @staticmethod
     def _extract_pool_events(events: list[LogReceipt]) -> list[LogReceipt]:
-        """Extract pool-level events (SUPPLY, WITHDRAW, etc.)."""
+        """
+        Extract pool-level events (SUPPLY, WITHDRAW, etc.).
+        """
+
         pool_topics = {
-            AaveV3PoolEvent.SUPPLY.value.hex(),
-            AaveV3PoolEvent.WITHDRAW.value.hex(),
-            AaveV3PoolEvent.BORROW.value.hex(),
-            AaveV3PoolEvent.REPAY.value.hex(),
-            AaveV3PoolEvent.LIQUIDATION_CALL.value.hex(),
-            AaveV3PoolEvent.DEFICIT_CREATED.value.hex(),
+            AaveV3PoolEvent.SUPPLY.value,
+            AaveV3PoolEvent.WITHDRAW.value,
+            AaveV3PoolEvent.BORROW.value,
+            AaveV3PoolEvent.REPAY.value,
+            AaveV3PoolEvent.LIQUIDATION_CALL.value,
+            AaveV3PoolEvent.DEFICIT_CREATED.value,
         }
 
         return sorted(
-            [e for e in events if _get_topic_str(e["topics"][0]) in pool_topics],
+            [e for e in events if e["topics"][0] in pool_topics],
             key=operator.itemgetter("logIndex"),
         )
 
     def _extract_scaled_token_events(self, events: list[LogReceipt]) -> list[ScaledTokenEvent]:
-        """Extract and decode scaled token events."""
+        """
+        Extract and decode scaled token events.
+        """
+
         result = []
-
         for event in events:
-            topic = _get_topic_str(event["topics"][0])
+            topic = event["topics"][0]
 
-            if topic == AaveV3ScaledTokenEvent.MINT.value.hex():
+            if topic == AaveV3ScaledTokenEvent.MINT.value:
                 ev = self._decode_mint_event(event)
                 if ev:
                     result.append(ev)
 
-            elif topic == AaveV3ScaledTokenEvent.BURN.value.hex():
+            elif topic == AaveV3ScaledTokenEvent.BURN.value:
                 ev = self._decode_burn_event(event)
                 if ev:
                     result.append(ev)
 
-            elif topic == AaveV3ScaledTokenEvent.BALANCE_TRANSFER.value.hex():
+            elif topic == AaveV3ScaledTokenEvent.BALANCE_TRANSFER.value:
                 ev = self._decode_balance_transfer_event(event)
                 if ev:
                     result.append(ev)
 
-            elif topic == ERC20Event.TRANSFER.value.hex():
+            elif topic == ERC20Event.TRANSFER.value:
                 # Handle ERC20 Transfer events for aTokens, vTokens, and the GHO discount token if
                 # that mechanism is active.
                 ev = self._decode_transfer_event(event)
@@ -725,8 +711,8 @@ class TransactionOperationsParser:
             );
         """
 
-        caller = _topic_to_address(event["topics"][1])
-        user = _topic_to_address(event["topics"][2])
+        caller = decode_address(event["topics"][1])
+        user = decode_address(event["topics"][2])
         # Convert hex string to bytes for eth_abi.decode
         amount, balance_increase, index = eth_abi.abi.decode(
             ["uint256", "uint256", "uint256"], _decode_hex_data(event["data"])
@@ -762,8 +748,8 @@ class TransactionOperationsParser:
     def _decode_burn_event(self, event: LogReceipt) -> ScaledTokenEvent | None:
         """Decode a Burn event."""
 
-        from_addr = _topic_to_address(event["topics"][1])
-        target = _topic_to_address(event["topics"][2])
+        from_addr = decode_address(event["topics"][1])
+        target = decode_address(event["topics"][2])
         amount, balance_increase, index = eth_abi.abi.decode(
             ["uint256", "uint256", "uint256"], _decode_hex_data(event["data"])
         )
@@ -802,8 +788,8 @@ class TransactionOperationsParser:
         During liquidations, collateral may be transferred to the treasury instead of burned.
         """
 
-        from_addr = _topic_to_address(event["topics"][1])
-        to_addr = _topic_to_address(event["topics"][2])
+        from_addr = decode_address(event["topics"][1])
+        to_addr = decode_address(event["topics"][2])
         # BalanceTransfer data: amount, index
         amount, index = eth_abi.abi.decode(["uint256", "uint256"], _decode_hex_data(event["data"]))
 
@@ -841,8 +827,8 @@ class TransactionOperationsParser:
             - GHO vToken discount token
         """
 
-        from_addr = _topic_to_address(event["topics"][1])
-        to_addr = _topic_to_address(event["topics"][2])
+        from_addr = decode_address(event["topics"][1])
+        to_addr = decode_address(event["topics"][2])
         # Transfer data: amount
         (amount,) = eth_abi.abi.decode(["uint256"], _decode_hex_data(event["data"]))
 
@@ -965,7 +951,7 @@ class TransactionOperationsParser:
 
         assert supply_event["topics"][0] == AaveV3PoolEvent.SUPPLY.value
 
-        on_behalf_of = _topic_to_address(supply_event["topics"][2])
+        on_behalf_of = decode_address(supply_event["topics"][2])
         _user, supply_amount = eth_abi.abi.decode(
             types=["address", "uint256"], data=supply_event["data"]
         )
@@ -1061,7 +1047,7 @@ class TransactionOperationsParser:
 
         assert withdraw_event["topics"][0] == AaveV3PoolEvent.WITHDRAW.value
 
-        user = _topic_to_address(withdraw_event["topics"][2])
+        user = decode_address(withdraw_event["topics"][2])
 
         withdraw_amount: int
         (withdraw_amount,) = eth_abi.abi.decode(types=["uint256"], data=withdraw_event["data"])
@@ -1226,8 +1212,8 @@ class TransactionOperationsParser:
 
         assert borrow_event["topics"][0] == AaveV3PoolEvent.BORROW.value
 
-        reserve = _topic_to_address(borrow_event["topics"][1])
-        on_behalf_of = _topic_to_address(borrow_event["topics"][2])
+        reserve = decode_address(borrow_event["topics"][1])
+        on_behalf_of = decode_address(borrow_event["topics"][2])
         _user, borrow_amount, _interest_rate_mode, _borrow_rate = eth_abi.abi.decode(
             types=["address", "uint256", "uint8", "uint256"],
             data=borrow_event["data"],
@@ -1326,8 +1312,8 @@ class TransactionOperationsParser:
             );
         """
 
-        reserve = _topic_to_address(repay_event["topics"][1])
-        user = _topic_to_address(repay_event["topics"][2])
+        reserve = decode_address(repay_event["topics"][1])
+        user = decode_address(repay_event["topics"][2])
         repay_amount, use_a_tokens = eth_abi.abi.decode(
             types=["uint256", "bool"],
             data=_decode_hex_data(
@@ -1632,9 +1618,9 @@ class TransactionOperationsParser:
             );
         """
 
-        _collateral_asset = _topic_to_address(liquidation_event["topics"][1])
-        debt_asset = _topic_to_address(liquidation_event["topics"][2])
-        user = _topic_to_address(liquidation_event["topics"][3])
+        _collateral_asset = decode_address(liquidation_event["topics"][1])
+        debt_asset = decode_address(liquidation_event["topics"][2])
+        user = decode_address(liquidation_event["topics"][3])
         _debt_to_cover, _liquidated_collateral_amount, _liquidator, _receive_a_token = (
             eth_abi.abi.decode(
                 types=["uint256", "uint256", "address", "bool"],
@@ -1746,8 +1732,8 @@ class TransactionOperationsParser:
         separate flash loan operation.
         """
 
-        user = _topic_to_address(deficit_event["topics"][1])
-        asset = _topic_to_address(deficit_event["topics"][2])
+        user = decode_address(deficit_event["topics"][1])
+        asset = decode_address(deficit_event["topics"][2])
 
         # Check if this is a GHO deficit (flash loan) or non-GHO deficit
         is_gho_deficit = asset == GHO_TOKEN_ADDRESS
@@ -1757,7 +1743,7 @@ class TransactionOperationsParser:
         has_liquidation_for_user = False
         for event in all_events:
             if event["topics"][0] == AaveV3PoolEvent.LIQUIDATION_CALL.value:
-                liquidation_user = _topic_to_address(event["topics"][3])
+                liquidation_user = decode_address(event["topics"][3])
                 if liquidation_user == user:
                     has_liquidation_for_user = True
                     break
@@ -2395,7 +2381,7 @@ class TransactionOperationsParser:
                 f"Expected 0 or 1 debt burns for LIQUIDATION, got {len(debt_burns)}. "
                 f"DEBUG NOTE: Check if debt/collateral events are being assigned to wrong "
                 f"operations. Current debt burns: {[e.event['logIndex'] for e in debt_burns]}. "
-                f"User in LIQUIDATION_CALL: {_topic_to_address(op.pool_event['topics'][3])}"
+                f"User in LIQUIDATION_CALL: {decode_address(op.pool_event['topics'][3])}"
             )
 
         if len(collateral_events) < 1:
@@ -2404,7 +2390,7 @@ class TransactionOperationsParser:
                 f"got {len(collateral_events)}. "
                 f"DEBUG NOTE: Check collateral asset matching and user address consistency. "
                 f"Current collateral events: {[e.event['logIndex'] for e in collateral_events]}. "
-                f"User in LIQUIDATION_CALL: {_topic_to_address(op.pool_event['topics'][3])}"
+                f"User in LIQUIDATION_CALL: {decode_address(op.pool_event['topics'][3])}"
             )
 
         return errors

@@ -4,7 +4,7 @@ from eth_typing import ChecksumAddress
 from degenbot.checksum_cache import get_checksum_address
 
 
-def _decode_address(input_: bytes) -> ChecksumAddress:
+def decode_address(input_: bytes) -> ChecksumAddress:
     """
     Get the checksummed address from the given byte stream.
     """

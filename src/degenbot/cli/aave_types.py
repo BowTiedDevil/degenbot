@@ -9,7 +9,7 @@ from web3.types import LogReceipt
 
 from degenbot.aave.events import ERC20Event
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.cli.aave_utils import _decode_address
+from degenbot.cli.aave_utils import decode_address
 from degenbot.database.models.aave import (
     AaveGhoToken,
     AaveV3CollateralPosition,
@@ -147,8 +147,8 @@ class TransactionContext:
             if transfer_log_index in self.processed_stk_aave_transfers:
                 continue
 
-            from_addr = _decode_address(event["topics"][1])
-            to_addr = _decode_address(event["topics"][2])
+            from_addr = decode_address(event["topics"][1])
+            to_addr = decode_address(event["topics"][2])
             (value,) = eth_abi.abi.decode(types=["uint256"], data=event["data"])
 
             if from_addr == user_address:
