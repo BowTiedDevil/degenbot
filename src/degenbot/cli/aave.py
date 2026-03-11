@@ -816,7 +816,6 @@ def _get_or_init_stk_aave_balance(
     discount_token: ChecksumAddress | None,
     block_number: int,
     w3: Web3,
-    skip_init: bool = False,
     tx_context: TransactionContext | None = None,
     log_index: int | None = None,
 ) -> int:
@@ -830,15 +829,13 @@ def _get_or_init_stk_aave_balance(
     for this user (transfers with log_index > current log_index), returns the predicted
     balance including the pending delta. This handles the reentrancy case where the GHO
     debt token contract sees the post-transfer balance before the Transfer event is emitted.
-
-    skip_init is unused but kept for API compatibility.
     """
 
     # If discount_token is None (revision 4+), return 0
     if discount_token is None:
         return 0
 
-    if user.stk_aave_balance is None and not skip_init:
+    if user.stk_aave_balance is None:
         balance: int
         (balance,) = raw_call(
             w3=w3,
@@ -851,22 +848,7 @@ def _get_or_init_stk_aave_balance(
             block_identifier=block_number - 1,
         )
         user.stk_aave_balance = balance
-    elif user.stk_aave_balance is None and skip_init:
-        # Fetch from contract at block_number - 1
-        # skip_init only prevents double-fetching within the same transaction
-        (balance,) = raw_call(
-            w3=w3,
-            address=discount_token,
-            calldata=encode_function_calldata(
-                function_prototype="balanceOf(address)",
-                function_arguments=[user.address],
-            ),
-            return_types=["uint256"],
-            block_identifier=block_number - 1,
-        )
-        user.stk_aave_balance = balance
 
-    # At this point, stk_aave_balance should always be set
     assert user.stk_aave_balance is not None
 
     # Check if we need to account for pending transfers due to reentrancy
@@ -960,8 +942,6 @@ def _process_stk_aave_transfer_event(
             discount_token=tx_context.gho_asset.v_gho_discount_token,
             block_number=event["blockNumber"],
             w3=tx_context.w3,
-            skip_init=tx_context is not None
-            and from_user.address in tx_context.stk_aave_transfer_users,
         )
     if to_user is not None and to_user.stk_aave_balance is None:
         _get_or_init_stk_aave_balance(
@@ -969,8 +949,6 @@ def _process_stk_aave_transfer_event(
             discount_token=tx_context.gho_asset.v_gho_discount_token,
             block_number=event["blockNumber"],
             w3=tx_context.w3,
-            skip_init=tx_context is not None
-            and to_user.address in tx_context.stk_aave_transfer_users,
         )
 
     # Apply balance changes
