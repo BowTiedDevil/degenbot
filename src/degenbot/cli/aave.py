@@ -50,7 +50,7 @@ from degenbot.cli.aave_types import TransactionContext
 from degenbot.cli.aave_utils import decode_address
 from degenbot.cli.utils import get_web3_from_config
 from degenbot.config import settings
-from degenbot.constants import ERC_1967_IMPLEMENTATION_SLOT, ZERO_ADDRESS
+from degenbot.constants import DEAD_ADDRESS, ERC_1967_IMPLEMENTATION_SLOT, ZERO_ADDRESS
 from degenbot.database import db_session
 from degenbot.database.models.aave import (
     AaveGhoToken,
@@ -1752,8 +1752,7 @@ def _verify_scaled_token_positions(
         leave=False,
         disable=not show_progress,
     ):
-        if user.address == ZERO_ADDRESS:
-            logger.error("SKIPPED ZERO ADDRESS!")
+        if user.address in {DEAD_ADDRESS, ZERO_ADDRESS}:
             continue
 
         for position in session.scalars(
@@ -1784,9 +1783,6 @@ def _verify_scaled_token_positions(
                 f"Balance verification failure for {position.asset}. "
                 f"User {position.user} scaled balance ({position.balance}) does not match contract "
                 f"balance ({actual_scaled_balance}) at block {block_number}"
-                # f"{'collateral' if position_table is AaveV3CollateralPosition else 'debt'} "
-                # f"balance  does not match scaled token contract "
-                # f"({actual_scaled_balance}) @ {token_address} at block {block_number}"
             )
 
             (actual_last_index,) = raw_call(
@@ -1801,10 +1797,9 @@ def _verify_scaled_token_positions(
             )
 
             assert actual_last_index == position.last_index, (
-                f"User {user.address}: "
-                f"{'collateral' if position_table is AaveV3CollateralPosition else 'debt'} "
-                f"last_index ({position.last_index}) does not match contract "
-                f"({actual_last_index}) @ {token_address} at block {block_number}"
+                f"Index verification failure for {position.asset}. "
+                f"User {position.user} last_index ({position.last_index}) does not match contract "
+                f"last_index ({actual_last_index}) at block {block_number}"
             )
 
 

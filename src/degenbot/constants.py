@@ -48,6 +48,7 @@ MAX_UINT160 = _max_uint(160)
 MIN_UINT256 = _min_uint(256)
 MAX_UINT256 = _max_uint(256)
 
+DEAD_ADDRESS: ChecksumAddress = get_checksum_address("0x000000000000000000000000000000000000dead")
 ZERO_ADDRESS: ChecksumAddress = get_checksum_address("0x0000000000000000000000000000000000000000")
 
 # ref: https://eips.ethereum.org/EIPS/eip-1967
