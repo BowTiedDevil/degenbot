@@ -885,8 +885,8 @@ class TransactionOperationsParser:
         )
 
     def _create_operation_from_pool_event(
-        *,
         self,
+        *,
         operation_id: int,
         pool_event: LogReceipt,
         scaled_events: list[ScaledTokenEvent],
@@ -1720,8 +1720,8 @@ class TransactionOperationsParser:
         )
 
     def _create_deficit_operation(
-        *,
         self,
+        *,
         operation_id: int,
         deficit_event: LogReceipt,
         scaled_events: list[ScaledTokenEvent],
