@@ -10,8 +10,8 @@ import eth_abi.exceptions
 import tqdm
 from eth_typing import ChainId, ChecksumAddress
 from hexbytes import HexBytes
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session, joinedload
 from tqdm.contrib.logging import logging_redirect_tqdm
 from web3 import Web3
 from web3.exceptions import ContractLogicError
@@ -567,9 +567,7 @@ def aave_update(
                     )
                     logger.info(f"Created database backup at block {working_end_block:,}")
 
-                _cleanup_zero_balance_positions(
-                    session=session, market=market, show_progress=show_progress
-                )
+                _cleanup_zero_balance_positions(session=session, market=market)
 
                 markets_to_update.clear()
                 session.commit()
@@ -963,6 +961,7 @@ def _process_stk_aave_transfer_event(
 
 def _process_reserve_data_update_event(
     *,
+    session: Session,
     event: LogReceipt,
     market: AaveV3Market,
 ) -> None:
@@ -986,11 +985,14 @@ def _process_reserve_data_update_event(
 
     reserve_asset_address = decode_address(event["topics"][1])
 
-    asset_in_db = None
-    for asset in market.assets:
-        if asset.underlying_token.address == reserve_asset_address:
-            asset_in_db = asset
-            break
+    asset_in_db = session.scalar(
+        select(AaveV3Asset)
+        .join(Erc20TokenTable, AaveV3Asset.underlying_asset_id == Erc20TokenTable.id)
+        .where(
+            AaveV3Asset.market_id == market.id,
+            Erc20TokenTable.address == reserve_asset_address,
+        )
+    )
     assert asset_in_db is not None
 
     if asset_in_db.last_update_block is not None:
@@ -1041,6 +1043,7 @@ def _process_scaled_token_upgrade_event(
 
     if (
         aave_collateral_asset := _get_asset_by_token_type(
+            session=tx_context.session,
             market=tx_context.market,
             token_address=get_checksum_address(event["address"]),
             token_type=TokenType.COLLATERAL,
@@ -1062,6 +1065,7 @@ def _process_scaled_token_upgrade_event(
         )
     elif (
         aave_debt_asset := _get_asset_by_token_type(
+            session=tx_context.session,
             market=tx_context.market,
             token_address=get_checksum_address(event["address"]),
             token_type=TokenType.DEBT,
@@ -1115,17 +1119,27 @@ def _process_scaled_token_upgrade_event(
         raise ValueError(msg)
 
 
-def _get_gho_vtoken_revision(market: AaveV3Market) -> int | None:
+def _get_gho_vtoken_revision(
+    session: Session,
+    market: AaveV3Market,
+) -> int | None:
     """Get the GHO vToken revision from market assets."""
-    for asset in market.assets:
-        if asset.v_token and asset.v_token.address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
-            return asset.v_token_revision
-    return None
+    return session.scalar(
+        select(AaveV3Asset.v_token_revision)
+        .join(Erc20TokenTable, AaveV3Asset.v_token_id == Erc20TokenTable.id)
+        .where(
+            AaveV3Asset.market_id == market.id,
+            Erc20TokenTable.address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS,
+        )
+    )
 
 
-def _is_discount_supported(market: AaveV3Market) -> bool:
+def _is_discount_supported(
+    session: Session,
+    market: AaveV3Market,
+) -> bool:
     """Check if GHO discount mechanism is supported (revision 2 or 3)."""
-    revision = _get_gho_vtoken_revision(market)
+    revision = _get_gho_vtoken_revision(session, market)
     return revision is not None and revision < 4  # noqa: PLR2004
 
 
@@ -1157,7 +1171,8 @@ def _get_or_create_user(
 
         # Only fetch discount if mechanism is supported (revision 2 or 3)
         if tx_context.gho_asset.v_gho_discount_token is not None and _is_discount_supported(
-            tx_context.market
+            session=tx_context.session,
+            market=tx_context.market,
         ):
             try:
                 (discount_percent,) = raw_call(
@@ -1247,7 +1262,6 @@ def _get_or_create_position[T: AaveV3CollateralPosition | AaveV3DebtPosition](
     asset_id: int,
     position_table: type[T],
     tx_context: TransactionContext | None = None,
-    relationship_attr: str | None = None,
 ) -> T:
     """
     Get existing position or create new one with zero balance.
@@ -1279,9 +1293,7 @@ def _get_or_create_position[T: AaveV3CollateralPosition | AaveV3DebtPosition](
     new_position = cast("T", position_table(user_id=user.id, asset_id=asset_id, balance=0))
     session.add(new_position)
     session.flush()
-    # Expire the relationship collection to prevent stale data
-    if relationship_attr is not None:
-        session.expire(user, [relationship_attr])
+
     # Track the new position
     if tx_context is not None:
         user_address = get_checksum_address(user.address)
@@ -1305,7 +1317,6 @@ def _get_or_create_collateral_position(
         asset_id=asset_id,
         position_table=AaveV3CollateralPosition,
         tx_context=tx_context,
-        relationship_attr="collateral_positions",
     )
 
 
@@ -1325,7 +1336,6 @@ def _get_or_create_debt_position(
         asset_id=asset_id,
         position_table=AaveV3DebtPosition,
         tx_context=tx_context,
-        relationship_attr="debt_positions",
     )
 
 
@@ -1385,20 +1395,28 @@ def _fetch_discount_token_from_contract(
 
 
 def _get_contract(
+    session: Session,
     market: AaveV3Market,
     contract_name: str,
 ) -> AaveV3Contract:
     """
     Get contract by name for a given market.
     """
-    for contract in market.contracts:
-        if contract.name == contract_name:
-            return contract
-    msg = f"{contract_name} not found for market {market.id}"
-    raise ValueError(msg)
+
+    contract = session.scalar(
+        select(AaveV3Contract).where(
+            AaveV3Contract.market_id == market.id,
+            AaveV3Contract.name == contract_name,
+        )
+    )
+    if contract is None:
+        msg = f"{contract_name} not found for market {market.id}"
+        raise ValueError(msg)
+    return contract
 
 
 def _get_asset_by_token_type(
+    session: Session,
     market: AaveV3Market,
     token_address: ChecksumAddress,
     token_type: TokenType,
@@ -1406,13 +1424,31 @@ def _get_asset_by_token_type(
     """
     Get AaveV3 asset by aToken (collateral) or vToken (debt) address.
     """
-    for asset in market.assets:
-        if token_type == TokenType.COLLATERAL:
-            if asset.a_token.address == token_address:
-                return asset
-        elif token_type == TokenType.DEBT and asset.v_token.address == token_address:
-            return asset
-    return None
+
+    match token_type:
+        case TokenType.COLLATERAL:
+            return session.scalar(
+                select(AaveV3Asset)
+                .join(Erc20TokenTable, AaveV3Asset.a_token_id == Erc20TokenTable.id)
+                .where(
+                    AaveV3Asset.market_id == market.id,
+                    Erc20TokenTable.address == token_address,
+                )
+                .options(joinedload(AaveV3Asset.a_token))
+            )
+        case TokenType.DEBT:
+            return session.scalar(
+                select(AaveV3Asset)
+                .join(Erc20TokenTable, AaveV3Asset.v_token_id == Erc20TokenTable.id)
+                .where(
+                    AaveV3Asset.market_id == market.id,
+                    Erc20TokenTable.address == token_address,
+                )
+                .options(joinedload(AaveV3Asset.v_token))
+            )
+        case _:
+            msg = f"Invalid token type: {token_type}"
+            raise ValueError(msg)
 
 
 def _get_current_borrow_index_from_pool(
@@ -1472,7 +1508,7 @@ def _verify_gho_discount_amounts(
     """
 
     # Skip verification if discount mechanism is not supported (revision 4+)
-    revision = _get_gho_vtoken_revision(market)
+    revision = _get_gho_vtoken_revision(session=session, market=market)
     logger.debug(f"Verifying GHO discounts: revision={revision}, market.id={market.id}")
     if revision is None or revision >= 4:  # noqa:PLR2004
         logger.debug(f"Skipping GHO discount verification (revision {revision} < 4 not met)")
@@ -1583,7 +1619,6 @@ def _cleanup_zero_balance_positions(
     *,
     session: Session,
     market: AaveV3Market,
-    show_progress: bool,
 ) -> None:
     """
     Delete all zero-balance debt and collateral positions for the market.
@@ -1592,41 +1627,33 @@ def _cleanup_zero_balance_positions(
     hold any balance, keeping the database lean.
     """
 
-    # Delete zero-balance collateral positions
-    collateral_positions = session.scalars(
-        select(AaveV3CollateralPosition)
-        .join(AaveV3User)
-        .where(
-            AaveV3User.market_id == market.id,
-            AaveV3CollateralPosition.balance == 0,
+    # Delete zero-balance collateral positions using bulk delete
+    session.execute(
+        delete(AaveV3CollateralPosition).where(
+            AaveV3CollateralPosition.id.in_(
+                select(AaveV3CollateralPosition.id)
+                .join(AaveV3User)
+                .where(
+                    AaveV3User.market_id == market.id,
+                    AaveV3CollateralPosition.balance == 0,
+                )
+            )
         )
-    ).all()
+    )
 
-    for position in tqdm.tqdm(
-        collateral_positions,
-        desc="Cleaning up zero-balance collateral positions",
-        leave=False,
-        disable=not show_progress,
-    ):
-        session.delete(position)
-
-    # Delete zero-balance debt positions
-    debt_positions = session.scalars(
-        select(AaveV3DebtPosition)
-        .join(AaveV3User)
-        .where(
-            AaveV3User.market_id == market.id,
-            AaveV3DebtPosition.balance == 0,
+    # Delete zero-balance debt positions using bulk delete
+    session.execute(
+        delete(AaveV3DebtPosition).where(
+            AaveV3DebtPosition.id.in_(
+                select(AaveV3DebtPosition.id)
+                .join(AaveV3User)
+                .where(
+                    AaveV3User.market_id == market.id,
+                    AaveV3DebtPosition.balance == 0,
+                )
+            )
         )
-    ).all()
-
-    for position in tqdm.tqdm(
-        debt_positions,
-        desc="Cleaning up zero-balance debt positions",
-        leave=False,
-        disable=not show_progress,
-    ):
-        session.delete(position)
+    )
 
 
 def _verify_all_positions(
@@ -1755,9 +1782,16 @@ def _verify_scaled_token_positions(
         if user.address in {DEAD_ADDRESS, ZERO_ADDRESS}:
             continue
 
-        for position in session.scalars(
-            select(position_table).where(position_table.user_id == user.id)
-        ):
+        positions = session.scalars(
+            select(position_table)
+            .where(position_table.user_id == user.id)
+            .options(
+                joinedload(position_table.asset).joinedload(AaveV3Asset.a_token),
+                joinedload(position_table.asset).joinedload(AaveV3Asset.v_token),
+            )
+        ).all()
+
+        for position in positions:
             position = cast("AaveV3CollateralPosition | AaveV3DebtPosition", position)
 
             if position_table is AaveV3CollateralPosition:
@@ -1984,6 +2018,43 @@ def _process_transaction(tx_context: TransactionContext) -> None:
     for user_address in tx_context.discount_updates_by_log_index:
         tx_context.discount_updates_by_log_index[user_address].sort(key=itemgetter(0))
 
+    # Pre-fetch all users from GHO mint/burn events to avoid N+1 queries
+    gho_user_addresses: set[ChecksumAddress] = set()
+    for event in tx_context.events:
+        topic = event["topics"][0]
+        event_address = get_checksum_address(event["address"])
+
+        if (
+            topic
+            in {
+                AaveV3ScaledTokenEvent.MINT.value,
+                AaveV3ScaledTokenEvent.BURN.value,
+            }
+            and event_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS
+        ):
+            # Mint event: topics[1] = caller, topics[2] = onBehalfOf (user)
+            # Burn event: topics[1] = from (user), topics[2] = target
+            if topic == AaveV3ScaledTokenEvent.MINT.value:
+                user_address = decode_address(event["topics"][2])
+            else:  # SCALED_TOKEN_BURN
+                user_address = decode_address(event["topics"][1])
+            gho_user_addresses.add(user_address)
+
+    # Fetch all GHO users in a single query
+    gho_users = (
+        {
+            user.address: user
+            for user in tx_context.session.scalars(
+                select(AaveV3User).where(
+                    AaveV3User.address.in_(gho_user_addresses),
+                    AaveV3User.market_id == tx_context.market.id,
+                )
+            )
+        }
+        if gho_user_addresses
+        else {}
+    )
+
     for event in tx_context.events:
         topic = event["topics"][0]
         event_address = get_checksum_address(event["address"])
@@ -2007,12 +2078,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 # If there are DiscountPercentUpdated events for this user in this
                 # transaction, use the OLD discount value that was in effect at the
                 # start of the transaction (before any updates in this tx)
-                user = tx_context.session.scalar(
-                    select(AaveV3User).where(
-                        AaveV3User.address == user_address,
-                        AaveV3User.market_id == tx_context.market.id,
-                    )
-                )
+                user = gho_users.get(user_address)
                 if user is not None:
                     # Get discount that was in effect at this specific log index
                     tx_context.user_discounts[user_address] = (
@@ -2027,7 +2093,10 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 # User doesn't exist in database yet - fetch discount from contract
                 # This happens when a user with an existing GHO debt position
                 # is first encountered during event processing
-                if not _is_discount_supported(tx_context.market):
+                if not _is_discount_supported(
+                    session=tx_context.session,
+                    market=tx_context.market,
+                ):
                     # Discount mechanism deprecated (revision 4+)
                     tx_context.user_discounts[user_address] = 0
                     continue
@@ -2056,7 +2125,11 @@ def _process_transaction(tx_context: TransactionContext) -> None:
     logger.debug(f"Processing _process_transaction for tx at block {tx_context.block_number}")
 
     # Parse events into operations
-    pool_contract = _get_contract(market=tx_context.market, contract_name="POOL")
+    pool_contract = _get_contract(
+        session=tx_context.session,
+        market=tx_context.market,
+        contract_name="POOL",
+    )
     parser = TransactionOperationsParser(
         market=tx_context.market,
         session=tx_context.session,
@@ -2154,6 +2227,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         # Dispatch to appropriate handler for non-operation events
         if topic == AaveV3PoolEvent.RESERVE_DATA_UPDATED.value:
             _process_reserve_data_update_event(
+                session=tx_context.session,
                 event=event,
                 market=tx_context.market,
             )
@@ -2391,6 +2465,7 @@ def _process_collateral_mint_with_match(
 
     token_address = get_checksum_address(scaled_event.event["address"])
     collateral_asset, _ = _get_scaled_token_asset_by_address(
+        session=tx_context.session,
         market=tx_context.market,
         token_address=token_address,
     )
@@ -2482,6 +2557,7 @@ def _process_collateral_burn_with_match(
     # Get collateral asset
     token_address = get_checksum_address(scaled_event.event["address"])
     collateral_asset, _ = _get_scaled_token_asset_by_address(
+        session=tx_context.session,
         market=tx_context.market,
         token_address=token_address,
     )
@@ -2678,6 +2754,7 @@ def _process_debt_mint_with_match(
 
     token_address = get_checksum_address(scaled_event.event["address"])
     _, debt_asset = _get_scaled_token_asset_by_address(
+        session=tx_context.session,
         market=tx_context.market,
         token_address=token_address,
     )
@@ -2751,7 +2828,11 @@ def _process_debt_mint_with_match(
         # Always fetch the current global index from the contract.
         # The asset's cached borrow_index may be stale (from a previous block).
         # The event's index is the user's cached lastIndex, not the current global index.
-        pool_contract = _get_contract(market=tx_context.market, contract_name="POOL")
+        pool_contract = _get_contract(
+            session=tx_context.session,
+            market=tx_context.market,
+            contract_name="POOL",
+        )
         fetched_index = _get_current_borrow_index_from_pool(
             w3=tx_context.w3,
             pool_address=get_checksum_address(pool_contract.address),
@@ -2806,7 +2887,11 @@ def _process_debt_mint_with_match(
         # Always fetch the current global index from the contract.
         # The asset's cached borrow_index may be stale (from a previous block).
         # The event's index is the user's cached lastIndex, not the current global index.
-        pool_contract = _get_contract(market=tx_context.market, contract_name="POOL")
+        pool_contract = _get_contract(
+            session=tx_context.session,
+            market=tx_context.market,
+            contract_name="POOL",
+        )
         fetched_index = _get_current_borrow_index_from_pool(
             w3=tx_context.w3,
             pool_address=get_checksum_address(pool_contract.address),
@@ -2837,6 +2922,7 @@ def _process_debt_burn_with_match(
 
     token_address = get_checksum_address(scaled_event.event["address"])
     _, debt_asset = _get_scaled_token_asset_by_address(
+        session=tx_context.session,
         market=tx_context.market,
         token_address=token_address,
     )
@@ -2912,7 +2998,11 @@ def _process_debt_burn_with_match(
         # Always fetch the current global index from the contract.
         # The asset's cached borrow_index may be stale (from a previous block).
         # The event's index is the user's cached lastIndex, not the current global index.
-        pool_contract = _get_contract(market=tx_context.market, contract_name="POOL")
+        pool_contract = _get_contract(
+            session=tx_context.session,
+            market=tx_context.market,
+            contract_name="POOL",
+        )
         fetched_index = _get_current_borrow_index_from_pool(
             w3=tx_context.w3,
             pool_address=get_checksum_address(pool_contract.address),
@@ -2973,7 +3063,11 @@ def _process_debt_burn_with_match(
         # Always fetch the current global index from the contract.
         # The asset's cached borrow_index may be stale (from a previous block).
         # The event's index is the user's cached lastIndex, not the current global index.
-        pool_contract = _get_contract(market=tx_context.market, contract_name="POOL")
+        pool_contract = _get_contract(
+            session=tx_context.session,
+            market=tx_context.market,
+            contract_name="POOL",
+        )
         fetched_index = _get_current_borrow_index_from_pool(
             w3=tx_context.w3,
             pool_address=get_checksum_address(pool_contract.address),
@@ -3101,6 +3195,7 @@ def _process_collateral_transfer(
 
     token_address = get_checksum_address(scaled_event.event["address"])
     collateral_asset, _ = _get_scaled_token_asset_by_address(
+        session=tx_context.session,
         market=tx_context.market,
         token_address=token_address,
     )
@@ -3345,6 +3440,7 @@ def _process_debt_transfer(
     # Get debt asset
     token_address = get_checksum_address(scaled_event.event["address"])
     _, debt_asset = _get_scaled_token_asset_by_address(
+        session=tx_context.session,
         market=tx_context.market,
         token_address=token_address,
     )
@@ -3403,6 +3499,7 @@ def _process_debt_transfer(
 
 
 def _get_scaled_token_asset_by_address(
+    session: Session,
     market: AaveV3Market,
     token_address: ChecksumAddress,
 ) -> tuple[AaveV3Asset | None, AaveV3Asset | None]:
@@ -3410,12 +3507,14 @@ def _get_scaled_token_asset_by_address(
     Get collateral and debt assets by token address.
     """
     collateral_asset = _get_asset_by_token_type(
+        session=session,
         market=market,
         token_address=token_address,
         token_type=TokenType.COLLATERAL,
     )
 
     debt_asset = _get_asset_by_token_type(
+        session=session,
         market=market,
         token_address=token_address,
         token_type=TokenType.DEBT,
@@ -3481,6 +3580,7 @@ def _get_debt_token_addresses(
 
 def _update_contract_revision(
     *,
+    session: Session,
     w3: Web3,
     market: AaveV3Market,
     contract_name: str,
@@ -3500,7 +3600,11 @@ def _update_contract_revision(
         return_types=["uint256"],
     )
 
-    contract = _get_contract(market=market, contract_name=contract_name)
+    contract = _get_contract(
+        session=session,
+        market=market,
+        contract_name=contract_name,
+    )
     contract.revision = revision
 
     logger.info(f"Upgraded revision for {contract.name} to {revision}")
@@ -3975,6 +4079,7 @@ def update_aave_market(
     for event in _fetch_address_provider_events(
         w3=w3,
         provider_address=_get_contract(
+            session=session,
             market=market,
             contract_name="POOL_ADDRESS_PROVIDER",
         ).address,
@@ -4004,6 +4109,7 @@ def update_aave_market(
             )
         elif topic == AaveV3PoolConfigEvent.POOL_UPDATED.value:
             _update_contract_revision(
+                session=session,
                 w3=w3,
                 market=market,
                 contract_name="POOL",
@@ -4012,6 +4118,7 @@ def update_aave_market(
             )
         elif topic == AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value:
             _update_contract_revision(
+                session=session,
                 w3=w3,
                 market=market,
                 contract_name="POOL_CONFIGURATOR",
@@ -4056,7 +4163,11 @@ def update_aave_market(
 
     # Phase 2
     try:
-        pool_configurator = _get_contract(market=market, contract_name="POOL_CONFIGURATOR")
+        pool_configurator = _get_contract(
+            session=session,
+            market=market,
+            contract_name="POOL_CONFIGURATOR",
+        )
     except ValueError:
         # Configurator not initialized yet, skip reserve initialization
         pool_configurator = None
@@ -4078,7 +4189,11 @@ def update_aave_market(
     all_events: list[LogReceipt] = []
 
     try:
-        pool = _get_contract(market=market, contract_name="POOL")
+        pool = _get_contract(
+            session=session,
+            market=market,
+            contract_name="POOL",
+        )
     except ValueError:
         # Pool not initialized yet, skip to next chunk
         logger.warning(f"Pool not initialized for market {market.id}, skipping")
