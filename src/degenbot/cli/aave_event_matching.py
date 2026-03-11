@@ -303,6 +303,8 @@ class OperationAwareEventMatcher:
             );
         """
 
+        assert self.operation.pool_event is not None
+
         _, raw_amount = decode(
             types=["address", "uint256"],
             data=self.operation.pool_event["data"],
@@ -323,6 +325,8 @@ class OperationAwareEventMatcher:
                 uint256 amount
             );
         """
+
+        assert self.operation.pool_event is not None
 
         (raw_amount,) = decode(
             types=["uint256"],
@@ -348,6 +352,8 @@ class OperationAwareEventMatcher:
             );
         """
 
+        assert self.operation.pool_event is not None
+
         _, raw_amount, _, _ = decode(
             types=["address", "uint256", "uint8", "uint256"],
             data=self.operation.pool_event["data"],
@@ -369,6 +375,8 @@ class OperationAwareEventMatcher:
                 bool useATokens
             );
         """
+
+        assert self.operation.pool_event is not None
 
         raw_amount, use_a_tokens = decode(
             types=["uint256", "bool"],
@@ -395,6 +403,8 @@ class OperationAwareEventMatcher:
             );
         """
 
+        assert self.operation.pool_event is not None
+
         debt_to_cover, liquidated_collateral = decode(
             types=["uint256", "uint256"],
             data=self.operation.pool_event["data"],
@@ -415,6 +425,8 @@ class OperationAwareEventMatcher:
                 uint256 amountCreated
             );
         """
+
+        assert self.operation.pool_event is not None
 
         (amount_created,) = decode(
             types=["uint256"],

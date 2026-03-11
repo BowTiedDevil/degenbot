@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass, field
 
-import eth_abi.abi
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from sqlalchemy.orm import Session
@@ -11,21 +10,13 @@ from web3.types import LogReceipt
 
 from degenbot.aave.events import ERC20Event
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.cli.aave_utils import _decode_address, _decode_uint_values
 from degenbot.database.models.aave import (
     AaveGhoToken,
     AaveV3CollateralPosition,
     AaveV3DebtPosition,
     AaveV3Market,
 )
-
-
-def _decode_address(input_: bytes) -> ChecksumAddress:
-    """
-    Get the checksummed address from the given byte stream.
-    """
-
-    (address,) = eth_abi.abi.decode(types=["address"], data=input_)
-    return get_checksum_address(address)
 
 
 @dataclass
@@ -159,17 +150,3 @@ class TransactionContext:
                 net_delta += value
 
         return net_delta
-
-
-def _decode_uint_values(
-    event: LogReceipt,
-    num_values: int | None = None,
-) -> tuple[int, ...]:
-    """
-    Decode uint256 values from event data.
-    """
-
-    if num_values is None:
-        num_values = len(event["data"]) // 32
-    types = ["uint256"] * num_values
-    return eth_abi.abi.decode(types=types, data=event["data"])

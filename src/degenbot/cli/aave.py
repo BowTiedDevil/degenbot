@@ -47,6 +47,7 @@ from degenbot.cli.aave_transaction_operations import (
     TransactionValidationError,
 )
 from degenbot.cli.aave_types import TransactionContext
+from degenbot.cli.aave_utils import _decode_address, _decode_uint_values
 from degenbot.cli.utils import get_web3_from_config
 from degenbot.config import settings
 from degenbot.constants import ERC_1967_IMPLEMENTATION_SLOT, ZERO_ADDRESS
@@ -108,29 +109,6 @@ event_in_process: LogReceipt
 class WadRayMathLibrary(Protocol):
     def ray_div(self, a: int, b: int) -> int: ...
     def ray_mul(self, a: int, b: int) -> int: ...
-
-
-def _decode_address(input_: bytes) -> ChecksumAddress:
-    """
-    Get the checksummed address from the given byte stream.
-    """
-
-    (address,) = eth_abi.abi.decode(types=["address"], data=input_)
-    return get_checksum_address(address)
-
-
-def _decode_uint_values(
-    event: LogReceipt,
-    num_values: int | None = None,
-) -> tuple[int, ...]:
-    """
-    Decode uint256 values from event data.
-    """
-
-    if num_values is None:
-        num_values = len(event["data"]) // 32
-    types = ["uint256"] * num_values
-    return eth_abi.abi.decode(types=types, data=event["data"])
 
 
 def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress]:
