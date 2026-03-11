@@ -19,7 +19,7 @@ nursery = { level = "warn", priority = -1 }
 
 [lib]
 name = "degenbot_rs"
-crate-type = ["cdylib"]
+crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 alloy-primitives = { version = "^1.5" }
