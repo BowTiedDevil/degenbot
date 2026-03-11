@@ -23,15 +23,6 @@ from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.logging import logger
 
 
-def _decode_hex_data(data: str | HexBytes) -> bytes:
-    """Convert hex string (with or without 0x prefix) to bytes."""
-    if isinstance(data, (HexBytes, bytes)):
-        return bytes(data)
-    if isinstance(data, str) and data.startswith("0x"):
-        data = data[2:]
-    return bytes.fromhex(data)
-
-
 class OperationType(Enum):
     """Types of Aave operations based on asset flows."""
 
@@ -713,9 +704,9 @@ class TransactionOperationsParser:
 
         caller = decode_address(event["topics"][1])
         user = decode_address(event["topics"][2])
-        # Convert hex string to bytes for eth_abi.decode
         amount, balance_increase, index = eth_abi.abi.decode(
-            ["uint256", "uint256", "uint256"], _decode_hex_data(event["data"])
+            types=["uint256", "uint256", "uint256"],
+            data=event["data"],
         )
 
         # Determine event type based on token type
@@ -751,7 +742,8 @@ class TransactionOperationsParser:
         from_addr = decode_address(event["topics"][1])
         target = decode_address(event["topics"][2])
         amount, balance_increase, index = eth_abi.abi.decode(
-            ["uint256", "uint256", "uint256"], _decode_hex_data(event["data"])
+            types=["uint256", "uint256", "uint256"],
+            data=event["data"],
         )
 
         # Determine event type based on token type
@@ -791,7 +783,10 @@ class TransactionOperationsParser:
         from_addr = decode_address(event["topics"][1])
         to_addr = decode_address(event["topics"][2])
         # BalanceTransfer data: amount, index
-        amount, index = eth_abi.abi.decode(["uint256", "uint256"], _decode_hex_data(event["data"]))
+        amount, index = eth_abi.abi.decode(
+            types=["uint256", "uint256"],
+            data=event["data"],
+        )
 
         # Determine event type based on token type
         token_address = get_checksum_address(event["address"])
@@ -830,7 +825,10 @@ class TransactionOperationsParser:
         from_addr = decode_address(event["topics"][1])
         to_addr = decode_address(event["topics"][2])
         # Transfer data: amount
-        (amount,) = eth_abi.abi.decode(["uint256"], _decode_hex_data(event["data"]))
+        (amount,) = eth_abi.abi.decode(
+            types=["uint256"],
+            data=event["data"],
+        )
 
         # Determine event type based on token type
         token_address = get_checksum_address(event["address"])
@@ -960,7 +958,6 @@ class TransactionOperationsParser:
         # For SUPPLY: look for mints where value > balance_increase (standard deposit)
         # Match on onBehalfOf (beneficiary) from the SUPPLY event, which corresponds
         # to the user_address in the collateral mint event
-
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
                 continue
@@ -1316,9 +1313,7 @@ class TransactionOperationsParser:
         user = decode_address(repay_event["topics"][2])
         repay_amount, use_a_tokens = eth_abi.abi.decode(
             types=["uint256", "bool"],
-            data=_decode_hex_data(
-                repay_event["data"],
-            ),
+            data=repay_event["data"],
         )
 
         is_gho = reserve == GHO_TOKEN_ADDRESS
