@@ -7,7 +7,7 @@ import operator
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum, auto
 
-from eth_abi.abi import decode
+import eth_abi.abi
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from sqlalchemy import select
@@ -22,23 +22,14 @@ from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.logging import logger
 
 
-def _topic_to_address(topic: HexBytes | str) -> ChecksumAddress:
-    """Extract Ethereum address from event topic.
-
-    Handles both HexBytes objects (from web3.py) and hex strings (from JSON).
-    The address is the last 40 hex characters (20 bytes) of the topic.
-
-    Args:
-        topic: Event topic as HexBytes or hex string (e.g., "0x000...d322a490...")
-
-    Returns:
-        ChecksumAddress: The extracted address
+def _topic_to_address(topic: HexBytes) -> ChecksumAddress:
     """
-    if isinstance(topic, str):
-        # Already a hex string, extract last 40 chars
-        return get_checksum_address("0x" + topic[-40:])
-    # HexBytes object, call .hex() method
-    return get_checksum_address("0x" + topic.hex()[-40:])
+    Extract Ethereum address from event topic.
+    """
+
+    address: str
+    (address,) = eth_abi.abi.decode(types=["address"], data=topic)
+    return get_checksum_address(address)
 
 
 def _decode_hex_data(data: str | HexBytes) -> bytes:
@@ -737,7 +728,7 @@ class TransactionOperationsParser:
         caller = _topic_to_address(event["topics"][1])
         user = _topic_to_address(event["topics"][2])
         # Convert hex string to bytes for eth_abi.decode
-        amount, balance_increase, index = decode(
+        amount, balance_increase, index = eth_abi.abi.decode(
             ["uint256", "uint256", "uint256"], _decode_hex_data(event["data"])
         )
 
@@ -773,7 +764,7 @@ class TransactionOperationsParser:
 
         from_addr = _topic_to_address(event["topics"][1])
         target = _topic_to_address(event["topics"][2])
-        amount, balance_increase, index = decode(
+        amount, balance_increase, index = eth_abi.abi.decode(
             ["uint256", "uint256", "uint256"], _decode_hex_data(event["data"])
         )
 
@@ -814,7 +805,7 @@ class TransactionOperationsParser:
         from_addr = _topic_to_address(event["topics"][1])
         to_addr = _topic_to_address(event["topics"][2])
         # BalanceTransfer data: amount, index
-        amount, index = decode(["uint256", "uint256"], _decode_hex_data(event["data"]))
+        amount, index = eth_abi.abi.decode(["uint256", "uint256"], _decode_hex_data(event["data"]))
 
         # Determine event type based on token type
         token_address = get_checksum_address(event["address"])
@@ -853,7 +844,7 @@ class TransactionOperationsParser:
         from_addr = _topic_to_address(event["topics"][1])
         to_addr = _topic_to_address(event["topics"][2])
         # Transfer data: amount
-        (amount,) = decode(["uint256"], _decode_hex_data(event["data"]))
+        (amount,) = eth_abi.abi.decode(["uint256"], _decode_hex_data(event["data"]))
 
         # Determine event type based on token type
         token_address = get_checksum_address(event["address"])
@@ -950,8 +941,9 @@ class TransactionOperationsParser:
         msg = f"Could not determine operation from event topic {topic!r}"
         raise ValueError(msg)
 
+    @staticmethod
     def _create_supply_operation(
-        self,
+        *,
         operation_id: int,
         supply_event: LogReceipt,
         scaled_events: list[ScaledTokenEvent],
@@ -973,8 +965,10 @@ class TransactionOperationsParser:
 
         assert supply_event["topics"][0] == AaveV3PoolEvent.SUPPLY.value
 
-        on_behalf_of = self._decode_address(supply_event["topics"][2])
-        _user, supply_amount = decode(types=["address", "uint256"], data=supply_event["data"])
+        on_behalf_of = _topic_to_address(supply_event["topics"][2])
+        _user, supply_amount = eth_abi.abi.decode(
+            types=["address", "uint256"], data=supply_event["data"]
+        )
 
         # Find collateral mint for this user
         # For SUPPLY: look for mints where value > balance_increase (standard deposit)
@@ -1044,8 +1038,9 @@ class TransactionOperationsParser:
             balance_transfer_events=[],
         )
 
+    @staticmethod
     def _create_withdraw_operation(
-        self,
+        *,
         operation_id: int,
         withdraw_event: LogReceipt,
         scaled_events: list[ScaledTokenEvent],
@@ -1066,10 +1061,10 @@ class TransactionOperationsParser:
 
         assert withdraw_event["topics"][0] == AaveV3PoolEvent.WITHDRAW.value
 
-        user = self._decode_address(withdraw_event["topics"][2])
+        user = _topic_to_address(withdraw_event["topics"][2])
 
         withdraw_amount: int
-        (withdraw_amount,) = decode(types=["uint256"], data=withdraw_event["data"])
+        (withdraw_amount,) = eth_abi.abi.decode(types=["uint256"], data=withdraw_event["data"])
 
         # Find interest accrual mint for this operation (may not exist)
         interest_mints: list[ScaledTokenEvent] = []
@@ -1231,9 +1226,9 @@ class TransactionOperationsParser:
 
         assert borrow_event["topics"][0] == AaveV3PoolEvent.BORROW.value
 
-        reserve = self._decode_address(borrow_event["topics"][1])
-        on_behalf_of = self._decode_address(borrow_event["topics"][2])
-        _user, borrow_amount, _interest_rate_mode, _borrow_rate = decode(
+        reserve = _topic_to_address(borrow_event["topics"][1])
+        on_behalf_of = _topic_to_address(borrow_event["topics"][2])
+        _user, borrow_amount, _interest_rate_mode, _borrow_rate = eth_abi.abi.decode(
             types=["address", "uint256", "uint8", "uint256"],
             data=borrow_event["data"],
         )
@@ -1331,9 +1326,9 @@ class TransactionOperationsParser:
             );
         """
 
-        reserve = self._decode_address(repay_event["topics"][1])
-        user = self._decode_address(repay_event["topics"][2])
-        repay_amount, use_a_tokens = decode(
+        reserve = _topic_to_address(repay_event["topics"][1])
+        user = _topic_to_address(repay_event["topics"][2])
+        repay_amount, use_a_tokens = eth_abi.abi.decode(
             types=["uint256", "bool"],
             data=_decode_hex_data(
                 repay_event["data"],
@@ -1613,8 +1608,8 @@ class TransactionOperationsParser:
 
         return None
 
+    @staticmethod
     def _create_liquidation_operation(
-        self,
         *,
         operation_id: int,
         liquidation_event: LogReceipt,
@@ -1637,12 +1632,14 @@ class TransactionOperationsParser:
             );
         """
 
-        _collateral_asset = self._decode_address(liquidation_event["topics"][1])
-        debt_asset = self._decode_address(liquidation_event["topics"][2])
-        user = self._decode_address(liquidation_event["topics"][3])
-        _debt_to_cover, _liquidated_collateral_amount, _liquidator, _receive_a_token = decode(
-            types=["uint256", "uint256", "address", "bool"],
-            data=liquidation_event["data"],
+        _collateral_asset = _topic_to_address(liquidation_event["topics"][1])
+        debt_asset = _topic_to_address(liquidation_event["topics"][2])
+        user = _topic_to_address(liquidation_event["topics"][3])
+        _debt_to_cover, _liquidated_collateral_amount, _liquidator, _receive_a_token = (
+            eth_abi.abi.decode(
+                types=["uint256", "uint256", "address", "bool"],
+                data=liquidation_event["data"],
+            )
         )
 
         is_gho = debt_asset == GHO_TOKEN_ADDRESS
@@ -1719,8 +1716,8 @@ class TransactionOperationsParser:
             balance_transfer_events=balance_transfer_events,
         )
 
+    @staticmethod
     def _create_deficit_operation(
-        self,
         *,
         operation_id: int,
         deficit_event: LogReceipt,
@@ -1749,8 +1746,8 @@ class TransactionOperationsParser:
         separate flash loan operation.
         """
 
-        user = self._decode_address(deficit_event["topics"][1])
-        asset = self._decode_address(deficit_event["topics"][2])
+        user = _topic_to_address(deficit_event["topics"][1])
+        asset = _topic_to_address(deficit_event["topics"][2])
 
         # Check if this is a GHO deficit (flash loan) or non-GHO deficit
         is_gho_deficit = asset == GHO_TOKEN_ADDRESS
@@ -1760,7 +1757,7 @@ class TransactionOperationsParser:
         has_liquidation_for_user = False
         for event in all_events:
             if event["topics"][0] == AaveV3PoolEvent.LIQUIDATION_CALL.value:
-                liquidation_user = self._decode_address(event["topics"][3])
+                liquidation_user = _topic_to_address(event["topics"][3])
                 if liquidation_user == user:
                     has_liquidation_for_user = True
                     break
@@ -2377,7 +2374,8 @@ class TransactionOperationsParser:
 
         return errors
 
-    def _validate_liquidation(self, op: Operation) -> list[str]:
+    @staticmethod
+    def _validate_liquidation(op: Operation) -> list[str]:
         """Validate LIQUIDATION operation."""
         errors = []
 
@@ -2397,7 +2395,7 @@ class TransactionOperationsParser:
                 f"Expected 0 or 1 debt burns for LIQUIDATION, got {len(debt_burns)}. "
                 f"DEBUG NOTE: Check if debt/collateral events are being assigned to wrong "
                 f"operations. Current debt burns: {[e.event['logIndex'] for e in debt_burns]}. "
-                f"User in LIQUIDATION_CALL: {self._decode_address(op.pool_event['topics'][3])}"
+                f"User in LIQUIDATION_CALL: {_topic_to_address(op.pool_event['topics'][3])}"
             )
 
         if len(collateral_events) < 1:
@@ -2406,7 +2404,7 @@ class TransactionOperationsParser:
                 f"got {len(collateral_events)}. "
                 f"DEBUG NOTE: Check collateral asset matching and user address consistency. "
                 f"Current collateral events: {[e.event['logIndex'] for e in collateral_events]}. "
-                f"User in LIQUIDATION_CALL: {self._decode_address(op.pool_event['topics'][3])}"
+                f"User in LIQUIDATION_CALL: {_topic_to_address(op.pool_event['topics'][3])}"
             )
 
         return errors
@@ -2556,8 +2554,3 @@ class TransactionOperationsParser:
                 )
 
         return errors
-
-    @staticmethod
-    def _decode_address(topic: HexBytes | str) -> ChecksumAddress:
-        """Decode topic as address."""
-        return _topic_to_address(topic)

@@ -8,17 +8,15 @@ from enum import Enum, auto
 from typing import Protocol, TypedDict
 
 from eth_abi.abi import decode
-from eth_typing import ChecksumAddress
-from hexbytes import HexBytes
 from web3.types import LogReceipt
 
 from degenbot.aave.events import AaveV3PoolEvent
 from degenbot.cli.aave_transaction_operations import Operation, OperationType, ScaledTokenEventType
-from degenbot.exceptions import DegenbotValueError
 
 
 class TransactionContext(Protocol):
-    """Protocol for transaction context.
+    """
+    Protocol for transaction context.
 
     Defines the interface needed by EventMatcher without importing
     the actual TransactionContext class from aave.py (avoiding circular imports).
@@ -28,31 +26,9 @@ class TransactionContext(Protocol):
     matched_pool_events: dict[int, bool]
 
 
-class EventMatchError(DegenbotValueError):
-    """Raised when event matching fails.
-
-    Provides detailed error messages including available pool events
-    for debugging purposes.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        tx_hash: HexBytes | None = None,
-        user_address: ChecksumAddress | None = None,
-        reserve_address: ChecksumAddress | None = None,
-        available_events: list[str] | None = None,
-    ) -> None:
-        self.tx_hash = tx_hash
-        self.user_address = user_address
-        self.reserve_address = reserve_address
-        self.available_events = available_events or []
-        super().__init__(message)
-
-
 class EventConsumptionPolicy(Enum):
-    """Policy for consuming pool events after matching.
+    """
+    Policy for consuming pool events after matching.
 
     - CONSUMABLE: Mark event as consumed after first match (e.g., SUPPLY, WITHDRAW)
     - REUSABLE: Never mark as consumed (e.g., LIQUIDATION_CALL, DEFICIT_CREATED)
@@ -66,7 +42,8 @@ class EventConsumptionPolicy(Enum):
 
 @dataclass(frozen=True)
 class MatchConfig:
-    """Configuration for matching a scaled token event to pool events.
+    """
+    Configuration for matching a scaled token event to pool events.
 
     Attributes:
         target_event: The scaled token event type being matched
@@ -141,7 +118,10 @@ class OperationAwareEventMatcher:
         return matcher()
 
     def _match_supply(self) -> EventMatchResult:
-        """Match supply operation."""
+        """
+        Match supply operation.
+        """
+
         return EventMatchResult(
             pool_event=self.operation.pool_event,
             should_consume=True,  # SUPPLY is single-purpose
@@ -149,7 +129,10 @@ class OperationAwareEventMatcher:
         )
 
     def _match_withdraw(self) -> EventMatchResult:
-        """Match withdraw operation."""
+        """
+        Match withdraw operation.
+        """
+
         return EventMatchResult(
             pool_event=self.operation.pool_event,
             should_consume=True,  # WITHDRAW is single-purpose
@@ -157,7 +140,10 @@ class OperationAwareEventMatcher:
         )
 
     def _match_borrow(self) -> EventMatchResult:
-        """Match borrow operation."""
+        """
+        Match borrow operation.
+        """
+
         return EventMatchResult(
             pool_event=self.operation.pool_event,
             should_consume=True,  # BORROW is single-purpose
@@ -165,7 +151,10 @@ class OperationAwareEventMatcher:
         )
 
     def _match_gho_borrow(self) -> EventMatchResult:
-        """Match GHO borrow operation."""
+        """
+        Match GHO borrow operation.
+        """
+
         return EventMatchResult(
             pool_event=self.operation.pool_event,
             should_consume=True,  # GHO BORROW is single-purpose
@@ -173,7 +162,10 @@ class OperationAwareEventMatcher:
         )
 
     def _match_repay(self) -> EventMatchResult:
-        """Match repay operation."""
+        """
+        Match repay operation.
+        """
+
         # Extract useATokens to determine consumption
         extraction_data = self._extract_repay_data()
         use_a_tokens = extraction_data.get("use_a_tokens", False)
@@ -188,7 +180,8 @@ class OperationAwareEventMatcher:
         )
 
     def _match_repay_with_atokens(self) -> EventMatchResult:
-        """Match repay with aTokens operation.
+        """
+        Match repay with aTokens operation.
 
         In this operation, the REPAY event is shared between:
         - Debt burn (vToken burn)
@@ -196,6 +189,7 @@ class OperationAwareEventMatcher:
 
         The REPAY event should NOT be consumed.
         """
+
         extraction_data = self._extract_repay_data()
 
         return EventMatchResult(
@@ -205,7 +199,10 @@ class OperationAwareEventMatcher:
         )
 
     def _match_gho_repay(self) -> EventMatchResult:
-        """Match GHO repay operation."""
+        """
+        Match GHO repay operation.
+        """
+
         return EventMatchResult(
             pool_event=self.operation.pool_event,
             should_consume=True,  # GHO REPAY is single-purpose (no useATokens)
@@ -213,7 +210,8 @@ class OperationAwareEventMatcher:
         )
 
     def _match_liquidation(self) -> EventMatchResult:
-        """Match liquidation operation.
+        """
+        Match liquidation operation.
 
         In liquidation, the LIQUIDATION_CALL event is shared between:
         - Debt burn (debt repayment)
@@ -221,6 +219,7 @@ class OperationAwareEventMatcher:
 
         The LIQUIDATION_CALL event should NOT be consumed.
         """
+
         return EventMatchResult(
             pool_event=self.operation.pool_event,
             should_consume=False,  # Shared across debt and collateral burns
@@ -228,10 +227,12 @@ class OperationAwareEventMatcher:
         )
 
     def _match_gho_liquidation(self) -> EventMatchResult:
-        """Match GHO liquidation operation.
+        """
+        Match GHO liquidation operation.
 
         Same as standard liquidation - LIQUIDATION_CALL is shared.
         """
+
         return EventMatchResult(
             pool_event=self.operation.pool_event,
             should_consume=False,  # Shared across burns
@@ -239,7 +240,10 @@ class OperationAwareEventMatcher:
         )
 
     def _match_flash_loan(self) -> EventMatchResult:
-        """Match flash loan (DEFICIT_CREATED) operation."""
+        """
+        Match flash loan (DEFICIT_CREATED) operation.
+        """
+
         return EventMatchResult(
             pool_event=self.operation.pool_event,
             should_consume=False,  # DEFICIT_CREATED is reusable
@@ -247,11 +251,13 @@ class OperationAwareEventMatcher:
         )
 
     def _match_interest_accrual(self) -> EventMatchResult:
-        """Match interest accrual operation.
+        """
+        Match interest accrual operation.
 
         Interest accrual operations have no pool event. The scaled token event
         represents pure interest accrual where amount == balance_increase.
         """
+
         return EventMatchResult(
             pool_event=self.operation.pool_event,
             should_consume=False,
@@ -259,11 +265,13 @@ class OperationAwareEventMatcher:
         )
 
     def _match_balance_transfer(self) -> EventMatchResult:
-        """Match balance transfer operation.
+        """
+        Match balance transfer operation.
 
         Balance transfer operations have no pool event. The scaled token event
         represents an ERC20 Transfer of aTokens or vTokens between users.
         """
+
         return EventMatchResult(
             pool_event=self.operation.pool_event,
             should_consume=False,
@@ -271,9 +279,9 @@ class OperationAwareEventMatcher:
         )
 
     def _default_match(self) -> EventMatchResult | None:
-        """Default matching for unknown operation types."""
-        if self.operation.pool_event is None:
-            return None
+        """
+        Default matching for unknown operation types.
+        """
 
         return EventMatchResult(
             pool_event=self.operation.pool_event,
@@ -295,8 +303,6 @@ class OperationAwareEventMatcher:
             );
         """
 
-        if self.operation.pool_event is None:
-            return {"raw_amount": 0}
         _, raw_amount = decode(
             types=["address", "uint256"],
             data=self.operation.pool_event["data"],
@@ -318,8 +324,6 @@ class OperationAwareEventMatcher:
             );
         """
 
-        if self.operation.pool_event is None:
-            return {"raw_amount": 0}
         (raw_amount,) = decode(
             types=["uint256"],
             data=self.operation.pool_event["data"],
@@ -344,9 +348,6 @@ class OperationAwareEventMatcher:
             );
         """
 
-        if self.operation.pool_event is None:
-            return {"raw_amount": 0}
-        # Skip the first 32 bytes (address caller) and decode the amount
         _, raw_amount, _, _ = decode(
             types=["address", "uint256", "uint8", "uint256"],
             data=self.operation.pool_event["data"],
@@ -369,8 +370,6 @@ class OperationAwareEventMatcher:
             );
         """
 
-        if self.operation.pool_event is None:
-            return {"raw_amount": 0, "use_a_tokens": False}
         raw_amount, use_a_tokens = decode(
             types=["uint256", "bool"],
             data=self.operation.pool_event["data"],
@@ -396,8 +395,6 @@ class OperationAwareEventMatcher:
             );
         """
 
-        if self.operation.pool_event is None:
-            return {"debt_to_cover": 0, "liquidated_collateral": 0}
         debt_to_cover, liquidated_collateral = decode(
             types=["uint256", "uint256"],
             data=self.operation.pool_event["data"],
@@ -419,8 +416,6 @@ class OperationAwareEventMatcher:
             );
         """
 
-        if self.operation.pool_event is None:
-            return {"amount_created": 0}
         (amount_created,) = decode(
             types=["uint256"],
             data=self.operation.pool_event["data"],
