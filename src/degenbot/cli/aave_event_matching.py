@@ -13,10 +13,8 @@ from hexbytes import HexBytes
 from web3.types import LogReceipt
 
 from degenbot.aave.events import AaveV3PoolEvent
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli.aave_transaction_operations import Operation, OperationType, ScaledTokenEventType
 from degenbot.exceptions import DegenbotValueError
-from degenbot.logging import logger
 
 
 class TransactionContext(Protocol):
@@ -59,9 +57,6 @@ class EventConsumptionPolicy(Enum):
     - CONSUMABLE: Mark event as consumed after first match (e.g., SUPPLY, WITHDRAW)
     - REUSABLE: Never mark as consumed (e.g., LIQUIDATION_CALL, DEFICIT_CREATED)
     - CONDITIONAL: Consumed based on event data (e.g., REPAY with useATokens flag)
-
-    See debug/aave/0010, 0011, 0012 for LIQUIDATION_CALL reuse patterns.
-    See debug/aave/0008, 0012b for REPAY conditional consumption patterns.
     """
 
     CONSUMABLE = auto()
@@ -85,7 +80,6 @@ class MatchConfig:
     pool_event_types: list[AaveV3PoolEvent] = field(default_factory=list)
     consumption_policy: EventConsumptionPolicy = EventConsumptionPolicy.CONSUMABLE
     consumption_condition: Callable[[LogReceipt], bool] | None = None
-    match_order_priority: bool = True
 
 
 class EventMatchResult(TypedDict):
@@ -104,9 +98,6 @@ def _should_consume_collateral_mint_pool_event(pool_event: LogReceipt) -> bool:
     - WITHDRAW: Always consumed (single-purpose event)
     - REPAY: Never consumed (shared with debt burns for repay-with-aTokens)
     - LIQUIDATION_CALL: Never consumed (shared across liquidation operations)
-
-    See debug/aave/0011 for LIQUIDATION_CALL matching in collateral mints.
-    See debug/aave/0015 for REPAY matching in repayWithATokens.
     """
     event_topic = pool_event["topics"][0]
 
@@ -131,9 +122,6 @@ def _should_consume_collateral_burn_pool_event(pool_event: LogReceipt) -> bool:
     - REPAY: Consumed only if useATokens=False
       (when useATokens=True, REPAY is shared with debt burn)
     - LIQUIDATION_CALL: Never consumed (shared across operations)
-
-    See debug/aave/0008 for repay-with-aTokens pattern.
-    See debug/aave/0009 for LIQUIDATION_CALL reuse pattern.
     """
     event_topic = pool_event["topics"][0]
 
@@ -159,10 +147,8 @@ def _should_consume_debt_mint_pool_event(pool_event: LogReceipt) -> bool:
     - BORROW: Always consumed (single-purpose event)
     - REPAY: Never consumed (shared with collateral burns for repay-with-aTokens)
     - LIQUIDATION_CALL: Never consumed (shared across liquidation operations)
-
-    See debug/aave/0011 for LIQUIDATION_CALL matching in debt mints.
-    See debug/aave/0012b for REPAY preservation pattern.
     """
+
     event_topic = pool_event["topics"][0]
 
     assert event_topic in {
@@ -185,11 +171,8 @@ def _should_consume_debt_burn_pool_event(pool_event: LogReceipt) -> bool:
       (when useATokens=True, REPAY is shared with collateral burn)
     - LIQUIDATION_CALL: Never consumed (shared across liquidation operations)
     - DEFICIT_CREATED: Never consumed (bad debt write-off may affect multiple positions)
-
-    See debug/aave/0008 for repay-with-aTokens pattern.
-    See debug/aave/0010, 0012a for LIQUIDATION_CALL preservation pattern.
-    See debug/aave/0013 for DEFICIT_CREATED handling.
     """
+
     event_topic = pool_event["topics"][0]
 
     if event_topic == AaveV3PoolEvent.LIQUIDATION_CALL.value:
@@ -215,9 +198,8 @@ def _should_consume_gho_debt_mint_pool_event(pool_event: LogReceipt) -> bool:
     Consumption rules:
     - BORROW: Always consumed (single-purpose event)
     - REPAY: Never consumed (shared with collateral burns)
-
-    See debug/aave/0012b for REPAY preservation in GHO operations.
     """
+
     event_topic = pool_event["topics"][0]
 
     assert event_topic in {
@@ -235,10 +217,8 @@ def _should_consume_gho_debt_burn_pool_event(pool_event: LogReceipt) -> bool:
     - REPAY: Consumed (GHO has no useATokens flag, always single-purpose)
     - LIQUIDATION_CALL: Never consumed (shared across liquidation operations)
     - DEFICIT_CREATED: Never consumed (bad debt write-off may affect multiple positions)
-
-    See debug/aave/0010 for LIQUIDATION_CALL preservation in GHO burns.
-    See debug/aave/0016 for DEFICIT_CREATED handling in GHO liquidations.
     """
+
     event_topic = pool_event["topics"][0]
 
     assert event_topic in {
@@ -261,24 +241,9 @@ class EventMatcher:
     - Shared LIQUIDATION_CALL events in liquidations
     - Conditional REPAY consumption for repay-with-aTokens
     - Debt burns without matching Pool events (flash loans)
-
-    Usage:
-        matcher = EventMatcher(tx_context)
-        result = matcher.find_matching_pool_event(
-            event_type=ScaledTokenEventType.COLLATERAL_BURN,
-            user_address=user.address,
-            reserve_address=reserve_address,
-        )
-        if result is None:
-            raise EventMatchError("No matching event found")
-
-        pool_event = result["pool_event"]
-        should_consume = result["should_consume"]
-        scaled_amount = result["extraction_data"].get("scaled_amount")
     """
 
     # Single source of truth for all matching configurations
-    # See debug/aave/ for bug reports justifying each configuration
     CONFIGS: ClassVar[dict[ScaledTokenEventType, MatchConfig]] = {
         # Collateral Mint: Can match SUPPLY (deposit), WITHDRAW (interest before withdraw),
         # LIQUIDATION_CALL (liquidator receiving collateral), or REPAY (excess aTokens returned
@@ -286,7 +251,6 @@ class EventMatcher:
         # SUPPLY/WITHDRAW: consumed (single-purpose)
         # LIQUIDATION_CALL: never consumed (shared across liquidation operations)
         # REPAY: never consumed (may be shared with debt burns for repay-with-aTokens)
-        # See debug/aave/0011, 0015
         ScaledTokenEventType.COLLATERAL_MINT: MatchConfig(
             target_event=ScaledTokenEventType.COLLATERAL_MINT,
             pool_event_types=[
@@ -302,7 +266,6 @@ class EventMatcher:
         # or LIQUIDATION_CALL (collateral seized)
         # REPAY only consumed if useATokens=False
         # LIQUIDATION_CALL never consumed
-        # See debug/aave/0008, 0009
         ScaledTokenEventType.COLLATERAL_BURN: MatchConfig(
             target_event=ScaledTokenEventType.COLLATERAL_BURN,
             pool_event_types=[
@@ -316,7 +279,6 @@ class EventMatcher:
         # Debt Mint: Can match BORROW (borrow), REPAY (interest before repayment),
         # or LIQUIDATION_CALL (liquidator borrowing to fund liquidation)
         # REPAY and LIQUIDATION_CALL never consumed (shared across operations)
-        # See debug/aave/0011, 0012b
         ScaledTokenEventType.DEBT_MINT: MatchConfig(
             target_event=ScaledTokenEventType.DEBT_MINT,
             pool_event_types=[
@@ -331,7 +293,6 @@ class EventMatcher:
         # or DEFICIT_CREATED (bad debt write-off)
         # LIQUIDATION_CALL and DEFICIT_CREATED never consumed
         # REPAY only consumed if useATokens=False
-        # See debug/aave/0008, 0010, 0012a, 0013
         ScaledTokenEventType.DEBT_BURN: MatchConfig(
             target_event=ScaledTokenEventType.DEBT_BURN,
             pool_event_types=[
@@ -344,7 +305,6 @@ class EventMatcher:
         ),
         # GHO Debt Mint: Can match BORROW or REPAY
         # REPAY never consumed (shared with collateral burns)
-        # See debug/aave/0012b
         ScaledTokenEventType.GHO_DEBT_MINT: MatchConfig(
             target_event=ScaledTokenEventType.GHO_DEBT_MINT,
             pool_event_types=[AaveV3PoolEvent.BORROW, AaveV3PoolEvent.REPAY],
@@ -354,7 +314,6 @@ class EventMatcher:
         # GHO Debt Burn: Can match REPAY, LIQUIDATION_CALL, or DEFICIT_CREATED
         # LIQUIDATION_CALL and DEFICIT_CREATED never consumed (shared across operations)
         # DEFICIT_CREATED is used for GHO liquidations (bad debt write-off mechanism)
-        # See debug/aave/0010, 0016
         ScaledTokenEventType.GHO_DEBT_BURN: MatchConfig(
             target_event=ScaledTokenEventType.GHO_DEBT_BURN,
             pool_event_types=[
@@ -375,452 +334,6 @@ class EventMatcher:
         """
         self.tx_context = tx_context
         self._event_index: dict[HexBytes, list[LogReceipt]] | None = None
-
-    def _build_event_index(self) -> dict[HexBytes, list[LogReceipt]]:
-        """Build index of pool events by topic for O(1) lookup.
-
-        This is lazily built on first access to avoid overhead for simple cases.
-        """
-        if self._event_index is None:
-            self._event_index = {}
-            for event in self.tx_context.pool_events:
-                topic = event["topics"][0]
-                if topic not in self._event_index:
-                    self._event_index[topic] = []
-                self._event_index[topic].append(event)
-        return self._event_index
-
-    def _is_consumed(self, pool_event: LogReceipt) -> bool:
-        """Check if a pool event has already been consumed."""
-        return self.tx_context.matched_pool_events.get(pool_event["logIndex"], False)
-
-    def _mark_consumed(self, pool_event: LogReceipt) -> None:
-        """Mark a pool event as consumed."""
-        self.tx_context.matched_pool_events[pool_event["logIndex"]] = True
-
-    @staticmethod
-    def _should_consume(pool_event: LogReceipt, config: MatchConfig) -> bool:
-        """Determine if a matched pool event should be consumed.
-
-        Args:
-            pool_event: The matched pool event
-            config: Match configuration for the scaled token event
-
-        Returns:
-            True if the event should be marked as consumed, False otherwise
-        """
-        if config.consumption_policy == EventConsumptionPolicy.CONSUMABLE:
-            return True
-        if config.consumption_policy == EventConsumptionPolicy.REUSABLE:
-            return False
-        if config.consumption_policy == EventConsumptionPolicy.CONDITIONAL:
-            if config.consumption_condition is not None:
-                return config.consumption_condition(pool_event)
-            return True
-        return True
-
-    @staticmethod
-    def _matches_pool_event(
-        pool_event: LogReceipt,
-        expected_type: AaveV3PoolEvent,
-        user_address: ChecksumAddress,
-        reserve_address: ChecksumAddress,
-    ) -> bool:
-        """Check if a pool event matches expected criteria.
-
-        This implements the matching logic previously in _matches_pool_event()
-        in aave.py, but centralized and documented.
-
-        Args:
-            pool_event: Pool event to check
-            expected_type: Expected event type
-            user_address: User address to match
-            reserve_address: Reserve/token address to match
-
-        Returns:
-            True if the event matches, False otherwise
-        """
-        event_topic = pool_event["topics"][0]
-        event_log_index = pool_event["logIndex"]
-
-        # DEBUG: Log matching attempt
-        logger.debug(
-            f"_matches_pool_event: checking event at logIndex {event_log_index} "
-            f"(topic={event_topic.hex()[:10]}) against expected_type={expected_type.name}, "
-            f"user={user_address}, reserve={reserve_address}"
-        )
-
-        # Allow LIQUIDATION_CALL when expecting REPAY or WITHDRAW
-        # Allow DEFICIT_CREATED when expecting REPAY (bad debt write-off)
-        if (
-            event_topic != expected_type.value
-            and not (
-                event_topic == AaveV3PoolEvent.LIQUIDATION_CALL.value
-                and expected_type in {AaveV3PoolEvent.REPAY, AaveV3PoolEvent.WITHDRAW}
-            )
-            and not (
-                event_topic == AaveV3PoolEvent.DEFICIT_CREATED.value
-                and expected_type == AaveV3PoolEvent.REPAY
-            )
-        ):
-            logger.debug(
-                f"  -> NO MATCH: event topic {event_topic.hex()[:10]} != "
-                f"expected {expected_type.value.hex()[:10]}"
-            )
-            return False
-
-        if expected_type == AaveV3PoolEvent.BORROW:
-            # BORROW: topics[1]=reserve, topics[2]=onBehalfOf, data=(amount, interestRateMode)
-            event_reserve = _decode_address(pool_event["topics"][1])
-            event_on_behalf_of = _decode_address(pool_event["topics"][2])
-            (_, _, interest_rate_mode, _) = decode(
-                types=["address", "uint256", "uint8", "uint256"],
-                data=pool_event["data"],
-            )
-            matches = (
-                event_on_behalf_of == user_address
-                and event_reserve == reserve_address
-                and interest_rate_mode == 2  # Variable rate #noqa:PLR2004
-            )
-            logger.debug(
-                f"  -> BORROW check: event_reserve={event_reserve}, "
-                f"event_on_behalf_of={event_on_behalf_of}, "
-                f"interest_rate_mode={interest_rate_mode}, "
-                f"matches={matches}"
-            )
-            return matches
-
-        if expected_type == AaveV3PoolEvent.REPAY:
-            if event_topic == AaveV3PoolEvent.REPAY.value:
-                # REPAY: topics[1]=reserve, topics[2]=user, data=(amount, useATokens)
-                event_reserve = _decode_address(pool_event["topics"][1])
-                event_user = _decode_address(pool_event["topics"][2])
-
-                # Decode amount from REPAY data
-                (payback_amount, _) = decode(
-                    types=["uint256", "bool"],
-                    data=pool_event["data"],
-                )
-
-                # Skip REPAY events with amount=0 (flash loan repayment via direct transfer)
-                # The actual debt reduction is captured in the Burn event
-                if payback_amount == 0:
-                    logger.warning("  -> REPAY check: SKIPPING (amount=0, flash loan repayment)")
-                    return False
-
-                # Compare addresses case-insensitively (both should be checksummed but may differ
-                # in casing)
-                matches = event_user == user_address and event_reserve == reserve_address
-                logger.debug(
-                    f"  -> REPAY check: event_user={event_user}, event_reserve={event_reserve}, "
-                    f"amount={payback_amount}, matches={matches}"
-                )
-                return matches
-            if event_topic == AaveV3PoolEvent.LIQUIDATION_CALL.value:
-                # Liquidation matching - match on debtAsset
-                event_debt_asset = _decode_address(pool_event["topics"][2])
-                event_user = _decode_address(pool_event["topics"][3])
-                matches = event_user == user_address and event_debt_asset == reserve_address
-                logger.debug(
-                    f"  -> LIQUIDATION_CALL(as REPAY) check: event_user={event_user}, "
-                    f"event_debt_asset={event_debt_asset}, matches={matches}"
-                )
-                return matches
-            if event_topic == AaveV3PoolEvent.DEFICIT_CREATED.value:
-                # DeficitCreated matching - debt written off
-                event_user = _decode_address(pool_event["topics"][1])
-                event_reserve = _decode_address(pool_event["topics"][2])
-                matches = event_user == user_address and event_reserve == reserve_address
-                logger.debug(
-                    f"  -> DEFICIT_CREATED(as REPAY) check: event_user={event_user}, "
-                    f"event_reserve={event_reserve}, matches={matches}"
-                )
-                return matches
-
-        elif expected_type == AaveV3PoolEvent.SUPPLY:
-            # SUPPLY: topics[1]=reserve, topics[2]=onBehalfOf, topics[3]=referralCode
-            # Aave V3 Supply event format (4 topics):
-            #   Supply(address indexed reserve, address indexed onBehalfOf,
-            #          uint16 indexed referralCode, address caller, uint256 amount)
-            # topics[3] is referralCode (uint16), NOT an address - do not decode as address!
-            event_reserve = _decode_address(pool_event["topics"][1])
-            event_on_behalf_of = _decode_address(pool_event["topics"][2])
-            matches = event_on_behalf_of == user_address and event_reserve == reserve_address
-            logger.debug(
-                f"  -> SUPPLY check: event_reserve={event_reserve}, "
-                f"event_on_behalf_of={event_on_behalf_of}, matches={matches}"
-            )
-            return matches
-
-        elif expected_type == AaveV3PoolEvent.WITHDRAW:
-            if event_topic == AaveV3PoolEvent.WITHDRAW.value:
-                # WITHDRAW: topics[1]=reserve, topics[2]=user
-                event_reserve = _decode_address(pool_event["topics"][1])
-                event_user = _decode_address(pool_event["topics"][2])
-                matches = event_user == user_address and event_reserve == reserve_address
-                logger.debug(
-                    f"  -> WITHDRAW check: event_user={event_user}, event_reserve={event_reserve}, "
-                    f"matches={matches}"
-                )
-                return matches
-            if event_topic == AaveV3PoolEvent.LIQUIDATION_CALL.value:
-                # Liquidation matching - match on collateralAsset
-                event_collateral_asset = _decode_address(pool_event["topics"][1])
-                event_user = _decode_address(pool_event["topics"][3])
-                matches = event_user == user_address and event_collateral_asset == reserve_address
-                logger.debug(
-                    f"  -> LIQUIDATION_CALL(as WITHDRAW) check: event_user={event_user}, "
-                    f"event_collateral_asset={event_collateral_asset}, matches={matches}"
-                )
-                return matches
-
-        elif expected_type == AaveV3PoolEvent.LIQUIDATION_CALL:
-            # LIQUIDATION_CALL: topics[1]=collateralAsset, topics[2]=debtAsset, topics[3]=user
-            event_collateral_asset = _decode_address(pool_event["topics"][1])
-            event_debt_asset = _decode_address(pool_event["topics"][2])
-            event_user = _decode_address(pool_event["topics"][3])
-            if event_user == user_address:
-                matches = reserve_address in {event_debt_asset, event_collateral_asset}
-                logger.debug(
-                    f"  -> LIQUIDATION_CALL check: event_user={event_user}, "
-                    f"event_collateral_asset={event_collateral_asset}, "
-                    f"event_debt_asset={event_debt_asset}, "
-                    f"matches={matches}"
-                )
-                return matches
-
-        elif expected_type == AaveV3PoolEvent.DEFICIT_CREATED:
-            # DEFICIT_CREATED: topics[1]=user, topics[2]=asset, data=(uint256 amountCreated)
-            # Used for GHO liquidations and bad debt write-offs
-            event_user = _decode_address(pool_event["topics"][1])
-            event_asset = _decode_address(pool_event["topics"][2])
-            matches = event_user == user_address and event_asset == reserve_address
-            logger.debug(
-                f"  -> DEFICIT_CREATED check: event_user={event_user}, "
-                f"event_asset={event_asset}, matches={matches}"
-            )
-            return matches
-
-        logger.debug(f"  -> NO MATCH: unexpected expected_type={expected_type.name}")
-        return False
-
-    def find_matching_pool_event(
-        self,
-        event_type: ScaledTokenEventType,
-        user_address: ChecksumAddress,
-        reserve_address: ChecksumAddress,
-        *,
-        check_users: list[ChecksumAddress] | None = None,
-        try_event_type_first: AaveV3PoolEvent | None = None,
-    ) -> EventMatchResult | None:
-        """Find a matching pool event for a scaled token event.
-
-        This is the main entry point for event matching. It searches through
-        available pool events in the transaction context, trying each configured
-        event type in order until a match is found.
-
-        Matching is not constrained by event ordering (logIndex). Pool events can
-        appear before or after their corresponding token events in complex transactions.
-        Event consumption tracking prevents double-matching.
-
-        Args:
-            event_type: Type of scaled token event being matched
-            user_address: Primary user address to match
-            reserve_address: Reserve/token address to match
-            check_users: Optional additional user addresses to try (e.g., caller_address)
-            try_event_type_first: Optional event type to try first before the config order.
-                Used for interest accrual mints to try WITHDRAW before SUPPLY.
-
-        Returns:
-            EventMatchResult with pool_event, should_consume flag, and extraction_data,
-            or None if no match found
-
-        Raises:
-            EventMatchError: If matching fails and strict mode is enabled
-        """
-        config = self.CONFIGS.get(event_type)
-        if config is None:
-            msg = f"Unknown scaled token event type: {event_type}"
-            raise EventMatchError(msg, user_address=user_address, reserve_address=reserve_address)
-
-        # DEBUG: Log entry into event matching
-        logger.debug(
-            f"EventMatcher.find_matching_pool_event called: "
-            f"event_type={event_type.name}, user={user_address}, reserve={reserve_address}"
-        )
-
-        # Build list of user addresses to check
-        users_to_check = [user_address]
-        if check_users:
-            users_to_check.extend(check_users)
-
-        # Build the list of event types to try
-        event_types_to_try = config.pool_event_types.copy()
-        if try_event_type_first is not None:
-            # Find the matching event type by value since direct enum comparison may fail
-            matching_type = None
-            for et in event_types_to_try:
-                if et.value == try_event_type_first.value:
-                    matching_type = et
-                    break
-            if matching_type is not None:
-                # Move the specified event type to the front
-                event_types_to_try.remove(matching_type)
-                event_types_to_try.insert(0, matching_type)
-
-        # Try each pool event type in order
-        for expected_type in event_types_to_try:
-            logger.debug(
-                f"Trying pool event type: {expected_type.name} (looking for {event_type.name})"
-            )
-            for user in users_to_check:
-                # Use index for O(1) lookup if available, otherwise iterate
-                event_index = self._build_event_index()
-                events_of_type = event_index.get(expected_type.value, [])
-
-                logger.debug(
-                    f"Found {len(events_of_type)} events of type {expected_type.name} "
-                    f"for user {user}"
-                )
-
-                for pool_event in events_of_type:
-                    event_log_index = pool_event["logIndex"]
-                    event_topic = pool_event["topics"][0].hex()[:10]
-
-                    if self._is_consumed(pool_event):
-                        logger.debug(
-                            f"Skipping consumed event at logIndex {event_log_index} "
-                            f"(topic={event_topic})"
-                        )
-                        continue
-
-                    matches = self._matches_pool_event(
-                        pool_event, expected_type, user, reserve_address
-                    )
-                    if matches:
-                        logger.debug(
-                            f"✓ MATCHED {expected_type.name} event at logIndex {event_log_index} "
-                            f"for user {user} (reserve: {reserve_address})"
-                        )
-                        should_consume = self._should_consume(pool_event, config)
-                        logger.debug(f"Consumption: should_consume={should_consume}")
-                        if should_consume:
-                            self._mark_consumed(pool_event)
-
-                        extraction_data = self._extract_event_data(pool_event)
-                        logger.debug(f"Extracted data: {extraction_data}")
-
-                        return EventMatchResult(
-                            pool_event=pool_event,
-                            should_consume=should_consume,
-                            extraction_data=extraction_data,
-                        )
-                    logger.debug(
-                        f"✗ NO MATCH for {expected_type.name} event at logIndex {event_log_index} "
-                        f"(topic={event_topic}, user={user}, reserve={reserve_address})"
-                    )
-
-        # No match found
-        logger.debug(
-            f"NO MATCH FOUND for {event_type.name}. "
-            f"Tried users: {users_to_check}, reserve: {reserve_address}. "
-            f"Available pool events: {len(self.tx_context.pool_events)}"
-        )
-        return None
-
-    @staticmethod
-    def _extract_event_data(pool_event: LogReceipt) -> dict[str, int]:
-        """Extract relevant data from a matched pool event.
-
-        Returns a dictionary with extracted values depending on event type:
-        - For SUPPLY: {'raw_amount': amount}
-        - For WITHDRAW: {'raw_amount': amount}
-        - For BORROW: {'raw_amount': amount}
-        - For REPAY: {'raw_amount': amount, 'use_a_tokens': bool}
-        - For LIQUIDATION_CALL: {'debt_to_cover': amount, 'liquidated_collateral': amount}
-        - For DEFICIT_CREATED: {'amount_created': amount}
-        """
-        event_topic = pool_event["topics"][0]
-        result: dict[str, int] = {}
-
-        if event_topic == AaveV3PoolEvent.SUPPLY.value:
-            # SUPPLY: data=(address caller, uint256 amount)
-            (_, raw_amount) = decode(
-                types=["address", "uint256"],
-                data=pool_event["data"],
-            )
-            result["raw_amount"] = raw_amount
-
-        elif event_topic == AaveV3PoolEvent.WITHDRAW.value:
-            """
-            Event definition:
-                event Withdraw(
-                    address indexed reserve,
-                    address indexed user,
-                    address indexed to,
-                    uint256 amount
-                );
-            """
-
-            (raw_amount,) = decode(
-                types=["uint256"],
-                data=pool_event["data"],
-            )
-            result["raw_amount"] = raw_amount
-
-        elif event_topic == AaveV3PoolEvent.BORROW.value:
-            """
-            Event definition:
-                event Borrow(
-                    address indexed reserve,
-                    address user,
-                    address indexed onBehalfOf,
-                    uint256 amount,
-                    DataTypes.InterestRateMode interestRateMode,
-                    uint256 borrowRate,
-                    uint16 indexed referralCode
-                );
-            """
-
-            (_, raw_amount, _, _) = decode(
-                types=["address", "uint256", "uint8", "uint256"],
-                data=pool_event["data"],
-            )
-            result["raw_amount"] = raw_amount
-
-        elif event_topic == AaveV3PoolEvent.REPAY.value:
-            # REPAY: data=(uint256 amount, bool useATokens)
-            raw_amount, use_a_tokens = decode(
-                types=["uint256", "bool"],
-                data=pool_event["data"],
-            )
-            result["raw_amount"] = raw_amount
-            result["use_a_tokens"] = int(use_a_tokens)  # Store as int for TypedDict
-
-        elif event_topic == AaveV3PoolEvent.LIQUIDATION_CALL.value:
-            # LIQUIDATION_CALL: data=(uint256 debtToCover, uint256 liquidatedCollateralAmount,
-            #                          address liquidator, bool receiveAToken)
-            debt_to_cover, liquidated_collateral, _, _ = decode(
-                types=["uint256", "uint256", "address", "bool"],
-                data=pool_event["data"],
-            )
-            result["debt_to_cover"] = debt_to_cover
-            result["liquidated_collateral"] = liquidated_collateral
-
-        elif event_topic == AaveV3PoolEvent.DEFICIT_CREATED.value:
-            # DEFICIT_CREATED: data=(uint256 amountCreated)
-            (amount_created,) = decode(
-                types=["uint256"],
-                data=pool_event["data"],
-            )
-            result["amount_created"] = amount_created
-
-        return result
-
-
-def _decode_address(topic: HexBytes) -> ChecksumAddress:
-    """Decode a 32-byte topic to a checksummed address."""
-    return get_checksum_address("0x" + topic.hex()[-40:])
 
 
 class OperationAwareEventMatcher:
@@ -1027,8 +540,7 @@ class OperationAwareEventMatcher:
                 uint16 indexed referralCode
             );
         """
-        # SUPPLY: indexed reserve, indexed onBehalfOf, indexed referralCode
-        # data=(address user, uint256 amount)
+
         if self.operation.pool_event is None:
             return {"raw_amount": 0}
         _, raw_amount = decode(
@@ -1051,7 +563,7 @@ class OperationAwareEventMatcher:
                 uint256 amount
             );
         """
-        # WITHDRAW: data=(uint256 amount)
+
         if self.operation.pool_event is None:
             return {"raw_amount": 0}
         (raw_amount,) = decode(
