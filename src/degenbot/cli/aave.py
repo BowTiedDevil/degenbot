@@ -39,9 +39,8 @@ from degenbot.aave.processors import (
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
 from degenbot.cli.aave_debug_logger import aave_debug_logger
-from degenbot.cli.aave_event_matching import OperationAwareEventMatcher
+from degenbot.cli.aave_event_matching import EventMatchResult, OperationAwareEventMatcher
 from degenbot.cli.aave_transaction_operations import (
-    EventMatchResult,
     Operation,
     OperationType,
     ScaledTokenEvent,
@@ -437,7 +436,12 @@ def aave_update(
             )
             logger.info(f"Debug output enabled: {debug_output}")
 
-        with db_session() as session, logging_redirect_tqdm(loggers=[logger]):  # noqa: PLR1702
+        with (
+            db_session() as session,
+            logging_redirect_tqdm(
+                loggers=[logger],
+            ),
+        ):
             active_chains = set(
                 session.scalars(
                     select(AaveV3Market.chain_id).where(
@@ -1896,7 +1900,8 @@ def _process_scaled_token_operation(
     """
 
     logger.debug(
-        f"Processing scaled token operation ({type(event).__name__}) for revision {scaled_token_revision}"
+        f"Processing scaled token operation ({type(event).__name__}) for revision "
+        f"{scaled_token_revision}"
     )
     logger.debug(position)
 
@@ -2845,7 +2850,7 @@ def _process_debt_mint_with_match(
         # Use standard debt processor for non-GHO tokens
         assert scaled_event.balance_increase is not None
         assert scaled_event.index is not None
-        logger.debug(f"_process_debt_burn_with_match: handling with standard debt processor")
+        logger.debug("_process_debt_burn_with_match: handling with standard debt processor")
         _process_scaled_token_operation(
             event=DebtMintEvent(
                 caller=scaled_event.caller_address or scaled_event.user_address,
@@ -3005,10 +3010,11 @@ def _process_debt_burn_with_match(
         # Use standard debt processor for non-GHO tokens
         assert scaled_event.balance_increase is not None
         assert scaled_event.index is not None
-        logger.debug(f"_process_debt_burn_with_match: handling with standard debt processor")
+        logger.debug("_process_debt_burn_with_match: handling with standard debt processor")
         logger.debug(f"_process_debt_burn_with_match: scaled_event.amount = {scaled_event.amount}")
         logger.debug(
-            f"_process_debt_burn_with_match: scaled_event.balance_increase = {scaled_event.balance_increase}"
+            f"_process_debt_burn_with_match: scaled_event.balance_increase = "
+            f"{scaled_event.balance_increase}"
         )
         logger.debug(f"_process_debt_burn_with_match: scaled_event.index = {scaled_event.index}")
         _process_scaled_token_operation(

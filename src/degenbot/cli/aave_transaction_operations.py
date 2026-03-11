@@ -3,30 +3,23 @@ Parses transaction events into logical operations based on asset flows.
 Provides strict validation with detailed plain-text error reporting.
 """
 
-from __future__ import annotations
-
 import operator
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum, auto
-from typing import TYPE_CHECKING, TypedDict
 
 from eth_abi.abi import decode
+from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from sqlalchemy import select
+from sqlalchemy.orm import Session
+from web3.types import LogReceipt
 
 from degenbot.aave.events import AaveV3PoolEvent, AaveV3ScaledTokenEvent, ERC20Event
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.database.models.aave import AaveGhoToken, AaveV3Asset, AaveV3Contract
+from degenbot.database.models.aave import AaveGhoToken, AaveV3Asset, AaveV3Contract, AaveV3Market
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.logging import logger
-
-if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
-    from sqlalchemy.orm import Session
-    from web3.types import LogReceipt
-
-    from degenbot.database.models.aave import AaveV3Market
 
 
 def _topic_to_address(topic: HexBytes | str) -> ChecksumAddress:
@@ -113,23 +106,13 @@ class ScaledTokenEventType(StrEnum):
     DISCOUNT_TRANSFER = auto()
 
 
+# TODO: drop this hardcoded address
 # GHO Token Address (Ethereum Mainnet)
 GHO_TOKEN_ADDRESS = get_checksum_address("0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f")
 
+# TODO: drop this hardcoded address
 # GHO Variable Debt Token Address (Ethereum Mainnet)
 GHO_VARIABLE_DEBT_TOKEN_ADDRESS = get_checksum_address("0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B")
-
-
-@dataclass(frozen=True)
-class AssetFlow:
-    """Represents a single asset movement in an operation."""
-
-    asset_address: ChecksumAddress
-    from_address: ChecksumAddress
-    to_address: ChecksumAddress
-    amount: int
-    event_type: str  # "Mint", "Burn", "Transfer", etc.
-    event_log_index: int
 
 
 @dataclass(frozen=True)
@@ -149,25 +132,12 @@ class ScaledTokenEvent:
     index: int | None
 
     @property
-    def is_interest_accrual(self) -> bool:
-        """Check if this is pure interest accrual (value == balanceIncrease)."""
-        return self.amount == self.balance_increase
-
-    @property
     def is_collateral(self) -> bool:
         return self.event_type.startswith("collateral")
 
     @property
     def is_debt(self) -> bool:
         return self.event_type.startswith("debt") or self.event_type.startswith("gho")
-
-    @property
-    def is_discount(self) -> bool:
-        return self.event_type.startswith("discount")
-
-    @property
-    def is_mint(self) -> bool:
-        return self.event_type.endswith("mint")
 
     @property
     def is_burn(self) -> bool:
@@ -191,9 +161,6 @@ class Operation:
     # Supporting events
     transfer_events: list[LogReceipt]
     balance_transfer_events: list[LogReceipt]
-
-    # Computed asset flows
-    asset_flows: list[AssetFlow] = field(default_factory=list)
 
     # Validation state
     validation_errors: list[str] = field(default_factory=list)
@@ -231,14 +198,6 @@ class Operation:
     def get_event_log_indices(self) -> list[int]:
         """Get all log indices involved in this operation."""
         return [e["logIndex"] for e in self.get_all_events()]
-
-
-class EventMatchResult(TypedDict):
-    """Result of a successful event match."""
-
-    pool_event: LogReceipt | None
-    should_consume: bool
-    extraction_data: dict[str, int | bool]
 
 
 class TransactionValidationError(Exception):
@@ -388,6 +347,87 @@ class TransactionValidationError(Exception):
             return None
 
 
+class TransactionOperations:
+    """Container for all operations in a transaction."""
+
+    def __init__(
+        self,
+        tx_hash: HexBytes,
+        block_number: int,
+        operations: list[Operation],
+        unassigned_events: list[LogReceipt],
+    ) -> None:
+        self.tx_hash = tx_hash
+        self.block_number = block_number
+        self.operations = operations
+        self.unassigned_events = unassigned_events
+
+    def validate(self, all_events: list[LogReceipt]) -> None:
+        """Strict validation - fails on any unmet expectation."""
+        all_errors = []
+
+        # Check all operations are valid
+        for op in self.operations:
+            if not op.is_valid():
+                all_errors.extend([
+                    f"Operation {op.operation_id} ({op.operation_type.name}): {err}"
+                    for err in op.validation_errors
+                ])
+
+        # Check for unassigned required events
+        required_unassigned = [e for e in self.unassigned_events if self._is_required_pool_event(e)]
+        if required_unassigned:
+            all_errors.append(
+                f"{len(required_unassigned)} required pool events unassigned: "
+                f"{[e['logIndex'] for e in required_unassigned]}. "
+                f"DEBUG NOTE: Investigate why these events were not assigned to any operation. "
+                f"They may need special handling or indicate a parsing bug."
+            )
+
+        # Check for ambiguous event assignments
+        assigned_indices: dict[int, int] = {}  # logIndex -> operation_id
+        for op in self.operations:
+            for log_idx in op.get_event_log_indices():
+                if log_idx in assigned_indices:
+                    all_errors.append(
+                        f"Event at logIndex {log_idx} assigned to multiple operations: "
+                        f"{assigned_indices[log_idx]} and {op.operation_id}. "
+                        f"DEBUG NOTE: This event may need to be reusable. "
+                        f"Investigate whether it can match multiple operations "
+                        f"(e.g., LIQUIDATION_CALL or REPAY with useATokens)."
+                    )
+                assigned_indices[log_idx] = op.operation_id
+
+        if all_errors:
+            raise TransactionValidationError(
+                message="Transaction validation failed:\n" + "\n".join(all_errors),
+                tx_hash=self.tx_hash,
+                events=all_events,
+                operations=self.operations,
+            )
+
+    @staticmethod
+    def _is_required_pool_event(event: LogReceipt) -> bool:
+        """Check if an event must be part of an operation."""
+        pool_topics = {
+            AaveV3PoolEvent.SUPPLY.value,
+            AaveV3PoolEvent.WITHDRAW.value,
+            AaveV3PoolEvent.BORROW.value,
+            AaveV3PoolEvent.REPAY.value,
+            AaveV3PoolEvent.LIQUIDATION_CALL.value,
+            AaveV3PoolEvent.DEFICIT_CREATED.value,
+        }
+        return event["topics"][0] in pool_topics
+
+    def get_operation_for_event(self, event: LogReceipt) -> Operation | None:
+        """Find which operation contains a given event."""
+        target_log_index = event["logIndex"]
+        for op in self.operations:
+            if target_log_index in op.get_event_log_indices():
+                return op
+        return None
+
+
 class TransactionOperationsParser:
     """Parses transaction events into logical operations."""
 
@@ -498,7 +538,10 @@ class TransactionOperationsParser:
         return None
 
     def _get_pool_revision(self) -> int:
-        """Get the Pool contract revision from the market."""
+        """
+        Get the Pool contract revision from the market.
+        """
+
         pool_contract = self.session.scalar(
             select(AaveV3Contract).where(
                 AaveV3Contract.market_id == self.market.id,
@@ -526,7 +569,10 @@ class TransactionOperationsParser:
         )
 
     def parse(self, events: list[LogReceipt], tx_hash: HexBytes) -> TransactionOperations:
-        """Parse events into operations."""
+        """
+        Parse events into operations.
+        """
+
         if not events:
             return TransactionOperations(
                 tx_hash=tx_hash,
@@ -839,6 +885,7 @@ class TransactionOperationsParser:
         )
 
     def _create_operation_from_pool_event(
+        *,
         self,
         operation_id: int,
         pool_event: LogReceipt,
@@ -1673,6 +1720,7 @@ class TransactionOperationsParser:
         )
 
     def _create_deficit_operation(
+        *,
         self,
         operation_id: int,
         deficit_event: LogReceipt,
@@ -2513,84 +2561,3 @@ class TransactionOperationsParser:
     def _decode_address(topic: HexBytes | str) -> ChecksumAddress:
         """Decode topic as address."""
         return _topic_to_address(topic)
-
-
-class TransactionOperations:
-    """Container for all operations in a transaction."""
-
-    def __init__(
-        self,
-        tx_hash: HexBytes,
-        block_number: int,
-        operations: list[Operation],
-        unassigned_events: list[LogReceipt],
-    ) -> None:
-        self.tx_hash = tx_hash
-        self.block_number = block_number
-        self.operations = operations
-        self.unassigned_events = unassigned_events
-
-    def validate(self, all_events: list[LogReceipt]) -> None:
-        """Strict validation - fails on any unmet expectation."""
-        all_errors = []
-
-        # Check all operations are valid
-        for op in self.operations:
-            if not op.is_valid():
-                all_errors.extend([
-                    f"Operation {op.operation_id} ({op.operation_type.name}): {err}"
-                    for err in op.validation_errors
-                ])
-
-        # Check for unassigned required events
-        required_unassigned = [e for e in self.unassigned_events if self._is_required_pool_event(e)]
-        if required_unassigned:
-            all_errors.append(
-                f"{len(required_unassigned)} required pool events unassigned: "
-                f"{[e['logIndex'] for e in required_unassigned]}. "
-                f"DEBUG NOTE: Investigate why these events were not assigned to any operation. "
-                f"They may need special handling or indicate a parsing bug."
-            )
-
-        # Check for ambiguous event assignments
-        assigned_indices: dict[int, int] = {}  # logIndex -> operation_id
-        for op in self.operations:
-            for log_idx in op.get_event_log_indices():
-                if log_idx in assigned_indices:
-                    all_errors.append(
-                        f"Event at logIndex {log_idx} assigned to multiple operations: "
-                        f"{assigned_indices[log_idx]} and {op.operation_id}. "
-                        f"DEBUG NOTE: This event may need to be reusable. "
-                        f"Investigate whether it can match multiple operations "
-                        f"(e.g., LIQUIDATION_CALL or REPAY with useATokens)."
-                    )
-                assigned_indices[log_idx] = op.operation_id
-
-        if all_errors:
-            raise TransactionValidationError(
-                message="Transaction validation failed:\n" + "\n".join(all_errors),
-                tx_hash=self.tx_hash,
-                events=all_events,
-                operations=self.operations,
-            )
-
-    @staticmethod
-    def _is_required_pool_event(event: LogReceipt) -> bool:
-        """Check if an event must be part of an operation."""
-        pool_topics = {
-            AaveV3PoolEvent.SUPPLY.value,
-            AaveV3PoolEvent.WITHDRAW.value,
-            AaveV3PoolEvent.BORROW.value,
-            AaveV3PoolEvent.REPAY.value,
-            AaveV3PoolEvent.LIQUIDATION_CALL.value,
-            AaveV3PoolEvent.DEFICIT_CREATED.value,
-        }
-        return event["topics"][0] in pool_topics
-
-    def get_operation_for_event(self, event: LogReceipt) -> Operation | None:
-        """Find which operation contains a given event."""
-        target_log_index = event["logIndex"]
-        for op in self.operations:
-            if target_log_index in op.get_event_log_indices():
-                return op
-        return None
