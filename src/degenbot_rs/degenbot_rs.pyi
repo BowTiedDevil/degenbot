@@ -1,3 +1,5 @@
+from eth_typing import ChecksumAddress
+
 # Rust extension module for degenbot.
 #
 # This module provides high-performance Rust implementations of common operations
@@ -55,4 +57,4 @@ def get_tick_at_sqrt_ratio(sqrt_price_x96: int | bytes) -> int: ...
 # Example:
 #     >>> to_checksum_address("0x66f9664f97f2b50f62d13ea064982f936de76657")
 #     '0x66F9664f97f2B50f62d13Ea064982f936de76657'
-def to_checksum_address(address: str | bytes) -> str: ...
+def to_checksum_address(address: str | bytes) -> ChecksumAddress: ...
