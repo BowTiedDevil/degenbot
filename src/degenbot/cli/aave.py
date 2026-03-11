@@ -47,7 +47,7 @@ from degenbot.cli.aave_transaction_operations import (
     TransactionValidationError,
 )
 from degenbot.cli.aave_types import TransactionContext
-from degenbot.cli.aave_utils import _decode_address, _decode_uint_values
+from degenbot.cli.aave_utils import _decode_address
 from degenbot.cli.utils import get_web3_from_config
 from degenbot.config import settings
 from degenbot.constants import ERC_1967_IMPLEMENTATION_SLOT, ZERO_ADDRESS
@@ -884,7 +884,7 @@ def _process_stk_aave_transfer_event(
     if from_address == to_address:
         return
 
-    (value,) = _decode_uint_values(event=event, num_values=1)
+    (value,) = eth_abi.abi.decode(types=["uint256"], data=event["data"])
 
     logger.debug(f"stkAAVE transfer: {from_address} -> {to_address}, value={value}")
 
@@ -2529,12 +2529,21 @@ def _process_collateral_burn_with_match(
         # search through events for a paired BalanceTransfer.
         # Only apply BalanceTransfer matching for WITHDRAW operations where the
         # BalanceTransfer is part of the same atomic operation.
-        # ref: Issue #0030 - Don't match BalanceTransfer for non-WITHDRAW burns
         if (
             scaled_amount is None
             and operation is not None
             and operation.operation_type == OperationType.WITHDRAW
         ):
+            """
+            Event definition:
+                event BalanceTransfer(
+                    address indexed from,
+                    address indexed to,
+                    uint256 value,
+                    uint256 index
+                );
+            """
+
             # Search all transaction events for a BalanceTransfer to this user
             # that happened before this burn, and find the closest one to the burn
             burn_log_index = scaled_event.event["logIndex"]
@@ -2554,7 +2563,10 @@ def _process_collateral_burn_with_match(
                 # Track the closest BalanceTransfer to the burn
                 if to_addr == scaled_event.user_address and evt["logIndex"] > closest_bt_log_index:
                     closest_bt_log_index = evt["logIndex"]
-                    closest_bt_amount, _ = _decode_uint_values(event=evt, num_values=2)
+                    (closest_bt_amount, _) = eth_abi.abi.decode(
+                        types=["uint256", "uint256"],
+                        data=evt["data"],
+                    )
 
             # Use the closest BalanceTransfer if found
             if closest_bt_amount is not None:
@@ -3123,7 +3135,10 @@ def _process_collateral_transfer(
                 and abs(bt_log_index - transfer_log_index) <= 3  # noqa:PLR2004
             ):
                 # Found matching BalanceTransfer - use its amount (scaled balance without interest)
-                bt_amount, bt_index = _decode_uint_values(event=bt_event, num_values=2)
+                bt_amount, bt_index = eth_abi.abi.decode(
+                    types=["uint256", "uint256"],
+                    data=bt_event["data"],
+                )
                 transfer_amount = bt_amount
                 transfer_index = bt_index
                 matched_balance_transfer = True
@@ -3246,7 +3261,10 @@ def _process_collateral_transfer(
             if operation and operation.balance_transfer_events and matched_balance_transfer:
                 # Use the BalanceTransfer event's data for tracking
                 bt_event = operation.balance_transfer_events[0]
-                track_amount, _ = _decode_uint_values(event=bt_event, num_values=2)
+                track_amount, _ = eth_abi.abi.decode(
+                    types=["uint256", "uint256"],
+                    data=bt_event["data"],
+                )
                 track_log_index = bt_event["logIndex"]
                 should_track = True
                 logger.debug(
@@ -3346,7 +3364,10 @@ def _process_debt_transfer(
     if operation and operation.balance_transfer_events:
         # Decode the BalanceTransfer event to get scaled amount and index
         bt_event = operation.balance_transfer_events[0]
-        transfer_amount, transfer_index = _decode_uint_values(event=bt_event, num_values=2)
+        transfer_amount, transfer_index = eth_abi.abi.decode(
+            types=["uint256", "uint256"],
+            data=bt_event["data"],
+        )
     else:
         # Standalone BalanceTransfer - scale the amount
         transfer_amount = transfer_amount * transfer_index // 10**27

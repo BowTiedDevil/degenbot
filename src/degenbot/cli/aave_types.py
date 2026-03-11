@@ -1,7 +1,6 @@
-"""Types for Aave CLI commands."""
-
 from dataclasses import dataclass, field
 
+import eth_abi
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from sqlalchemy.orm import Session
@@ -10,7 +9,7 @@ from web3.types import LogReceipt
 
 from degenbot.aave.events import ERC20Event
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.cli.aave_utils import _decode_address, _decode_uint_values
+from degenbot.cli.aave_utils import _decode_address
 from degenbot.database.models.aave import (
     AaveGhoToken,
     AaveV3CollateralPosition,
@@ -114,6 +113,13 @@ class TransactionContext:
         calculates the net delta from pending transfers to determine the balance
         that was used by the contract.
 
+        Event definition:
+            event Transfer(
+                address indexed from,
+                address indexed to,
+                uint256 value
+            );
+
         Args:
             user_address: The user's address
             log_index: The current log index being processed
@@ -122,6 +128,7 @@ class TransactionContext:
         Returns:
             The net pending balance delta (positive for incoming, negative for outgoing)
         """
+
         net_delta = 0
 
         for event in self.events:
@@ -142,7 +149,7 @@ class TransactionContext:
 
             from_addr = _decode_address(event["topics"][1])
             to_addr = _decode_address(event["topics"][2])
-            (value,) = _decode_uint_values(event=event, num_values=1)
+            (value,) = eth_abi.abi.decode(types=["uint256"], data=event["data"])
 
             if from_addr == user_address:
                 net_delta -= value
