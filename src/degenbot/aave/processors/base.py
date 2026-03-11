@@ -48,7 +48,7 @@ class CollateralMintEvent:
     scaled_amount: int | None = None
     """Optional pre-calculated scaled amount from Pool contract.
 
-    For revision 4+, this should be calculated using PoolProcessor
+    For revision 4+, this should be calculated using TokenMathFactory
     to ensure exact matching with on-chain TokenMath calculations.
     """
 
@@ -62,8 +62,8 @@ class CollateralBurnEvent:
     index: int
     scaled_amount: int | None = None
     """Optional pre-calculated scaled amount from Pool contract.
-    
-    For revision 4+, this should be calculated using PoolProcessor
+
+    For revision 4+, this should be calculated using TokenMathFactory
     to ensure exact matching with on-chain TokenMath calculations.
     """
 
@@ -79,8 +79,8 @@ class DebtMintEvent:
     index: int
     scaled_amount: int | None = None
     """Optional pre-calculated scaled amount from Pool contract.
-    
-    For revision 4+, this should be calculated using PoolProcessor
+
+    For revision 4+, this should be calculated using TokenMathFactory
     to ensure exact matching with on-chain TokenMath calculations.
     """
 
@@ -96,8 +96,8 @@ class DebtBurnEvent:
     index: int
     scaled_amount: int | None = None
     """Optional pre-calculated scaled amount from Pool contract.
-    
-    For revision 4+, this should be calculated using PoolProcessor
+
+    For revision 4+, this should be calculated using TokenMathFactory
     to ensure exact matching with on-chain TokenMath calculations.
     """
 

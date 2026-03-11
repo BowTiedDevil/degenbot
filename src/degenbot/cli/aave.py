@@ -26,13 +26,13 @@ from degenbot.aave.events import (
     AaveV3StkAaveEvent,
     ERC20Event,
 )
+from degenbot.aave.libraries.token_math import TokenMathFactory
 from degenbot.aave.libraries.wad_ray_math import wad_mul
 from degenbot.aave.processors import (
     CollateralBurnEvent,
     CollateralMintEvent,
     DebtBurnEvent,
     DebtMintEvent,
-    PoolProcessorFactory,
     TokenProcessorFactory,
 )
 from degenbot.checksum_cache import get_checksum_address
@@ -2419,9 +2419,12 @@ def _process_collateral_mint_with_match(
         raw_amount = extraction_data.get("liquidated_collateral")
 
     if raw_amount is not None and collateral_asset.a_token_revision >= 4:  # noqa:PLR2004
-        pool_processor = PoolProcessorFactory.get_pool_processor(operation.pool_revision)
+        # Use token revision for math calculations to match contract behavior
+        token_math = TokenMathFactory.get_token_math_for_token_revision(
+            collateral_asset.a_token_revision
+        )
         assert scaled_event.index is not None
-        scaled_amount = pool_processor.calculate_collateral_mint_scaled_amount(
+        scaled_amount = token_math.get_collateral_mint_scaled_amount(
             amount=raw_amount,
             liquidity_index=scaled_event.index,
         )
@@ -2590,9 +2593,12 @@ def _process_collateral_burn_with_match(
     ):
         # Calculate scaled amount from Withdraw event's raw_amount
         if collateral_asset.a_token_revision >= 4:  # noqa:PLR2004
-            pool_processor = PoolProcessorFactory.get_pool_processor(operation.pool_revision)
+            # Use token revision for math calculations to match contract behavior
+            token_math = TokenMathFactory.get_token_math_for_token_revision(
+                collateral_asset.a_token_revision
+            )
             assert scaled_event.index is not None
-            scaled_amount = pool_processor.calculate_collateral_burn_scaled_amount(
+            scaled_amount = token_math.get_collateral_burn_scaled_amount(
                 amount=raw_amount,
                 liquidity_index=scaled_event.index,
             )
@@ -2604,10 +2610,13 @@ def _process_collateral_burn_with_match(
         )
 
     if scaled_amount is None and raw_amount is not None and collateral_asset.a_token_revision >= 4:  # noqa:PLR2004
-        pool_processor = PoolProcessorFactory.get_pool_processor(operation.pool_revision)
+        # Use token revision for math calculations to match contract behavior
+        token_math = TokenMathFactory.get_token_math_for_token_revision(
+            collateral_asset.a_token_revision
+        )
 
         assert scaled_event.index is not None
-        scaled_amount = pool_processor.calculate_collateral_burn_scaled_amount(
+        scaled_amount = token_math.get_collateral_burn_scaled_amount(
             amount=raw_amount,
             liquidity_index=scaled_event.index,
         )
@@ -2707,9 +2716,10 @@ def _process_debt_mint_with_match(
         raw_amount = extraction_data.get("debt_to_cover")
 
     if raw_amount is not None:
-        pool_processor = PoolProcessorFactory.get_pool_processor(operation.pool_revision)
+        # Use token revision for math calculations to match contract behavior
+        token_math = TokenMathFactory.get_token_math_for_token_revision(debt_asset.v_token_revision)
         assert scaled_event.index is not None
-        scaled_amount = pool_processor.calculate_debt_mint_scaled_amount(
+        scaled_amount = token_math.get_debt_mint_scaled_amount(
             amount=raw_amount,
             borrow_index=scaled_event.index,
         )
@@ -2868,8 +2878,9 @@ def _process_debt_burn_with_match(
 
     if raw_amount is not None and debt_asset.v_token_revision >= 4:  # noqa:PLR2004
         assert scaled_event.index is not None
-        pool_processor = PoolProcessorFactory.get_pool_processor(operation.pool_revision)
-        scaled_amount = pool_processor.calculate_debt_burn_scaled_amount(
+        # Use token revision for math calculations to match contract behavior
+        token_math = TokenMathFactory.get_token_math_for_token_revision(debt_asset.v_token_revision)
+        scaled_amount = token_math.get_debt_burn_scaled_amount(
             amount=raw_amount,
             borrow_index=scaled_event.index,
         )
