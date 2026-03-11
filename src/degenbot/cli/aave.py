@@ -618,22 +618,11 @@ def _process_asset_initialization_event(
         chain_id=market.chain_id,
         token_address=asset_address,
     )
-
-    if (
-        a_token := session.scalar(
-            select(Erc20TokenTable).where(
-                Erc20TokenTable.chain == market.chain_id,
-                Erc20TokenTable.address == a_token_address,
-            )
-        )
-    ) is None:
-        a_token = Erc20TokenTable(
-            chain=market.chain_id,
-            address=a_token_address,
-        )
-        session.add(a_token)
-        session.flush()
-
+    a_token = _get_or_create_erc20_token(
+        session=session,
+        chain_id=market.chain_id,
+        token_address=a_token_address,
+    )
     v_token = _get_or_create_erc20_token(
         session=session,
         chain_id=market.chain_id,
@@ -680,20 +669,20 @@ def _process_asset_initialization_event(
         return_types=["uint256"],
     )
 
-    new_asset = AaveV3Asset(
-        market_id=market.id,
-        underlying_asset_id=erc20_token_in_db.id,
-        a_token_id=a_token.id,
-        a_token_revision=atoken_revision,
-        v_token_id=v_token.id,
-        v_token_revision=vtoken_revision,
-        liquidity_index=0,
-        liquidity_rate=0,
-        borrow_index=0,
-        borrow_rate=0,
+    session.add(
+        AaveV3Asset(
+            market_id=market.id,
+            underlying_asset_id=erc20_token_in_db.id,
+            a_token_id=a_token.id,
+            a_token_revision=atoken_revision,
+            v_token_id=v_token.id,
+            v_token_revision=vtoken_revision,
+            liquidity_index=0,
+            liquidity_rate=0,
+            borrow_index=0,
+            borrow_rate=0,
+        )
     )
-    market.assets.append(new_asset)
-    session.flush()
     logger.info(f"Added new Aave V3 asset: {asset_address}")
 
 
