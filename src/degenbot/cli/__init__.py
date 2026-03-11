@@ -15,7 +15,7 @@ def cli() -> None: ...
 
 # Initialize coverage tracking if DEGENBOT_COVERAGE envvar is set
 _cov: Coverage | None = None
-if os.environ.get("DEGENBOT_COVERAGE"):
+if os.environ.get("DEGENBOT_COVERAGE") and not os.environ.get("PYTEST_VERSION"):
     _cov = Coverage(
         config_file=False,
         include=["**/cli/**/*.py"],
