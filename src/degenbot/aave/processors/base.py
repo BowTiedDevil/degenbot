@@ -1,4 +1,6 @@
-"""Base protocols and types for Aave token processors."""
+"""
+Base protocols and types for Aave token processors.
+"""
 
 from dataclasses import dataclass
 from enum import Enum
@@ -8,7 +10,9 @@ from eth_typing import ChecksumAddress
 
 
 class GhoUserOperation(Enum):
-    """GHO user operation types for mint events."""
+    """
+    GHO user operation types for mint events.
+    """
 
     GHO_BORROW = "GHO BORROW"
     GHO_REPAY = "GHO REPAY"
@@ -16,14 +20,18 @@ class GhoUserOperation(Enum):
 
 
 class PercentageMathLibrary(Protocol):
-    """Protocol for percentage math operations."""
+    """
+    Protocol for percentage math operations.
+    """
 
     def percent_div(self, value: int, percentage: int) -> int: ...
     def percent_mul(self, value: int, percentage: int) -> int: ...
 
 
 class WadRayMathLibrary(Protocol):
-    """Protocol for Wad/Ray math operations."""
+    """
+    Protocol for Wad/Ray math operations.
+    """
 
     def ray_div(self, a: int, b: int) -> int: ...
     def ray_div_ceil(self, a: int, b: int) -> int: ...
@@ -32,7 +40,9 @@ class WadRayMathLibrary(Protocol):
 
 
 class MathLibraries(TypedDict):
-    """Container for math library modules."""
+    """
+    Container for math library modules.
+    """
 
     wad_ray: WadRayMathLibrary
     percentage: PercentageMathLibrary
@@ -40,70 +50,86 @@ class MathLibraries(TypedDict):
 
 @dataclass(frozen=True, slots=True)
 class CollateralMintEvent:
-    """Data for collateral (aToken) mint events."""
+    """
+    Data for collateral (aToken) mint events.
+    """
 
     value: int
     balance_increase: int
     index: int
-    scaled_amount: int | None = None
-    """Optional pre-calculated scaled amount from Pool contract.
+
+    """
+    Optional pre-calculated scaled amount from Pool contract.
 
     For revision 4+, this should be calculated using TokenMathFactory
     to ensure exact matching with on-chain TokenMath calculations.
     """
+    scaled_amount: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class CollateralBurnEvent:
-    """Data for collateral (aToken) burn events."""
+    """
+    Data for collateral (aToken) burn events.
+    """
 
     value: int
     balance_increase: int
     index: int
-    scaled_amount: int | None = None
+
     """Optional pre-calculated scaled amount from Pool contract.
 
     For revision 4+, this should be calculated using TokenMathFactory
     to ensure exact matching with on-chain TokenMath calculations.
     """
+    scaled_amount: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class DebtMintEvent:
-    """Data for debt (vToken) mint events."""
+    """
+    Data for debt (vToken) mint events.
+    """
 
     caller: ChecksumAddress
     on_behalf_of: ChecksumAddress
     value: int
     balance_increase: int
     index: int
-    scaled_amount: int | None = None
+
     """Optional pre-calculated scaled amount from Pool contract.
 
     For revision 4+, this should be calculated using TokenMathFactory
     to ensure exact matching with on-chain TokenMath calculations.
     """
+    scaled_amount: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class DebtBurnEvent:
-    """Data for debt (vToken) burn events."""
+    """
+    Data for debt (vToken) burn events.
+    """
 
     from_: ChecksumAddress
     target: ChecksumAddress
     value: int
     balance_increase: int
     index: int
-    scaled_amount: int | None = None
-    """Optional pre-calculated scaled amount from Pool contract.
+
+    """
+    Optional pre-calculated scaled amount from Pool contract.
 
     For revision 4+, this should be calculated using TokenMathFactory
     to ensure exact matching with on-chain TokenMath calculations.
     """
+    scaled_amount: int | None = None
 
 
 class ProcessingResult(Protocol):
-    """Protocol for processor results with balance delta and new index."""
+    """
+    Protocol for processor results with balance delta and new index.
+    """
 
     balance_delta: int
     new_index: int
@@ -111,7 +137,9 @@ class ProcessingResult(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class MintResult:
-    """Result of processing a mint event (collateral or standard debt)."""
+    """
+    Result of processing a mint event (collateral or standard debt).
+    """
 
     balance_delta: int
     new_index: int
@@ -120,7 +148,9 @@ class MintResult:
 
 @dataclass(frozen=True, slots=True)
 class BurnResult:
-    """Result of processing a burn event (collateral or standard debt)."""
+    """
+    Result of processing a burn event (collateral or standard debt).
+    """
 
     balance_delta: int
     new_index: int
@@ -128,7 +158,9 @@ class BurnResult:
 
 @dataclass(frozen=True, slots=True)
 class GhoMintResult:
-    """Result of processing a GHO debt mint event."""
+    """
+    Result of processing a GHO debt mint event.
+    """
 
     balance_delta: int
     new_index: int
@@ -139,7 +171,9 @@ class GhoMintResult:
 
 @dataclass(frozen=True, slots=True)
 class GhoBurnResult:
-    """Result of processing a GHO debt burn event."""
+    """
+    Result of processing a GHO debt burn event.
+    """
 
     balance_delta: int
     new_index: int
@@ -148,17 +182,21 @@ class GhoBurnResult:
 
 
 class TokenProcessor(Protocol):
-    """Base protocol for all token processors."""
+    """
+    Base protocol for all token processors.
+    """
 
     revision: ClassVar[int]
 
     def get_math_libraries(self) -> MathLibraries:
-        """Get the math libraries for this revision."""
-        ...
+        """
+        Get the math libraries for this revision.
+        """
 
 
 class CollateralTokenProcessor(TokenProcessor, Protocol):
-    """Protocol for collateral (aToken) processors.
+    """
+    Protocol for collateral (aToken) processors.
 
     Processors are stateless - they calculate deltas and return results
     without modifying position state. Callers must apply the results.
@@ -181,7 +219,6 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
         Returns:
             MintResult with balance_delta, new_index, and is_repay flag
         """
-        ...
 
     def process_burn_event(
         self,
@@ -200,11 +237,11 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
         Returns:
             BurnResult with balance_delta and new_index
         """
-        ...
 
 
 class DebtTokenProcessor(TokenProcessor, Protocol):
-    """Protocol for standard debt (vToken) processors.
+    """
+    Protocol for standard debt (vToken) processors.
 
     This protocol is for non-GHO variable debt tokens.
     GHO tokens have special discount handling and use GhoDebtTokenProcessor instead.
@@ -232,7 +269,6 @@ class DebtTokenProcessor(TokenProcessor, Protocol):
         Returns:
             MintResult with balance_delta, new_index, and is_repay flag
         """
-        ...
 
     def process_burn_event(
         self,
@@ -253,11 +289,11 @@ class DebtTokenProcessor(TokenProcessor, Protocol):
         Returns:
             BurnResult with balance_delta and new_index
         """
-        ...
 
 
 class GhoDebtTokenProcessor(TokenProcessor, Protocol):
-    """Protocol for GHO variable debt token processors.
+    """
+    Protocol for GHO variable debt token processors.
 
     GHO debt tokens have special discount handling that requires additional
     parameters and return values compared to standard vTokens.
@@ -267,8 +303,9 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
     """
 
     def supports_discount(self) -> bool:
-        """Check if this revision supports the discount mechanism."""
-        ...
+        """
+        Check if this revision supports the discount mechanism.
+        """
 
     def process_mint_event(
         self,
@@ -290,7 +327,6 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
             GhoMintResult with balance_delta, new_index, is_repay,
             discount_scaled, and should_refresh_discount flag
         """
-        ...
 
     def process_burn_event(
         self,
@@ -312,7 +348,6 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
             GhoBurnResult with balance_delta, new_index, discount_scaled,
             and should_refresh_discount flag
         """
-        ...
 
     def get_discounted_balance(
         self,
@@ -333,7 +368,6 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
         Returns:
             The balance with discount applied
         """
-        ...
 
     def accrue_debt_on_action(
         self,
@@ -358,7 +392,6 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
         Returns:
             The discount scaled amount (0 for revisions without discount support)
         """
-        ...
 
 
 __all__ = [

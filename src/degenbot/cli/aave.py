@@ -1235,6 +1235,7 @@ def _get_or_create_erc20_token(
         token = Erc20TokenTable(chain=chain_id, address=token_address)
         session.add(token)
         session.flush()
+
     return token
 
 
@@ -1263,6 +1264,7 @@ def _get_or_create_position[T: AaveV3CollateralPosition | AaveV3DebtPosition](
     new_position = cast("T", position_table(user_id=user.id, asset_id=asset_id, balance=0))
     session.add(new_position)
     session.flush()
+
     return new_position
 
 
@@ -1310,6 +1312,7 @@ def _get_gho_asset(
     GHO tokens are chain-unique: multiple Aave markets on the same chain share
     a single GHO token. Query by chain_id to retrieve the shared configuration.
     """
+
     gho_asset = session.scalar(
         select(AaveGhoToken).join(Erc20TokenTable).where(Erc20TokenTable.chain == market.chain_id)
     )
@@ -1319,6 +1322,7 @@ def _get_gho_asset(
             "Ensure that market has been activated."
         )
         raise ValueError(msg)
+
     return gho_asset
 
 
@@ -1327,11 +1331,13 @@ def _fetch_discount_token_from_contract(
     gho_asset: AaveGhoToken,
     block_number: int,
 ) -> ChecksumAddress | None:
-    """Fetch the discount token address from the GHO vToken contract.
+    """
+    Fetch the discount token address from the GHO vToken contract.
 
     This is used to initialize v_gho_discount_token when it's not set in the database
     and no DISCOUNT_TOKEN_UPDATED events exist in the current block range.
     """
+
     try:
         # GHO vToken has a getDiscountToken() function
         (discount_token,) = raw_call(
@@ -1373,6 +1379,7 @@ def _get_contract(
     if contract is None:
         msg = f"{contract_name} not found for market {market.id}"
         raise ValueError(msg)
+
     return contract
 
 
@@ -1433,6 +1440,7 @@ def _get_current_borrow_index_from_pool(
     Returns:
         The current borrow index, or None if the call fails
     """
+
     try:
         borrow_index: int
         (borrow_index,) = raw_call(
