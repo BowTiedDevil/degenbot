@@ -1,6 +1,6 @@
 """Collateral token processor for revision 1."""
 
-import degenbot.aave.libraries as aave_library
+import degenbot.aave.libraries
 from degenbot.aave.processors.base import (
     BurnResult,
     CollateralBurnEvent,
@@ -15,13 +15,11 @@ class CollateralV1Processor(CollateralTokenProcessor):
     """Processor for AToken revision 1."""
 
     revision = 1
-    math_lib_version = "v3.1"
 
     def __init__(self) -> None:
-        """Initialize with math libraries."""
         self._math_libs = MathLibraries(
-            wad_ray=aave_library.wad_ray_math,
-            percentage=aave_library.percentage_math,
+            wad_ray=degenbot.aave.libraries.wad_ray_math,
+            percentage=degenbot.aave.libraries.percentage_math,
         )
 
     def get_math_libraries(self) -> MathLibraries:

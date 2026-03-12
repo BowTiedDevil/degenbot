@@ -1,6 +1,6 @@
 """Debt token processor for revision 4."""
 
-import degenbot.aave.libraries as aave_library
+import degenbot.aave.libraries
 from degenbot.aave.processors.base import (
     BurnResult,
     DebtBurnEvent,
@@ -15,13 +15,11 @@ class DebtV4Processor(DebtV1Processor):
     """Processor for VToken revision 4."""
 
     revision = 4
-    math_lib_version = "v3.4"
 
     def __init__(self) -> None:
-        """Initialize with v3.4 math libraries."""
         self._math_libs = MathLibraries(
-            wad_ray=aave_library.wad_ray_math,
-            percentage=aave_library.percentage_math,
+            wad_ray=degenbot.aave.libraries.wad_ray_math,
+            percentage=degenbot.aave.libraries.percentage_math,
         )
 
     def calculate_scaled_amount(self, raw_amount: int, index: int) -> int:

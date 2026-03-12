@@ -7,7 +7,7 @@ in revision 5.
 
 import typing
 
-import degenbot.aave.libraries as aave_library
+import degenbot.aave.libraries
 from degenbot.aave.processors.base import (
     DebtBurnEvent,
     DebtMintEvent,
@@ -27,13 +27,11 @@ class GhoV4Processor(GhoDebtTokenProcessor):
     """
 
     revision = 4
-    math_lib_version = "v3.4"
 
     def __init__(self) -> None:
-        """Initialize with v3.4 math libraries."""
         self._math_libs = MathLibraries(
-            wad_ray=aave_library.wad_ray_math,
-            percentage=aave_library.percentage_math,
+            wad_ray=degenbot.aave.libraries.wad_ray_math,
+            percentage=degenbot.aave.libraries.percentage_math,
         )
 
     def get_math_libraries(self) -> MathLibraries:

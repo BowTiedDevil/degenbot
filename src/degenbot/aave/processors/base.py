@@ -151,7 +151,6 @@ class TokenProcessor(Protocol):
     """Base protocol for all token processors."""
 
     revision: ClassVar[int]
-    math_lib_version: ClassVar[str]
 
     def get_math_libraries(self) -> MathLibraries:
         """Get the math libraries for this revision."""

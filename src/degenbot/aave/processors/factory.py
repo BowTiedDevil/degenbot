@@ -75,10 +75,7 @@ class TokenProcessorFactory:
             msg = f"No processor for collateral revision {revision}"
             raise ValueError(msg)
         processor = processor_class()
-        logger.debug(
-            f"Created {processor_class.__name__} for aToken revision {revision} "
-            f"(math lib: {processor.math_lib_version})"
-        )
+        logger.debug(f"Created {processor_class.__name__} for aToken revision {revision}")
         return processor
 
     @classmethod
@@ -102,10 +99,7 @@ class TokenProcessorFactory:
             msg = f"No processor for debt revision {revision}"
             raise ValueError(msg)
         processor = processor_class()
-        logger.debug(
-            f"Created {processor_class.__name__} for vToken revision {revision} "
-            f"(math lib: {processor.math_lib_version})"
-        )
+        logger.debug(f"Created {processor_class.__name__} for vToken revision {revision}")
         return processor
 
     @classmethod
@@ -129,8 +123,5 @@ class TokenProcessorFactory:
             msg = f"No processor for GHO revision {revision}"
             raise ValueError(msg)
         processor = cast("GhoDebtTokenProcessor", processor_class())
-        logger.debug(
-            f"Created {processor_class.__name__} for GHO vToken revision {revision} "
-            f"(math lib: {processor.math_lib_version})"
-        )
+        logger.debug(f"Created {processor_class.__name__} for GHO vToken revision {revision}")
         return processor

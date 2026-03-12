@@ -1642,8 +1642,6 @@ def _verify_all_positions(
 
     logger.info(f"Performing full verification of all positions at block {block_number:,}")
 
-    # session.flush()
-
     # Verify all collateral positions
     _verify_scaled_token_positions(
         w3=w3,
@@ -2598,10 +2596,12 @@ def _process_collateral_burn_with_match(
     # For INTEREST_ACCRUAL collateral burns following a WITHDRAW, use the stored withdrawAmount
     # to avoid 1 wei rounding errors from reverse-calculating value + balance_increase.
     # This overrides the reverse-calculated raw_amount from extraction_data.
-    if operation is not None and operation.operation_type == OperationType.INTEREST_ACCRUAL:
-        if tx_context.last_withdraw_amount > 0:
-            raw_amount = tx_context.last_withdraw_amount
-            logger.debug(f"Using stored WITHDRAW amount for INTEREST_ACCRUAL: {raw_amount}")
+    if (
+        operation.operation_type == OperationType.INTEREST_ACCRUAL
+        and tx_context.last_withdraw_amount > 0
+    ):
+        raw_amount = tx_context.last_withdraw_amount
+        logger.debug(f"Using stored WITHDRAW amount for INTEREST_ACCRUAL: {raw_amount}")
 
     # If this is a WITHDRAW operation and no BalanceTransfer amount was found,
     # use the raw_amount from the Withdraw event to ensure accurate balance updates.
@@ -2611,8 +2611,7 @@ def _process_collateral_burn_with_match(
     # no BalanceTransfer is present. If a BalanceTransfer was found, use its amount
     # to ensure exact cancellation.
     if (
-        operation is not None
-        and operation.operation_type == OperationType.WITHDRAW
+        operation.operation_type == OperationType.WITHDRAW
         and scaled_amount is None
         and raw_amount is not None
     ):
@@ -2666,16 +2665,11 @@ def _process_collateral_burn_with_match(
     collateral_position.last_index = scaled_event.index
 
     # Log liquidation match for debugging
-    if (
-        aave_debug_logger.is_enabled()
-        and operation is not None
-        and operation.operation_type
-        in {
-            OperationType.LIQUIDATION,
-            OperationType.GHO_LIQUIDATION,
-            OperationType.SELF_LIQUIDATION,
-        }
-    ):
+    if aave_debug_logger.is_enabled() and operation.operation_type in {
+        OperationType.LIQUIDATION,
+        OperationType.GHO_LIQUIDATION,
+        OperationType.SELF_LIQUIDATION,
+    }:
         extraction_data = match_result.get("extraction_data", {})
         aave_debug_logger.log_liquidation_match(
             operation_id=operation.operation_id,

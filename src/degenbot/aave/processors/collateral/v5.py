@@ -1,6 +1,6 @@
 """Collateral token processor for revision 5."""
 
-import degenbot.aave.libraries as aave_library_v3_5
+import degenbot.aave.libraries
 from degenbot.aave.processors.base import (
     BurnResult,
     CollateralBurnEvent,
@@ -15,13 +15,11 @@ class CollateralV5Processor(CollateralV1Processor):
     """Processor for AToken revision 5."""
 
     revision = 5
-    math_lib_version = "v3.5"
 
     def __init__(self) -> None:
-        """Initialize with v3.5 math libraries."""
         self._math_libs = MathLibraries(
-            wad_ray=aave_library_v3_5.wad_ray_math,
-            percentage=aave_library_v3_5.percentage_math,
+            wad_ray=degenbot.aave.libraries.wad_ray_math,
+            percentage=degenbot.aave.libraries.percentage_math,
         )
 
     def calculate_scaled_amount(self, raw_amount: int, index: int) -> int:

@@ -7,7 +7,7 @@ division via the TokenMath library.
 
 import typing
 
-import degenbot.aave.libraries as aave_library_v3_5
+import degenbot.aave.libraries
 from degenbot.aave.processors.base import (
     DebtBurnEvent,
     DebtMintEvent,
@@ -28,13 +28,11 @@ class GhoV5Processor(GhoDebtTokenProcessor):
     """
 
     revision = 5
-    math_lib_version = "v3.5"
 
     def __init__(self) -> None:
-        """Initialize with v3.5 math libraries."""
         self._math_libs = MathLibraries(
-            wad_ray=aave_library_v3_5.wad_ray_math,
-            percentage=aave_library_v3_5.percentage_math,
+            wad_ray=degenbot.aave.libraries.wad_ray_math,
+            percentage=degenbot.aave.libraries.percentage_math,
         )
 
     def get_math_libraries(self) -> MathLibraries:
