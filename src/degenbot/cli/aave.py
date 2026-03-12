@@ -308,6 +308,8 @@ def deactivate_mainnet_aave_v3(
     default=10_000,
     show_default=True,
     help="The maximum number of blocks to process before committing changes to the database.",
+    envvar="DEGENBOT_CHUNK_SIZE",
+    show_envvar=True,
 )
 @click.option(
     "--to-block",
