@@ -3880,26 +3880,6 @@ def _build_transaction_contexts(
         ctx = contexts[tx_hash]
         ctx.events.append(event)
 
-        # # Skip scaled token events from the Pool contract specifically
-        # # The Pool contract may emit Mint/Burn/Transfer-like events that have the
-        # # same topic signature as aToken/vToken events but are not scaled token events
-        # # All other addresses should be processed, even if not in known_scaled_token_addresses,
-        # # as they may be new tokens not yet in the database
-        # if (
-        #     topic
-        #     in {
-        #         AaveV3ScaledTokenEvent.MINT.value,
-        #         AaveV3ScaledTokenEvent.BURN.value,
-        #         AaveV3ScaledTokenEvent.BALANCE_TRANSFER.value,
-        #     }
-        #     and event_address == pool_address
-        # ):
-        #     logger.debug(
-        #         f"_build_transaction_contexts: SKIPPING scaled token "
-        #         f"event from Pool addr={event_address}"
-        #     )
-        #     continue
-
         # Track users involved in stkAAVE transfers (needed for discount calculations)
         if topic == ERC20Event.TRANSFER.value and event_address == (
             gho_asset.v_gho_discount_token if gho_asset else None
