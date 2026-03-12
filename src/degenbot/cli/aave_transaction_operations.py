@@ -1008,7 +1008,10 @@ class TransactionOperationsParser:
                 continue
             if ev.target_address != on_behalf_of:
                 continue
-            if ev.event_type != ScaledTokenEventType.COLLATERAL_TRANSFER:
+            if ev.event_type not in {
+                ScaledTokenEventType.COLLATERAL_TRANSFER,
+                ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+            }:
                 continue
             if ev.amount is None or ev.amount != collateral_mint.amount:
                 continue
@@ -1164,7 +1167,10 @@ class TransactionOperationsParser:
             for ev in scaled_events:
                 if ev.event["logIndex"] in assigned_indices:
                     continue
-                if ev.event_type != ScaledTokenEventType.COLLATERAL_TRANSFER:
+                if ev.event_type not in {
+                    ScaledTokenEventType.COLLATERAL_TRANSFER,
+                    ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+                }:
                     continue
                 if ev.from_address != ZERO_ADDRESS:
                     continue
@@ -1176,7 +1182,10 @@ class TransactionOperationsParser:
             for ev in scaled_events:
                 if ev.event["logIndex"] in assigned_indices:
                     continue
-                if ev.event_type != ScaledTokenEventType.COLLATERAL_TRANSFER:
+                if ev.event_type not in {
+                    ScaledTokenEventType.COLLATERAL_TRANSFER,
+                    ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+                }:
                     continue
                 if ev.target_address != ZERO_ADDRESS:
                     continue
