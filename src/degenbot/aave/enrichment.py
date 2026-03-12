@@ -82,40 +82,68 @@ class ScaledEventEnricher:
         if operation.pool_event is None:
             # Check if this is an INTEREST_ACCRUAL operation
             if operation.operation_type.name == "INTEREST_ACCRUAL":
-                # Interest accrual events don't have pool events and don't follow
-                # standard TokenMath patterns. The event amount is the scaled amount
-                # that was minted/burned due to interest accrual.
-                # Use amount directly without validation since there's no Pool calculation to verify.
+                # Interest accrual events don't have pool events.
+                # The Mint event for interest accrual is emitted for tracking purposes only.
+                # Interest accrual does NOT mint tokens or increase the scaled balance -
+                # it only updates the user's stored index.
+                # See Aave V3 aToken contract _transfer function (rev_1.sol:2844-2846)
                 raw_amount = scaled_event.amount
-                scaled_amount = scaled_event.amount
+                scaled_amount = 0  # Interest accrual does not change scaled balance
+            elif operation.operation_type.name == "MINT_TO_TREASURY":
+                # MINT_TO_TREASURY: The event amount includes underlying amount + interest accrued.
+                # The actual underlying amount is amount - balance_increase.
+                # See Aave V3 aToken contract _mintScaled and mintToTreasury.
+                if scaled_event.index is None:
+                    msg = f"MINT_TO_TREASURY event has no index: {scaled_event}"
+                    raise EnrichmentError(msg)
+
+                # Calculate actual raw amount (underlying being minted)
+                balance_increase = scaled_event.balance_increase or 0
+                raw_amount = scaled_event.amount - balance_increase
+
+                # Calculate scaled amount using TokenMath
+                calculator = ScaledAmountCalculator(
+                    pool_revision=self.pool_revision,
+                    token_revision=token_revision,
+                )
+                scaled_amount = calculator.calculate(
+                    event_type=scaled_event.event_type.value,
+                    raw_amount=raw_amount,
+                    index=scaled_event.index,
+                )
             else:
                 # Internal transfers (BALANCE_TRANSFER) have no pool event
                 # For transfers, raw_amount = scaled_amount (no index-based calculation)
                 raw_amount = scaled_event.amount
                 scaled_amount = scaled_event.amount
         else:
-            # Extract raw amount from pool event and calculate scaled amount
-            extractor = RawAmountExtractor(
-                pool_event=operation.pool_event,
-                pool_revision=self.pool_revision,
-            )
-            raw_amount = extractor.extract()
+            # ERC20 transfers don't have an index - use amount directly
+            if scaled_event.event_type.value == "erc20_collateral_transfer":
+                raw_amount = scaled_event.amount
+                scaled_amount = scaled_event.amount
+            else:
+                # Extract raw amount from pool event and calculate scaled amount
+                extractor = RawAmountExtractor(
+                    pool_event=operation.pool_event,
+                    pool_revision=self.pool_revision,
+                )
+                raw_amount = extractor.extract()
 
-            # Calculate scaled amount using TokenMath
-            calculator = ScaledAmountCalculator(
-                pool_revision=self.pool_revision,
-                token_revision=token_revision,
-            )
+                # Calculate scaled amount using TokenMath
+                calculator = ScaledAmountCalculator(
+                    pool_revision=self.pool_revision,
+                    token_revision=token_revision,
+                )
 
-            if scaled_event.index is None:
-                msg = f"Scaled event has no index: {scaled_event}"
-                raise EnrichmentError(msg)
+                if scaled_event.index is None:
+                    msg = f"Scaled event has no index: {scaled_event}"
+                    raise EnrichmentError(msg)
 
-            scaled_amount = calculator.calculate(
-                event_type=scaled_event.event_type.value,
-                raw_amount=raw_amount,
-                index=scaled_event.index,
-            )
+                scaled_amount = calculator.calculate(
+                    event_type=scaled_event.event_type.value,
+                    raw_amount=raw_amount,
+                    index=scaled_event.index,
+                )
 
         # 5. Create appropriate enriched event type
         return self._create_enriched_event(
@@ -175,7 +203,6 @@ class ScaledEventEnricher:
         token_address: ChecksumAddress,
     ) -> ChecksumAddress:
         """Get underlying asset address for a token."""
-        from degenbot.database.models.erc20 import Erc20TokenTable
 
         # Query by joining with a_token or v_token
         asset = (
@@ -233,6 +260,7 @@ class ScaledEventEnricher:
                 "collateral_mint": EnrichedCollateralMintEvent,
                 "collateral_burn": EnrichedCollateralBurnEvent,
                 "collateral_transfer": EnrichedCollateralTransferEvent,
+                "erc20_collateral_transfer": EnrichedCollateralTransferEvent,
                 "debt_mint": EnrichedDebtMintEvent,
                 "debt_burn": EnrichedDebtBurnEvent,
                 "gho_debt_mint": EnrichedGhoDebtMintEvent,
@@ -259,7 +287,11 @@ class ScaledEventEnricher:
             }
             actual_event_type = interest_event_type_map.get(event_type, event_type)
         else:
-            actual_event_type = event_type
+            # Map ERC20 transfer types to their base types for Pydantic models
+            event_type_map = {
+                "erc20_collateral_transfer": "collateral_transfer",
+            }
+            actual_event_type = event_type_map.get(event_type, event_type)
 
         kwargs: dict[str, Any] = {
             "event": scaled_event.event,
@@ -301,10 +333,10 @@ class ScaledEventEnricher:
         elif event_type == "collateral_burn" and not is_interest_accrual:
             kwargs["from_address"] = scaled_event.from_address or scaled_event.user_address
             kwargs["target_address"] = scaled_event.target_address
-        elif event_type == "collateral_transfer":
+        elif event_type in {"collateral_transfer", "erc20_collateral_transfer"}:
             # Transfer events need from_address and to_address
             kwargs["from_address"] = scaled_event.from_address or scaled_event.user_address
-            kwargs["to_address"] = scaled_event.user_address  # Placeholder
+            kwargs["to_address"] = scaled_event.target_address or scaled_event.user_address
         elif event_type == "debt_mint" and not is_interest_accrual:
             kwargs["caller_address"] = scaled_event.caller_address
         elif event_type == "debt_burn" and not is_interest_accrual:

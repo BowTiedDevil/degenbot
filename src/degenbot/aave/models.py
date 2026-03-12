@@ -7,7 +7,6 @@ from pydantic import (
     BaseModel,
     Field,
     PlainValidator,
-    ValidationInfo,
     field_validator,
     model_validator,
 )

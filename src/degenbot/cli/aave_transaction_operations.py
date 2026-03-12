@@ -59,10 +59,12 @@ class ScaledTokenEventType(StrEnum):
 
     COLLATERAL_MINT = auto()
     COLLATERAL_BURN = auto()
-    COLLATERAL_TRANSFER = auto()
+    COLLATERAL_TRANSFER = auto()  # AToken BalanceTransfer events with index
+    ERC20_COLLATERAL_TRANSFER = auto()  # Standard ERC20 Transfer events (no index)
     DEBT_MINT = auto()
     DEBT_BURN = auto()
-    DEBT_TRANSFER = auto()
+    DEBT_TRANSFER = auto()  # vToken BalanceTransfer events with index
+    ERC20_DEBT_TRANSFER = auto()  # Standard ERC20 Transfer events for debt tokens (no index)
     GHO_DEBT_MINT = auto()
     GHO_DEBT_BURN = auto()
     GHO_DEBT_TRANSFER = auto()
@@ -838,9 +840,11 @@ class TransactionOperationsParser:
             # Use token type lookup to determine if this is collateral or debt
             token_type = self._get_token_type(token_address)
             if token_type == "aToken":  # noqa:S105
-                event_type = ScaledTokenEventType.COLLATERAL_TRANSFER
+                # Standard ERC20 Transfer (not BalanceTransfer) - no index
+                event_type = ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER
             elif token_type == "vToken":  # noqa:S105
-                event_type = ScaledTokenEventType.DEBT_TRANSFER
+                # Standard ERC20 Transfer (not BalanceTransfer) - no index
+                event_type = ScaledTokenEventType.ERC20_DEBT_TRANSFER
             elif token_type == "GHO Discount Token":  # noqa:S105
                 # This is active only when the GHO vToken discount mechanism is active
                 event_type = ScaledTokenEventType.DISCOUNT_TRANSFER
@@ -856,7 +860,7 @@ class TransactionOperationsParser:
             target_address=to_addr,
             amount=amount,
             balance_increase=None,  # Transfer doesn't have balanceIncrease
-            index=None,  # Transfer doesn't have index
+            index=None,  # ERC20 Transfer doesn't have index
         )
 
     def _create_operation_from_pool_event(
@@ -1733,7 +1737,10 @@ class TransactionOperationsParser:
             if ev.event_type == ScaledTokenEventType.COLLATERAL_BURN:
                 if ev.user_address == user:
                     collateral_burn = ev
-            elif ev.event_type == ScaledTokenEventType.COLLATERAL_TRANSFER:
+            elif ev.event_type in {
+                ScaledTokenEventType.COLLATERAL_TRANSFER,
+                ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+            }:
                 if ev.user_address == user:
                     collateral_transfers.append(ev)
             else:
@@ -1996,7 +2003,11 @@ class TransactionOperationsParser:
             transfer_events = []
             for transfer_ev in scaled_events:
                 if (
-                    transfer_ev.event_type == ScaledTokenEventType.COLLATERAL_TRANSFER  # noqa:PLR0916
+                    transfer_ev.event_type
+                    in {
+                        ScaledTokenEventType.COLLATERAL_TRANSFER,
+                        ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+                    }  # noqa:PLR0916
                     and transfer_ev.from_address == ZERO_ADDRESS
                     and transfer_ev.target_address == ev.user_address
                     and transfer_ev.event["address"] == ev.event["address"]
@@ -2128,7 +2139,9 @@ class TransactionOperationsParser:
             # Only process transfer events
             if ev.event_type not in {
                 ScaledTokenEventType.COLLATERAL_TRANSFER,
+                ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
                 ScaledTokenEventType.DEBT_TRANSFER,
+                ScaledTokenEventType.ERC20_DEBT_TRANSFER,
                 ScaledTokenEventType.GHO_DEBT_TRANSFER,
                 ScaledTokenEventType.DISCOUNT_TRANSFER,
             }:
@@ -2249,7 +2262,9 @@ class TransactionOperationsParser:
             # Only process transfer event types
             if ev.event_type not in {
                 ScaledTokenEventType.COLLATERAL_TRANSFER,
+                ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
                 ScaledTokenEventType.DEBT_TRANSFER,
+                ScaledTokenEventType.ERC20_DEBT_TRANSFER,
                 ScaledTokenEventType.GHO_DEBT_TRANSFER,
                 ScaledTokenEventType.DISCOUNT_TRANSFER,
             }:
@@ -2581,7 +2596,9 @@ class TransactionOperationsParser:
             ev = op.scaled_token_events[0]
             if ev.event_type not in {
                 ScaledTokenEventType.COLLATERAL_TRANSFER,
+                ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
                 ScaledTokenEventType.DEBT_TRANSFER,
+                ScaledTokenEventType.ERC20_DEBT_TRANSFER,
                 ScaledTokenEventType.GHO_DEBT_TRANSFER,
             }:
                 errors.append(

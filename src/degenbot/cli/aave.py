@@ -2378,7 +2378,10 @@ def _process_operation(
                 scaled_event=scaled_event,
                 enriched_event=enriched_event,
             )
-        elif scaled_event.event_type == ScaledTokenEventType.COLLATERAL_TRANSFER.value:
+        elif scaled_event.event_type in {
+            ScaledTokenEventType.COLLATERAL_TRANSFER.value,
+            ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER.value,
+        }:
             _process_collateral_transfer(
                 event=event,
                 tx_context=tx_context,
@@ -2388,6 +2391,7 @@ def _process_operation(
         elif scaled_event.event_type in {
             ScaledTokenEventType.DEBT_TRANSFER.value,
             ScaledTokenEventType.GHO_DEBT_TRANSFER.value,
+            ScaledTokenEventType.ERC20_DEBT_TRANSFER.value,
         }:
             _process_debt_transfer(
                 event=event,
