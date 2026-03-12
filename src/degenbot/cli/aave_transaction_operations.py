@@ -1371,8 +1371,16 @@ class TransactionOperationsParser:
     ) -> Operation:
         """
         Create standard REPAY or GHO_REPAY operation (debt burn).
+
+        Attaches both principal and interest accrual burns to the operation.
+        Principal burn represents the actual debt repayment.
+        Interest accrual burn represents interest that accrued during the transaction.
         """
 
+        scaled_token_events: list[ScaledTokenEvent] = []
+        local_assigned: set[int] = set()
+
+        # Find principal debt burn (actual repayment)
         debt_burn_event = self._find_matching_debt_burn(
             user=user,
             reserve=reserve,
@@ -1382,9 +1390,28 @@ class TransactionOperationsParser:
             assigned_indices=assigned_indices,
         )
 
-        if debt_burn_event is None:
+        if debt_burn_event is not None:
+            scaled_token_events.append(debt_burn_event)
+            local_assigned.add(debt_burn_event.event["logIndex"])
+
+        # Find interest accrual debt burn (where amount == balance_increase)
+        # This represents interest that accrued during the repayment transaction
+        interest_burn_event = self._find_interest_accrual_debt_burn(
+            user=user,
+            reserve=reserve,
+            is_gho=is_gho,
+            scaled_events=scaled_events,
+            assigned_indices=assigned_indices | local_assigned,
+        )
+
+        if interest_burn_event is not None:
+            scaled_token_events.append(interest_burn_event)
+            local_assigned.add(interest_burn_event.event["logIndex"])
+
+        # If no burns found, create minimal operation
+        if not scaled_token_events:
             logger.debug(
-                f"REPAY at logIndex={repay_log_index} has no matching burn event, "
+                f"REPAY at logIndex={repay_log_index} has no matching burn events, "
                 f"creating minimal operation"
             )
             return Operation(
@@ -1397,13 +1424,16 @@ class TransactionOperationsParser:
                 balance_transfer_events=[],
             )
 
-        scaled_token_events = [debt_burn_event]
-        transfer_events = self._find_debt_transfer_to_zero(
-            user=user,
-            amount=debt_burn_event.amount,
-            scaled_events=scaled_events,
-            assigned_indices=assigned_indices,
-        )
+        # Find transfer events for the principal burn only
+        # Interest burns don't have corresponding transfer events (they're internal)
+        transfer_events: list[LogReceipt] = []
+        if debt_burn_event is not None:
+            transfer_events = self._find_debt_transfer_to_zero(
+                user=user,
+                amount=debt_burn_event.amount,
+                scaled_events=scaled_events,
+                assigned_indices=assigned_indices,
+            )
 
         return Operation(
             operation_id=operation_id,
@@ -1512,6 +1542,49 @@ class TransactionOperationsParser:
                 continue
 
             return ev
+
+        return None
+
+    def _find_interest_accrual_debt_burn(
+        self,
+        *,
+        user: ChecksumAddress,
+        reserve: ChecksumAddress,
+        is_gho: bool,
+        scaled_events: list[ScaledTokenEvent],
+        assigned_indices: set[int],
+    ) -> ScaledTokenEvent | None:
+        """
+        Find debt burn event representing pure interest accrual.
+
+        Interest accrual burns have amount == balance_increase (or close to it),
+        representing interest that accrued during the transaction rather than
+        principal repayment.
+        """
+
+        for ev in scaled_events:
+            if ev.event["logIndex"] in assigned_indices:
+                continue
+            if is_gho and ev.event_type != ScaledTokenEventType.GHO_DEBT_BURN:
+                continue
+            if not is_gho and ev.event_type != ScaledTokenEventType.DEBT_BURN:
+                continue
+            if ev.user_address != user:
+                continue
+
+            reserve_asset = self._get_reserve_for_debt_token(
+                get_checksum_address(ev.event["address"])
+            )
+
+            if reserve_asset != reserve:
+                continue
+            if ev.target_address != ZERO_ADDRESS:
+                continue
+
+            # Interest accrual: amount should equal or be close to balance_increase
+            # The amount represents the interest that accrued
+            if ev.balance_increase is not None and ev.amount == ev.balance_increase:
+                return ev
 
         return None
 
@@ -2065,6 +2138,27 @@ class TransactionOperationsParser:
             # BalanceTransfer events have index > 0
             is_erc20_transfer = ev.index is None
 
+            # Skip ERC20 Transfer events to zero address that are part of burns
+            # These are handled by the Burn events, not as balance transfers
+            # ref: Issue #0003 - Debt Transfer Double Counting in Debt Swap
+            if is_erc20_transfer and ev.target_address == ZERO_ADDRESS:
+                # Check if there's a Burn event at the next log index for the same user
+                for other_ev in scaled_events:
+                    if (
+                        other_ev.event["logIndex"] == ev.event["logIndex"] + 1
+                        and other_ev.event_type
+                        in {
+                            ScaledTokenEventType.DEBT_BURN,
+                            ScaledTokenEventType.COLLATERAL_BURN,
+                            ScaledTokenEventType.GHO_DEBT_BURN,
+                        }
+                        and other_ev.user_address == ev.from_address
+                    ):
+                        # This transfer is part of a burn, skip it
+                        local_assigned.add(ev.event["logIndex"])
+                        break
+                continue
+
             balance_transfer_event: ScaledTokenEvent | None = None
 
             if is_erc20_transfer:
@@ -2309,10 +2403,13 @@ class TransactionOperationsParser:
             errors.append("Missing REPAY pool event")
             return errors
 
-        # Can have 0 or 1 debt burns (0 = interest-only repayment, 1 = principal repayment)
+        # Can have 0, 1, or 2 debt burns:
+        # 0 = interest-only repayment
+        # 1 = principal repayment only
+        # 2 = principal repayment + interest accrual during transaction
         debt_burns = [e for e in op.scaled_token_events if e.is_debt]
-        if len(debt_burns) > 1:
-            errors.append(f"Expected 0 or 1 debt burns for REPAY, got {len(debt_burns)}")
+        if len(debt_burns) > 2:  # noqa:PLR2004
+            errors.append(f"Expected 0, 1, or 2 debt burns for REPAY, got {len(debt_burns)}")
 
         return errors
 

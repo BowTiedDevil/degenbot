@@ -2108,18 +2108,18 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         logger.error(f"Transaction validation failed: {e}")
         raise
 
-    # Sort operations by the logIndex of their first scaled token event
-    # to ensure chronological processing order.
-    # This fixes the transfer-to-zero-address bug where burn was processed
-    # before transfer created the position.
-    sorted_operations = sorted(
-        tx_operations.operations,
-        key=lambda op: (
-            min(ev.event["logIndex"] for ev in op.scaled_token_events)
-            if op.scaled_token_events
-            else float("inf")
-        ),
-    )
+    # Sort operations by the logIndex of their pool event (if present) or first scaled token
+    # event to ensure chronological processing order. Pool events (REPAY, BORROW, etc.) should
+    # be processed before their associated INTEREST_ACCRUAL operations to ensure correct
+    # paybackAmount extraction. ref: Issue #0003 - Process REPAY before INTEREST_ACCRUAL
+    def get_sort_key(op: Operation) -> int:
+        if op.pool_event is not None:
+            return op.pool_event["logIndex"]
+        if op.scaled_token_events:
+            return min(ev.event["logIndex"] for ev in op.scaled_token_events)
+        return int(1e18)
+
+    sorted_operations = sorted(tx_operations.operations, key=get_sort_key)
 
     logger.debug(f"\n=== OPERATIONS FOR TX {tx_context.tx_hash.to_0x_hex()} ===")
     for op in sorted_operations:
@@ -2154,24 +2154,20 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                     tx_context=tx_context,
                 )
 
-    # Pre-process REPAY operations to extract paybackAmounts before processing scaled events.
-    # This ensures INTEREST_ACCRUAL debt burns can use the original paybackAmount to avoid
+    # Pre-process WITHDRAW operations to extract withdrawAmounts before processing scaled events.
+    # This ensures INTEREST_ACCRUAL collateral burns can use the original withdrawAmount to avoid
     # 1 wei rounding errors from reverse-calculating from Burn event values.
+    # Note: REPAY paybackAmounts are now extracted during operation processing via extraction_data
     for operation in sorted_operations:
         if (
-            operation.operation_type
-            in {
-                OperationType.REPAY,
-                OperationType.REPAY_WITH_ATOKENS,
-                OperationType.GHO_REPAY,
-            }
+            operation.operation_type == OperationType.WITHDRAW
             and operation.pool_event is not None
             and operation.pool_event.get("data")
         ):
-            decoded = eth_abi.abi.decode(["uint256", "bool"], operation.pool_event["data"])
-            tx_context.last_repay_amount = decoded[0]
+            decoded = eth_abi.abi.decode(["uint256"], operation.pool_event["data"])
+            tx_context.last_withdraw_amount = decoded[0]
             logger.debug(
-                f"Pre-processed REPAY paybackAmount: {tx_context.last_repay_amount} "
+                f"Pre-processed WITHDRAW amount: {tx_context.last_withdraw_amount} "
                 f"for operation {operation.operation_id}"
             )
 
@@ -2252,7 +2248,7 @@ def _process_operation(
     logger.debug(f"Processing _process_operation for tx at block {tx_context.block_number}")
 
     # Create matcher for this operation
-    matcher = OperationAwareEventMatcher(operation)
+    matcher = OperationAwareEventMatcher(operation, tx_context)
 
     # Log liquidation operations for debugging
     if operation.operation_type in {
@@ -2313,26 +2309,6 @@ def _process_operation(
                 block_number=tx_context.block_number,
                 tx_hash=tx_context.tx_hash,
             )
-
-    # For REPAY operations, store the paybackAmount for accurate interest accrual calculations.
-    # When a subsequent INTEREST_ACCRUAL debt burn occurs, we need the original paybackAmount
-    # to avoid 1 wei rounding errors from reverse-calculating from Burn event values.
-    if operation.operation_type in {
-        OperationType.REPAY,
-        OperationType.REPAY_WITH_ATOKENS,
-        OperationType.GHO_REPAY,
-    }:
-        if operation.pool_event is not None:
-            # Decode Repay event: Repay(address indexed reserve, address indexed user,
-            # address indexed repayer, uint256 amount, bool useATokens)
-            data = operation.pool_event.get("data", "")
-            if data:
-                decoded = eth_abi.abi.decode(["uint256", "bool"], data)
-                tx_context.last_repay_amount = decoded[0]
-                logger.debug(
-                    f"Stored REPAY paybackAmount: {tx_context.last_repay_amount} "
-                    f"for operation {operation.operation_id}"
-                )
 
     # Process each scaled token event in the operation
     # Sort by log index to ensure events are processed in chronological order
@@ -2618,6 +2594,14 @@ def _process_collateral_burn_with_match(
                     f"Using preceding BalanceTransfer amount {closest_bt_amount} for burn at "
                     f"log {burn_log_index} to match transfer at log {closest_bt_log_index}"
                 )
+
+    # For INTEREST_ACCRUAL collateral burns following a WITHDRAW, use the stored withdrawAmount
+    # to avoid 1 wei rounding errors from reverse-calculating value + balance_increase.
+    # This overrides the reverse-calculated raw_amount from extraction_data.
+    if operation is not None and operation.operation_type == OperationType.INTEREST_ACCRUAL:
+        if tx_context.last_withdraw_amount > 0:
+            raw_amount = tx_context.last_withdraw_amount
+            logger.debug(f"Using stored WITHDRAW amount for INTEREST_ACCRUAL: {raw_amount}")
 
     # If this is a WITHDRAW operation and no BalanceTransfer amount was found,
     # use the raw_amount from the Withdraw event to ensure accurate balance updates.
@@ -2924,17 +2908,9 @@ def _process_debt_burn_with_match(
     if raw_amount is None and not is_liquidation:
         raw_amount = extraction_data.get("debt_to_cover")
 
-    # For INTEREST_ACCRUAL debt burns following a REPAY, use the stored paybackAmount
-    # to avoid 1 wei rounding errors from reverse-calculating amount + balance_increase.
-    # This overrides the reverse-calculated raw_amount from extraction_data.
-    if operation is not None and operation.operation_type == OperationType.INTEREST_ACCRUAL:
-        if tx_context.last_repay_amount > 0:
-            raw_amount = tx_context.last_repay_amount
-            logger.debug(f"Using stored REPAY paybackAmount for INTEREST_ACCRUAL: {raw_amount}")
-
     # For V4+ debt burns with raw_amount, calculate the scaled amount using TokenMath
     # to match the contract's rayDivFloor calculation
-    if raw_amount is not None and debt_asset.v_token_revision >= 4:
+    if raw_amount is not None and debt_asset.v_token_revision >= 4:  # noqa:PLR2004
         assert scaled_event.index is not None
         token_math = TokenMathFactory.get_token_math_for_token_revision(debt_asset.v_token_revision)
         scaled_amount = token_math.get_debt_burn_scaled_amount(
@@ -3876,17 +3852,9 @@ def _build_transaction_contexts(
     session: Session,
     w3: Web3,
     gho_asset: AaveGhoToken,
-    known_scaled_token_addresses: set[ChecksumAddress],
     known_debt_token_addresses: set[ChecksumAddress],
-    pool_address: ChecksumAddress,
 ) -> dict[HexBytes, TransactionContext]:
     """Group events by transaction with full categorization."""
-
-    logger.debug(f"_build_transaction_contexts: starting categorization for {len(events)} events")
-    logger.debug(
-        f"_build_transaction_contexts: known_scaled_tokens={len(known_scaled_token_addresses)} "
-        f"known_debt_tokens={len(known_debt_token_addresses)}"
-    )
 
     contexts: dict[HexBytes, TransactionContext] = {}
 
@@ -3919,25 +3887,25 @@ def _build_transaction_contexts(
         ctx = contexts[tx_hash]
         ctx.events.append(event)
 
-        # Skip scaled token events from the Pool contract specifically
-        # The Pool contract may emit Mint/Burn/Transfer-like events that have the
-        # same topic signature as aToken/vToken events but are not scaled token events
-        # All other addresses should be processed, even if not in known_scaled_token_addresses,
-        # as they may be new tokens not yet in the database
-        if (
-            topic
-            in {
-                AaveV3ScaledTokenEvent.MINT.value,
-                AaveV3ScaledTokenEvent.BURN.value,
-                AaveV3ScaledTokenEvent.BALANCE_TRANSFER.value,
-            }
-            and event_address == pool_address
-        ):
-            logger.debug(
-                f"_build_transaction_contexts: SKIPPING scaled token "
-                f"event from Pool addr={event_address}"
-            )
-            continue
+        # # Skip scaled token events from the Pool contract specifically
+        # # The Pool contract may emit Mint/Burn/Transfer-like events that have the
+        # # same topic signature as aToken/vToken events but are not scaled token events
+        # # All other addresses should be processed, even if not in known_scaled_token_addresses,
+        # # as they may be new tokens not yet in the database
+        # if (
+        #     topic
+        #     in {
+        #         AaveV3ScaledTokenEvent.MINT.value,
+        #         AaveV3ScaledTokenEvent.BURN.value,
+        #         AaveV3ScaledTokenEvent.BALANCE_TRANSFER.value,
+        #     }
+        #     and event_address == pool_address
+        # ):
+        #     logger.debug(
+        #         f"_build_transaction_contexts: SKIPPING scaled token "
+        #         f"event from Pool addr={event_address}"
+        #     )
+        #     continue
 
         # Track users involved in stkAAVE transfers (needed for discount calculations)
         if topic == ERC20Event.TRANSFER.value and event_address == (
@@ -4259,9 +4227,7 @@ def update_aave_market(
         session=session,
         w3=w3,
         gho_asset=gho_asset,
-        known_scaled_token_addresses=known_scaled_token_addresses,
         known_debt_token_addresses=known_debt_token_addresses,
-        pool_address=get_checksum_address(pool.address),
     )
 
     # Build users by block for verification at block boundaries

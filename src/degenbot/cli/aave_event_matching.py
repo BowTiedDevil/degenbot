@@ -27,8 +27,7 @@ class TransactionContext(Protocol):
     the actual TransactionContext class from aave.py (avoiding circular imports).
     """
 
-    pool_events: list[LogReceipt]
-    matched_pool_events: dict[int, bool]
+    last_withdraw_amount: int
 
 
 class EventConsumptionPolicy(Enum):
@@ -79,13 +78,15 @@ class OperationAwareEventMatcher:
     eliminating the need for max_log_index and temporal ordering checks.
     """
 
-    def __init__(self, operation: Operation) -> None:
+    def __init__(self, operation: Operation, tx_context: TransactionContext | None = None) -> None:
         """Initialize matcher with operation context.
 
         Args:
             operation: The operation containing the pool event and scaled events.
+            tx_context: Optional transaction context for accessing stored values
         """
         self.operation = operation
+        self.tx_context = tx_context
 
     def find_match(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
@@ -268,10 +269,10 @@ class OperationAwareEventMatcher:
         extraction_data: dict[str, int] = {}
 
         # Only provide raw_amount for debt burns (not collateral mints)
-        # For debt burns, raw_amount = value + balance_increase represents the total
-        # payback amount, enabling correct TokenMath calculation using rayDivFloor.
-        # For collateral mints, the event amount is already the correct scaled amount.
         if scaled_event.is_debt:
+            # For INTEREST_ACCRUAL debt burns, calculate raw_amount from Burn event values
+            # Note: Interest accrual burns attached to REPAY operations will have
+            # raw_amount provided via extraction_data from the REPAY pool event
             if scaled_event.balance_increase is not None:
                 extraction_data["raw_amount"] = scaled_event.amount + scaled_event.balance_increase
             else:
