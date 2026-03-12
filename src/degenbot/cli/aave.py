@@ -18,6 +18,7 @@ from web3.exceptions import ContractLogicError
 from web3.types import LogReceipt
 
 from degenbot.aave.deployments import EthereumMainnetAaveV3
+from degenbot.aave.enrichment import ScaledEventEnricher
 from degenbot.aave.events import (
     AaveV3GhoDebtTokenEvent,
     AaveV3PoolConfigEvent,
@@ -28,6 +29,7 @@ from degenbot.aave.events import (
 )
 from degenbot.aave.libraries.token_math import TokenMathFactory
 from degenbot.aave.libraries.wad_ray_math import wad_mul
+from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.processors import (
     CollateralBurnEvent,
     CollateralMintEvent,
@@ -38,7 +40,7 @@ from degenbot.aave.processors import (
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
 from degenbot.cli.aave_debug_logger import aave_debug_logger
-from degenbot.cli.aave_event_matching import EventMatchResult, OperationAwareEventMatcher
+from degenbot.cli.aave_event_matching import OperationAwareEventMatcher
 from degenbot.cli.aave_transaction_operations import (
     Operation,
     OperationType,
@@ -76,7 +78,10 @@ from degenbot.logging import logger
 if TYPE_CHECKING:
     from eth_typing.evm import BlockParams
 
-    from degenbot.aave.processors.base import BurnResult, MintResult
+    from degenbot.aave.processors.base import (
+        ScaledTokenBurnResult,
+        ScaledTokenMintResult,
+    )
 
 
 class TokenType(Enum):
@@ -1833,7 +1838,7 @@ def _process_scaled_token_operation(
             collateral_processor = TokenProcessorFactory.get_collateral_processor(
                 scaled_token_revision
             )
-            mint_result: MintResult = collateral_processor.process_mint_event(
+            mint_result: ScaledTokenMintResult = collateral_processor.process_mint_event(
                 event_data=event,
                 previous_balance=position.balance,
                 previous_index=position.last_index or 0,
@@ -1847,7 +1852,7 @@ def _process_scaled_token_operation(
             collateral_processor = TokenProcessorFactory.get_collateral_processor(
                 scaled_token_revision
             )
-            burn_result: BurnResult = collateral_processor.process_burn_event(
+            burn_result: ScaledTokenBurnResult = collateral_processor.process_burn_event(
                 event_data=event,
                 previous_balance=position.balance,
                 previous_index=position.last_index or 0,
@@ -1863,7 +1868,7 @@ def _process_scaled_token_operation(
         case DebtMintEvent():
             assert isinstance(position, AaveV3DebtPosition)
             debt_processor = TokenProcessorFactory.get_debt_processor(scaled_token_revision)
-            debt_mint_result: MintResult = debt_processor.process_mint_event(
+            debt_mint_result: ScaledTokenMintResult = debt_processor.process_mint_event(
                 event_data=event,
                 previous_balance=position.balance,
                 previous_index=position.last_index or 0,
@@ -1876,7 +1881,7 @@ def _process_scaled_token_operation(
         case DebtBurnEvent():
             assert isinstance(position, AaveV3DebtPosition)
             debt_processor = TokenProcessorFactory.get_debt_processor(scaled_token_revision)
-            debt_burn_result: BurnResult = debt_processor.process_burn_event(
+            debt_burn_result: ScaledTokenBurnResult = debt_processor.process_burn_event(
                 event_data=event,
                 previous_balance=position.balance,
                 previous_index=position.last_index or 0,
@@ -2253,8 +2258,13 @@ def _process_operation(
     """Process a single operation."""
     logger.debug(f"Processing _process_operation for tx at block {tx_context.block_number}")
 
-    # Create matcher for this operation
-    matcher = OperationAwareEventMatcher(operation, tx_context)
+    # Create enricher and matcher for this operation
+    enricher = ScaledEventEnricher(
+        pool_revision=tx_context.pool_revision,
+        token_revisions={},
+        session=tx_context.session,
+    )
+    matcher = OperationAwareEventMatcher(operation, enricher, tx_context)
 
     # Log liquidation operations for debugging
     if operation.operation_type in {
@@ -2329,13 +2339,14 @@ def _process_operation(
         match_result = matcher.find_match(scaled_event)
 
         # Route to appropriate handler based on event type
+        enriched_event = match_result.enriched_event
         if scaled_event.event_type == ScaledTokenEventType.COLLATERAL_MINT.value:
             _process_collateral_mint_with_match(
                 event=event,
                 tx_context=tx_context,
                 operation=operation,
                 scaled_event=scaled_event,
-                match_result=match_result,
+                enriched_event=enriched_event,
             )
         elif scaled_event.event_type == ScaledTokenEventType.COLLATERAL_BURN.value:
             _process_collateral_burn_with_match(
@@ -2343,7 +2354,7 @@ def _process_operation(
                 tx_context=tx_context,
                 operation=operation,
                 scaled_event=scaled_event,
-                match_result=match_result,
+                enriched_event=enriched_event,
             )
         elif scaled_event.event_type in {
             ScaledTokenEventType.DEBT_MINT.value,
@@ -2354,7 +2365,7 @@ def _process_operation(
                 tx_context=tx_context,
                 operation=operation,
                 scaled_event=scaled_event,
-                match_result=match_result,
+                enriched_event=enriched_event,
             )
         elif scaled_event.event_type in {
             ScaledTokenEventType.DEBT_BURN.value,
@@ -2365,7 +2376,7 @@ def _process_operation(
                 tx_context=tx_context,
                 operation=operation,
                 scaled_event=scaled_event,
-                match_result=match_result,
+                enriched_event=enriched_event,
             )
         elif scaled_event.event_type == ScaledTokenEventType.COLLATERAL_TRANSFER.value:
             _process_collateral_transfer(
@@ -2400,7 +2411,7 @@ def _process_collateral_mint_with_match(
     tx_context: TransactionContext,
     operation: Operation,
     scaled_event: ScaledTokenEvent,
-    match_result: EventMatchResult,
+    enriched_event: EnrichedScaledTokenEvent,
 ) -> None:
     """Process collateral (aToken) mint with operation match."""
     logger.debug(f"Processing _process_collateral_mint_with_match at block {event['blockNumber']}")
@@ -2428,27 +2439,10 @@ def _process_collateral_mint_with_match(
         asset_id=collateral_asset.id,
     )
 
-    # Calculate scaled amount using PoolProcessor for revision 4+
-    # The scaled_event.amount is the raw underlying amount
-    scaled_amount: int | None = None
-    extraction_data = match_result.get("extraction_data", {})
-    raw_amount = extraction_data.get("raw_amount")
+    # Use enriched event data for scaled amount
+    scaled_amount: int | None = enriched_event.scaled_amount
 
-    # For liquidations, use the liquidated_collateral amount
-    if raw_amount is None:
-        raw_amount = extraction_data.get("liquidated_collateral")
-
-    if raw_amount is not None and collateral_asset.a_token_revision >= 4:  # noqa:PLR2004
-        # Use token revision for math calculations to match contract behavior
-        token_math = TokenMathFactory.get_token_math_for_token_revision(
-            collateral_asset.a_token_revision
-        )
-        assert scaled_event.index is not None
-        scaled_amount = token_math.get_collateral_mint_scaled_amount(
-            amount=raw_amount,
-            liquidity_index=scaled_event.index,
-        )
-    elif operation.operation_type == OperationType.MINT_TO_TREASURY:
+    if operation.operation_type == OperationType.MINT_TO_TREASURY:
         # For MINT_TO_TREASURY, the Mint event amount is the actual minted amount
         # (post-interest), while the MintedToTreasury Pool event shows pre-interest.
         # The Transfer event from address(0) is skipped, so we must calculate
@@ -2488,7 +2482,7 @@ def _process_collateral_burn_with_match(
     tx_context: TransactionContext,
     operation: Operation,
     scaled_event: ScaledTokenEvent,
-    match_result: EventMatchResult,
+    enriched_event: EnrichedScaledTokenEvent,
 ) -> None:
     """Process collateral (aToken) burn with operation match."""
     logger.debug(f"Processing _process_collateral_burn_with_match at block {event['blockNumber']}")
@@ -2522,15 +2516,9 @@ def _process_collateral_burn_with_match(
         asset_id=collateral_asset.id,
     )
 
-    # Calculate scaled amount using PoolProcessor for revision 4+
-    # The scaled_event.amount is the raw underlying amount
-    scaled_amount: int | None = None
-    extraction_data = match_result.get("extraction_data", {})
-    raw_amount = extraction_data.get("raw_amount")
-
-    # For liquidations, use the liquidated_collateral amount
-    if raw_amount is None:
-        raw_amount = extraction_data.get("liquidated_collateral")
+    # Use enriched event data for scaled amount
+    scaled_amount: int | None = enriched_event.scaled_amount
+    raw_amount = enriched_event.raw_amount
 
     # Check if this burn follows a BalanceTransfer to the same user in the same transaction
     # If so, use the BalanceTransfer amount to ensure they cancel out exactly
@@ -2678,14 +2666,13 @@ def _process_collateral_burn_with_match(
         OperationType.GHO_LIQUIDATION,
         OperationType.SELF_LIQUIDATION,
     }:
-        extraction_data = match_result.get("extraction_data", {})
         aave_debug_logger.log_liquidation_match(
             operation_id=operation.operation_id,
             user_address=scaled_event.user_address or "unknown",
             scaled_event_type=scaled_event.event_type,
             token_address=token_address,
-            matched_amount=extraction_data.get("liquidated_collateral", 0),
-            extraction_data=extraction_data,
+            matched_amount=enriched_event.raw_amount,
+            extraction_data={"raw_amount": enriched_event.raw_amount},
             block_number=scaled_event.event["blockNumber"],
             tx_hash=tx_context.tx_hash,
         )
@@ -2697,7 +2684,7 @@ def _process_debt_mint_with_match(
     tx_context: TransactionContext,
     operation: Operation,
     scaled_event: ScaledTokenEvent,
-    match_result: EventMatchResult,
+    enriched_event: EnrichedScaledTokenEvent,
 ) -> None:
     """Process debt (vToken) mint with operation match."""
     logger.debug(f"Processing _process_debt_mint_with_match at block {event['blockNumber']}")
@@ -2725,32 +2712,8 @@ def _process_debt_mint_with_match(
         asset_id=debt_asset.id,
     )
 
-    # Calculate scaled amount using PoolProcessor for revision 4+
-    # The scaled_event.amount is the raw underlying amount
-    scaled_amount: int | None = None
-    extraction_data = match_result.get("extraction_data", {})
-    raw_amount = extraction_data.get("raw_amount")
-
-    # For liquidations, use the debt_to_cover amount ONLY for pre-v4 tokens
-    # For v4+, let the processor calculate from the actual Mint event values
-    # to avoid discrepancies between debt_to_cover and actual minted amount
-    is_liquidation = operation is not None and operation.operation_type in {
-        OperationType.LIQUIDATION,
-        OperationType.GHO_LIQUIDATION,
-        OperationType.SELF_LIQUIDATION,
-    }
-
-    if raw_amount is None and not is_liquidation:
-        raw_amount = extraction_data.get("debt_to_cover")
-
-    if raw_amount is not None:
-        # Use token revision for math calculations to match contract behavior
-        token_math = TokenMathFactory.get_token_math_for_token_revision(debt_asset.v_token_revision)
-        assert scaled_event.index is not None
-        scaled_amount = token_math.get_debt_mint_scaled_amount(
-            amount=raw_amount,
-            borrow_index=scaled_event.index,
-        )
+    # Use enriched event data for scaled amount
+    scaled_amount: int | None = enriched_event.scaled_amount
 
     # Check if this is a GHO token and use GHO-specific processing
     if token_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
@@ -2865,7 +2828,7 @@ def _process_debt_burn_with_match(
     tx_context: TransactionContext,
     operation: Operation,
     scaled_event: ScaledTokenEvent,
-    match_result: EventMatchResult,
+    enriched_event: EnrichedScaledTokenEvent,
 ) -> None:
     """Process debt (vToken) burn with operation match."""
     logger.debug(f"Processing _process_debt_burn_with_match at block {event['blockNumber']}")
@@ -2892,33 +2855,8 @@ def _process_debt_burn_with_match(
         asset_id=debt_asset.id,
     )
 
-    # Calculate scaled amount using PoolProcessor for revision 4+
-    # The scaled_event.amount is the raw underlying amount
-    scaled_amount: int | None = None
-    extraction_data = match_result.get("extraction_data", {})
-    raw_amount = extraction_data.get("raw_amount")
-
-    # For liquidations, use the debt_to_cover amount ONLY for pre-v4 tokens
-    # For v4+, let the processor calculate from the actual Burn event values
-    # to avoid discrepancies between debt_to_cover and actual burned amount
-    is_liquidation = operation is not None and operation.operation_type in {
-        OperationType.LIQUIDATION,
-        OperationType.GHO_LIQUIDATION,
-        OperationType.SELF_LIQUIDATION,
-    }
-
-    if raw_amount is None and not is_liquidation:
-        raw_amount = extraction_data.get("debt_to_cover")
-
-    # For V4+ debt burns with raw_amount, calculate the scaled amount using TokenMath
-    # to match the contract's rayDivFloor calculation
-    if raw_amount is not None and debt_asset.v_token_revision >= 4:  # noqa:PLR2004
-        assert scaled_event.index is not None
-        token_math = TokenMathFactory.get_token_math_for_token_revision(debt_asset.v_token_revision)
-        scaled_amount = token_math.get_debt_burn_scaled_amount(
-            amount=raw_amount,
-            borrow_index=scaled_event.index,
-        )
+    # Use enriched event data for scaled amount
+    scaled_amount: int | None = enriched_event.scaled_amount
 
     # Check if this is a GHO token and use GHO-specific processing
     if token_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
@@ -3043,14 +2981,13 @@ def _process_debt_burn_with_match(
             OperationType.SELF_LIQUIDATION,
         }
     ):
-        extraction_data = match_result.get("extraction_data", {})
         aave_debug_logger.log_liquidation_match(
             operation_id=operation.operation_id,
             user_address=scaled_event.user_address or "unknown",
             scaled_event_type=scaled_event.event_type,
             token_address=token_address,
-            matched_amount=extraction_data.get("debt_to_cover", 0),
-            extraction_data=extraction_data,
+            matched_amount=enriched_event.raw_amount,
+            extraction_data={"raw_amount": enriched_event.raw_amount},
             block_number=scaled_event.event["blockNumber"],
             tx_hash=tx_context.tx_hash,
         )
@@ -3846,6 +3783,25 @@ def _fetch_discount_config_events(
     )
 
 
+def _get_pool_revision_from_db(
+    session: Session,
+    market: AaveV3Market,
+) -> int:
+    """
+    Fetch current Pool revision from database.
+    """
+
+    pool_contract = session.scalar(
+        select(AaveV3Contract).where(
+            AaveV3Contract.market_id == market.id,
+            AaveV3Contract.name == "POOL",
+        )
+    )
+    assert pool_contract is not None
+
+    return pool_contract.revision
+
+
 def _build_transaction_contexts(
     *,
     events: list[LogReceipt],
@@ -3875,6 +3831,7 @@ def _build_transaction_contexts(
             logger.debug(
                 f"_build_transaction_contexts: creating new context for tx={tx_hash.to_0x_hex()}"
             )
+            pool_revision = _get_pool_revision_from_db(session, market)
             contexts[tx_hash] = TransactionContext(
                 w3=w3,
                 tx_hash=tx_hash,
@@ -3883,6 +3840,7 @@ def _build_transaction_contexts(
                 market=market,
                 session=session,
                 gho_asset=gho_asset,
+                pool_revision=pool_revision,
             )
 
         ctx = contexts[tx_hash]

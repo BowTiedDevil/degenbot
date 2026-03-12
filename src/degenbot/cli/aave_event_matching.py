@@ -5,18 +5,22 @@ Aave V3 event matching framework.
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Protocol, TypedDict
+from typing import TYPE_CHECKING, Protocol
 
 from eth_abi.abi import decode
 from web3.types import LogReceipt
 
 from degenbot.aave.events import AaveV3PoolEvent
+from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.cli.aave_transaction_operations import (
     Operation,
     OperationType,
     ScaledTokenEvent,
     ScaledTokenEventType,
 )
+
+if TYPE_CHECKING:
+    from degenbot.aave.enrichment import ScaledEventEnricher
 
 
 class TransactionContext(Protocol):
@@ -63,12 +67,13 @@ class MatchConfig:
     consumption_condition: Callable[[LogReceipt], bool] | None = None
 
 
-class EventMatchResult(TypedDict):
-    """Result of a successful event match."""
+@dataclass(frozen=True)
+class EventMatchResult:
+    """Result of a successful event match with enriched scaled amounts."""
 
     pool_event: LogReceipt | None
     should_consume: bool
-    extraction_data: dict[str, int]
+    enriched_event: EnrichedScaledTokenEvent
 
 
 class OperationAwareEventMatcher:
@@ -78,26 +83,33 @@ class OperationAwareEventMatcher:
     eliminating the need for max_log_index and temporal ordering checks.
     """
 
-    def __init__(self, operation: Operation, tx_context: TransactionContext | None = None) -> None:
+    def __init__(
+        self,
+        operation: Operation,
+        enricher: "ScaledEventEnricher",
+        tx_context: TransactionContext | None = None,
+    ) -> None:
         """Initialize matcher with operation context.
 
         Args:
             operation: The operation containing the pool event and scaled events.
-            tx_context: Optional transaction context for accessing stored values
+            enricher: The enricher to use for calculating scaled amounts.
+            tx_context: Optional transaction context for accessing stored values.
         """
         self.operation = operation
+        self.enricher = enricher
         self.tx_context = tx_context
 
     def find_match(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
-        Find pool event match within operation context.
+        Find pool event match within operation context and enrich with scaled amounts.
 
         Args:
             scaled_event: The scaled token event to match.
 
         Returns:
-            EventMatchResult with pool_event, should_consume flag, and extraction_data,
-            or None if no match found.
+            EventMatchResult with pool_event, should_consume flag, and enriched_event
+            containing pre-calculated scaled amounts.
         """
 
         # Pattern-aware matching based on operation type
@@ -121,53 +133,51 @@ class OperationAwareEventMatcher:
             # Default matching for unknown operation types
             self._default_match,
         )
-        return matcher(scaled_event=scaled_event)
 
-    def _match_supply(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
+        # Get match result (pool_event and should_consume)
+        pool_event, should_consume = matcher(scaled_event=scaled_event)
+
+        # Enrich the scaled event with calculated amounts
+        enriched_event = self.enricher.enrich(
+            scaled_event=scaled_event,
+            operation=self.operation,
+        )
+
+        return EventMatchResult(
+            pool_event=pool_event,
+            should_consume=should_consume,
+            enriched_event=enriched_event,
+        )
+
+    def _match_supply(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
         """
         Match supply operation.
         """
 
-        return EventMatchResult(
-            pool_event=self.operation.pool_event,
-            should_consume=True,  # SUPPLY is single-purpose
-            extraction_data=self._extract_supply_data(),
-        )
+        return (self.operation.pool_event, True)
 
-    def _match_withdraw(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
+    def _match_withdraw(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
         """
         Match withdraw operation.
         """
 
-        return EventMatchResult(
-            pool_event=self.operation.pool_event,
-            should_consume=True,  # WITHDRAW is single-purpose
-            extraction_data=self._extract_withdraw_data(),
-        )
+        return (self.operation.pool_event, True)
 
-    def _match_borrow(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
+    def _match_borrow(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
         """
         Match borrow operation.
         """
 
-        return EventMatchResult(
-            pool_event=self.operation.pool_event,
-            should_consume=True,  # BORROW is single-purpose
-            extraction_data=self._extract_borrow_data(),
-        )
+        return (self.operation.pool_event, True)
 
-    def _match_gho_borrow(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
+    def _match_gho_borrow(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
         """
         Match GHO borrow operation.
         """
 
-        return EventMatchResult(
-            pool_event=self.operation.pool_event,
-            should_consume=True,  # GHO BORROW is single-purpose
-            extraction_data=self._extract_borrow_data(),
-        )
+        return (self.operation.pool_event, True)
 
-    def _match_repay(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
+    def _match_repay(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
         """
         Match repay operation.
         """
@@ -179,13 +189,11 @@ class OperationAwareEventMatcher:
         # REPAY is consumed only if useATokens=False
         should_consume = not use_a_tokens
 
-        return EventMatchResult(
-            pool_event=self.operation.pool_event,
-            should_consume=should_consume,
-            extraction_data=extraction_data,
-        )
+        return (self.operation.pool_event, should_consume)
 
-    def _match_repay_with_atokens(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
+    def _match_repay_with_atokens(
+        self, scaled_event: ScaledTokenEvent
+    ) -> tuple[LogReceipt | None, bool]:
         """
         Match repay with aTokens operation.
 
@@ -196,26 +204,16 @@ class OperationAwareEventMatcher:
         The REPAY event should NOT be consumed.
         """
 
-        extraction_data = self._extract_repay_data()
+        return (self.operation.pool_event, False)
 
-        return EventMatchResult(
-            pool_event=self.operation.pool_event,
-            should_consume=False,  # Shared across debt and collateral burns
-            extraction_data=extraction_data,
-        )
-
-    def _match_gho_repay(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
+    def _match_gho_repay(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
         """
         Match GHO repay operation.
         """
 
-        return EventMatchResult(
-            pool_event=self.operation.pool_event,
-            should_consume=True,  # GHO REPAY is single-purpose (no useATokens)
-            extraction_data=self._extract_repay_data(),
-        )
+        return (self.operation.pool_event, True)
 
-    def _match_liquidation(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
+    def _match_liquidation(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
         """
         Match liquidation operation.
 
@@ -226,37 +224,29 @@ class OperationAwareEventMatcher:
         The LIQUIDATION_CALL event should NOT be consumed.
         """
 
-        return EventMatchResult(
-            pool_event=self.operation.pool_event,
-            should_consume=False,  # Shared across debt and collateral burns
-            extraction_data=self._extract_liquidation_data(),
-        )
+        return (self.operation.pool_event, False)
 
-    def _match_gho_liquidation(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
+    def _match_gho_liquidation(
+        self, scaled_event: ScaledTokenEvent
+    ) -> tuple[LogReceipt | None, bool]:
         """
         Match GHO liquidation operation.
 
         Same as standard liquidation - LIQUIDATION_CALL is shared.
         """
 
-        return EventMatchResult(
-            pool_event=self.operation.pool_event,
-            should_consume=False,  # Shared across burns
-            extraction_data=self._extract_liquidation_data(),
-        )
+        return (self.operation.pool_event, False)
 
-    def _match_flash_loan(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
+    def _match_flash_loan(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
         """
         Match flash loan (DEFICIT_CREATED) operation.
         """
 
-        return EventMatchResult(
-            pool_event=self.operation.pool_event,
-            should_consume=False,  # DEFICIT_CREATED is reusable
-            extraction_data=self._extract_deficit_data(),
-        )
+        return (self.operation.pool_event, False)
 
-    def _match_interest_accrual(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
+    def _match_interest_accrual(
+        self, scaled_event: ScaledTokenEvent
+    ) -> tuple[LogReceipt | None, bool]:
         """
         Match interest accrual operation.
 
@@ -266,25 +256,11 @@ class OperationAwareEventMatcher:
         correct scaled amount calculation using TokenMath.
         """
 
-        extraction_data: dict[str, int] = {}
+        return (self.operation.pool_event, False)
 
-        # Only provide raw_amount for debt burns (not collateral mints)
-        if scaled_event.is_debt:
-            # For INTEREST_ACCRUAL debt burns, calculate raw_amount from Burn event values
-            # Note: Interest accrual burns attached to REPAY operations will have
-            # raw_amount provided via extraction_data from the REPAY pool event
-            if scaled_event.balance_increase is not None:
-                extraction_data["raw_amount"] = scaled_event.amount + scaled_event.balance_increase
-            else:
-                extraction_data["raw_amount"] = scaled_event.amount
-
-        return EventMatchResult(
-            pool_event=self.operation.pool_event,
-            should_consume=False,
-            extraction_data=extraction_data,
-        )
-
-    def _match_balance_transfer(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
+    def _match_balance_transfer(
+        self, scaled_event: ScaledTokenEvent
+    ) -> tuple[LogReceipt | None, bool]:
         """
         Match balance transfer operation.
 
@@ -292,22 +268,14 @@ class OperationAwareEventMatcher:
         represents an ERC20 Transfer of aTokens or vTokens between users.
         """
 
-        return EventMatchResult(
-            pool_event=self.operation.pool_event,
-            should_consume=False,
-            extraction_data={},
-        )
+        return (self.operation.pool_event, False)
 
-    def _default_match(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
+    def _default_match(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
         """
         Default matching for unknown operation types.
         """
 
-        return EventMatchResult(
-            pool_event=self.operation.pool_event,
-            should_consume=True,  # Default to consumable
-            extraction_data={},
-        )
+        return (self.operation.pool_event, True)
 
     def _extract_supply_data(self) -> dict[str, int]:
         """

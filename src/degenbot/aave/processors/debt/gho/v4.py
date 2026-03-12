@@ -11,9 +11,9 @@ import degenbot.aave.libraries
 from degenbot.aave.processors.base import (
     DebtBurnEvent,
     DebtMintEvent,
-    GhoBurnResult,
     GhoDebtTokenProcessor,
-    GhoMintResult,
+    GhoScaledTokenBurnResult,
+    GhoScaledTokenMintResult,
     GhoUserOperation,
     MathLibraries,
 )
@@ -71,7 +71,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         previous_balance: int,
         previous_index: int,
         previous_discount: int,  # noqa: ARG002
-    ) -> GhoMintResult:
+    ) -> GhoScaledTokenMintResult:
         """Process a GHO debt mint event without discount.
 
         For accurate balance tracking, the scaled_delta parameter should be
@@ -141,7 +141,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         # Revision 4+ never refreshes discount (discount is deprecated)
         should_refresh_discount = False
 
-        return GhoMintResult(
+        return GhoScaledTokenMintResult(
             balance_delta=balance_delta,
             new_index=event_data.index,
             user_operation=user_operation,
@@ -155,7 +155,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         previous_balance: int,  # noqa: ARG002
         previous_index: int,  # noqa: ARG002
         previous_discount: int,  # noqa: ARG002
-    ) -> GhoBurnResult:
+    ) -> GhoScaledTokenBurnResult:
         """Process a GHO debt burn event without discount.
 
         Args:
@@ -184,7 +184,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         # Revision 4+ never refreshes discount (discount is deprecated)
         should_refresh_discount = False
 
-        return GhoBurnResult(
+        return GhoScaledTokenBurnResult(
             balance_delta=balance_delta,
             new_index=event_data.index,
             discount_scaled=0,

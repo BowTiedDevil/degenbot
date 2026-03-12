@@ -2,12 +2,12 @@
 
 import degenbot.aave.libraries
 from degenbot.aave.processors.base import (
-    BurnResult,
     DebtBurnEvent,
     DebtMintEvent,
     DebtTokenProcessor,
     MathLibraries,
-    MintResult,
+    ScaledTokenBurnResult,
+    ScaledTokenMintResult,
 )
 
 
@@ -32,7 +32,7 @@ class DebtV1Processor(DebtTokenProcessor):
         previous_balance: int,  # noqa: ARG002
         previous_index: int,  # noqa: ARG002
         scaled_delta: int | None = None,  # noqa: ARG002
-    ) -> MintResult:
+    ) -> ScaledTokenMintResult:
         """
         Process a debt mint event.
 
@@ -76,7 +76,7 @@ class DebtV1Processor(DebtTokenProcessor):
                 b=event_data.index,
             )
             is_repay = True
-        return MintResult(
+        return ScaledTokenMintResult(
             balance_delta=balance_delta,
             new_index=event_data.index,
             is_repay=is_repay,
@@ -122,7 +122,7 @@ class DebtV1Processor(DebtTokenProcessor):
         previous_balance: int,  # noqa: ARG002
         previous_index: int,  # noqa: ARG002
         scaled_delta: int | None = None,  # noqa: ARG002
-    ) -> BurnResult:
+    ) -> ScaledTokenBurnResult:
         """
         Process a debt burn event.
 
@@ -148,7 +148,7 @@ class DebtV1Processor(DebtTokenProcessor):
             b=event_data.index,
         )
 
-        return BurnResult(
+        return ScaledTokenBurnResult(
             balance_delta=balance_delta,
             new_index=event_data.index,
         )

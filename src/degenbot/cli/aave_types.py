@@ -68,6 +68,10 @@ class TransactionContext:
     # avoid 1 wei rounding errors from rayDivCeil/rayMulFloor asymmetry.
     last_withdraw_amount: int = 0
 
+    # Pool revision for TokenMath calculations
+    # Used to determine if scaled amounts need to be pre-calculated (rev 9+)
+    pool_revision: int = 0
+
     def get_effective_discount_at_log_index(
         self,
         user_address: ChecksumAddress,

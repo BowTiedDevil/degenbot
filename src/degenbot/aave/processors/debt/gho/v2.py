@@ -4,8 +4,8 @@ import degenbot.aave.libraries
 from degenbot.aave.processors.base import (
     DebtBurnEvent,
     DebtMintEvent,
-    GhoBurnResult,
-    GhoMintResult,
+    GhoScaledTokenBurnResult,
+    GhoScaledTokenMintResult,
     GhoUserOperation,
     MathLibraries,
 )
@@ -33,7 +33,7 @@ class GhoV2Processor(GhoV1Processor):
         previous_balance: int,
         previous_index: int,
         previous_discount: int,
-    ) -> GhoMintResult:
+    ) -> GhoScaledTokenMintResult:
         """
         Process a GHO debt mint event with full discount support.
 
@@ -110,7 +110,7 @@ class GhoV2Processor(GhoV1Processor):
         # For GHO rev 2-3, always refresh discount after balance-changing operations
         should_refresh_discount = True
 
-        return GhoMintResult(
+        return GhoScaledTokenMintResult(
             balance_delta=balance_delta,
             new_index=event_data.index,
             user_operation=user_operation,
@@ -124,7 +124,7 @@ class GhoV2Processor(GhoV1Processor):
         previous_balance: int,
         previous_index: int,
         previous_discount: int,
-    ) -> GhoBurnResult:
+    ) -> GhoScaledTokenBurnResult:
         """
         Process a GHO debt burn event with full discount support.
 
@@ -175,7 +175,7 @@ class GhoV2Processor(GhoV1Processor):
         # For GHO rev 2-3, always refresh discount after balance-changing operations
         should_refresh_discount = True
 
-        return GhoBurnResult(
+        return GhoScaledTokenBurnResult(
             balance_delta=balance_delta,
             new_index=event_data.index,
             discount_scaled=discount_scaled,

@@ -11,9 +11,9 @@ import degenbot.aave.libraries
 from degenbot.aave.processors.base import (
     DebtBurnEvent,
     DebtMintEvent,
-    GhoBurnResult,
     GhoDebtTokenProcessor,
-    GhoMintResult,
+    GhoScaledTokenBurnResult,
+    GhoScaledTokenMintResult,
     GhoUserOperation,
     MathLibraries,
 )
@@ -93,7 +93,7 @@ class GhoV5Processor(GhoDebtTokenProcessor):
         previous_balance: int,
         previous_index: int,
         previous_discount: int,  # noqa: ARG002
-    ) -> GhoMintResult:
+    ) -> GhoScaledTokenMintResult:
         """Process a GHO debt mint event without discount.
 
         For accurate balance tracking, the scaled_delta parameter should be
@@ -172,7 +172,7 @@ class GhoV5Processor(GhoDebtTokenProcessor):
         # Revision 5+ never refreshes discount (discount is deprecated)
         should_refresh_discount = False
 
-        return GhoMintResult(
+        return GhoScaledTokenMintResult(
             balance_delta=balance_delta,
             new_index=event_data.index,
             user_operation=user_operation,
@@ -186,7 +186,7 @@ class GhoV5Processor(GhoDebtTokenProcessor):
         previous_balance: int,  # noqa: ARG002
         previous_index: int,  # noqa: ARG002
         previous_discount: int,  # noqa: ARG002
-    ) -> GhoBurnResult:
+    ) -> GhoScaledTokenBurnResult:
         """Process a GHO debt burn event without discount.
 
         Args:
@@ -201,7 +201,7 @@ class GhoV5Processor(GhoDebtTokenProcessor):
         """
         # Use pre-calculated scaled amount from Pool contract if available
         if event_data.scaled_amount is not None:
-            return GhoBurnResult(
+            return GhoScaledTokenBurnResult(
                 balance_delta=-event_data.scaled_amount,
                 new_index=event_data.index,
                 discount_scaled=0,
@@ -224,7 +224,7 @@ class GhoV5Processor(GhoDebtTokenProcessor):
         # Revision 5+ never refreshes discount (discount is deprecated)
         should_refresh_discount = False
 
-        return GhoBurnResult(
+        return GhoScaledTokenBurnResult(
             balance_delta=balance_delta,
             new_index=event_data.index,
             discount_scaled=0,

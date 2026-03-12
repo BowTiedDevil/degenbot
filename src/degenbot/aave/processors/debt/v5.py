@@ -2,11 +2,11 @@
 
 import degenbot.aave.libraries
 from degenbot.aave.processors.base import (
-    BurnResult,
     DebtBurnEvent,
     DebtMintEvent,
     MathLibraries,
-    MintResult,
+    ScaledTokenBurnResult,
+    ScaledTokenMintResult,
 )
 from degenbot.aave.processors.debt.v1 import DebtV1Processor
 
@@ -71,7 +71,7 @@ class DebtV5Processor(DebtV1Processor):
         previous_balance: int,  # noqa: ARG002
         previous_index: int,  # noqa: ARG002
         scaled_delta: int | None = None,
-    ) -> BurnResult:
+    ) -> ScaledTokenBurnResult:
         """
         Process a debt burn event.
 
@@ -96,7 +96,7 @@ class DebtV5Processor(DebtV1Processor):
         """
         if scaled_delta is not None:
             # Use pre-calculated scaled amount from paybackAmount
-            return BurnResult(
+            return ScaledTokenBurnResult(
                 balance_delta=-scaled_delta,
                 new_index=event_data.index,
             )
@@ -109,7 +109,7 @@ class DebtV5Processor(DebtV1Processor):
             b=event_data.index,
         )
 
-        return BurnResult(
+        return ScaledTokenBurnResult(
             balance_delta=balance_delta,
             new_index=event_data.index,
         )
@@ -120,7 +120,7 @@ class DebtV5Processor(DebtV1Processor):
         previous_balance: int,  # noqa: ARG002
         previous_index: int,  # noqa: ARG002
         scaled_delta: int | None = None,
-    ) -> MintResult:
+    ) -> ScaledTokenMintResult:
         """
         Process a debt mint event.
 
@@ -152,7 +152,7 @@ class DebtV5Processor(DebtV1Processor):
             # BORROW path: emitted in _mintScaled
             if scaled_delta is not None:
                 # Use pre-calculated scaled amount from borrow amount
-                return MintResult(
+                return ScaledTokenMintResult(
                     balance_delta=scaled_delta,
                     new_index=event_data.index,
                     is_repay=False,
@@ -165,7 +165,7 @@ class DebtV5Processor(DebtV1Processor):
                 a=requested_amount,
                 b=event_data.index,
             )
-            return MintResult(
+            return ScaledTokenMintResult(
                 balance_delta=balance_delta,
                 new_index=event_data.index,
                 is_repay=False,
@@ -180,7 +180,7 @@ class DebtV5Processor(DebtV1Processor):
             a=amount_repaid,
             b=event_data.index,
         )
-        return MintResult(
+        return ScaledTokenMintResult(
             balance_delta=balance_delta,
             new_index=event_data.index,
             is_repay=True,

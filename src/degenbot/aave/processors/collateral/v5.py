@@ -2,11 +2,11 @@
 
 import degenbot.aave.libraries
 from degenbot.aave.processors.base import (
-    BurnResult,
     CollateralBurnEvent,
     CollateralMintEvent,
     MathLibraries,
-    MintResult,
+    ScaledTokenBurnResult,
+    ScaledTokenMintResult,
 )
 from degenbot.aave.processors.collateral.v1 import CollateralV1Processor
 
@@ -70,7 +70,7 @@ class CollateralV5Processor(CollateralV1Processor):
         previous_balance: int,  # noqa: ARG002
         previous_index: int,  # noqa: ARG002
         scaled_delta: int | None = None,
-    ) -> BurnResult:
+    ) -> ScaledTokenBurnResult:
         """
         Process a collateral burn event.
 
@@ -95,7 +95,7 @@ class CollateralV5Processor(CollateralV1Processor):
         """
         if scaled_delta is not None:
             # Use pre-calculated scaled amount from withdrawal amount
-            return BurnResult(
+            return ScaledTokenBurnResult(
                 balance_delta=-scaled_delta,
                 new_index=event_data.index,
             )
@@ -108,7 +108,7 @@ class CollateralV5Processor(CollateralV1Processor):
             b=event_data.index,
         )
 
-        return BurnResult(
+        return ScaledTokenBurnResult(
             balance_delta=balance_delta,
             new_index=event_data.index,
         )
@@ -119,7 +119,7 @@ class CollateralV5Processor(CollateralV1Processor):
         previous_balance: int,  # noqa: ARG002
         previous_index: int,  # noqa: ARG002
         scaled_delta: int | None = None,
-    ) -> MintResult:
+    ) -> ScaledTokenMintResult:
         """
         Process a collateral mint event.
 
@@ -159,7 +159,7 @@ class CollateralV5Processor(CollateralV1Processor):
             balance_delta = scaled_delta if scaled_delta is not None else 0
             is_repay = False
 
-        return MintResult(
+        return ScaledTokenMintResult(
             balance_delta=balance_delta,
             new_index=event_data.index,
             is_repay=is_repay,

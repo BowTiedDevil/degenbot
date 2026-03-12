@@ -136,9 +136,9 @@ class ProcessingResult(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class MintResult:
+class ScaledTokenMintResult:
     """
-    Result of processing a mint event (collateral or standard debt).
+    Result of processing a scaled token mint event (collateral or standard debt).
     """
 
     balance_delta: int
@@ -147,9 +147,9 @@ class MintResult:
 
 
 @dataclass(frozen=True, slots=True)
-class BurnResult:
+class ScaledTokenBurnResult:
     """
-    Result of processing a burn event (collateral or standard debt).
+    Result of processing a scaled token burn event (collateral or standard debt).
     """
 
     balance_delta: int
@@ -157,7 +157,7 @@ class BurnResult:
 
 
 @dataclass(frozen=True, slots=True)
-class GhoMintResult:
+class GhoScaledTokenMintResult:
     """
     Result of processing a GHO debt mint event.
     """
@@ -170,7 +170,7 @@ class GhoMintResult:
 
 
 @dataclass(frozen=True, slots=True)
-class GhoBurnResult:
+class GhoScaledTokenBurnResult:
     """
     Result of processing a GHO debt burn event.
     """
@@ -207,7 +207,7 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
         event_data: CollateralMintEvent,
         previous_balance: int,
         previous_index: int,
-    ) -> MintResult:
+    ) -> ScaledTokenMintResult:
         """
         Process a collateral mint event.
 
@@ -217,7 +217,7 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
             previous_index: The index at previous_balance calculation
 
         Returns:
-            MintResult with balance_delta, new_index, and is_repay flag
+            ScaledTokenMintResult with balance_delta, new_index, and is_repay flag
         """
 
     def process_burn_event(
@@ -225,7 +225,7 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
         event_data: CollateralBurnEvent,
         previous_balance: int,
         previous_index: int,
-    ) -> BurnResult:
+    ) -> ScaledTokenBurnResult:
         """
         Process a collateral burn event.
 
@@ -235,7 +235,7 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
             previous_index: The index at previous_balance calculation
 
         Returns:
-            BurnResult with balance_delta and new_index
+            ScaledTokenBurnResult with balance_delta and new_index
         """
 
 
@@ -256,7 +256,7 @@ class DebtTokenProcessor(TokenProcessor, Protocol):
         previous_balance: int,
         previous_index: int,
         scaled_delta: int | None = None,
-    ) -> MintResult:
+    ) -> ScaledTokenMintResult:
         """
         Process a debt mint event.
 
@@ -267,7 +267,7 @@ class DebtTokenProcessor(TokenProcessor, Protocol):
             scaled_delta: Pre-calculated scaled amount from Pool contract for V4+
 
         Returns:
-            MintResult with balance_delta, new_index, and is_repay flag
+            ScaledTokenMintResult with balance_delta, new_index, and is_repay flag
         """
 
     def process_burn_event(
@@ -276,7 +276,7 @@ class DebtTokenProcessor(TokenProcessor, Protocol):
         previous_balance: int,
         previous_index: int,
         scaled_delta: int | None = None,
-    ) -> BurnResult:
+    ) -> ScaledTokenBurnResult:
         """
         Process a debt burn event.
 
@@ -287,7 +287,7 @@ class DebtTokenProcessor(TokenProcessor, Protocol):
             scaled_delta: Pre-calculated scaled amount for V4+ revisions
 
         Returns:
-            BurnResult with balance_delta and new_index
+            ScaledTokenBurnResult with balance_delta and new_index
         """
 
 
@@ -313,7 +313,7 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
         previous_balance: int,
         previous_index: int,
         previous_discount: int,
-    ) -> GhoMintResult:
+    ) -> GhoScaledTokenMintResult:
         """
         Process a GHO debt mint event.
 
@@ -324,7 +324,7 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
             previous_discount: The discount percent before this transaction
 
         Returns:
-            GhoMintResult with balance_delta, new_index, is_repay,
+            GhoScaledTokenMintResult with balance_delta, new_index, is_repay,
             discount_scaled, and should_refresh_discount flag
         """
 
@@ -334,7 +334,7 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
         previous_balance: int,
         previous_index: int,
         previous_discount: int,
-    ) -> GhoBurnResult:
+    ) -> GhoScaledTokenBurnResult:
         """
         Process a GHO debt burn event.
 
@@ -345,7 +345,7 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
             previous_discount: The discount percent before this transaction
 
         Returns:
-            GhoBurnResult with balance_delta, new_index, discount_scaled,
+            GhoScaledTokenBurnResult with balance_delta, new_index, discount_scaled,
             and should_refresh_discount flag
         """
 
@@ -395,21 +395,21 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
 
 
 __all__ = [
-    "BurnResult",
     "CollateralBurnEvent",
     "CollateralMintEvent",
     "CollateralTokenProcessor",
     "DebtBurnEvent",
     "DebtMintEvent",
     "DebtTokenProcessor",
-    "GhoBurnResult",
     "GhoDebtTokenProcessor",
-    "GhoMintResult",
+    "GhoScaledTokenBurnResult",
+    "GhoScaledTokenMintResult",
     "GhoUserOperation",
     "MathLibraries",
-    "MintResult",
     "PercentageMathLibrary",
     "ProcessingResult",
+    "ScaledTokenBurnResult",
+    "ScaledTokenMintResult",
     "TokenProcessor",
     "WadRayMathLibrary",
 ]
