@@ -3688,7 +3688,6 @@ def _process_discount_percent_updated_event(
         f"(user.id={user.id})"
     )
     user.gho_discount = new_discount_percent
-    # tx_context.session.flush()  # Ensure the discount update is visible to subsequent queries
 
 
 def _event_sort_key(event: LogReceipt) -> tuple[int, int]:
