@@ -11,7 +11,12 @@ from eth_abi.abi import decode
 from web3.types import LogReceipt
 
 from degenbot.aave.events import AaveV3PoolEvent
-from degenbot.cli.aave_transaction_operations import Operation, OperationType, ScaledTokenEventType
+from degenbot.cli.aave_transaction_operations import (
+    Operation,
+    OperationType,
+    ScaledTokenEvent,
+    ScaledTokenEventType,
+)
 
 
 class TransactionContext(Protocol):
@@ -82,7 +87,7 @@ class OperationAwareEventMatcher:
         """
         self.operation = operation
 
-    def find_match(self) -> EventMatchResult | None:
+    def find_match(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
         Find pool event match within operation context.
 
@@ -115,9 +120,9 @@ class OperationAwareEventMatcher:
             # Default matching for unknown operation types
             self._default_match,
         )
-        return matcher()
+        return matcher(scaled_event=scaled_event)
 
-    def _match_supply(self) -> EventMatchResult:
+    def _match_supply(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
         Match supply operation.
         """
@@ -128,7 +133,7 @@ class OperationAwareEventMatcher:
             extraction_data=self._extract_supply_data(),
         )
 
-    def _match_withdraw(self) -> EventMatchResult:
+    def _match_withdraw(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
         Match withdraw operation.
         """
@@ -139,7 +144,7 @@ class OperationAwareEventMatcher:
             extraction_data=self._extract_withdraw_data(),
         )
 
-    def _match_borrow(self) -> EventMatchResult:
+    def _match_borrow(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
         Match borrow operation.
         """
@@ -150,7 +155,7 @@ class OperationAwareEventMatcher:
             extraction_data=self._extract_borrow_data(),
         )
 
-    def _match_gho_borrow(self) -> EventMatchResult:
+    def _match_gho_borrow(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
         Match GHO borrow operation.
         """
@@ -161,7 +166,7 @@ class OperationAwareEventMatcher:
             extraction_data=self._extract_borrow_data(),
         )
 
-    def _match_repay(self) -> EventMatchResult:
+    def _match_repay(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
         Match repay operation.
         """
@@ -179,7 +184,7 @@ class OperationAwareEventMatcher:
             extraction_data=extraction_data,
         )
 
-    def _match_repay_with_atokens(self) -> EventMatchResult:
+    def _match_repay_with_atokens(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
         Match repay with aTokens operation.
 
@@ -198,7 +203,7 @@ class OperationAwareEventMatcher:
             extraction_data=extraction_data,
         )
 
-    def _match_gho_repay(self) -> EventMatchResult:
+    def _match_gho_repay(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
         Match GHO repay operation.
         """
@@ -209,7 +214,7 @@ class OperationAwareEventMatcher:
             extraction_data=self._extract_repay_data(),
         )
 
-    def _match_liquidation(self) -> EventMatchResult:
+    def _match_liquidation(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
         Match liquidation operation.
 
@@ -226,7 +231,7 @@ class OperationAwareEventMatcher:
             extraction_data=self._extract_liquidation_data(),
         )
 
-    def _match_gho_liquidation(self) -> EventMatchResult:
+    def _match_gho_liquidation(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
         Match GHO liquidation operation.
 
@@ -239,7 +244,7 @@ class OperationAwareEventMatcher:
             extraction_data=self._extract_liquidation_data(),
         )
 
-    def _match_flash_loan(self) -> EventMatchResult:
+    def _match_flash_loan(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
         Match flash loan (DEFICIT_CREATED) operation.
         """
@@ -250,21 +255,35 @@ class OperationAwareEventMatcher:
             extraction_data=self._extract_deficit_data(),
         )
 
-    def _match_interest_accrual(self) -> EventMatchResult:
+    def _match_interest_accrual(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
         Match interest accrual operation.
 
         Interest accrual operations have no pool event. The scaled token event
         represents pure interest accrual where amount == balance_increase.
+        For debt burns during interest accrual, provide raw_amount to enable
+        correct scaled amount calculation using TokenMath.
         """
+
+        extraction_data: dict[str, int] = {}
+
+        # Only provide raw_amount for debt burns (not collateral mints)
+        # For debt burns, raw_amount = value + balance_increase represents the total
+        # payback amount, enabling correct TokenMath calculation using rayDivFloor.
+        # For collateral mints, the event amount is already the correct scaled amount.
+        if scaled_event.is_debt:
+            if scaled_event.balance_increase is not None:
+                extraction_data["raw_amount"] = scaled_event.amount + scaled_event.balance_increase
+            else:
+                extraction_data["raw_amount"] = scaled_event.amount
 
         return EventMatchResult(
             pool_event=self.operation.pool_event,
             should_consume=False,
-            extraction_data={},
+            extraction_data=extraction_data,
         )
 
-    def _match_balance_transfer(self) -> EventMatchResult:
+    def _match_balance_transfer(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
         Match balance transfer operation.
 
@@ -278,7 +297,7 @@ class OperationAwareEventMatcher:
             extraction_data={},
         )
 
-    def _default_match(self) -> EventMatchResult | None:
+    def _default_match(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
         Default matching for unknown operation types.
         """

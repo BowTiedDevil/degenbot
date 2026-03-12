@@ -62,6 +62,18 @@ class TransactionContext:
         tuple[ChecksumAddress, int], AaveV3CollateralPosition | AaveV3DebtPosition
     ] = field(default_factory=dict)
 
+    # Store the most recent REPAY paybackAmount for accurate interest accrual calculations.
+    # When a debt burn occurs as part of interest accrual during a repay, we need the
+    # original paybackAmount (not the reverse-calculated value from the Burn event) to
+    # avoid 1 wei rounding errors from rayDivFloor/rayMulCeil asymmetry.
+    last_repay_amount: int = 0
+
+    # Store the most recent WITHDRAW amount for accurate interest accrual calculations.
+    # When a collateral burn occurs as part of interest accrual during a withdraw, we need the
+    # original withdrawAmount (not the reverse-calculated value from the Burn event) to
+    # avoid 1 wei rounding errors from rayDivCeil/rayMulFloor asymmetry.
+    last_withdraw_amount: int = 0
+
     def get_effective_discount_at_log_index(
         self,
         user_address: ChecksumAddress,

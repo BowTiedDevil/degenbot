@@ -43,6 +43,7 @@ from degenbot.cli.aave_transaction_operations import (
     Operation,
     OperationType,
     ScaledTokenEvent,
+    ScaledTokenEventType,
     TransactionOperationsParser,
     TransactionValidationError,
 )
@@ -232,28 +233,21 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
 
             # Create GHO token entry if it doesn't exist. GHO tokens are chain-unique, so we create
             # a single entry that all markets on this chain will share.
-            if (
-                gho_token := session.scalar(
-                    select(Erc20TokenTable).where(
-                        Erc20TokenTable.address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS,
-                        Erc20TokenTable.chain == chain_id,
-                    )
-                )
-            ) is None:
-                gho_token = Erc20TokenTable(
-                    chain=chain_id,
-                    address=GHO_VARIABLE_DEBT_TOKEN_ADDRESS,
-                )
-                session.add(gho_token)
-                session.flush()
+            gho_token = _get_or_create_erc20_token(
+                session=session,
+                chain_id=market.chain_id,
+                token_address=GHO_VARIABLE_DEBT_TOKEN_ADDRESS,
+            )
 
             if (
-                gho_entry := session.scalar(
-                    select(AaveGhoToken).where(AaveGhoToken.token_id == gho_token.id)
+                session.scalar(
+                    select(AaveGhoToken).where(
+                        AaveGhoToken.token_id == gho_token.id,
+                    )
                 )
-            ) is None:
-                gho_entry = AaveGhoToken(token_id=gho_token.id)
-                session.add(gho_entry)
+                is None
+            ):
+                session.add(AaveGhoToken(token_id=gho_token.id))
 
         session.commit()
 
@@ -1102,7 +1096,6 @@ def _process_scaled_token_upgrade_event(
                 f"GHO discount mechanism deprecated at revision {vtoken_revision}. "
                 "Set GHO discounts to 0"
             )
-            tx_context.session.flush()
 
     else:
         token_address = get_checksum_address(event["address"])
@@ -1216,7 +1209,6 @@ def _get_or_create_user(
             e_mode=0,
             gho_discount=gho_discount,
         )
-        tx_context.market.users.append(user)
         tx_context.session.add(user)
         tx_context.session.flush()
 
@@ -1252,18 +1244,10 @@ def _get_or_create_position[T: AaveV3CollateralPosition | AaveV3DebtPosition](
     user: AaveV3User,
     asset_id: int,
     position_table: type[T],
-    tx_context: TransactionContext | None = None,
 ) -> T:
     """
     Get existing position or create new one with zero balance.
     """
-
-    # Check if we have a tracked position for this user/asset in this transaction
-    if tx_context is not None:
-        user_address = get_checksum_address(user.address)
-        cache_key = (user_address, asset_id)
-        if cache_key in tx_context.modified_positions:
-            return cast("T", tx_context.modified_positions[cache_key])
 
     # Query the database directly for the position
     existing_position = session.scalar(
@@ -1272,23 +1256,13 @@ def _get_or_create_position[T: AaveV3CollateralPosition | AaveV3DebtPosition](
             position_table.asset_id == asset_id,
         )
     )
-
     if existing_position is not None:
-        # Track this position for the rest of the transaction
-        if tx_context is not None:
-            user_address = get_checksum_address(user.address)
-            tx_context.modified_positions[user_address, asset_id] = existing_position
         return existing_position
 
-    # Create new position if none exists
+    # Create new position
     new_position = cast("T", position_table(user_id=user.id, asset_id=asset_id, balance=0))
     session.add(new_position)
     session.flush()
-
-    # Track the new position
-    if tx_context is not None:
-        user_address = get_checksum_address(user.address)
-        tx_context.modified_positions[user_address, asset_id] = new_position
     return new_position
 
 
@@ -1296,7 +1270,6 @@ def _get_or_create_collateral_position(
     session: Session,
     user: AaveV3User,
     asset_id: int,
-    tx_context: TransactionContext | None = None,
 ) -> AaveV3CollateralPosition:
     """
     Get existing collateral position or create new one with zero balance.
@@ -1307,7 +1280,6 @@ def _get_or_create_collateral_position(
         user=user,
         asset_id=asset_id,
         position_table=AaveV3CollateralPosition,
-        tx_context=tx_context,
     )
 
 
@@ -1315,7 +1287,6 @@ def _get_or_create_debt_position(
     session: Session,
     user: AaveV3User,
     asset_id: int,
-    tx_context: TransactionContext | None = None,
 ) -> AaveV3DebtPosition:
     """
     Get existing debt position or create new one with zero balance.
@@ -1326,7 +1297,6 @@ def _get_or_create_debt_position(
         user=user,
         asset_id=asset_id,
         position_table=AaveV3DebtPosition,
-        tx_context=tx_context,
     )
 
 
@@ -1672,7 +1642,7 @@ def _verify_all_positions(
 
     logger.info(f"Performing full verification of all positions at block {block_number:,}")
 
-    session.flush()
+    # session.flush()
 
     # Verify all collateral positions
     _verify_scaled_token_positions(
@@ -2184,6 +2154,27 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                     tx_context=tx_context,
                 )
 
+    # Pre-process REPAY operations to extract paybackAmounts before processing scaled events.
+    # This ensures INTEREST_ACCRUAL debt burns can use the original paybackAmount to avoid
+    # 1 wei rounding errors from reverse-calculating from Burn event values.
+    for operation in sorted_operations:
+        if (
+            operation.operation_type
+            in {
+                OperationType.REPAY,
+                OperationType.REPAY_WITH_ATOKENS,
+                OperationType.GHO_REPAY,
+            }
+            and operation.pool_event is not None
+            and operation.pool_event.get("data")
+        ):
+            decoded = eth_abi.abi.decode(["uint256", "bool"], operation.pool_event["data"])
+            tx_context.last_repay_amount = decoded[0]
+            logger.debug(
+                f"Pre-processed REPAY paybackAmount: {tx_context.last_repay_amount} "
+                f"for operation {operation.operation_id}"
+            )
+
     # Process each operation
     for operation in sorted_operations:
         logger.debug(
@@ -2323,6 +2314,26 @@ def _process_operation(
                 tx_hash=tx_context.tx_hash,
             )
 
+    # For REPAY operations, store the paybackAmount for accurate interest accrual calculations.
+    # When a subsequent INTEREST_ACCRUAL debt burn occurs, we need the original paybackAmount
+    # to avoid 1 wei rounding errors from reverse-calculating from Burn event values.
+    if operation.operation_type in {
+        OperationType.REPAY,
+        OperationType.REPAY_WITH_ATOKENS,
+        OperationType.GHO_REPAY,
+    }:
+        if operation.pool_event is not None:
+            # Decode Repay event: Repay(address indexed reserve, address indexed user,
+            # address indexed repayer, uint256 amount, bool useATokens)
+            data = operation.pool_event.get("data", "")
+            if data:
+                decoded = eth_abi.abi.decode(["uint256", "bool"], data)
+                tx_context.last_repay_amount = decoded[0]
+                logger.debug(
+                    f"Stored REPAY paybackAmount: {tx_context.last_repay_amount} "
+                    f"for operation {operation.operation_id}"
+                )
+
     # Process each scaled token event in the operation
     # Sort by log index to ensure events are processed in chronological order
     sorted_scaled_events = sorted(
@@ -2333,55 +2344,10 @@ def _process_operation(
         event = scaled_event.event
 
         # Find match within operation context
-        match_result = matcher.find_match()
-
-        # Handle MINT_TO_TREASURY operations specially - they don't have pool events
-        # so we process them directly without matching
-        if match_result is None and operation.operation_type == OperationType.MINT_TO_TREASURY:
-            if scaled_event.event_type == "collateral_mint":
-                _process_collateral_mint_with_match(
-                    event=event,
-                    tx_context=tx_context,
-                    operation=operation,
-                    scaled_event=scaled_event,
-                    match_result={
-                        "pool_event": None,
-                        "extraction_data": {},
-                        "should_consume": False,
-                    },
-                )
-            continue
-
-        # Handle IMPLICIT_BORROW operations - DEBT_MINT without BORROW event
-        # These occur in flash loans and other internal Pool operations
-        if match_result is None and operation.operation_type == OperationType.IMPLICIT_BORROW:
-            if scaled_event.event_type in {"debt_mint", "gho_debt_mint"}:
-                _process_debt_mint_with_match(
-                    event=event,
-                    tx_context=tx_context,
-                    operation=operation,
-                    scaled_event=scaled_event,
-                    match_result={
-                        "pool_event": None,
-                        "extraction_data": {},
-                        "should_consume": False,
-                    },
-                )
-            continue
-
-        # Handle STKAAVE_TRANSFER operations - these are standalone ERC20 transfers
-        # that don't require matching with pool events
-        if match_result is None and operation.operation_type == OperationType.STKAAVE_TRANSFER:
-            # stkAAVE transfers are processed separately to update user balances
-            # They don't affect Aave market positions directly
-            continue
-
-        if match_result is None:
-            msg = f"No match for {scaled_event.event_type} in operation {operation.operation_id}"
-            raise ValueError(msg)
+        match_result = matcher.find_match(scaled_event)
 
         # Route to appropriate handler based on event type
-        if scaled_event.event_type == "collateral_mint":
+        if scaled_event.event_type == ScaledTokenEventType.COLLATERAL_MINT.value:
             _process_collateral_mint_with_match(
                 event=event,
                 tx_context=tx_context,
@@ -2389,7 +2355,7 @@ def _process_operation(
                 scaled_event=scaled_event,
                 match_result=match_result,
             )
-        elif scaled_event.event_type == "collateral_burn":
+        elif scaled_event.event_type == ScaledTokenEventType.COLLATERAL_BURN.value:
             _process_collateral_burn_with_match(
                 event=event,
                 tx_context=tx_context,
@@ -2397,7 +2363,10 @@ def _process_operation(
                 scaled_event=scaled_event,
                 match_result=match_result,
             )
-        elif scaled_event.event_type in {"debt_mint", "gho_debt_mint"}:
+        elif scaled_event.event_type in {
+            ScaledTokenEventType.DEBT_MINT.value,
+            ScaledTokenEventType.GHO_DEBT_MINT.value,
+        }:
             _process_debt_mint_with_match(
                 event=event,
                 tx_context=tx_context,
@@ -2405,7 +2374,10 @@ def _process_operation(
                 scaled_event=scaled_event,
                 match_result=match_result,
             )
-        elif scaled_event.event_type in {"debt_burn", "gho_debt_burn"}:
+        elif scaled_event.event_type in {
+            ScaledTokenEventType.DEBT_BURN.value,
+            ScaledTokenEventType.GHO_DEBT_BURN.value,
+        }:
             _process_debt_burn_with_match(
                 event=event,
                 tx_context=tx_context,
@@ -2413,21 +2385,24 @@ def _process_operation(
                 scaled_event=scaled_event,
                 match_result=match_result,
             )
-        elif scaled_event.event_type == "collateral_transfer":
+        elif scaled_event.event_type == ScaledTokenEventType.COLLATERAL_TRANSFER.value:
             _process_collateral_transfer(
                 event=event,
                 tx_context=tx_context,
                 operation=operation,
                 scaled_event=scaled_event,
             )
-        elif scaled_event.event_type in {"debt_transfer", "gho_debt_transfer"}:
+        elif scaled_event.event_type in {
+            ScaledTokenEventType.DEBT_TRANSFER.value,
+            ScaledTokenEventType.GHO_DEBT_TRANSFER.value,
+        }:
             _process_debt_transfer(
                 event=event,
                 tx_context=tx_context,
                 operation=operation,
                 scaled_event=scaled_event,
             )
-        elif scaled_event.event_type == "discount_transfer":
+        elif scaled_event.event_type == ScaledTokenEventType.DISCOUNT_TRANSFER.value:
             # stkAAVE transfers are processed separately to update user balances
             # before GHO debt operations calculate discount rates. They don't
             # affect Aave market positions directly.
@@ -2466,7 +2441,9 @@ def _process_collateral_mint_with_match(
 
     # Get or create collateral position
     collateral_position = _get_or_create_collateral_position(
-        session=tx_context.session, user=user, asset_id=collateral_asset.id, tx_context=tx_context
+        session=tx_context.session,
+        user=user,
+        asset_id=collateral_asset.id,
     )
 
     # Calculate scaled amount using PoolProcessor for revision 4+
@@ -2558,7 +2535,9 @@ def _process_collateral_burn_with_match(
 
     # Get collateral position
     collateral_position = _get_or_create_collateral_position(
-        session=tx_context.session, user=user, asset_id=collateral_asset.id, tx_context=tx_context
+        session=tx_context.session,
+        user=user,
+        asset_id=collateral_asset.id,
     )
 
     # Calculate scaled amount using PoolProcessor for revision 4+
@@ -2945,12 +2924,18 @@ def _process_debt_burn_with_match(
     if raw_amount is None and not is_liquidation:
         raw_amount = extraction_data.get("debt_to_cover")
 
-    logger.debug(f"_process_debt_burn_with_match: vToken revision = {debt_asset.v_token_revision}")
-    logger.debug(f"_process_debt_burn_with_match: raw_amount = {raw_amount}")
+    # For INTEREST_ACCRUAL debt burns following a REPAY, use the stored paybackAmount
+    # to avoid 1 wei rounding errors from reverse-calculating amount + balance_increase.
+    # This overrides the reverse-calculated raw_amount from extraction_data.
+    if operation is not None and operation.operation_type == OperationType.INTEREST_ACCRUAL:
+        if tx_context.last_repay_amount > 0:
+            raw_amount = tx_context.last_repay_amount
+            logger.debug(f"Using stored REPAY paybackAmount for INTEREST_ACCRUAL: {raw_amount}")
 
-    if raw_amount is not None and debt_asset.v_token_revision >= 4:  # noqa:PLR2004
+    # For V4+ debt burns with raw_amount, calculate the scaled amount using TokenMath
+    # to match the contract's rayDivFloor calculation
+    if raw_amount is not None and debt_asset.v_token_revision >= 4:
         assert scaled_event.index is not None
-        # Use token revision for math calculations to match contract behavior
         token_math = TokenMathFactory.get_token_math_for_token_revision(debt_asset.v_token_revision)
         scaled_amount = token_math.get_debt_burn_scaled_amount(
             amount=raw_amount,
@@ -3197,7 +3182,6 @@ def _process_collateral_transfer(
         session=tx_context.session,
         user=sender,
         asset_id=collateral_asset.id,
-        tx_context=tx_context,
     )
 
     # Determine transfer amount
@@ -3225,7 +3209,7 @@ def _process_collateral_transfer(
                 and bt_to == scaled_event.target_address
                 and abs(bt_log_index - transfer_log_index) <= 3  # noqa:PLR2004
             ):
-                # Found matching BalanceTransfer - use its amount (scaled balance without interest)
+                # Found matching BalanceTransfer - use its amount (scaled balance)
                 bt_amount, bt_index = eth_abi.abi.decode(
                     types=["uint256", "uint256"],
                     data=bt_event["data"],
@@ -3328,7 +3312,6 @@ def _process_collateral_transfer(
                 session=tx_context.session,
                 user=recipient,
                 asset_id=collateral_asset.id,
-                tx_context=tx_context,
             )
             recipient_position.balance += transfer_amount
 
@@ -3735,7 +3718,7 @@ def _process_discount_percent_updated_event(
         f"(user.id={user.id})"
     )
     user.gho_discount = new_discount_percent
-    tx_context.session.flush()  # Ensure the discount update is visible to subsequent queries
+    # tx_context.session.flush()  # Ensure the discount update is visible to subsequent queries
 
 
 def _event_sort_key(event: LogReceipt) -> tuple[int, int]:
@@ -4322,7 +4305,6 @@ def update_aave_market(
         if verify and last_verified_block is not None and current_block != last_verified_block:
             users_to_verify = users_by_block.get(last_verified_block, set())
             if users_to_verify:
-                session.flush()
                 _verify_scaled_token_positions(
                     w3=w3,
                     market=market,
@@ -4374,7 +4356,6 @@ def update_aave_market(
     if verify and last_verified_block is not None:
         users_to_verify = users_by_block.get(last_verified_block, set())
         if users_to_verify:
-            session.flush()
             _verify_scaled_token_positions(
                 w3=w3,
                 market=market,

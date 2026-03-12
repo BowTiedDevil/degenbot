@@ -958,6 +958,7 @@ class TransactionOperationsParser:
         # For SUPPLY: look for mints where value > balance_increase (standard deposit)
         # Match on onBehalfOf (beneficiary) from the SUPPLY event, which corresponds
         # to the user_address in the collateral mint event
+        collateral_mint: ScaledTokenEvent | None = None
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
                 continue
@@ -973,9 +974,13 @@ class TransactionOperationsParser:
             # Calculate expected mint principal
             expected_principal = (
                 # Pool revision 9 began pre-scaling the amount with flooring ray division.
-                # Calculating it exactly requires knowledge of the position, so this workaround
-                # considers a 1 wei difference acceptable
-                {supply_amount - 1, supply_amount}
+                # Calculating it exactly requires injecting extra details about the position,
+                # so this check will allow up to a -2 deviation ono pool revisions 9+
+                #
+                # see TX: 0x46dfb37518cad8e8749d858c7f166385e74aaeaa1775d4ab99804761b709d63a
+                # for an example of a supply event amount=285000000000000000, but the associated
+                # Mint has a principal amount=284999999999999998
+                (supply_amount - 2, supply_amount - 1, supply_amount)
                 if pool_revision >= 9  # noqa:PLR2004
                 else {supply_amount}
             )
@@ -1101,23 +1106,26 @@ class TransactionOperationsParser:
                 )
                 continue
 
-            expected_amount = (
-                # ev.amount + ev.balance_increase - 1
-                # if pool_revision >= 9
-                # else
-                ev.amount + ev.balance_increase
+            # Calculate expected burn amount(s)
+            expected_burn_amounts = (
+                # Pool revision 9 began pre-scaling the amount with flooring ray division.
+                # Calculating it exactly requires injecting extra details about the position,
+                # so this check will allow up to a -2 deviation ono pool revisions 9+
+                #
+                # see TX: 0x8a4bc3d8f386c0d754d98766caf9033202a65a932f0f3ede035d95f039a56abe
+                # for an example of a withdraw event amount=500000000000000000000000, but the
+                # associated Burn has a principal amount=500000000000000000000001
+                (withdraw_amount, withdraw_amount + 1)
+                if pool_revision >= 9  # noqa:PLR2004
+                else {withdraw_amount}
             )
 
-            logger.debug(
-                f"WITHDRAW: Checking logIndex={ev.event['logIndex']}: amount={ev.amount}, "
-                f"balance_inc={ev.balance_increase}, expected_total={expected_amount}, "
-                f"withdraw={withdraw_amount}"
-            )
-            if withdraw_amount != expected_amount:
+            if ev.amount - ev.balance_increase not in expected_burn_amounts:
                 logger.debug(
                     f"WITHDRAW: Skipping logIndex={ev.event['logIndex']} - amount mismatch"
                 )
                 continue
+
             logger.debug(f"WITHDRAW: Found matching burn at logIndex={ev.event['logIndex']}")
             collateral_burns.append(ev)
             break
@@ -1239,6 +1247,7 @@ class TransactionOperationsParser:
             if reserve_asset is None or reserve_asset != reserve:
                 continue
             if borrow_amount not in {
+                ev.amount - ev.balance_increase - 2,
                 ev.amount - ev.balance_increase - 1,
                 ev.amount - ev.balance_increase,
             }:
@@ -1248,7 +1257,7 @@ class TransactionOperationsParser:
             break
 
         if debt_mint is None:
-            msg = f"Could not create BORROW operation for event {borrow_event}"
+            msg = f"Could not create BORROW operation for event {borrow_event}, looked for match of value {borrow_amount}"
             raise ValueError(msg)
 
         op_type = OperationType.GHO_BORROW if is_gho else OperationType.BORROW
