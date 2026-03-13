@@ -106,9 +106,7 @@ class UserOperation(Enum):
     STKAAVE_TRANSFER = "stkAAVE TRANSFER"
 
 
-GHO_TOKEN_ADDRESS = get_checksum_address("0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f")
-GHO_VARIABLE_DEBT_TOKEN_ADDRESS = get_checksum_address("0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B")
-
+FULL_VERIFICATION_INTERVAL = 250_000
 
 event_in_process: LogReceipt
 
@@ -116,6 +114,19 @@ event_in_process: LogReceipt
 class WadRayMathLibrary(Protocol):
     def ray_div(self, a: int, b: int) -> int: ...
     def ray_mul(self, a: int, b: int) -> int: ...
+
+
+def _extract_user_addresses_from_transaction(events: list[LogReceipt]) -> set[ChecksumAddress]:
+    """
+    Extract all unique user addresses from a list of transaction events.
+
+    This is used for batch prefetching users to avoid N+1 queries during
+    transaction processing.
+    """
+    user_addresses: set[ChecksumAddress] = set()
+    for event in events:
+        user_addresses.update(_extract_user_addresses_from_event(event))
+    return user_addresses
 
 
 def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress]:
@@ -194,6 +205,9 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
     Activate Aave V3 on Ethereum mainnet.
     """
 
+    # GHO Token Address (Ethereum Mainnet) - only needed for market activation
+    gho_token_address = get_checksum_address("0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f")
+
     pool_address_provider = EthereumMainnetAaveV3.pool_address_provider
 
     w3 = get_web3_from_config(chain_id=chain_id)
@@ -242,7 +256,7 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
             gho_asset_token = _get_or_create_erc20_token(
                 session=session,
                 chain_id=market.chain_id,
-                token_address=GHO_TOKEN_ADDRESS,
+                token_address=gho_token_address,
             )
 
             if (
@@ -469,8 +483,6 @@ def aave_update(
 
             block_pbar.n = working_start_block - initial_start_block
 
-            markets_to_update: set[AaveV3Market] = set()
-
             while True:
                 # Cap the working end block at the lowest of:
                 # - the safe block for the chain
@@ -539,41 +551,37 @@ def aave_update(
                             aave_debug_logger.close()
 
                         sys.exit(1)
+                    else:
+                        market.last_update_block = working_end_block
 
-                # At this point, all markets have been updated and the invariant checks have
-                # passed, so stamp the update block and commit to the DB
-                for market in markets_to_update:
-                    market.last_update_block = working_end_block
+                        # Perform full verification when the chunk spans a verification interval
+                        if (
+                            verify
+                            and working_end_block // FULL_VERIFICATION_INTERVAL
+                            != working_start_block // FULL_VERIFICATION_INTERVAL
+                        ):
+                            _verify_all_positions(
+                                w3=w3,
+                                market=market,
+                                session=session,
+                                block_number=working_end_block,
+                                show_progress=show_progress,
+                            )
+                            _cleanup_zero_balance_positions(
+                                session=session,
+                                market=market,
+                            )
 
-                # Perform full verification when the chunk spans a verification interval
-                full_verification_interval = 250_000
-                if (
-                    verify
-                    and working_end_block // full_verification_interval
-                    != working_start_block // full_verification_interval
-                ):
-                    for market in markets_to_update:
-                        _verify_all_positions(
-                            w3=w3,
-                            market=market,
-                            session=session,
-                            block_number=working_end_block,
-                            show_progress=show_progress,
-                        )
-
-                    session.commit()
-                    backup_sqlite_database(
-                        settings.database.path,
-                        suffix=f"{working_end_block}",
-                        skip_confirmation=True,
-                    )
-                    logger.info(f"Created database backup at block {working_end_block:,}")
-
-                for market in markets_to_update:
-                    _cleanup_zero_balance_positions(session=session, market=market)
-
-                markets_to_update.clear()
-                session.commit()
+                            session.commit()
+                            backup_sqlite_database(
+                                settings.database.path,
+                                suffix=f"{working_end_block}",
+                                skip_confirmation=True,
+                                engine=session.bind,
+                            )
+                            logger.info(f"Created database backup at block {working_end_block:,}")
+                        else:
+                            session.commit()
 
                 if working_end_block == last_block or stop_after_one_chunk:
                     break
@@ -689,7 +697,8 @@ def _process_asset_initialization_event(
     logger.info(f"Added new Aave V3 asset: {asset_address}")
 
     # If this is the GHO asset, update the GHO token entry with the vToken reference
-    if asset_address == GHO_TOKEN_ADDRESS:
+    gho_asset = _get_gho_asset(session, market)
+    if asset_address == gho_asset.token.address:
         gho_token_entry = session.scalar(
             select(AaveGhoToken).where(AaveGhoToken.token_id == erc20_token_in_db.id)
         )
@@ -1087,13 +1096,14 @@ def _process_scaled_token_upgrade_event(
         )
 
         # Handle GHO discount deprecation on upgrade to revision 4+
+        gho_asset = _get_gho_asset(tx_context.session, tx_context.market)
         if (
-            aave_debt_asset.v_token.address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS
+            gho_asset.v_token is not None
+            and aave_debt_asset.v_token.address == gho_asset.v_token.address
             and vtoken_revision >= 4  # noqa: PLR2004
         ):
-            gho_asset_db = _get_gho_asset(tx_context.session, tx_context.market)
-            gho_asset_db.v_gho_discount_token = None
-            gho_asset_db.v_gho_discount_rate_strategy = None
+            gho_asset.v_gho_discount_token = None
+            gho_asset.v_gho_discount_rate_strategy = None
 
             # Reset all users' GHO discount to 0 since discount mechanism is deprecated
             for user in (
@@ -1124,12 +1134,15 @@ def _get_gho_vtoken_revision(
     market: AaveV3Market,
 ) -> int | None:
     """Get the GHO vToken revision from market assets."""
+    gho_asset = _get_gho_asset(session, market)
+    if gho_asset.v_token is None:
+        return None
     return session.scalar(
         select(AaveV3Asset.v_token_revision)
         .join(Erc20TokenTable, AaveV3Asset.v_token_id == Erc20TokenTable.id)
         .where(
             AaveV3Asset.market_id == market.id,
-            Erc20TokenTable.address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS,
+            Erc20TokenTable.address == gho_asset.v_token.address,
         )
     )
 
@@ -1143,6 +1156,101 @@ def _is_discount_supported(
     return revision is not None and revision < 4  # noqa: PLR2004
 
 
+def _prefetch_users_for_transaction(
+    tx_context: TransactionContext,
+    user_addresses: set[ChecksumAddress],
+) -> dict[ChecksumAddress, AaveV3User]:
+    """
+    Batch prefetch all existing users for a transaction.
+
+    This reduces N+1 queries by loading all users in a single query upfront.
+    Returns a dictionary mapping user addresses to their AaveV3User objects.
+
+    Args:
+        tx_context: The transaction context containing session and market
+        user_addresses: Set of user addresses to prefetch
+
+    Returns:
+        Dictionary mapping address -> AaveV3User for existing users
+    """
+    if not user_addresses:
+        return {}
+
+    users = tx_context.session.scalars(
+        select(AaveV3User).where(
+            AaveV3User.address.in_(list(user_addresses)),
+            AaveV3User.market_id == tx_context.market.id,
+        )
+    ).all()
+
+    return {user.address: user for user in users}
+
+
+def _prefetch_positions_for_transaction(
+    tx_context: TransactionContext,
+    user_addresses: set[ChecksumAddress],
+) -> None:
+    """
+    Batch prefetch all positions for users in a transaction.
+
+    Uses existing user_cache to avoid N+1 queries. Positions are cached with
+    table class as discriminator to distinguish collateral vs debt positions
+    for the same user and asset.
+    """
+    # Build reverse lookup: user_id -> user_address
+    user_id_to_address = {user.id: addr for addr, user in tx_context.user_cache.items()}
+
+    if not user_id_to_address:
+        return
+
+    user_ids = list(user_id_to_address.keys())
+
+    # Query collateral positions (no JOIN needed - we have user data in cache)
+    collateral_positions = tx_context.session.scalars(
+        select(AaveV3CollateralPosition).where(AaveV3CollateralPosition.user_id.in_(user_ids))
+    ).all()
+
+    for collateral_pos in collateral_positions:
+        # INVARIANT: Every position must belong to a user in our cache
+        assert collateral_pos.user_id in user_id_to_address, (
+            f"Collateral position {collateral_pos.id} (user_id={collateral_pos.user_id}) "
+            f"found but user not in transaction user_cache. "
+            f"This indicates a logic error in user prefetching."
+        )
+
+        user_address = user_id_to_address[collateral_pos.user_id]
+        tx_context.modified_positions[
+            user_address,
+            collateral_pos.asset_id,
+            AaveV3CollateralPosition,
+        ] = collateral_pos
+
+    # Query debt positions
+    debt_positions = tx_context.session.scalars(
+        select(AaveV3DebtPosition).where(AaveV3DebtPosition.user_id.in_(user_ids))
+    ).all()
+
+    for debt_pos in debt_positions:
+        # INVARIANT: Every position must belong to a user in our cache
+        assert debt_pos.user_id in user_id_to_address, (
+            f"Debt position {debt_pos.id} (user_id={debt_pos.user_id}) "
+            f"found but user not in transaction user_cache. "
+            f"This indicates a logic error in user prefetching."
+        )
+
+        user_address = user_id_to_address[debt_pos.user_id]
+        tx_context.modified_positions[
+            user_address,
+            debt_pos.asset_id,
+            AaveV3DebtPosition,
+        ] = debt_pos
+
+    logger.debug(
+        f"Prefetched {len(collateral_positions)} collateral + {len(debt_positions)} "
+        f"debt positions for {len(user_addresses)} users"
+    )
+
+
 def _get_or_create_user(
     *,
     tx_context: TransactionContext,
@@ -1152,11 +1260,19 @@ def _get_or_create_user(
     """
     Get existing user or create new one with default e_mode.
 
+    Uses the transaction context's user_cache to avoid repeated database queries.
+    New users are created on-demand and added to the cache.
+
     When creating a new user, if w3 and block_number are provided and the user
     has an existing GHO debt position, their discount percent will be fetched
     from the contract to properly initialize their gho_discount value.
     """
+    # Check cache first to avoid database query
+    if user_address in tx_context.user_cache:
+        return tx_context.user_cache[user_address]
 
+    # User not in cache - query database (this handles the edge case where
+    # a user was added by a concurrent transaction or cache wasn't pre-filled)
     user = tx_context.session.scalar(
         select(AaveV3User).where(
             AaveV3User.address == user_address,
@@ -1164,69 +1280,82 @@ def _get_or_create_user(
         )
     )
 
-    if user is None:
-        # When creating a new user, check if they have a GHO discount on-chain
-        # to properly initialize their gho_discount value
-        gho_discount = 0
+    if user is not None:
+        # Add to cache for future lookups
+        tx_context.user_cache[user_address] = user
+        return user
 
-        # Only fetch discount if mechanism is supported (revision 2 or 3)
-        if tx_context.gho_asset.v_gho_discount_token is not None and _is_discount_supported(
+    # Create new user
+    # When creating a new user, check if they have a GHO discount on-chain
+    # to properly initialize their gho_discount value
+    gho_discount = 0
+
+    # Only fetch discount if mechanism is supported (revision 2 or 3)
+    gho_vtoken_address = (
+        tx_context.gho_asset.v_token.address if tx_context.gho_asset.v_token is not None else None
+    )
+
+    if (
+        gho_vtoken_address is not None
+        and tx_context.gho_asset.v_gho_discount_token is not None
+        and _is_discount_supported(
             session=tx_context.session,
             market=tx_context.market,
-        ):
-            try:
-                (discount_percent,) = raw_call(
-                    w3=tx_context.w3,
-                    address=GHO_VARIABLE_DEBT_TOKEN_ADDRESS,
-                    calldata=encode_function_calldata(
-                        function_prototype="getDiscountPercent(address)",
-                        function_arguments=[user_address],
-                    ),
-                    return_types=["uint256"],
-                    block_identifier=block_number,
-                )
-                gho_discount = discount_percent
-            except (
-                ValueError,
-                RuntimeError,
-                eth_abi.exceptions.DecodingError,
-                ContractLogicError,
-            ) as e:
-                # If the call fails (e.g., contract not deployed yet, node error,
-                # or function not found after upgrade to revision 4+), default to 0
-                logger.warning(
-                    f"Failed to fetch GHO discount for user {user_address} at block "
-                    f"{block_number}: {e}. Using default 0."
-                )
-
-        # Log all user creations for debugging
-        logger.debug(
-            f"CREATING USER: {user_address} gho_discount={gho_discount} block={block_number}"
         )
-
-        # Log user creation to structured debug logger
-        if aave_debug_logger.is_enabled():
-            tx_hash = (
-                event_in_process["transactionHash"]
-                if "event_in_process" in globals() and event_in_process is not None
-                else HexBytes("0x")
+    ):
+        try:
+            (discount_percent,) = raw_call(
+                w3=tx_context.w3,
+                address=gho_vtoken_address,
+                calldata=encode_function_calldata(
+                    function_prototype="getDiscountPercent(address)",
+                    function_arguments=[user_address],
+                ),
+                return_types=["uint256"],
+                block_identifier=block_number,
             )
-            aave_debug_logger.log_user_creation(
-                user_address=user_address,
-                block_number=block_number,
-                tx_hash=tx_hash,
-                gho_discount=gho_discount,
-                e_mode=0,
+            gho_discount = discount_percent
+        except (
+            RuntimeError,
+            eth_abi.exceptions.DecodingError,
+            ContractLogicError,
+        ) as e:
+            # If the call fails (e.g., contract not deployed yet, node error,
+            # or function not found after upgrade to revision 4+), default to 0
+            logger.warning(
+                f"Failed to fetch GHO discount for user {user_address} at block "
+                f"{block_number}: {e}. Using default 0."
             )
 
-        user = AaveV3User(
-            market_id=tx_context.market.id,
-            address=user_address,
-            e_mode=0,
+    # Log all user creations for debugging
+    logger.debug(f"CREATING USER: {user_address} gho_discount={gho_discount} block={block_number}")
+
+    # Log user creation to structured debug logger
+    if aave_debug_logger.is_enabled():
+        tx_hash = (
+            event_in_process["transactionHash"]
+            if "event_in_process" in globals() and event_in_process is not None
+            else HexBytes("0x")
+        )
+        aave_debug_logger.log_user_creation(
+            user_address=user_address,
+            block_number=block_number,
+            tx_hash=tx_hash,
             gho_discount=gho_discount,
+            e_mode=0,
         )
-        tx_context.session.add(user)
-        tx_context.session.flush()
+
+    user = AaveV3User(
+        market_id=tx_context.market.id,
+        address=user_address,
+        e_mode=0,
+        gho_discount=gho_discount,
+    )
+    tx_context.session.add(user)
+    tx_context.session.flush()
+
+    # Add new user to cache
+    tx_context.user_cache[user_address] = user
 
     return user
 
@@ -1257,44 +1386,83 @@ def _get_or_create_erc20_token(
 
 def _get_or_create_position[T: AaveV3CollateralPosition | AaveV3DebtPosition](
     *,
-    session: Session,
+    tx_context: TransactionContext,
     user: AaveV3User,
     asset_id: int,
     position_table: type[T],
 ) -> T:
     """
     Get existing position or create new one with zero balance.
+
+    Uses tx_context.modified_positions cache to avoid repeated database queries.
+    New positions are created on-demand and added to the cache.
     """
 
-    # Query the database directly for the position
-    existing_position = session.scalar(
+    # INVARIANT: User must be in the transaction's user cache
+    assert user.address in tx_context.user_cache, (
+        f"User {user.address} not found in transaction user_cache. "
+        f"All users should be prefetched before position access. "
+        f"This indicates _get_or_create_user was not used or user_cache is corrupted."
+    )
+
+    # Check cache using table class as discriminator
+    cache_key = (user.address, asset_id, position_table)
+    if cache_key in tx_context.modified_positions:
+        cached_position = tx_context.modified_positions[cache_key]
+
+        # INVARIANT: Cached position must be of expected type
+        assert isinstance(cached_position, position_table), (
+            f"Cache type mismatch: expected {position_table.__name__}, "
+            f"got {type(cached_position).__name__} for key {cache_key}. "
+            f"This indicates cache key collision or corruption."
+        )
+
+        return cached_position
+
+    # Cache miss - query database
+    existing_position = tx_context.session.scalar(
         select(position_table).where(
             position_table.user_id == user.id,
             position_table.asset_id == asset_id,
         )
     )
+
     if existing_position is not None:
+        # INVARIANT: Found position must match the user we queried for
+        assert existing_position.user_id == user.id, (
+            f"Database returned position with wrong user_id: "
+            f"expected {user.id}, got {existing_position.user_id}. "
+            f"This indicates a SQL error or database corruption."
+        )
+
+        tx_context.modified_positions[cache_key] = existing_position
         return existing_position
 
     # Create new position
-    new_position = cast("T", position_table(user_id=user.id, asset_id=asset_id, balance=0))
-    session.add(new_position)
-    session.flush()
+    new_position = position_table(user_id=user.id, asset_id=asset_id, balance=0)
+    tx_context.session.add(new_position)
+    tx_context.session.flush()
 
-    return new_position
+    # Add new position to cache
+    tx_context.modified_positions[cache_key] = new_position
+
+    return cast("T", new_position)
 
 
 def _get_or_create_collateral_position(
-    session: Session,
+    *,
+    tx_context: TransactionContext,
     user: AaveV3User,
     asset_id: int,
 ) -> AaveV3CollateralPosition:
     """
     Get existing collateral position or create new one with zero balance.
+
+    Uses tx_context.modified_positions cache to avoid repeated database queries.
     """
 
     return _get_or_create_position(
-        session=session,
+        tx_context=tx_context,
         user=user,
         asset_id=asset_id,
         position_table=AaveV3CollateralPosition,
@@ -1302,16 +1470,19 @@ def _get_or_create_collateral_position(
 
 
 def _get_or_create_debt_position(
-    session: Session,
+    *,
+    tx_context: TransactionContext,
     user: AaveV3User,
     asset_id: int,
 ) -> AaveV3DebtPosition:
     """
     Get existing debt position or create new one with zero balance.
+
+    Uses tx_context.modified_positions cache to avoid repeated database queries.
     """
 
     return _get_or_create_position(
-        session=session,
+        tx_context=tx_context,
         user=user,
         asset_id=asset_id,
         position_table=AaveV3DebtPosition,
@@ -1514,6 +1685,13 @@ def _verify_gho_discount_amounts(
 
     users_to_verify = session.scalars(stmt).all()
 
+    gho_asset = _get_gho_asset(session, market)
+    gho_vtoken_address = gho_asset.v_token.address if gho_asset.v_token is not None else None
+
+    # Skip verification if GHO vToken is not deployed
+    if gho_vtoken_address is None:
+        return
+
     for user in tqdm.tqdm(
         users_to_verify,
         desc="Verifying GHO discount amounts",
@@ -1523,7 +1701,7 @@ def _verify_gho_discount_amounts(
         try:
             (discount_percent,) = raw_call(
                 w3=w3,
-                address=GHO_VARIABLE_DEBT_TOKEN_ADDRESS,
+                address=gho_vtoken_address,
                 calldata=encode_function_calldata(
                     function_prototype="getDiscountPercent(address)",
                     function_arguments=[user.address],
@@ -1531,7 +1709,7 @@ def _verify_gho_discount_amounts(
                 return_types=["uint256"],
                 block_identifier=block_number,
             )
-        except (ValueError, RuntimeError, eth_abi.exceptions.DecodingError, ContractLogicError):
+        except (RuntimeError, eth_abi.exceptions.DecodingError, ContractLogicError):
             # Function may not exist (revision 4+ after upgrade in same block)
             # Verify that our tracked discount is 0 (the new default)
             discount_percent = 0
@@ -1539,7 +1717,7 @@ def _verify_gho_discount_amounts(
         assert user.gho_discount == discount_percent, (
             f"User {user.address}: GHO discount {user.gho_discount} "
             f"does not match GHO vDebtToken contract ({discount_percent}) "
-            f"@ {GHO_VARIABLE_DEBT_TOKEN_ADDRESS} at block {block_number}"
+            f"@ {gho_vtoken_address} at block {block_number}"
         )
 
 
@@ -1610,9 +1788,6 @@ def _cleanup_zero_balance_positions(
 ) -> None:
     """
     Delete all zero-balance debt and collateral positions for the market.
-
-    This cleanup runs after chunk verification to remove positions that no longer
-    hold any balance, keeping the database lean.
     """
 
     # Delete zero-balance collateral positions using bulk delete
@@ -1986,6 +2161,11 @@ def _process_transaction(tx_context: TransactionContext) -> None:
     # Capture user discount percents before processing events
     # This ensures calculations use the discount in effect at the start of the transaction
 
+    # Cache GHO vToken address for reuse
+    gho_vtoken_address = (
+        tx_context.gho_asset.v_token.address if tx_context.gho_asset.v_token is not None else None
+    )
+
     # First, build a map of discount updates in this transaction to get old values
     # Track all updates with their log indices to handle multiple updates per transaction
     for event in tx_context.events:
@@ -2016,7 +2196,8 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 AaveV3ScaledTokenEvent.MINT.value,
                 AaveV3ScaledTokenEvent.BURN.value,
             }
-            and event_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS
+            and gho_vtoken_address is not None
+            and event_address == gho_vtoken_address
         ):
             # Mint event: topics[1] = caller, topics[2] = onBehalfOf (user)
             # Burn event: topics[1] = from (user), topics[2] = target
@@ -2052,7 +2233,8 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 AaveV3ScaledTokenEvent.MINT.value,
                 AaveV3ScaledTokenEvent.BURN.value,
             }
-            and event_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS
+            and gho_vtoken_address is not None
+            and event_address == gho_vtoken_address
         ):
             # Mint event: topics[1] = caller, topics[2] = onBehalfOf (user)
             # Burn event: topics[1] = from (user), topics[2] = target
@@ -2079,18 +2261,18 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 # User doesn't exist in database yet - fetch discount from contract
                 # This happens when a user with an existing GHO debt position
                 # is first encountered during event processing
-                if not _is_discount_supported(
+                if gho_vtoken_address is None or not _is_discount_supported(
                     session=tx_context.session,
                     market=tx_context.market,
                 ):
-                    # Discount mechanism deprecated (revision 4+)
+                    # Discount mechanism not available (no vToken or revision 4+)
                     tx_context.user_discounts[user_address] = 0
                     continue
 
                 try:
                     (discount_percent,) = raw_call(
                         w3=tx_context.w3,
-                        address=GHO_VARIABLE_DEBT_TOKEN_ADDRESS,
+                        address=gho_vtoken_address,
                         calldata=encode_function_calldata(
                             function_prototype="getDiscountPercent(address)",
                             function_arguments=[user_address],
@@ -2100,7 +2282,6 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                     )
                     tx_context.user_discounts[user_address] = discount_percent
                 except (
-                    ValueError,
                     RuntimeError,
                     eth_abi.exceptions.DecodingError,
                     ContractLogicError,
@@ -2458,7 +2639,7 @@ def _process_collateral_mint_with_match(
 
     # Get or create collateral position
     collateral_position = _get_or_create_collateral_position(
-        session=tx_context.session,
+        tx_context=tx_context,
         user=user,
         asset_id=collateral_asset.id,
     )
@@ -2535,7 +2716,7 @@ def _process_collateral_burn_with_match(
 
     # Get collateral position
     collateral_position = _get_or_create_collateral_position(
-        session=tx_context.session,
+        tx_context=tx_context,
         user=user,
         asset_id=collateral_asset.id,
     )
@@ -2731,7 +2912,7 @@ def _process_debt_mint_with_match(
 
     # Get or create debt position
     debt_position = _get_or_create_debt_position(
-        session=tx_context.session,
+        tx_context=tx_context,
         user=user,
         asset_id=debt_asset.id,
     )
@@ -2740,7 +2921,10 @@ def _process_debt_mint_with_match(
     scaled_amount: int | None = enriched_event.scaled_amount
 
     # Check if this is a GHO token and use GHO-specific processing
-    if token_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
+    gho_vtoken_address = (
+        tx_context.gho_asset.v_token.address if tx_context.gho_asset.v_token is not None else None
+    )
+    if gho_vtoken_address is not None and token_address == gho_vtoken_address:
         # Use the effective discount from transaction context or user record
         effective_discount = (
             tx_context.user_discounts.get(user.address, user.gho_discount)
@@ -2874,7 +3058,7 @@ def _process_debt_burn_with_match(
 
     # Get debt position
     debt_position = _get_or_create_debt_position(
-        session=tx_context.session,
+        tx_context=tx_context,
         user=user,
         asset_id=debt_asset.id,
     )
@@ -2883,7 +3067,10 @@ def _process_debt_burn_with_match(
     scaled_amount: int | None = enriched_event.scaled_amount
 
     # Check if this is a GHO token and use GHO-specific processing
-    if token_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
+    gho_vtoken_address = (
+        tx_context.gho_asset.v_token.address if tx_context.gho_asset.v_token is not None else None
+    )
+    if gho_vtoken_address is not None and token_address == gho_vtoken_address:
         # Use the effective discount from transaction context or user record
         effective_discount = (
             tx_context.user_discounts.get(user.address, user.gho_discount)
@@ -3084,11 +3271,19 @@ def _process_collateral_transfer(
     # processed normally as they represent actual balance movements.
     if scaled_event.index is None and scaled_event.target_address == ZERO_ADDRESS and tx_context:
         # Check if there's a corresponding SCALED_TOKEN_BURN for this direct burn
+        gho_vtoken_address = (
+            tx_context.gho_asset.v_token.address
+            if tx_context.gho_asset.v_token is not None
+            else None
+        )
         for evt in tx_context.events:
             if evt["topics"][0] != AaveV3ScaledTokenEvent.BURN.value:
                 continue
             # Skip GHO debt burns (collateral burns are all other burns)
-            if get_checksum_address(evt["address"]) == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
+            if (
+                gho_vtoken_address is not None
+                and get_checksum_address(evt["address"]) == gho_vtoken_address
+            ):
                 continue
             if get_checksum_address(evt["address"]) == get_checksum_address(
                 scaled_event.event["address"]
@@ -3118,7 +3313,7 @@ def _process_collateral_transfer(
     assert collateral_asset is not None
 
     sender_position = _get_or_create_collateral_position(
-        session=tx_context.session,
+        tx_context=tx_context,
         user=sender,
         asset_id=collateral_asset.id,
     )
@@ -3248,7 +3443,7 @@ def _process_collateral_transfer(
             )
 
             recipient_position = _get_or_create_collateral_position(
-                session=tx_context.session,
+                tx_context=tx_context,
                 user=recipient,
                 asset_id=collateral_asset.id,
             )
@@ -3363,7 +3558,7 @@ def _process_debt_transfer(
 
     # Get sender's position
     sender_position = _get_or_create_debt_position(
-        session=tx_context.session,
+        tx_context=tx_context,
         user=sender,
         asset_id=debt_asset.id,
     )
@@ -3401,7 +3596,7 @@ def _process_debt_transfer(
         )
 
         recipient_position = _get_or_create_debt_position(
-            session=tx_context.session,
+            tx_context=tx_context,
             user=recipient,
             asset_id=debt_asset.id,
         )
@@ -3901,8 +4096,9 @@ def _build_transaction_contexts(
             gho_asset.v_gho_discount_token if gho_asset else None
         ):
             logger.debug("_build_transaction_contexts: categorized as stkAAVE TRANSFER event")
-        elif topic == AaveV3ScaledTokenEvent.MINT.value:
-            if event_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
+        gho_vtoken_address = gho_asset.v_token.address if gho_asset.v_token is not None else None
+        if topic == AaveV3ScaledTokenEvent.MINT.value:
+            if gho_vtoken_address is not None and event_address == gho_vtoken_address:
                 logger.debug("_build_transaction_contexts: categorized as GHO_MINT event")
             elif event_address in known_debt_token_addresses:
                 logger.debug(
@@ -3915,7 +4111,7 @@ def _build_transaction_contexts(
                     f"COLLATERAL_MINT event addr={event_address}"
                 )
         elif topic == AaveV3ScaledTokenEvent.BURN.value:
-            if event_address == GHO_VARIABLE_DEBT_TOKEN_ADDRESS:
+            if gho_vtoken_address is not None and event_address == gho_vtoken_address:
                 logger.debug("_build_transaction_contexts: categorized as GHO_BURN event")
             elif event_address in known_debt_token_addresses:
                 logger.debug(
@@ -3951,6 +4147,27 @@ def _build_transaction_contexts(
     logger.debug(
         f"_build_transaction_contexts: completed with {len(contexts)} transaction contexts"
     )
+
+    # Prefetch all users for each transaction to avoid N+1 queries
+    for tx_hash, ctx in contexts.items():
+        user_addresses = _extract_user_addresses_from_transaction(ctx.events)
+        if user_addresses:
+            user_cache = _prefetch_users_for_transaction(ctx, user_addresses)
+            ctx.user_cache = user_cache
+
+            # INVARIANT: Prefetch should find or create all users
+            assert len(user_cache) <= len(user_addresses), (
+                f"User cache size exceeds expected: got {len(user_cache)}, "
+                f"expected at most {len(user_addresses)}. This indicates duplicate users."
+            )
+
+            # Prefetch positions (uses user cache)
+            _prefetch_positions_for_transaction(ctx, user_addresses)
+
+            logger.debug(
+                f"Prefetched {len(user_cache)} users and {len(ctx.modified_positions)} "
+                f"positions for transaction {tx_hash.to_0x_hex()}"
+            )
 
     return contexts
 

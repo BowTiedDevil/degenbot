@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import Any
 
 import eth_abi
 from eth_typing import ChecksumAddress
@@ -15,6 +16,7 @@ from degenbot.database.models.aave import (
     AaveV3CollateralPosition,
     AaveV3DebtPosition,
     AaveV3Market,
+    AaveV3User,
 )
 
 
@@ -29,6 +31,10 @@ class TransactionContext:
     market: AaveV3Market
     session: Session
     gho_asset: AaveGhoToken
+
+    # Cached users for this transaction to avoid N+1 queries
+    # Key: user address, Value: AaveV3User object
+    user_cache: dict[ChecksumAddress, AaveV3User] = field(default_factory=dict)
 
     # Snapshot of user discount percents at the start of transaction processing
     # Key: user address, Value: discount percent at transaction start
@@ -57,9 +63,13 @@ class TransactionContext:
     )
 
     # Track modified positions to ensure we use the same object across operations.
-    # Key: (user_address, asset_id), Value: position object
+    # Key: (user_address, asset_id, position_table_class), Value: position object
+    # Using table class as discriminator to distinguish collateral vs debt positions
+    # for the same user and asset (e.g., user supplying and borrowing USDC)
+    # Using Any for the table class type to satisfy mypy with generic parameters
     modified_positions: dict[
-        tuple[ChecksumAddress, int], AaveV3CollateralPosition | AaveV3DebtPosition
+        tuple[ChecksumAddress, int, Any],
+        AaveV3CollateralPosition | AaveV3DebtPosition,
     ] = field(default_factory=dict)
 
     # Store the most recent WITHDRAW amount for accurate interest accrual calculations.

@@ -3,7 +3,7 @@ import sqlite3
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import URL, create_engine, text
+from sqlalchemy import URL, Connection, Engine, create_engine, text
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
 from degenbot.config import settings
@@ -18,6 +18,7 @@ def backup_sqlite_database(
     prefix: str | None = None,
     suffix: str | None = None,
     skip_confirmation: bool = False,
+    engine: Engine | Connection | None = None,
 ) -> None:
     assert db_path.exists()
 
@@ -31,16 +32,31 @@ def backup_sqlite_database(
     if backup_path.exists() and not skip_confirmation:
         raise BackupExists(path=backup_path)
 
-    engine = create_engine(
-        f"sqlite:///{db_path.absolute()}",
-    )
-    with engine.connect() as connection:
+    if engine is None:
+        # Fallback: create a new engine (legacy behavior)
+        engine = create_engine(
+            f"sqlite:///{db_path.absolute()}",
+        )
+
+    connection = engine if isinstance(engine, Connection) else engine.connect()
+
+    with connection:
+        # Checkpoint WAL to ensure all data is in main database
         connection.execute(
             text("PRAGMA wal_checkpoint(FULL);"),
         )
 
-    with sqlite3.connect(db_path) as src, sqlite3.connect(backup_path) as dest:
-        src.backup(target=dest)
+        # Get the underlying DBAPI connection for backup
+        # This ensures we use the same connection pool as the active session
+        raw_conn = connection.connection
+        with sqlite3.connect(backup_path) as dest:
+            raw_conn.backup(target=dest)
+
+    # Verify backup integrity
+    with sqlite3.connect(backup_path) as verify_conn:
+        result = verify_conn.execute("PRAGMA integrity_check;").fetchone()
+        assert result is not None, "Backup integrity check failed: no result"
+        assert result[0] == "ok", f"Backup integrity check failed: {result[0]}"
 
 
 def create_new_sqlite_database(db_path: pathlib.Path) -> None:

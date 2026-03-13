@@ -59,15 +59,6 @@ class OperationType(Enum):
     UNKNOWN = auto()
 
 
-# TODO: drop this hardcoded address
-# GHO Token Address (Ethereum Mainnet)
-GHO_TOKEN_ADDRESS = get_checksum_address("0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f")
-
-# TODO: drop this hardcoded address
-# GHO Variable Debt Token Address (Ethereum Mainnet)
-GHO_VARIABLE_DEBT_TOKEN_ADDRESS = get_checksum_address("0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B")
-
-
 @dataclass(frozen=True)
 class ScaledTokenEvent:
     """
@@ -413,22 +404,52 @@ class TransactionOperationsParser:
         market: AaveV3Market,
         session: Session,
         gho_token_address: ChecksumAddress | None = None,
+        gho_vtoken_address: ChecksumAddress | None = None,
         pool_address: ChecksumAddress | None = None,
     ) -> None:
-        """Initialize parser.
+        """
+        Initialize parser.
 
         Args:
             market: Aave V3 market with assets containing aToken and vToken relationships.
             session: SQLAlchemy session for database queries.
-            gho_token_address: Address of GHO variable debt token.
-                Defaults to mainnet address if not provided.
-            pool_address: Address of the Aave Pool contract.
-                Used to detect mintToTreasury operations.
+            gho_token_address: Address of GHO token. Queried from database if not provided.
+            gho_vtoken_address: Address of GHO variable debt token. Queried from database if not
+                provided.
+            pool_address: Address of the Aave Pool contract. Used to detect mintToTreasury
+                operations.
         """
+
         self.market = market
         self.session = session
-        self.gho_token_address = gho_token_address or GHO_VARIABLE_DEBT_TOKEN_ADDRESS
         self.pool_address = pool_address
+
+        # Query GHO addresses from database if not provided
+        if gho_token_address is None or gho_vtoken_address is None:
+            gho_asset = self._get_gho_asset()
+            if gho_token_address is None:
+                gho_token_address = gho_asset.token.address
+            if gho_vtoken_address is None and gho_asset.v_token is not None:
+                gho_vtoken_address = gho_asset.v_token.address
+
+        self.gho_token_address = gho_token_address
+        self.gho_vtoken_address = gho_vtoken_address
+
+    def _get_gho_asset(self) -> AaveGhoToken:
+        """Get GHO token asset for the current market."""
+
+        gho_asset = self.session.scalar(
+            select(AaveGhoToken)
+            .join(AaveGhoToken.token)
+            .where(Erc20TokenTable.chain == self.market.chain_id)
+        )
+        if gho_asset is None:
+            msg = (
+                f"GHO token not found for chain {self.market.chain_id}. "
+                "Ensure that market has been activated."
+            )
+            raise ValueError(msg)
+        return gho_asset
 
     def _get_token_type(self, token_address: ChecksumAddress) -> str | None:
         """
@@ -1249,7 +1270,7 @@ class TransactionOperationsParser:
             data=borrow_event["data"],
         )
 
-        is_gho = reserve == GHO_TOKEN_ADDRESS
+        is_gho = reserve == self.gho_token_address
 
         # Match the borrow to the associated debt mint operation
         debt_mint = None
@@ -1354,7 +1375,7 @@ class TransactionOperationsParser:
             data=repay_event["data"],
         )
 
-        is_gho = reserve == GHO_TOKEN_ADDRESS
+        is_gho = reserve == self.gho_token_address
         repay_log_index = repay_event["logIndex"]
 
         if use_a_tokens:
@@ -1701,8 +1722,8 @@ class TransactionOperationsParser:
 
         return None
 
-    @staticmethod
     def _create_liquidation_operation(
+        self,
         *,
         operation_id: int,
         liquidation_event: LogReceipt,
@@ -1735,7 +1756,7 @@ class TransactionOperationsParser:
             )
         )
 
-        is_gho = debt_asset == GHO_TOKEN_ADDRESS
+        is_gho = debt_asset == self.gho_token_address
 
         debt_burn: ScaledTokenEvent | None = None
         for ev in scaled_events:
@@ -1812,8 +1833,8 @@ class TransactionOperationsParser:
             balance_transfer_events=balance_transfer_events,
         )
 
-    @staticmethod
     def _create_deficit_operation(
+        self,
         *,
         operation_id: int,
         deficit_event: LogReceipt,
@@ -1846,7 +1867,7 @@ class TransactionOperationsParser:
         asset = decode_address(deficit_event["topics"][2])
 
         # Check if this is a GHO deficit (flash loan) or non-GHO deficit
-        is_gho_deficit = asset == GHO_TOKEN_ADDRESS
+        is_gho_deficit = asset == self.gho_token_address
 
         # Check if there's a LIQUIDATION_CALL for the same user in this transaction
         # If so, this DEFICIT_CREATED is part of the liquidation, not a standalone flash loan
