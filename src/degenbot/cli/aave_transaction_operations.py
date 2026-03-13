@@ -14,7 +14,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from web3.types import LogReceipt
 
-from degenbot.aave.events import AaveV3PoolEvent, AaveV3ScaledTokenEvent, ERC20Event
+from degenbot.aave.events import (
+    AaveV3PoolEvent,
+    AaveV3ScaledTokenEvent,
+    ERC20Event,
+    ScaledTokenEventType,
+)
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
@@ -52,23 +57,6 @@ class OperationType(Enum):
     )  # DEBT_MINT without BORROW event (e.g., flash loans, internal operations)
     STKAAVE_TRANSFER = auto()  # stkAAVE (GHO Discount Token) transfer
     UNKNOWN = auto()
-
-
-class ScaledTokenEventType(StrEnum):
-    """Types of scaled token events."""
-
-    COLLATERAL_MINT = auto()
-    COLLATERAL_BURN = auto()
-    COLLATERAL_TRANSFER = auto()  # AToken BalanceTransfer events with index
-    ERC20_COLLATERAL_TRANSFER = auto()  # Standard ERC20 Transfer events (no index)
-    DEBT_MINT = auto()
-    DEBT_BURN = auto()
-    DEBT_TRANSFER = auto()  # vToken BalanceTransfer events with index
-    ERC20_DEBT_TRANSFER = auto()  # Standard ERC20 Transfer events for debt tokens (no index)
-    GHO_DEBT_MINT = auto()
-    GHO_DEBT_BURN = auto()
-    GHO_DEBT_TRANSFER = auto()
-    DISCOUNT_TRANSFER = auto()
 
 
 # TODO: drop this hardcoded address
@@ -1289,6 +1277,7 @@ class TransactionOperationsParser:
                 continue
             if ev.event_type not in {
                 ScaledTokenEventType.DEBT_TRANSFER,
+                ScaledTokenEventType.ERC20_DEBT_TRANSFER,
                 ScaledTokenEventType.GHO_DEBT_TRANSFER,
             }:
                 continue
@@ -1639,6 +1628,7 @@ class TransactionOperationsParser:
                 continue
             if ev.event_type not in {
                 ScaledTokenEventType.DEBT_TRANSFER,
+                ScaledTokenEventType.ERC20_DEBT_TRANSFER,
                 ScaledTokenEventType.GHO_DEBT_TRANSFER,
             }:
                 continue
@@ -2198,11 +2188,27 @@ class TransactionOperationsParser:
                         continue
 
                     # Check if from/to addresses match and it's the same token
+                    # Allow matching between ERC20 Transfer and BalanceTransfer events
+                    # (e.g., ERC20_COLLATERAL_TRANSFER with COLLATERAL_TRANSFER)
+                    event_types_match = (
+                        bt_ev.event_type == ev.event_type
+                        or {bt_ev.event_type, ev.event_type}
+                        == {
+                            ScaledTokenEventType.COLLATERAL_TRANSFER,
+                            ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+                        }
+                        or {bt_ev.event_type, ev.event_type}
+                        == {
+                            ScaledTokenEventType.DEBT_TRANSFER,
+                            ScaledTokenEventType.ERC20_DEBT_TRANSFER,
+                        }
+                    )
+
                     if (
                         bt_ev.from_address == ev.from_address
                         and bt_ev.target_address == ev.target_address
                         and bt_ev.event["address"] == ev.event["address"]
-                        and bt_ev.event_type == ev.event_type
+                        and event_types_match
                     ):
                         # Found matching BalanceTransfer
                         balance_transfer_event = bt_ev
@@ -2220,11 +2226,26 @@ class TransactionOperationsParser:
                                 continue
 
                             # Check if from/to addresses match and it's the same token
+                            # Allow matching between ERC20 Transfer and BalanceTransfer events
+                            event_types_match = (
+                                bt_ev.event_type == ev.event_type
+                                or {bt_ev.event_type, ev.event_type}
+                                == {
+                                    ScaledTokenEventType.COLLATERAL_TRANSFER,
+                                    ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+                                }
+                                or {bt_ev.event_type, ev.event_type}
+                                == {
+                                    ScaledTokenEventType.DEBT_TRANSFER,
+                                    ScaledTokenEventType.ERC20_DEBT_TRANSFER,
+                                }
+                            )
+
                             if (
                                 bt_ev.from_address == ev.from_address
                                 and bt_ev.target_address == ev.target_address
                                 and bt_ev.event["address"] == ev.event["address"]
-                                and bt_ev.event_type == ev.event_type
+                                and event_types_match
                             ):
                                 # Found matching BalanceTransfer in existing operation
                                 balance_transfer_event = bt_ev

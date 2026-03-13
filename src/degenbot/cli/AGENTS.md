@@ -245,6 +245,48 @@ else:
 
 ---
 
+### ERC20 Transfer and BalanceTransfer Event Matching
+
+**Lesson:** When pairing ERC20 Transfer events with BalanceTransfer events during operation creation, the event types must be explicitly matched as compatible pairs.
+
+**Context:** In `_create_transfer_operations`, the code attempts to pair ERC20 Transfer events with their corresponding BalanceTransfer events (which provide index data for proper scaling). The original matching logic required exact type equality (`bt_ev.event_type == ev.event_type`), but since ERC20 Transfers and BalanceTransfers have different types, valid pairs were never matched.
+
+**The Problem:** Without proper matching:
+1. The BalanceTransfer event wouldn't be marked as `local_assigned`
+2. The standalone BalanceTransfer processing loop would create a duplicate operation
+3. Validation would fail with "Event at logIndex X assigned to multiple operations"
+
+**Example Transaction:** `0x4a88a8c6a43b5df2ee59ebcf266225fbc5b876f202009422f0f9d05cc4915f35`
+- logIndex 104: `ERC20_COLLATERAL_TRANSFER` (ERC20 Transfer)
+- logIndex 107: `COLLATERAL_TRANSFER` (BalanceTransfer with index)
+- These represent the same transfer but have different event types
+
+**Solution:** Allow matching between compatible event type pairs:
+
+```python
+# In _create_transfer_operations method
+event_types_match = (
+    bt_ev.event_type == ev.event_type
+    or {bt_ev.event_type, ev.event_type}
+    == {
+        ScaledTokenEventType.COLLATERAL_TRANSFER,
+        ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+    }
+    or {bt_ev.event_type, ev.event_type}
+    == {
+        ScaledTokenEventType.DEBT_TRANSFER,
+        ScaledTokenEventType.ERC20_DEBT_TRANSFER,
+    }
+)
+```
+
+**Key Insight:**
+- Set comparison (`{a, b} == {c, d}`) elegantly checks for bidirectional matching
+- Both directions are covered: ERC20 Transfer looking for BalanceTransfer AND BalanceTransfer looking for ERC20 Transfer
+- This fix applies to both the unassigned events search AND the existing operations search
+
+---
+
 ### General Lessons
 
 1. **Read the source code** - Don't assume behavior based on event names alone

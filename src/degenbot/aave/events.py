@@ -1,8 +1,25 @@
 """Aave V3 event topic hashes."""
 
-from enum import Enum
+from enum import Enum, StrEnum, auto
 
 from hexbytes import HexBytes
+
+
+class ScaledTokenEventType(StrEnum):
+    """Types of scaled token events."""
+
+    COLLATERAL_MINT = auto()
+    COLLATERAL_BURN = auto()
+    COLLATERAL_TRANSFER = auto()  # AToken BalanceTransfer events with index
+    ERC20_COLLATERAL_TRANSFER = auto()  # Standard ERC20 Transfer events (no index)
+    DEBT_MINT = auto()
+    DEBT_BURN = auto()
+    DEBT_TRANSFER = auto()  # vToken BalanceTransfer events with index
+    ERC20_DEBT_TRANSFER = auto()  # Standard ERC20 Transfer events for debt tokens (no index)
+    GHO_DEBT_MINT = auto()
+    GHO_DEBT_BURN = auto()
+    GHO_DEBT_TRANSFER = auto()
+    DISCOUNT_TRANSFER = auto()
 
 
 class AaveV3PoolEvent(Enum):

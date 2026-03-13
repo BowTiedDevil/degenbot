@@ -6,6 +6,7 @@ from eth_typing import ChecksumAddress
 from sqlalchemy.orm import Session
 
 from degenbot.aave.calculator import ScaledAmountCalculator
+from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.extraction import RawAmountExtractor
 from degenbot.aave.models import (
     EnrichedCollateralBurnEvent,
@@ -17,6 +18,7 @@ from degenbot.aave.models import (
     EnrichedDebtInterestBurnEvent,
     EnrichedDebtInterestMintEvent,
     EnrichedDebtMintEvent,
+    EnrichedDebtTransferEvent,
     EnrichedGhoDebtBurnEvent,
     EnrichedGhoDebtInterestBurnEvent,
     EnrichedGhoDebtInterestMintEvent,
@@ -116,34 +118,33 @@ class ScaledEventEnricher:
                 # For transfers, raw_amount = scaled_amount (no index-based calculation)
                 raw_amount = scaled_event.amount
                 scaled_amount = scaled_event.amount
+        # ERC20 transfers don't have an index - use amount directly
+        elif scaled_event.event_type == ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER:
+            raw_amount = scaled_event.amount
+            scaled_amount = scaled_event.amount
         else:
-            # ERC20 transfers don't have an index - use amount directly
-            if scaled_event.event_type.value == "erc20_collateral_transfer":
-                raw_amount = scaled_event.amount
-                scaled_amount = scaled_event.amount
-            else:
-                # Extract raw amount from pool event and calculate scaled amount
-                extractor = RawAmountExtractor(
-                    pool_event=operation.pool_event,
-                    pool_revision=self.pool_revision,
-                )
-                raw_amount = extractor.extract()
+            # Extract raw amount from pool event and calculate scaled amount
+            extractor = RawAmountExtractor(
+                pool_event=operation.pool_event,
+                pool_revision=self.pool_revision,
+            )
+            raw_amount = extractor.extract()
 
-                # Calculate scaled amount using TokenMath
-                calculator = ScaledAmountCalculator(
-                    pool_revision=self.pool_revision,
-                    token_revision=token_revision,
-                )
+            # Calculate scaled amount using TokenMath
+            calculator = ScaledAmountCalculator(
+                pool_revision=self.pool_revision,
+                token_revision=token_revision,
+            )
 
-                if scaled_event.index is None:
-                    msg = f"Scaled event has no index: {scaled_event}"
-                    raise EnrichmentError(msg)
+            if scaled_event.index is None:
+                msg = f"Scaled event has no index: {scaled_event}"
+                raise EnrichmentError(msg)
 
-                scaled_amount = calculator.calculate(
-                    event_type=scaled_event.event_type.value,
-                    raw_amount=raw_amount,
-                    index=scaled_event.index,
-                )
+            scaled_amount = calculator.calculate(
+                event_type=scaled_event.event_type.value,
+                raw_amount=raw_amount,
+                index=scaled_event.index,
+            )
 
         # 5. Create appropriate enriched event type
         return self._create_enriched_event(
@@ -240,58 +241,62 @@ class ScaledEventEnricher:
         underlying_asset: ChecksumAddress,
     ) -> EnrichedScaledTokenEvent:
         """Create the appropriate enriched event type."""
-        event_type = scaled_event.event_type.value
+        event_type = scaled_event.event_type
         is_interest_accrual = operation.operation_type.name == "INTEREST_ACCRUAL"
 
         # Map event type to enriched class
         # For INTEREST_ACCRUAL, use interest-specific event types
-        class_map: dict[str, type[EnrichedScaledTokenEvent]]
+        class_map: dict[ScaledTokenEventType, type[EnrichedScaledTokenEvent]]
         if is_interest_accrual:
             class_map = {
-                "collateral_mint": EnrichedCollateralInterestMintEvent,
-                "collateral_burn": EnrichedCollateralInterestBurnEvent,
-                "debt_mint": EnrichedDebtInterestMintEvent,
-                "debt_burn": EnrichedDebtInterestBurnEvent,
-                "gho_debt_mint": EnrichedGhoDebtInterestMintEvent,
-                "gho_debt_burn": EnrichedGhoDebtInterestBurnEvent,
+                ScaledTokenEventType.COLLATERAL_MINT: EnrichedCollateralInterestMintEvent,
+                ScaledTokenEventType.COLLATERAL_BURN: EnrichedCollateralInterestBurnEvent,
+                ScaledTokenEventType.DEBT_MINT: EnrichedDebtInterestMintEvent,
+                ScaledTokenEventType.DEBT_BURN: EnrichedDebtInterestBurnEvent,
+                ScaledTokenEventType.GHO_DEBT_MINT: EnrichedGhoDebtInterestMintEvent,
+                ScaledTokenEventType.GHO_DEBT_BURN: EnrichedGhoDebtInterestBurnEvent,
             }
         else:
             class_map = {
-                "collateral_mint": EnrichedCollateralMintEvent,
-                "collateral_burn": EnrichedCollateralBurnEvent,
-                "collateral_transfer": EnrichedCollateralTransferEvent,
-                "erc20_collateral_transfer": EnrichedCollateralTransferEvent,
-                "debt_mint": EnrichedDebtMintEvent,
-                "debt_burn": EnrichedDebtBurnEvent,
-                "gho_debt_mint": EnrichedGhoDebtMintEvent,
-                "gho_debt_burn": EnrichedGhoDebtBurnEvent,
-                "gho_debt_transfer": EnrichedGhoDebtTransferEvent,
+                ScaledTokenEventType.COLLATERAL_MINT: EnrichedCollateralMintEvent,
+                ScaledTokenEventType.COLLATERAL_BURN: EnrichedCollateralBurnEvent,
+                ScaledTokenEventType.COLLATERAL_TRANSFER: EnrichedCollateralTransferEvent,
+                ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER: EnrichedCollateralTransferEvent,
+                ScaledTokenEventType.DEBT_MINT: EnrichedDebtMintEvent,
+                ScaledTokenEventType.DEBT_BURN: EnrichedDebtBurnEvent,
+                ScaledTokenEventType.DEBT_TRANSFER: EnrichedDebtTransferEvent,
+                ScaledTokenEventType.ERC20_DEBT_TRANSFER: EnrichedDebtTransferEvent,
+                ScaledTokenEventType.GHO_DEBT_MINT: EnrichedGhoDebtMintEvent,
+                ScaledTokenEventType.GHO_DEBT_BURN: EnrichedGhoDebtBurnEvent,
+                ScaledTokenEventType.GHO_DEBT_TRANSFER: EnrichedGhoDebtTransferEvent,
             }
 
         enriched_class = class_map.get(event_type)
         if enriched_class is None:
-            msg = f"Unknown event type: {event_type}"
+            msg = f"Unknown event type: {event_type.value}"
             raise EnrichmentError(msg)
 
         # Build base kwargs (common to all event types)
         # For interest accrual, get the correct event_type from the class
         if is_interest_accrual:
-            # Map the event_type to interest-specific event type
-            interest_event_type_map = {
-                "collateral_mint": "collateral_interest_mint",
-                "collateral_burn": "collateral_interest_burn",
-                "debt_mint": "debt_interest_mint",
-                "debt_burn": "debt_interest_burn",
-                "gho_debt_mint": "gho_debt_interest_mint",
-                "gho_debt_burn": "gho_debt_interest_burn",
+            # Map the event_type to interest-specific event type strings
+            # (values are Literal strings used by Pydantic models)
+            interest_event_type_map: dict[ScaledTokenEventType, str] = {
+                ScaledTokenEventType.COLLATERAL_MINT: "collateral_interest_mint",
+                ScaledTokenEventType.COLLATERAL_BURN: "collateral_interest_burn",
+                ScaledTokenEventType.DEBT_MINT: "debt_interest_mint",
+                ScaledTokenEventType.DEBT_BURN: "debt_interest_burn",
+                ScaledTokenEventType.GHO_DEBT_MINT: "gho_debt_interest_mint",
+                ScaledTokenEventType.GHO_DEBT_BURN: "gho_debt_interest_burn",
             }
-            actual_event_type = interest_event_type_map.get(event_type, event_type)
+            actual_event_type = interest_event_type_map.get(event_type, event_type.value)
         else:
             # Map ERC20 transfer types to their base types for Pydantic models
-            event_type_map = {
-                "erc20_collateral_transfer": "collateral_transfer",
+            event_type_map: dict[ScaledTokenEventType, str] = {
+                ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER: "collateral_transfer",
+                ScaledTokenEventType.ERC20_DEBT_TRANSFER: "debt_transfer",
             }
-            actual_event_type = event_type_map.get(event_type, event_type)
+            actual_event_type = event_type_map.get(event_type, event_type.value)
 
         kwargs: dict[str, Any] = {
             "event": scaled_event.event,
@@ -314,12 +319,12 @@ class ScaledEventEnricher:
             kwargs["balance_increase"] = scaled_event.balance_increase or 0
         # Index-scaled events (mint/burn) require index and balance_increase
         elif event_type in {
-            "collateral_mint",
-            "collateral_burn",
-            "debt_mint",
-            "debt_burn",
-            "gho_debt_mint",
-            "gho_debt_burn",
+            ScaledTokenEventType.COLLATERAL_MINT,
+            ScaledTokenEventType.COLLATERAL_BURN,
+            ScaledTokenEventType.DEBT_MINT,
+            ScaledTokenEventType.DEBT_BURN,
+            ScaledTokenEventType.GHO_DEBT_MINT,
+            ScaledTokenEventType.GHO_DEBT_BURN,
         }:
             if scaled_event.index is None:
                 msg = f"Index-scaled event has no index: {scaled_event}"
@@ -328,21 +333,31 @@ class ScaledEventEnricher:
             kwargs["balance_increase"] = scaled_event.balance_increase
 
         # Add type-specific fields
-        if event_type == "collateral_mint" and not is_interest_accrual:
+        if event_type == ScaledTokenEventType.COLLATERAL_MINT and not is_interest_accrual:
             kwargs["caller_address"] = scaled_event.caller_address
-        elif event_type == "collateral_burn" and not is_interest_accrual:
+        elif event_type == ScaledTokenEventType.COLLATERAL_BURN and not is_interest_accrual:
             kwargs["from_address"] = scaled_event.from_address or scaled_event.user_address
             kwargs["target_address"] = scaled_event.target_address
-        elif event_type in {"collateral_transfer", "erc20_collateral_transfer"}:
+        elif event_type in {
+            ScaledTokenEventType.COLLATERAL_TRANSFER,
+            ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+        }:
             # Transfer events need from_address and to_address
             kwargs["from_address"] = scaled_event.from_address or scaled_event.user_address
             kwargs["to_address"] = scaled_event.target_address or scaled_event.user_address
-        elif event_type == "debt_mint" and not is_interest_accrual:
+        elif event_type in {
+            ScaledTokenEventType.DEBT_TRANSFER,
+            ScaledTokenEventType.ERC20_DEBT_TRANSFER,
+        }:
+            # Transfer events need from_address and to_address
+            kwargs["from_address"] = scaled_event.from_address or scaled_event.user_address
+            kwargs["to_address"] = scaled_event.target_address or scaled_event.user_address
+        elif event_type == ScaledTokenEventType.DEBT_MINT and not is_interest_accrual:
             kwargs["caller_address"] = scaled_event.caller_address
-        elif event_type == "debt_burn" and not is_interest_accrual:
+        elif event_type == ScaledTokenEventType.DEBT_BURN and not is_interest_accrual:
             kwargs["from_address"] = scaled_event.from_address or scaled_event.user_address
             kwargs["target_address"] = scaled_event.target_address
-        elif event_type == "gho_debt_mint":
+        elif event_type == ScaledTokenEventType.GHO_DEBT_MINT:
             kwargs["caller_address"] = scaled_event.caller_address
             if is_interest_accrual:
                 # Interest accrual - use actual discount from event if available
@@ -352,7 +367,7 @@ class ScaledEventEnricher:
                 # TODO: Add GHO discount fields from transaction context
                 kwargs["discount_percent"] = 0  # Placeholder
                 kwargs["discount_scaled"] = 0  # Placeholder
-        elif event_type == "gho_debt_burn":
+        elif event_type == ScaledTokenEventType.GHO_DEBT_BURN:
             kwargs["from_address"] = scaled_event.from_address or scaled_event.user_address
             kwargs["target_address"] = scaled_event.target_address
             if is_interest_accrual:
@@ -363,7 +378,7 @@ class ScaledEventEnricher:
                 # TODO: Add GHO discount fields from transaction context
                 kwargs["discount_percent"] = 0  # Placeholder
                 kwargs["discount_scaled"] = 0  # Placeholder
-        elif event_type == "gho_debt_transfer":
+        elif event_type == ScaledTokenEventType.GHO_DEBT_TRANSFER:
             kwargs["from_address"] = scaled_event.from_address or scaled_event.user_address
             kwargs["to_address"] = scaled_event.user_address  # Placeholder
             kwargs["discount_scaled"] = 0  # Placeholder

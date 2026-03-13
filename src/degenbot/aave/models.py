@@ -12,6 +12,7 @@ from pydantic import (
 )
 from web3.types import LogReceipt
 
+from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.libraries.token_math import TokenMathFactory
 
 # Custom type that accepts LogReceipt (containing HexBytes) without validation
@@ -67,13 +68,13 @@ class ScaledAmountValidationError(Exception):
 def _get_token_math_method(event_type: str) -> str:
     """Map event type to TokenMath method name."""
     mapping = {
-        "collateral_mint": "get_collateral_mint_scaled_amount",
-        "collateral_burn": "get_collateral_burn_scaled_amount",
-        "collateral_transfer": "get_collateral_transfer_scaled_amount",
-        "debt_mint": "get_debt_mint_scaled_amount",
-        "debt_burn": "get_debt_burn_scaled_amount",
-        "gho_debt_mint": "get_debt_mint_scaled_amount",
-        "gho_debt_burn": "get_debt_burn_scaled_amount",
+        ScaledTokenEventType.COLLATERAL_MINT.value: "get_collateral_mint_scaled_amount",
+        ScaledTokenEventType.COLLATERAL_BURN.value: "get_collateral_burn_scaled_amount",
+        ScaledTokenEventType.COLLATERAL_TRANSFER.value: "get_collateral_transfer_scaled_amount",
+        ScaledTokenEventType.DEBT_MINT.value: "get_debt_mint_scaled_amount",
+        ScaledTokenEventType.DEBT_BURN.value: "get_debt_burn_scaled_amount",
+        ScaledTokenEventType.GHO_DEBT_MINT.value: "get_debt_mint_scaled_amount",
+        ScaledTokenEventType.GHO_DEBT_BURN.value: "get_debt_burn_scaled_amount",
     }
     if event_type not in mapping:
         msg = f"Unknown event type: {event_type}"
@@ -238,6 +239,12 @@ class EnrichedCollateralTransferEvent(TransferEvent):
     event_type: Literal["collateral_transfer"] = "collateral_transfer"
 
 
+class EnrichedDebtTransferEvent(TransferEvent):
+    """Enriched vToken transfer event."""
+
+    event_type: Literal["debt_transfer"] = "debt_transfer"
+
+
 class EnrichedDebtMintEvent(IndexScaledEvent):
     """Enriched vToken mint event (borrow)."""
 
@@ -392,6 +399,7 @@ EnrichedScaledTokenEvent = (
     | EnrichedCollateralTransferEvent
     | EnrichedDebtMintEvent
     | EnrichedDebtBurnEvent
+    | EnrichedDebtTransferEvent
     | EnrichedGhoDebtMintEvent
     | EnrichedGhoDebtBurnEvent
     | EnrichedGhoDebtTransferEvent
