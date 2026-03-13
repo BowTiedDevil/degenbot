@@ -340,13 +340,8 @@ class ScaledEventEnricher:
             kwargs["target_address"] = scaled_event.target_address
         elif event_type in {
             ScaledTokenEventType.COLLATERAL_TRANSFER,
-            ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
-        }:
-            # Transfer events need from_address and to_address
-            kwargs["from_address"] = scaled_event.from_address or scaled_event.user_address
-            kwargs["to_address"] = scaled_event.target_address or scaled_event.user_address
-        elif event_type in {
             ScaledTokenEventType.DEBT_TRANSFER,
+            ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
             ScaledTokenEventType.ERC20_DEBT_TRANSFER,
         }:
             # Transfer events need from_address and to_address
