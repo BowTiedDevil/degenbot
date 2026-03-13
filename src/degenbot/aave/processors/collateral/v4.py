@@ -27,6 +27,7 @@ class CollateralV4Processor(CollateralV1Processor):
         event_data: CollateralBurnEvent,
         previous_balance: int,  # noqa: ARG002
         previous_index: int,  # noqa: ARG002
+        scaled_delta: int | None = None,  # noqa: ARG002
     ) -> ScaledTokenBurnResult:
         """
         Process a collateral burn event.
@@ -71,6 +72,7 @@ class CollateralV4Processor(CollateralV1Processor):
         event_data: CollateralMintEvent,
         previous_balance: int,  # noqa: ARG002
         previous_index: int,  # noqa: ARG002
+        scaled_delta: int | None = None,  # noqa: ARG002
     ) -> ScaledTokenMintResult:
         """
         Process a collateral mint event.

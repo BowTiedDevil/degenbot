@@ -24,6 +24,7 @@ from degenbot.aave.events import (
     AaveV3PoolEvent,
     AaveV3ScaledTokenEvent,
     ERC20Event,
+    ScaledTokenEventType,
 )
 from degenbot.cli.aave_types import TransactionContext
 
@@ -713,7 +714,7 @@ class AaveDebugLogger:
         debt_asset: str,
         debt_to_cover: int,
         liquidated_collateral: int,
-        scaled_events: Sequence[str],
+        scaled_events: Sequence[ScaledTokenEventType],
         block_number: int,
         tx_hash: HexBytes | str,
     ) -> None:

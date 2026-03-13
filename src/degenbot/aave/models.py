@@ -1,6 +1,6 @@
 """Pydantic models for enriched Aave token events."""
 
-from typing import Annotated, Literal
+from typing import Annotated
 
 from eth_typing import ChecksumAddress
 from pydantic import (
@@ -65,16 +65,16 @@ class ScaledAmountValidationError(Exception):
         super().__init__(detail)
 
 
-def _get_token_math_method(event_type: str) -> str:
+def _get_token_math_method(event_type: ScaledTokenEventType) -> str:
     """Map event type to TokenMath method name."""
     mapping = {
-        ScaledTokenEventType.COLLATERAL_MINT.value: "get_collateral_mint_scaled_amount",
-        ScaledTokenEventType.COLLATERAL_BURN.value: "get_collateral_burn_scaled_amount",
-        ScaledTokenEventType.COLLATERAL_TRANSFER.value: "get_collateral_transfer_scaled_amount",
-        ScaledTokenEventType.DEBT_MINT.value: "get_debt_mint_scaled_amount",
-        ScaledTokenEventType.DEBT_BURN.value: "get_debt_burn_scaled_amount",
-        ScaledTokenEventType.GHO_DEBT_MINT.value: "get_debt_mint_scaled_amount",
-        ScaledTokenEventType.GHO_DEBT_BURN.value: "get_debt_burn_scaled_amount",
+        ScaledTokenEventType.COLLATERAL_MINT: "get_collateral_mint_scaled_amount",
+        ScaledTokenEventType.COLLATERAL_BURN: "get_collateral_burn_scaled_amount",
+        ScaledTokenEventType.COLLATERAL_TRANSFER: "get_collateral_transfer_scaled_amount",
+        ScaledTokenEventType.DEBT_MINT: "get_debt_mint_scaled_amount",
+        ScaledTokenEventType.DEBT_BURN: "get_debt_burn_scaled_amount",
+        ScaledTokenEventType.GHO_DEBT_MINT: "get_debt_mint_scaled_amount",
+        ScaledTokenEventType.GHO_DEBT_BURN: "get_debt_burn_scaled_amount",
     }
     if event_type not in mapping:
         msg = f"Unknown event type: {event_type}"
@@ -86,15 +86,14 @@ class BaseEnrichedScaledTokenEvent(BaseModel):
     """
     Base class for enriched scaled token events.
 
-    Contains common fields without validation. Subclasses should add
-    specific validation for their event types.
+    Contains common fields. Subclasses must define specific validation for their event types.
     """
 
     model_config = {"frozen": True}
 
     # Core identity
     event: LogReceiptField
-    event_type: str
+    event_type: ScaledTokenEventType
     user_address: ChecksumAddress
 
     # Operation context
@@ -217,7 +216,7 @@ class InterestAccrualEvent(BaseEnrichedScaledTokenEvent):
 class EnrichedCollateralMintEvent(IndexScaledEvent):
     """Enriched aToken mint event (supply)."""
 
-    event_type: Literal["collateral_mint"] = "collateral_mint"
+    event_type: ScaledTokenEventType = ScaledTokenEventType.COLLATERAL_MINT
     caller_address: ChecksumAddress | None = Field(
         default=None, description="Address that initiated the mint (may differ from user)"
     )
@@ -226,7 +225,7 @@ class EnrichedCollateralMintEvent(IndexScaledEvent):
 class EnrichedCollateralBurnEvent(IndexScaledEvent):
     """Enriched aToken burn event (withdraw)."""
 
-    event_type: Literal["collateral_burn"] = "collateral_burn"
+    event_type: ScaledTokenEventType = ScaledTokenEventType.COLLATERAL_BURN
     from_address: ChecksumAddress
     target_address: ChecksumAddress | None = Field(
         default=None, description="Address receiving underlying asset"
@@ -236,19 +235,19 @@ class EnrichedCollateralBurnEvent(IndexScaledEvent):
 class EnrichedCollateralTransferEvent(TransferEvent):
     """Enriched aToken transfer event."""
 
-    event_type: Literal["collateral_transfer"] = "collateral_transfer"
+    event_type: ScaledTokenEventType = ScaledTokenEventType.COLLATERAL_TRANSFER
 
 
 class EnrichedDebtTransferEvent(TransferEvent):
     """Enriched vToken transfer event."""
 
-    event_type: Literal["debt_transfer"] = "debt_transfer"
+    event_type: ScaledTokenEventType = ScaledTokenEventType.DEBT_TRANSFER
 
 
 class EnrichedDebtMintEvent(IndexScaledEvent):
     """Enriched vToken mint event (borrow)."""
 
-    event_type: Literal["debt_mint"] = "debt_mint"
+    event_type: ScaledTokenEventType = ScaledTokenEventType.DEBT_MINT
     caller_address: ChecksumAddress | None = Field(
         default=None, description="Address that initiated the borrow"
     )
@@ -257,7 +256,7 @@ class EnrichedDebtMintEvent(IndexScaledEvent):
 class EnrichedDebtBurnEvent(IndexScaledEvent):
     """Enriched vToken burn event (repay)."""
 
-    event_type: Literal["debt_burn"] = "debt_burn"
+    event_type: ScaledTokenEventType = ScaledTokenEventType.DEBT_BURN
     from_address: ChecksumAddress
     target_address: ChecksumAddress | None = None
 
@@ -273,7 +272,7 @@ class EnrichedGhoDebtMintEvent(IndexScaledEvent):
     interest rate. The scaled amount is calculated before discount is applied.
     """
 
-    event_type: Literal["gho_debt_mint"] = "gho_debt_mint"
+    event_type: ScaledTokenEventType = ScaledTokenEventType.GHO_DEBT_MINT
     caller_address: ChecksumAddress | None = None
 
     # GHO-specific fields
@@ -299,7 +298,7 @@ class EnrichedGhoDebtBurnEvent(IndexScaledEvent):
     debt reduction.
     """
 
-    event_type: Literal["gho_debt_burn"] = "gho_debt_burn"
+    event_type: ScaledTokenEventType = ScaledTokenEventType.GHO_DEBT_BURN
     from_address: ChecksumAddress
     target_address: ChecksumAddress | None = None
 
@@ -321,7 +320,7 @@ class EnrichedGhoDebtBurnEvent(IndexScaledEvent):
 class EnrichedGhoDebtTransferEvent(TransferEvent):
     """Enriched GHO vToken transfer event (discount transfers)."""
 
-    event_type: Literal["gho_debt_transfer"] = "gho_debt_transfer"
+    event_type: ScaledTokenEventType = ScaledTokenEventType.GHO_DEBT_TRANSFER
     discount_scaled: int = Field(description="Scaled discount amount being transferred")
 
 
@@ -331,31 +330,31 @@ class EnrichedGhoDebtTransferEvent(TransferEvent):
 class EnrichedCollateralInterestMintEvent(InterestAccrualEvent):
     """Enriched aToken interest mint event (collateral interest accrual)."""
 
-    event_type: Literal["collateral_interest_mint"] = "collateral_interest_mint"
+    event_type: ScaledTokenEventType = ScaledTokenEventType.COLLATERAL_INTEREST_MINT
 
 
 class EnrichedCollateralInterestBurnEvent(InterestAccrualEvent):
     """Enriched aToken interest burn event (collateral interest during transfers)."""
 
-    event_type: Literal["collateral_interest_burn"] = "collateral_interest_burn"
+    event_type: ScaledTokenEventType = ScaledTokenEventType.COLLATERAL_INTEREST_BURN
 
 
 class EnrichedDebtInterestMintEvent(InterestAccrualEvent):
     """Enriched vToken interest mint event (debt interest accrual)."""
 
-    event_type: Literal["debt_interest_mint"] = "debt_interest_mint"
+    event_type: ScaledTokenEventType = ScaledTokenEventType.DEBT_INTEREST_MINT
 
 
 class EnrichedDebtInterestBurnEvent(InterestAccrualEvent):
     """Enriched vToken interest burn event (debt interest during transfers)."""
 
-    event_type: Literal["debt_interest_burn"] = "debt_interest_burn"
+    event_type: ScaledTokenEventType = ScaledTokenEventType.DEBT_INTEREST_BURN
 
 
 class EnrichedGhoDebtInterestMintEvent(InterestAccrualEvent):
     """Enriched GHO vToken interest mint event (GHO debt interest accrual)."""
 
-    event_type: Literal["gho_debt_interest_mint"] = "gho_debt_interest_mint"
+    event_type: ScaledTokenEventType = ScaledTokenEventType.GHO_DEBT_INTEREST_MINT
 
     # GHO-specific fields
     discount_percent: int = Field(
@@ -375,7 +374,7 @@ class EnrichedGhoDebtInterestMintEvent(InterestAccrualEvent):
 class EnrichedGhoDebtInterestBurnEvent(InterestAccrualEvent):
     """Enriched GHO vToken interest burn event (GHO debt interest during transfers)."""
 
-    event_type: Literal["gho_debt_interest_burn"] = "gho_debt_interest_burn"
+    event_type: ScaledTokenEventType = ScaledTokenEventType.GHO_DEBT_INTEREST_BURN
 
     # GHO-specific fields
     discount_percent: int = Field(

@@ -26,6 +26,7 @@ from degenbot.aave.events import (
     AaveV3ScaledTokenEvent,
     AaveV3StkAaveEvent,
     ERC20Event,
+    ScaledTokenEventType,
 )
 from degenbot.aave.libraries.token_math import TokenMathFactory
 from degenbot.aave.libraries.wad_ray_math import wad_mul
@@ -45,7 +46,6 @@ from degenbot.cli.aave_transaction_operations import (
     Operation,
     OperationType,
     ScaledTokenEvent,
-    ScaledTokenEventType,
     TransactionOperationsParser,
     TransactionValidationError,
 )
@@ -2346,7 +2346,7 @@ def _process_operation(
 
         # Route to appropriate handler based on event type
         enriched_event = match_result.enriched_event
-        if scaled_event.event_type == ScaledTokenEventType.COLLATERAL_MINT.value:
+        if scaled_event.event_type == ScaledTokenEventType.COLLATERAL_MINT:
             _process_collateral_mint_with_match(
                 event=event,
                 tx_context=tx_context,
@@ -2354,7 +2354,7 @@ def _process_operation(
                 scaled_event=scaled_event,
                 enriched_event=enriched_event,
             )
-        elif scaled_event.event_type == ScaledTokenEventType.COLLATERAL_BURN.value:
+        elif scaled_event.event_type == ScaledTokenEventType.COLLATERAL_BURN:
             _process_collateral_burn_with_match(
                 event=event,
                 tx_context=tx_context,
@@ -2363,8 +2363,8 @@ def _process_operation(
                 enriched_event=enriched_event,
             )
         elif scaled_event.event_type in {
-            ScaledTokenEventType.DEBT_MINT.value,
-            ScaledTokenEventType.GHO_DEBT_MINT.value,
+            ScaledTokenEventType.DEBT_MINT,
+            ScaledTokenEventType.GHO_DEBT_MINT,
         }:
             _process_debt_mint_with_match(
                 event=event,
@@ -2374,8 +2374,8 @@ def _process_operation(
                 enriched_event=enriched_event,
             )
         elif scaled_event.event_type in {
-            ScaledTokenEventType.DEBT_BURN.value,
-            ScaledTokenEventType.GHO_DEBT_BURN.value,
+            ScaledTokenEventType.DEBT_BURN,
+            ScaledTokenEventType.GHO_DEBT_BURN,
         }:
             _process_debt_burn_with_match(
                 event=event,
@@ -2385,8 +2385,8 @@ def _process_operation(
                 enriched_event=enriched_event,
             )
         elif scaled_event.event_type in {
-            ScaledTokenEventType.COLLATERAL_TRANSFER.value,
-            ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER.value,
+            ScaledTokenEventType.COLLATERAL_TRANSFER,
+            ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
         }:
             _process_collateral_transfer(
                 event=event,
@@ -2395,9 +2395,9 @@ def _process_operation(
                 scaled_event=scaled_event,
             )
         elif scaled_event.event_type in {
-            ScaledTokenEventType.DEBT_TRANSFER.value,
-            ScaledTokenEventType.GHO_DEBT_TRANSFER.value,
-            ScaledTokenEventType.ERC20_DEBT_TRANSFER.value,
+            ScaledTokenEventType.DEBT_TRANSFER,
+            ScaledTokenEventType.GHO_DEBT_TRANSFER,
+            ScaledTokenEventType.ERC20_DEBT_TRANSFER,
         }:
             _process_debt_transfer(
                 event=event,
@@ -2405,7 +2405,7 @@ def _process_operation(
                 operation=operation,
                 scaled_event=scaled_event,
             )
-        elif scaled_event.event_type == ScaledTokenEventType.DISCOUNT_TRANSFER.value:
+        elif scaled_event.event_type == ScaledTokenEventType.DISCOUNT_TRANSFER:
             # stkAAVE transfers are processed separately to update user balances
             # before GHO debt operations calculate discount rates. They don't
             # affect Aave market positions directly.
@@ -2679,7 +2679,7 @@ def _process_collateral_burn_with_match(
         aave_debug_logger.log_liquidation_match(
             operation_id=operation.operation_id,
             user_address=scaled_event.user_address or "unknown",
-            scaled_event_type=scaled_event.event_type,
+            scaled_event_type=scaled_event.event_type.name,
             token_address=token_address,
             matched_amount=enriched_event.raw_amount,
             extraction_data={"raw_amount": enriched_event.raw_amount},
@@ -2692,7 +2692,7 @@ def _process_debt_mint_with_match(
     *,
     event: LogReceipt,
     tx_context: TransactionContext,
-    operation: Operation,
+    operation: Operation,  # noqa: ARG001
     scaled_event: ScaledTokenEvent,
     enriched_event: EnrichedScaledTokenEvent,
 ) -> None:
@@ -2994,7 +2994,7 @@ def _process_debt_burn_with_match(
         aave_debug_logger.log_liquidation_match(
             operation_id=operation.operation_id,
             user_address=scaled_event.user_address or "unknown",
-            scaled_event_type=scaled_event.event_type,
+            scaled_event_type=scaled_event.event_type.name,
             token_address=token_address,
             matched_amount=enriched_event.raw_amount,
             extraction_data={"raw_amount": enriched_event.raw_amount},
@@ -3808,7 +3808,7 @@ def _get_pool_revision_from_db(
         )
     )
     assert pool_contract is not None
-
+    assert pool_contract.revision is not None
     return pool_contract.revision
 
 

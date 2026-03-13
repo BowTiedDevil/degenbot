@@ -5,7 +5,7 @@ Provides strict validation with detailed plain-text error reporting.
 
 import operator
 from dataclasses import dataclass, field
-from enum import Enum, StrEnum, auto
+from enum import Enum, auto
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -86,15 +86,39 @@ class ScaledTokenEvent:
 
     @property
     def is_collateral(self) -> bool:
-        return self.event_type.startswith("collateral")
+        return self.event_type in {
+            ScaledTokenEventType.COLLATERAL_BURN,
+            ScaledTokenEventType.COLLATERAL_MINT,
+            ScaledTokenEventType.COLLATERAL_TRANSFER,
+            ScaledTokenEventType.COLLATERAL_INTEREST_BURN,
+            ScaledTokenEventType.COLLATERAL_INTEREST_MINT,
+        }
 
     @property
     def is_debt(self) -> bool:
-        return self.event_type.startswith("debt") or self.event_type.startswith("gho")
+        return self.event_type in {
+            ScaledTokenEventType.DEBT_BURN,
+            ScaledTokenEventType.DEBT_MINT,
+            ScaledTokenEventType.DEBT_TRANSFER,
+            ScaledTokenEventType.DEBT_INTEREST_BURN,
+            ScaledTokenEventType.DEBT_INTEREST_MINT,
+            ScaledTokenEventType.GHO_DEBT_BURN,
+            ScaledTokenEventType.GHO_DEBT_MINT,
+            ScaledTokenEventType.GHO_DEBT_TRANSFER,
+            ScaledTokenEventType.GHO_DEBT_INTEREST_BURN,
+            ScaledTokenEventType.GHO_DEBT_INTEREST_MINT,
+        }
 
     @property
     def is_burn(self) -> bool:
-        return self.event_type.endswith("burn")
+        return self.event_type in {
+            ScaledTokenEventType.COLLATERAL_BURN,
+            ScaledTokenEventType.COLLATERAL_INTEREST_BURN,
+            ScaledTokenEventType.DEBT_BURN,
+            ScaledTokenEventType.DEBT_INTEREST_BURN,
+            ScaledTokenEventType.GHO_DEBT_BURN,
+            ScaledTokenEventType.GHO_DEBT_INTEREST_BURN,
+        }
 
 
 @dataclass(frozen=True)
@@ -1220,7 +1244,7 @@ class TransactionOperationsParser:
 
         reserve = decode_address(borrow_event["topics"][1])
         on_behalf_of = decode_address(borrow_event["topics"][2])
-        _user, borrow_amount, _interest_rate_mode, _borrow_rate = eth_abi.abi.decode(
+        _, borrow_amount, _, _ = eth_abi.abi.decode(
             types=["address", "uint256", "uint8", "uint256"],
             data=borrow_event["data"],
         )
@@ -1258,7 +1282,10 @@ class TransactionOperationsParser:
             break
 
         if debt_mint is None:
-            msg = f"Could not create BORROW operation for event {borrow_event}, looked for match of value {borrow_amount}"
+            msg = (
+                f"Could not create BORROW operation for event {borrow_event}, looked for match of "
+                f"value {borrow_amount}"
+            )
             raise ValueError(msg)
 
         op_type = OperationType.GHO_BORROW if is_gho else OperationType.BORROW
@@ -2001,23 +2028,21 @@ class TransactionOperationsParser:
             # deposit
             transfer_events = []
             for transfer_ev in scaled_events:
-                if (
+                if all([
                     transfer_ev.event_type
                     in {
                         ScaledTokenEventType.COLLATERAL_TRANSFER,
                         ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
-                    }  # noqa:PLR0916
-                    and transfer_ev.from_address == ZERO_ADDRESS
-                    and transfer_ev.target_address == ev.user_address
-                    and transfer_ev.event["address"] == ev.event["address"]
-                    and transfer_ev.event["logIndex"] not in assigned_indices
-                    and transfer_ev.event["logIndex"] not in local_assigned
-                    and (
-                        # For pure interest, Transfer amount matches Mint amount
-                        # For deposit + interest, Transfer amount may be less than Mint amount
-                        transfer_ev.amount == ev.amount or transfer_ev.amount < ev.amount
-                    )
-                ):
+                    },
+                    transfer_ev.from_address == ZERO_ADDRESS,
+                    transfer_ev.target_address == ev.user_address,
+                    transfer_ev.event["address"] == ev.event["address"],
+                    transfer_ev.event["logIndex"] not in assigned_indices,
+                    transfer_ev.event["logIndex"] not in local_assigned,
+                    # For pure interest, Transfer amount matches Mint amount
+                    # For deposit + interest, Transfer amount may be less than Mint amount
+                    transfer_ev.amount == ev.amount or transfer_ev.amount < ev.amount,
+                ]):
                     transfer_events.append(transfer_ev.event)
                     local_assigned.add(transfer_ev.event["logIndex"])
                     break  # Only match one transfer per mint

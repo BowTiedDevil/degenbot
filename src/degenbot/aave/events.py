@@ -1,12 +1,14 @@
 """Aave V3 event topic hashes."""
 
-from enum import Enum, StrEnum, auto
+from enum import Enum, auto
 
 from hexbytes import HexBytes
 
 
-class ScaledTokenEventType(StrEnum):
-    """Types of scaled token events."""
+class ScaledTokenEventType(Enum):
+    """
+    Types of scaled token events.
+    """
 
     COLLATERAL_MINT = auto()
     COLLATERAL_BURN = auto()
@@ -20,6 +22,13 @@ class ScaledTokenEventType(StrEnum):
     GHO_DEBT_BURN = auto()
     GHO_DEBT_TRANSFER = auto()
     DISCOUNT_TRANSFER = auto()
+    # Interest accrual event types (derived during enrichment)
+    COLLATERAL_INTEREST_MINT = auto()
+    COLLATERAL_INTEREST_BURN = auto()
+    DEBT_INTEREST_MINT = auto()
+    DEBT_INTEREST_BURN = auto()
+    GHO_DEBT_INTEREST_MINT = auto()
+    GHO_DEBT_INTEREST_BURN = auto()
 
 
 class AaveV3PoolEvent(Enum):

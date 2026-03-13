@@ -109,7 +109,7 @@ class ScaledEventEnricher:
                     token_revision=token_revision,
                 )
                 scaled_amount = calculator.calculate(
-                    event_type=scaled_event.event_type.value,
+                    event_type=scaled_event.event_type,
                     raw_amount=raw_amount,
                     index=scaled_event.index,
                 )
@@ -141,7 +141,7 @@ class ScaledEventEnricher:
                 raise EnrichmentError(msg)
 
             scaled_amount = calculator.calculate(
-                event_type=scaled_event.event_type.value,
+                event_type=scaled_event.event_type,
                 raw_amount=raw_amount,
                 index=scaled_event.index,
             )
@@ -273,30 +273,30 @@ class ScaledEventEnricher:
 
         enriched_class = class_map.get(event_type)
         if enriched_class is None:
-            msg = f"Unknown event type: {event_type.value}"
+            msg = f"Unknown event type: {event_type}"
             raise EnrichmentError(msg)
 
         # Build base kwargs (common to all event types)
-        # For interest accrual, get the correct event_type from the class
+        # For interest accrual, map to the interest-specific event type
         if is_interest_accrual:
-            # Map the event_type to interest-specific event type strings
-            # (values are Literal strings used by Pydantic models)
-            interest_event_type_map: dict[ScaledTokenEventType, str] = {
-                ScaledTokenEventType.COLLATERAL_MINT: "collateral_interest_mint",
-                ScaledTokenEventType.COLLATERAL_BURN: "collateral_interest_burn",
-                ScaledTokenEventType.DEBT_MINT: "debt_interest_mint",
-                ScaledTokenEventType.DEBT_BURN: "debt_interest_burn",
-                ScaledTokenEventType.GHO_DEBT_MINT: "gho_debt_interest_mint",
-                ScaledTokenEventType.GHO_DEBT_BURN: "gho_debt_interest_burn",
+            interest_event_type_map: dict[ScaledTokenEventType, ScaledTokenEventType] = {
+                ScaledTokenEventType.COLLATERAL_MINT: ScaledTokenEventType.COLLATERAL_INTEREST_MINT,
+                ScaledTokenEventType.COLLATERAL_BURN: ScaledTokenEventType.COLLATERAL_INTEREST_BURN,
+                ScaledTokenEventType.DEBT_MINT: ScaledTokenEventType.DEBT_INTEREST_MINT,
+                ScaledTokenEventType.DEBT_BURN: ScaledTokenEventType.DEBT_INTEREST_BURN,
+                ScaledTokenEventType.GHO_DEBT_MINT: ScaledTokenEventType.GHO_DEBT_INTEREST_MINT,
+                ScaledTokenEventType.GHO_DEBT_BURN: ScaledTokenEventType.GHO_DEBT_INTEREST_BURN,
             }
-            actual_event_type = interest_event_type_map.get(event_type, event_type.value)
+            actual_event_type = interest_event_type_map.get(event_type, event_type)
         else:
-            # Map ERC20 transfer types to their base types for Pydantic models
-            event_type_map: dict[ScaledTokenEventType, str] = {
-                ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER: "collateral_transfer",
-                ScaledTokenEventType.ERC20_DEBT_TRANSFER: "debt_transfer",
+            # Map ERC20 transfer types to their base types
+            event_type_map: dict[ScaledTokenEventType, ScaledTokenEventType] = {
+                ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER: (
+                    ScaledTokenEventType.COLLATERAL_TRANSFER
+                ),
+                ScaledTokenEventType.ERC20_DEBT_TRANSFER: ScaledTokenEventType.DEBT_TRANSFER,
             }
-            actual_event_type = event_type_map.get(event_type, event_type.value)
+            actual_event_type = event_type_map.get(event_type, event_type)
 
         kwargs: dict[str, Any] = {
             "event": scaled_event.event,

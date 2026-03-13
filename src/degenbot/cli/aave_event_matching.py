@@ -10,14 +10,9 @@ from typing import TYPE_CHECKING, Protocol
 from eth_abi.abi import decode
 from web3.types import LogReceipt
 
-from degenbot.aave.events import AaveV3PoolEvent
+from degenbot.aave.events import AaveV3PoolEvent, ScaledTokenEventType
 from degenbot.aave.models import EnrichedScaledTokenEvent
-from degenbot.cli.aave_transaction_operations import (
-    Operation,
-    OperationType,
-    ScaledTokenEvent,
-    ScaledTokenEventType,
-)
+from degenbot.cli.aave_transaction_operations import Operation, OperationType, ScaledTokenEvent
 
 if TYPE_CHECKING:
     from degenbot.aave.enrichment import ScaledEventEnricher
@@ -149,35 +144,50 @@ class OperationAwareEventMatcher:
             enriched_event=enriched_event,
         )
 
-    def _match_supply(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
+    def _match_supply(
+        self,
+        scaled_event: ScaledTokenEvent,  # noqa: ARG002
+    ) -> tuple[LogReceipt | None, bool]:
         """
         Match supply operation.
         """
 
         return (self.operation.pool_event, True)
 
-    def _match_withdraw(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
+    def _match_withdraw(
+        self,
+        scaled_event: ScaledTokenEvent,  # noqa: ARG002
+    ) -> tuple[LogReceipt | None, bool]:
         """
         Match withdraw operation.
         """
 
         return (self.operation.pool_event, True)
 
-    def _match_borrow(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
+    def _match_borrow(
+        self,
+        scaled_event: ScaledTokenEvent,  # noqa: ARG002
+    ) -> tuple[LogReceipt | None, bool]:
         """
         Match borrow operation.
         """
 
         return (self.operation.pool_event, True)
 
-    def _match_gho_borrow(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
+    def _match_gho_borrow(
+        self,
+        scaled_event: ScaledTokenEvent,  # noqa: ARG002
+    ) -> tuple[LogReceipt | None, bool]:
         """
         Match GHO borrow operation.
         """
 
         return (self.operation.pool_event, True)
 
-    def _match_repay(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
+    def _match_repay(
+        self,
+        scaled_event: ScaledTokenEvent,  # noqa: ARG002
+    ) -> tuple[LogReceipt | None, bool]:
         """
         Match repay operation.
         """
@@ -192,7 +202,8 @@ class OperationAwareEventMatcher:
         return (self.operation.pool_event, should_consume)
 
     def _match_repay_with_atokens(
-        self, scaled_event: ScaledTokenEvent
+        self,
+        scaled_event: ScaledTokenEvent,  # noqa: ARG002
     ) -> tuple[LogReceipt | None, bool]:
         """
         Match repay with aTokens operation.
@@ -206,14 +217,20 @@ class OperationAwareEventMatcher:
 
         return (self.operation.pool_event, False)
 
-    def _match_gho_repay(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
+    def _match_gho_repay(
+        self,
+        scaled_event: ScaledTokenEvent,  # noqa: ARG002
+    ) -> tuple[LogReceipt | None, bool]:
         """
         Match GHO repay operation.
         """
 
         return (self.operation.pool_event, True)
 
-    def _match_liquidation(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
+    def _match_liquidation(
+        self,
+        scaled_event: ScaledTokenEvent,  # noqa: ARG002
+    ) -> tuple[LogReceipt | None, bool]:
         """
         Match liquidation operation.
 
@@ -227,7 +244,8 @@ class OperationAwareEventMatcher:
         return (self.operation.pool_event, False)
 
     def _match_gho_liquidation(
-        self, scaled_event: ScaledTokenEvent
+        self,
+        scaled_event: ScaledTokenEvent,  # noqa: ARG002
     ) -> tuple[LogReceipt | None, bool]:
         """
         Match GHO liquidation operation.
@@ -237,7 +255,10 @@ class OperationAwareEventMatcher:
 
         return (self.operation.pool_event, False)
 
-    def _match_flash_loan(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
+    def _match_flash_loan(
+        self,
+        scaled_event: ScaledTokenEvent,  # noqa: ARG002
+    ) -> tuple[LogReceipt | None, bool]:
         """
         Match flash loan (DEFICIT_CREATED) operation.
         """
@@ -245,7 +266,8 @@ class OperationAwareEventMatcher:
         return (self.operation.pool_event, False)
 
     def _match_interest_accrual(
-        self, scaled_event: ScaledTokenEvent
+        self,
+        scaled_event: ScaledTokenEvent,  # noqa: ARG002
     ) -> tuple[LogReceipt | None, bool]:
         """
         Match interest accrual operation.
@@ -259,7 +281,8 @@ class OperationAwareEventMatcher:
         return (self.operation.pool_event, False)
 
     def _match_balance_transfer(
-        self, scaled_event: ScaledTokenEvent
+        self,
+        scaled_event: ScaledTokenEvent,  # noqa: ARG002
     ) -> tuple[LogReceipt | None, bool]:
         """
         Match balance transfer operation.
@@ -270,7 +293,10 @@ class OperationAwareEventMatcher:
 
         return (self.operation.pool_event, False)
 
-    def _default_match(self, scaled_event: ScaledTokenEvent) -> tuple[LogReceipt | None, bool]:
+    def _default_match(
+        self,
+        scaled_event: ScaledTokenEvent,  # noqa: ARG002
+    ) -> tuple[LogReceipt | None, bool]:
         """
         Default matching for unknown operation types.
         """

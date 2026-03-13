@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 
+from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.libraries.token_math import TokenMathFactory
 from degenbot.aave.models import EnrichmentError
 
@@ -21,7 +22,7 @@ class ScaledAmountCalculator:
 
     def calculate(
         self,
-        event_type: str,
+        event_type: ScaledTokenEventType,
         raw_amount: int,
         index: int,
     ) -> int:
@@ -42,16 +43,20 @@ class ScaledAmountCalculator:
         method = self._get_calculation_method(event_type)
         return method(raw_amount, index)
 
-    def _get_calculation_method(self, event_type: str) -> Callable[[int, int], int]:
+    def _get_calculation_method(
+        self, event_type: ScaledTokenEventType
+    ) -> Callable[[int, int], int]:
         """Get the appropriate TokenMath method for this event type."""
-        method_map: dict[str, Callable[[int, int], int]] = {
-            "collateral_mint": self.token_math.get_collateral_mint_scaled_amount,
-            "collateral_burn": self.token_math.get_collateral_burn_scaled_amount,
-            "collateral_transfer": self.token_math.get_collateral_transfer_scaled_amount,
-            "debt_mint": self.token_math.get_debt_mint_scaled_amount,
-            "debt_burn": self.token_math.get_debt_burn_scaled_amount,
-            "gho_debt_mint": self.token_math.get_debt_mint_scaled_amount,
-            "gho_debt_burn": self.token_math.get_debt_burn_scaled_amount,
+        method_map: dict[ScaledTokenEventType, Callable[[int, int], int]] = {
+            ScaledTokenEventType.COLLATERAL_MINT: self.token_math.get_collateral_mint_scaled_amount,
+            ScaledTokenEventType.COLLATERAL_BURN: self.token_math.get_collateral_burn_scaled_amount,
+            ScaledTokenEventType.COLLATERAL_TRANSFER: (
+                self.token_math.get_collateral_transfer_scaled_amount
+            ),
+            ScaledTokenEventType.DEBT_MINT: self.token_math.get_debt_mint_scaled_amount,
+            ScaledTokenEventType.DEBT_BURN: self.token_math.get_debt_burn_scaled_amount,
+            ScaledTokenEventType.GHO_DEBT_MINT: self.token_math.get_debt_mint_scaled_amount,
+            ScaledTokenEventType.GHO_DEBT_BURN: self.token_math.get_debt_burn_scaled_amount,
         }
 
         method = method_map.get(event_type)
@@ -60,7 +65,7 @@ class ScaledAmountCalculator:
             raise EnrichmentError(msg)
         return method
 
-    def get_method_name(self, event_type: str) -> str:
+    def get_method_name(self, event_type: ScaledTokenEventType) -> str:
         """Get the TokenMath method name for debugging."""
         method = self._get_calculation_method(event_type)
         return method.__name__
