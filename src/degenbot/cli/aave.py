@@ -106,6 +106,7 @@ class UserOperation(Enum):
     STKAAVE_TRANSFER = "stkAAVE TRANSFER"
 
 
+GHO_TOKEN_ADDRESS = get_checksum_address("0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f")
 GHO_VARIABLE_DEBT_TOKEN_ADDRESS = get_checksum_address("0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B")
 
 
@@ -236,23 +237,23 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
                 )
             )
 
-            # Create GHO token entry if it doesn't exist. GHO tokens are chain-unique, so we create
-            # a single entry that all markets on this chain will share.
-            gho_token = _get_or_create_erc20_token(
+            # GHO tokens are chain-unique, so create a single entry that all markets on this chain
+            # will share.
+            gho_asset_token = _get_or_create_erc20_token(
                 session=session,
                 chain_id=market.chain_id,
-                token_address=GHO_VARIABLE_DEBT_TOKEN_ADDRESS,
+                token_address=GHO_TOKEN_ADDRESS,
             )
 
             if (
                 session.scalar(
                     select(AaveGhoToken).where(
-                        AaveGhoToken.token_id == gho_token.id,
+                        AaveGhoToken.token_id == gho_asset_token.id,
                     )
                 )
                 is None
             ):
-                session.add(AaveGhoToken(token_id=gho_token.id))
+                session.add(AaveGhoToken(token_id=gho_asset_token.id))
 
         session.commit()
 
@@ -568,7 +569,8 @@ def aave_update(
                     )
                     logger.info(f"Created database backup at block {working_end_block:,}")
 
-                _cleanup_zero_balance_positions(session=session, market=market)
+                for market in markets_to_update:
+                    _cleanup_zero_balance_positions(session=session, market=market)
 
                 markets_to_update.clear()
                 session.commit()
@@ -685,6 +687,15 @@ def _process_asset_initialization_event(
         )
     )
     logger.info(f"Added new Aave V3 asset: {asset_address}")
+
+    # If this is the GHO asset, update the GHO token entry with the vToken reference
+    if asset_address == GHO_TOKEN_ADDRESS:
+        gho_token_entry = session.scalar(
+            select(AaveGhoToken).where(AaveGhoToken.token_id == erc20_token_in_db.id)
+        )
+        if gho_token_entry is not None and gho_token_entry.v_token_id is None:
+            gho_token_entry.v_token_id = v_token.id
+            logger.info(f"Updated AaveGhoToken v_token_id to {v_token.id} ({v_token_address})")
 
 
 def _process_user_e_mode_set_event(
@@ -1313,13 +1324,12 @@ def _get_gho_asset(
 ) -> AaveGhoToken:
     """
     Get GHO token asset for a given market.
-
-    GHO tokens are chain-unique: multiple Aave markets on the same chain share
-    a single GHO token. Query by chain_id to retrieve the shared configuration.
     """
 
     gho_asset = session.scalar(
-        select(AaveGhoToken).join(Erc20TokenTable).where(Erc20TokenTable.chain == market.chain_id)
+        select(AaveGhoToken)
+        .join(AaveGhoToken.token)
+        .where(Erc20TokenTable.chain == market.chain_id)
     )
     if gho_asset is None:
         msg = (
@@ -1343,11 +1353,15 @@ def _fetch_discount_token_from_contract(
     and no DISCOUNT_TOKEN_UPDATED events exist in the current block range.
     """
 
+    # If v_token is not set (e.g., before vToken deployment), return None
+    if gho_asset.v_token is None:
+        return None
+
     try:
         # GHO vToken has a getDiscountToken() function
         (discount_token,) = raw_call(
             w3=w3,
-            address=gho_asset.token.address,
+            address=gho_asset.v_token.address,
             calldata=encode_function_calldata(
                 function_prototype="getDiscountToken()",
                 function_arguments=[],

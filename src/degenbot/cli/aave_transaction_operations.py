@@ -478,7 +478,7 @@ class TransactionOperationsParser:
         # Check for GHO Discount Token
         gho_asset = self.session.scalar(
             select(AaveGhoToken)
-            .join(Erc20TokenTable)
+            .join(AaveGhoToken.token)
             .where(Erc20TokenTable.chain == self.market.chain_id)
         )
         if gho_asset is not None and token_address == gho_asset.v_gho_discount_token:

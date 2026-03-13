@@ -288,6 +288,7 @@ class AaveGhoToken(Base):
     id: Mapped[PrimaryKeyInt]
     token_id: Mapped[ForeignKeyTokenId]
 
+    v_token_id: Mapped[ForeignKeyTokenId | None]
     v_gho_discount_rate_strategy: Mapped[Address | None]
     v_gho_discount_token: Mapped[Address | None]
 
@@ -295,4 +296,8 @@ class AaveGhoToken(Base):
     token: Mapped["Erc20TokenTable"] = relationship(
         "Erc20TokenTable",
         foreign_keys="AaveGhoToken.token_id",
+    )
+    v_token: Mapped["Erc20TokenTable | None"] = relationship(
+        "Erc20TokenTable",
+        foreign_keys="AaveGhoToken.v_token_id",
     )
