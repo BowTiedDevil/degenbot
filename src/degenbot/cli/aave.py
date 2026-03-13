@@ -800,10 +800,7 @@ def _process_discount_rate_strategy_updated_event(
 def _get_or_init_stk_aave_balance(
     *,
     user: AaveV3User,
-    discount_token: ChecksumAddress | None,
-    block_number: int,
-    w3: Web3,
-    tx_context: TransactionContext | None = None,
+    tx_context: TransactionContext,
     log_index: int | None = None,
 ) -> int:
     """
@@ -812,11 +809,13 @@ def _get_or_init_stk_aave_balance(
     If the balance is unknown, perform a contract call at the previous block to ensure
     the balance check is performed before any events in the current block are processed.
 
-    When tx_context and log_index are provided and there are pending stkAAVE transfers
-    for this user (transfers with log_index > current log_index), returns the predicted
-    balance including the pending delta. This handles the reentrancy case where the GHO
+    When log_index is provided and there are pending stkAAVE transfers for this user
+    (transfers with log_index > current log_index), returns the predicted balance
+    including the pending delta. This handles the reentrancy case where the GHO
     debt token contract sees the post-transfer balance before the Transfer event is emitted.
     """
+
+    discount_token = tx_context.gho_asset.v_gho_discount_token
 
     # If discount_token is None (revision 4+), return 0
     if discount_token is None:
@@ -825,14 +824,14 @@ def _get_or_init_stk_aave_balance(
     if user.stk_aave_balance is None:
         balance: int
         (balance,) = raw_call(
-            w3=w3,
+            w3=tx_context.w3,
             address=discount_token,
             calldata=encode_function_calldata(
                 function_prototype="balanceOf(address)",
                 function_arguments=[user.address],
             ),
             return_types=["uint256"],
-            block_identifier=block_number - 1,
+            block_identifier=tx_context.block_number - 1,
         )
         user.stk_aave_balance = balance
 
@@ -841,12 +840,7 @@ def _get_or_init_stk_aave_balance(
     # Check if we need to account for pending transfers due to reentrancy
     # This happens when stkAAVE is transferred during GHO discount updates,
     # and the GHO contract sees the post-transfer balance before the Transfer event
-    if (
-        tx_context is not None
-        and log_index is not None
-        and user.address in tx_context.stk_aave_transfer_users
-        and discount_token is not None
-    ):
+    if log_index is not None and user.address in tx_context.stk_aave_transfer_users:
         pending_delta = tx_context.get_pending_stk_aave_delta_at_log_index(
             user_address=user.address,
             log_index=log_index,
@@ -926,16 +920,12 @@ def _process_stk_aave_transfer_event(
     if from_user is not None and from_user.stk_aave_balance is None:
         _get_or_init_stk_aave_balance(
             user=from_user,
-            discount_token=tx_context.gho_asset.v_gho_discount_token,
-            block_number=event["blockNumber"],
-            w3=tx_context.w3,
+            tx_context=tx_context,
         )
     if to_user is not None and to_user.stk_aave_balance is None:
         _get_or_init_stk_aave_balance(
             user=to_user,
-            discount_token=tx_context.gho_asset.v_gho_discount_token,
-            block_number=event["blockNumber"],
-            w3=tx_context.w3,
+            tx_context=tx_context,
         )
 
     # Apply balance changes
@@ -2977,9 +2967,6 @@ def _process_debt_mint_with_match(
         ):
             discount_token_balance = _get_or_init_stk_aave_balance(
                 user=user,
-                discount_token=tx_context.gho_asset.v_gho_discount_token,
-                block_number=scaled_event.event["blockNumber"],
-                w3=tx_context.w3,
                 tx_context=tx_context,
                 log_index=scaled_event.event["logIndex"],
             )
@@ -3123,9 +3110,6 @@ def _process_debt_burn_with_match(
         ):
             discount_token_balance = _get_or_init_stk_aave_balance(
                 user=user,
-                discount_token=tx_context.gho_asset.v_gho_discount_token,
-                block_number=scaled_event.event["blockNumber"],
-                w3=tx_context.w3,
                 tx_context=tx_context,
                 log_index=scaled_event.event["logIndex"],
             )
