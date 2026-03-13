@@ -2258,6 +2258,12 @@ def _process_operation(
     """Process a single operation."""
     logger.debug(f"Processing _process_operation for tx at block {tx_context.block_number}")
 
+    # Skip stkAAVE transfers - they're pre-processed separately before operations
+    # to ensure stkAAVE balances are up-to-date when GHO operations calculate
+    # discount rates. They should not be processed again here.
+    if operation.operation_type == OperationType.STKAAVE_TRANSFER:
+        return
+
     # Create enricher and matcher for this operation
     enricher = ScaledEventEnricher(
         pool_revision=tx_context.pool_revision,
