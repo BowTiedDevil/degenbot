@@ -581,7 +581,6 @@ class TransactionOperationsParser:
             )
 
         block_number = events[0]["blockNumber"]
-        self._current_tx_hash = tx_hash
 
         # Step 1: Identify pool events (anchors for operations)
         pool_events = self._extract_pool_events(events)
@@ -662,7 +661,7 @@ class TransactionOperationsParser:
 
         # Step 5: Validate all operations
         for op in operations:
-            self._validate_operation(op)
+            self._validate_operation(op, tx_hash)
 
         return TransactionOperations(
             tx_hash=tx_hash,
@@ -2373,7 +2372,7 @@ class TransactionOperationsParser:
 
         return operations
 
-    def _validate_operation(self, op: Operation) -> None:
+    def _validate_operation(self, op: Operation, tx_hash: HexBytes) -> None:
         """Strict validation of operation completeness."""
         errors = []
 
@@ -2411,7 +2410,7 @@ class TransactionOperationsParser:
                     f"Operation {op.operation_id} ({op.operation_type.name}) validation failed:\n"
                     + "\n".join(errors)
                 ),
-                tx_hash=self._current_tx_hash,
+                tx_hash=tx_hash,
                 events=op.get_all_events(),
                 operations=[op],
             )
