@@ -117,8 +117,6 @@ class UserOperation(Enum):
 
 FULL_VERIFICATION_INTERVAL = 250_000
 
-event_in_process: LogReceipt
-
 
 class WadRayMathLibrary(Protocol):
     def ray_div(self, a: int, b: int) -> int: ...
@@ -132,11 +130,7 @@ def _extract_user_addresses_from_transaction(events: list[LogReceipt]) -> set[Ch
     This is used for batch prefetching users to avoid N+1 queries during
     transaction processing.
     """
-
-    user_addresses: set[ChecksumAddress] = set()
-    for event in events:
-        user_addresses.update(_extract_user_addresses_from_event(event))
-    return user_addresses
+    return {address for event in events for address in _extract_user_addresses_from_event(event)}
 
 
 def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress]:
@@ -744,6 +738,7 @@ def _process_user_e_mode_set_event(
         tx_context=tx_context,
         user_address=user_address,
         block_number=event["blockNumber"],
+        tx_hash=event["transactionHash"],
     )
     user.e_mode = e_mode
 
@@ -905,11 +900,14 @@ def _process_stk_aave_transfer_event(
     block_number = event["blockNumber"]
     assert block_number is not None
 
+    tx_hash = event["transactionHash"]
+
     from_user = (
         _get_or_create_user(
             tx_context=tx_context,
             user_address=from_address,
             block_number=block_number,
+            tx_hash=tx_hash,
         )
         if from_address != ZERO_ADDRESS
         else None
@@ -919,6 +917,7 @@ def _process_stk_aave_transfer_event(
             tx_context=tx_context,
             user_address=to_address,
             block_number=block_number,
+            tx_hash=tx_hash,
         )
         if to_address != ZERO_ADDRESS
         else None
@@ -1140,6 +1139,7 @@ def _get_gho_vtoken_revision(
     gho_asset = _get_gho_asset(session, market)
     if gho_asset.v_token is None:
         return None
+
     return session.scalar(
         select(AaveV3Asset.v_token_revision)
         .join(Erc20TokenTable, AaveV3Asset.v_token_id == Erc20TokenTable.id)
@@ -1264,6 +1264,7 @@ def _get_or_create_user(
     tx_context: TransactionContext,
     user_address: ChecksumAddress,
     block_number: int,
+    tx_hash: HexBytes | None = None,
 ) -> AaveV3User:
     """
     Get existing user or create new one with default e_mode.
@@ -1341,15 +1342,10 @@ def _get_or_create_user(
 
     # Log user creation to structured debug logger
     if aave_debug_logger.is_enabled():
-        tx_hash = (
-            event_in_process["transactionHash"]
-            if "event_in_process" in globals() and event_in_process is not None
-            else HexBytes("0x")
-        )
         aave_debug_logger.log_user_creation(
             user_address=user_address,
             block_number=block_number,
-            tx_hash=tx_hash,
+            tx_hash=tx_hash if tx_hash is not None else HexBytes("0x"),
             gho_discount=gho_discount,
             e_mode=0,
         )
@@ -1533,7 +1529,7 @@ def _fetch_discount_token_from_contract(
     and no DISCOUNT_TOKEN_UPDATED events exist in the current block range.
     """
 
-    # If v_token is not set (e.g., before vToken deployment), return None
+    # vToken not deployed yet
     if gho_asset.v_token is None:
         return None
 
@@ -2103,8 +2099,9 @@ def calculate_gho_discount_rate(
     Returns the discount rate in basis points (10000 = 100.00%).
     """
 
+    # These constants are taken from the contract
     gho_discounted_per_discount_token = 100 * 10**18
-    discount_rate_bps = 3000  # 30.00%
+    discount_rate_bps = 3000
     min_discount_token_balance = 10**15
     min_debt_token_balance = 10**18
 
@@ -2323,21 +2320,8 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         logger.error(f"Transaction validation failed: {e}")
         raise
 
-    # Sort operations by the logIndex of their pool event (if present) or first scaled token
-    # event to ensure chronological processing order. Pool events (REPAY, BORROW, etc.) should
-    # be processed before their associated INTEREST_ACCRUAL operations to ensure correct
-    # paybackAmount extraction. ref: Issue #0003 - Process REPAY before INTEREST_ACCRUAL
-    def get_sort_key(op: Operation) -> int:
-        if op.pool_event is not None:
-            return op.pool_event["logIndex"]
-        if op.scaled_token_events:
-            return min(ev.event["logIndex"] for ev in op.scaled_token_events)
-        return int(1e18)
-
-    sorted_operations = sorted(tx_operations.operations, key=get_sort_key)
-
     logger.debug(f"\n=== OPERATIONS FOR TX {tx_context.tx_hash.to_0x_hex()} ===")
-    for op in sorted_operations:
+    for op in tx_operations.operations:
         logger.debug(f"Operation {op.operation_id}: {op.operation_type.name}")
         if op.pool_event:
             logger.debug(f"  Pool event: logIndex={op.pool_event['logIndex']}")
@@ -2373,7 +2357,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
     # This ensures INTEREST_ACCRUAL collateral burns can use the original withdrawAmount to avoid
     # 1 wei rounding errors from reverse-calculating from Burn event values.
     # Note: REPAY paybackAmounts are now extracted during operation processing via extraction_data
-    for operation in sorted_operations:
+    for operation in tx_operations.operations:
         if (
             operation.operation_type == OperationType.WITHDRAW
             and operation.pool_event is not None
@@ -2387,7 +2371,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
             )
 
     # Process each operation
-    for operation in sorted_operations:
+    for operation in tx_operations.operations:
         logger.debug(
             f"Processing operation {operation.operation_id}: {operation.operation_type.name}"
         )
@@ -2637,6 +2621,7 @@ def _process_collateral_mint_with_match(
         tx_context=tx_context,
         user_address=scaled_event.user_address,
         block_number=scaled_event.event["blockNumber"],
+        tx_hash=event["transactionHash"],
     )
 
     token_address = get_checksum_address(scaled_event.event["address"])
@@ -2646,8 +2631,7 @@ def _process_collateral_mint_with_match(
         token_address=token_address,
     )
 
-    if collateral_asset is None:
-        return  # Skip unknown assets
+    assert collateral_asset
 
     # Get or create collateral position
     collateral_position = _get_or_create_collateral_position(
@@ -2716,6 +2700,7 @@ def _process_collateral_burn_with_match(
         tx_context=tx_context,
         user_address=scaled_event.user_address,
         block_number=scaled_event.event["blockNumber"],
+        tx_hash=event["transactionHash"],
     )
 
     # Get collateral asset
@@ -2726,8 +2711,7 @@ def _process_collateral_burn_with_match(
         token_address=token_address,
     )
 
-    if collateral_asset is None:
-        return  # Skip unknown assets
+    assert collateral_asset
 
     # Get collateral position
     collateral_position = _get_or_create_collateral_position(
@@ -2916,6 +2900,7 @@ def _process_debt_mint_with_match(
         tx_context=tx_context,
         user_address=scaled_event.user_address,
         block_number=scaled_event.event["blockNumber"],
+        tx_hash=event["transactionHash"],
     )
 
     token_address = get_checksum_address(scaled_event.event["address"])
@@ -2925,8 +2910,7 @@ def _process_debt_mint_with_match(
         token_address=token_address,
     )
 
-    if debt_asset is None:
-        return  # Skip unknown assets
+    assert debt_asset
 
     # Get or create debt position
     debt_position = _get_or_create_debt_position(
@@ -3063,6 +3047,7 @@ def _process_debt_burn_with_match(
         tx_context=tx_context,
         user_address=scaled_event.user_address,
         block_number=scaled_event.event["blockNumber"],
+        tx_hash=event["transactionHash"],
     )
 
     token_address = get_checksum_address(scaled_event.event["address"])
@@ -3242,9 +3227,8 @@ def _process_collateral_transfer(
         f"to={scaled_event.target_address}"
     )
 
-    # Skip if addresses are missing
-    if scaled_event.from_address is None or scaled_event.target_address is None:
-        return
+    assert scaled_event.from_address is not None
+    assert scaled_event.target_address is not None
 
     # Skip BalanceTransfer events that are tracked in balance_transfer_events
     # These will be handled by their paired ERC20 Transfer events
@@ -3319,6 +3303,7 @@ def _process_collateral_transfer(
         tx_context=tx_context,
         user_address=scaled_event.from_address,
         block_number=scaled_event.event["blockNumber"],
+        tx_hash=event["transactionHash"],
     )
 
     token_address = get_checksum_address(scaled_event.event["address"])
@@ -3458,6 +3443,7 @@ def _process_collateral_transfer(
                 tx_context=tx_context,
                 user_address=scaled_event.target_address,
                 block_number=scaled_event.event["blockNumber"],
+                tx_hash=event["transactionHash"],
             )
 
             recipient_position = _get_or_create_collateral_position(
@@ -3540,9 +3526,8 @@ def _process_debt_transfer(
 
     logger.debug(f"Processing _process_debt_transfer_with_match at block {event['blockNumber']}")
 
-    # Skip if addresses are missing
-    if scaled_event.from_address is None or scaled_event.target_address is None:
-        return
+    assert scaled_event.from_address is not None
+    assert scaled_event.target_address is not None
 
     # Skip transfers to zero address (burns) - these are handled by Burn events
     # Processing both Transfer(to=0) and Burn would result in double-counting
@@ -3555,15 +3540,12 @@ def _process_debt_transfer(
     if scaled_event.from_address == ZERO_ADDRESS:
         return
 
-    # Skip if addresses are missing
-    if scaled_event.from_address is None or scaled_event.target_address is None:
-        return
-
     # Get sender
     sender = _get_or_create_user(
         tx_context=tx_context,
         user_address=scaled_event.from_address,
         block_number=scaled_event.event["blockNumber"],
+        tx_hash=event["transactionHash"],
     )
 
     # Get debt asset
@@ -3574,8 +3556,7 @@ def _process_debt_transfer(
         token_address=token_address,
     )
 
-    if debt_asset is None:
-        return
+    assert debt_asset
 
     # Get sender's position
     sender_position = _get_or_create_debt_position(
@@ -3614,6 +3595,7 @@ def _process_debt_transfer(
             tx_context=tx_context,
             user_address=scaled_event.target_address,
             block_number=scaled_event.event["blockNumber"],
+            tx_hash=event["transactionHash"],
         )
 
         recipient_position = _get_or_create_debt_position(
@@ -3848,6 +3830,7 @@ def _process_discount_percent_updated_event(
         tx_context=tx_context,
         user_address=user_address,
         block_number=event["blockNumber"],
+        tx_hash=event["transactionHash"],
     )
 
     # With transaction-level processing, the discount is updated here
@@ -4465,11 +4448,6 @@ def update_aave_market(
                     show_progress=show_progress,
                     user_addresses=users_to_verify,
                 )
-
-        # Set global event reference for debugging
-        if tx_context.events:
-            global event_in_process  # noqa: PLW0603
-            event_in_process = tx_context.events[0]
 
         # Process entire transaction atomically with full context
         _process_transaction(tx_context=tx_context)
