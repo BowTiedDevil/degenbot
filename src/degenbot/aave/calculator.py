@@ -18,7 +18,7 @@ class ScaledAmountCalculator:
     def __init__(self, pool_revision: int, token_revision: int) -> None:
         self.pool_revision = pool_revision
         self.token_revision = token_revision
-        self.token_math = TokenMathFactory.get_token_math(pool_version=pool_revision)
+        self.token_math = TokenMathFactory.get_token_math_for_token_revision(token_revision)
 
     def calculate(
         self,

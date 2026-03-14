@@ -155,7 +155,7 @@ class IndexScaledEvent(BaseEnrichedScaledTokenEvent):
         scaled = self.scaled_amount
 
         # Calculate expected scaled amount
-        token_math = TokenMathFactory.get_token_math(pool_rev)
+        token_math = TokenMathFactory.get_token_math_for_token_revision(token_rev)
         method_name = _get_token_math_method(event_type)
         method = getattr(token_math, method_name)
 
