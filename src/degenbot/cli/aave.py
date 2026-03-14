@@ -1910,12 +1910,6 @@ def _verify_scaled_token_positions(
     Otherwise, verifies all users in the market.
     """
 
-    desc = (
-        "Verifying collateral positions"
-        if position_table is AaveV3CollateralPosition
-        else "Verifying debt positions"
-    )
-
     if user_addresses is not None and len(user_addresses) == 0:
         return
 
@@ -1937,7 +1931,11 @@ def _verify_scaled_token_positions(
 
     for user in tqdm.tqdm(
         users_to_verify,
-        desc=desc,
+        desc=(
+            "Verifying collateral positions"
+            if position_table is AaveV3CollateralPosition
+            else "Verifying debt positions"
+        ),
         leave=False,
         disable=not show_progress,
     ):
