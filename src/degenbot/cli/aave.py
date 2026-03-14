@@ -1857,7 +1857,6 @@ def _verify_all_positions(
         position_table=AaveV3CollateralPosition,
         block_number=block_number,
         show_progress=show_progress,
-        user_addresses=None,
     )
 
     # Verify all debt positions
@@ -1868,7 +1867,6 @@ def _verify_all_positions(
         position_table=AaveV3DebtPosition,
         block_number=block_number,
         show_progress=show_progress,
-        user_addresses=None,
     )
 
     # Get GHO asset for stkAAVE and discount verification
@@ -1882,7 +1880,6 @@ def _verify_all_positions(
         gho_asset=gho_asset,
         block_number=block_number,
         show_progress=show_progress,
-        user_addresses=None,
     )
 
     # Verify all GHO discount amounts
@@ -1893,7 +1890,6 @@ def _verify_all_positions(
         gho_asset=gho_asset,
         block_number=block_number,
         show_progress=show_progress,
-        user_addresses=None,
     )
 
 
@@ -4371,14 +4367,6 @@ def update_aave_market(
         gho_asset=gho_asset,
     )
 
-    # Build users by block for verification at block boundaries
-    users_by_block: dict[int, set[ChecksumAddress]] = {}
-    for event in all_events:
-        block_number = event["blockNumber"]
-        if block_number not in users_by_block:
-            users_by_block[block_number] = set()
-        users_by_block[block_number].update(_extract_user_addresses_from_event(event))
-
     # Sort transaction contexts chronologically by (block_number, first_event_log_index)
     sorted_tx_contexts = sorted(
         tx_contexts.values(),
@@ -4387,112 +4375,59 @@ def update_aave_market(
         ),
     )
 
-    last_verified_block: int | None = None
+    # Collect all users modified during this chunk for verification
+    users_modified: set[ChecksumAddress] = set()
 
-    # Process transactions chronologically, verifying at block boundaries
+    # Process transactions chronologically
     for tx_context in tqdm.tqdm(
         sorted_tx_contexts,
         desc="Processing transactions",
         leave=False,
         disable=not show_progress,
     ):
-        current_block = tx_context.block_number
-
-        # Log block boundary for debugging when entering a new block
-        if aave_debug_logger.is_enabled():
-            block_users = users_by_block.get(current_block, set())
-            aave_debug_logger.log_block_boundary(
-                block_number=current_block,
-                event_count=len([e for e in all_events if e["blockNumber"] == current_block]),
-                user_count=len(block_users),
-                user_addresses=[addr.lower() for addr in block_users],
-            )
-
-        # Verify users from the previous block before processing first transaction of new block
-        if verify and last_verified_block is not None and current_block != last_verified_block:
-            users_to_verify = users_by_block.get(last_verified_block, set())
-            if users_to_verify:
-                _verify_scaled_token_positions(
-                    w3=w3,
-                    market=market,
-                    session=session,
-                    position_table=AaveV3CollateralPosition,
-                    block_number=last_verified_block,
-                    show_progress=show_progress,
-                    user_addresses=users_to_verify,
-                )
-                _verify_scaled_token_positions(
-                    w3=w3,
-                    market=market,
-                    session=session,
-                    position_table=AaveV3DebtPosition,
-                    block_number=last_verified_block,
-                    show_progress=show_progress,
-                    user_addresses=users_to_verify,
-                )
-                _verify_stk_aave_balances(
-                    w3=w3,
-                    session=session,
-                    market=market,
-                    gho_asset=gho_asset,
-                    block_number=last_verified_block,
-                    show_progress=show_progress,
-                    user_addresses=users_to_verify,
-                )
-                _verify_gho_discount_amounts(
-                    w3=w3,
-                    session=session,
-                    market=market,
-                    gho_asset=gho_asset,
-                    block_number=last_verified_block,
-                    show_progress=show_progress,
-                    user_addresses=users_to_verify,
-                )
-
         # Process entire transaction atomically with full context
         _process_transaction(tx_context=tx_context)
 
-        last_verified_block = current_block
+        # Track users modified in this transaction
+        users_modified.update(tx_context.user_cache.keys())
 
-    # Perform final verification at chunk boundary for the last block
-    if verify and last_verified_block is not None:
-        users_to_verify = users_by_block.get(last_verified_block, set())
-        if users_to_verify:
-            _verify_scaled_token_positions(
-                w3=w3,
-                market=market,
-                session=session,
-                position_table=AaveV3CollateralPosition,
-                block_number=last_verified_block,
-                show_progress=show_progress,
-                user_addresses=users_to_verify,
-            )
-            _verify_scaled_token_positions(
-                w3=w3,
-                market=market,
-                session=session,
-                position_table=AaveV3DebtPosition,
-                block_number=last_verified_block,
-                show_progress=show_progress,
-                user_addresses=users_to_verify,
-            )
-            _verify_stk_aave_balances(
-                w3=w3,
-                session=session,
-                market=market,
-                gho_asset=gho_asset,
-                block_number=last_verified_block,
-                show_progress=show_progress,
-                user_addresses=users_to_verify,
-            )
-            _verify_gho_discount_amounts(
-                w3=w3,
-                session=session,
-                market=market,
-                gho_asset=gho_asset,
-                block_number=last_verified_block,
-                show_progress=show_progress,
-                user_addresses=users_to_verify,
-            )
+    # Perform verification at chunk boundary for all modified users
+    if verify and users_modified:
+        _verify_scaled_token_positions(
+            w3=w3,
+            market=market,
+            session=session,
+            position_table=AaveV3CollateralPosition,
+            block_number=end_block,
+            show_progress=show_progress,
+            user_addresses=users_modified,
+        )
+        _verify_scaled_token_positions(
+            w3=w3,
+            market=market,
+            session=session,
+            position_table=AaveV3DebtPosition,
+            block_number=end_block,
+            show_progress=show_progress,
+            user_addresses=users_modified,
+        )
+        _verify_stk_aave_balances(
+            w3=w3,
+            session=session,
+            market=market,
+            gho_asset=gho_asset,
+            block_number=end_block,
+            show_progress=show_progress,
+            user_addresses=users_modified,
+        )
+        _verify_gho_discount_amounts(
+            w3=w3,
+            session=session,
+            market=market,
+            gho_asset=gho_asset,
+            block_number=end_block,
+            show_progress=show_progress,
+            user_addresses=users_modified,
+        )
 
     logger.info(f"{market} successfully updated to block {end_block:,}")
