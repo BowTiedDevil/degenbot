@@ -21,6 +21,7 @@ from degenbot.aave.events import (
     ScaledTokenEventType,
 )
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.cli.aave_types import TokenType
 from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.database.models.aave import AaveGhoToken, AaveV3Asset, AaveV3Contract, AaveV3Market
@@ -451,7 +452,7 @@ class TransactionOperationsParser:
             raise ValueError(msg)
         return gho_asset
 
-    def _get_token_type(self, token_address: ChecksumAddress) -> str | None:
+    def _get_token_type(self, token_address: ChecksumAddress) -> TokenType | None:
         """
         Get token type (aToken or vToken) for a given token address.
 
@@ -461,7 +462,7 @@ class TransactionOperationsParser:
             token_address: The token address to look up.
 
         Returns:
-            "aToken", "vToken", "GHO Discount" or None if not found in market assets.
+            TokenType.A_TOKEN, TokenType.V_TOKEN, TokenType.GHO_DISCOUNT or None if not found.
         """
 
         token_address = get_checksum_address(token_address)
@@ -480,7 +481,7 @@ class TransactionOperationsParser:
             )
             is not None
         ):
-            return "aToken"
+            return TokenType.A_TOKEN
 
         # Check for vToken match
         if (
@@ -494,7 +495,7 @@ class TransactionOperationsParser:
             )
             is not None
         ):
-            return "vToken"
+            return TokenType.V_TOKEN
 
         # Check for GHO Discount Token
         gho_asset = self.session.scalar(
@@ -503,7 +504,7 @@ class TransactionOperationsParser:
             .where(Erc20TokenTable.chain == self.market.chain_id)
         )
         if gho_asset is not None and token_address == gho_asset.v_gho_discount_token:
-            return "GHO Discount Token"
+            return TokenType.GHO_DISCOUNT
 
         return None
 
@@ -746,14 +747,14 @@ class TransactionOperationsParser:
 
         # Determine event type based on token type
         token_address = get_checksum_address(event["address"])
-        if token_address == self.gho_token_address:
+        if token_address == self.gho_vtoken_address:
             event_type = ScaledTokenEventType.GHO_DEBT_MINT
         else:
             # Use token type lookup to determine if this is a collateral or debt mint
             token_type = self._get_token_type(token_address)
-            if token_type == "aToken":  # noqa:S105
+            if token_type == TokenType.A_TOKEN:
                 event_type = ScaledTokenEventType.COLLATERAL_MINT
-            elif token_type == "vToken":  # noqa:S105
+            elif token_type == TokenType.V_TOKEN:
                 event_type = ScaledTokenEventType.DEBT_MINT
             else:
                 msg = "Unknown token type!"
@@ -783,14 +784,14 @@ class TransactionOperationsParser:
 
         # Determine event type based on token type
         token_address = get_checksum_address(event["address"])
-        if token_address == self.gho_token_address:
+        if token_address == self.gho_vtoken_address:
             event_type = ScaledTokenEventType.GHO_DEBT_BURN
         else:
             # Use token type lookup to determine if this is a collateral or debt burn
             token_type = self._get_token_type(token_address)
-            if token_type == "aToken":  # noqa:S105
+            if token_type == TokenType.A_TOKEN:
                 event_type = ScaledTokenEventType.COLLATERAL_BURN
-            elif token_type == "vToken":  # noqa:S105
+            elif token_type == TokenType.V_TOKEN:
                 event_type = ScaledTokenEventType.DEBT_BURN
             else:
                 msg = "Unknown burn event!"
@@ -829,9 +830,9 @@ class TransactionOperationsParser:
         # Use token type lookup to determine if this is collateral or debt
         token_type = self._get_token_type(token_address)
 
-        if token_type == "aToken":  # noqa:S105
+        if token_type == TokenType.A_TOKEN:
             event_type = ScaledTokenEventType.COLLATERAL_TRANSFER
-        elif token_type == "vToken":  # noqa:S105
+        elif token_type == TokenType.V_TOKEN:
             event_type = ScaledTokenEventType.DEBT_TRANSFER
         else:
             msg = "Unknown token type!"
@@ -867,18 +868,18 @@ class TransactionOperationsParser:
 
         # Determine event type based on token type
         token_address = get_checksum_address(event["address"])
-        if token_address == self.gho_token_address:
+        if token_address == self.gho_vtoken_address:
             event_type = ScaledTokenEventType.GHO_DEBT_TRANSFER
         else:
             # Use token type lookup to determine if this is collateral or debt
             token_type = self._get_token_type(token_address)
-            if token_type == "aToken":  # noqa:S105
+            if token_type == TokenType.A_TOKEN:
                 # Standard ERC20 Transfer (not BalanceTransfer) - no index
                 event_type = ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER
-            elif token_type == "vToken":  # noqa:S105
+            elif token_type == TokenType.V_TOKEN:
                 # Standard ERC20 Transfer (not BalanceTransfer) - no index
                 event_type = ScaledTokenEventType.ERC20_DEBT_TRANSFER
-            elif token_type == "GHO Discount Token":  # noqa:S105
+            elif token_type == TokenType.GHO_DISCOUNT:
                 # This is active only when the GHO vToken discount mechanism is active
                 event_type = ScaledTokenEventType.DISCOUNT_TRANSFER
             else:

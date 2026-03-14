@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import Any
 
 import eth_abi
@@ -18,6 +19,14 @@ from degenbot.database.models.aave import (
     AaveV3Market,
     AaveV3User,
 )
+
+
+class TokenType(Enum):
+    """Token types in Aave V3."""
+
+    A_TOKEN = auto()
+    V_TOKEN = auto()
+    GHO_DISCOUNT = auto()
 
 
 @dataclass
