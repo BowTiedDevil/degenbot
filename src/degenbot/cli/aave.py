@@ -1922,15 +1922,24 @@ def _verify_scaled_token_positions(
             position_type=position_type,
         )
 
-    # Query users for this market
-    stmt = select(AaveV3User).where(AaveV3User.market_id == market.id)
+    stmt = (
+        select(position_table)
+        .join(AaveV3User)
+        .where(AaveV3User.market_id == market.id)
+        .options(
+            joinedload(position_table.user),
+            joinedload(position_table.asset).joinedload(AaveV3Asset.a_token),
+            joinedload(position_table.asset).joinedload(AaveV3Asset.v_token),
+        )
+    )
+
     if user_addresses is not None:
         stmt = stmt.where(AaveV3User.address.in_(user_addresses))
 
-    users_to_verify = session.scalars(stmt).all()
+    all_positions = session.scalars(stmt).all()
 
-    for user in tqdm.tqdm(
-        users_to_verify,
+    for position in tqdm.tqdm(
+        all_positions,
         desc=(
             "Verifying collateral positions"
             if position_table is AaveV3CollateralPosition
@@ -1939,62 +1948,52 @@ def _verify_scaled_token_positions(
         leave=False,
         disable=not show_progress,
     ):
-        if user.address in {DEAD_ADDRESS, ZERO_ADDRESS}:
+        if position.user.address in {DEAD_ADDRESS, ZERO_ADDRESS}:
             continue
 
-        positions = session.scalars(
-            select(position_table)
-            .where(position_table.user_id == user.id)
-            .options(
-                joinedload(position_table.asset).joinedload(AaveV3Asset.a_token),
-                joinedload(position_table.asset).joinedload(AaveV3Asset.v_token),
-            )
-        ).all()
+        position = cast("AaveV3CollateralPosition | AaveV3DebtPosition", position)
 
-        for position in positions:
-            position = cast("AaveV3CollateralPosition | AaveV3DebtPosition", position)
+        if position_table is AaveV3CollateralPosition:
+            token_address = get_checksum_address(position.asset.a_token.address)
+        elif position_table is AaveV3DebtPosition:
+            token_address = get_checksum_address(position.asset.v_token.address)
+        else:
+            msg = f"Unknown position table type: {position_table}"
+            raise ValueError(msg)
 
-            if position_table is AaveV3CollateralPosition:
-                token_address = get_checksum_address(position.asset.a_token.address)
-            elif position_table is AaveV3DebtPosition:
-                token_address = get_checksum_address(position.asset.v_token.address)
-            else:
-                msg = f"Unknown position table type: {position_table}"
-                raise ValueError(msg)
+        (actual_scaled_balance,) = raw_call(
+            w3=w3,
+            address=token_address,
+            calldata=encode_function_calldata(
+                function_prototype="scaledBalanceOf(address)",
+                function_arguments=[position.user.address],
+            ),
+            return_types=["uint256"],
+            block_identifier=block_number,
+        )
 
-            (actual_scaled_balance,) = raw_call(
-                w3=w3,
-                address=token_address,
-                calldata=encode_function_calldata(
-                    function_prototype="scaledBalanceOf(address)",
-                    function_arguments=[user.address],
-                ),
-                return_types=["uint256"],
-                block_identifier=block_number,
-            )
+        assert actual_scaled_balance == position.balance, (
+            f"Balance verification failure for {position.asset}. "
+            f"User {position.user} scaled balance ({position.balance}) does not match contract "
+            f"balance ({actual_scaled_balance}) at block {block_number}"
+        )
 
-            assert actual_scaled_balance == position.balance, (
-                f"Balance verification failure for {position.asset}. "
-                f"User {position.user} scaled balance ({position.balance}) does not match contract "
-                f"balance ({actual_scaled_balance}) at block {block_number}"
-            )
+        (actual_last_index,) = raw_call(
+            w3=w3,
+            address=token_address,
+            calldata=encode_function_calldata(
+                function_prototype="getPreviousIndex(address)",
+                function_arguments=[position.user.address],
+            ),
+            return_types=["uint256"],
+            block_identifier=block_number,
+        )
 
-            (actual_last_index,) = raw_call(
-                w3=w3,
-                address=token_address,
-                calldata=encode_function_calldata(
-                    function_prototype="getPreviousIndex(address)",
-                    function_arguments=[user.address],
-                ),
-                return_types=["uint256"],
-                block_identifier=block_number,
-            )
-
-            assert actual_last_index == position.last_index, (
-                f"Index verification failure for {position.asset}. "
-                f"User {position.user} last_index ({position.last_index}) does not match contract "
-                f"last_index ({actual_last_index}) at block {block_number}"
-            )
+        assert actual_last_index == position.last_index, (
+            f"Index verification failure for {position.asset}. "
+            f"User {position.user} last_index ({position.last_index}) does not match contract "
+            f"last_index ({actual_last_index}) at block {block_number}"
+        )
 
 
 def _process_scaled_token_operation(
