@@ -2458,7 +2458,7 @@ def _process_operation(
         token_revisions={},
         session=tx_context.session,
     )
-    matcher = OperationAwareEventMatcher(operation, enricher, tx_context)
+    matcher = OperationAwareEventMatcher(operation, enricher)
 
     # Log liquidation operations for debugging
     if operation.operation_type in {

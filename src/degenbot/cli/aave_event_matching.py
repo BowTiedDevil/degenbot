@@ -5,7 +5,7 @@ Aave V3 event matching framework.
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from eth_abi.abi import decode
 from web3.types import LogReceipt
@@ -16,17 +16,6 @@ from degenbot.cli.aave_transaction_operations import Operation, OperationType, S
 
 if TYPE_CHECKING:
     from degenbot.aave.enrichment import ScaledEventEnricher
-
-
-class TransactionContext(Protocol):
-    """
-    Protocol for transaction context.
-
-    Defines the interface needed by EventMatcher without importing
-    the actual TransactionContext class from aave.py (avoiding circular imports).
-    """
-
-    last_withdraw_amount: int
 
 
 class EventConsumptionPolicy(Enum):
@@ -82,18 +71,15 @@ class OperationAwareEventMatcher:
         self,
         operation: Operation,
         enricher: "ScaledEventEnricher",
-        tx_context: TransactionContext | None = None,
     ) -> None:
         """Initialize matcher with operation context.
 
         Args:
             operation: The operation containing the pool event and scaled events.
             enricher: The enricher to use for calculating scaled amounts.
-            tx_context: Optional transaction context for accessing stored values.
         """
         self.operation = operation
         self.enricher = enricher
-        self.tx_context = tx_context
 
     def find_match(self, scaled_event: ScaledTokenEvent) -> EventMatchResult:
         """
