@@ -32,11 +32,8 @@ def backup_sqlite_database(
         raise BackupExists(path=backup_path)
 
     # Get the underlying DBAPI connection for backup
-    with (
-        session.connection() as source_connection,
-        sqlite3.connect(backup_path) as backup_connection,
-    ):
-        raw_conn: sqlite3.Connection = source_connection.connection.driver_connection
+    with sqlite3.connect(backup_path) as backup_connection:
+        raw_conn: sqlite3.Connection = session.connection().connection.driver_connection
         raw_conn.backup(target=backup_connection)
 
         # Verify integrity of underlying database
