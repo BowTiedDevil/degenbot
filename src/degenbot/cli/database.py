@@ -2,7 +2,7 @@ import click
 
 from degenbot.cli import cli
 from degenbot.config import settings
-from degenbot.database import current_database_version, latest_database_version
+from degenbot.database import current_database_version, db_session, latest_database_version
 from degenbot.database.operations import (
     backup_sqlite_database,
     compact_sqlite_database,
@@ -21,18 +21,14 @@ def database() -> None:
 
 
 @database.command("backup")
-def database_backup(
-    prefix: str | None = None,
-    suffix: str | None = None,
-) -> None:
+def database_backup() -> None:
     """Back up the database."""
 
     try:
-        backup_sqlite_database(
-            settings.database.path,
-            prefix=prefix,
-            suffix=suffix,
-        )
+        with db_session() as session:
+            backup_sqlite_database(
+                session=session,
+            )
     except BackupExists as exc:
         user_confirm = click.confirm(
             f"An existing backup was found at {exc.path}. Do you want to replace it?",
@@ -40,11 +36,10 @@ def database_backup(
         )
         if user_confirm:
             exc.path.unlink()
-            backup_sqlite_database(
-                settings.database.path,
-                prefix=prefix,
-                suffix=suffix,
-            )
+            with db_session() as session:
+                backup_sqlite_database(
+                    session=session,
+                )
         else:
             raise click.Abort from None
 

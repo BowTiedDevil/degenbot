@@ -52,7 +52,6 @@ from degenbot.cli.aave_transaction_operations import (
 from degenbot.cli.aave_types import TransactionContext
 from degenbot.cli.aave_utils import decode_address
 from degenbot.cli.utils import get_web3_from_config
-from degenbot.config import settings
 from degenbot.constants import DEAD_ADDRESS, ERC_1967_IMPLEMENTATION_SLOT, ZERO_ADDRESS
 from degenbot.database import db_session
 from degenbot.database.models.aave import (
@@ -578,10 +577,9 @@ def aave_update(
 
                             session.commit()
                             backup_sqlite_database(
-                                settings.database.path,
+                                session=session,
                                 suffix=f"{working_end_block}",
                                 skip_confirmation=True,
-                                engine=session.bind,
                             )
                             logger.info(f"Created database backup at block {working_end_block:,}")
                         else:
