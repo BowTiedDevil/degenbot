@@ -198,6 +198,31 @@ GhoVariableDebtToken/
 - `POOL_REVISION()` for Pool contracts
 - `DEBT_TOKEN_REVISION()` for VariableDebtToken contracts
 
+### Execution Flow Diagrams
+
+**Location:** `docs/cli/aave_pool_flows.md`
+
+When debugging complex interactions or unexpected event sequences, reference the Mermaid flow diagrams which show:
+- Complete execution paths from Pool public functions through logic libraries
+- Event emission points and their triggers
+- Decision points and conditional logic
+- Library call chains and dependencies
+
+**Key diagrams for debugging:**
+- **Supply/Withdraw Flow** - Shows interest accrual handling and collateral validation
+- **Borrow/Repay Flow** - Shows isolation mode logic and debt token operations
+- **Liquidation Flow** - Complete liquidation path with collateral/debt handling
+- **Flash Loan Flow** - Shows callback pattern and debt vs repayment paths
+- **Library Dependencies** - Visual map of which libraries call which
+
+These diagrams help identify:
+- Which library emits a particular event
+- What validations run before state changes
+- Where amounts are scaled/unscaled
+- How interest accrual flows through the system
+
+**Tip:** If an event is missing or unexpected, trace backwards from the event in the diagram to find the conditions that trigger it.
+
 ---
 
 ### ERC20 Transfer vs BalanceTransfer Events

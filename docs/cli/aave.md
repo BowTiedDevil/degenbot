@@ -587,4 +587,296 @@ Mint/Burn events include:
 
 CLI derives storage amounts: `amountScaled = ray_div(user_amount, index)`
 
+---
+
+# Aave V3 Pool Contract - Function Flow Diagram
+
+## Overview
+This diagram traces all public functions in the Pool contract, showing their execution paths through various logic libraries and the events they emit.
+
+## 1. SUPPLY & WITHDRAW FLOW
+
+```
+supply() / supplyWithPermit()
+    ↓
+SupplyLogic.executeSupply()
+    ↓
+├── ReserveLogic.updateState()
+├── ValidationLogic.validateSupply()
+├── ReserveLogic.updateInterestRates()
+├── IERC20.safeTransferFrom() → aToken
+├── IAToken.mint()
+├── ValidationLogic.validateUseAsCollateral()
+└── UserConfiguration.setUsingAsCollateral()
+    ↓
+EMIT: Supply(), ReserveUsedAsCollateralEnabled
+
+withdraw()
+    ↓
+SupplyLogic.executeWithdraw()
+    ↓
+├── ReserveLogic.updateState()
+├── ValidationLogic.validateWithdraw()
+├── ReserveLogic.updateInterestRates()
+├── IAToken.burn()
+└── ValidationLogic.validateHFAndLtv()
+    ↓
+EMIT: Withdraw(), ReserveUsedAsCollateralDisabled
+```
+
+## 2. BORROW & REPAY FLOW
+
+```
+borrow()
+    ↓
+BorrowLogic.executeBorrow()
+    ↓
+├── ReserveLogic.updateState()
+├── ValidationLogic.validateBorrow()
+├── GenericLogic.calculateUserAccountData()
+├── IsolationModeLogic (if active)
+├── IStableDebtToken.mint() OR IVariableDebtToken.mint()
+├── UserConfiguration.setBorrowing()
+├── ReserveLogic.updateInterestRates()
+└── IAToken.transferUnderlyingTo()
+    ↓
+EMIT: Borrow(), IsolationModeTotalDebtUpdated
+
+repay() / repayWithPermit() / repayWithATokens()
+    ↓
+BorrowLogic.executeRepay()
+    ↓
+├── ReserveLogic.updateState()
+├── ValidationLogic.validateRepay()
+├── IStableDebtToken.burn() OR IVariableDebtToken.burn()
+├── IsolationModeLogic.updateIsolatedDebtIfIsolated()
+├── ReserveLogic.updateInterestRates()
+└── IAToken.burn() OR IERC20.safeTransferFrom()
+    ↓
+EMIT: Repay()
+```
+
+## 3. LIQUIDATION FLOW
+
+```
+liquidationCall()
+    ↓
+LiquidationLogic.executeLiquidationCall()
+    ↓
+├── ReserveLogic.updateState()
+├── GenericLogic.calculateUserAccountData()
+├── ValidationLogic.validateLiquidationCall()
+├── _calculateDebt()
+├── _getConfigurationData()
+├── _calculateAvailableCollateralToLiquidate()
+├── _burnDebtTokens() [IVariableDebtToken.burn() / IStableDebtToken.burn()]
+├── IsolationModeLogic.updateIsolatedDebtIfIsolated()
+├── ReserveLogic.updateInterestRates()
+├── _burnCollateralATokens() OR _liquidateATokens()
+└── IERC20.safeTransferFrom() (debt repayment)
+    ↓
+EMIT: LiquidationCall(), ReserveUsedAsCollateralDisabled, 
+      ReserveUsedAsCollateralEnabled (for liquidator)
+```
+
+## 4. FLASH LOAN FLOW
+
+```
+flashLoan()
+    ↓
+FlashLoanLogic.executeFlashLoan()
+    ↓
+├── ValidationLogic.validateFlashloan()
+├── IAToken.transferUnderlyingTo() (for each asset)
+├── IFlashLoanReceiver.executeOperation()
+│   └── Receiver callback
+└── IF interestRateMode == NONE:
+        _handleFlashLoanRepayment()
+        └── IERC20.safeTransferFrom()
+    ELSE:
+        BorrowLogic.executeBorrow()
+    ↓
+EMIT: FlashLoan()
+
+flashLoanSimple()
+    ↓
+FlashLoanLogic.executeFlashLoanSimple()
+    ↓
+├── ValidationLogic.validateFlashloanSimple()
+├── IAToken.transferUnderlyingTo()
+├── IFlashLoanSimpleReceiver.executeOperation()
+└── _handleFlashLoanRepayment()
+    ↓
+EMIT: FlashLoan()
+```
+
+## 5. RATE & COLLATERAL MANAGEMENT
+
+```
+swapBorrowRateMode()
+    ↓
+BorrowLogic.executeSwapBorrowRateMode()
+    ↓
+├── ReserveLogic.updateState()
+├── ValidationLogic.validateSwapRateMode()
+├── IStableDebtToken.burn()/mint() + IVariableDebtToken.mint()/burn()
+└── ReserveLogic.updateInterestRates()
+    ↓
+EMIT: SwapBorrowRateMode()
+
+rebalanceStableBorrowRate()
+    ↓
+BorrowLogic.executeRebalanceStableBorrowRate()
+    ↓
+├── ReserveLogic.updateState()
+├── ValidationLogic.validateRebalanceStableBorrowRate()
+├── IStableDebtToken.burn()/mint()
+└── ReserveLogic.updateInterestRates()
+    ↓
+EMIT: RebalanceStableBorrowRate()
+
+setUserUseReserveAsCollateral()
+    ↓
+SupplyLogic.executeUseReserveAsCollateral()
+    ↓
+├── ValidationLogic.validateSetUseReserveAsCollateral()
+├── ValidationLogic.validateUseAsCollateral() OR validateHFAndLtv()
+└── UserConfiguration.setUsingAsCollateral()
+    ↓
+EMIT: ReserveUsedAsCollateralEnabled/Disabled
+```
+
+## 6. EFFICIENCY MODE (eMode)
+
+```
+setUserEMode()
+    ↓
+EModeLogic.executeSetUserEMode()
+    ↓
+├── ValidationLogic.validateSetUserEMode()
+├── ValidationLogic.validateHealthFactor()
+└── GenericLogic.calculateUserAccountData()
+    ↓
+EMIT: UserEModeSet()
+```
+
+## 7. BRIDGE OPERATIONS (Privileged)
+
+```
+mintUnbacked() [onlyBridge]
+    ↓
+BridgeLogic.executeMintUnbacked()
+    ↓
+├── ReserveLogic.updateState()
+├── ValidationLogic.validateSupply()
+├── ReserveLogic.updateInterestRates()
+├── IAToken.mint()
+└── UserConfiguration.setUsingAsCollateral() (if first supply)
+    ↓
+EMIT: MintUnbacked(), ReserveUsedAsCollateralEnabled
+
+backUnbacked() [onlyBridge]
+    ↓
+BridgeLogic.executeBackUnbacked()
+    ↓
+├── ReserveLogic.updateState()
+├── ReserveLogic.cumulateToLiquidityIndex()
+└── IERC20.safeTransferFrom()
+    ↓
+EMIT: BackUnbacked()
+```
+
+## 8. ADMIN OPERATIONS (Privileged)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ Function                        │ Calls                            │
+├─────────────────────────────────────────────────────────────────────┤
+│ initReserve()                   │ PoolLogic.executeInitReserve()   │
+│                                 │   → ReserveLogic.init()          │
+├─────────────────────────────────────────────────────────────────────┤
+│ dropReserve()                   │ PoolLogic.executeDropReserve()   │
+│                                 │   → ValidationLogic.validateDrop │
+│                                 │     Reserve()                    │
+├─────────────────────────────────────────────────────────────────────┤
+│ mintToTreasury()                │ PoolLogic.executeMintToTreasury()│
+│                                 │   → IAToken.mintToTreasury()     │
+│                                 │ EMIT: MintedToTreasury()         │
+├─────────────────────────────────────────────────────────────────────┤
+│ rescueTokens()                  │ PoolLogic.executeRescueTokens()  │
+│                                 │   → IERC20.safeTransfer()        │
+├─────────────────────────────────────────────────────────────────────┤
+│ resetIsolationModeTotalDebt()   │ PoolLogic.executeResetIsolation  │
+│ [onlyPoolConfigurator]          │   ModeTotalDebt()                │
+│                                 │ EMIT: IsolationModeTotal         │
+│                                 │   DebtUpdated()                  │
+├─────────────────────────────────────────────────────────────────────┤
+│ setReserveInterestRateStrategy  │ Direct storage update            │
+│ Address()                       │                                  │
+├─────────────────────────────────────────────────────────────────────┤
+│ setConfiguration()              │ Direct storage update            │
+├─────────────────────────────────────────────────────────────────────┤
+│ updateBridgeProtocolFee()       │ Direct storage update            │
+├─────────────────────────────────────────────────────────────────────┤
+│ updateFlashloanPremiums()       │ Direct storage update            │
+├─────────────────────────────────────────────────────────────────────┤
+│ configureEModeCategory()        │ Direct storage update            │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## 9. COMPLETE EVENTS MATRIX
+
+| Event                           | Parameters                                                                                           | Emitted By                                 | Triggered From                                                |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------- |
+| **MintUnbacked**                    | reserve, user, onBehalfOf, amount, referralCode                                                      | BridgeLogic                                | mintUnbacked()                                                |
+| **BackUnbacked**                    | reserve, backer, amount, fee                                                                         | BridgeLogic                                | backUnbacked()                                                |
+| **Supply**                          | reserve, user, onBehalfOf, amount, referralCode                                                      | SupplyLogic                                | supply()                                                      |
+| **Withdraw**                        | reserve, user, to, amount                                                                            | SupplyLogic                                | withdraw()                                                    |
+| **Borrow**                          | reserve, user, onBehalfOf, amount, interestRateMode, borrowRate, referralCode                        | BorrowLogic                                | borrow()                                                      |
+| **Repay**                           | reserve, user, repayer, amount, useATokens                                                           | BorrowLogic                                | repay()                                                       |
+| **SwapBorrowRateMode**              | reserve, user, interestRateMode                                                                      | BorrowLogic                                | swapBorrowRateMode()                                          |
+| **RebalanceStableBorrowRate**       | reserve, user                                                                                        | BorrowLogic                                | rebalanceStableBorrowRate()                                   |
+| **LiquidationCall**                 | collateralAsset, debtAsset, user, debtToCover, liquidatedCollateralAmount, liquidator, receiveAToken | LiquidationLogic                           | liquidationCall()                                             |
+| **FlashLoan**                       | target, initiator, asset, amount, interestRateMode, premium, referralCode                            | FlashLoanLogic                             | flashLoan(), flashLoanSimple()                                |
+| **ReserveUsedAsCollateralEnabled**  | reserve, user                                                                                        | SupplyLogic, LiquidationLogic              | supply(), finalizeTransfer(), liquidation                     |
+| **ReserveUsedAsCollateralDisabled** | reserve, user                                                                                        | SupplyLogic                                | withdraw(), setUserUseReserveAsCollateral()                   |
+| **ReserveDataUpdated**              | reserve, liquidityRate, stableBorrowRate, variableBorrowRate, liquidityIndex, variableBorrowIndex    | ReserveLogic                               | All state-changing operations                                 |
+| **UserEModeSet**                    | user, categoryId                                                                                     | EModeLogic                                 | setUserEMode()                                                |
+| **IsolationModeTotalDebtUpdated**   | asset, totalDebt                                                                                     | BorrowLogic, IsolationModeLogic, PoolLogic | borrow(), repay(), liquidation, resetIsolationModeTotalDebt() |
+| **MintedToTreasury**                | reserve, amountMinted                                                                                | PoolLogic                                  | mintToTreasury()                                              |
+
+## 10. LIBRARIES REFERENCE
+
+### Core Logic Libraries:
+- **SupplyLogic** - Supply, withdraw, collateral management, finalize transfer
+- **BorrowLogic** - Borrow, repay, swap rate mode, rebalance stable rate
+- **LiquidationLogic** - Position liquidation
+- **FlashLoanLogic** - Flash loan operations (standard and simple)
+- **BridgeLogic** - Unbacked minting and backing
+- **PoolLogic** - Treasury minting, rescue tokens, reserve management
+- **EModeLogic** - Efficiency mode operations
+- **IsolationModeLogic** - Isolation mode debt tracking
+
+### State Management:
+- **ReserveLogic** - Reserve state updates and interest rates
+- **ValidationLogic** - Input validation for all operations
+- **GenericLogic** - User account data calculations
+
+### Configuration:
+- **ReserveConfiguration** - Reserve config bitmap operations
+- **UserConfiguration** - User config bitmap operations
+
+### Math:
+- **WadRayMath** - Wad and ray arithmetic
+- **PercentageMath** - Percentage calculations
+- **MathUtils** - Interest rate calculations
+
+### External Libraries:
+- **GPv2SafeERC20** - Safe ERC20 transfers
+- **SafeCast** - Safe type casting
+- **Address** - Address utility functions
+
+---
+
+*This diagram shows how the Pool contract acts as a router, delegating all business logic to specialized libraries while maintaining storage and access control at the contract level.*
 
