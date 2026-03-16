@@ -6,7 +6,7 @@ from eth_typing import ChecksumAddress
 from sqlalchemy.orm import Session
 
 from degenbot.aave.calculator import ScaledAmountCalculator
-from degenbot.aave.events import ScaledTokenEventType
+from degenbot.aave.events import AaveV3PoolEvent, ScaledTokenEventType
 from degenbot.aave.extraction import RawAmountExtractor
 from degenbot.aave.models import (
     EnrichedCollateralBurnEvent,
@@ -124,11 +124,51 @@ class ScaledEventEnricher:
             scaled_amount = scaled_event.amount
         else:
             # Extract raw amount from pool event and calculate scaled amount
-            extractor = RawAmountExtractor(
-                pool_event=operation.pool_event,
-                pool_revision=self.pool_revision,
-            )
-            raw_amount = extractor.extract()
+            # Special handling for LIQUIDATION: use different extractors for debt vs collateral
+            if operation.operation_type.name in {
+                "LIQUIDATION",
+                "GHO_LIQUIDATION",
+                "SELF_LIQUIDATION",
+            }:
+                if operation.pool_event["topics"][0] == AaveV3PoolEvent.LIQUIDATION_CALL.value:
+                    # Determine which amount to extract based on event type
+                    if scaled_event.event_type in {
+                        ScaledTokenEventType.DEBT_BURN,
+                        ScaledTokenEventType.GHO_DEBT_BURN,
+                        ScaledTokenEventType.DEBT_TRANSFER,
+                        ScaledTokenEventType.ERC20_DEBT_TRANSFER,
+                    }:
+                        # Debt events use debtToCover
+                        raw_amount = RawAmountExtractor._extract_liquidation_debt(
+                            operation.pool_event
+                        )
+                    elif scaled_event.event_type in {
+                        ScaledTokenEventType.COLLATERAL_BURN,
+                        ScaledTokenEventType.COLLATERAL_TRANSFER,
+                        ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+                    }:
+                        # Collateral events use liquidatedCollateralAmount
+                        raw_amount = RawAmountExtractor._extract_liquidation_collateral(
+                            operation.pool_event
+                        )
+                    else:
+                        # Default to debt amount for unknown event types
+                        raw_amount = RawAmountExtractor._extract_liquidation_debt(
+                            operation.pool_event
+                        )
+                else:
+                    extractor = RawAmountExtractor(
+                        pool_event=operation.pool_event,
+                        pool_revision=self.pool_revision,
+                    )
+                    raw_amount = extractor.extract()
+            else:
+                # Non-liquidation operations use standard extraction
+                extractor = RawAmountExtractor(
+                    pool_event=operation.pool_event,
+                    pool_revision=self.pool_revision,
+                )
+                raw_amount = extractor.extract()
 
             # Calculate scaled amount using TokenMath
             calculator = ScaledAmountCalculator(

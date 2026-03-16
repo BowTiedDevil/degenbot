@@ -297,7 +297,24 @@ event_types_match = (
 6. **On-chain is truth** - When in doubt, query the actual contract state
 7. **Event names are misleading** - Same event type name can represent different underlying events
 
+### Burn Event Matching
+
+**Lesson:** When matching Burn events to WITHDRAW operations, the total burned is `amount + balanceIncrease`, not `amount - balanceIncrease`.
+
+**Context:** The Aave V3 Burn event has the following structure:
+```solidity
+event Burn(address indexed from, address indexed target, uint256 value, uint256 balanceIncrease, uint256 index);
+```
+
+- `value`: Principal amount being burned (in underlying units)
+- `balanceIncrease`: Accrued interest since last user interaction
+- **Total burned** = `value` + `balanceIncrease`
+
+This total matches the Withdraw event's amount exactly. A single-character error (`-` instead of `+`) caused burn events to fail matching, leaving them unassigned and classified as INTEREST_ACCRUAL operations (which zero out the scaled amount).
+
+**Issue Reference:** `debug/aave/0007 - Interest Accrual Burn Amount Zeroed in Enrichment.md`
+
 ---
 
-*Last updated: 2026-03-12*
-*Contributors: Issue #0004 investigation team*
+*Last updated: 2026-03-15*
+*Contributors: Issue #0004, #0007 investigation teams*

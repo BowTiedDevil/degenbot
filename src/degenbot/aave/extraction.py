@@ -146,12 +146,9 @@ class RawAmountExtractor:
         return withdraw_amount
 
     @staticmethod
-    def _extract_liquidation(event: LogReceipt) -> int:
+    def _extract_liquidation_debt(event: LogReceipt) -> int:
         """
         Extract debt amount from LiquidationCall event.
-
-        Note: Liquidation has both debt and collateral amounts.
-        We extract the debt amount (debtToCover) for debt burns.
 
         Event definition:
             event LiquidationCall(
@@ -172,10 +169,34 @@ class RawAmountExtractor:
         )
         return debt_to_cover
 
+    @staticmethod
+    def _extract_liquidation_collateral(event: LogReceipt) -> int:
+        """
+        Extract collateral amount from LiquidationCall event.
+
+        Event definition:
+            event LiquidationCall(
+                address indexed collateralAsset,
+                address indexed debtAsset,
+                address indexed user,
+                uint256 debtToCover,
+                uint256 liquidatedCollateralAmount,
+                address liquidator,
+                bool receiveAToken
+            );
+        """
+
+        liquidated_collateral: int
+        _, liquidated_collateral, _, _ = eth_abi.abi.decode(
+            types=["uint256", "uint256", "address", "bool"],
+            data=event["data"],
+        )
+        return liquidated_collateral
+
 
 # Register extractors for each Pool event type
 EVENT_EXTRACTORS[AaveV3PoolEvent.SUPPLY] = RawAmountExtractor._extract_supply
 EVENT_EXTRACTORS[AaveV3PoolEvent.WITHDRAW] = RawAmountExtractor._extract_withdraw
 EVENT_EXTRACTORS[AaveV3PoolEvent.BORROW] = RawAmountExtractor._extract_borrow
 EVENT_EXTRACTORS[AaveV3PoolEvent.REPAY] = RawAmountExtractor._extract_repay
-EVENT_EXTRACTORS[AaveV3PoolEvent.LIQUIDATION_CALL] = RawAmountExtractor._extract_liquidation
+# Liquidation uses different extractors for debt vs collateral - handled in extract method

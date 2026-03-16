@@ -2877,12 +2877,18 @@ def _process_debt_mint_with_match(
     *,
     event: LogReceipt,
     tx_context: TransactionContext,
-    operation: Operation,  # noqa: ARG001
+    operation: Operation,
     scaled_event: ScaledTokenEvent,
     enriched_event: EnrichedScaledTokenEvent,
 ) -> None:
     """
     Process debt (vToken) mint with operation match.
+
+    Note: In REPAY operations, a Mint event is emitted when interest > repayment.
+    In this case, the Mint event represents the net effect of:
+    1. Interest accrual (increasing debt)
+    2. Debt repayment (burning scaled tokens)
+    The actual scaled burn amount = balance_increase - amount.
     """
 
     logger.debug(f"Processing _process_debt_mint_with_match at block {event['blockNumber']}")
@@ -2987,19 +2993,52 @@ def _process_debt_mint_with_match(
         # Use standard debt processor for non-GHO tokens
         assert scaled_event.balance_increase is not None
         assert scaled_event.index is not None
-        logger.debug("_process_debt_burn_with_match: handling with standard debt processor")
-        _process_scaled_token_operation(
-            event=DebtMintEvent(
-                caller=scaled_event.caller_address or scaled_event.user_address,
-                on_behalf_of=scaled_event.user_address,
-                value=scaled_event.amount,
-                balance_increase=scaled_event.balance_increase,
-                index=scaled_event.index,
-                scaled_amount=scaled_amount,
-            ),
-            scaled_token_revision=debt_asset.v_token_revision,
-            position=debt_position,
-        )
+
+        # Check if this Mint event is part of a REPAY operation
+        # In REPAY, Mint is emitted when interest > repayment, but the net effect
+        # is still a burn of scaled tokens
+        if operation.operation_type in {OperationType.REPAY, OperationType.GHO_REPAY}:
+            # Treat as burn: calculate actual scaled burn amount from Pool event
+            # Use TokenMath to match on-chain calculation
+            assert operation.pool_event is not None
+            repay_amount, _ = eth_abi.abi.decode(
+                types=["uint256", "bool"],
+                data=operation.pool_event["data"],
+            )
+            token_math = TokenMathFactory.get_token_math(operation.pool_revision)
+            actual_scaled_burn = token_math.get_debt_burn_scaled_amount(
+                repay_amount, scaled_event.index
+            )
+            logger.debug(
+                f"REPAY with Mint event: treating as burn, "
+                f"repay_amount={repay_amount}, scaled_burn={actual_scaled_burn}"
+            )
+            _process_scaled_token_operation(
+                event=DebtBurnEvent(
+                    from_=scaled_event.user_address,
+                    target=ZERO_ADDRESS,
+                    value=actual_scaled_burn,
+                    balance_increase=scaled_event.balance_increase,
+                    index=scaled_event.index,
+                    scaled_amount=actual_scaled_burn,  # Pass the correctly calculated scaled burn
+                ),
+                scaled_token_revision=debt_asset.v_token_revision,
+                position=debt_position,
+            )
+        else:
+            logger.debug("_process_debt_mint_with_match: handling as borrow/mint")
+            _process_scaled_token_operation(
+                event=DebtMintEvent(
+                    caller=scaled_event.caller_address or scaled_event.user_address,
+                    on_behalf_of=scaled_event.user_address,
+                    value=scaled_event.amount,
+                    balance_increase=scaled_event.balance_increase,
+                    index=scaled_event.index,
+                    scaled_amount=scaled_amount,
+                ),
+                scaled_token_revision=debt_asset.v_token_revision,
+                position=debt_position,
+            )
 
         # Always fetch the current global index from the contract.
         # The asset's cached borrow_index may be stale (from a previous block).

@@ -1160,7 +1160,7 @@ class TransactionOperationsParser:
                 else {withdraw_amount}
             )
 
-            if ev.amount - ev.balance_increase not in expected_burn_amounts:
+            if ev.amount + ev.balance_increase not in expected_burn_amounts:
                 logger.debug(
                     f"WITHDRAW: Skipping logIndex={ev.event['logIndex']} - amount mismatch"
                 )
@@ -1420,45 +1420,32 @@ class TransactionOperationsParser:
         pool_revision: int,
     ) -> Operation:
         """
-        Create standard REPAY or GHO_REPAY operation (debt burn).
+        Create standard REPAY or GHO_REPAY operation.
 
-        Attaches both principal and interest accrual burns to the operation.
-        Principal burn represents the actual debt repayment.
-        Interest accrual burn represents interest that accrued during the transaction.
+        Attaches the principal debt event (Burn or Mint) to the operation.
+        The event contains the repayment data including any accrued interest
+        (available via the balance_increase field).
         """
 
         scaled_token_events: list[ScaledTokenEvent] = []
         local_assigned: set[int] = set()
 
-        # Find principal debt burn (actual repayment)
-        debt_burn_event = self._find_matching_debt_burn(
+        # Find principal debt event (Burn or Mint)
+        principal_repay_event = self._find_principal_repay_event(
             user=user,
             reserve=reserve,
             repay_amount=repay_amount,
             is_gho=is_gho,
             scaled_events=scaled_events,
             assigned_indices=assigned_indices,
+            pool_revision=pool_revision,
         )
 
-        if debt_burn_event is not None:
-            scaled_token_events.append(debt_burn_event)
-            local_assigned.add(debt_burn_event.event["logIndex"])
+        if principal_repay_event is not None:
+            scaled_token_events.append(principal_repay_event)
+            local_assigned.add(principal_repay_event.event["logIndex"])
 
-        # Find interest accrual debt burn (where amount == balance_increase)
-        # This represents interest that accrued during the repayment transaction
-        interest_burn_event = self._find_interest_accrual_debt_burn(
-            user=user,
-            reserve=reserve,
-            is_gho=is_gho,
-            scaled_events=scaled_events,
-            assigned_indices=assigned_indices | local_assigned,
-        )
-
-        if interest_burn_event is not None:
-            scaled_token_events.append(interest_burn_event)
-            local_assigned.add(interest_burn_event.event["logIndex"])
-
-        # If no burns found, create minimal operation
+        # If no events found, create minimal operation
         if not scaled_token_events:
             logger.debug(
                 f"REPAY at logIndex={repay_log_index} has no matching burn events, "
@@ -1477,10 +1464,10 @@ class TransactionOperationsParser:
         # Find transfer events for the principal burn only
         # Interest burns don't have corresponding transfer events (they're internal)
         transfer_events: list[LogReceipt] = []
-        if debt_burn_event is not None:
+        if principal_repay_event is not None:
             transfer_events = self._find_debt_transfer_to_zero(
                 user=user,
-                amount=debt_burn_event.amount,
+                amount=principal_repay_event.amount,
                 scaled_events=scaled_events,
                 assigned_indices=assigned_indices,
             )
@@ -1513,13 +1500,14 @@ class TransactionOperationsParser:
         scaled_token_events: list[ScaledTokenEvent] = []
         balance_transfer_events: list[LogReceipt] = []
 
-        debt_burn_event = self._find_matching_debt_burn(
+        principal_repay_event = self._find_principal_repay_event(
             user=user,
             reserve=reserve,
             repay_amount=repay_amount,
             is_gho=False,
             scaled_events=scaled_events,
             assigned_indices=assigned_indices,
+            pool_revision=pool_revision,
         )
 
         collateral_burn_event = self._find_matching_collateral_burn(
@@ -1528,8 +1516,8 @@ class TransactionOperationsParser:
             assigned_indices=assigned_indices,
         )
 
-        if debt_burn_event:
-            scaled_token_events.append(debt_burn_event)
+        if principal_repay_event:
+            scaled_token_events.append(principal_repay_event)
 
             if collateral_burn_event:
                 scaled_token_events.append(collateral_burn_event)
@@ -1559,7 +1547,7 @@ class TransactionOperationsParser:
             balance_transfer_events=balance_transfer_events,
         )
 
-    def _find_matching_debt_burn(
+    def _find_principal_repay_event(
         self,
         *,
         user: ChecksumAddress,
@@ -1568,15 +1556,39 @@ class TransactionOperationsParser:
         is_gho: bool,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
+        pool_revision: int,
     ) -> ScaledTokenEvent | None:
+        """Find the principal debt event (Burn or Mint) associated with a REPAY operation.
+
+        For REPAY operations, the VariableDebtToken emits either:
+        - Burn event: when repayment > interest (net decrease in unscaled debt)
+        - Mint event: when interest > repayment (net increase in unscaled debt)
+
+        Both represent the same operation (debt reduction via repayment), just with
+        different net effects due to interest accrual.
+        """
 
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
                 continue
-            if is_gho and ev.event_type != ScaledTokenEventType.GHO_DEBT_BURN:
+
+            # For REPAY operations, match either Burn or Mint events
+            # A Mint is emitted when interest > repayment (net unscaled increase)
+            # A Burn is emitted when repayment > interest (net unscaled decrease)
+            valid_event_types = (
+                {
+                    ScaledTokenEventType.GHO_DEBT_BURN,
+                    ScaledTokenEventType.GHO_DEBT_MINT,
+                }
+                if is_gho
+                else {
+                    ScaledTokenEventType.DEBT_BURN,
+                    ScaledTokenEventType.DEBT_MINT,
+                }
+            )
+            if ev.event_type not in valid_event_types:
                 continue
-            if not is_gho and ev.event_type != ScaledTokenEventType.DEBT_BURN:
-                continue
+
             if ev.user_address != user:
                 continue
 
@@ -1586,55 +1598,49 @@ class TransactionOperationsParser:
 
             if reserve_asset != reserve:
                 continue
-            if ev.balance_increase is not None and repay_amount != ev.amount + ev.balance_increase:
-                continue
-            if ev.target_address != ZERO_ADDRESS:
-                continue
+
+            if ev.balance_increase is not None:
+                # Pool revision 9 began pre-scaling the amount with flooring ray division.
+                # Calculating it exactly requires injecting extra details about the position,
+                # so this check will allow up to a 2 wei deviation on pool revisions 9+
+                expected_repay_amounts = (
+                    (
+                        repay_amount - 2,
+                        repay_amount - 1,
+                        repay_amount,
+                        repay_amount + 1,
+                        repay_amount + 2,
+                    )
+                    if pool_revision >= 9  # noqa:PLR2004
+                    else (repay_amount,)
+                )
+
+                # For DEBT_BURN: amount represents principal burned
+                #   (calculated_amount = amount + balance_increase)
+                # For DEBT_MINT: amount represents net increase (interest - repayment)
+                #   (calculated_amount = balance_increase - amount)
+                if ev.event_type in {
+                    ScaledTokenEventType.DEBT_BURN,
+                    ScaledTokenEventType.GHO_DEBT_BURN,
+                }:
+                    calculated_amount = ev.amount + ev.balance_increase
+                else:  # DEBT_MINT or GHO_DEBT_MINT
+                    calculated_amount = ev.balance_increase - ev.amount
+
+                if calculated_amount not in expected_repay_amounts:
+                    continue
+
+            # For Burn events: target_address should be ZERO_ADDRESS
+            # For Mint events: target_address is None (no target in mints)
+            if ev.event_type in {
+                ScaledTokenEventType.DEBT_BURN,
+                ScaledTokenEventType.GHO_DEBT_BURN,
+            }:
+                if ev.target_address != ZERO_ADDRESS:
+                    continue
+            # For Mint events, target_address can be None, so no check needed
 
             return ev
-
-        return None
-
-    def _find_interest_accrual_debt_burn(
-        self,
-        *,
-        user: ChecksumAddress,
-        reserve: ChecksumAddress,
-        is_gho: bool,
-        scaled_events: list[ScaledTokenEvent],
-        assigned_indices: set[int],
-    ) -> ScaledTokenEvent | None:
-        """
-        Find debt burn event representing pure interest accrual.
-
-        Interest accrual burns have amount == balance_increase (or close to it),
-        representing interest that accrued during the transaction rather than
-        principal repayment.
-        """
-
-        for ev in scaled_events:
-            if ev.event["logIndex"] in assigned_indices:
-                continue
-            if is_gho and ev.event_type != ScaledTokenEventType.GHO_DEBT_BURN:
-                continue
-            if not is_gho and ev.event_type != ScaledTokenEventType.DEBT_BURN:
-                continue
-            if ev.user_address != user:
-                continue
-
-            reserve_asset = self._get_reserve_for_debt_token(
-                get_checksum_address(ev.event["address"])
-            )
-
-            if reserve_asset != reserve:
-                continue
-            if ev.target_address != ZERO_ADDRESS:
-                continue
-
-            # Interest accrual: amount should equal or be close to balance_increase
-            # The amount represents the interest that accrued
-            if ev.balance_increase is not None and ev.amount == ev.balance_increase:
-                return ev
 
         return None
 
@@ -2201,6 +2207,7 @@ class TransactionOperationsParser:
             # ref: Issue #0003 - Debt Transfer Double Counting in Debt Swap
             if is_erc20_transfer and ev.target_address == ZERO_ADDRESS:
                 # Check if there's a Burn event at the next log index for the same user
+                is_part_of_burn = False
                 for other_ev in scaled_events:
                     if (
                         other_ev.event["logIndex"] == ev.event["logIndex"] + 1
@@ -2213,9 +2220,11 @@ class TransactionOperationsParser:
                         and other_ev.user_address == ev.from_address
                     ):
                         # This transfer is part of a burn, skip it
+                        is_part_of_burn = True
                         local_assigned.add(ev.event["logIndex"])
                         break
-                continue
+                if is_part_of_burn:
+                    continue
 
             balance_transfer_event: ScaledTokenEvent | None = None
 
@@ -2295,6 +2304,7 @@ class TransactionOperationsParser:
                             ):
                                 # Found matching BalanceTransfer in existing operation
                                 balance_transfer_event = bt_ev
+                                local_assigned.add(bt_ev.event["logIndex"])
                                 break
                         if balance_transfer_event:
                             break
