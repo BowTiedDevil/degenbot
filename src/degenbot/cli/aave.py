@@ -2599,7 +2599,8 @@ def _calculate_mint_to_treasury_scaled_amount(
     # We have amountMinted (which equals amountToMint) from the event
     scaled_amount = ray_div(minted_amount, scaled_event.index)
     logger.debug(
-        f"MINT_TO_TREASURY (Rev 1-8): rayDiv({minted_amount}, {scaled_event.index}) = {scaled_amount}"
+        f"MINT_TO_TREASURY (Rev 1-8): "
+        f"rayDiv({minted_amount}, {scaled_event.index}) = {scaled_amount}"
     )
     return scaled_amount
 
