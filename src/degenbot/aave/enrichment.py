@@ -29,6 +29,7 @@ from degenbot.aave.models import (
 )
 from degenbot.database.models.aave import AaveV3Asset
 from degenbot.database.models.erc20 import Erc20TokenTable
+from degenbot.logging import logger
 
 if TYPE_CHECKING:
     from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
@@ -92,27 +93,13 @@ class ScaledEventEnricher:
                 raw_amount = scaled_event.amount
                 scaled_amount = 0  # Interest accrual does not change scaled balance
             elif operation.operation_type.name == "MINT_TO_TREASURY":
-                # MINT_TO_TREASURY: The event amount includes underlying amount + interest accrued.
-                # The actual underlying amount is amount - balance_increase.
-                # See Aave V3 aToken contract _mintScaled and mintToTreasury.
-                if scaled_event.index is None:
-                    msg = f"MINT_TO_TREASURY event has no index: {scaled_event}"
-                    raise EnrichmentError(msg)
-
-                # Calculate actual raw amount (underlying being minted)
-                balance_increase = scaled_event.balance_increase or 0
-                raw_amount = scaled_event.amount - balance_increase
-
-                # Calculate scaled amount using TokenMath
-                calculator = ScaledAmountCalculator(
-                    pool_revision=self.pool_revision,
-                    token_revision=token_revision,
-                )
-                scaled_amount = calculator.calculate(
-                    event_type=scaled_event.event_type,
-                    raw_amount=raw_amount,
-                    index=scaled_event.index,
-                )
+                # MINT_TO_TREASURY requires position data (current balance and last_index)
+                # to correctly calculate accruedToTreasury. The enrichment layer doesn't
+                # have access to position data, so leave scaled_amount as None.
+                # The correct calculation is performed in aave.py with position context.
+                # See debug/aave/0014 - MINT_TO_TREASURY AccruedToTreasury Calculation Error.md
+                raw_amount = scaled_event.amount
+                scaled_amount = None
             else:
                 # Internal transfers (BALANCE_TRANSFER) have no pool event
                 # For transfers, raw_amount = scaled_amount (no index-based calculation)
@@ -162,6 +149,47 @@ class ScaledEventEnricher:
                         pool_revision=self.pool_revision,
                     )
                     raw_amount = extractor.extract()
+            elif (
+                # Special case: When interest exceeds withdrawal, the Mint event's amount
+                # represents the net interest (interest - withdrawal), not the actual withdrawal.
+                # But we need the withdrawal amount to calculate the scaled burn.
+                # Detection: In a WITHDRAW operation, if COLLATERAL_MINT has
+                # amount < balance_increase, it means interest > withdrawal. Use the pool event's
+                # withdraw amount.
+                operation.operation_type.name == "WITHDRAW"
+                and scaled_event.event_type == ScaledTokenEventType.COLLATERAL_MINT
+                and scaled_event.balance_increase is not None
+                and scaled_event.amount < scaled_event.balance_increase
+            ):
+                # Interest exceeds withdrawal - extract the actual withdrawal amount
+                extractor = RawAmountExtractor(
+                    pool_event=operation.pool_event,
+                    pool_revision=self.pool_revision,
+                )
+                raw_amount = extractor.extract()
+                logger.debug(
+                    f"ENRICHMENT: Interest exceeds withdrawal - using withdraw amount "
+                    f"{raw_amount} for burn calculation"
+                )
+            elif (
+                # Special case: When interest exceeds repayment, the VariableDebtToken emits
+                # a Mint event with amount = balance_increase - repay_amount (net debt increase).
+                # But we need the actual repay amount to calculate the scaled burn.
+                # Detection: In a REPAY operation, if DEBT_MINT is emitted, interest > repayment.
+                operation.operation_type.name in {"REPAY", "GHO_REPAY"}
+                and scaled_event.event_type == ScaledTokenEventType.DEBT_MINT
+                and scaled_event.balance_increase is not None
+            ):
+                # Interest exceeds repayment - extract the actual repay amount
+                extractor = RawAmountExtractor(
+                    pool_event=operation.pool_event,
+                    pool_revision=self.pool_revision,
+                )
+                raw_amount = extractor.extract()
+                logger.debug(
+                    f"ENRICHMENT: Interest exceeds repayment - using repay amount "
+                    f"{raw_amount} for burn calculation"
+                )
             else:
                 # Non-liquidation operations use standard extraction
                 extractor = RawAmountExtractor(
@@ -169,7 +197,6 @@ class ScaledEventEnricher:
                     pool_revision=self.pool_revision,
                 )
                 raw_amount = extractor.extract()
-
             # Calculate scaled amount using TokenMath
             calculator = ScaledAmountCalculator(
                 pool_revision=self.pool_revision,
@@ -180,8 +207,42 @@ class ScaledEventEnricher:
                 msg = f"Scaled event has no index: {scaled_event}"
                 raise EnrichmentError(msg)
 
+            # Special case: When interest exceeds withdrawal amount, the aToken contract
+            # emits a Mint event instead of a Burn event (AToken rev_4.sol:2836-2839).
+            # In this case, use COLLATERAL_BURN calculation (ceil rounding) instead of
+            # COLLATERAL_MINT (floor rounding) to match Pool rev 9+ contract behavior.
+            if (
+                operation.operation_type.name == "WITHDRAW"
+                and scaled_event.event_type == ScaledTokenEventType.COLLATERAL_MINT
+                and scaled_event.balance_increase is not None
+                and scaled_event.amount < scaled_event.balance_increase
+            ):
+                # Use COLLATERAL_BURN for burn rounding (ceil)
+                calculation_event_type = ScaledTokenEventType.COLLATERAL_BURN
+                logger.debug(
+                    "ENRICHMENT: Interest exceeds withdrawal - using COLLATERAL_BURN "
+                    "calculation (ceil rounding)"
+                )
+            elif (
+                # Special case: When interest exceeds repayment amount, the VariableDebtToken
+                # emits a Mint event instead of a Burn event (VariableDebtToken _burnScaled).
+                # In this case, use DEBT_BURN calculation (floor rounding) instead of
+                # DEBT_MINT (ceil rounding) to match contract behavior.
+                operation.operation_type.name in {"REPAY", "GHO_REPAY"}
+                and scaled_event.event_type == ScaledTokenEventType.DEBT_MINT
+                and scaled_event.balance_increase is not None
+            ):
+                # Use DEBT_BURN for burn rounding (floor)
+                calculation_event_type = ScaledTokenEventType.DEBT_BURN
+                logger.debug(
+                    "ENRICHMENT: Interest exceeds repayment - using DEBT_BURN "
+                    "calculation (floor rounding)"
+                )
+            else:
+                calculation_event_type = scaled_event.event_type
+
             scaled_amount = calculator.calculate(
-                event_type=scaled_event.event_type,
+                event_type=calculation_event_type,
                 raw_amount=raw_amount,
                 index=scaled_event.index,
             )
@@ -275,7 +336,7 @@ class ScaledEventEnricher:
         scaled_event: "ScaledTokenEvent",
         operation: "Operation",
         raw_amount: int,
-        scaled_amount: int,
+        scaled_amount: int | None,
         token_revision: int,
         token_address: ChecksumAddress,
         underlying_asset: ChecksumAddress,

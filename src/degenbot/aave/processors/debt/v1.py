@@ -121,7 +121,7 @@ class DebtV1Processor(DebtTokenProcessor):
         event_data: DebtBurnEvent,
         previous_balance: int,  # noqa: ARG002
         previous_index: int,  # noqa: ARG002
-        scaled_delta: int | None = None,  # noqa: ARG002
+        scaled_delta: int | None = None,
     ) -> ScaledTokenBurnResult:
         """
         Process a debt burn event.
@@ -132,11 +132,21 @@ class DebtV1Processor(DebtTokenProcessor):
             event_data: The burn event data
             previous_balance: The user's balance before this event
             previous_index: The index at previous_balance calculation
-            scaled_delta: Unused for revisions 1-3 (calculated from event data)
+            scaled_delta: Pre-calculated scaled amount from original paybackAmount.
+                When provided, used directly to avoid double-scaling.
 
         Returns:
             BurnResult with balance_delta and new_index
         """
+        if scaled_delta is not None:
+            # Use pre-calculated scaled amount from paybackAmount
+            # This is critical for REPAY with Mint event when interest > repayment
+            return ScaledTokenBurnResult(
+                balance_delta=-scaled_delta,
+                new_index=event_data.index,
+            )
+
+        # Fallback: calculate from event data (for standard Burn events)
         wad_ray_math = self._math_libs["wad_ray"]
 
         # uint256 amountToBurn = amount - balanceIncrease;

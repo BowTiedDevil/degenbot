@@ -225,6 +225,7 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
         event_data: CollateralBurnEvent,
         previous_balance: int,
         previous_index: int,
+        scaled_delta: int | None = None,
     ) -> ScaledTokenBurnResult:
         """
         Process a collateral burn event.
@@ -233,6 +234,8 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
             event_data: The burn event data
             previous_balance: The user's balance before this event
             previous_index: The index at previous_balance calculation
+            scaled_delta: Pre-calculated scaled amount from original withdraw amount.
+                When provided, used directly to avoid double-scaling.
 
         Returns:
             ScaledTokenBurnResult with balance_delta and new_index

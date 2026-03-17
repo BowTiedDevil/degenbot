@@ -86,6 +86,8 @@ class TransactionContext:
     # original withdrawAmount (not the reverse-calculated value from the Burn event) to
     # avoid 1 wei rounding errors from rayDivCeil/rayMulFloor asymmetry.
     last_withdraw_amount: int = 0
+    last_withdraw_token_address: ChecksumAddress | None = None
+    last_withdraw_user_address: ChecksumAddress | None = None
 
     # Pool revision for TokenMath calculations
     # Used to determine if scaled amounts need to be pre-calculated (rev 9+)

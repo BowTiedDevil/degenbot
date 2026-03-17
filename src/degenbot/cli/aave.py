@@ -29,7 +29,13 @@ from degenbot.aave.events import (
     ScaledTokenEventType,
 )
 from degenbot.aave.libraries.token_math import TokenMathFactory
-from degenbot.aave.libraries.wad_ray_math import wad_mul
+from degenbot.aave.libraries.wad_ray_math import (
+    ray_div,
+    ray_div_ceil,
+    ray_mul,
+    ray_mul_floor,
+    wad_mul,
+)
 from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.processors import (
     CollateralBurnEvent,
@@ -2029,7 +2035,11 @@ def _process_scaled_token_operation(
                 previous_index=position.last_index or 0,
             )
             position.balance += mint_result.balance_delta
-            position.last_index = mint_result.new_index
+            # Only update last_index if the new index is greater than current
+            # This prevents earlier events (in log index order) from overwriting
+            # later events' indices when operations are processed out of order
+            if mint_result.new_index > (position.last_index or 0):
+                position.last_index = mint_result.new_index
             return UserOperation.WITHDRAW if mint_result.is_repay else UserOperation.DEPOSIT
 
         case CollateralBurnEvent():
@@ -2041,13 +2051,18 @@ def _process_scaled_token_operation(
                 event_data=event,
                 previous_balance=position.balance,
                 previous_index=position.last_index or 0,
+                scaled_delta=event.scaled_amount,
             )
             logger.debug(
                 f"_process_scaled_token_operation burn: delta={burn_result.balance_delta}, "
                 f"new_balance={position.balance + burn_result.balance_delta}"
             )
             position.balance += burn_result.balance_delta
-            position.last_index = burn_result.new_index
+            # Only update last_index if the new index is greater than current
+            # This prevents earlier events (in log index order) from overwriting
+            # later events' indices when operations are processed out of order
+            if burn_result.new_index > (position.last_index or 0):
+                position.last_index = burn_result.new_index
             return UserOperation.WITHDRAW
 
         case DebtMintEvent():
@@ -2060,7 +2075,11 @@ def _process_scaled_token_operation(
                 scaled_delta=event.scaled_amount,
             )
             position.balance += debt_mint_result.balance_delta
-            position.last_index = debt_mint_result.new_index
+            # Only update last_index if the new index is greater than current
+            # This prevents earlier events (in log index order) from overwriting
+            # later events' indices when operations are processed out of order
+            if debt_mint_result.new_index > (position.last_index or 0):
+                position.last_index = debt_mint_result.new_index
             return UserOperation.REPAY if debt_mint_result.is_repay else UserOperation.BORROW
 
         case DebtBurnEvent():
@@ -2073,7 +2092,11 @@ def _process_scaled_token_operation(
                 scaled_delta=event.scaled_amount,
             )
             position.balance += debt_burn_result.balance_delta
-            position.last_index = debt_burn_result.new_index
+            # Only update last_index if the new index is greater than current
+            # This prevents earlier events (in log index order) from overwriting
+            # later events' indices when operations are processed out of order
+            if debt_burn_result.new_index > (position.last_index or 0):
+                position.last_index = debt_burn_result.new_index
             return UserOperation.REPAY
 
 
@@ -2356,6 +2379,13 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         ):
             decoded = eth_abi.abi.decode(["uint256"], operation.pool_event["data"])
             tx_context.last_withdraw_amount = decoded[0]
+            # Store the token and user addresses for matching with INTEREST_ACCRUAL burns
+            if operation.scaled_token_events:
+                first_event = operation.scaled_token_events[0]
+                tx_context.last_withdraw_token_address = get_checksum_address(
+                    first_event.event["address"]
+                )
+                tx_context.last_withdraw_user_address = first_event.user_address
             logger.debug(
                 f"Pre-processed WITHDRAW amount: {tx_context.last_withdraw_amount} "
                 f"for operation {operation.operation_id}"
@@ -2526,13 +2556,36 @@ def _process_operation(
         # Route to appropriate handler based on event type
         enriched_event = match_result.enriched_event
         if scaled_event.event_type == ScaledTokenEventType.COLLATERAL_MINT:
-            _process_collateral_mint_with_match(
-                event=event,
-                tx_context=tx_context,
-                operation=operation,
-                scaled_event=scaled_event,
-                enriched_event=enriched_event,
-            )
+            # Special case: When interest exceeds withdrawal amount, the aToken contract
+            # emits a Mint event instead of a Burn event (AToken rev_4.sol:2836-2839).
+            # This happens when nextBalance > previousBalance after burning.
+            # Detection: amount < balance_increase indicates the withdrawal was less than interest.
+            # In this case, we should treat it as a burn (subtract from balance), not a mint.
+            if (
+                operation.operation_type == OperationType.WITHDRAW
+                and scaled_event.balance_increase is not None
+                and scaled_event.amount < scaled_event.balance_increase
+            ):
+                logger.debug(
+                    f"WITHDRAW: Treating COLLATERAL_MINT as burn - interest exceeds withdrawal "
+                    f"(amount={scaled_event.amount}, "
+                    f"balance_increase={scaled_event.balance_increase})"
+                )
+                _process_collateral_burn_with_match(
+                    event=event,
+                    tx_context=tx_context,
+                    operation=operation,
+                    scaled_event=scaled_event,
+                    enriched_event=enriched_event,
+                )
+            else:
+                _process_collateral_mint_with_match(
+                    event=event,
+                    tx_context=tx_context,
+                    operation=operation,
+                    scaled_event=scaled_event,
+                    enriched_event=enriched_event,
+                )
         elif scaled_event.event_type == ScaledTokenEventType.COLLATERAL_BURN:
             _process_collateral_burn_with_match(
                 event=event,
@@ -2594,6 +2647,103 @@ def _process_operation(
             raise ValueError(msg)
 
 
+def _calculate_mint_to_treasury_scaled_amount(
+    scaled_event: ScaledTokenEvent,
+    collateral_position: AaveV3CollateralPosition,
+    balance_transfer_events: list[LogReceipt],
+    pool_revision: int,
+    minted_to_treasury_amount: int | None,
+) -> int:
+    """
+    Calculate scaled amount for MINT_TO_TREASURY operations.
+
+    MINT_TO_TREASURY is a special operation where the Pool mints aTokens to the
+    treasury from accumulated reserve fees. The calculation depends on whether
+    a BalanceTransfer event is present and the relationship between amount and
+    balance_increase.
+
+    Args:
+        scaled_event: The scaled token Mint event
+        collateral_position: The treasury's collateral position
+        balance_transfer_events: List of BalanceTransfer events (may be empty)
+        pool_revision: The pool contract revision
+        minted_to_treasury_amount: The amount from MintedToTreasury event (for Rev 8)
+
+    Returns:
+        The calculated scaled amount to add to the treasury position
+
+    See debug/aave/0015 for detailed explanation of this logic.
+    """
+    if balance_transfer_events:
+        # BalanceTransfer is present during liquidations - use its amount directly
+        # The BalanceTransfer amount is already in scaled units and represents the
+        # actual tokens added to the treasury from protocol fees
+        bt_event = balance_transfer_events[0]
+        bt_amount, _bt_index = eth_abi.abi.decode(
+            types=["uint256", "uint256"],
+            data=bt_event["data"],
+        )
+        logger.debug(f"MINT_TO_TREASURY using BalanceTransfer amount: {bt_amount}")
+        return bt_amount
+
+    # For Pool Revision 8, use the MintedToTreasury event amount directly
+    # In Rev 8, the amount is calculated with rayMul (half-up) and passed as amountScaled
+    # to the AToken, so it equals the actual scaled amount added
+    if pool_revision == 8 and minted_to_treasury_amount is not None:  # noqa: PLR2004
+        logger.debug(
+            f"MINT_TO_TREASURY using MintedToTreasury amount for Rev 8: {minted_to_treasury_amount}"
+        )
+        return minted_to_treasury_amount
+
+    # No BalanceTransfer - need to calculate from the Mint event
+    assert scaled_event.balance_increase is not None
+    assert scaled_event.index is not None
+
+    # Special case: when amount == balanceIncrease, the treasury's existing
+    # aTokens accrued interest equal to the accruedToTreasury amount.
+    # No new scaled tokens are minted - the existing balance simply appreciated.
+    if scaled_event.amount == scaled_event.balance_increase:
+        logger.debug("MINT_TO_TREASURY: amount == balanceIncrease, setting scaled_amount = 0")
+        return 0
+
+    # Use appropriate calculation based on pool revision
+    # - Rev 1-3: Simple formula - the contract calculates
+    #   balance_increase = scaled_balance * index - scaled_balance * last_index
+    #   amount (from Pool) = Mint.amount - balance_increase
+    #   scaled_amount = amount / index (rayDiv with half-up rounding)
+    # - Rev 4+: Complex formula to reverse floor rounding (see Issue 0014)
+    logger.debug("MINT_TO_TREASURY: Using formula calculation")
+    if pool_revision <= 3:
+        # Simple formula for Pool Rev 1-3 (see Issue 0019)
+        balance_increase = ray_mul(
+            collateral_position.balance,
+            scaled_event.index,
+        ) - ray_mul(
+            collateral_position.balance,
+            collateral_position.last_index or 0,
+        )
+        principal = scaled_event.amount - balance_increase
+        scaled_amount = ray_div(principal, scaled_event.index)
+        logger.debug(f"MINT_TO_TREASURY (Rev 1-3): balance_increase={balance_increase}")
+        logger.debug(f"MINT_TO_TREASURY (Rev 1-3): principal={principal}")
+        logger.debug(f"MINT_TO_TREASURY (Rev 1-3): scaled_amount={scaled_amount}")
+        return scaled_amount
+
+    # Complex formula for Rev 4+
+    previous_balance = ray_mul_floor(
+        collateral_position.balance,
+        collateral_position.last_index or 0,
+    )
+    next_balance = scaled_event.amount + previous_balance
+    X = ray_div_ceil(next_balance, scaled_event.index)
+    scaled_amount = X - collateral_position.balance
+    logger.debug(f"MINT_TO_TREASURY (Rev 4+): previous_balance={previous_balance}")
+    logger.debug(f"MINT_TO_TREASURY (Rev 4+): next_balance={next_balance}")
+    logger.debug(f"MINT_TO_TREASURY (Rev 4+): X={X}")
+    logger.debug(f"MINT_TO_TREASURY (Rev 4+): scaled_amount={scaled_amount}")
+    return scaled_amount
+
+
 def _process_collateral_mint_with_match(
     *,
     event: LogReceipt,
@@ -2631,27 +2781,24 @@ def _process_collateral_mint_with_match(
         asset_id=collateral_asset.id,
     )
 
-    # Use enriched event data for scaled amount
-    scaled_amount: int | None = enriched_event.scaled_amount
-
-    if operation.operation_type == OperationType.MINT_TO_TREASURY:
-        # For MINT_TO_TREASURY, the Mint event amount is the actual minted amount
-        # (post-interest), while the MintedToTreasury Pool event shows pre-interest.
-        # The Transfer event from address(0) is skipped, so we must calculate
-        # the scaled amount from the Mint event data here.
-        # Formula: scaled_amount = (value - balance_increase) / index # noqa: ERA001
-        # This gives the principal amount converted to scaled balance.
-        collateral_processor = TokenProcessorFactory.get_collateral_processor(
-            collateral_asset.a_token_revision
+    # Use enriched event data for scaled amount, or calculate for MINT_TO_TREASURY
+    if operation.operation_type.name == "MINT_TO_TREASURY":
+        # MINT_TO_TREASURY requires special calculation (see debug/aave/0015)
+        scaled_amount = _calculate_mint_to_treasury_scaled_amount(
+            scaled_event=scaled_event,
+            collateral_position=collateral_position,
+            balance_transfer_events=operation.balance_transfer_events,
+            pool_revision=tx_context.pool_revision,
+            minted_to_treasury_amount=operation.minted_to_treasury_amount,
         )
-        wad_ray_math = collateral_processor.get_math_libraries()["wad_ray"]
-        assert scaled_event.balance_increase is not None
-        principal_amount = scaled_event.amount - scaled_event.balance_increase
-        assert scaled_event.index is not None
-        scaled_amount = wad_ray_math.ray_div(principal_amount, scaled_event.index)
+    else:
+        scaled_amount = enriched_event.scaled_amount
 
+    # Ensure required fields are present for CollateralMintEvent
     assert scaled_event.balance_increase is not None
     assert scaled_event.index is not None
+    assert scaled_amount is not None
+
     _process_scaled_token_operation(
         event=CollateralMintEvent(
             value=scaled_event.amount,
@@ -2664,7 +2811,8 @@ def _process_collateral_mint_with_match(
     )
 
     # Update last_index
-    if scaled_event.index > 0:
+    current_index = collateral_position.last_index or 0
+    if scaled_event.index > 0 and scaled_event.index > current_index:
         collateral_position.last_index = scaled_event.index
 
 
@@ -2787,12 +2935,18 @@ def _process_collateral_burn_with_match(
     # For INTEREST_ACCRUAL collateral burns following a WITHDRAW, use the stored withdrawAmount
     # to avoid 1 wei rounding errors from reverse-calculating value + balance_increase.
     # This overrides the reverse-calculated raw_amount from extraction_data.
+    # Only apply if the burn is for the same user AND token as the last WITHDRAW.
     if (
         operation.operation_type == OperationType.INTEREST_ACCRUAL
         and tx_context.last_withdraw_amount > 0
+        and token_address == tx_context.last_withdraw_token_address
+        and scaled_event.user_address == tx_context.last_withdraw_user_address
     ):
         raw_amount = tx_context.last_withdraw_amount
-        logger.debug(f"Using stored WITHDRAW amount for INTEREST_ACCRUAL: {raw_amount}")
+        logger.debug(
+            f"Using stored WITHDRAW amount for INTEREST_ACCRUAL: {raw_amount} "
+            f"(user={scaled_event.user_address}, token={token_address})"
+        )
 
     # If this is a WITHDRAW operation and no BalanceTransfer amount was found,
     # use the raw_amount from the Withdraw event to ensure accurate balance updates.
@@ -2852,8 +3006,12 @@ def _process_collateral_burn_with_match(
         f"After burn position id={id(collateral_position)}, balance={collateral_position.balance}"
     )
 
-    # Update last_index
-    collateral_position.last_index = scaled_event.index
+    # Only update last_index if the new index is greater than current
+    # This prevents earlier events (in log index order) from overwriting
+    # later events' indices when operations are processed out of order
+    current_index = collateral_position.last_index or 0
+    if scaled_event.index > current_index:
+        collateral_position.last_index = scaled_event.index
 
     # Log liquidation match for debugging
     if aave_debug_logger.is_enabled() and operation.operation_type in {
@@ -2967,7 +3125,11 @@ def _process_debt_mint_with_match(
         )
         # Use fetched index if available, otherwise fall back to event index
         current_index = fetched_index if fetched_index is not None else scaled_event.index
-        debt_position.last_index = current_index
+        # Only update last_index if the new index is greater than current
+        # This prevents earlier events (in log index order) from overwriting
+        # later events' indices when operations are processed out of order
+        if current_index > (debt_position.last_index or 0):
+            debt_position.last_index = current_index
 
         # Refresh discount if needed
         if (
@@ -3005,7 +3167,10 @@ def _process_debt_mint_with_match(
                 types=["uint256", "bool"],
                 data=operation.pool_event["data"],
             )
-            token_math = TokenMathFactory.get_token_math(operation.pool_revision)
+            # Use token revision (not pool revision) to get correct TokenMath
+            token_math = TokenMathFactory.get_token_math_for_token_revision(
+                debt_asset.v_token_revision
+            )
             actual_scaled_burn = token_math.get_debt_burn_scaled_amount(
                 repay_amount, scaled_event.index
             )
@@ -3056,7 +3221,11 @@ def _process_debt_mint_with_match(
         )
         # Use fetched index if available, otherwise fall back to event index
         current_index = fetched_index if fetched_index is not None else scaled_event.index
-        debt_position.last_index = current_index
+        # Only update last_index if the new index is greater than current
+        # This prevents earlier events (in log index order) from overwriting
+        # later events' indices when operations are processed out of order
+        if current_index > (debt_position.last_index or 0):
+            debt_position.last_index = current_index
 
 
 def _process_debt_burn_with_match(
@@ -3147,7 +3316,11 @@ def _process_debt_burn_with_match(
         )
         # Use fetched index if available, otherwise fall back to event index
         current_index = fetched_index if fetched_index is not None else scaled_event.index
-        debt_position.last_index = current_index
+        # Only update last_index if the new index is greater than current
+        # This prevents earlier events (in log index order) from overwriting
+        # later events' indices when operations are processed out of order
+        if current_index > (debt_position.last_index or 0):
+            debt_position.last_index = current_index
 
         # Refresh discount if needed
         if (
@@ -3180,11 +3353,63 @@ def _process_debt_burn_with_match(
             f"{scaled_event.balance_increase}"
         )
         logger.debug(f"_process_debt_burn_with_match: scaled_event.index = {scaled_event.index}")
+
+        # For liquidation operations, determine if this is a bad debt (deficit) liquidation
+        # Bad debt liquidations have a DEFICIT_CREATED event and burn the FULL debt balance
+        # Normal liquidations burn only the debtToCover amount
+        is_bad_debt_liquidation = False
+        if operation and operation.operation_type in {
+            OperationType.LIQUIDATION,
+            OperationType.GHO_LIQUIDATION,
+        }:
+            # Check if there's a DEFICIT_CREATED event for the same user in this transaction
+            if tx_context is not None:
+                for evt in tx_context.events:
+                    if evt["topics"][0] == AaveV3PoolEvent.DEFICIT_CREATED.value:
+                        # DEFICIT_CREATED event has user as topic[1]
+                        deficit_user = get_checksum_address("0x" + evt["topics"][1].hex()[-40:])
+                        if deficit_user == user.address:
+                            is_bad_debt_liquidation = True
+                            logger.debug(
+                                f"_process_debt_burn_with_match: Bad debt liquidation detected "
+                                f"for user {user.address}"
+                            )
+                            break
+
+        if is_bad_debt_liquidation:
+            # Bad debt liquidation: The contract burns the ENTIRE debt balance (borrowerReserveDebt)
+            # not just the debtToCover amount. The debt position should be set to 0.
+            # This is because the protocol writes off the bad debt.
+            debt_position.balance = 0
+            logger.debug(
+                f"_process_debt_burn_with_match: BAD DEBT LIQUIDATION - setting balance to 0 "
+                f"(was {debt_position.balance})"
+            )
+            # Skip the normal processing since we've already set the balance
+            # Only update last_index if the new index is greater than current
+            current_index = debt_position.last_index or 0
+            if scaled_event.index > current_index:
+                debt_position.last_index = scaled_event.index
+            return
+        elif operation and operation.operation_type in {
+            OperationType.LIQUIDATION,
+            OperationType.GHO_LIQUIDATION,
+        }:
+            # Normal liquidation: use debtToCover from pool event
+            burn_value = enriched_event.raw_amount
+            logger.debug(
+                f"_process_debt_burn_with_match: NORMAL LIQUIDATION - using debtToCover={burn_value}"
+            )
+        else:
+            # Standard REPAY: use Burn event value
+            burn_value = scaled_event.amount
+            logger.debug(f"_process_debt_burn_with_match: REPAY - using burn_value={burn_value}")
+
         _process_scaled_token_operation(
             event=DebtBurnEvent(
                 from_=scaled_event.from_address or scaled_event.user_address,
                 target=scaled_event.target_address or scaled_event.user_address,
-                value=scaled_event.amount,
+                value=burn_value,
                 balance_increase=scaled_event.balance_increase,
                 index=scaled_event.index,
                 scaled_amount=scaled_amount,
@@ -3899,6 +4124,7 @@ def _fetch_pool_events(
                 AaveV3PoolEvent.DEFICIT_CREATED.value,
                 AaveV3PoolEvent.RESERVE_DATA_UPDATED.value,
                 AaveV3PoolEvent.USER_E_MODE_SET.value,
+                AaveV3PoolEvent.MINTED_TO_TREASURY.value,
             ]
         ],
     )
@@ -4110,6 +4336,9 @@ def _build_transaction_contexts(
                 f"_build_transaction_contexts: creating new context for tx={tx_hash.to_0x_hex()}"
             )
             pool_revision = _get_pool_revision_from_db(session, market)
+            logger.debug(
+                f"TRANSACTION CONTEXT: pool_revision={pool_revision} for tx={tx_hash.to_0x_hex()}"
+            )
             contexts[tx_hash] = TransactionContext(
                 w3=w3,
                 tx_hash=tx_hash,

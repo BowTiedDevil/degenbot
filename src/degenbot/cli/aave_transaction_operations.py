@@ -131,6 +131,9 @@ class Operation:
     transfer_events: list[LogReceipt]
     balance_transfer_events: list[LogReceipt]
 
+    # MintedToTreasury amount for Pool Revision 8 (underlying amount = scaled amount)
+    minted_to_treasury_amount: int | None = None
+
     # Validation state
     validation_errors: list[str] = field(default_factory=list)
 
@@ -567,6 +570,22 @@ class TransactionOperationsParser:
             )
         )
 
+    def _get_asset_by_a_token(self, a_token_address: ChecksumAddress) -> AaveV3Asset | None:
+        """
+        Get the asset for a given aToken address.
+        """
+
+        checksum_addr = get_checksum_address(a_token_address)
+
+        return self.session.scalar(
+            select(AaveV3Asset)
+            .join(AaveV3Asset.a_token)
+            .where(
+                AaveV3Asset.market_id == self.market.id,
+                Erc20TokenTable.address == checksum_addr,
+            )
+        )
+
     def parse(self, events: list[LogReceipt], tx_hash: HexBytes) -> TransactionOperations:
         """
         Parse events into operations.
@@ -611,11 +630,14 @@ class TransactionOperationsParser:
 
         # Step 4b: Create MINT_TO_TREASURY operations for unassigned scaled token mints
         # where the user is the Pool contract (protocol reserves being minted to treasury)
+        # For Pool Revision 8, extract MintedToTreasury events to get the actual scaled amount
+        minted_to_treasury_events = self._extract_minted_to_treasury_events(events)
         mint_to_treasury_ops = self._create_mint_to_treasury_operations(
             scaled_events=scaled_events,
             assigned_indices=assigned_log_indices,
             starting_operation_id=len(operations),
             pool_revision=pool_revision,
+            minted_to_treasury_events=minted_to_treasury_events,
         )
         operations.extend(mint_to_treasury_ops)
         assigned_log_indices.update(
@@ -1105,11 +1127,14 @@ class TransactionOperationsParser:
                 continue
             if ev.index is None:
                 continue
-            if (
-                ev.balance_increase is not None
-                and withdraw_amount != ev.balance_increase - ev.amount
-            ):
-                continue
+            if ev.balance_increase is not None:
+                calculated_withdraw = ev.balance_increase - ev.amount
+                # Pool revision 9+ uses ray math with rounding, allow ±2 wei tolerance
+                if pool_revision >= 9:  # noqa:PLR2004
+                    if abs(calculated_withdraw - withdraw_amount) > 2:  # noqa:PLR2004
+                        continue
+                elif calculated_withdraw != withdraw_amount:
+                    continue
             interest_mints.append(ev)
             break
 
@@ -1150,12 +1175,18 @@ class TransactionOperationsParser:
             expected_burn_amounts = (
                 # Pool revision 9 began pre-scaling the amount with flooring ray division.
                 # Calculating it exactly requires injecting extra details about the position,
-                # so this check will allow up to a -2 deviation ono pool revisions 9+
+                # so this check will allow up to a ±2 wei deviation on pool revisions 9+
                 #
                 # see TX: 0x8a4bc3d8f386c0d754d98766caf9033202a65a932f0f3ede035d95f039a56abe
                 # for an example of a withdraw event amount=500000000000000000000000, but the
                 # associated Burn has a principal amount=500000000000000000000001
-                (withdraw_amount, withdraw_amount + 1)
+                (
+                    withdraw_amount - 2,
+                    withdraw_amount - 1,
+                    withdraw_amount,
+                    withdraw_amount + 1,
+                    withdraw_amount + 2,
+                )
                 if pool_revision >= 9  # noqa:PLR2004
                 else {withdraw_amount}
             )
@@ -1174,6 +1205,39 @@ class TransactionOperationsParser:
             f"WITHDRAW: Found {len(collateral_burns)} collateral burns and {len(interest_mints)} "
             f"interest mints"
         )
+
+        # Handle edge case: When interest accrued exceeds withdrawal amount, the aToken contract
+        # emits a Mint event instead of a Burn event (AToken rev_4.sol:2836-2839).
+        # In this case: nextBalance > previousBalance, so Mint is emitted.
+        # The mint amount represents the net balance increase after the withdrawal.
+        # See debug/aave/0012 for details.
+        if not collateral_burns and not interest_mints:
+            logger.debug(
+                "WITHDRAW: No burns or standard interest mints found. "
+                "Checking for 'interest exceeds withdrawal' mint..."
+            )
+            for ev in scaled_events:
+                if ev.event["logIndex"] in assigned_indices:
+                    continue
+                if ev.event_type != ScaledTokenEventType.COLLATERAL_MINT:
+                    continue
+                if ev.user_address != user:
+                    continue
+                if ev.index is None:
+                    continue
+                if ev.balance_increase is None:
+                    continue
+                # In the "interest exceeds withdrawal" case:
+                # - The mint event has amount == balance_increase (pure interest value)
+                # - This indicates the withdrawal resulted in a net balance increase
+                # - The actual withdrawal amount was burned internally but net result is mint
+                if ev.amount == ev.balance_increase:
+                    logger.debug(
+                        f"WITHDRAW: Found 'interest exceeds withdrawal' mint at "
+                        f"logIndex={ev.event['logIndex']}, amount={ev.amount}"
+                    )
+                    interest_mints.append(ev)
+                    break
 
         if not collateral_burns and not interest_mints:
             logger.debug(
@@ -1632,13 +1696,15 @@ class TransactionOperationsParser:
 
             # For Burn events: target_address should be ZERO_ADDRESS
             # For Mint events: target_address is None (no target in mints)
-            if ev.event_type in {
-                ScaledTokenEventType.DEBT_BURN,
-                ScaledTokenEventType.GHO_DEBT_BURN,
-            }:
-                if ev.target_address != ZERO_ADDRESS:
-                    continue
-            # For Mint events, target_address can be None, so no check needed
+            if (
+                ev.event_type
+                in {
+                    ScaledTokenEventType.DEBT_BURN,
+                    ScaledTokenEventType.GHO_DEBT_BURN,
+                }
+                and ev.target_address != ZERO_ADDRESS
+            ):
+                continue
 
             return ev
 
@@ -2089,18 +2155,32 @@ class TransactionOperationsParser:
 
         return operations
 
+    @staticmethod
+    def _extract_minted_to_treasury_events(events: list[LogReceipt]) -> list[LogReceipt]:
+        """
+        Extract MintedToTreasury events from Pool contract.
+
+        These events contain the actual amount minted to treasury (underlying for Rev 8,
+        which equals the scaled amount passed to the AToken).
+        """
+        return [e for e in events if e["topics"][0] == AaveV3PoolEvent.MINTED_TO_TREASURY.value]
+
     def _create_mint_to_treasury_operations(
         self,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         starting_operation_id: int,
         pool_revision: int,
+        minted_to_treasury_events: list[LogReceipt],
     ) -> list[Operation]:
         """Create MINT_TO_TREASURY operations for unassigned scaled token mints to the Pool.
 
         When the Pool contract calls mintToTreasury(), it emits ScaledTokenMint events
         where the caller_address is the Pool itself. These represent protocol reserves being
         minted to the treasury and should be treated as SUPPLY operations for the Pool.
+
+        During liquidations, a BalanceTransfer event accompanies the Mint event, containing
+        the actual scaled amount to add to the treasury. See debug/aave/0015 for details.
 
         Args:
             scaled_events: All scaled token events from the transaction
@@ -2129,11 +2209,58 @@ class TransactionOperationsParser:
             if ev.caller_address != self.pool_address:
                 continue
 
+            # Look for paired BalanceTransfer event to the same user (treasury)
+            # This happens during liquidations when protocol fees are minted to treasury
+            # The BalanceTransfer contains the actual scaled amount (see issue 0015)
+            paired_balance_transfer = None
+            for bt_ev in scaled_events:
+                if bt_ev.event_type != ScaledTokenEventType.COLLATERAL_TRANSFER:
+                    continue
+                if bt_ev.event["logIndex"] in assigned_indices:
+                    logger.debug(
+                        f"  Skipping BalanceTransfer at {bt_ev.event['logIndex']} - already assigned"
+                    )
+                    continue
+                # BalanceTransfer should be to the same user (treasury) and have the same index
+                # Note: For BalanceTransfer, user_address is the FROM address, target_address is the TO address
+                logger.debug(
+                    f"  Checking BalanceTransfer at {bt_ev.event['logIndex']}: "
+                    f"from={bt_ev.user_address}, to={bt_ev.target_address}, index={bt_ev.index}"
+                )
+                if bt_ev.target_address == ev.user_address and bt_ev.index == ev.index:
+                    paired_balance_transfer = bt_ev
+                    assigned_indices.add(bt_ev.event["logIndex"])
+                    logger.debug(f"  Found paired BalanceTransfer at {bt_ev.event['logIndex']}")
+                    break
+
             # This is a mint to treasury - create operation
             logger.debug(
                 f"Creating MINT_TO_TREASURY for event at logIndex {ev.event['logIndex']}, "
                 f"user={ev.user_address}, amount={ev.amount}"
             )
+            if paired_balance_transfer:
+                logger.debug(
+                    f"  Paired BalanceTransfer at logIndex {paired_balance_transfer.event['logIndex']}, "
+                    f"amount={paired_balance_transfer.amount}"
+                )
+            # For Pool Revision 8, get the scaled amount from MintedToTreasury event
+            minted_amount = None
+            if pool_revision == 8:  # noqa: PLR2004
+                # Match by underlying asset address (topic[1] in MintedToTreasury)
+                # The Mint event's address is the aToken, so we need to find the underlying asset
+                a_token_addr = get_checksum_address(ev.event["address"])
+                asset = self._get_asset_by_a_token(a_token_addr)
+                if asset is not None:
+                    underlying_addr = get_checksum_address(asset.underlying_token.address).lower()
+                    for mt_ev in minted_to_treasury_events:
+                        mt_reserve = ("0x" + mt_ev["topics"][1].hex()[-40:]).lower()
+                        if mt_reserve == underlying_addr:
+                            # Decode the amountMinted from data - for Rev 8 this equals the scaled amount
+                            minted_amount = eth_abi.abi.decode(
+                                types=["uint256"], data=mt_ev["data"]
+                            )[0]
+                            break
+
             operations.append(
                 Operation(
                     operation_id=operation_id,
@@ -2142,7 +2269,10 @@ class TransactionOperationsParser:
                     pool_event=None,
                     scaled_token_events=[ev],
                     transfer_events=[],
-                    balance_transfer_events=[],
+                    balance_transfer_events=[paired_balance_transfer.event]
+                    if paired_balance_transfer
+                    else [],
+                    minted_to_treasury_amount=minted_amount,
                 )
             )
             operation_id += 1
@@ -2224,6 +2354,30 @@ class TransactionOperationsParser:
                         local_assigned.add(ev.event["logIndex"])
                         break
                 if is_part_of_burn:
+                    continue
+
+            # Skip ERC20 Transfer events from zero address that are part of mints
+            # These are handled by the Mint events (SUPPLY, MINT_TO_TREASURY), not as transfers
+            # ref: Issue #0013 - Double counting in mint operations
+            if is_erc20_transfer and ev.from_address == ZERO_ADDRESS:
+                # Check if there's a Mint event at the next log index for the same user
+                is_part_of_mint = False
+                for other_ev in scaled_events:
+                    if (
+                        other_ev.event["logIndex"] == ev.event["logIndex"] + 1
+                        and other_ev.event_type
+                        in {
+                            ScaledTokenEventType.COLLATERAL_MINT,
+                            ScaledTokenEventType.DEBT_MINT,
+                            ScaledTokenEventType.GHO_DEBT_MINT,
+                        }
+                        and other_ev.user_address == ev.target_address
+                    ):
+                        # This transfer is part of a mint, skip it
+                        is_part_of_mint = True
+                        local_assigned.add(ev.event["logIndex"])
+                        break
+                if is_part_of_mint:
                     continue
 
             balance_transfer_event: ScaledTokenEvent | None = None

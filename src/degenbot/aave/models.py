@@ -1,6 +1,6 @@
 """Pydantic models for enriched Aave token events."""
 
-from typing import Annotated
+from typing import Annotated, ClassVar
 
 from eth_typing import ChecksumAddress
 from pydantic import (
@@ -102,31 +102,78 @@ class BaseEnrichedScaledTokenEvent(BaseModel):
 
     # Amounts - both always present post-enrichment
     raw_amount: int = Field(description="Amount from Pool event (user input before scaling)")
-    scaled_amount: int = Field(description="Scaled amount calculated by Pool using TokenMath")
+    scaled_amount: int | None = Field(
+        description="Scaled amount calculated by Pool using TokenMath"
+    )
 
     # Token contract addresses for debugging
     token_address: ChecksumAddress = Field(description="Address of the scaled token contract")
     underlying_asset: ChecksumAddress = Field(description="Address of the underlying asset")
 
+    COLLATERAL_TYPES: ClassVar[set[ScaledTokenEventType]] = {
+        ScaledTokenEventType.COLLATERAL_MINT,
+        ScaledTokenEventType.COLLATERAL_BURN,
+        ScaledTokenEventType.COLLATERAL_TRANSFER,
+        ScaledTokenEventType.COLLATERAL_INTEREST_MINT,
+        ScaledTokenEventType.COLLATERAL_INTEREST_BURN,
+    }
+
+    DEBT_TYPES: ClassVar[set[ScaledTokenEventType]] = {
+        ScaledTokenEventType.DEBT_MINT,
+        ScaledTokenEventType.DEBT_BURN,
+        ScaledTokenEventType.DEBT_TRANSFER,
+        ScaledTokenEventType.DEBT_INTEREST_MINT,
+        ScaledTokenEventType.DEBT_INTEREST_BURN,
+        ScaledTokenEventType.GHO_DEBT_MINT,
+        ScaledTokenEventType.GHO_DEBT_BURN,
+        ScaledTokenEventType.GHO_DEBT_TRANSFER,
+        ScaledTokenEventType.GHO_DEBT_INTEREST_MINT,
+        ScaledTokenEventType.GHO_DEBT_INTEREST_BURN,
+    }
+
+    BURN_TYPES: ClassVar[set[ScaledTokenEventType]] = {
+        ScaledTokenEventType.COLLATERAL_BURN,
+        ScaledTokenEventType.DEBT_BURN,
+        ScaledTokenEventType.GHO_DEBT_BURN,
+        ScaledTokenEventType.COLLATERAL_INTEREST_BURN,
+        ScaledTokenEventType.DEBT_INTEREST_BURN,
+        ScaledTokenEventType.GHO_DEBT_INTEREST_BURN,
+    }
+
+    MINT_TYPES: ClassVar[set[ScaledTokenEventType]] = {
+        ScaledTokenEventType.COLLATERAL_MINT,
+        ScaledTokenEventType.DEBT_MINT,
+        ScaledTokenEventType.GHO_DEBT_MINT,
+        ScaledTokenEventType.COLLATERAL_INTEREST_MINT,
+        ScaledTokenEventType.DEBT_INTEREST_MINT,
+        ScaledTokenEventType.GHO_DEBT_INTEREST_MINT,
+    }
+
+    TRANSFER_TYPES: ClassVar[set[ScaledTokenEventType]] = {
+        ScaledTokenEventType.COLLATERAL_TRANSFER,
+        ScaledTokenEventType.DEBT_TRANSFER,
+        ScaledTokenEventType.GHO_DEBT_TRANSFER,
+    }
+
     @property
     def is_collateral(self) -> bool:
-        return self.event_type.startswith("collateral")
+        return self.event_type in self.COLLATERAL_TYPES
 
     @property
     def is_debt(self) -> bool:
-        return self.event_type.startswith("debt") or self.event_type.startswith("gho")
+        return self.event_type in self.DEBT_TYPES
 
     @property
     def is_burn(self) -> bool:
-        return self.event_type.endswith("burn")
+        return self.event_type in self.BURN_TYPES
 
     @property
     def is_mint(self) -> bool:
-        return self.event_type.endswith("mint")
+        return self.event_type in self.MINT_TYPES
 
     @property
     def is_transfer(self) -> bool:
-        return self.event_type.endswith("transfer")
+        return self.event_type in self.TRANSFER_TYPES
 
 
 class IndexScaledEvent(BaseEnrichedScaledTokenEvent):
@@ -154,6 +201,21 @@ class IndexScaledEvent(BaseEnrichedScaledTokenEvent):
         event_type = self.event_type
         scaled = self.scaled_amount
 
+        # Special case: MINT_TO_TREASURY
+        # MINT_TO_TREASURY calculations require position data (user balance and last_index)
+        # which is not available during enrichment. The scaled amount is calculated later
+        # in the processing layer (aave.py) using the correct formula with position context.
+        # Skip validation here since we can't calculate the expected value without position data.
+        # See debug/aave/0014 and debug/aave/0015 for details.
+        # Note: This applies to all pool revisions, not just >= 9.
+        if event_type == ScaledTokenEventType.COLLATERAL_MINT and scaled is None:
+            # Accept the scaled amount as-is (None during enrichment, calculated later)
+            return self
+
+        if scaled is None:
+            msg = "scaled_amount cannot be None for validation"
+            raise EnrichmentError(msg)
+
         # Calculate expected scaled amount
         token_math = TokenMathFactory.get_token_math_for_token_revision(token_rev)
         method_name = _get_token_math_method(event_type)
@@ -161,10 +223,29 @@ class IndexScaledEvent(BaseEnrichedScaledTokenEvent):
 
         expected = method(raw, idx)
 
+        # Special case: Withdraw with interest exceeding withdrawal amount
+        # When a COLLATERAL_MINT event is part of a WITHDRAW operation and
+        # interest > withdrawal, the Pool uses burn rounding (ceil) but emits
+        # a Mint event. Allow the ceil-calculated value.
+        # Detection: raw < balance_increase means interest > withdrawal
+        if (
+            event_type == ScaledTokenEventType.COLLATERAL_MINT
+            and self.balance_increase is not None
+            and raw < self.balance_increase
+        ):
+            # Calculate expected with burn rounding (ceil)
+            expected_burn = token_math.get_collateral_burn_scaled_amount(
+                amount=raw, liquidity_index=idx
+            )
+
+            # Accept either mint (floor) or burn (ceil) rounding
+            if scaled == expected_burn:
+                return self  # Validation passes with burn rounding
+
         if scaled != expected:
             raise ScaledAmountValidationError(
                 message="Scaled amount validation failed",
-                event_type=event_type,
+                event_type=str(event_type),
                 pool_revision=pool_rev,
                 token_revision=token_rev,
                 raw_amount=raw,

@@ -49,6 +49,9 @@ class AaveV3PoolEvent(Enum):
     )
     USER_E_MODE_SET = HexBytes("0xd728da875fc88944cbf17638bcbe4af0eedaef63becd1d1c57cc097eb4608d84")
     DEFICIT_CREATED = HexBytes("0x2bccfb3fad376d59d7accf970515eb77b2f27b082c90ed0fb15583dd5a942699")
+    MINTED_TO_TREASURY = HexBytes(
+        "0xbfa21aa5d5f9a1f0120a95e7c0749f389863cbdbfff531aa7339077a5bc919de"
+    )
 
 
 class AaveV3ScaledTokenEvent(Enum):
