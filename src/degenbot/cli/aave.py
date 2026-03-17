@@ -1,7 +1,6 @@
 import sys
 from enum import Enum
 from operator import itemgetter
-from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
 import click
@@ -46,7 +45,6 @@ from degenbot.aave.processors import (
 )
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
-from degenbot.cli.aave_debug_logger import aave_debug_logger
 from degenbot.cli.aave_event_matching import OperationAwareEventMatcher
 from degenbot.cli.aave_transaction_operations import (
     Operation,
@@ -377,12 +375,6 @@ def deactivate_mainnet_aave_v3(
     envvar="DEGENBOT_PROGRESS_BAR",
     show_envvar=True,
 )
-@click.option(
-    "--debug-output",
-    "debug_output",
-    default=None,
-    help="Path to write structured JSON debug output for machine analysis.",
-)
 def aave_update(
     *,
     chunk_size: int,
@@ -390,7 +382,6 @@ def aave_update(
     verify: bool,
     stop_after_one_chunk: bool,
     show_progress: bool,
-    debug_output: str | None,
 ) -> None:
     """
     Update positions for active Aave markets.
@@ -404,14 +395,7 @@ def aave_update(
         verify: If True, verify position balances at every block boundary.
         stop_after_one_chunk: If True, stop after processing the first chunk.
         show_progress: Toggle display of progress bars.
-        debug_output: Path to write structured JSON debug output.
     """
-
-    if debug_output:
-        aave_debug_logger.configure(
-            output_path=Path(debug_output),
-        )
-        logger.info(f"Debug output enabled: {debug_output}")
 
     with (  # noqa:PLR1702
         db_session() as session,
@@ -524,13 +508,6 @@ def aave_update(
                 }
 
                 for market in markets_to_update:
-                    # Configure debug logger for this market
-                    if aave_debug_logger.is_enabled():
-                        aave_debug_logger.configure(
-                            chain_id=ChainId(chain_id),
-                            market_id=market.id,
-                        )
-
                     try:
                         update_aave_market(
                             w3=w3,
@@ -541,24 +518,8 @@ def aave_update(
                             verify=verify,
                             show_progress=show_progress,
                         )
-                    except Exception as e:  # noqa: BLE001
+                    except Exception:  # noqa: BLE001
                         logger.exception("")
-
-                        # Log structured exception data for autonomous analysis
-                        if aave_debug_logger.is_enabled():
-                            extra_context = {
-                                "chain_id": chain_id,
-                                "market_id": market.id,
-                                "market_name": market.name,
-                                "start_block": working_start_block,
-                                "end_block": working_end_block,
-                            }
-                            aave_debug_logger.log_exception(
-                                exc=e,
-                                extra_context=extra_context,
-                            )
-                            aave_debug_logger.close()
-
                         sys.exit(1)
                     else:
                         market.last_update_block = working_end_block
@@ -1342,16 +1303,6 @@ def _get_or_create_user(
     # Log all user creations for debugging
     logger.debug(f"CREATING USER: {user_address} gho_discount={gho_discount} block={block_number}")
 
-    # Log user creation to structured debug logger
-    if aave_debug_logger.is_enabled():
-        aave_debug_logger.log_user_creation(
-            user_address=user_address,
-            block_number=block_number,
-            tx_hash=tx_hash if tx_hash is not None else HexBytes("0x"),
-            gho_discount=gho_discount,
-            e_mode=0,
-        )
-
     user = AaveV3User(
         market_id=tx_context.market.id,
         address=user_address,
@@ -1915,15 +1866,6 @@ def _verify_scaled_token_positions(
     if user_addresses is not None and len(user_addresses) == 0:
         return
 
-    # Log verification start
-    if aave_debug_logger.is_enabled() and user_addresses is not None:
-        position_type = "collateral" if position_table is AaveV3CollateralPosition else "debt"
-        aave_debug_logger.log_verification_start(
-            block_number=block_number,
-            user_addresses=[addr.lower() for addr in user_addresses],
-            position_type=position_type,
-        )
-
     stmt = (
         select(position_table)
         .join(AaveV3User)
@@ -2166,15 +2108,6 @@ def _process_transaction(tx_context: TransactionContext) -> None:
     """
     Process transaction using operation-based parsing.
     """
-
-    # Log transaction start for debugging
-    if aave_debug_logger.is_enabled():
-        aave_debug_logger.log_transaction_start(
-            tx_hash=tx_context.tx_hash,
-            block_number=tx_context.block_number,
-            event_count=len(tx_context.events),
-            context=tx_context,
-        )
 
     # Capture user discount percents before processing events
     # This ensures calculations use the discount in effect at the start of the transaction
@@ -2480,65 +2413,6 @@ def _process_operation(
     matcher = OperationAwareEventMatcher(operation, enricher)
 
     # Log liquidation operations for debugging
-    if operation.operation_type in {
-        OperationType.LIQUIDATION,
-        OperationType.GHO_LIQUIDATION,
-        OperationType.SELF_LIQUIDATION,
-    }:
-        user_address: str = "unknown"
-        collateral_asset: str = "unknown"
-        debt_asset: str = "unknown"
-        debt_to_cover: int = 0
-        liquidated_collateral: int = 0
-        liquidator: str = "unknown"
-
-        if aave_debug_logger.is_enabled() and operation.pool_event is not None:
-            # Extract liquidation data from pool event
-            topics = operation.pool_event.get("topics", [])
-            if len(topics) >= 4:  # noqa:PLR2004
-                collateral_asset = "0x" + topics[1].hex()[-40:]
-                debt_asset = "0x" + topics[2].hex()[-40:]
-                user_address = "0x" + topics[3].hex()[-40:]
-
-                # Decode liquidation data
-                data = operation.pool_event.get("data", "")
-                if data:
-                    decoded = eth_abi.abi.decode(
-                        ["uint256", "uint256", "address", "bool"],
-                        data,
-                    )
-                    debt_to_cover = decoded[0]
-                    liquidated_collateral = decoded[1]
-                    liquidator = decoded[2]
-
-                    aave_debug_logger.log_liquidation_call(
-                        user_address=user_address.lower(),
-                        liquidator=liquidator.lower(),
-                        collateral_asset=collateral_asset.lower(),
-                        debt_asset=debt_asset.lower(),
-                        debt_to_cover=debt_to_cover,
-                        liquidated_collateral=liquidated_collateral,
-                        block_number=tx_context.block_number,
-                        tx_hash=tx_context.tx_hash,
-                        is_gho=operation.operation_type == OperationType.GHO_LIQUIDATION,
-                    )
-
-            # Log liquidation operation start with scaled events info
-            scaled_event_types = [ev.event_type for ev in operation.scaled_token_events]
-
-            aave_debug_logger.log_liquidation_operation_start(
-                operation_id=operation.operation_id,
-                user_address=user_address.lower(),
-                operation_type=operation.operation_type.name,
-                collateral_asset=collateral_asset.lower(),
-                debt_asset=debt_asset.lower(),
-                debt_to_cover=debt_to_cover,
-                liquidated_collateral=liquidated_collateral,
-                scaled_events=scaled_event_types,
-                block_number=tx_context.block_number,
-                tx_hash=tx_context.tx_hash,
-            )
-
     # Process each scaled token event in the operation
     # Sort by log index to ensure events are processed in chronological order
     sorted_scaled_events = sorted(
@@ -3116,23 +2990,6 @@ def _process_collateral_burn_with_match(
     if scaled_event.index > current_index:
         collateral_position.last_index = scaled_event.index
 
-    # Log liquidation match for debugging
-    if aave_debug_logger.is_enabled() and operation.operation_type in {
-        OperationType.LIQUIDATION,
-        OperationType.GHO_LIQUIDATION,
-        OperationType.SELF_LIQUIDATION,
-    }:
-        aave_debug_logger.log_liquidation_match(
-            operation_id=operation.operation_id,
-            user_address=scaled_event.user_address or "unknown",
-            scaled_event_type=scaled_event.event_type.name,
-            token_address=token_address,
-            matched_amount=enriched_event.raw_amount,
-            extraction_data={"raw_amount": enriched_event.raw_amount},
-            block_number=scaled_event.event["blockNumber"],
-            tx_hash=tx_context.tx_hash,
-        )
-
 
 def _process_debt_mint_with_match(
     *,
@@ -3530,28 +3387,6 @@ def _process_debt_burn_with_match(
         # Use fetched index if available, otherwise fall back to event index
         current_index = fetched_index if fetched_index is not None else scaled_event.index
         debt_position.last_index = current_index
-
-    # Log liquidation match for debugging
-    if (
-        aave_debug_logger.is_enabled()
-        and operation is not None
-        and operation.operation_type
-        in {
-            OperationType.LIQUIDATION,
-            OperationType.GHO_LIQUIDATION,
-            OperationType.SELF_LIQUIDATION,
-        }
-    ):
-        aave_debug_logger.log_liquidation_match(
-            operation_id=operation.operation_id,
-            user_address=scaled_event.user_address or "unknown",
-            scaled_event_type=scaled_event.event_type.name,
-            token_address=token_address,
-            matched_amount=enriched_event.raw_amount,
-            extraction_data={"raw_amount": enriched_event.raw_amount},
-            block_number=scaled_event.event["blockNumber"],
-            tx_hash=tx_context.tx_hash,
-        )
 
 
 def _process_collateral_transfer(
