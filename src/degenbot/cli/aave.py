@@ -1628,18 +1628,27 @@ def _verify_gho_discount_amounts(
     if user_addresses is not None and len(user_addresses) == 0:
         return
 
-    stmt = select(AaveV3User).where(AaveV3User.market_id == market.id)
+    # Skip verification if GHO vToken is not deployed
+    if gho_asset.v_token is None:
+        return
+
+    gho_vtoken_address = gho_asset.v_token.address
+
+    # Only verify users who have GHO debt positions
+    stmt = (
+        select(AaveV3User)
+        .join(AaveV3DebtPosition)
+        .join(AaveV3Asset)
+        .where(
+            AaveV3User.market_id == market.id,
+            AaveV3Asset.v_token_id == gho_asset.v_token_id,
+        )
+        .distinct()
+    )
     if user_addresses is not None:
         stmt = stmt.where(AaveV3User.address.in_(user_addresses))
 
     users_to_verify = session.scalars(stmt).all()
-
-    gho_asset = _get_gho_asset(session, market)
-    gho_vtoken_address = gho_asset.v_token.address if gho_asset.v_token is not None else None
-
-    # Skip verification if GHO vToken is not deployed
-    if gho_vtoken_address is None:
-        return
 
     for user in tqdm.tqdm(
         users_to_verify,
