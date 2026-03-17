@@ -2277,9 +2277,11 @@ class TransactionOperationsParser:
                     f"{paired_balance_transfer.event['logIndex']}, "
                     f"amount={paired_balance_transfer.amount}"
                 )
-            # For Pool Revision 8, get the scaled amount from MintedToTreasury event
+            # Extract MintedToTreasury amount for all pool revisions
+            # For Rev 1-8: amountMinted is in underlying units (needs rayDiv to get scaled)
+            # For Rev 9+: amountMinted equals the scaled amount directly
             minted_amount = None
-            if pool_revision == 8:  # noqa: PLR2004
+            if minted_to_treasury_events:
                 # Match by underlying asset address (topic[1] in MintedToTreasury)
                 # The Mint event's address is the aToken, so we need to find the underlying asset
                 a_token_addr = get_checksum_address(ev.event["address"])
@@ -2289,8 +2291,7 @@ class TransactionOperationsParser:
                     for mt_ev in minted_to_treasury_events:
                         mt_reserve = ("0x" + mt_ev["topics"][1].hex()[-40:]).lower()
                         if mt_reserve == underlying_addr:
-                            # Decode the amountMinted from data - for Rev 8 this equals the scaled
-                            # amount
+                            # Decode the amountMinted from data
                             minted_amount = eth_abi.abi.decode(
                                 types=["uint256"], data=mt_ev["data"]
                             )[0]
