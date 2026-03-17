@@ -2277,24 +2277,39 @@ class TransactionOperationsParser:
                     f"{paired_balance_transfer.event['logIndex']}, "
                     f"amount={paired_balance_transfer.amount}"
                 )
-            # Extract MintedToTreasury amount for all pool revisions
+
+            # Extract MintedToTreasury amount
             # For Rev 1-8: amountMinted is in underlying units (needs rayDiv to get scaled)
             # For Rev 9+: amountMinted equals the scaled amount directly
-            minted_amount = None
+            minted_amount: int | None = None
             if minted_to_treasury_events:
-                # Match by underlying asset address (topic[1] in MintedToTreasury)
+                """
+                Event definition:
+                    event MintedToTreasury(
+                        address indexed reserve,
+                        uint256 amountMinted
+                    );
+                """
+
                 # The Mint event's address is the aToken, so we need to find the underlying asset
-                a_token_addr = get_checksum_address(ev.event["address"])
-                asset = self._get_asset_by_a_token(a_token_addr)
+                asset = self._get_asset_by_a_token(
+                    a_token_address=get_checksum_address(ev.event["address"])
+                )
                 if asset is not None:
-                    underlying_addr = get_checksum_address(asset.underlying_token.address).lower()
+                    underlying_addr = get_checksum_address(asset.underlying_token.address)
+
                     for mt_ev in minted_to_treasury_events:
-                        mt_reserve = ("0x" + mt_ev["topics"][1].hex()[-40:]).lower()
-                        if mt_reserve == underlying_addr:
-                            # Decode the amountMinted from data
-                            minted_amount = eth_abi.abi.decode(
-                                types=["uint256"], data=mt_ev["data"]
-                            )[0]
+                        mt_reserve: str
+                        (mt_reserve,) = eth_abi.abi.decode(
+                            types=["address"], data=mt_ev["topics"][1]
+                        )
+                        minted_reserve = get_checksum_address(mt_reserve)
+
+                        if minted_reserve == underlying_addr:
+                            (minted_amount,) = eth_abi.abi.decode(
+                                types=["uint256"],
+                                data=mt_ev["data"],
+                            )
                             break
 
             operations.append(
