@@ -411,9 +411,9 @@ class TransactionOperationsParser:
         self,
         market: AaveV3Market,
         session: Session,
+        pool_address: ChecksumAddress,
         gho_token_address: ChecksumAddress | None = None,
         gho_vtoken_address: ChecksumAddress | None = None,
-        pool_address: ChecksumAddress | None = None,
     ) -> None:
         """
         Initialize parser.
@@ -2160,9 +2160,6 @@ class TransactionOperationsParser:
         """
         operations: list[Operation] = []
         operation_id = starting_operation_id
-
-        if not self.pool_address:
-            return operations
 
         for ev in scaled_events:
             # Skip already assigned events
