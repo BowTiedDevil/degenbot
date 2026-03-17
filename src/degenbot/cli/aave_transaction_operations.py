@@ -536,6 +536,58 @@ class TransactionOperationsParser:
             return get_checksum_address(asset.underlying_token.address)
         return None
 
+    def _get_a_token_for_asset(self, underlying_asset: ChecksumAddress) -> ChecksumAddress | None:
+        """Get the aToken address for an underlying asset.
+
+        Queries the database directly to avoid stale ORM relationship cache issues.
+
+        Args:
+            underlying_asset: The underlying asset address.
+
+        Returns:
+            The aToken contract address, or None if not found.
+        """
+        checksum_addr = get_checksum_address(underlying_asset)
+
+        # Query database directly to avoid stale ORM cache
+        asset = self.session.scalar(
+            select(AaveV3Asset)
+            .join(AaveV3Asset.underlying_token)
+            .where(
+                AaveV3Asset.market_id == self.market.id,
+                Erc20TokenTable.address == checksum_addr,
+            )
+        )
+        if asset is not None and asset.a_token is not None:
+            return get_checksum_address(asset.a_token.address)
+        return None
+
+    def _get_v_token_for_asset(self, underlying_asset: ChecksumAddress) -> ChecksumAddress | None:
+        """Get the vToken address for an underlying asset.
+
+        Queries the database directly to avoid stale ORM relationship cache issues.
+
+        Args:
+            underlying_asset: The underlying asset address.
+
+        Returns:
+            The vToken contract address, or None if not found.
+        """
+        checksum_addr = get_checksum_address(underlying_asset)
+
+        # Query database directly to avoid stale ORM cache
+        asset = self.session.scalar(
+            select(AaveV3Asset)
+            .join(AaveV3Asset.underlying_token)
+            .where(
+                AaveV3Asset.market_id == self.market.id,
+                Erc20TokenTable.address == checksum_addr,
+            )
+        )
+        if asset is not None and asset.v_token is not None:
+            return get_checksum_address(asset.v_token.address)
+        return None
+
     def _get_pool_revision(self) -> int:
         """
         Get the Pool contract revision from the market.
@@ -1779,7 +1831,7 @@ class TransactionOperationsParser:
             );
         """
 
-        _collateral_asset = decode_address(liquidation_event["topics"][1])
+        collateral_asset = decode_address(liquidation_event["topics"][1])
         debt_asset = decode_address(liquidation_event["topics"][2])
         user = decode_address(liquidation_event["topics"][3])
         _debt_to_cover, _liquidated_collateral_amount, _liquidator, _receive_a_token = (
@@ -1790,6 +1842,12 @@ class TransactionOperationsParser:
         )
 
         is_gho = debt_asset == self.gho_token_address
+
+        # Get token contract addresses for the collateral and debt assets
+        # This is needed to properly match events when a user is liquidated
+        # multiple times with different collateral assets in the same transaction
+        collateral_a_token_address = self._get_a_token_for_asset(collateral_asset)
+        debt_v_token_address = self._get_v_token_for_asset(debt_asset)
 
         debt_burn: ScaledTokenEvent | None = None
         for ev in scaled_events:
@@ -1802,8 +1860,13 @@ class TransactionOperationsParser:
             if not is_gho and ev.event_type != ScaledTokenEventType.DEBT_BURN:
                 continue
 
-            debt_burn = ev
-            break
+            # Match debt burn events only if they belong to this liquidation's debt asset
+            # This prevents incorrect matching when a user is liquidated multiple times
+            # with different debt assets in the same transaction
+            event_token_address = get_checksum_address(ev.event["address"])
+            if debt_v_token_address is not None and event_token_address == debt_v_token_address:
+                debt_burn = ev
+                break
 
         # Find collateral burn and/or transfer(s)
         # During liquidations, borrower may have BOTH collateral burned AND multiple transfers
@@ -1814,17 +1877,27 @@ class TransactionOperationsParser:
             if ev.event["logIndex"] in assigned_indices:
                 continue
 
-            if ev.event_type == ScaledTokenEventType.COLLATERAL_BURN:
-                if ev.user_address == user:
-                    collateral_burn = ev
-            elif ev.event_type in {
-                ScaledTokenEventType.COLLATERAL_TRANSFER,
-                ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
-            }:
-                if ev.user_address == user:
-                    collateral_transfers.append(ev)
-            else:
+            # Match collateral events only if they belong to this liquidation's collateral asset
+            # This prevents incorrect matching when a user is liquidated multiple times
+            # with different collateral assets in the same transaction
+            event_token_address = get_checksum_address(ev.event["address"])
+            if (
+                collateral_a_token_address is not None
+                and event_token_address != collateral_a_token_address
+            ):
                 continue
+
+            if ev.event_type == ScaledTokenEventType.COLLATERAL_BURN and ev.user_address == user:
+                collateral_burn = ev
+            elif (
+                ev.event_type
+                in {
+                    ScaledTokenEventType.COLLATERAL_TRANSFER,
+                    ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+                }
+                and ev.user_address == user
+            ):
+                collateral_transfers.append(ev)
         # A liquidation requires at least one collateral event (burn or transfer)
         # Collateral may be transferred to treasury instead of burned when protocol takes fee
         assert collateral_burn is not None or collateral_transfers, (
