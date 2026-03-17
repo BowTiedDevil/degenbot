@@ -2645,56 +2645,143 @@ def _process_operation(
             raise ValueError(msg)
 
 
+def _get_accrued_to_treasury_from_pool(
+    w3: Web3,
+    pool_address: ChecksumAddress,
+    underlying_asset_address: ChecksumAddress,
+    block_number: int,
+) -> int | None:
+    """
+    Query accruedToTreasury directly from Pool contract.
+
+    This retrieves the exact scaled amount from the reserve storage before
+    it was reset to 0 during the mintToTreasury transaction.
+
+    Note: getReserveData() returns the same struct layout for all Pool revisions:
+    - Rev 1-3: Returns ReserveData
+    - Rev 4+: Returns ReserveDataLegacy (maintains backward compatibility)
+    In both cases, accruedToTreasury is at index 12.
+
+    Args:
+        w3: Web3 instance
+        pool_address: Pool contract address
+        underlying_asset_address: Underlying asset address (not aToken)
+        block_number: Block number to query at (should be before the transaction)
+
+    Returns:
+        The accruedToTreasury scaled amount, or None if query fails
+    """
+    try:
+        # Query getReserveData which returns the same layout for all revisions
+        # ReserveData/ReserveDataLegacy struct layout:
+        #   0: configuration (uint256)
+        #   1: liquidityIndex (uint128)
+        #   2: currentLiquidityRate (uint128)
+        #   3: variableBorrowIndex (uint128)
+        #   4: currentVariableBorrowRate (uint128)
+        #   5: currentStableBorrowRate (uint128)
+        #   6: lastUpdateTimestamp (uint40)
+        #   7: id (uint16)
+        #   8: aTokenAddress (address)
+        #   9: stableDebtTokenAddress (address)
+        #   10: variableDebtTokenAddress (address)
+        #   11: interestRateStrategyAddress (address)
+        #   12: accruedToTreasury (uint128) <- This is what we want
+        #   13: unbacked (uint128)
+        #   14: isolationModeTotalDebt (uint128)
+
+        result = raw_call(
+            w3=w3,
+            address=pool_address,
+            calldata=encode_function_calldata(
+                function_prototype="getReserveData(address)",
+                function_arguments=[underlying_asset_address],
+            ),
+            return_types=[
+                "uint256",  # configuration
+                "uint128",  # liquidityIndex
+                "uint128",  # currentLiquidityRate
+                "uint128",  # variableBorrowIndex
+                "uint128",  # currentVariableBorrowRate
+                "uint128",  # currentStableBorrowRate
+                "uint40",  # lastUpdateTimestamp
+                "uint16",  # id
+                "address",  # aTokenAddress
+                "address",  # stableDebtTokenAddress
+                "address",  # variableDebtTokenAddress
+                "address",  # interestRateStrategyAddress
+                "uint128",  # accruedToTreasury <- Index 12
+                "uint128",  # unbacked
+                "uint128",  # isolationModeTotalDebt
+            ],
+            block_identifier=block_number,
+        )
+
+        accrued_to_treasury = int(result[12])  # Index 12 for all revisions
+        logger.debug(
+            f"Queried accruedToTreasury from Pool: {accrued_to_treasury} at block {block_number}"
+        )
+
+    except ContractLogicError:
+        logger.warning("Failed to query accruedToTreasury from Pool: contract logic error")
+        return None
+
+    else:
+        return accrued_to_treasury
+
+
 def _calculate_mint_to_treasury_scaled_amount(
     scaled_event: ScaledTokenEvent,
     collateral_position: AaveV3CollateralPosition,
     balance_transfer_events: list[LogReceipt],
-    pool_revision: int,
-    minted_to_treasury_amount: int | None,
+    tx_context: TransactionContext,
+    collateral_asset: AaveV3Asset,
 ) -> int:
     """
     Calculate scaled amount for MINT_TO_TREASURY operations.
 
-    MINT_TO_TREASURY is a special operation where the Pool mints aTokens to the
-    treasury from accumulated reserve fees. The calculation depends on whether
-    a BalanceTransfer event is present and the relationship between amount and
-    balance_increase.
+    For MINT_TO_TREASURY, the Pool contract stores the scaled amount in
+    reserve.accruedToTreasury before resetting it to 0. We query this value
+    directly from the Pool contract to avoid complex reverse calculations.
 
     Args:
         scaled_event: The scaled token Mint event
         collateral_position: The treasury's collateral position
         balance_transfer_events: List of BalanceTransfer events (may be empty)
-        pool_revision: The pool contract revision
-        minted_to_treasury_amount: The amount from MintedToTreasury event (for Rev 8)
+        tx_context: Transaction context with Web3 and market info
+        collateral_asset: The collateral asset with underlying token info
 
     Returns:
         The calculated scaled amount to add to the treasury position
 
     See debug/aave/0015 for detailed explanation of this logic.
+    See debug/aave/0020 for version check refactoring details.
     """
+
+    # 1. Handle BalanceTransfer (applies to all revisions)
+    # BalanceTransfer is present during liquidations - use its amount directly
+    # The BalanceTransfer amount is already in scaled units
     if balance_transfer_events:
-        # BalanceTransfer is present during liquidations - use its amount directly
-        # The BalanceTransfer amount is already in scaled units and represents the
-        # actual tokens added to the treasury from protocol fees
+        """
+        Event definition:
+            event BalanceTransfer(
+                address indexed from,
+                address indexed to,
+                uint256 value,
+                uint256 index
+            );
+        """
+
         bt_event = balance_transfer_events[0]
         bt_amount: int
-        bt_amount, _bt_index = eth_abi.abi.decode(
+        bt_amount, _ = eth_abi.abi.decode(
             types=["uint256", "uint256"],
             data=bt_event["data"],
         )
         logger.debug(f"MINT_TO_TREASURY using BalanceTransfer amount: {bt_amount}")
         return bt_amount
 
-    # For Pool Revision 8, use the MintedToTreasury event amount directly
-    # In Rev 8, the amount is calculated with rayMul (half-up) and passed as amountScaled
-    # to the AToken, so it equals the actual scaled amount added
-    if pool_revision == 8 and minted_to_treasury_amount is not None:  # noqa: PLR2004
-        logger.debug(
-            f"MINT_TO_TREASURY using MintedToTreasury amount for Rev 8: {minted_to_treasury_amount}"
-        )
-        return minted_to_treasury_amount
-
-    # No BalanceTransfer - need to calculate from the Mint event
+    # No BalanceTransfer - need to get the scaled amount
     assert scaled_event.balance_increase is not None
     assert scaled_event.index is not None
 
@@ -2705,15 +2792,36 @@ def _calculate_mint_to_treasury_scaled_amount(
         logger.debug("MINT_TO_TREASURY: amount == balanceIncrease, setting scaled_amount = 0")
         return 0
 
-    # Use appropriate calculation based on pool revision
-    # - Rev 1-3: Simple formula - the contract calculates
-    #     (balance_increase = scaled_balance * index - scaled_balance * last_index)
-    #     amount (from Pool) = Mint.amount - balance_increase
-    #     scaled_amount = amount / index (rayDiv with half-up rounding)
-    # - Rev 4+: Complex formula to reverse floor rounding (see Issue 0014)
-    logger.debug("MINT_TO_TREASURY: Using formula calculation")
-    if pool_revision <= 3:  # noqa: PLR2004
-        # Simple formula for Pool Rev 1-3 (see Issue 0019)
+    # 2. Query accruedToTreasury directly from Pool contract
+    # This is the exact scaled amount that was minted to the treasury
+    # We query at block_number - 1 to get the value before it was reset to 0
+    # Note: getReserveData() returns the same struct layout for all Pool revisions
+    pool_contract = next(
+        (c for c in tx_context.market.contracts if c.name == "POOL"),
+        None,
+    )
+    if pool_contract:
+        accrued_to_treasury = _get_accrued_to_treasury_from_pool(
+            w3=tx_context.w3,
+            pool_address=get_checksum_address(pool_contract.address),
+            underlying_asset_address=get_checksum_address(
+                collateral_asset.underlying_token.address
+            ),
+            block_number=scaled_event.event["blockNumber"] - 1,
+        )
+        if accrued_to_treasury is not None:
+            logger.debug(f"MINT_TO_TREASURY using queried accruedToTreasury: {accrued_to_treasury}")
+            return accrued_to_treasury
+
+    # 3. Fallback: Calculate from position data
+    # This should only happen if the RPC query fails
+    logger.warning("MINT_TO_TREASURY: Falling back to calculation method")
+
+    # Get the aToken revision to determine which formula to use
+    a_token_revision = collateral_asset.a_token_revision
+
+    if a_token_revision <= 3:  # noqa: PLR2004
+        # Simple formula for AToken Rev 1-3 (see Issue 0019)
         balance_increase = ray_mul(
             collateral_position.balance,
             scaled_event.index,
@@ -2723,12 +2831,10 @@ def _calculate_mint_to_treasury_scaled_amount(
         )
         principal = scaled_event.amount - balance_increase
         scaled_amount = ray_div(principal, scaled_event.index)
-        logger.debug(f"MINT_TO_TREASURY (Rev 1-3): balance_increase={balance_increase}")
-        logger.debug(f"MINT_TO_TREASURY (Rev 1-3): principal={principal}")
-        logger.debug(f"MINT_TO_TREASURY (Rev 1-3): scaled_amount={scaled_amount}")
+        logger.debug(f"MINT_TO_TREASURY (Rev 1-3 fallback): scaled_amount={scaled_amount}")
         return scaled_amount
 
-    # Complex formula for Rev 4+
+    # Complex formula for AToken Rev 4+ (see Issue 0014)
     previous_balance = ray_mul_floor(
         collateral_position.balance,
         collateral_position.last_index or 0,
@@ -2736,10 +2842,7 @@ def _calculate_mint_to_treasury_scaled_amount(
     next_balance = scaled_event.amount + previous_balance
     x = ray_div_ceil(next_balance, scaled_event.index)
     scaled_amount = x - collateral_position.balance
-    logger.debug(f"MINT_TO_TREASURY (Rev 4+): previous_balance={previous_balance}")
-    logger.debug(f"MINT_TO_TREASURY (Rev 4+): next_balance={next_balance}")
-    logger.debug(f"MINT_TO_TREASURY (Rev 4+): x={x}")
-    logger.debug(f"MINT_TO_TREASURY (Rev 4+): scaled_amount={scaled_amount}")
+    logger.debug(f"MINT_TO_TREASURY (Rev 4+ fallback): scaled_amount={scaled_amount}")
     return scaled_amount
 
 
@@ -2782,13 +2885,13 @@ def _process_collateral_mint_with_match(
 
     # Use enriched event data for scaled amount, or calculate for MINT_TO_TREASURY
     if operation.operation_type.name == "MINT_TO_TREASURY":
-        # MINT_TO_TREASURY requires special calculation (see debug/aave/0015)
+        # MINT_TO_TREASURY queries accruedToTreasury directly from Pool (simplified approach)
         scaled_amount = _calculate_mint_to_treasury_scaled_amount(
             scaled_event=scaled_event,
             collateral_position=collateral_position,
             balance_transfer_events=operation.balance_transfer_events,
-            pool_revision=tx_context.pool_revision,
-            minted_to_treasury_amount=operation.minted_to_treasury_amount,
+            tx_context=tx_context,
+            collateral_asset=collateral_asset,
         )
     else:
         assert enriched_event.scaled_amount is not None
