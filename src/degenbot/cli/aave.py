@@ -547,6 +547,7 @@ def aave_update(
                                 skip_confirmation=True,
                             )
                             logger.info(f"Created database backup at block {working_end_block:,}")
+                            session.refresh()
                         else:
                             session.commit()
 
