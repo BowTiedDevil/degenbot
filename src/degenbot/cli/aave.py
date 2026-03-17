@@ -116,6 +116,7 @@ class UserOperation(Enum):
 
 
 FULL_VERIFICATION_INTERVAL = 250_000
+SCALED_AMOUNT_POOL_REVISION = 9
 
 
 class WadRayMathLibrary(Protocol):
@@ -2588,7 +2589,7 @@ def _calculate_mint_to_treasury_scaled_amount(
 
     # For Pool Rev 9+, the minted amount IS the scaled amount
     # Pool passes accruedToTreasury directly to AToken without conversion
-    if tx_context.pool_revision >= 9:
+    if tx_context.pool_revision >= SCALED_AMOUNT_POOL_REVISION:
         logger.debug(f"MINT_TO_TREASURY (Rev 9+): using amount directly = {minted_amount}")
         return minted_amount
 

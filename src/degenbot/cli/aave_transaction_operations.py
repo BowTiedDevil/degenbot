@@ -31,6 +31,7 @@ from degenbot.logging import logger
 # Token amount matching tolerance for ray math rounding differences
 # Pool revision 9+ uses flooring ray division which can introduce ±2 wei variance
 TOKEN_AMOUNT_MATCH_TOLERANCE = 2
+SCALED_AMOUNT_POOL_REVISION = 9
 
 
 class OperationType(Enum):
@@ -1089,7 +1090,7 @@ class TransactionOperationsParser:
             # for an example of a supply event amount=285000000000000000, but the associated
             # Mint has a principal amount=284999999999999998
             calculated_principal = ev.amount - ev.balance_increase
-            if pool_revision >= 9:  # noqa:PLR2004
+            if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
                 if abs(calculated_principal - supply_amount) > TOKEN_AMOUNT_MATCH_TOLERANCE:
                     continue
             elif calculated_principal != supply_amount:
@@ -1186,7 +1187,7 @@ class TransactionOperationsParser:
             # for an example of a withdraw event amount=500000000000000000000000, but the
             # associated Burn has a principal amount=500000000000000000000001
             calculated_burn = ev.amount + ev.balance_increase
-            if pool_revision >= 9:  # noqa:PLR2004
+            if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
                 if abs(calculated_burn - withdraw_amount) > TOKEN_AMOUNT_MATCH_TOLERANCE:
                     continue
             elif calculated_burn != withdraw_amount:
@@ -1218,7 +1219,7 @@ class TransactionOperationsParser:
                 # Pattern 2: mint amount ≈ balance_increase (full interest used)
                 calculated_withdraw = ev.balance_increase - ev.amount
 
-                if pool_revision >= 9:  # noqa:PLR2004
+                if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
                     pattern_1_match = (
                         abs(calculated_withdraw - withdraw_amount) <= TOKEN_AMOUNT_MATCH_TOLERANCE
                     )
@@ -1681,7 +1682,7 @@ class TransactionOperationsParser:
                 # Calculating it exactly requires injecting extra details about the position,
                 # so this check will allow up to a TOKEN_AMOUNT_MATCH_TOLERANCE wei deviation
                 # on pool revisions 9+
-                if pool_revision >= 9:  # noqa:PLR2004
+                if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
                     if abs(calculated_amount - repay_amount) > TOKEN_AMOUNT_MATCH_TOLERANCE:
                         continue
                 elif calculated_amount != repay_amount:
@@ -1736,8 +1737,8 @@ class TransactionOperationsParser:
 
             # Pool revision 9+ uses ray math with flooring, allow ±2 wei tolerance
             # see TX: 0x8a4bc3d8f386c0d754d98766caf9033202a65a932f0f3ede035d95f039a56abe
-            if pool_revision >= 9:  # noqa:PLR2004
-                if abs(total_burn - expected_amount) > 2:  # noqa:PLR2004
+            if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
+                if abs(total_burn - expected_amount) > TOKEN_AMOUNT_MATCH_TOLERANCE:
                     continue
             elif total_burn != expected_amount:
                 continue
