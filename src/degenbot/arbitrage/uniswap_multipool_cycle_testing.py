@@ -264,9 +264,6 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
 
                 ordered_tokens.extend(FakeToken() for _ in range(len(pools) - len(ordered_tokens)))
 
-                # removed assertion: WETH-X -> X-Y -> Y->X -> X-WETH paths should be valid as long
-                # as all are unique
-                # assert len(ordered_tokens) == len(pools), f"{ordered_tokens=}, {pools=}"
                 return tuple(ordered_tokens)
 
             # TODO: review if pools should be dynamically sorted, or filtered pre-check and assumed
@@ -296,8 +293,6 @@ class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
                 ],
                 dtype=np.float64,
             )
-
-            # print(f"{uncompressed_reserves=}")
 
             # SET UP PARAMETERS
             assert len(problem.param_dict) == 3  # noqa: PLR2004

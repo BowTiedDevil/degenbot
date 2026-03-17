@@ -84,31 +84,38 @@ class TokenMathV1:
     TokenMath library did not exist yet in these versions.
     """
 
-    def get_collateral_mint_scaled_amount(self, amount: int, liquidity_index: int) -> int:
+    @staticmethod
+    def get_collateral_mint_scaled_amount(amount: int, liquidity_index: int) -> int:
         """Standard half-up rounding for collateral mint."""
         return wad_ray_math.ray_div(amount, liquidity_index)
 
-    def get_collateral_burn_scaled_amount(self, amount: int, liquidity_index: int) -> int:
+    @staticmethod
+    def get_collateral_burn_scaled_amount(amount: int, liquidity_index: int) -> int:
         """Standard half-up rounding for collateral burn."""
         return wad_ray_math.ray_div(amount, liquidity_index)
 
-    def get_collateral_transfer_scaled_amount(self, amount: int, liquidity_index: int) -> int:
+    @staticmethod
+    def get_collateral_transfer_scaled_amount(amount: int, liquidity_index: int) -> int:
         """Standard half-up rounding for collateral transfer."""
         return wad_ray_math.ray_div(amount, liquidity_index)
 
-    def get_collateral_balance(self, scaled_amount: int, liquidity_index: int) -> int:
+    @staticmethod
+    def get_collateral_balance(scaled_amount: int, liquidity_index: int) -> int:
         """Standard half-up rounding for collateral balance."""
         return wad_ray_math.ray_mul(scaled_amount, liquidity_index)
 
-    def get_debt_mint_scaled_amount(self, amount: int, borrow_index: int) -> int:
+    @staticmethod
+    def get_debt_mint_scaled_amount(amount: int, borrow_index: int) -> int:
         """Standard half-up rounding for debt mint."""
         return wad_ray_math.ray_div(amount, borrow_index)
 
-    def get_debt_burn_scaled_amount(self, amount: int, borrow_index: int) -> int:
+    @staticmethod
+    def get_debt_burn_scaled_amount(amount: int, borrow_index: int) -> int:
         """Standard half-up rounding for debt burn."""
         return wad_ray_math.ray_div(amount, borrow_index)
 
-    def get_debt_balance(self, scaled_amount: int, borrow_index: int) -> int:
+    @staticmethod
+    def get_debt_balance(scaled_amount: int, borrow_index: int) -> int:
         """Standard half-up rounding for debt balance."""
         return wad_ray_math.ray_mul(scaled_amount, borrow_index)
 
@@ -120,31 +127,38 @@ class TokenMathV4:
     Uses floor for mint operations, ceil for burn operations (inverse for debt).
     """
 
-    def get_collateral_mint_scaled_amount(self, amount: int, liquidity_index: int) -> int:
+    @staticmethod
+    def get_collateral_mint_scaled_amount(amount: int, liquidity_index: int) -> int:
         """Floor rounding: minted aTokens <= supplied amount."""
         return wad_ray_math.ray_div_floor(amount, liquidity_index)
 
-    def get_collateral_burn_scaled_amount(self, amount: int, liquidity_index: int) -> int:
+    @staticmethod
+    def get_collateral_burn_scaled_amount(amount: int, liquidity_index: int) -> int:
         """Ceil rounding: ensure sufficient balance reduction."""
         return wad_ray_math.ray_div_ceil(amount, liquidity_index)
 
-    def get_collateral_transfer_scaled_amount(self, amount: int, liquidity_index: int) -> int:
+    @staticmethod
+    def get_collateral_transfer_scaled_amount(amount: int, liquidity_index: int) -> int:
         """Ceil rounding: ensure recipient gets at least requested."""
         return wad_ray_math.ray_div_ceil(amount, liquidity_index)
 
-    def get_collateral_balance(self, scaled_amount: int, liquidity_index: int) -> int:
+    @staticmethod
+    def get_collateral_balance(scaled_amount: int, liquidity_index: int) -> int:
         """Floor rounding: prevent over-accounting."""
         return wad_ray_math.ray_mul_floor(scaled_amount, liquidity_index)
 
-    def get_debt_mint_scaled_amount(self, amount: int, borrow_index: int) -> int:
+    @staticmethod
+    def get_debt_mint_scaled_amount(amount: int, borrow_index: int) -> int:
         """Ceil rounding: never underaccount user's debt."""
         return wad_ray_math.ray_div_ceil(amount, borrow_index)
 
-    def get_debt_burn_scaled_amount(self, amount: int, borrow_index: int) -> int:
+    @staticmethod
+    def get_debt_burn_scaled_amount(amount: int, borrow_index: int) -> int:
         """Floor rounding: prevent over-burning."""
         return wad_ray_math.ray_div_floor(amount, borrow_index)
 
-    def get_debt_balance(self, scaled_amount: int, borrow_index: int) -> int:
+    @staticmethod
+    def get_debt_balance(scaled_amount: int, borrow_index: int) -> int:
         """Ceil rounding: prevent under-accounting."""
         return wad_ray_math.ray_mul_ceil(scaled_amount, borrow_index)
 
@@ -155,31 +169,38 @@ class TokenMathV5:
     Same rounding semantics as V4.
     """
 
-    def get_collateral_mint_scaled_amount(self, amount: int, liquidity_index: int) -> int:
+    @staticmethod
+    def get_collateral_mint_scaled_amount(amount: int, liquidity_index: int) -> int:
         """Floor rounding: minted aTokens <= supplied amount."""
         return wad_ray_math.ray_div_floor(amount, liquidity_index)
 
-    def get_collateral_burn_scaled_amount(self, amount: int, liquidity_index: int) -> int:
+    @staticmethod
+    def get_collateral_burn_scaled_amount(amount: int, liquidity_index: int) -> int:
         """Ceil rounding: ensure sufficient balance reduction."""
         return wad_ray_math.ray_div_ceil(amount, liquidity_index)
 
-    def get_collateral_transfer_scaled_amount(self, amount: int, liquidity_index: int) -> int:
+    @staticmethod
+    def get_collateral_transfer_scaled_amount(amount: int, liquidity_index: int) -> int:
         """Ceil rounding: ensure recipient gets at least requested."""
         return wad_ray_math.ray_div_ceil(amount, liquidity_index)
 
-    def get_collateral_balance(self, scaled_amount: int, liquidity_index: int) -> int:
+    @staticmethod
+    def get_collateral_balance(scaled_amount: int, liquidity_index: int) -> int:
         """Floor rounding: prevent over-accounting."""
         return wad_ray_math.ray_mul_floor(scaled_amount, liquidity_index)
 
-    def get_debt_mint_scaled_amount(self, amount: int, borrow_index: int) -> int:
+    @staticmethod
+    def get_debt_mint_scaled_amount(amount: int, borrow_index: int) -> int:
         """Ceil rounding: never underaccount user's debt."""
         return wad_ray_math.ray_div_ceil(amount, borrow_index)
 
-    def get_debt_burn_scaled_amount(self, amount: int, borrow_index: int) -> int:
+    @staticmethod
+    def get_debt_burn_scaled_amount(amount: int, borrow_index: int) -> int:
         """Floor rounding: prevent over-burning."""
         return wad_ray_math.ray_div_floor(amount, borrow_index)
 
-    def get_debt_balance(self, scaled_amount: int, borrow_index: int) -> int:
+    @staticmethod
+    def get_debt_balance(scaled_amount: int, borrow_index: int) -> int:
         """Ceil rounding: prevent under-accounting."""
         return wad_ray_math.ray_mul_ceil(scaled_amount, borrow_index)
 
@@ -234,8 +255,9 @@ class TokenMathFactory:
         Returns:
             TokenMath instance with appropriate rounding
         """
-        if token_revision <= 3:
+
+        if token_revision <= 3:  # noqa:PLR2004
             return cls.get_token_math(1)
-        if token_revision == 4:
+        if token_revision == 4:  # noqa:PLR2004
             return cls.get_token_math(4)
         return cls.get_token_math(5)

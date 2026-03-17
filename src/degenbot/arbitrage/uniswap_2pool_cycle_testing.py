@@ -914,7 +914,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
-            if forward_token_bounds[1] == 1.0:
+            if int(forward_token_bounds[1]) == 1:
                 forward_token_amount = 1
             else:
                 opt: OptimizeResult = minimize_scalar(
@@ -1077,7 +1077,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
-            if forward_token_bounds[1] == 1.0:
+            if int(forward_token_bounds[1]) == 1:
                 forward_token_amount = 1
             else:
                 opt: OptimizeResult = minimize_scalar(
@@ -1252,7 +1252,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
-            if forward_token_bounds[1] == 1.0:
+            if int(forward_token_bounds[1]) == 1:
                 forward_token_amount = 1
             else:
                 opt: OptimizeResult = minimize_scalar(
@@ -1557,7 +1557,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
-            if forward_token_bounds[1] == 1.0:
+            if int(forward_token_bounds[1]) == 1:
                 forward_token_amount = 1
             else:
                 opt: OptimizeResult = minimize_scalar(
@@ -1720,7 +1720,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
-            if forward_token_bounds[1] == 1.0:
+            if int(forward_token_bounds[1]) == 1:
                 forward_token_amount = 1
             else:
                 opt: OptimizeResult = minimize_scalar(

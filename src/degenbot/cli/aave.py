@@ -2679,6 +2679,7 @@ def _calculate_mint_to_treasury_scaled_amount(
         # The BalanceTransfer amount is already in scaled units and represents the
         # actual tokens added to the treasury from protocol fees
         bt_event = balance_transfer_events[0]
+        bt_amount: int
         bt_amount, _bt_index = eth_abi.abi.decode(
             types=["uint256", "uint256"],
             data=bt_event["data"],
@@ -2708,12 +2709,12 @@ def _calculate_mint_to_treasury_scaled_amount(
 
     # Use appropriate calculation based on pool revision
     # - Rev 1-3: Simple formula - the contract calculates
-    #   balance_increase = scaled_balance * index - scaled_balance * last_index
-    #   amount (from Pool) = Mint.amount - balance_increase
-    #   scaled_amount = amount / index (rayDiv with half-up rounding)
+    #     (balance_increase = scaled_balance * index - scaled_balance * last_index)
+    #     amount (from Pool) = Mint.amount - balance_increase
+    #     scaled_amount = amount / index (rayDiv with half-up rounding)
     # - Rev 4+: Complex formula to reverse floor rounding (see Issue 0014)
     logger.debug("MINT_TO_TREASURY: Using formula calculation")
-    if pool_revision <= 3:
+    if pool_revision <= 3:  # noqa: PLR2004
         # Simple formula for Pool Rev 1-3 (see Issue 0019)
         balance_increase = ray_mul(
             collateral_position.balance,
@@ -2735,11 +2736,11 @@ def _calculate_mint_to_treasury_scaled_amount(
         collateral_position.last_index or 0,
     )
     next_balance = scaled_event.amount + previous_balance
-    X = ray_div_ceil(next_balance, scaled_event.index)
-    scaled_amount = X - collateral_position.balance
+    x = ray_div_ceil(next_balance, scaled_event.index)
+    scaled_amount = x - collateral_position.balance
     logger.debug(f"MINT_TO_TREASURY (Rev 4+): previous_balance={previous_balance}")
     logger.debug(f"MINT_TO_TREASURY (Rev 4+): next_balance={next_balance}")
-    logger.debug(f"MINT_TO_TREASURY (Rev 4+): X={X}")
+    logger.debug(f"MINT_TO_TREASURY (Rev 4+): x={x}")
     logger.debug(f"MINT_TO_TREASURY (Rev 4+): scaled_amount={scaled_amount}")
     return scaled_amount
 
@@ -2792,6 +2793,7 @@ def _process_collateral_mint_with_match(
             minted_to_treasury_amount=operation.minted_to_treasury_amount,
         )
     else:
+        assert enriched_event.scaled_amount is not None
         scaled_amount = enriched_event.scaled_amount
 
     # Ensure required fields are present for CollateralMintEvent
@@ -3361,20 +3363,20 @@ def _process_debt_burn_with_match(
         if operation and operation.operation_type in {
             OperationType.LIQUIDATION,
             OperationType.GHO_LIQUIDATION,
-        }:
+            tx_context is not None,
             # Check if there's a DEFICIT_CREATED event for the same user in this transaction
-            if tx_context is not None:
-                for evt in tx_context.events:
-                    if evt["topics"][0] == AaveV3PoolEvent.DEFICIT_CREATED.value:
-                        # DEFICIT_CREATED event has user as topic[1]
-                        deficit_user = get_checksum_address("0x" + evt["topics"][1].hex()[-40:])
-                        if deficit_user == user.address:
-                            is_bad_debt_liquidation = True
-                            logger.debug(
-                                f"_process_debt_burn_with_match: Bad debt liquidation detected "
-                                f"for user {user.address}"
-                            )
-                            break
+        }:
+            for evt in tx_context.events:
+                if evt["topics"][0] == AaveV3PoolEvent.DEFICIT_CREATED.value:
+                    # DEFICIT_CREATED event has user as topic[1]
+                    deficit_user = get_checksum_address("0x" + evt["topics"][1].hex()[-40:])
+                    if deficit_user == user.address:
+                        is_bad_debt_liquidation = True
+                        logger.debug(
+                            f"_process_debt_burn_with_match: Bad debt liquidation detected "
+                            f"for user {user.address}"
+                        )
+                        break
 
         if is_bad_debt_liquidation:
             # Bad debt liquidation: The contract burns the ENTIRE debt balance (borrowerReserveDebt)
@@ -3391,14 +3393,15 @@ def _process_debt_burn_with_match(
             if scaled_event.index > current_index:
                 debt_position.last_index = scaled_event.index
             return
-        elif operation and operation.operation_type in {
+        if operation and operation.operation_type in {
             OperationType.LIQUIDATION,
             OperationType.GHO_LIQUIDATION,
         }:
             # Normal liquidation: use debtToCover from pool event
             burn_value = enriched_event.raw_amount
             logger.debug(
-                f"_process_debt_burn_with_match: NORMAL LIQUIDATION - using debtToCover={burn_value}"
+                f"_process_debt_burn_with_match: NORMAL LIQUIDATION - using "
+                f"debtToCover={burn_value}"
             )
         else:
             # Standard REPAY: use Burn event value

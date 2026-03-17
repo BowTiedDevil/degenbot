@@ -3,7 +3,7 @@ import sqlite3
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import URL, create_engine, text
+from sqlalchemy import URL, Engine, create_engine, text
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
 from degenbot.config import settings
@@ -19,7 +19,11 @@ def backup_sqlite_database(
     suffix: str | None = None,
     skip_confirmation: bool = False,
 ) -> None:
-    backup_path = pathlib.Path(session.bind.url.database).absolute()
+    session_engine = session.bind
+    assert isinstance(session_engine, Engine)
+    assert session_engine.url.database is not None
+
+    backup_path = pathlib.Path(session_engine.url.database).absolute()
 
     if prefix is not None:
         backup_path = backup_path.with_stem(f"{prefix}-{backup_path.stem}")
@@ -33,7 +37,8 @@ def backup_sqlite_database(
 
     # Get the underlying DBAPI connection for backup
     with sqlite3.connect(backup_path) as backup_connection:
-        raw_conn: sqlite3.Connection = session.connection().connection.driver_connection
+        raw_conn = session.connection().connection.driver_connection
+        assert isinstance(raw_conn, sqlite3.Connection)
         raw_conn.backup(target=backup_connection)
 
         # Verify integrity of underlying database

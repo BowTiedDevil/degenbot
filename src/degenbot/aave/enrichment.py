@@ -126,7 +126,7 @@ class ScaledEventEnricher:
                         ScaledTokenEventType.ERC20_DEBT_TRANSFER,
                     }:
                         # Debt events use debtToCover
-                        raw_amount = RawAmountExtractor._extract_liquidation_debt(
+                        raw_amount = RawAmountExtractor.extract_liquidation_debt(
                             operation.pool_event
                         )
                     elif scaled_event.event_type in {
@@ -135,12 +135,12 @@ class ScaledEventEnricher:
                         ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
                     }:
                         # Collateral events use liquidatedCollateralAmount
-                        raw_amount = RawAmountExtractor._extract_liquidation_collateral(
+                        raw_amount = RawAmountExtractor.extract_liquidation_collateral(
                             operation.pool_event
                         )
                     else:
                         # Default to debt amount for unknown event types
-                        raw_amount = RawAmountExtractor._extract_liquidation_debt(
+                        raw_amount = RawAmountExtractor.extract_liquidation_debt(
                             operation.pool_event
                         )
                 else:

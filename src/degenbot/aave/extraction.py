@@ -57,7 +57,7 @@ class RawAmountExtractor:
         return extractor
 
     @staticmethod
-    def _extract_supply(event: LogReceipt) -> int:
+    def extract_supply(event: LogReceipt) -> int:
         """
         Extract amount from Supply event.
 
@@ -79,7 +79,7 @@ class RawAmountExtractor:
         return supply_amount
 
     @staticmethod
-    def _extract_borrow(event: LogReceipt) -> int:
+    def extract_borrow(event: LogReceipt) -> int:
         """
         Extract amount from Borrow event.
 
@@ -103,7 +103,7 @@ class RawAmountExtractor:
         return borrow_amount
 
     @staticmethod
-    def _extract_repay(event: LogReceipt) -> int:
+    def extract_repay(event: LogReceipt) -> int:
         """
         Extract amount from Repay event.
 
@@ -125,7 +125,7 @@ class RawAmountExtractor:
         return repay_amount
 
     @staticmethod
-    def _extract_withdraw(event: LogReceipt) -> int:
+    def extract_withdraw(event: LogReceipt) -> int:
         """
         Extract amount from Withdraw event.
 
@@ -146,7 +146,7 @@ class RawAmountExtractor:
         return withdraw_amount
 
     @staticmethod
-    def _extract_liquidation_debt(event: LogReceipt) -> int:
+    def extract_liquidation_debt(event: LogReceipt) -> int:
         """
         Extract debt amount from LiquidationCall event.
 
@@ -170,7 +170,7 @@ class RawAmountExtractor:
         return debt_to_cover
 
     @staticmethod
-    def _extract_liquidation_collateral(event: LogReceipt) -> int:
+    def extract_liquidation_collateral(event: LogReceipt) -> int:
         """
         Extract collateral amount from LiquidationCall event.
 
@@ -195,8 +195,8 @@ class RawAmountExtractor:
 
 
 # Register extractors for each Pool event type
-EVENT_EXTRACTORS[AaveV3PoolEvent.SUPPLY] = RawAmountExtractor._extract_supply
-EVENT_EXTRACTORS[AaveV3PoolEvent.WITHDRAW] = RawAmountExtractor._extract_withdraw
-EVENT_EXTRACTORS[AaveV3PoolEvent.BORROW] = RawAmountExtractor._extract_borrow
-EVENT_EXTRACTORS[AaveV3PoolEvent.REPAY] = RawAmountExtractor._extract_repay
+EVENT_EXTRACTORS[AaveV3PoolEvent.SUPPLY] = RawAmountExtractor.extract_supply
+EVENT_EXTRACTORS[AaveV3PoolEvent.WITHDRAW] = RawAmountExtractor.extract_withdraw
+EVENT_EXTRACTORS[AaveV3PoolEvent.BORROW] = RawAmountExtractor.extract_borrow
+EVENT_EXTRACTORS[AaveV3PoolEvent.REPAY] = RawAmountExtractor.extract_repay
 # Liquidation uses different extractors for debt vs collateral - handled in extract method

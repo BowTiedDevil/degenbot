@@ -2218,11 +2218,13 @@ class TransactionOperationsParser:
                     continue
                 if bt_ev.event["logIndex"] in assigned_indices:
                     logger.debug(
-                        f"  Skipping BalanceTransfer at {bt_ev.event['logIndex']} - already assigned"
+                        f"  Skipping BalanceTransfer at {bt_ev.event['logIndex']} - already "
+                        f"assigned"
                     )
                     continue
                 # BalanceTransfer should be to the same user (treasury) and have the same index
-                # Note: For BalanceTransfer, user_address is the FROM address, target_address is the TO address
+                # Note: For BalanceTransfer, user_address is the FROM address, target_address is
+                # the TO address
                 logger.debug(
                     f"  Checking BalanceTransfer at {bt_ev.event['logIndex']}: "
                     f"from={bt_ev.user_address}, to={bt_ev.target_address}, index={bt_ev.index}"
@@ -2240,7 +2242,8 @@ class TransactionOperationsParser:
             )
             if paired_balance_transfer:
                 logger.debug(
-                    f"  Paired BalanceTransfer at logIndex {paired_balance_transfer.event['logIndex']}, "
+                    f"  Paired BalanceTransfer at logIndex ,"
+                    f"{paired_balance_transfer.event['logIndex']}, "
                     f"amount={paired_balance_transfer.amount}"
                 )
             # For Pool Revision 8, get the scaled amount from MintedToTreasury event
@@ -2255,7 +2258,8 @@ class TransactionOperationsParser:
                     for mt_ev in minted_to_treasury_events:
                         mt_reserve = ("0x" + mt_ev["topics"][1].hex()[-40:]).lower()
                         if mt_reserve == underlying_addr:
-                            # Decode the amountMinted from data - for Rev 8 this equals the scaled amount
+                            # Decode the amountMinted from data - for Rev 8 this equals the scaled
+                            # amount
                             minted_amount = eth_abi.abi.decode(
                                 types=["uint256"], data=mt_ev["data"]
                             )[0]
