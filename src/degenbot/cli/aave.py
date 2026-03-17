@@ -30,9 +30,6 @@ from degenbot.aave.events import (
 from degenbot.aave.libraries.token_math import TokenMathFactory
 from degenbot.aave.libraries.wad_ray_math import (
     ray_div,
-    ray_div_ceil,
-    ray_mul,
-    ray_mul_floor,
     wad_mul,
 )
 from degenbot.aave.models import EnrichedScaledTokenEvent
@@ -703,7 +700,6 @@ def _process_user_e_mode_set_event(
         tx_context=tx_context,
         user_address=user_address,
         block_number=event["blockNumber"],
-        tx_hash=event["transactionHash"],
     )
     user.e_mode = e_mode
 
@@ -864,14 +860,11 @@ def _process_stk_aave_transfer_event(
     # Get or create users involved in the transfer
     block_number = event["blockNumber"]
 
-    tx_hash = event["transactionHash"]
-
     from_user = (
         _get_or_create_user(
             tx_context=tx_context,
             user_address=from_address,
             block_number=block_number,
-            tx_hash=tx_hash,
         )
         if from_address != ZERO_ADDRESS
         else None
@@ -881,7 +874,6 @@ def _process_stk_aave_transfer_event(
             tx_context=tx_context,
             user_address=to_address,
             block_number=block_number,
-            tx_hash=tx_hash,
         )
         if to_address != ZERO_ADDRESS
         else None
@@ -1227,7 +1219,6 @@ def _get_or_create_user(
     tx_context: TransactionContext,
     user_address: ChecksumAddress,
     block_number: int,
-    tx_hash: HexBytes | None = None,
 ) -> AaveV3User:
     """
     Get existing user or create new one with default e_mode.
@@ -2738,7 +2729,6 @@ def _process_collateral_mint_with_match(
         tx_context=tx_context,
         user_address=scaled_event.user_address,
         block_number=scaled_event.event["blockNumber"],
-        tx_hash=event["transactionHash"],
     )
 
     token_address = get_checksum_address(scaled_event.event["address"])
@@ -2816,7 +2806,6 @@ def _process_collateral_burn_with_match(
         tx_context=tx_context,
         user_address=scaled_event.user_address,
         block_number=scaled_event.event["blockNumber"],
-        tx_hash=event["transactionHash"],
     )
 
     # Get collateral asset
@@ -3015,7 +3004,6 @@ def _process_debt_mint_with_match(
         tx_context=tx_context,
         user_address=scaled_event.user_address,
         block_number=scaled_event.event["blockNumber"],
-        tx_hash=event["transactionHash"],
     )
 
     token_address = get_checksum_address(scaled_event.event["address"])
@@ -3202,7 +3190,6 @@ def _process_debt_burn_with_match(
         tx_context=tx_context,
         user_address=scaled_event.user_address,
         block_number=scaled_event.event["blockNumber"],
-        tx_hash=event["transactionHash"],
     )
 
     token_address = get_checksum_address(scaled_event.event["address"])
@@ -3488,7 +3475,6 @@ def _process_collateral_transfer(
         tx_context=tx_context,
         user_address=scaled_event.from_address,
         block_number=scaled_event.event["blockNumber"],
-        tx_hash=event["transactionHash"],
     )
 
     token_address = get_checksum_address(scaled_event.event["address"])
@@ -3626,7 +3612,6 @@ def _process_collateral_transfer(
                 tx_context=tx_context,
                 user_address=scaled_event.target_address,
                 block_number=scaled_event.event["blockNumber"],
-                tx_hash=event["transactionHash"],
             )
 
             recipient_position = _get_or_create_collateral_position(
@@ -3728,7 +3713,6 @@ def _process_debt_transfer(
         tx_context=tx_context,
         user_address=scaled_event.from_address,
         block_number=scaled_event.event["blockNumber"],
-        tx_hash=event["transactionHash"],
     )
 
     # Get debt asset
@@ -3778,7 +3762,6 @@ def _process_debt_transfer(
             tx_context=tx_context,
             user_address=scaled_event.target_address,
             block_number=scaled_event.event["blockNumber"],
-            tx_hash=event["transactionHash"],
         )
 
         recipient_position = _get_or_create_debt_position(
@@ -4013,7 +3996,6 @@ def _process_discount_percent_updated_event(
         tx_context=tx_context,
         user_address=user_address,
         block_number=event["blockNumber"],
-        tx_hash=event["transactionHash"],
     )
 
     # With transaction-level processing, the discount is updated here

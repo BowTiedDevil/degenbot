@@ -412,8 +412,6 @@ class TransactionOperationsParser:
         market: AaveV3Market,
         session: Session,
         pool_address: ChecksumAddress,
-        gho_token_address: ChecksumAddress | None = None,
-        gho_vtoken_address: ChecksumAddress | None = None,
     ) -> None:
         """
         Initialize parser.
@@ -432,16 +430,11 @@ class TransactionOperationsParser:
         self.session = session
         self.pool_address = pool_address
 
-        # Query GHO addresses from database if not provided
-        if gho_token_address is None or gho_vtoken_address is None:
-            gho_asset = self._get_gho_asset()
-            if gho_token_address is None:
-                gho_token_address = gho_asset.token.address
-            if gho_vtoken_address is None and gho_asset.v_token is not None:
-                gho_vtoken_address = gho_asset.v_token.address
-
-        self.gho_token_address = gho_token_address
-        self.gho_vtoken_address = gho_vtoken_address
+        gho_asset = self._get_gho_asset()
+        self.gho_token_address = gho_asset.token.address
+        self.gho_vtoken_address = (
+            gho_asset.v_token.address if gho_asset.v_token is not None else None
+        )
 
     def _get_gho_asset(self) -> AaveGhoToken:
         """Get GHO token asset for the current market."""
