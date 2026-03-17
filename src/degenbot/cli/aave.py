@@ -902,7 +902,6 @@ def _process_stk_aave_transfer_event(
 
     # Get or create users involved in the transfer
     block_number = event["blockNumber"]
-    assert block_number is not None
 
     tx_hash = event["transactionHash"]
 
@@ -968,8 +967,7 @@ def _process_stk_aave_transfer_event(
         )
 
     # Mark this transfer as processed to prevent double-counting in pending delta calculations
-    if tx_context is not None:
-        tx_context.processed_stk_aave_transfers.add(event["logIndex"])
+    tx_context.processed_stk_aave_transfers.add(event["logIndex"])
 
 
 def _process_reserve_data_update_event(
@@ -1159,7 +1157,7 @@ def _is_discount_supported(
     market: AaveV3Market,
 ) -> bool:
     """
-    Check if GHO discount mechanism is supported (revision 2 or 3).
+    Check if GHO discount mechanism is supported
     """
 
     revision = _get_gho_vtoken_revision(session, market)
@@ -2868,7 +2866,7 @@ def _process_collateral_burn_with_match(
     # Check if this burn follows a BalanceTransfer to the same user in the same transaction
     # If so, use the BalanceTransfer amount to ensure they cancel out exactly
     # ref: Bug #0026 - BalanceTransfer followed by Withdraw must use matching amounts
-    if tx_context is not None and scaled_event.user_address is not None:
+    if scaled_event.user_address is not None:
         # First, check if we have a tracked BalanceTransfer for this user/token
         # This is set when a transfer to this user was skipped (contract receives and burns)
         tracked_key = (token_address, scaled_event.user_address)
@@ -3084,12 +3082,8 @@ def _process_debt_mint_with_match(
         tx_context.gho_asset.v_token.address if tx_context.gho_asset.v_token is not None else None
     )
     if gho_vtoken_address is not None and token_address == gho_vtoken_address:
-        # Use the effective discount from transaction context or user record
-        effective_discount = (
-            tx_context.user_discounts.get(user.address, user.gho_discount)
-            if tx_context is not None
-            else user.gho_discount
-        )
+        # Use the effective discount from transaction context
+        effective_discount = tx_context.user_discounts.get(user.address, user.gho_discount)
 
         # Process using GHO-specific processor
         gho_processor = TokenProcessorFactory.get_gho_debt_processor(debt_asset.v_token_revision)
@@ -3275,12 +3269,8 @@ def _process_debt_burn_with_match(
         tx_context.gho_asset.v_token.address if tx_context.gho_asset.v_token is not None else None
     )
     if gho_vtoken_address is not None and token_address == gho_vtoken_address:
-        # Use the effective discount from transaction context or user record
-        effective_discount = (
-            tx_context.user_discounts.get(user.address, user.gho_discount)
-            if tx_context is not None
-            else user.gho_discount
-        )
+        # Use the effective discount from transaction context
+        effective_discount = tx_context.user_discounts.get(user.address, user.gho_discount)
 
         # Process using GHO-specific processor
         gho_processor = TokenProcessorFactory.get_gho_debt_processor(debt_asset.v_token_revision)
@@ -3363,9 +3353,8 @@ def _process_debt_burn_with_match(
         if operation and operation.operation_type in {
             OperationType.LIQUIDATION,
             OperationType.GHO_LIQUIDATION,
-            tx_context is not None,
-            # Check if there's a DEFICIT_CREATED event for the same user in this transaction
         }:
+            # Check if there's a DEFICIT_CREATED event for the same user in this transaction
             for evt in tx_context.events:
                 if evt["topics"][0] == AaveV3PoolEvent.DEFICIT_CREATED.value:
                     # DEFICIT_CREATED event has user as topic[1]
@@ -3668,10 +3657,8 @@ def _process_collateral_transfer(
             )
         )
         if (
-            tx_context is not None
-            and (scaled_event.index is None or scaled_event.index == 0)
-            and not has_paired_balance_transfer
-        ):
+            scaled_event.index is None or scaled_event.index == 0
+        ) and not has_paired_balance_transfer:
             transfer_log_index = scaled_event.event["logIndex"]
             # Check if there's a WITHDRAW pool event anywhere in the transaction
             # If so, this is part of a withdrawal and we should NOT skip the recipient update
@@ -3723,7 +3710,7 @@ def _process_collateral_transfer(
         # If the recipient update was skipped (e.g., because they immediately burn),
         # tracking the BalanceTransfer would cause the burn to use the wrong amount.
         # ref: Bug #0029
-        if tx_context is not None and not skip_recipient_update:
+        if not skip_recipient_update:
             should_track = False
             track_log_index = None
             track_amount = None
