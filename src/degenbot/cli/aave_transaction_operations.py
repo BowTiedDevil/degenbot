@@ -1199,7 +1199,6 @@ class TransactionOperationsParser:
         # If no burn found, search for "interest exceeds withdrawal" mint
         # In this case, interest accrued exceeds withdrawal amount, so instead of
         # burning, the contract emits a Mint representing net balance increase.
-        # See debug/aave/0012 for details.
         interest_mint: ScaledTokenEvent | None = None
         if not collateral_burn:
             for ev in scaled_events:
@@ -2215,7 +2214,7 @@ class TransactionOperationsParser:
         minted to the treasury and should be treated as SUPPLY operations for the Pool.
 
         During liquidations, a BalanceTransfer event accompanies the Mint event, containing
-        the actual scaled amount to add to the treasury. See debug/aave/0015 for details.
+        the actual scaled amount to add to the treasury.
 
         Args:
             scaled_events: All scaled token events from the transaction
@@ -2243,7 +2242,7 @@ class TransactionOperationsParser:
 
             # Look for paired BalanceTransfer event to the same user (treasury)
             # This happens during liquidations when protocol fees are minted to treasury
-            # The BalanceTransfer contains the actual scaled amount (see issue 0015)
+            # The BalanceTransfer contains the actual scaled amount
             paired_balance_transfer = None
             for bt_ev in scaled_events:
                 if bt_ev.event_type != ScaledTokenEventType.COLLATERAL_TRANSFER:
@@ -2371,7 +2370,6 @@ class TransactionOperationsParser:
 
             # Skip ERC20 Transfer events to zero address that are part of burns
             # These are handled by the Burn events, not as balance transfers
-            # ref: Issue #0003 - Debt Transfer Double Counting in Debt Swap
             if is_erc20_transfer and ev.target_address == ZERO_ADDRESS:
                 # Check if there's a Burn event at the next log index for the same user
                 is_part_of_burn = False
@@ -2395,7 +2393,6 @@ class TransactionOperationsParser:
 
             # Skip ERC20 Transfer events from zero address that are part of mints
             # These are handled by the Mint events (SUPPLY, MINT_TO_TREASURY), not as transfers
-            # ref: Issue #0013 - Double counting in mint operations
             if is_erc20_transfer and ev.from_address == ZERO_ADDRESS:
                 # Check if there's a Mint event at the next log index for the same user
                 is_part_of_mint = False
@@ -2526,7 +2523,6 @@ class TransactionOperationsParser:
 
         # Process standalone BalanceTransfer events (no paired ERC20 Transfer)
         # These can occur when rewards are distributed directly via BalanceTransfer
-        # ref: Issue #0030 - Standalone BalanceTransfer events must be processed
         for ev in scaled_events:
             # Skip already assigned events
             if ev.event["logIndex"] in assigned_indices or ev.event["logIndex"] in local_assigned:

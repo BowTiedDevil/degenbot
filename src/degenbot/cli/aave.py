@@ -2542,8 +2542,6 @@ def _calculate_mint_to_treasury_scaled_amount(
 
     Returns:
         The calculated scaled amount to add to the treasury position
-
-    See debug/aave/0021 for detailed explanation of this logic.
     """
 
     # 1. Handle BalanceTransfer (applies to all revisions)
@@ -2724,7 +2722,6 @@ def _process_collateral_burn_with_match(
 
     # Check if this burn follows a BalanceTransfer to the same user in the same transaction
     # If so, use the BalanceTransfer amount to ensure they cancel out exactly
-    # ref: Bug #0026 - BalanceTransfer followed by Withdraw must use matching amounts
     if scaled_event.user_address is not None:
         # First, check if we have a tracked BalanceTransfer for this user/token
         # This is set when a transfer to this user was skipped (contract receives and burns)
@@ -2811,7 +2808,6 @@ def _process_collateral_burn_with_match(
     # use the raw_amount from the Withdraw event to ensure accurate balance updates.
     # The Burn event value may differ by 1 wei due to rounding, but the Withdraw amount
     # is the authoritative value that should be used for balance updates.
-    # ref: Bug #0026 and #0027 - Withdraw must use Withdraw event amount only when
     # no BalanceTransfer is present. If a BalanceTransfer was found, use its amount
     # to ensure exact cancellation.
     if (
@@ -3297,7 +3293,6 @@ def _process_collateral_transfer(
 
     # Skip BalanceTransfer events that are tracked in balance_transfer_events
     # These will be handled by their paired ERC20 Transfer events
-    # ref: Issue #0030 - Standalone BalanceTransfer events should NOT be skipped
     if (
         scaled_event.index is not None
         and scaled_event.index > 0
@@ -3462,8 +3457,6 @@ def _process_collateral_transfer(
         # movement of scaled balances and must always be processed.
         # Also, don't skip if this ERC20 Transfer has a paired BalanceTransfer event,
         # as the BalanceTransfer represents the actual balance movement.
-        # ref: Issue #0026 - Don't skip if the burn is part of a WITHDRAW operation
-        # ref: Issue #0030 - BalanceTransfer events must always update recipient balance
         skip_recipient_update = False
         has_paired_balance_transfer = (
             operation is not None
@@ -3519,13 +3512,11 @@ def _process_collateral_transfer(
 
         # Track this BalanceTransfer for potential matching with subsequent burns
         # This allows exact cancellation when the recipient burns the transferred tokens
-        # ref: Bug #0026
         # Only track if we have an actual BalanceTransfer (matched_balance_transfer=True)
         # or if this is a standalone BalanceTransfer event (index > 0)
         # IMPORTANT: Only track if we actually updated the recipient's balance.
         # If the recipient update was skipped (e.g., because they immediately burn),
         # tracking the BalanceTransfer would cause the burn to use the wrong amount.
-        # ref: Bug #0029
         if not skip_recipient_update:
             should_track = False
             track_log_index = None
