@@ -2817,19 +2817,15 @@ def _process_collateral_burn_with_match(
         and raw_amount is not None
     ):
         # Calculate scaled amount from Withdraw event's raw_amount
-        if collateral_asset.a_token_revision >= 4:  # noqa:PLR2004
-            # Use token revision for math calculations to match contract behavior
-            token_math = TokenMathFactory.get_token_math_for_token_revision(
-                collateral_asset.a_token_revision
-            )
-            assert scaled_event.index is not None
-            scaled_amount = token_math.get_collateral_burn_scaled_amount(
-                amount=raw_amount,
-                liquidity_index=scaled_event.index,
-            )
-        else:
-            # For revisions 1-3, use standard ray_div
-            scaled_amount = raw_amount * 10**27 // (scaled_event.index or 1)
+        # Use token revision for math calculations to match contract behavior
+        token_math = TokenMathFactory.get_token_math_for_token_revision(
+            collateral_asset.a_token_revision
+        )
+        assert scaled_event.index is not None
+        scaled_amount = token_math.get_collateral_burn_scaled_amount(
+            amount=raw_amount,
+            liquidity_index=scaled_event.index,
+        )
         logger.debug(
             f"Using Withdraw raw_amount {raw_amount} to calculate scaled_amount {scaled_amount}"
         )
@@ -3632,8 +3628,12 @@ def _process_debt_transfer(
             data=bt_event["data"],
         )
     else:
-        # Standalone BalanceTransfer - scale the amount
-        transfer_amount = transfer_amount * transfer_index // 10**27
+        # Standalone BalanceTransfer - use TokenMath for consistent rounding
+        token_math = TokenMathFactory.get_token_math_for_token_revision(debt_asset.v_token_revision)
+        transfer_amount = token_math.get_debt_balance(
+            scaled_amount=transfer_amount,
+            borrow_index=transfer_index,
+        )
 
     # Update sender's balance
     sender_position.balance -= transfer_amount
