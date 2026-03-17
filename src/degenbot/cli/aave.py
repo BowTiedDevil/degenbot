@@ -2581,7 +2581,8 @@ def _calculate_mint_to_treasury_scaled_amount(
     # Get the MintedToTreasury amount from the operation
     # This is populated during operation creation for ALL revisions
     if operation.minted_to_treasury_amount is None:
-        raise ValueError("MINT_TO_TREASURY operation missing minted_to_treasury_amount")
+        msg = "MINT_TO_TREASURY operation missing minted_to_treasury_amount"
+        raise ValueError(msg)
 
     minted_amount = operation.minted_to_treasury_amount
     logger.debug(f"MINT_TO_TREASURY minted_to_treasury_amount: {minted_amount}")
