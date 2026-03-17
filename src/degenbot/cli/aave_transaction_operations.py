@@ -1127,48 +1127,34 @@ class TransactionOperationsParser:
                 continue
             if ev.index is None:
                 continue
-            if ev.balance_increase is not None:
-                calculated_withdraw = ev.balance_increase - ev.amount
-                # Pool revision 9+ uses ray math with rounding, allow ±2 wei tolerance
-                if pool_revision >= 9:  # noqa:PLR2004
-                    if abs(calculated_withdraw - withdraw_amount) > 2:  # noqa:PLR2004
-                        continue
-                elif calculated_withdraw != withdraw_amount:
+            if ev.balance_increase is None:
+                continue
+
+            calculated_withdraw = ev.balance_increase - ev.amount
+            # Pool revision 9+ uses ray math with rounding, allow ±2 wei tolerance
+            if pool_revision >= 9:  # noqa:PLR2004
+                if abs(calculated_withdraw - withdraw_amount) > 2:  # noqa:PLR2004
                     continue
+            elif calculated_withdraw != withdraw_amount:
+                continue
+
+            logger.debug(f"WITHDRAW: Found matching mint at logIndex={ev.event['logIndex']}")
             interest_mints.append(ev)
             break
 
         # Find collateral burn for this operation (may not exist)
         collateral_burns: list[ScaledTokenEvent] = []
-        logger.debug(
-            f"WITHDRAW: Looking for collateral burn for user={user}, amount={withdraw_amount}"
-        )
-        logger.debug(f"WITHDRAW: Total scaled events: {len(scaled_events)}")
-        logger.debug(f"WITHDRAW: Assigned indices: {assigned_indices}")
+
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
-                logger.debug(
-                    f"WITHDRAW: Skipping logIndex={ev.event['logIndex']} - already assigned"
-                )
                 continue
             if ev.event_type != ScaledTokenEventType.COLLATERAL_BURN:
-                logger.debug(
-                    f"WITHDRAW: Skipping logIndex={ev.event['logIndex']} - type={ev.event_type}"
-                )
                 continue
             if ev.user_address != user:
-                logger.debug(
-                    f"WITHDRAW: Skipping logIndex={ev.event['logIndex']} - user mismatch "
-                    f"(ev={ev.user_address})"
-                )
                 continue
             if ev.index is None:
-                logger.debug(f"WITHDRAW: Skipping logIndex={ev.event['logIndex']} - index is None")
                 continue
             if ev.balance_increase is None:
-                logger.debug(
-                    f"WITHDRAW: Skipping logIndex={ev.event['logIndex']} - balance_increase is None"
-                )
                 continue
 
             # Calculate expected burn amount(s)
@@ -1192,9 +1178,6 @@ class TransactionOperationsParser:
             )
 
             if ev.amount + ev.balance_increase not in expected_burn_amounts:
-                logger.debug(
-                    f"WITHDRAW: Skipping logIndex={ev.event['logIndex']} - amount mismatch"
-                )
                 continue
 
             logger.debug(f"WITHDRAW: Found matching burn at logIndex={ev.event['logIndex']}")
@@ -1211,9 +1194,9 @@ class TransactionOperationsParser:
         # In this case: nextBalance > previousBalance, so Mint is emitted.
         # The mint amount represents the net balance increase after the withdrawal.
         # See debug/aave/0012 for details.
-        if not collateral_burns and not interest_mints:
+        if not interest_mints:
             logger.debug(
-                "WITHDRAW: No burns or standard interest mints found. "
+                "WITHDRAW: No standard interest mints found. "
                 "Checking for 'interest exceeds withdrawal' mint..."
             )
             for ev in scaled_events:
@@ -1227,39 +1210,36 @@ class TransactionOperationsParser:
                     continue
                 if ev.balance_increase is None:
                     continue
+
                 # In the "interest exceeds withdrawal" case:
-                # - The mint event has amount == balance_increase (pure interest value)
+                # - The mint event has amount approximately equal to balance_increase
+                # - Due to ray math rounding, they may differ by a few wei
                 # - This indicates the withdrawal resulted in a net balance increase
                 # - The actual withdrawal amount was burned internally but net result is mint
-                if ev.amount == ev.balance_increase:
+                # Allow small tolerance (±2 wei) for rounding differences
+                amount_diff = abs(ev.amount - ev.balance_increase)
+                if amount_diff <= 2:  # noqa:PLR2004
                     logger.debug(
                         f"WITHDRAW: Found 'interest exceeds withdrawal' mint at "
-                        f"logIndex={ev.event['logIndex']}, amount={ev.amount}"
+                        f"logIndex={ev.event['logIndex']}, amount={ev.amount}, "
+                        f"balance_increase={ev.balance_increase}, diff={amount_diff}"
                     )
                     interest_mints.append(ev)
                     break
 
         if not collateral_burns and not interest_mints:
-            logger.debug(
-                f"WITHDRAW at logIndex={withdraw_event['logIndex']} has no matching "
-                f"burn/mint event, creating minimal operation"
+            msg = (
+                f"WITHDRAW at logIndex={withdraw_event['logIndex']} for user={user} "
+                f"with amount={withdraw_amount} has no matching burn or mint event. "
+                "Every WITHDRAW must have a collateral burn (or mint when "
+                "interest exceeds withdrawal)."
             )
-            return Operation(
-                operation_id=operation_id,
-                operation_type=OperationType.WITHDRAW,
-                pool_revision=pool_revision,
-                pool_event=withdraw_event,
-                scaled_token_events=[],
-                transfer_events=[],
-                balance_transfer_events=[],
-            )
+            raise AssertionError(msg)
 
         # Look for matching Transfer events:
         # A Burn will correspond to a Transfer event with a ZERO_ADDRESS destination
         # A Mint will correspond to a Transfer event with a ZERO_ADDRESS source
-
         transfer_events: list[LogReceipt] = []
-
         if interest_mints:
             for ev in scaled_events:
                 if ev.event["logIndex"] in assigned_indices:
@@ -1274,7 +1254,6 @@ class TransactionOperationsParser:
 
                 transfer_events.append(ev.event)
                 break  # Only match one transfer per Mint
-
         if collateral_burns:
             for ev in scaled_events:
                 if ev.event["logIndex"] in assigned_indices:
@@ -1576,8 +1555,10 @@ class TransactionOperationsParser:
 
         collateral_burn_event = self._find_matching_collateral_burn(
             user=user,
+            expected_amount=repay_amount,
             scaled_events=scaled_events,
             assigned_indices=assigned_indices,
+            pool_revision=pool_revision,
         )
 
         if principal_repay_event:
@@ -1714,11 +1695,16 @@ class TransactionOperationsParser:
     def _find_matching_collateral_burn(
         *,
         user: ChecksumAddress,
+        expected_amount: int,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
+        pool_revision: int,
     ) -> ScaledTokenEvent | None:
         """
         Find the closest matching collateral burn event.
+
+        Matches based on user address and burn amount (amount + balance_increase).
+        For pool revision 9+, allows ±2 wei tolerance due to ray math rounding.
         """
 
         for ev in scaled_events:
@@ -1727,6 +1713,21 @@ class TransactionOperationsParser:
             if ev.event_type != ScaledTokenEventType.COLLATERAL_BURN:
                 continue
             if ev.user_address != user:
+                continue
+            if ev.index is None:
+                continue
+            if ev.balance_increase is None:
+                continue
+
+            # Calculate the total burn amount (principal + interest)
+            total_burn = ev.amount + ev.balance_increase
+
+            # Pool revision 9+ uses ray math with flooring, allow ±2 wei tolerance
+            # see TX: 0x8a4bc3d8f386c0d754d98766caf9033202a65a932f0f3ede035d95f039a56abe
+            if pool_revision >= 9:  # noqa:PLR2004
+                if abs(total_burn - expected_amount) > 2:  # noqa:PLR2004
+                    continue
+            elif total_burn != expected_amount:
                 continue
 
             return ev
