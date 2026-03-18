@@ -2476,7 +2476,6 @@ def _process_operation(
                 _process_collateral_burn_with_match(
                     event=event,
                     tx_context=tx_context,
-                    operation=operation,
                     scaled_event=scaled_event,
                     enriched_event=enriched_event,
                 )
@@ -2492,7 +2491,6 @@ def _process_operation(
             _process_collateral_burn_with_match(
                 event=event,
                 tx_context=tx_context,
-                operation=operation,
                 scaled_event=scaled_event,
                 enriched_event=enriched_event,
             )
@@ -2523,7 +2521,6 @@ def _process_operation(
             ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
         }:
             _process_collateral_transfer(
-                event=event,
                 tx_context=tx_context,
                 operation=operation,
                 scaled_event=scaled_event,
@@ -2689,7 +2686,6 @@ def _process_collateral_burn_with_match(
     *,
     event: LogReceipt,
     tx_context: TransactionContext,
-    operation: Operation,
     scaled_event: ScaledTokenEvent,
     enriched_event: EnrichedScaledTokenEvent,
 ) -> None:
@@ -3289,7 +3285,6 @@ def _match_paired_balance_transfer(
 
 def _process_collateral_transfer(
     *,
-    event: LogReceipt,
     tx_context: TransactionContext,
     operation: Operation,
     scaled_event: ScaledTokenEvent,
