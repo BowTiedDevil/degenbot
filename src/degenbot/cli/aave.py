@@ -1571,6 +1571,40 @@ def _get_asset_by_token_type(
             raise ValueError(msg)
 
 
+def _update_debt_position_index(
+    *,
+    tx_context: TransactionContext,
+    debt_asset: AaveV3Asset,
+    debt_position: AaveV3DebtPosition,
+    event_index: int,
+    event_block_number: int,
+) -> None:
+    """
+    Update debt position's last_index from current pool state.
+
+    Fetches the current global borrow index from the pool contract and updates
+    the position's last_index if the new index is greater than the current one.
+    """
+    pool_contract = _get_contract(
+        session=tx_context.session,
+        market=tx_context.market,
+        contract_name="POOL",
+    )
+    fetched_index = _get_current_borrow_index_from_pool(
+        w3=tx_context.w3,
+        pool_address=get_checksum_address(pool_contract.address),
+        underlying_asset_address=get_checksum_address(debt_asset.underlying_token.address),
+        block_number=event_block_number,
+    )
+    # Use fetched index if available, otherwise fall back to event index
+    current_index = fetched_index if fetched_index is not None else event_index
+    # Only update last_index if the new index is greater than current
+    # This prevents earlier events (in log index order) from overwriting
+    # later events' indices when operations are processed out of order
+    if current_index > (debt_position.last_index or 0):
+        debt_position.last_index = current_index
+
+
 def _get_current_borrow_index_from_pool(
     w3: Web3,
     pool_address: ChecksumAddress,
@@ -2848,27 +2882,13 @@ def _process_debt_mint_with_match(
 
         # Apply the calculated balance delta
         debt_position.balance += gho_result.balance_delta
-        # Always fetch the current global index from the contract.
-        # The asset's cached borrow_index may be stale (from a previous block).
-        # The event's index is the user's cached lastIndex, not the current global index.
-        pool_contract = _get_contract(
-            session=tx_context.session,
-            market=tx_context.market,
-            contract_name="POOL",
+        _update_debt_position_index(
+            tx_context=tx_context,
+            debt_asset=debt_asset,
+            debt_position=debt_position,
+            event_index=scaled_event.index,
+            event_block_number=scaled_event.event["blockNumber"],
         )
-        fetched_index = _get_current_borrow_index_from_pool(
-            w3=tx_context.w3,
-            pool_address=get_checksum_address(pool_contract.address),
-            underlying_asset_address=get_checksum_address(debt_asset.underlying_token.address),
-            block_number=scaled_event.event["blockNumber"],
-        )
-        # Use fetched index if available, otherwise fall back to event index
-        current_index = fetched_index if fetched_index is not None else scaled_event.index
-        # Only update last_index if the new index is greater than current
-        # This prevents earlier events (in log index order) from overwriting
-        # later events' indices when operations are processed out of order
-        if current_index > (debt_position.last_index or 0):
-            debt_position.last_index = current_index
 
         # Refresh discount if needed
         if (
@@ -2880,14 +2900,14 @@ def _process_debt_mint_with_match(
                 tx_context=tx_context,
                 log_index=scaled_event.event["logIndex"],
             )
-            assert current_index is not None
+            assert debt_position.last_index is not None
             _refresh_discount_rate(
                 user=user,
                 has_discount_rate_strategy=tx_context.gho_asset.v_gho_discount_rate_strategy
                 is not None,
                 discount_token_balance=discount_token_balance,
                 scaled_debt_balance=debt_position.balance,
-                debt_index=current_index,
+                debt_index=debt_position.last_index,
                 wad_ray_math=gho_processor.get_math_libraries()["wad_ray"],
             )
     else:
@@ -2944,27 +2964,13 @@ def _process_debt_mint_with_match(
                 position=debt_position,
             )
 
-        # Always fetch the current global index from the contract.
-        # The asset's cached borrow_index may be stale (from a previous block).
-        # The event's index is the user's cached lastIndex, not the current global index.
-        pool_contract = _get_contract(
-            session=tx_context.session,
-            market=tx_context.market,
-            contract_name="POOL",
+        _update_debt_position_index(
+            tx_context=tx_context,
+            debt_asset=debt_asset,
+            debt_position=debt_position,
+            event_index=scaled_event.index,
+            event_block_number=scaled_event.event["blockNumber"],
         )
-        fetched_index = _get_current_borrow_index_from_pool(
-            w3=tx_context.w3,
-            pool_address=get_checksum_address(pool_contract.address),
-            underlying_asset_address=get_checksum_address(debt_asset.underlying_token.address),
-            block_number=scaled_event.event["blockNumber"],
-        )
-        # Use fetched index if available, otherwise fall back to event index
-        current_index = fetched_index if fetched_index is not None else scaled_event.index
-        # Only update last_index if the new index is greater than current
-        # This prevents earlier events (in log index order) from overwriting
-        # later events' indices when operations are processed out of order
-        if current_index > (debt_position.last_index or 0):
-            debt_position.last_index = current_index
 
 
 def _process_debt_burn_with_match(
@@ -3031,27 +3037,13 @@ def _process_debt_burn_with_match(
 
         # Apply the calculated balance delta
         debt_position.balance += gho_result.balance_delta
-        # Always fetch the current global index from the contract.
-        # The asset's cached borrow_index may be stale (from a previous block).
-        # The event's index is the user's cached lastIndex, not the current global index.
-        pool_contract = _get_contract(
-            session=tx_context.session,
-            market=tx_context.market,
-            contract_name="POOL",
+        _update_debt_position_index(
+            tx_context=tx_context,
+            debt_asset=debt_asset,
+            debt_position=debt_position,
+            event_index=scaled_event.index,
+            event_block_number=scaled_event.event["blockNumber"],
         )
-        fetched_index = _get_current_borrow_index_from_pool(
-            w3=tx_context.w3,
-            pool_address=get_checksum_address(pool_contract.address),
-            underlying_asset_address=get_checksum_address(debt_asset.underlying_token.address),
-            block_number=scaled_event.event["blockNumber"],
-        )
-        # Use fetched index if available, otherwise fall back to event index
-        current_index = fetched_index if fetched_index is not None else scaled_event.index
-        # Only update last_index if the new index is greater than current
-        # This prevents earlier events (in log index order) from overwriting
-        # later events' indices when operations are processed out of order
-        if current_index > (debt_position.last_index or 0):
-            debt_position.last_index = current_index
 
         # Refresh discount if needed
         if (
@@ -3063,6 +3055,7 @@ def _process_debt_burn_with_match(
                 tx_context=tx_context,
                 log_index=scaled_event.event["logIndex"],
             )
+            current_index = debt_position.last_index
             assert current_index is not None
             _refresh_discount_rate(
                 user=user,
@@ -3150,23 +3143,13 @@ def _process_debt_burn_with_match(
             position=debt_position,
         )
 
-        # Always fetch the current global index from the contract.
-        # The asset's cached borrow_index may be stale (from a previous block).
-        # The event's index is the user's cached lastIndex, not the current global index.
-        pool_contract = _get_contract(
-            session=tx_context.session,
-            market=tx_context.market,
-            contract_name="POOL",
+        _update_debt_position_index(
+            tx_context=tx_context,
+            debt_asset=debt_asset,
+            debt_position=debt_position,
+            event_index=scaled_event.index,
+            event_block_number=scaled_event.event["blockNumber"],
         )
-        fetched_index = _get_current_borrow_index_from_pool(
-            w3=tx_context.w3,
-            pool_address=get_checksum_address(pool_contract.address),
-            underlying_asset_address=get_checksum_address(debt_asset.underlying_token.address),
-            block_number=scaled_event.event["blockNumber"],
-        )
-        # Use fetched index if available, otherwise fall back to event index
-        current_index = fetched_index if fetched_index is not None else scaled_event.index
-        debt_position.last_index = current_index
 
 
 def _should_skip_collateral_transfer(
@@ -3415,27 +3398,27 @@ def _process_debt_transfer(
         asset_id=debt_asset.id,
     )
 
-    # Determine transfer amount
-    transfer_amount = scaled_event.amount
-    transfer_index = scaled_event.index
+    # Determine the scaled amount and index for this transfer
+    # For paired events, use BalanceTransfer data (scaled balance)
+    # For standalone events, use the event data directly
+    _, transfer_amount, transfer_index = _match_paired_balance_transfer(
+        scaled_event=scaled_event,
+        operation=operation,
+        token_address=token_address,
+    )
+
+    if transfer_amount is None:
+        # No paired BalanceTransfer found - use event data directly
+        if scaled_event.index is not None and scaled_event.index > 0:
+            # Standalone BalanceTransfer - already in scaled units
+            transfer_amount = scaled_event.amount
+            transfer_index = scaled_event.index
+        else:
+            # Standalone ERC20 Transfer - use current borrow index
+            transfer_amount = scaled_event.amount
+            transfer_index = debt_asset.borrow_index
 
     assert transfer_index is not None
-
-    # Check if we have a paired BalanceTransfer event
-    if operation and operation.balance_transfer_events:
-        # Decode the BalanceTransfer event to get scaled amount and index
-        bt_event = operation.balance_transfer_events[0]
-        transfer_amount, transfer_index = eth_abi.abi.decode(
-            types=["uint256", "uint256"],
-            data=bt_event["data"],
-        )
-    else:
-        # Standalone BalanceTransfer - use TokenMath for consistent rounding
-        token_math = TokenMathFactory.get_token_math_for_token_revision(debt_asset.v_token_revision)
-        transfer_amount = token_math.get_debt_balance(
-            scaled_amount=transfer_amount,
-            borrow_index=transfer_index,
-        )
 
     # Update sender's balance
     sender_position.balance -= transfer_amount
