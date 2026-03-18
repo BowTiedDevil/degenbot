@@ -653,6 +653,22 @@ class TransactionOperationsParser:
             )
         )
 
+    def _get_asset_by_v_token(self, v_token_address: ChecksumAddress) -> AaveV3Asset | None:
+        """
+        Get the asset for a given vToken address.
+        """
+
+        checksum_addr = get_checksum_address(v_token_address)
+
+        return self.session.scalar(
+            select(AaveV3Asset)
+            .join(AaveV3Asset.v_token)
+            .where(
+                AaveV3Asset.market_id == self.market.id,
+                Erc20TokenTable.address == checksum_addr,
+            )
+        )
+
     def parse(self, events: list[LogReceipt], tx_hash: HexBytes) -> TransactionOperations:
         """
         Parse events into operations.
@@ -1864,7 +1880,11 @@ class TransactionOperationsParser:
         collateral_a_token_address = self._get_a_token_for_asset(collateral_asset)
         debt_v_token_address = self._get_v_token_for_asset(debt_asset)
 
-        debt_burn: ScaledTokenEvent | None = None
+        # Collect ALL debt burns for the liquidated user
+        # A liquidation may burn multiple debt positions (not just the primary debt asset)
+        # This happens when a user has multiple debts and the position is underwater
+        debt_burns: list[ScaledTokenEvent] = []
+
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
                 continue
@@ -1875,10 +1895,9 @@ class TransactionOperationsParser:
             if not is_gho and ev.event_type != ScaledTokenEventType.DEBT_BURN:
                 continue
 
-            # Match debt burn events only if they belong to this liquidation's debt asset
-            # This prevents incorrect matching when a user is liquidated multiple times
-            # with different debt assets in the same transaction
             event_token_address = get_checksum_address(ev.event["address"])
+
+            # Check if this is the primary debt burn (matches the liquidation's debt asset)
             if debt_v_token_address is not None and event_token_address == debt_v_token_address:
                 # Calculate total debt being cleared: principal + interest
                 # The Burn event's `value` field is principal only, balance_increase is interest
@@ -1895,8 +1914,14 @@ class TransactionOperationsParser:
                 elif total_burn < debt_to_cover:
                     continue
 
-                debt_burn = ev
-                break
+                debt_burns.append(ev)
+            elif debt_v_token_address is not None and event_token_address != debt_v_token_address:
+                # Check if this is a secondary debt (different asset) for the same user
+                # Get the asset for this vToken to verify it's a valid debt position
+                secondary_asset = self._get_asset_by_v_token(event_token_address)
+                if secondary_asset is not None:
+                    # This is a valid secondary debt burn for another asset
+                    debt_burns.append(ev)
 
         # Find collateral burn and/or transfer(s)
         # During liquidations, borrower may have BOTH collateral burned AND multiple transfers
@@ -1963,14 +1988,15 @@ class TransactionOperationsParser:
         scaled_token_events: list[ScaledTokenEvent] = []
         balance_transfer_events: list[LogReceipt] = []
 
-        # Add the debt burn, debt mint, and collateral burn to scaled_token_events
-        # Note: debt_burn may be None for flash loan liquidations or when interest > repayment
+        # Add the debt burns, debt mint, and collateral burn to scaled_token_events
+        # Note: debt_burns may be empty for flash loan liquidations or when interest > repayment
         # Note: debt_mint is set when interest > repayment (net debt increase)
         # Note: collateral_burn may be None when collateral is transferred to treasury
         if collateral_burn is not None:
             scaled_token_events.append(collateral_burn)
-        if debt_burn is not None:
-            scaled_token_events.append(debt_burn)
+
+        # Add all debt burns (primary and secondary)
+        scaled_token_events.extend(debt_burns)
         if debt_mint is not None:
             scaled_token_events.append(debt_mint)
 
@@ -2797,20 +2823,25 @@ class TransactionOperationsParser:
             errors.append("Missing LIQUIDATION_CALL pool event")
             return errors
 
-        # Should have 1 collateral event (burn or transfer) and 0 or 1 debt burns
+        # Should have 1 collateral event (burn or transfer) and 0 or more debt burns
         # Flash loan liquidations have 0 debt burns (debt repaid via flash loan)
-        # Standard liquidations have 1 debt burn
+        # Standard liquidations have 1 debt burn (primary debt asset)
+        # Multi-asset liquidations may have multiple debt burns (primary + secondary debts)
         # Collateral may be burned OR transferred to treasury (BalanceTransfer)
         debt_burns = [e for e in op.scaled_token_events if e.is_debt]
         collateral_events = [e for e in op.scaled_token_events if e.is_collateral]
 
-        if len(debt_burns) > 1:
-            errors.append(
-                f"Expected 0 or 1 debt burns for LIQUIDATION, got {len(debt_burns)}. "
-                f"DEBUG NOTE: Check if debt/collateral events are being assigned to wrong "
-                f"operations. Current debt burns: {[e.event['logIndex'] for e in debt_burns]}. "
-                f"User in LIQUIDATION_CALL: {decode_address(op.pool_event['topics'][3])}"
-            )
+        # Allow multiple debt burns for multi-asset liquidations
+        # Each debt burn should be for a different debt asset (verified by token address)
+        if len(debt_burns) > 0:
+            # Check that all debt burns are for different assets
+            debt_token_addresses = {e.event["address"] for e in debt_burns}
+            if len(debt_token_addresses) != len(debt_burns):
+                errors.append(
+                    f"Multiple debt burns for same asset in LIQUIDATION. "
+                    f"Debt burns: {[e.event['logIndex'] for e in debt_burns]}. "
+                    f"Token addresses: {list(debt_token_addresses)}"
+                )
 
         if len(collateral_events) < 1:
             errors.append(
