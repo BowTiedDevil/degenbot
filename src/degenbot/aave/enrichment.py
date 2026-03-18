@@ -34,6 +34,9 @@ from degenbot.logging import logger
 if TYPE_CHECKING:
     from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
 
+# Import OperationType at runtime for enum comparisons
+from degenbot.cli.aave_transaction_operations import OperationType
+
 
 class ScaledEventEnricher:
     """
@@ -86,7 +89,7 @@ class ScaledEventEnricher:
         # 3. Handle operations with or without pool events
         if operation.pool_event is None:
             # Check if this is an INTEREST_ACCRUAL operation
-            if operation.operation_type.name == "INTEREST_ACCRUAL":
+            if operation.operation_type == OperationType.INTEREST_ACCRUAL:
                 # Interest accrual events don't have pool events.
                 # The Mint event for interest accrual is emitted for tracking purposes only.
                 # Interest accrual does NOT mint tokens or increase the scaled balance -
@@ -94,7 +97,7 @@ class ScaledEventEnricher:
                 # See Aave V3 aToken contract _transfer function (rev_1.sol:2844-2846)
                 raw_amount = scaled_event.amount
                 scaled_amount = 0  # Interest accrual does not change scaled balance
-            elif operation.operation_type.name == "MINT_TO_TREASURY":
+            elif operation.operation_type == OperationType.MINT_TO_TREASURY:
                 # MINT_TO_TREASURY requires position data (current balance and last_index)
                 # to correctly calculate accruedToTreasury. The enrichment layer doesn't
                 # have access to position data, so leave scaled_amount as None.
@@ -114,10 +117,9 @@ class ScaledEventEnricher:
         else:
             # Extract raw amount from pool event and calculate scaled amount
             # Special handling for LIQUIDATION: use different extractors for debt vs collateral
-            if operation.operation_type.name in {
-                "LIQUIDATION",
-                "GHO_LIQUIDATION",
-                "SELF_LIQUIDATION",
+            if operation.operation_type in {
+                OperationType.LIQUIDATION,
+                OperationType.GHO_LIQUIDATION,
             }:
                 if operation.pool_event["topics"][0] == AaveV3PoolEvent.LIQUIDATION_CALL.value:
                     # Determine which amount to extract based on event type
@@ -158,7 +160,7 @@ class ScaledEventEnricher:
                 # Detection: In a WITHDRAW operation, if COLLATERAL_MINT has
                 # amount < balance_increase, it means interest > withdrawal. Use the pool event's
                 # withdraw amount.
-                operation.operation_type.name == "WITHDRAW"
+                operation.operation_type == OperationType.WITHDRAW
                 and scaled_event.event_type == ScaledTokenEventType.COLLATERAL_MINT
                 and scaled_event.balance_increase is not None
                 and scaled_event.amount < scaled_event.balance_increase
@@ -178,7 +180,7 @@ class ScaledEventEnricher:
                 # a Mint event with amount = balance_increase - repay_amount (net debt increase).
                 # But we need the actual repay amount to calculate the scaled burn.
                 # Detection: In a REPAY operation, if DEBT_MINT is emitted, interest > repayment.
-                operation.operation_type.name in {"REPAY", "GHO_REPAY"}
+                operation.operation_type in {OperationType.REPAY, OperationType.GHO_REPAY}
                 and scaled_event.event_type == ScaledTokenEventType.DEBT_MINT
                 and scaled_event.balance_increase is not None
             ):
@@ -214,7 +216,7 @@ class ScaledEventEnricher:
             # In this case, use COLLATERAL_BURN calculation (ceil rounding) instead of
             # COLLATERAL_MINT (floor rounding) to match Pool rev 9+ contract behavior.
             if (
-                operation.operation_type.name == "WITHDRAW"
+                operation.operation_type == OperationType.WITHDRAW
                 and scaled_event.event_type == ScaledTokenEventType.COLLATERAL_MINT
                 and scaled_event.balance_increase is not None
                 and scaled_event.amount < scaled_event.balance_increase
@@ -230,7 +232,7 @@ class ScaledEventEnricher:
                 # emits a Mint event instead of a Burn event (VariableDebtToken _burnScaled).
                 # In this case, use DEBT_BURN calculation (floor rounding) instead of
                 # DEBT_MINT (ceil rounding) to match contract behavior.
-                operation.operation_type.name in {"REPAY", "GHO_REPAY"}
+                operation.operation_type in {OperationType.REPAY, OperationType.GHO_REPAY}
                 and scaled_event.event_type == ScaledTokenEventType.DEBT_MINT
                 and scaled_event.balance_increase is not None
             ):
@@ -246,7 +248,8 @@ class ScaledEventEnricher:
                 # representing a net debt increase (balance_increase - amount).
                 # This should be treated as a debt burn (net increase) for correct balance
                 # calculation.
-                operation.operation_type.name in {"LIQUIDATION", "GHO_LIQUIDATION"}
+                operation.operation_type
+                in {OperationType.LIQUIDATION, OperationType.GHO_LIQUIDATION}
                 and scaled_event.event_type == ScaledTokenEventType.DEBT_MINT
                 and scaled_event.balance_increase is not None
                 and scaled_event.balance_increase > scaled_event.amount
@@ -364,7 +367,7 @@ class ScaledEventEnricher:
     ) -> EnrichedScaledTokenEvent:
         """Create the appropriate enriched event type."""
         event_type = scaled_event.event_type
-        is_interest_accrual = operation.operation_type.name == "INTEREST_ACCRUAL"
+        is_interest_accrual = operation.operation_type == OperationType.INTEREST_ACCRUAL
 
         # Map event type to enriched class
         # For INTEREST_ACCRUAL, use interest-specific event types

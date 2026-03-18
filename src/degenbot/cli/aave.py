@@ -2701,7 +2701,7 @@ def _process_collateral_mint_with_match(
     )
 
     # Use enriched event data for scaled amount, or calculate for MINT_TO_TREASURY
-    if operation.operation_type.name == "MINT_TO_TREASURY":
+    if operation.operation_type == OperationType.MINT_TO_TREASURY:
         # MINT_TO_TREASURY uses MintedToTreasury event amount
         scaled_amount = _calculate_mint_to_treasury_scaled_amount(
             scaled_event=scaled_event,
