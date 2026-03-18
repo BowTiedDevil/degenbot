@@ -75,6 +75,10 @@ from degenbot.functions import (
 )
 from degenbot.logging import logger
 
+# Maximum log index difference for matching ERC20 Transfer to BalanceTransfer
+# BalanceTransfer events typically follow their corresponding ERC20 Transfer within 3 logs
+BALANCE_TRANSFER_PROXIMITY_THRESHOLD = 3
+
 if TYPE_CHECKING:
     from eth_typing.evm import BlockParams
 
@@ -396,19 +400,19 @@ def aave_update(
     """
 
     with (  # noqa:PLR1702
-        db_session() as session,
         logging_redirect_tqdm(
             loggers=[logger],
         ),
     ):
-        active_chains = set(
-            session.scalars(
-                select(AaveV3Market.chain_id).where(
-                    AaveV3Market.active,
-                    AaveV3Market.name.contains("aave"),
-                )
-            ).all()
-        )
+        with db_session() as session:
+            active_chains = set(
+                session.scalars(
+                    select(AaveV3Market.chain_id).where(
+                        AaveV3Market.active,
+                        AaveV3Market.name.contains("aave"),
+                    )
+                ).all()
+            )
 
         if not active_chains:
             msg = "No active Aave markets found."
@@ -417,22 +421,23 @@ def aave_update(
         for chain_id in active_chains:
             w3 = get_web3_from_config(chain_id=chain_id)
 
-            active_markets = session.scalars(
-                select(AaveV3Market).where(
-                    AaveV3Market.active,
-                    AaveV3Market.chain_id == chain_id,
-                    AaveV3Market.name.contains("aave"),
+            with db_session() as session:
+                active_markets = session.scalars(
+                    select(AaveV3Market).where(
+                        AaveV3Market.active,
+                        AaveV3Market.chain_id == chain_id,
+                        AaveV3Market.name.contains("aave"),
+                    )
+                ).all()
+
+                if not active_markets:
+                    click.echo(f"No active Aave markets on chain {chain_id}.")
+                    continue
+
+                initial_start_block = working_start_block = min(
+                    0 if market.last_update_block is None else market.last_update_block + 1
+                    for market in active_markets
                 )
-            ).all()
-
-            if not active_markets:
-                click.echo(f"No active Aave markets on chain {chain_id}.")
-                continue
-
-            initial_start_block = working_start_block = min(
-                0 if market.last_update_block is None else market.last_update_block + 1
-                for market in active_markets
-            )
 
             if to_block.isdigit():
                 last_block = int(to_block)
@@ -475,51 +480,60 @@ def aave_update(
             block_pbar.n = working_start_block - initial_start_block
 
             while True:
-                # Cap the working end block at the lowest of:
-                # - the safe block for the chain
-                # - the end of the working chunk size
-                # - all update blocks for active markets
-                working_end_block = min(
-                    [last_block]
-                    + [working_start_block + chunk_size - 1]
-                    + [
-                        market.last_update_block
-                        for market in active_markets
-                        if market.last_update_block is not None
-                        if market.last_update_block > working_start_block
-                    ],
-                )
-                assert working_end_block >= working_start_block
-
-                block_pbar.set_description(
-                    f"Processing block range {working_start_block:,} -> {working_end_block:,}"
-                )
-                block_pbar.refresh()
-
-                markets_to_update = {
-                    market
-                    for market in active_markets
-                    if (
-                        market.last_update_block is None
-                        or market.last_update_block + 1 == working_start_block
-                    )
-                }
-
-                for market in markets_to_update:
-                    try:
-                        update_aave_market(
-                            w3=w3,
-                            start_block=working_start_block,
-                            end_block=working_end_block,
-                            market=market,
-                            session=session,
-                            verify=verify,
-                            show_progress=show_progress,
+                with db_session() as session:
+                    active_markets = session.scalars(
+                        select(AaveV3Market).where(
+                            AaveV3Market.active,
+                            AaveV3Market.chain_id == chain_id,
+                            AaveV3Market.name.contains("aave"),
                         )
-                    except Exception:  # noqa: BLE001
-                        logger.exception("")
-                        sys.exit(1)
-                    else:
+                    ).all()
+
+                    # Cap the working end block at the lowest of:
+                    # - the safe block for the chain
+                    # - the end of the working chunk size
+                    # - all update blocks for active markets
+                    working_end_block = min(
+                        [last_block]
+                        + [working_start_block + chunk_size - 1]
+                        + [
+                            market.last_update_block
+                            for market in active_markets
+                            if market.last_update_block is not None
+                            if market.last_update_block > working_start_block
+                        ],
+                    )
+                    assert working_end_block >= working_start_block
+
+                    block_pbar.set_description(
+                        f"Processing block range {working_start_block:,} -> {working_end_block:,}"
+                    )
+                    block_pbar.refresh()
+
+                    markets_to_update = {
+                        market
+                        for market in active_markets
+                        if (
+                            market.last_update_block is None
+                            or market.last_update_block + 1 == working_start_block
+                        )
+                    }
+
+                    for market in markets_to_update:
+                        try:
+                            update_aave_market(
+                                w3=w3,
+                                start_block=working_start_block,
+                                end_block=working_end_block,
+                                market=market,
+                                session=session,
+                                verify=verify,
+                                show_progress=show_progress,
+                            )
+                        except Exception:  # noqa: BLE001
+                            logger.exception("")
+                            sys.exit(1)
+
                         market.last_update_block = working_end_block
 
                         # Perform full verification when the chunk spans a verification interval
@@ -547,15 +561,15 @@ def aave_update(
                                 skip_confirmation=True,
                             )
                             logger.info(f"Created database backup at block {working_end_block:,}")
-                            session.refresh()
+                            db_session.remove()
                         else:
                             session.commit()
 
-                if working_end_block == last_block or stop_after_one_chunk:
-                    break
-                working_start_block = working_end_block + 1
+                    if working_end_block == last_block or stop_after_one_chunk:
+                        break
+                    working_start_block = working_end_block + 1
 
-                block_pbar.n = working_end_block - initial_start_block
+                    block_pbar.n = working_end_block - initial_start_block
 
             block_pbar.close()
 
@@ -2523,7 +2537,6 @@ def _process_operation(
 
 def _calculate_mint_to_treasury_scaled_amount(
     scaled_event: ScaledTokenEvent,
-    balance_transfer_events: list[LogReceipt],
     tx_context: TransactionContext,
     operation: Operation,
 ) -> int:
@@ -2534,9 +2547,12 @@ def _calculate_mint_to_treasury_scaled_amount(
     For Rev 1-8: amountMinted is in underlying units, needs rayDiv to get scaled amount.
     For Rev 9+: amountMinted equals the scaled amount directly (passed as-is to AToken).
 
+    Note: BalanceTransfer events to the treasury during liquidations are handled by
+    the liquidation operations themselves, not here. This function only calculates
+    the scaled amount for actual mints to the treasury (protocol fee accrual).
+
     Args:
         scaled_event: The scaled token Mint event
-        balance_transfer_events: List of BalanceTransfer events (may be empty)
         tx_context: Transaction context with Web3 and market info
         operation: The operation containing minted_to_treasury_amount
 
@@ -2544,28 +2560,8 @@ def _calculate_mint_to_treasury_scaled_amount(
         The calculated scaled amount to add to the treasury position
     """
 
-    # 1. Handle BalanceTransfer (applies to all revisions)
-    # BalanceTransfer is present during liquidations - use its amount directly
-    # The BalanceTransfer amount is already in scaled units
-    if balance_transfer_events:
-        """
-        Event definition:
-            event BalanceTransfer(
-                address indexed from,
-                address indexed to,
-                uint256 value,
-                uint256 index
-            );
-        """
-
-        bt_event = balance_transfer_events[0]
-        bt_amount: int
-        bt_amount, _ = eth_abi.abi.decode(
-            types=["uint256", "uint256"],
-            data=bt_event["data"],
-        )
-        logger.debug(f"MINT_TO_TREASURY using BalanceTransfer amount: {bt_amount}")
-        return bt_amount
+    # No BalanceTransfer handling here - liquidation fees are processed by liquidation operations
+    # This function only handles actual mints to treasury (protocol fee accrual)
 
     # No BalanceTransfer - use MintedToTreasury amount
     assert scaled_event.balance_increase is not None
@@ -2646,7 +2642,6 @@ def _process_collateral_mint_with_match(
         # MINT_TO_TREASURY uses MintedToTreasury event amount
         scaled_amount = _calculate_mint_to_treasury_scaled_amount(
             scaled_event=scaled_event,
-            balance_transfer_events=operation.balance_transfer_events,
             tx_context=tx_context,
             operation=operation,
         )
@@ -3396,12 +3391,13 @@ def _process_collateral_transfer(
             bt_log_index = bt_event["logIndex"]
             transfer_log_index = scaled_event.event["logIndex"]
 
-            # Match by token, from address, and log index proximity
+            # Match by token, from address, to address, and log index proximity
+            # Log index proximity ensures each ERC20 Transfer matches its paired BalanceTransfer
             if (
                 bt_token == token_address
                 and bt_from == scaled_event.from_address
                 and bt_to == scaled_event.target_address
-                and abs(bt_log_index - transfer_log_index) <= 3  # noqa:PLR2004
+                and abs(bt_log_index - transfer_log_index) <= BALANCE_TRANSFER_PROXIMITY_THRESHOLD
             ):
                 # Found matching BalanceTransfer - use its amount (scaled balance)
                 bt_amount, bt_index = eth_abi.abi.decode(

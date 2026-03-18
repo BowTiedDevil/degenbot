@@ -413,6 +413,7 @@ class TransactionOperationsParser:
         market: AaveV3Market,
         session: Session,
         pool_address: ChecksumAddress,
+        treasury_address: ChecksumAddress | None = None,
     ) -> None:
         """
         Initialize parser.
@@ -420,22 +421,38 @@ class TransactionOperationsParser:
         Args:
             market: Aave V3 market with assets containing aToken and vToken relationships.
             session: SQLAlchemy session for database queries.
-            gho_token_address: Address of GHO token. Queried from database if not provided.
-            gho_vtoken_address: Address of GHO variable debt token. Queried from database if not
-                provided.
             pool_address: Address of the Aave Pool contract. Used to detect mintToTreasury
                 operations.
+            treasury_address: Address of the Aave treasury. If not provided, will attempt to
+                retrieve from the first aToken in the market.
         """
 
         self.market = market
         self.session = session
         self.pool_address = pool_address
+        self.treasury_address = treasury_address or self._get_default_treasury_address()
 
         gho_asset = self._get_gho_asset()
         self.gho_token_address = gho_asset.token.address
         self.gho_vtoken_address = (
             gho_asset.v_token.address if gho_asset.v_token is not None else None
         )
+
+    def _get_default_treasury_address(self) -> ChecksumAddress:
+        """Get default treasury address for known markets."""
+        # Known treasury addresses for major Aave markets
+        known_treasuries: dict[int, ChecksumAddress] = {
+            1: get_checksum_address("0x464C71f6c2F760DdA6093dCB91C24c39e5d6e18c"),  # Ethereum
+        }
+
+        if self.market.chain_id in known_treasuries:
+            return known_treasuries[self.market.chain_id]
+
+        msg = (
+            f"Unknown treasury address for chain {self.market.chain_id}. "
+            f"Please provide treasury_address parameter to TransactionOperationsParser."
+        )
+        raise ValueError(msg)
 
     def _get_gho_asset(self) -> AaveGhoToken:
         """Get GHO token asset for the current market."""
@@ -2240,43 +2257,11 @@ class TransactionOperationsParser:
             if ev.caller_address != self.pool_address:
                 continue
 
-            # Look for paired BalanceTransfer event to the same user (treasury)
-            # This happens during liquidations when protocol fees are minted to treasury
-            # The BalanceTransfer contains the actual scaled amount
-            paired_balance_transfer = None
-            for bt_ev in scaled_events:
-                if bt_ev.event_type != ScaledTokenEventType.COLLATERAL_TRANSFER:
-                    continue
-                if bt_ev.event["logIndex"] in assigned_indices:
-                    logger.debug(
-                        f"  Skipping BalanceTransfer at {bt_ev.event['logIndex']} - already "
-                        f"assigned"
-                    )
-                    continue
-                # BalanceTransfer should be to the same user (treasury) and have the same index
-                # Note: For BalanceTransfer, user_address is the FROM address, target_address is
-                # the TO address
-                logger.debug(
-                    f"  Checking BalanceTransfer at {bt_ev.event['logIndex']}: "
-                    f"from={bt_ev.user_address}, to={bt_ev.target_address}, index={bt_ev.index}"
-                )
-                if bt_ev.target_address == ev.user_address and bt_ev.index == ev.index:
-                    paired_balance_transfer = bt_ev
-                    assigned_indices.add(bt_ev.event["logIndex"])
-                    logger.debug(f"  Found paired BalanceTransfer at {bt_ev.event['logIndex']}")
-                    break
-
             # This is a mint to treasury - create operation
             logger.debug(
                 f"Creating MINT_TO_TREASURY for event at logIndex {ev.event['logIndex']}, "
                 f"user={ev.user_address}, amount={ev.amount}"
             )
-            if paired_balance_transfer:
-                logger.debug(
-                    f"  Paired BalanceTransfer at logIndex ,"
-                    f"{paired_balance_transfer.event['logIndex']}, "
-                    f"amount={paired_balance_transfer.amount}"
-                )
 
             # Extract MintedToTreasury amount
             # For Rev 1-8: amountMinted is in underlying units (needs rayDiv to get scaled)
@@ -2320,9 +2305,7 @@ class TransactionOperationsParser:
                     pool_event=None,
                     scaled_token_events=[ev],
                     transfer_events=[],
-                    balance_transfer_events=[paired_balance_transfer.event]
-                    if paired_balance_transfer
-                    else [],
+                    balance_transfer_events=[],
                     minted_to_treasury_amount=minted_amount,
                 )
             )
