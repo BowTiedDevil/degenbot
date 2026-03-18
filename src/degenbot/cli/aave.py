@@ -3577,14 +3577,6 @@ def _process_collateral_transfer(
                     track_log_index,
                     track_amount,
                 )
-                # Standalone BalanceTransfer (no paired ERC20 Transfer)
-                tx_context.processed_balance_transfers[
-                    token_address,
-                    scaled_event.target_address,
-                ] = (
-                    scaled_event.event["logIndex"],
-                    transfer_amount,
-                )
 
 
 def _process_debt_transfer(
