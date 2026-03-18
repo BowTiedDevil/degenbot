@@ -242,7 +242,8 @@ class ScaledEventEnricher:
                 # Special case: In LIQUIDATION operations, when the debt repayment is less
                 # than the accrued interest, the VariableDebtToken emits a Mint event
                 # representing a net debt increase (balance_increase - amount).
-                # This should be treated as a debt burn (net increase) for correct balance calculation.
+                # This should be treated as a debt burn (net increase) for correct balance
+                # calculation.
                 operation.operation_type.name in {"LIQUIDATION", "GHO_LIQUIDATION"}
                 and scaled_event.event_type == ScaledTokenEventType.DEBT_MINT
                 and scaled_event.balance_increase is not None

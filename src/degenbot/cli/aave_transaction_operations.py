@@ -1851,11 +1851,9 @@ class TransactionOperationsParser:
         collateral_asset = decode_address(liquidation_event["topics"][1])
         debt_asset = decode_address(liquidation_event["topics"][2])
         user = decode_address(liquidation_event["topics"][3])
-        _debt_to_cover, _liquidated_collateral_amount, _liquidator, _receive_a_token = (
-            eth_abi.abi.decode(
-                types=["uint256", "uint256", "address", "bool"],
-                data=liquidation_event["data"],
-            )
+        debt_to_cover, _, _, _ = eth_abi.abi.decode(
+            types=["uint256", "uint256", "address", "bool"],
+            data=liquidation_event["data"],
         )
 
         is_gho = debt_asset == self.gho_token_address
@@ -1892,11 +1890,11 @@ class TransactionOperationsParser:
                     burn_amount = ev.amount + ev.balance_increase
 
                 # Calculate the difference between debtToCover and burn amount
-                amount_diff = abs(int(_debt_to_cover) - burn_amount)
+                amount_diff = abs(int(debt_to_cover) - burn_amount)
 
                 # Only consider this burn event if it's a reasonable match
                 # (within 1% of debtToCover or within 1000 tokens, whichever is larger)
-                tolerance = max(int(_debt_to_cover) * 0.01, 1000)
+                tolerance = max(int(debt_to_cover) * 0.01, 1000)
                 if amount_diff > tolerance:
                     # Skip this burn event - it's not a good match for this liquidation
                     continue
@@ -1958,12 +1956,15 @@ class TransactionOperationsParser:
 
             # Match debt mint events only if they belong to this liquidation's debt asset
             event_token_address = get_checksum_address(ev.event["address"])
-            if debt_v_token_address is not None and event_token_address == debt_v_token_address:
-                # Check if this is a net debt increase (interest > repayment)
-                if ev.balance_increase is not None and ev.balance_increase > ev.amount:
-                    # This Mint event represents net debt increase during liquidation
-                    debt_mint = ev
-                    break
+            if (
+                debt_v_token_address is not None
+                and event_token_address == debt_v_token_address
+                and ev.balance_increase is not None
+                and ev.balance_increase > ev.amount
+            ):
+                # This Mint event represents net debt increase during liquidation
+                debt_mint = ev
+                break
 
         scaled_token_events: list[ScaledTokenEvent] = []
         balance_transfer_events: list[LogReceipt] = []
