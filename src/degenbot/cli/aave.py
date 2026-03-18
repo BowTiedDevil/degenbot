@@ -3868,25 +3868,6 @@ def _fetch_discount_config_events(
     )
 
 
-def _get_pool_revision_from_db(
-    session: Session,
-    market: AaveV3Market,
-) -> int:
-    """
-    Fetch current Pool revision from database.
-    """
-
-    pool_contract = session.scalar(
-        select(AaveV3Contract).where(
-            AaveV3Contract.market_id == market.id,
-            AaveV3Contract.name == "POOL",
-        )
-    )
-    assert pool_contract is not None
-    assert pool_contract.revision is not None
-    return pool_contract.revision
-
-
 def _log_event_categorization(
     *,
     topic: HexBytes,
@@ -3923,10 +3904,13 @@ def _build_transaction_contexts(
     session: Session,
     w3: Web3,
     gho_asset: AaveGhoToken,
+    pool_contract: AaveV3Contract,
 ) -> dict[HexBytes, TransactionContext]:
     """
     Group events by transaction with full categorization.
     """
+
+    assert pool_contract.revision is not None
 
     contexts: dict[HexBytes, TransactionContext] = {}
 
@@ -3946,10 +3930,6 @@ def _build_transaction_contexts(
             logger.debug(
                 f"_build_transaction_contexts: creating new context for tx={tx_hash.to_0x_hex()}"
             )
-            pool_revision = _get_pool_revision_from_db(session, market)
-            logger.debug(
-                f"TRANSACTION CONTEXT: pool_revision={pool_revision} for tx={tx_hash.to_0x_hex()}"
-            )
             contexts[tx_hash] = TransactionContext(
                 w3=w3,
                 tx_hash=tx_hash,
@@ -3958,7 +3938,7 @@ def _build_transaction_contexts(
                 market=market,
                 session=session,
                 gho_asset=gho_asset,
-                pool_revision=pool_revision,
+                pool_revision=pool_contract.revision,
             )
 
         ctx = contexts[tx_hash]
@@ -4239,6 +4219,7 @@ def update_aave_market(
         session=session,
         w3=w3,
         gho_asset=gho_asset,
+        pool_contract=pool,
     )
 
     # Sort transaction contexts chronologically by (block_number, first_event_log_index)
