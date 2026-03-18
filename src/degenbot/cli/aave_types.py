@@ -64,13 +64,6 @@ class TransactionContext:
     # This prevents double-counting in pending delta calculations
     processed_stk_aave_transfers: set[int] = field(default_factory=set)
 
-    # Track BalanceTransfer events that have been processed in this transaction.
-    # Key: (token_address, recipient_address), Value: (log_index, scaled_amount)
-    # Used to match burns with preceding transfers for exact amount cancellation.
-    processed_balance_transfers: dict[tuple[ChecksumAddress, ChecksumAddress], tuple[int, int]] = (
-        field(default_factory=dict)
-    )
-
     # Track modified positions to ensure we use the same object across operations.
     # Key: (user_address, asset_id, position_table_class), Value: position object
     # Using table class as discriminator to distinguish collateral vs debt positions

@@ -2728,127 +2728,16 @@ def _process_collateral_burn_with_match(
     )
 
     # Use enriched event data for scaled amount
+    # Enrichment layer reliably calculates scaled_amount for all burn events
     scaled_amount: int | None = enriched_event.scaled_amount
     raw_amount = enriched_event.raw_amount
 
-    # Check if this burn follows a BalanceTransfer to the same user in the same transaction.
-    # When a user receives a transfer and immediately burns in the same transaction,
-    # the enrichment layer calculates the exact scaled burn amount from the Burn event.
-    # Only fall back to tracked BalanceTransfer data if enrichment didn't provide a value
-    # (e.g., when recipient update was skipped because they immediately burn).
-    if scaled_event.user_address is not None and scaled_amount is None:
-        # First, check if we have a tracked BalanceTransfer for this user/token
-        # This is set when a transfer to this user was skipped (contract receives and burns)
-        tracked_key = (token_address, scaled_event.user_address)
-        if tracked_key in tx_context.processed_balance_transfers:
-            tracked_log_index, tracked_amount = tx_context.processed_balance_transfers[tracked_key]
-            # Only use if it happened before this burn
-            if tracked_log_index < scaled_event.event["logIndex"]:
-                scaled_amount = tracked_amount
-                logger.debug(
-                    f"Using tracked BalanceTransfer amount {tracked_amount} for burn at "
-                    f"log {scaled_event.event['logIndex']} "
-                    f"(transfer was at log {tracked_log_index})"
-                )
-
-        # If no tracked transfer found and this is a WITHDRAW operation,
-        # search through events for a paired BalanceTransfer.
-        # Only apply BalanceTransfer matching for WITHDRAW operations where the
-        # BalanceTransfer is part of the same atomic operation.
-        if (
-            scaled_amount is None
-            and operation is not None
-            and operation.operation_type == OperationType.WITHDRAW
-        ):
-            """
-            Event definition:
-                event BalanceTransfer(
-                    address indexed from,
-                    address indexed to,
-                    uint256 value,
-                    uint256 index
-                );
-            """
-
-            # Search all transaction events for a BalanceTransfer to this user
-            # that happened before this burn, and find the closest one to the burn
-            burn_log_index = scaled_event.event["logIndex"]
-            closest_bt_amount = None
-            closest_bt_log_index = -1
-
-            for evt in tx_context.events:
-                if evt["logIndex"] >= burn_log_index:
-                    # Skip events at or after the burn
-                    continue
-                if evt["topics"][0] != AaveV3ScaledTokenEvent.BALANCE_TRANSFER.value:
-                    continue
-                if get_checksum_address(evt["address"]) != token_address:
-                    continue
-                # Check if this BalanceTransfer was TO this user
-                to_addr = get_checksum_address("0x" + evt["topics"][2].hex()[-40:])
-                # Track the closest BalanceTransfer to the burn
-                if to_addr == scaled_event.user_address and evt["logIndex"] > closest_bt_log_index:
-                    closest_bt_log_index = evt["logIndex"]
-                    (closest_bt_amount, _) = eth_abi.abi.decode(
-                        types=["uint256", "uint256"],
-                        data=evt["data"],
-                    )
-
-            # Use the closest BalanceTransfer if found
-            if closest_bt_amount is not None:
-                scaled_amount = closest_bt_amount
-                logger.debug(
-                    f"Using preceding BalanceTransfer amount {closest_bt_amount} for burn at "
-                    f"log {burn_log_index} to match transfer at log {closest_bt_log_index}"
-                )
-
-    # For INTEREST_ACCRUAL collateral burns following a WITHDRAW, use the stored withdrawAmount
-    # to avoid 1 wei rounding errors from reverse-calculating value + balance_increase.
-    # This overrides the reverse-calculated raw_amount from extraction_data.
-    # Only apply if the burn is for the same user AND token as the last WITHDRAW.
-    if (
-        operation.operation_type == OperationType.INTEREST_ACCRUAL
-        and tx_context.last_withdraw_amount > 0
-        and token_address == tx_context.last_withdraw_token_address
-        and scaled_event.user_address == tx_context.last_withdraw_user_address
-    ):
-        raw_amount = tx_context.last_withdraw_amount
-        logger.debug(
-            f"Using stored WITHDRAW amount for INTEREST_ACCRUAL: {raw_amount} "
-            f"(user={scaled_event.user_address}, token={token_address})"
-        )
-
-    # If this is a WITHDRAW operation and no BalanceTransfer amount was found,
-    # use the raw_amount from the Withdraw event to ensure accurate balance updates.
-    # The Burn event value may differ by 1 wei due to rounding, but the Withdraw amount
-    # is the authoritative value that should be used for balance updates.
-    # no BalanceTransfer is present. If a BalanceTransfer was found, use its amount
-    # to ensure exact cancellation.
-    if (
-        operation.operation_type == OperationType.WITHDRAW
-        and scaled_amount is None
-        and raw_amount is not None
-    ):
-        # Calculate scaled amount from Withdraw event's raw_amount
-        # Use token revision for math calculations to match contract behavior
+    # Fallback calculation only if enrichment didn't provide scaled_amount
+    # This should not happen for normal burns, but provides a safety net
+    if scaled_amount is None and raw_amount is not None:
         token_math = TokenMathFactory.get_token_math_for_token_revision(
             collateral_asset.a_token_revision
         )
-        assert scaled_event.index is not None
-        scaled_amount = token_math.get_collateral_burn_scaled_amount(
-            amount=raw_amount,
-            liquidity_index=scaled_event.index,
-        )
-        logger.debug(
-            f"Using Withdraw raw_amount {raw_amount} to calculate scaled_amount {scaled_amount}"
-        )
-
-    if scaled_amount is None and raw_amount is not None and collateral_asset.a_token_revision >= 4:  # noqa:PLR2004
-        # Use token revision for math calculations to match contract behavior
-        token_math = TokenMathFactory.get_token_math_for_token_revision(
-            collateral_asset.a_token_revision
-        )
-
         assert scaled_event.index is not None
         scaled_amount = token_math.get_collateral_burn_scaled_amount(
             amount=raw_amount,
@@ -3398,66 +3287,6 @@ def _match_paired_balance_transfer(
     return None, None, None
 
 
-def _should_skip_recipient_update(
-    scaled_event: ScaledTokenEvent,
-    operation: Operation | None,
-    tx_context: TransactionContext,
-) -> bool:
-    """
-    Determine if recipient balance update should be skipped.
-
-    Only ERC20 Transfers (not BalanceTransfer events) are candidates for skipping.
-    Additionally, there must be no paired BalanceTransfer in the operation.
-
-    When these prerequisites are met, skip the update only if:
-        No WITHDRAW pool event exists in the transaction
-        - and -
-        The recipient will immediately burn the received tokens
-
-    This avoids temporarily crediting a balance that will be burned in the same transaction.
-    """
-    # Never skip for BalanceTransfer events (index > 0)
-    if scaled_event.index is not None and scaled_event.index > 0:
-        return False
-
-    # Skip if there's a paired BalanceTransfer after this event
-    has_paired_balance_transfer = (
-        operation is not None
-        and operation.balance_transfer_events
-        and any(
-            bt_event["logIndex"] > scaled_event.event["logIndex"]
-            for bt_event in operation.balance_transfer_events
-        )
-    )
-    if has_paired_balance_transfer:
-        return False
-
-    # Single scan: check for WITHDRAW and subsequent BURN
-    has_withdraw = False
-    will_burn = False
-    transfer_idx = scaled_event.event["logIndex"]
-
-    for evt in tx_context.events:
-        if evt["logIndex"] <= transfer_idx:
-            continue
-
-        # Check for WITHDRAW - if found, don't skip
-        if not has_withdraw and evt["topics"][0] == AaveV3PoolEvent.WITHDRAW.value:
-            has_withdraw = True
-
-        # Check for BURN from the same recipient
-        if not will_burn and evt["topics"][0] == AaveV3ScaledTokenEvent.BURN.value:
-            burn_user = get_checksum_address("0x" + evt["topics"][1].hex()[-40:])
-            if burn_user == scaled_event.target_address:
-                will_burn = True
-
-        if has_withdraw and will_burn:
-            break
-
-    # Skip only if no WITHDRAW and recipient will burn
-    return not has_withdraw and will_burn
-
-
 def _process_collateral_transfer(
     *,
     event: LogReceipt,
@@ -3473,8 +3302,8 @@ def _process_collateral_transfer(
     - Paired ERC20 Transfer + BalanceTransfer events
     - Standalone BalanceTransfer events (liquidations)
     - Protocol mints and burns
-    - Immediate burn scenarios where recipient update should be skipped
     """
+
     assert scaled_event.from_address is not None
     assert scaled_event.target_address is not None
 
@@ -3506,8 +3335,10 @@ def _process_collateral_transfer(
     # Determine the scaled amount and index for this transfer
     # For paired events, use BalanceTransfer data (scaled balance)
     # For standalone events, use the event data directly
-    matched_bt_event, scaled_amount, transfer_index = _match_paired_balance_transfer(
-        scaled_event, operation, token_address
+    _, scaled_amount, transfer_index = _match_paired_balance_transfer(
+        scaled_event=scaled_event,
+        operation=operation,
+        token_address=token_address,
     )
 
     if scaled_amount is None:
@@ -3531,48 +3362,22 @@ def _process_collateral_transfer(
         if transfer_index > current_sender_index:
             sender_position.last_index = transfer_index
 
-    # Handle recipient (skip if they immediately burn the tokens)
+    # Handle recipient
     if scaled_event.target_address != ZERO_ADDRESS:
-        skip_recipient = _should_skip_recipient_update(scaled_event, operation, tx_context)
+        recipient = _get_or_create_user(
+            tx_context=tx_context,
+            user_address=scaled_event.target_address,
+            block_number=scaled_event.event["blockNumber"],
+        )
+        recipient_position = _get_or_create_collateral_position(
+            tx_context=tx_context,
+            user=recipient,
+            asset_id=collateral_asset.id,
+        )
+        recipient_position.balance += scaled_amount
 
-        if not skip_recipient:
-            # Update recipient's balance and index
-            recipient = _get_or_create_user(
-                tx_context=tx_context,
-                user_address=scaled_event.target_address,
-                block_number=scaled_event.event["blockNumber"],
-            )
-            recipient_position = _get_or_create_collateral_position(
-                tx_context=tx_context,
-                user=recipient,
-                asset_id=collateral_asset.id,
-            )
-            recipient_position.balance += scaled_amount
-
-            if transfer_index is not None and transfer_index > 0:
-                recipient_position.last_index = transfer_index
-
-        # Track BalanceTransfer for potential burn matching
-        # Only track if recipient update wasn't skipped
-        if not skip_recipient:
-            if matched_bt_event is not None:
-                # Paired BalanceTransfer - track for subsequent burn matching
-                tx_context.processed_balance_transfers[
-                    token_address,
-                    scaled_event.target_address,
-                ] = (
-                    matched_bt_event["logIndex"],
-                    scaled_amount,
-                )
-            elif scaled_event.index is not None and scaled_event.index > 0:
-                # Standalone BalanceTransfer
-                tx_context.processed_balance_transfers[
-                    token_address,
-                    scaled_event.target_address,
-                ] = (
-                    scaled_event.event["logIndex"],
-                    scaled_amount,
-                )
+        if transfer_index is not None and transfer_index > 0:
+            recipient_position.last_index = transfer_index
 
 
 def _process_debt_transfer(
