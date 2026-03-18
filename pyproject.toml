@@ -70,27 +70,14 @@ omit = [
 plugins = ["pydantic.mypy"]
 files=[
     "src/degenbot",
-    "tests/",
 ]
 python_version = "3.12"
 python_executable = ".venv/bin/python"
 untyped_calls_exclude = "cvxpy"
 
 [[tool.mypy.overrides]]
-module="tests/test_cvxpy.py"
-disable_error_code = [
-    "attr-defined",
-]
-
-[[tool.mypy.overrides]]
 module="degenbot.*"
 strict = true
-
-[[tool.mypy.overrides]]
-module="tests.*"
-disable_error_code = [
-    "no-untyped-def",
-]
 
 [[tool.mypy.overrides]]
 module=[
