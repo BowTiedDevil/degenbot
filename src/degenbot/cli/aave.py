@@ -75,9 +75,6 @@ from degenbot.functions import (
 )
 from degenbot.logging import logger
 
-# Maximum log index difference for matching ERC20 Transfer to BalanceTransfer
-# BalanceTransfer events typically follow their corresponding ERC20 Transfer within 3 logs
-BALANCE_TRANSFER_PROXIMITY_THRESHOLD = 3
 
 if TYPE_CHECKING:
     from eth_typing.evm import BlockParams
@@ -121,6 +118,9 @@ class UserOperation(Enum):
 
 FULL_VERIFICATION_INTERVAL = 250_000
 SCALED_AMOUNT_POOL_REVISION = 9
+# Maximum log index difference for matching ERC20 Transfer to BalanceTransfer
+# BalanceTransfer events typically follow their corresponding ERC20 Transfer within 3 logs
+BALANCE_TRANSFER_PROXIMITY_THRESHOLD = 3
 
 
 class WadRayMathLibrary(Protocol):
@@ -2338,8 +2338,23 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 f"for operation {operation.operation_id}"
             )
 
-    # Process each operation
-    for operation in tx_operations.operations:
+    # Process each operation in chronological order (sorted by pool event or minimum scaled event log index)
+    # This ensures events are processed in the order they appear in the transaction.
+    # Operations with pool events are sorted by pool event log index.
+    # Operations without pool events (INTEREST_ACCRUAL, etc.) are sorted by minimum scaled event log index.
+    def _get_operation_sort_key(op: Operation) -> int:
+        if op.pool_event is not None:
+            # Use pool event log index for operations with pool events
+            return op.pool_event["logIndex"]
+        elif op.scaled_token_events:
+            # Use minimum scaled event log index for operations without pool events
+            return min(ev.event["logIndex"] for ev in op.scaled_token_events)
+        else:
+            # Fallback for operations with no events (should be at the end)
+            return 2_147_483_647  # Max int32
+
+    sorted_operations = sorted(tx_operations.operations, key=_get_operation_sort_key)
+    for operation in sorted_operations:
         logger.debug(
             f"Processing operation {operation.operation_id}: {operation.operation_type.name}"
         )
@@ -2903,6 +2918,19 @@ def _process_debt_mint_with_match(
         user=user,
         asset_id=debt_asset.id,
     )
+
+    # INTEREST_ACCRUAL operations: Mint events are tracking-only, no balance change
+    # Just update the last_index and return
+    if operation.operation_type == OperationType.INTEREST_ACCRUAL:
+        logger.debug(
+            "_process_debt_mint_with_match: INTEREST_ACCRUAL - skipping balance change, updating index"
+        )
+        if scaled_event.index is not None:
+            current_index = debt_position.last_index or 0
+            if scaled_event.index > current_index:
+                debt_position.last_index = scaled_event.index
+                logger.debug(f"Updated last_index for INTEREST_ACCRUAL: {debt_position.last_index}")
+        return
 
     # Use enriched event data for scaled amount
     scaled_amount: int | None = enriched_event.scaled_amount

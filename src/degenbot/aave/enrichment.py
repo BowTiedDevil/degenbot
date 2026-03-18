@@ -238,6 +238,24 @@ class ScaledEventEnricher:
                     "ENRICHMENT: Interest exceeds repayment - using DEBT_BURN "
                     "calculation (floor rounding)"
                 )
+            elif (
+                # Special case: In LIQUIDATION operations, when the debt repayment is less
+                # than the accrued interest, the VariableDebtToken emits a Mint event
+                # representing a net debt increase (balance_increase - amount).
+                # This should be treated as a debt burn (net increase) for correct balance calculation.
+                operation.operation_type.name in {"LIQUIDATION", "GHO_LIQUIDATION"}
+                and scaled_event.event_type == ScaledTokenEventType.DEBT_MINT
+                and scaled_event.balance_increase is not None
+                and scaled_event.balance_increase > scaled_event.amount
+            ):
+                # Interest exceeds repayment: net debt increase
+                # Use DEBT_BURN calculation (floor rounding) to correctly handle the net increase
+                calculation_event_type = ScaledTokenEventType.DEBT_BURN
+                raw_amount = scaled_event.balance_increase - scaled_event.amount
+                logger.debug(
+                    f"ENRICHMENT: LIQUIDATION net debt increase - using DEBT_BURN "
+                    f"calculation with raw_amount={raw_amount}"
+                )
             else:
                 calculation_event_type = scaled_event.event_type
 

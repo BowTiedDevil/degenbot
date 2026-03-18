@@ -1867,6 +1867,7 @@ class TransactionOperationsParser:
         debt_v_token_address = self._get_v_token_for_asset(debt_asset)
 
         debt_burn: ScaledTokenEvent | None = None
+        best_match_diff: int | None = None
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
                 continue
@@ -1882,8 +1883,28 @@ class TransactionOperationsParser:
             # with different debt assets in the same transaction
             event_token_address = get_checksum_address(ev.event["address"])
             if debt_v_token_address is not None and event_token_address == debt_v_token_address:
-                debt_burn = ev
-                break
+                # For multiple liquidations with the same debt asset, match based on amount
+                # The burn event's amount should closely match the liquidation's debtToCover
+                # (allowing for small differences due to interest accrual)
+                burn_amount = ev.amount
+                if ev.balance_increase is not None and ev.balance_increase > 0:
+                    # Adjust burn amount by balance increase if present
+                    burn_amount = ev.amount + ev.balance_increase
+
+                # Calculate the difference between debtToCover and burn amount
+                amount_diff = abs(int(_debt_to_cover) - burn_amount)
+
+                # Only consider this burn event if it's a reasonable match
+                # (within 1% of debtToCover or within 1000 tokens, whichever is larger)
+                tolerance = max(int(_debt_to_cover) * 0.01, 1000)
+                if amount_diff > tolerance:
+                    # Skip this burn event - it's not a good match for this liquidation
+                    continue
+
+                # Use this burn event if it's a better match than previous ones
+                if best_match_diff is None or amount_diff < best_match_diff:
+                    debt_burn = ev
+                    best_match_diff = amount_diff
 
         # Find collateral burn and/or transfer(s)
         # During liquidations, borrower may have BOTH collateral burned AND multiple transfers
@@ -1922,16 +1943,41 @@ class TransactionOperationsParser:
             f"User: {user}, scaled_events: {[e.event['logIndex'] for e in scaled_events]}"
         )
 
+        # Find debt mint events that represent net debt increase during liquidation
+        # This happens when accrued interest > debt repayment (balance_increase > amount)
+        debt_mint: ScaledTokenEvent | None = None
+        for ev in scaled_events:
+            if ev.event["logIndex"] in assigned_indices:
+                continue
+            if ev.user_address != user:
+                continue
+            if is_gho and ev.event_type != ScaledTokenEventType.GHO_DEBT_MINT:
+                continue
+            if not is_gho and ev.event_type != ScaledTokenEventType.DEBT_MINT:
+                continue
+
+            # Match debt mint events only if they belong to this liquidation's debt asset
+            event_token_address = get_checksum_address(ev.event["address"])
+            if debt_v_token_address is not None and event_token_address == debt_v_token_address:
+                # Check if this is a net debt increase (interest > repayment)
+                if ev.balance_increase is not None and ev.balance_increase > ev.amount:
+                    # This Mint event represents net debt increase during liquidation
+                    debt_mint = ev
+                    break
+
         scaled_token_events: list[ScaledTokenEvent] = []
         balance_transfer_events: list[LogReceipt] = []
 
-        # Add the debt burn and collateral burn to scaled_token_events
-        # Note: debt_burn may be None for flash loan liquidations
+        # Add the debt burn, debt mint, and collateral burn to scaled_token_events
+        # Note: debt_burn may be None for flash loan liquidations or when interest > repayment
+        # Note: debt_mint is set when interest > repayment (net debt increase)
         # Note: collateral_burn may be None when collateral is transferred to treasury
         if collateral_burn is not None:
             scaled_token_events.append(collateral_burn)
         if debt_burn is not None:
             scaled_token_events.append(debt_burn)
+        if debt_mint is not None:
+            scaled_token_events.append(debt_mint)
 
         if collateral_transfers:
             # Add all collateral transfers to scaled_token_events
