@@ -1865,7 +1865,6 @@ class TransactionOperationsParser:
         debt_v_token_address = self._get_v_token_for_asset(debt_asset)
 
         debt_burn: ScaledTokenEvent | None = None
-        best_match_diff: int | None = None
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
                 continue
@@ -1881,28 +1880,23 @@ class TransactionOperationsParser:
             # with different debt assets in the same transaction
             event_token_address = get_checksum_address(ev.event["address"])
             if debt_v_token_address is not None and event_token_address == debt_v_token_address:
-                # For multiple liquidations with the same debt asset, match based on amount
-                # The burn event's amount should closely match the liquidation's debtToCover
-                # (allowing for small differences due to interest accrual)
-                # Note: The Burn event's `value` field (ev.amount) is the amountToBurn from the
-                # contract, which is already in underlying units (amount - balanceIncrease).
-                # Do NOT add balance_increase - it's already accounted for in the net burn amount.
-                burn_amount = ev.amount
+                # Calculate total debt being cleared: principal + interest
+                # The Burn event's `value` field is principal only, balance_increase is interest
+                # Total burned = value + balance_increase
+                total_burn = ev.amount + (ev.balance_increase or 0)
 
-                # Calculate the difference between debtToCover and burn amount
-                amount_diff = abs(int(debt_to_cover) - burn_amount)
-
-                # Only consider this burn event if it's a reasonable match
-                # (within 1% of debtToCover or within 1000 tokens, whichever is larger)
-                tolerance = max(int(debt_to_cover) * 0.01, 1000)
-                if amount_diff > tolerance:
-                    # Skip this burn event - it's not a good match for this liquidation
+                # Match if total_burn >= debt_to_cover
+                # - Normal liquidation: total_burn == debt_toCover (within tolerance)
+                # - Bad debt liquidation: total_burn > debtToCover (excess becomes deficit)
+                if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
+                    # Pool revision 9+ uses ray math with flooring, allow ±2 wei tolerance
+                    if total_burn < debt_to_cover - TOKEN_AMOUNT_MATCH_TOLERANCE:
+                        continue
+                elif total_burn < debt_to_cover:
                     continue
 
-                # Use this burn event if it's a better match than previous ones
-                if best_match_diff is None or amount_diff < best_match_diff:
-                    debt_burn = ev
-                    best_match_diff = amount_diff
+                debt_burn = ev
+                break
 
         # Find collateral burn and/or transfer(s)
         # During liquidations, borrower may have BOTH collateral burned AND multiple transfers
