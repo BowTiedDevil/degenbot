@@ -1884,10 +1884,10 @@ class TransactionOperationsParser:
                 # For multiple liquidations with the same debt asset, match based on amount
                 # The burn event's amount should closely match the liquidation's debtToCover
                 # (allowing for small differences due to interest accrual)
+                # Note: The Burn event's `value` field (ev.amount) is the amountToBurn from the
+                # contract, which is already in underlying units (amount - balanceIncrease).
+                # Do NOT add balance_increase - it's already accounted for in the net burn amount.
                 burn_amount = ev.amount
-                if ev.balance_increase is not None and ev.balance_increase > 0:
-                    # Adjust burn amount by balance increase if present
-                    burn_amount = ev.amount + ev.balance_increase
 
                 # Calculate the difference between debtToCover and burn amount
                 amount_diff = abs(int(debt_to_cover) - burn_amount)
