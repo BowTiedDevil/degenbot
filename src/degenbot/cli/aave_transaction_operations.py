@@ -1850,6 +1850,147 @@ class TransactionOperationsParser:
 
         return None
 
+    @staticmethod
+    def _collect_primary_debt_burns(
+        *,
+        user: ChecksumAddress,
+        debt_v_token_address: ChecksumAddress | None,
+        debt_to_cover: int,
+        pool_revision: int,
+        scaled_events: list[ScaledTokenEvent],
+        assigned_indices: set[int],
+        is_gho: bool,
+    ) -> list[ScaledTokenEvent]:
+        """
+        Collect primary debt burns matching the liquidation's debt asset.
+
+        Validates that total burn (principal + interest) meets or exceeds debt_to_cover,
+        with revision-specific tolerance handling.
+        """
+
+        primary_burns: list[ScaledTokenEvent] = []
+
+        for ev in scaled_events:
+            if ev.event["logIndex"] in assigned_indices:
+                continue
+            if ev.user_address != user:
+                continue
+            if is_gho and ev.event_type != ScaledTokenEventType.GHO_DEBT_BURN:
+                continue
+            if not is_gho and ev.event_type != ScaledTokenEventType.DEBT_BURN:
+                continue
+
+            event_token_address = get_checksum_address(ev.event["address"])
+            if debt_v_token_address is None or event_token_address != debt_v_token_address:
+                continue
+
+            # Calculate total debt being cleared: principal + interest
+            # The Burn event's `value` field is principal only, balance_increase is interest
+            # Total burned = value + balance_increase
+            total_burn = ev.amount + (ev.balance_increase or 0)
+
+            # Match if total_burn >= debt_to_cover
+            # - Normal liquidation: total_burn == debtToCover (within tolerance)
+            # - Bad debt liquidation: total_burn > debtToCover (excess becomes deficit)
+            if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
+                # Pool revision 9+ uses ray math with flooring, allow ±2 wei tolerance
+                if total_burn < debt_to_cover - TOKEN_AMOUNT_MATCH_TOLERANCE:
+                    continue
+            elif total_burn < debt_to_cover:
+                continue
+
+            primary_burns.append(ev)
+
+        return primary_burns
+
+    def _collect_secondary_debt_burns(
+        self,
+        *,
+        user: ChecksumAddress,
+        debt_v_token_address: ChecksumAddress | None,
+        scaled_events: list[ScaledTokenEvent],
+        assigned_indices: set[int],
+        is_gho: bool,
+    ) -> list[ScaledTokenEvent]:
+        """
+        Collect secondary debt burns for other assets held by the user.
+
+        These are debts that weren't the primary liquidation target but were also
+        burned as part of the liquidation (bad debt write-off scenario).
+        """
+
+        secondary_burns: list[ScaledTokenEvent] = []
+
+        for ev in scaled_events:
+            if ev.event["logIndex"] in assigned_indices:
+                continue
+            if ev.user_address != user:
+                continue
+            if is_gho and ev.event_type != ScaledTokenEventType.GHO_DEBT_BURN:
+                continue
+            if not is_gho and ev.event_type != ScaledTokenEventType.DEBT_BURN:
+                continue
+
+            event_token_address = get_checksum_address(ev.event["address"])
+            if debt_v_token_address is not None and event_token_address == debt_v_token_address:
+                continue  # Skip primary debt burns
+
+            # Validate this is a real debt token
+            asset = self._get_asset_by_v_token(event_token_address)
+            if asset is not None:
+                secondary_burns.append(ev)
+
+        return secondary_burns
+
+    @staticmethod
+    def _collect_collateral_events(
+        *,
+        user: ChecksumAddress,
+        collateral_a_token_address: ChecksumAddress | None,
+        scaled_events: list[ScaledTokenEvent],
+        assigned_indices: set[int],
+    ) -> tuple[ScaledTokenEvent | None, list[ScaledTokenEvent]]:
+        """
+        Collect collateral events (burns and transfers) for the liquidation.
+
+        During liquidations, borrower may have BOTH collateral burned AND multiple transfers.
+        Collateral may be burned OR transferred to treasury (BalanceTransfer).
+
+        Returns:
+            Tuple of (collateral_burn, collateral_transfers)
+        """
+
+        collateral_transfers: list[ScaledTokenEvent] = []
+        collateral_burn: ScaledTokenEvent | None = None
+
+        for ev in scaled_events:
+            if ev.event["logIndex"] in assigned_indices:
+                continue
+
+            # Match collateral events only if they belong to this liquidation's collateral asset
+            # This prevents incorrect matching when a user is liquidated multiple times
+            # with different collateral assets in the same transaction
+            event_token_address = get_checksum_address(ev.event["address"])
+            if (
+                collateral_a_token_address is not None
+                and event_token_address != collateral_a_token_address
+            ):
+                continue
+
+            if ev.event_type == ScaledTokenEventType.COLLATERAL_BURN and ev.user_address == user:
+                collateral_burn = ev
+            elif (
+                ev.event_type
+                in {
+                    ScaledTokenEventType.COLLATERAL_TRANSFER,
+                    ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+                }
+                and ev.user_address == user
+            ):
+                collateral_transfers.append(ev)
+
+        return collateral_burn, collateral_transfers
+
     def _create_liquidation_operation(
         self,
         *,
@@ -1892,77 +2033,32 @@ class TransactionOperationsParser:
 
         # Collect ALL debt burns for the liquidated user
         # A liquidation may burn multiple debt positions (not just the primary debt asset)
-        # This happens when a user has multiple debts and the position is underwater
-        debt_burns: list[ScaledTokenEvent] = []
+        primary_burns = self._collect_primary_debt_burns(
+            user=user,
+            debt_v_token_address=debt_v_token_address,
+            debt_to_cover=debt_to_cover,
+            pool_revision=pool_revision,
+            scaled_events=scaled_events,
+            assigned_indices=assigned_indices,
+            is_gho=is_gho,
+        )
+        secondary_burns = self._collect_secondary_debt_burns(
+            user=user,
+            debt_v_token_address=debt_v_token_address,
+            scaled_events=scaled_events,
+            assigned_indices=assigned_indices,
+            is_gho=is_gho,
+        )
+        debt_burns = primary_burns + secondary_burns
 
-        for ev in scaled_events:
-            if ev.event["logIndex"] in assigned_indices:
-                continue
-            if ev.user_address != user:
-                continue
-            if is_gho and ev.event_type != ScaledTokenEventType.GHO_DEBT_BURN:
-                continue
-            if not is_gho and ev.event_type != ScaledTokenEventType.DEBT_BURN:
-                continue
+        # Collect collateral events (burns and transfers)
+        collateral_burn, collateral_transfers = self._collect_collateral_events(
+            user=user,
+            collateral_a_token_address=collateral_a_token_address,
+            scaled_events=scaled_events,
+            assigned_indices=assigned_indices,
+        )
 
-            event_token_address = get_checksum_address(ev.event["address"])
-
-            # Check if this is the primary debt burn (matches the liquidation's debt asset)
-            if debt_v_token_address is not None and event_token_address == debt_v_token_address:
-                # Calculate total debt being cleared: principal + interest
-                # The Burn event's `value` field is principal only, balance_increase is interest
-                # Total burned = value + balance_increase
-                total_burn = ev.amount + (ev.balance_increase or 0)
-
-                # Match if total_burn >= debt_to_cover
-                # - Normal liquidation: total_burn == debt_toCover (within tolerance)
-                # - Bad debt liquidation: total_burn > debtToCover (excess becomes deficit)
-                if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
-                    # Pool revision 9+ uses ray math with flooring, allow ±2 wei tolerance
-                    if total_burn < debt_to_cover - TOKEN_AMOUNT_MATCH_TOLERANCE:
-                        continue
-                elif total_burn < debt_to_cover:
-                    continue
-
-                debt_burns.append(ev)
-            elif debt_v_token_address is not None and event_token_address != debt_v_token_address:
-                # Check if this is a secondary debt (different asset) for the same user
-                # Get the asset for this vToken to verify it's a valid debt position
-                secondary_asset = self._get_asset_by_v_token(event_token_address)
-                if secondary_asset is not None:
-                    # This is a valid secondary debt burn for another asset
-                    debt_burns.append(ev)
-
-        # Find collateral burn and/or transfer(s)
-        # During liquidations, borrower may have BOTH collateral burned AND multiple transfers
-
-        collateral_transfers: list[ScaledTokenEvent] = []
-        collateral_burn: ScaledTokenEvent | None = None
-        for ev in scaled_events:
-            if ev.event["logIndex"] in assigned_indices:
-                continue
-
-            # Match collateral events only if they belong to this liquidation's collateral asset
-            # This prevents incorrect matching when a user is liquidated multiple times
-            # with different collateral assets in the same transaction
-            event_token_address = get_checksum_address(ev.event["address"])
-            if (
-                collateral_a_token_address is not None
-                and event_token_address != collateral_a_token_address
-            ):
-                continue
-
-            if ev.event_type == ScaledTokenEventType.COLLATERAL_BURN and ev.user_address == user:
-                collateral_burn = ev
-            elif (
-                ev.event_type
-                in {
-                    ScaledTokenEventType.COLLATERAL_TRANSFER,
-                    ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
-                }
-                and ev.user_address == user
-            ):
-                collateral_transfers.append(ev)
         # A liquidation requires at least one collateral event (burn or transfer)
         # Collateral may be transferred to treasury instead of burned when protocol takes fee
         assert collateral_burn is not None or collateral_transfers, (
