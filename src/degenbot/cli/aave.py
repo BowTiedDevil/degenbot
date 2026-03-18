@@ -3120,10 +3120,11 @@ def _process_debt_burn_with_match(
             # Bad debt liquidation: The contract burns the ENTIRE debt balance (borrowerReserveDebt)
             # not just the debtToCover amount. The debt position should be set to 0.
             # This is because the protocol writes off the bad debt.
+            old_balance = debt_position.balance
             debt_position.balance = 0
             logger.debug(
                 f"_process_debt_burn_with_match: BAD DEBT LIQUIDATION - setting balance to 0 "
-                f"(was {debt_position.balance})"
+                f"(was {old_balance})"
             )
             # Skip the normal processing since we've already set the balance
             # Only update last_index if the new index is greater than current
