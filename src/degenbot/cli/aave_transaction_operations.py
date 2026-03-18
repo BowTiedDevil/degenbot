@@ -361,6 +361,25 @@ class TransactionOperations:
                 f"They may need special handling or indicate a parsing bug."
             )
 
+        # Check for unassigned scaled token events (Burn, Mint, BalanceTransfer)
+        # These should always be matched to an operation, not left for INTEREST_ACCRUAL
+        scaled_token_topics = {
+            AaveV3ScaledTokenEvent.BURN.value,
+            AaveV3ScaledTokenEvent.MINT.value,
+            AaveV3ScaledTokenEvent.BALANCE_TRANSFER.value,
+        }
+        unassigned_scaled = [
+            e for e in self.unassigned_events if e["topics"][0] in scaled_token_topics
+        ]
+        if unassigned_scaled:
+            all_errors.append(
+                f"{len(unassigned_scaled)} scaled token events "
+                f"(Burn/Mint/BalanceTransfer) unassigned: "
+                f"{[e['logIndex'] for e in unassigned_scaled]}. "
+                f"DEBUG NOTE: All scaled token events must be matched to operations. "
+                f"Unassigned burns/mints/transfers indicate a matching bug."
+            )
+
         # Check for ambiguous event assignments
         assigned_indices: dict[int, int] = {}  # logIndex -> operation_id
         for op in self.operations:
