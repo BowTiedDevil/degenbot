@@ -117,9 +117,6 @@ class UserOperation(Enum):
 
 FULL_VERIFICATION_INTERVAL = 250_000
 SCALED_AMOUNT_POOL_REVISION = 9
-# Maximum log index difference for matching ERC20 Transfer to BalanceTransfer
-# BalanceTransfer events typically follow their corresponding ERC20 Transfer within 3 logs
-BALANCE_TRANSFER_PROXIMITY_THRESHOLD = 3
 
 
 class WadRayMathLibrary(Protocol):
@@ -3269,20 +3266,17 @@ def _match_paired_balance_transfer(
     if not operation or not operation.balance_transfer_events:
         return None, None, None
 
-    transfer_log_index = scaled_event.event["logIndex"]
-
     for bt_event in operation.balance_transfer_events:
         bt_from = get_checksum_address("0x" + bt_event["topics"][1].hex()[-40:])
         bt_to = get_checksum_address("0x" + bt_event["topics"][2].hex()[-40:])
         bt_token = get_checksum_address(bt_event["address"])
-        bt_log_index = bt_event["logIndex"]
 
-        # Match by token, from, to, and log index proximity (within 3 logs)
+        # Match by token, from, and to addresses (semantic matching)
+        # Log index proximity is not reliable in batch transactions
         if (
             bt_token == token_address
             and bt_from == scaled_event.from_address
             and bt_to == scaled_event.target_address
-            and abs(bt_log_index - transfer_log_index) <= BALANCE_TRANSFER_PROXIMITY_THRESHOLD
         ):
             decoded_amount, decoded_index = eth_abi.abi.decode(
                 types=["uint256", "uint256"],
