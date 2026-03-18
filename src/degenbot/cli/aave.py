@@ -2614,6 +2614,15 @@ def _process_operation(
     if operation.operation_type == OperationType.STKAAVE_TRANSFER:
         return
 
+    # Handle DEFICIT_COVERAGE operations specially
+    # These have paired Transfer + Burn events that must be processed atomically
+    if operation.operation_type == OperationType.DEFICIT_COVERAGE:
+        _process_deficit_coverage_operation(
+            operation=operation,
+            tx_context=tx_context,
+        )
+        return
+
     # Create enricher and matcher for this operation
     enricher = ScaledEventEnricher(
         pool_revision=tx_context.pool_revision,
@@ -2790,6 +2799,125 @@ def _calculate_mint_to_treasury_scaled_amount(
         f"rayDiv({minted_amount}, {scaled_event.index}) = {scaled_amount}"
     )
     return scaled_amount
+
+
+def _process_deficit_coverage_operation(
+    *,
+    operation: Operation,
+    tx_context: TransactionContext,
+) -> None:
+    """
+    Process DEFICIT_COVERAGE operations atomically.
+
+    DEFICIT_COVERAGE operations contain paired Transfer + Burn events that occur
+    during Umbrella protocol's deficit coverage operations. These must be processed
+    atomically (credit then debit) to maintain correct balances.
+
+    The pattern is:
+    1. Transfer/BalanceTransfer credits user's collateral position
+    2. Burn debits user's collateral position (including accrued interest)
+    3. Net effect should be zero or the interest amount
+    """
+    # Sort events by log index to ensure chronological processing
+    sorted_events = sorted(
+        operation.scaled_token_events,
+        key=lambda e: e.event["logIndex"],
+    )
+
+    # Process transfer events first (credit the user)
+    for scaled_event in sorted_events:
+        if scaled_event.event_type in {
+            ScaledTokenEventType.COLLATERAL_TRANSFER,
+            ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+        }:
+            _process_collateral_transfer(
+                tx_context=tx_context,
+                operation=operation,
+                scaled_event=scaled_event,
+            )
+
+    # Process burn events last (debit the user)
+    for scaled_event in sorted_events:
+        if scaled_event.event_type == ScaledTokenEventType.COLLATERAL_BURN:
+            # Skip enrichment validation for deficit coverage burns
+            # The burn amount may not match standard calculations because
+            # it includes interest accrued during the deficit coverage
+            _process_deficit_coverage_burn(
+                event=scaled_event.event,
+                tx_context=tx_context,
+                scaled_event=scaled_event,
+            )
+
+
+def _process_deficit_coverage_burn(
+    *,
+    event: LogReceipt,
+    tx_context: TransactionContext,
+    scaled_event: ScaledTokenEvent,
+) -> None:
+    """
+    Process a burn event within a DEFICIT_COVERAGE operation.
+
+    Unlike regular burns, deficit coverage burns don't need enrichment validation
+    because the amount includes interest that was accrued between the transfer
+    and the burn within the same transaction.
+    """
+    # Skip if user address is missing
+    if scaled_event.user_address is None:
+        return
+
+    # Get collateral asset
+    token_address = get_checksum_address(scaled_event.event["address"])
+    collateral_asset, _ = _get_scaled_token_asset_by_address(
+        session=tx_context.session,
+        market=tx_context.market,
+        token_address=token_address,
+    )
+
+    assert collateral_asset
+
+    # Get user
+    user = _get_or_create_user(
+        tx_context=tx_context,
+        user_address=scaled_event.user_address,
+        block_number=scaled_event.event["blockNumber"],
+    )
+
+    # Get collateral position
+    collateral_position = _get_or_create_collateral_position(
+        tx_context=tx_context,
+        user=user,
+        asset_id=collateral_asset.id,
+    )
+
+    # Calculate scaled amount directly without enrichment validation
+    # The raw amount needs to be converted to scaled amount
+    assert scaled_event.index is not None
+    token_math = TokenMathFactory.get_token_math_for_token_revision(
+        collateral_asset.a_token_revision
+    )
+    scaled_amount = token_math.get_collateral_burn_scaled_amount(
+        amount=scaled_event.amount,
+        liquidity_index=scaled_event.index,
+    )
+
+    # Process the burn directly
+    assert scaled_event.balance_increase is not None
+    _process_scaled_token_operation(
+        event=CollateralBurnEvent(
+            value=scaled_event.amount,
+            balance_increase=scaled_event.balance_increase,
+            index=scaled_event.index,
+            scaled_amount=scaled_amount,
+        ),
+        scaled_token_revision=collateral_asset.a_token_revision,
+        position=collateral_position,
+    )
+
+    # Update last_index if the new index is greater
+    current_index = collateral_position.last_index or 0
+    if scaled_event.index > current_index:
+        collateral_position.last_index = scaled_event.index
 
 
 def _process_collateral_mint_with_match(

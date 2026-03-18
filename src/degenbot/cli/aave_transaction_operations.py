@@ -57,6 +57,7 @@ class OperationType(Enum):
     # Standalone events
     INTEREST_ACCRUAL = auto()  # Mint/Burn with no pool event
     BALANCE_TRANSFER = auto()  # Standalone BalanceTransfer
+    DEFICIT_COVERAGE = auto()  # BalanceTransfer + Burn pair (Umbrella deficit coverage)
     MINT_TO_TREASURY = auto()  # Pool minting aTokens to treasury (no SUPPLY event)
     IMPLICIT_BORROW = (
         auto()
@@ -756,7 +757,21 @@ class TransactionOperationsParser:
             ev.event["logIndex"] for op in mint_to_treasury_ops for ev in op.scaled_token_events
         )
 
-        # Step 4c: Create INTEREST_ACCRUAL operations for unassigned scaled token events
+        # Step 4c: Create DEFICIT_COVERAGE operations for paired BalanceTransfer + Burn events
+        # These occur during Umbrella protocol's deficit coverage operations where aTokens
+        # are transferred to a user and then immediately burned to cover deficits
+        deficit_coverage_ops = self._create_deficit_coverage_operations(
+            scaled_events=scaled_events,
+            assigned_indices=assigned_log_indices,
+            starting_operation_id=len(operations),
+            pool_revision=pool_revision,
+        )
+        operations.extend(deficit_coverage_ops)
+        assigned_log_indices.update(
+            ev.event["logIndex"] for op in deficit_coverage_ops for ev in op.scaled_token_events
+        )
+
+        # Step 4d: Create INTEREST_ACCRUAL operations for unassigned scaled token events
         # that represent interest accrual (amount == balance_increase)
         # Skip DEBT_MINT extraction if there's a LIQUIDATION_CALL (flash loan pattern)
         interest_accrual_ops = self._create_interest_accrual_operations(
@@ -2223,6 +2238,136 @@ class TransactionOperationsParser:
         )
 
     @staticmethod
+    def _create_deficit_coverage_operations(
+        scaled_events: list[ScaledTokenEvent],
+        assigned_indices: set[int],
+        starting_operation_id: int,
+        pool_revision: int,
+    ) -> list[Operation]:
+        """Create DEFICIT_COVERAGE operations for paired BalanceTransfer + Burn events.
+
+        Umbrella protocol's executeCoverReserveDeficits transfers aTokens to a user
+        (via BalanceTransfer) and then burns them to cover reserve deficits. These
+        paired events must be processed atomically to maintain correct balances.
+
+        Pattern:
+            1. BalanceTransfer to user (credits user's collateral position)
+            2. Burn from user (debits user's collateral position + interest)
+
+        The net effect is zero (transfer amount == burn amount - interest), but the
+        intermediate state must be tracked correctly.
+
+        Args:
+            scaled_events: All scaled token events from the transaction
+            assigned_indices: Set of log indices already assigned to operations
+            starting_operation_id: The next available operation ID
+            pool_revision: Pool revision for this transaction
+
+        Returns:
+            List of DEFICIT_COVERAGE operations
+        """
+        operations: list[Operation] = []
+        operation_id = starting_operation_id
+        local_assigned: set[int] = set()
+
+        # Find all BalanceTransfer events that are not yet assigned
+        balance_transfers: list[ScaledTokenEvent] = []
+        for ev in scaled_events:
+            if ev.event["logIndex"] in assigned_indices or ev.event["logIndex"] in local_assigned:
+                continue
+            if ev.event_type in {
+                ScaledTokenEventType.COLLATERAL_TRANSFER,
+                ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+            }:
+                balance_transfers.append(ev)
+
+        # For each BalanceTransfer, look for a paired Burn event
+        for bt_ev in balance_transfers:
+            bt_token_address = get_checksum_address(bt_ev.event["address"])
+            bt_target_user = bt_ev.target_address
+
+            if bt_target_user is None:
+                continue
+
+            # Look for a matching Burn event
+            paired_burn: ScaledTokenEvent | None = None
+            for burn_ev in scaled_events:
+                if (
+                    burn_ev.event["logIndex"] in assigned_indices
+                    or burn_ev.event["logIndex"] in local_assigned
+                ):
+                    continue
+                if burn_ev.event_type != ScaledTokenEventType.COLLATERAL_BURN:
+                    continue
+                if burn_ev.user_address != bt_target_user:
+                    continue
+                burn_token_address = get_checksum_address(burn_ev.event["address"])
+                if burn_token_address != bt_token_address:
+                    continue
+
+                # Found a paired burn
+                paired_burn = burn_ev
+                break
+
+            if paired_burn is not None:
+                # Create DEFICIT_COVERAGE operation with paired events
+                # Include both ERC20 Transfer and BalanceTransfer if both exist
+                paired_events = [bt_ev, paired_burn]
+
+                # Check for a matching BalanceTransfer event for the same transfer
+                # ERC20 Transfer and BalanceTransfer events represent the same transfer
+                # but have different event types and amounts (underlying vs scaled)
+                if bt_ev.event_type == ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER:
+                    for other_ev in scaled_events:
+                        if (
+                            other_ev.event["logIndex"] in assigned_indices
+                            or other_ev.event["logIndex"] in local_assigned
+                        ):
+                            continue
+                        if other_ev.event_type != ScaledTokenEventType.COLLATERAL_TRANSFER:
+                            continue
+                        if other_ev.from_address != bt_ev.from_address:
+                            continue
+                        if other_ev.target_address != bt_ev.target_address:
+                            continue
+                        other_token_address = get_checksum_address(other_ev.event["address"])
+                        if other_token_address != bt_token_address:
+                            continue
+
+                        # Found matching BalanceTransfer - include it
+                        paired_events.insert(1, other_ev)  # Insert between transfer and burn
+                        local_assigned.add(other_ev.event["logIndex"])
+                        break
+
+                # Collect BalanceTransfer events for the balance_transfer_events field
+                # This allows _should_skip_collateral_transfer to properly skip paired events
+                bt_events = [
+                    ev.event
+                    for ev in paired_events
+                    if ev.event_type == ScaledTokenEventType.COLLATERAL_TRANSFER
+                ]
+
+                operations.append(
+                    Operation(
+                        operation_id=operation_id,
+                        operation_type=OperationType.DEFICIT_COVERAGE,
+                        pool_revision=pool_revision,
+                        pool_event=None,
+                        scaled_token_events=paired_events,
+                        transfer_events=[],
+                        balance_transfer_events=bt_events,
+                    )
+                )
+                operation_id += 1
+                local_assigned.add(bt_ev.event["logIndex"])
+                local_assigned.add(paired_burn.event["logIndex"])
+
+        # Update the passed-in assigned_indices set with locally assigned events
+        assigned_indices.update(local_assigned)
+
+        return operations
+
+    @staticmethod
     def _create_interest_accrual_operations(
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
@@ -2777,6 +2922,7 @@ class TransactionOperationsParser:
             OperationType.GHO_LIQUIDATION: self._validate_gho_liquidation,
             OperationType.GHO_FLASH_LOAN: self._validate_flash_loan,
             OperationType.INTEREST_ACCRUAL: self._validate_interest_accrual,
+            OperationType.DEFICIT_COVERAGE: self._validate_deficit_coverage,
             OperationType.BALANCE_TRANSFER: self._validate_balance_transfer,
             OperationType.MINT_TO_TREASURY: self._validate_mint_to_treasury,
             OperationType.STKAAVE_TRANSFER: self._validate_stkaave_transfer,
@@ -3073,6 +3219,67 @@ class TransactionOperationsParser:
             }:
                 errors.append(
                     f"BALANCE_TRANSFER event should be a transfer type, got {ev.event_type}"
+                )
+
+        return errors
+
+    @staticmethod
+    def _validate_deficit_coverage(op: Operation) -> list[str]:
+        """Validate DEFICIT_COVERAGE operation.
+
+        DEFICIT_COVERAGE operations group paired BalanceTransfer + Burn events
+        that occur during Umbrella protocol's deficit coverage operations.
+        May include both ERC20 Transfer and BalanceTransfer events for the same transfer.
+        """
+        errors = []
+
+        # Should have no pool event (deficit coverage is standalone)
+        if op.pool_event is not None:
+            errors.append("DEFICIT_COVERAGE should not have a pool event")
+
+        # Should have 2 or 3 scaled token events:
+        # - 2: ERC20 Transfer + Burn OR BalanceTransfer + Burn
+        # - 3: ERC20 Transfer + BalanceTransfer + Burn
+        if len(op.scaled_token_events) not in {2, 3}:
+            errors.append(
+                f"Expected 2 or 3 scaled token events for DEFICIT_COVERAGE "
+                f"(Transfer[s] + Burn), got {len(op.scaled_token_events)}"
+            )
+
+        # Validate the events are transfer(s) and burn for the same user/asset
+        if len(op.scaled_token_events) > 1:
+            # First event should be a transfer
+            first_ev = op.scaled_token_events[0]
+            if first_ev.event_type not in {
+                ScaledTokenEventType.COLLATERAL_TRANSFER,
+                ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+            }:
+                errors.append(
+                    f"DEFICIT_COVERAGE first event should be a transfer, got {first_ev.event_type}"
+                )
+
+            # Last event should be a burn
+            last_ev = op.scaled_token_events[-1]
+            if last_ev.event_type != ScaledTokenEventType.COLLATERAL_BURN:
+                errors.append(
+                    f"DEFICIT_COVERAGE last event should be COLLATERAL_BURN, "
+                    f"got {last_ev.event_type}"
+                )
+
+            # All events should be for the same token
+            first_token = get_checksum_address(first_ev.event["address"])
+            last_token = get_checksum_address(last_ev.event["address"])
+            if first_token != last_token:
+                errors.append(
+                    f"DEFICIT_COVERAGE events should be for the same token: "
+                    f"{first_token} != {last_token}"
+                )
+
+            # Burn should be from the transfer recipient
+            if last_ev.user_address != first_ev.target_address:
+                errors.append(
+                    f"DEFICIT_COVERAGE burn user ({last_ev.user_address}) should match "
+                    f"transfer recipient ({first_ev.target_address})"
                 )
 
         return errors
