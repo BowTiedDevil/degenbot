@@ -2733,8 +2733,10 @@ def _process_collateral_burn_with_match(
     raw_amount = enriched_event.raw_amount
 
     # Check if this burn follows a BalanceTransfer to the same user in the same transaction
-    # If so, use the BalanceTransfer amount to ensure they cancel out exactly
-    if scaled_event.user_address is not None:
+    # If so, use the BalanceTransfer amount to ensure they cancel out exactly.
+    # Only use the tracked BalanceTransfer amount if we don't already have a valid scaled_amount
+    # from enrichment (which correctly calculates the scaled burn amount from the Burn event).
+    if scaled_event.user_address is not None and scaled_amount is None:
         # First, check if we have a tracked BalanceTransfer for this user/token
         # This is set when a transfer to this user was skipped (contract receives and burns)
         tracked_key = (token_address, scaled_event.user_address)
