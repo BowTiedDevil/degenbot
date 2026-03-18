@@ -86,6 +86,18 @@ class TransactionContext:
     # Used to determine if scaled amounts need to be pre-calculated (rev 9+)
     pool_revision: int = 0
 
+    @property
+    def gho_vtoken_address(self) -> ChecksumAddress | None:
+        """Get the GHO vToken address if GHO asset exists."""
+        if self.gho_asset is None or self.gho_asset.v_token is None:
+            return None
+        return self.gho_asset.v_token.address
+
+    def is_gho_vtoken(self, token_address: ChecksumAddress) -> bool:
+        """Check if the given token address is the GHO vToken."""
+        gho_addr = self.gho_vtoken_address
+        return gho_addr is not None and token_address == gho_addr
+
     def get_effective_discount_at_log_index(
         self,
         user_address: ChecksumAddress,

@@ -1270,9 +1270,7 @@ def _get_or_create_user(
     gho_discount = 0
 
     # Only fetch discount if mechanism is supported (revision 2 or 3)
-    gho_vtoken_address = (
-        tx_context.gho_asset.v_token.address if tx_context.gho_asset.v_token is not None else None
-    )
+    gho_vtoken_address = tx_context.gho_vtoken_address
 
     if (
         gho_vtoken_address is not None
@@ -2128,9 +2126,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
     # This ensures calculations use the discount in effect at the start of the transaction
 
     # Cache GHO vToken address for reuse
-    gho_vtoken_address = (
-        tx_context.gho_asset.v_token.address if tx_context.gho_asset.v_token is not None else None
-    )
+    gho_vtoken_address = tx_context.gho_vtoken_address
 
     # First, build a map of discount updates in this transaction to get old values
     # Track all updates with their log indices to handle multiple updates per transaction
@@ -2808,10 +2804,7 @@ def _process_debt_mint_with_match(
     )
 
     # Check if this is a GHO token first (needed for INTEREST_ACCRUAL handling)
-    gho_vtoken_address = (
-        tx_context.gho_asset.v_token.address if tx_context.gho_asset.v_token is not None else None
-    )
-    is_gho = gho_vtoken_address is not None and token_address == gho_vtoken_address
+    is_gho = tx_context.is_gho_vtoken(token_address)
 
     # INTEREST_ACCRUAL operations: For non-GHO tokens, Mint events are tracking-only
     # For GHO tokens, we still need to process through the GHO processor to apply discounts
@@ -3014,10 +3007,7 @@ def _process_debt_burn_with_match(
     scaled_amount: int | None = enriched_event.scaled_amount
 
     # Check if this is a GHO token and use GHO-specific processing
-    gho_vtoken_address = (
-        tx_context.gho_asset.v_token.address if tx_context.gho_asset.v_token is not None else None
-    )
-    if gho_vtoken_address is not None and token_address == gho_vtoken_address:
+    if tx_context.is_gho_vtoken(token_address):
         # Use the effective discount from transaction context
         effective_discount = tx_context.user_discounts.get(user.address, user.gho_discount)
 
@@ -3214,11 +3204,7 @@ def _should_skip_collateral_transfer(
 
     # Skip ERC20 transfers corresponding to direct burns (handled by Burn event)
     if scaled_event.index is None and scaled_event.target_address == ZERO_ADDRESS:
-        gho_vtoken_address = (
-            tx_context.gho_asset.v_token.address
-            if tx_context.gho_asset.v_token is not None
-            else None
-        )
+        gho_vtoken_address = tx_context.gho_vtoken_address
         for evt in tx_context.events:
             if evt["topics"][0] != AaveV3ScaledTokenEvent.BURN.value:
                 continue
