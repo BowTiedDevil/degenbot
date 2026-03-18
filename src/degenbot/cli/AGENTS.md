@@ -312,6 +312,83 @@ event_types_match = (
 
 ---
 
+### Semantic Matching for Event Association
+
+**Lesson:** Associate events with operations based on **semantic relationships** (user, asset, operation type) rather than numeric comparisons or positional proximity.
+
+**Context:** When processing complex transactions like multi-asset liquidations, events may be emitted in unpredictable order and contain amounts in incompatible units. Amount-based matching fails because:
+- `debtToCover` is in underlying units while burn amounts are in scaled units
+- Batch transactions emit events out of log index order
+- Different revisions handle unit conversions differently
+
+**The Problem:** The original matching logic compared burn amounts to `debtToCover`:
+
+```python
+# Amount-based matching (FRAGILE)
+total_burn = ev.amount + (ev.balance_increase or 0)
+if total_burn < debt_to_cover - TOLERANCE:
+    continue  # Skip this event - amounts don't match!
+```
+
+This failed because:
+- 20,647,496 (scaled wstETH) vs 8,414,088,469,488,124,792 (underlying GHO)
+- Different assets, different units, no valid comparison possible
+
+**Solution:** Use semantic matching based on immutable identifiers:
+
+```python
+# Semantic matching (ROBUST)
+if ev.user_address == user and event_token_address == debt_v_token_address:
+    # Match! The burn belongs to this liquidation regardless of amounts
+    matched_burns.append(ev)
+```
+
+**Core Principle:**
+> If a debt burn exists for the same user and asset in the same transaction, it belongs to the liquidation.
+
+This works because:
+1. Each user has at most one debt position per asset
+2. Liquidations burn ALL debt positions for the user
+3. No other operation burns debt in the same transaction
+
+**When to Use Semantic Matching:**
+- Events have clear ownership (user + asset)
+- Transaction context establishes causality  
+- Amount comparisons are unreliable (mixed units, revisions)
+- Events may be out of order (batch transactions)
+
+**Validation Strategy:**
+Separate matching from validation:
+- **Matching**: Find events by semantic criteria (user + asset)
+- **Processing**: Validate business logic (amounts, balances)
+
+```python
+# Matching phase - trust the semantic relationship
+matched_event = find_event(user=user, asset=asset)
+
+# Processing phase - validate amounts make sense  
+if matched_event.amount > position.balance * 2:
+    logger.warning(f"Unusually large burn: {matched_event.amount}")
+```
+
+**Benefits:**
+- Simpler code without unit conversions
+- More robust to event ordering issues
+- Easier to understand and debug
+- Future-proof across contract revisions
+
+**Trade-offs:**
+- Less validation at match time (caught during processing instead)
+- Trusts contract behavior (assumes semantic matches are correct)
+- Requires clear documentation of assumptions
+
+**Documentation:**
+See full architectural documentation: `docs/architecture/semantic-matching.md`
+
+**Issue Reference:** `debug/aave/0029 - Multi-Asset Liquidation Missing Secondary Debt Burns Fix.md`
+
+---
+
 ### General Lessons
 
 1. **Read the source code** - Don't assume behavior based on event names alone
@@ -341,5 +418,5 @@ This total matches the Withdraw event's amount exactly. A single-character error
 
 ---
 
-*Last updated: 2026-03-15*
-*Contributors: Issue #0004, #0007 investigation teams*
+*Last updated: 2026-03-18*
+*Contributors: Issue #0004, #0007, #0029 investigation teams*

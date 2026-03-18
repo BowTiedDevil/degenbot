@@ -1855,8 +1855,8 @@ class TransactionOperationsParser:
         *,
         user: ChecksumAddress,
         debt_v_token_address: ChecksumAddress | None,
-        debt_to_cover: int,
-        pool_revision: int,
+        debt_to_cover: int,  # noqa: ARG004
+        pool_revision: int,  # noqa: ARG004
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         is_gho: bool,
@@ -1864,8 +1864,9 @@ class TransactionOperationsParser:
         """
         Collect primary debt burns matching the liquidation's debt asset.
 
-        Validates that total burn (principal + interest) meets or exceeds debt_to_cover,
-        with revision-specific tolerance handling.
+        Uses semantic matching: a debt burn for the same user and debt asset
+        in this transaction belongs to this liquidation, regardless of amounts
+        or log index ordering. Amount validation happens during processing.
         """
 
         primary_burns: list[ScaledTokenEvent] = []
@@ -1884,22 +1885,14 @@ class TransactionOperationsParser:
             if debt_v_token_address is None or event_token_address != debt_v_token_address:
                 continue
 
-            # Calculate total debt being cleared: principal + interest
-            # The Burn event's `value` field is principal only, balance_increase is interest
-            # Total burned = value + balance_increase
-            total_burn = ev.amount + (ev.balance_increase or 0)
-
-            # Match if total_burn >= debt_to_cover
-            # - Normal liquidation: total_burn == debtToCover (within tolerance)
-            # - Bad debt liquidation: total_burn > debtToCover (excess becomes deficit)
-            if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
-                # Pool revision 9+ uses ray math with flooring, allow ±2 wei tolerance
-                if total_burn < debt_to_cover - TOKEN_AMOUNT_MATCH_TOLERANCE:
-                    continue
-            elif total_burn < debt_to_cover:
-                continue
-
+            # Semantic matching: the presence of a debt burn for this user and
+            # asset in this transaction indicates it belongs to this liquidation.
+            # We trust the smart contract event ordering/logic over amount comparisons.
             primary_burns.append(ev)
+            assigned_indices.add(ev.event["logIndex"])
+            if ev.index is not None and ev.index > 0:
+                assigned_indices.add(ev.index)
+            break  # Only one primary burn expected per (user, asset) pair
 
         return primary_burns
 
@@ -1910,13 +1903,16 @@ class TransactionOperationsParser:
         debt_v_token_address: ChecksumAddress | None,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
-        is_gho: bool,
+        is_gho: bool,  # noqa: ARG002
     ) -> list[ScaledTokenEvent]:
         """
         Collect secondary debt burns for other assets held by the user.
 
         These are debts that weren't the primary liquidation target but were also
         burned as part of the liquidation (bad debt write-off scenario).
+
+        Note: Secondary debt burns can be any debt type (GHO or non-GHO), not just
+        the same type as the primary debt being liquidated.
         """
 
         secondary_burns: list[ScaledTokenEvent] = []
@@ -1926,9 +1922,11 @@ class TransactionOperationsParser:
                 continue
             if ev.user_address != user:
                 continue
-            if is_gho and ev.event_type != ScaledTokenEventType.GHO_DEBT_BURN:
-                continue
-            if not is_gho and ev.event_type != ScaledTokenEventType.DEBT_BURN:
+            # Collect ALL debt burn types (both GHO and non-GHO) as secondary burns
+            if ev.event_type not in {
+                ScaledTokenEventType.DEBT_BURN,
+                ScaledTokenEventType.GHO_DEBT_BURN,
+            }:
                 continue
 
             event_token_address = get_checksum_address(ev.event["address"])
@@ -2542,18 +2540,20 @@ class TransactionOperationsParser:
             # Skip ERC20 Transfer events to zero address that are part of burns
             # These are handled by the Burn events, not as balance transfers
             if is_erc20_transfer and ev.target_address == ZERO_ADDRESS:
-                # Check if there's a Burn event at the next log index for the same user
+                # Use semantic matching: look for any burn event for the same user and token
+                # Log index proximity is not reliable in batch transactions
                 is_part_of_burn = False
+                ev_token_address = get_checksum_address(ev.event["address"])
                 for other_ev in scaled_events:
                     if (
-                        other_ev.event["logIndex"] == ev.event["logIndex"] + 1
-                        and other_ev.event_type
+                        other_ev.event_type
                         in {
                             ScaledTokenEventType.DEBT_BURN,
                             ScaledTokenEventType.COLLATERAL_BURN,
                             ScaledTokenEventType.GHO_DEBT_BURN,
                         }
                         and other_ev.user_address == ev.from_address
+                        and get_checksum_address(other_ev.event["address"]) == ev_token_address
                     ):
                         # This transfer is part of a burn, skip it
                         is_part_of_burn = True
@@ -2565,18 +2565,20 @@ class TransactionOperationsParser:
             # Skip ERC20 Transfer events from zero address that are part of mints
             # These are handled by the Mint events (SUPPLY, MINT_TO_TREASURY), not as transfers
             if is_erc20_transfer and ev.from_address == ZERO_ADDRESS:
-                # Check if there's a Mint event at the next log index for the same user
+                # Use semantic matching: look for any mint event for the same user and token
+                # Log index proximity is not reliable in batch transactions
                 is_part_of_mint = False
+                ev_token_address = get_checksum_address(ev.event["address"])
                 for other_ev in scaled_events:
                     if (
-                        other_ev.event["logIndex"] == ev.event["logIndex"] + 1
-                        and other_ev.event_type
+                        other_ev.event_type
                         in {
                             ScaledTokenEventType.COLLATERAL_MINT,
                             ScaledTokenEventType.DEBT_MINT,
                             ScaledTokenEventType.GHO_DEBT_MINT,
                         }
                         and other_ev.user_address == ev.target_address
+                        and get_checksum_address(other_ev.event["address"]) == ev_token_address
                     ):
                         # This transfer is part of a mint, skip it
                         is_part_of_mint = True
