@@ -234,6 +234,28 @@ This means:
 
 The current code assumes a 1:1 relationship between LIQUIDATION_CALL events and debt burns, but the actual relationship is 1:N (one liquidation can burn multiple debt positions).
 
+### Revision Context Awareness
+
+The debug output has been enhanced to clearly distinguish between different revision types:
+- **Pool revision:** The Pool contract implementation version
+- **aToken revision:** The aToken contract implementation version  
+- **vToken revision:** The vToken contract implementation version
+
+**Before (confusing):**
+```
+Processing scaled token operation (CollateralBurnEvent) for revision 1
+```
+
+**After (clear):**
+```
+[Pool rev 7] Processing transaction at block 21990197
+[Pool rev 7] Processing operation 2: LIQUIDATION
+[Pool rev 7] Processing 0x5149... LINK debt burn at block 21990197
+Processing scaled token operation (DebtBurnEvent) for vToken revision 1
+```
+
+This makes it immediately clear which contract revisions are in use and eliminates confusion when debugging.
+
 ## Related Issues
 
 - **Issue 0027:** Bad Debt Liquidation Debt Burn Matching Failure

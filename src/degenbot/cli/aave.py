@@ -2004,8 +2004,12 @@ def _process_scaled_token_operation(
         position: The user's position to update
     """
 
+    # Determine token type for logging
+    token_type = (
+        "aToken" if isinstance(event, (CollateralMintEvent, CollateralBurnEvent)) else "vToken"
+    )
     logger.debug(
-        f"Processing scaled token operation ({type(event).__name__}) for revision "
+        f"Processing scaled token operation ({type(event).__name__}) for {token_type} revision "
         f"{scaled_token_revision}"
     )
     logger.debug(position)
@@ -2285,7 +2289,10 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                     # Function may not exist (revision 4+), default to 0
                     tx_context.user_discounts[user_address] = 0
 
-    logger.debug(f"Processing _process_transaction for tx at block {tx_context.block_number}")
+    logger.debug(
+        f"[Pool rev {tx_context.pool_revision}] Processing transaction at block "
+        f"{tx_context.block_number}"
+    )
 
     # Parse events into operations
     pool_contract = _get_contract(
@@ -2457,7 +2464,10 @@ def _process_operation(
     Process a single operation.
     """
 
-    logger.debug(f"Processing _process_operation for tx at block {tx_context.block_number}")
+    logger.debug(
+        f"[Pool rev {tx_context.pool_revision}] Processing operation {operation.operation_id}: "
+        f"{operation.operation_type.name}"
+    )
 
     # Skip stkAAVE transfers - they're pre-processed separately before operations
     # to ensure stkAAVE balances are up-to-date when GHO operations calculate
@@ -2655,14 +2665,6 @@ def _process_collateral_mint_with_match(
     Process collateral (aToken) mint with operation match.
     """
 
-    logger.debug(f"Processing _process_collateral_mint_with_match at block {event['blockNumber']}")
-
-    user = _get_or_create_user(
-        tx_context=tx_context,
-        user_address=scaled_event.user_address,
-        block_number=scaled_event.event["blockNumber"],
-    )
-
     token_address = get_checksum_address(scaled_event.event["address"])
     collateral_asset, _ = _get_scaled_token_asset_by_address(
         session=tx_context.session,
@@ -2671,6 +2673,19 @@ def _process_collateral_mint_with_match(
     )
 
     assert collateral_asset
+
+    asset_symbol = collateral_asset.underlying_token.symbol
+    asset_identifier = asset_symbol or collateral_asset.underlying_token.address
+    logger.debug(
+        f"[Pool rev {tx_context.pool_revision}] Processing {asset_identifier} collateral mint "
+        f"at block {event['blockNumber']}"
+    )
+
+    user = _get_or_create_user(
+        tx_context=tx_context,
+        user_address=scaled_event.user_address,
+        block_number=scaled_event.event["blockNumber"],
+    )
 
     # Get or create collateral position
     collateral_position = _get_or_create_collateral_position(
@@ -2724,20 +2739,11 @@ def _process_collateral_burn_with_match(
     Process collateral (aToken) burn with operation match.
     """
 
-    logger.debug(f"Processing _process_collateral_burn_with_match at block {event['blockNumber']}")
-
     # Skip if user address is missing
     if scaled_event.user_address is None:
         return
 
-    # Get user
-    user = _get_or_create_user(
-        tx_context=tx_context,
-        user_address=scaled_event.user_address,
-        block_number=scaled_event.event["blockNumber"],
-    )
-
-    # Get collateral asset
+    # Get collateral asset first for logging
     token_address = get_checksum_address(scaled_event.event["address"])
     collateral_asset, _ = _get_scaled_token_asset_by_address(
         session=tx_context.session,
@@ -2746,6 +2752,20 @@ def _process_collateral_burn_with_match(
     )
 
     assert collateral_asset
+
+    asset_symbol = collateral_asset.underlying_token.symbol
+    asset_identifier = asset_symbol or collateral_asset.underlying_token.address
+    logger.debug(
+        f"[Pool rev {tx_context.pool_revision}] Processing {asset_identifier} collateral burn "
+        f"at block {event['blockNumber']}"
+    )
+
+    # Get user
+    user = _get_or_create_user(
+        tx_context=tx_context,
+        user_address=scaled_event.user_address,
+        block_number=scaled_event.event["blockNumber"],
+    )
 
     # Get collateral position
     collateral_position = _get_or_create_collateral_position(
@@ -2813,14 +2833,7 @@ def _process_debt_mint_with_match(
     The actual scaled burn amount = balance_increase - amount.
     """
 
-    logger.debug(f"Processing _process_debt_mint_with_match at block {event['blockNumber']}")
-
-    user = _get_or_create_user(
-        tx_context=tx_context,
-        user_address=scaled_event.user_address,
-        block_number=scaled_event.event["blockNumber"],
-    )
-
+    # Get debt asset first for logging
     token_address = get_checksum_address(scaled_event.event["address"])
     _, debt_asset = _get_scaled_token_asset_by_address(
         session=tx_context.session,
@@ -2829,6 +2842,19 @@ def _process_debt_mint_with_match(
     )
 
     assert debt_asset
+
+    asset_symbol = debt_asset.underlying_token.symbol
+    asset_identifier = asset_symbol or debt_asset.underlying_token.address
+    logger.debug(
+        f"[Pool rev {tx_context.pool_revision}] Processing {asset_identifier} debt mint "
+        f"at block {event['blockNumber']}"
+    )
+
+    user = _get_or_create_user(
+        tx_context=tx_context,
+        user_address=scaled_event.user_address,
+        block_number=scaled_event.event["blockNumber"],
+    )
 
     # Get or create debt position
     debt_position = _get_or_create_debt_position(
@@ -2985,14 +3011,7 @@ def _process_debt_burn_with_match(
     Process debt (vToken) burn with operation match.
     """
 
-    logger.debug(f"Processing _process_debt_burn_with_match at block {event['blockNumber']}")
-
-    user = _get_or_create_user(
-        tx_context=tx_context,
-        user_address=scaled_event.user_address,
-        block_number=scaled_event.event["blockNumber"],
-    )
-
+    # Get debt asset first for logging
     token_address = get_checksum_address(scaled_event.event["address"])
     _, debt_asset = _get_scaled_token_asset_by_address(
         session=tx_context.session,
@@ -3001,6 +3020,19 @@ def _process_debt_burn_with_match(
     )
 
     assert debt_asset is not None
+
+    asset_symbol = debt_asset.underlying_token.symbol
+    asset_identifier = asset_symbol or debt_asset.underlying_token.address
+    logger.debug(
+        f"[Pool rev {tx_context.pool_revision}] Processing {asset_identifier} debt burn "
+        f"at block {event['blockNumber']}"
+    )
+
+    user = _get_or_create_user(
+        tx_context=tx_context,
+        user_address=scaled_event.user_address,
+        block_number=scaled_event.event["blockNumber"],
+    )
 
     # Get debt position
     debt_position = _get_or_create_debt_position(
