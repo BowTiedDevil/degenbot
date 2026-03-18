@@ -637,37 +637,47 @@ class TransactionOperationsParser:
             )
         )
 
-    def _get_asset_by_a_token(self, a_token_address: ChecksumAddress) -> AaveV3Asset | None:
+    def _get_asset_by_token(
+        self,
+        token_address: ChecksumAddress,
+        token_type: TokenType,
+    ) -> AaveV3Asset | None:
         """
-        Get the asset for a given aToken address.
+        Get the asset for a given token address.
         """
 
-        checksum_addr = get_checksum_address(a_token_address)
+        checksum_addr = get_checksum_address(token_address)
+
+        # Select the appropriate relationship based on token type
+        if token_type == TokenType.A_TOKEN:
+            relationship = AaveV3Asset.a_token
+        elif token_type == TokenType.V_TOKEN:
+            relationship = AaveV3Asset.v_token
+        else:
+            return None
 
         return self.session.scalar(
             select(AaveV3Asset)
-            .join(AaveV3Asset.a_token)
+            .join(relationship)
             .where(
                 AaveV3Asset.market_id == self.market.id,
                 Erc20TokenTable.address == checksum_addr,
             )
         )
+
+    def _get_asset_by_a_token(self, a_token_address: ChecksumAddress) -> AaveV3Asset | None:
+        """
+        Get the asset for a given aToken address.
+        """
+
+        return self._get_asset_by_token(a_token_address, TokenType.A_TOKEN)
 
     def _get_asset_by_v_token(self, v_token_address: ChecksumAddress) -> AaveV3Asset | None:
         """
         Get the asset for a given vToken address.
         """
 
-        checksum_addr = get_checksum_address(v_token_address)
-
-        return self.session.scalar(
-            select(AaveV3Asset)
-            .join(AaveV3Asset.v_token)
-            .where(
-                AaveV3Asset.market_id == self.market.id,
-                Erc20TokenTable.address == checksum_addr,
-            )
-        )
+        return self._get_asset_by_token(v_token_address, TokenType.V_TOKEN)
 
     def parse(self, events: list[LogReceipt], tx_hash: HexBytes) -> TransactionOperations:
         """

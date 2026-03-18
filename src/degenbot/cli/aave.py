@@ -1451,6 +1451,16 @@ def _get_or_create_debt_position(
     )
 
 
+def _get_asset_identifier(asset: AaveV3Asset) -> str:
+    """
+    Get a human-readable identifier for an asset.
+
+    This provides consistent asset identification in debug logs and error messages.
+    """
+
+    return asset.underlying_token.symbol or asset.underlying_token.address
+
+
 def _get_gho_asset(
     session: Session,
     market: AaveV3Market,
@@ -2674,8 +2684,7 @@ def _process_collateral_mint_with_match(
 
     assert collateral_asset
 
-    asset_symbol = collateral_asset.underlying_token.symbol
-    asset_identifier = asset_symbol or collateral_asset.underlying_token.address
+    asset_identifier = _get_asset_identifier(collateral_asset)
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing {asset_identifier} collateral mint "
         f"at block {event['blockNumber']}"
@@ -2753,8 +2762,7 @@ def _process_collateral_burn_with_match(
 
     assert collateral_asset
 
-    asset_symbol = collateral_asset.underlying_token.symbol
-    asset_identifier = asset_symbol or collateral_asset.underlying_token.address
+    asset_identifier = _get_asset_identifier(collateral_asset)
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing {asset_identifier} collateral burn "
         f"at block {event['blockNumber']}"
@@ -2843,8 +2851,7 @@ def _process_debt_mint_with_match(
 
     assert debt_asset
 
-    asset_symbol = debt_asset.underlying_token.symbol
-    asset_identifier = asset_symbol or debt_asset.underlying_token.address
+    asset_identifier = _get_asset_identifier(debt_asset)
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing {asset_identifier} debt mint "
         f"at block {event['blockNumber']}"
@@ -3021,8 +3028,7 @@ def _process_debt_burn_with_match(
 
     assert debt_asset is not None
 
-    asset_symbol = debt_asset.underlying_token.symbol
-    asset_identifier = asset_symbol or debt_asset.underlying_token.address
+    asset_identifier = _get_asset_identifier(debt_asset)
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing {asset_identifier} debt burn "
         f"at block {event['blockNumber']}"
