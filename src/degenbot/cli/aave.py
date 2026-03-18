@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, joinedload
 from tqdm.contrib.logging import logging_redirect_tqdm
 from web3 import Web3
 from web3.exceptions import ContractLogicError
-from web3.types import LogReceipt
+from web3.types import LogReceipt, TxParams
 
 from degenbot.aave.deployments import EthereumMainnetAaveV3
 from degenbot.aave.enrichment import ScaledEventEnricher
@@ -259,6 +259,7 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
             # GHO tokens are chain-unique, so create a single entry that all markets on this chain
             # will share.
             gho_asset_token = _get_or_create_erc20_token(
+                w3=w3,
                 session=session,
                 chain_id=market.chain_id,
                 token_address=gho_token_address,
@@ -603,16 +604,19 @@ def _process_asset_initialization_event(
     v_token_address = get_checksum_address(v_token_address)
 
     erc20_token_in_db = _get_or_create_erc20_token(
+        w3=w3,
         session=session,
         chain_id=market.chain_id,
         token_address=asset_address,
     )
     a_token = _get_or_create_erc20_token(
+        w3=w3,
         session=session,
         chain_id=market.chain_id,
         token_address=a_token_address,
     )
     v_token = _get_or_create_erc20_token(
+        w3=w3,
         session=session,
         chain_id=market.chain_id,
         token_address=v_token_address,
@@ -1319,13 +1323,121 @@ def _get_or_create_user(
     return user
 
 
+def _fetch_erc20_token_metadata(
+    w3: Web3,
+    token_address: ChecksumAddress,
+) -> tuple[str | None, str | None, int | None]:
+    """
+    Fetch ERC20 token metadata (name, symbol, decimals) from the blockchain.
+
+    Attempts to fetch using standard ERC20 function signatures, falling back
+    to uppercase versions and bytes32 decoding as needed.
+
+    Args:
+        chain_id: The chain ID where the token exists
+        token_address: The token contract address
+
+    Returns:
+        Tuple of (name, symbol, decimals) or (None, None, None) if all fetch attempts fail
+    """
+
+    name = _try_fetch_token_string(
+        w3=w3,
+        token_address=token_address,
+        lower_func="name()",
+        upper_func="NAME()",
+    )
+    symbol = _try_fetch_token_string(
+        w3=w3,
+        token_address=token_address,
+        lower_func="symbol()",
+        upper_func="SYMBOL()",
+    )
+    decimals = _try_fetch_token_uint256(
+        w3=w3,
+        token_address=token_address,
+        lower_func="decimals()",
+        upper_func="DECIMALS()",
+    )
+
+    return name, symbol, decimals
+
+
+def _try_fetch_token_string(
+    w3: Web3,
+    token_address: ChecksumAddress,
+    lower_func: str,
+    upper_func: str,
+) -> str | None:
+    """
+    Try to fetch a string value from an ERC20 token, with fallback to bytes32.
+    """
+
+    for func_prototype in (lower_func, upper_func):
+        try:
+            result = w3.eth.call(
+                TxParams(
+                    to=token_address,
+                    data=encode_function_calldata(
+                        function_prototype=func_prototype,
+                        function_arguments=None,
+                    ),
+                )
+            )
+
+            try:
+                (value,) = eth_abi.abi.decode(types=["string"], data=result)
+                return str(value)
+            except eth_abi.exceptions.DecodingError:
+                # Fallback for older tokens that return bytes32
+                (value,) = eth_abi.abi.decode(types=["bytes32"], data=result)
+                return (
+                    value.decode("utf-8", errors="ignore").strip("\x00")
+                    if isinstance(value, (bytes, HexBytes))
+                    else str(value)
+                )
+        except Exception:
+            continue
+
+    return None
+
+
+def _try_fetch_token_uint256(
+    w3: Web3,
+    token_address: ChecksumAddress,
+    lower_func: str,
+    upper_func: str,
+) -> int | None:
+    """Try to fetch a uint256 value from an ERC20 token."""
+    for func_prototype in (lower_func, upper_func):
+        try:
+            (result,) = raw_call(
+                w3=w3,
+                address=token_address,
+                calldata=encode_function_calldata(
+                    function_prototype=func_prototype,
+                    function_arguments=None,
+                ),
+                return_types=["uint256"],
+            )
+            return int(result)
+        except Exception:
+            continue
+
+    return None
+
+
 def _get_or_create_erc20_token(
+    w3: Web3,
     session: Session,
     chain_id: int,
     token_address: ChecksumAddress,
 ) -> Erc20TokenTable:
     """
     Get existing ERC20 token or create new one.
+
+    When creating a new token, attempts to fetch name, symbol, and decimals
+    from the blockchain and populate the database record.
     """
 
     if (
@@ -1337,8 +1449,28 @@ def _get_or_create_erc20_token(
         )
     ) is None:
         token = Erc20TokenTable(chain=chain_id, address=token_address)
+
+        # Attempt to fetch metadata from blockchain
+        name, symbol, decimals = _fetch_erc20_token_metadata(
+            w3=w3,
+            token_address=token_address,
+        )
+
+        if name is not None:
+            token.name = name
+        if symbol is not None:
+            token.symbol = symbol
+        if decimals is not None:
+            token.decimals = decimals
+
         session.add(token)
         session.flush()
+
+        if name is not None or symbol is not None or decimals is not None:
+            logger.debug(
+                f"Created ERC20 token {token_address} with metadata: "
+                f"name='{name}', symbol='{symbol}', decimals={decimals}"
+            )
 
     return token
 
