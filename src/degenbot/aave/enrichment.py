@@ -46,6 +46,8 @@ class ScaledEventEnricher:
     4. Raises immediately on any error
     """
 
+    _PLACEHOLDER_INT = 0
+
     def __init__(
         self,
         pool_revision: int,
@@ -479,9 +481,8 @@ class ScaledEventEnricher:
                 kwargs["discount_percent"] = getattr(scaled_event, "discount_percent", 0)
                 kwargs["discount_scaled"] = getattr(scaled_event, "discount_scaled", 0)
             else:
-                # TODO: Add GHO discount fields from transaction context
-                kwargs["discount_percent"] = 0  # Placeholder
-                kwargs["discount_scaled"] = 0  # Placeholder
+                kwargs["discount_percent"] = self._PLACEHOLDER_INT
+                kwargs["discount_scaled"] = self._PLACEHOLDER_INT
         elif event_type == ScaledTokenEventType.GHO_DEBT_BURN:
             kwargs["from_address"] = scaled_event.from_address or scaled_event.user_address
             kwargs["target_address"] = scaled_event.target_address
@@ -490,12 +491,11 @@ class ScaledEventEnricher:
                 kwargs["discount_percent"] = getattr(scaled_event, "discount_percent", 0)
                 kwargs["discount_scaled"] = getattr(scaled_event, "discount_scaled", 0)
             else:
-                # TODO: Add GHO discount fields from transaction context
-                kwargs["discount_percent"] = 0  # Placeholder
-                kwargs["discount_scaled"] = 0  # Placeholder
+                kwargs["discount_percent"] = self._PLACEHOLDER_INT
+                kwargs["discount_scaled"] = self._PLACEHOLDER_INT
         elif event_type == ScaledTokenEventType.GHO_DEBT_TRANSFER:
             kwargs["from_address"] = scaled_event.from_address or scaled_event.user_address
-            kwargs["to_address"] = scaled_event.user_address  # Placeholder
-            kwargs["discount_scaled"] = 0  # Placeholder
+            kwargs["to_address"] = scaled_event.user_address
+            kwargs["discount_scaled"] = self._PLACEHOLDER_INT
 
         return enriched_class(**kwargs)
