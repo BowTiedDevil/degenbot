@@ -170,6 +170,7 @@ cython_debug/
 
 # Opencode
 .opencode/plans
+.opencode/skills
 .opencode/tmp
 .ignore
 
