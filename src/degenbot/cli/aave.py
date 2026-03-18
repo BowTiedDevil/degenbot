@@ -53,7 +53,7 @@ from degenbot.cli.aave_transaction_operations import (
 from degenbot.cli.aave_types import TransactionContext
 from degenbot.cli.aave_utils import decode_address
 from degenbot.cli.utils import get_web3_from_config
-from degenbot.constants import DEAD_ADDRESS, ERC_1967_IMPLEMENTATION_SLOT, ZERO_ADDRESS
+from degenbot.constants import DEAD_ADDRESS, ERC_1967_IMPLEMENTATION_SLOT, MAX_UINT256, ZERO_ADDRESS
 from degenbot.database import db_session
 from degenbot.database.models.aave import (
     AaveGhoToken,
@@ -2337,20 +2337,21 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 f"for operation {operation.operation_id}"
             )
 
-    # Process each operation in chronological order (sorted by pool event or minimum scaled event log index)
+    # Process each operation in chronological order (sorted by pool event or minimum scaled event
+    # log index)
     # This ensures events are processed in the order they appear in the transaction.
     # Operations with pool events are sorted by pool event log index.
-    # Operations without pool events (INTEREST_ACCRUAL, etc.) are sorted by minimum scaled event log index.
+    # Operations without pool events (INTEREST_ACCRUAL, etc.) are sorted by minimum scaled event
+    # log index.
     def _get_operation_sort_key(op: Operation) -> int:
         if op.pool_event is not None:
             # Use pool event log index for operations with pool events
             return op.pool_event["logIndex"]
-        elif op.scaled_token_events:
+        if op.scaled_token_events:
             # Use minimum scaled event log index for operations without pool events
             return min(ev.event["logIndex"] for ev in op.scaled_token_events)
-        else:
-            # Fallback for operations with no events (should be at the end)
-            return 2_147_483_647  # Max int32
+        # Fallback for operations with no events (place at the end)
+        return MAX_UINT256
 
     sorted_operations = sorted(tx_operations.operations, key=_get_operation_sort_key)
     for operation in sorted_operations:
@@ -2816,7 +2817,8 @@ def _process_debt_mint_with_match(
     # For GHO tokens, we still need to process through the GHO processor to apply discounts
     if operation.operation_type == OperationType.INTEREST_ACCRUAL and not is_gho:
         logger.debug(
-            "_process_debt_mint_with_match: INTEREST_ACCRUAL - skipping balance change, updating index"
+            "_process_debt_mint_with_match: INTEREST_ACCRUAL - skipping balance change, "
+            "updating index"
         )
         if scaled_event.index is not None:
             current_index = debt_position.last_index or 0
