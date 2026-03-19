@@ -44,7 +44,7 @@ class AnvilFork:
         self,
         *,
         localhost: str = "127.0.0.1",
-        fork_url: str,
+        fork_url: str | None = None,
         fork_block: BlockNumber | None = None,
         fork_transaction_hash: str | None = None,
         mining_mode: Literal["auto", "interval", "none"] = "auto",
@@ -120,12 +120,16 @@ class AnvilFork:
         command: AnvilOptions = [
             str(anvil_path),
             "--auto-impersonate",
-            "--no-rate-limit",
-            f"--fork-url={fork_url}",
             f"--port={self.port}",
             f"--ipc={self.ipc_filename}",
             f"--mnemonic={mnemonic}",
         ]
+
+        # Only add fork_url and --no-rate-limit if provided (standalone mode when None)
+        if fork_url is not None:
+            command.append(f"--fork-url={fork_url}")
+            command.append("--no-rate-limit")
+
         _parse_base_fee_arg(command)
         _parse_block_number_arg(command)
         _parse_mining_mode_arg(command)
@@ -171,7 +175,7 @@ class AnvilFork:
             self.set_block_timestamp_interval(mining_interval)
 
     @property
-    def fork_url(self) -> str:
+    def fork_url(self) -> str | None:
         return self._fork_url
 
     @property
@@ -220,6 +224,8 @@ class AnvilFork:
         """
         Launch an Anvil subprocess, waiting for the IPC socket to be created.
         """
+        # Log the command being executed for debugging
+        logger.debug(f"Launching Anvil with command: {' '.join(anvil_command)}")
 
         with (
             self.stderr_capture_filename.open("w") as stderr_capture,
