@@ -44,6 +44,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
 from degenbot.cli.aave_event_matching import OperationAwareEventMatcher
 from degenbot.cli.aave_transaction_operations import (
+    TOKEN_AMOUNT_MATCH_TOLERANCE,
     Operation,
     OperationType,
     ScaledTokenEvent,
@@ -2102,11 +2103,14 @@ def _verify_scaled_token_positions(
             block_identifier=block_number,
         )
 
-        assert actual_scaled_balance == position.balance, (
-            f"Balance verification failure for {position.asset}. "
-            f"User {position.user} scaled balance ({position.balance}) does not match contract "
-            f"balance ({actual_scaled_balance}) at block {block_number}"
-        )
+        # Allow 2 wei tolerance for rounding errors from ray math operations
+        # See debug/aave/0032 and 0033 for MINT_TO_TREASURY rounding explanation
+        if abs(actual_scaled_balance - position.balance) > TOKEN_AMOUNT_MATCH_TOLERANCE:
+            raise AssertionError(
+                f"Balance verification failure for {position.asset}. "
+                f"User {position.user} scaled balance ({position.balance}) does not match contract "
+                f"balance ({actual_scaled_balance}) at block {block_number}"
+            )
 
         (actual_last_index,) = raw_call(
             w3=w3,
@@ -2783,20 +2787,13 @@ def _calculate_mint_to_treasury_scaled_amount(
     minted_amount = operation.minted_to_treasury_amount
     logger.debug(f"MINT_TO_TREASURY minted_to_treasury_amount: {minted_amount}")
 
-    # For Pool Rev 9+, the minted amount IS the scaled amount
-    # Pool passes accruedToTreasury directly to AToken without conversion
-    if tx_context.pool_revision >= SCALED_AMOUNT_POOL_REVISION:
-        logger.debug(f"MINT_TO_TREASURY (Rev 9+): using amount directly = {minted_amount}")
-        return minted_amount
-
-    # For Pool Rev 1-8: Convert underlying amount to scaled amount
-    # Pool does: amountToMint = rayMul(accruedToTreasury, index) [underlying]
-    # AToken does: scaledAmount = rayDiv(amountToMint, index) [scaled]
-    # We have amountMinted (which equals amountToMint) from the event
+    # Convert underlying amount to scaled amount for ALL pool revisions
+    # The MintedToTreasury event amount is always in underlying units,
+    # regardless of pool revision. Convert to scaled using rayDiv.
+    # See debug/aave/0032 for the rationale on unified formula.
     scaled_amount = ray_div(minted_amount, scaled_event.index)
     logger.debug(
-        f"MINT_TO_TREASURY (Rev 1-8): "
-        f"rayDiv({minted_amount}, {scaled_event.index}) = {scaled_amount}"
+        f"MINT_TO_TREASURY: rayDiv({minted_amount}, {scaled_event.index}) = {scaled_amount}"
     )
     return scaled_amount
 

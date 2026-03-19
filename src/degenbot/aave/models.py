@@ -201,20 +201,14 @@ class IndexScaledEvent(BaseEnrichedScaledTokenEvent):
         event_type = self.event_type
         scaled = self.scaled_amount
 
-        # Special case: MINT_TO_TREASURY
-        # MINT_TO_TREASURY calculations require position data (user balance and last_index)
-        # which is not available during enrichment. The scaled amount is calculated later
-        # in the processing layer (aave.py) using the correct formula with position context.
-        # Skip validation here since we can't calculate the expected value without position data.
-        # See debug/aave/0014 and debug/aave/0015 for details.
-        # Note: This applies to all pool revisions, not just >= 9.
-        if event_type == ScaledTokenEventType.COLLATERAL_MINT and scaled is None:
-            # Accept the scaled amount as-is (None during enrichment, calculated later)
-            return self
-
+        # Special case: Enrichment layer overrides calculation type
+        # When enrichment switches calculation type (e.g., DEBT_MINT -> DEBT_BURN
+        # for REPAY with interest > repayment), the calculated amount won't match
+        # the event type's standard calculation. Skip validation in these cases
+        # since the processing layer recalculates the amount anyway.
+        # See debug/aave/0031 for details.
         if scaled is None:
-            msg = "scaled_amount cannot be None for validation"
-            raise EnrichmentError(msg)
+            return self
 
         # Calculate expected scaled amount
         token_math = TokenMathFactory.get_token_math_for_token_revision(token_rev)

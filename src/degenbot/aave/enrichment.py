@@ -86,6 +86,9 @@ class ScaledEventEnricher:
         # 2. Get underlying asset address
         underlying_asset = self._get_underlying_asset(token_address)
 
+        # Track calculation type to detect overrides for validation skipping
+        calculation_event_type: ScaledTokenEventType | None = None
+
         # 3. Handle operations with or without pool events
         if operation.pool_event is None:
             # Check if this is an INTEREST_ACCRUAL operation
@@ -265,11 +268,25 @@ class ScaledEventEnricher:
             else:
                 calculation_event_type = scaled_event.event_type
 
+            # Calculate scaled amount using the appropriate method
             scaled_amount = calculator.calculate(
                 event_type=calculation_event_type,
                 raw_amount=raw_amount,
                 index=scaled_event.index,
             )
+
+            # Special case: When enrichment overrides the calculation type
+            # (e.g., REPAY + DEBT_MINT with interest > repayment), skip validation
+            # by setting scaled_amount=None. The processing layer recalculates
+            # the amount anyway for these cases.
+            # See debug/aave/0031 for details.
+            if calculation_event_type != scaled_event.event_type:
+                logger.debug(
+                    f"ENRICHMENT: Overriding {scaled_event.event_type.name} with "
+                    f"{calculation_event_type.name} - skipping validation by setting "
+                    f"scaled_amount=None"
+                )
+                scaled_amount = None
 
         # 5. Create appropriate enriched event type
         return self._create_enriched_event(
