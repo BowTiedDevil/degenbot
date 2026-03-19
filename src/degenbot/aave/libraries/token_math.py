@@ -76,12 +76,37 @@ class TokenMath(Protocol):
         """
         ...
 
+    # TODO: remove this after confirming it is unnecessary
+    @abstractmethod
+    def get_scaled_from_underlying_collateral(
+        self, underlying_amount: int, liquidity_index: int
+    ) -> int:
+        """Convert underlying amount to scaled collateral amount.
 
-class TokenMathV1:
-    """TokenMath for Pool revisions 1-3 (Aave v3.1-v3.3).
+        This is the inverse of get_collateral_balance:
+        - get_collateral_balance(scaled, index) -> balance
+        - get_scaled_from_underlying_collateral(balance, index) -> scaled
+        """
+        ...
 
-    Uses standard ray_div (half-up rounding) for all operations.
-    TokenMath library did not exist yet in these versions.
+    # TODO: remove this after confirming it is unnecessary
+    @abstractmethod
+    def get_scaled_from_underlying_debt(self, underlying_amount: int, borrow_index: int) -> int:
+        """Convert underlying amount to scaled debt amount.
+
+        This is the inverse of get_debt_balance:
+        - get_debt_balance(scaled, index) -> balance
+        - get_scaled_from_underlying_debt(balance, index) -> scaled
+        """
+        ...
+
+
+class HalfUpRoundingMath:
+    """Standard half-up rounding for pool revisions 1-3.
+
+    Uses traditional ray_div/ray_mul with half-up rounding.
+    This was the default before explicit floor/ceil rounding was introduced
+    in token revision 4.
     """
 
     @staticmethod
@@ -119,12 +144,29 @@ class TokenMathV1:
         """Standard half-up rounding for debt balance."""
         return wad_ray_math.ray_mul(scaled_amount, borrow_index)
 
+    # TODO: remove this after confirming it is unnecessary
+    @staticmethod
+    def get_scaled_from_underlying_collateral(underlying_amount: int, liquidity_index: int) -> int:
+        """Reverse of ray_mul (half-up) = ray_div (half-up)."""
+        return wad_ray_math.ray_div(underlying_amount, liquidity_index)
 
-class TokenMathV4:
-    """TokenMath for Pool revision 4 (Aave v3.4).
+    # TODO: remove this after confirming it is unnecessary
+    @staticmethod
+    def get_scaled_from_underlying_debt(underlying_amount: int, borrow_index: int) -> int:
+        """Reverse of ray_mul (half-up) = ray_div (half-up)."""
+        return wad_ray_math.ray_div(underlying_amount, borrow_index)
 
-    First version with explicit floor/ceil rounding.
-    Uses floor for mint operations, ceil for burn operations (inverse for debt).
+
+class ExplicitRoundingMath:
+    """Explicit floor/ceil rounding for pool revisions 4+.
+
+    Introduced in token revision 4 to provide protocol-controlled rounding:
+    - Floor for collateral mints (prevent over-minting)
+    - Ceil for collateral burns (ensure sufficient reduction)
+    - Inverse logic for debt (ceil for mints, floor for burns)
+
+    Note: TokenMathV4 and TokenMathV5 had identical implementations,
+    so they are consolidated into this single class.
     """
 
     @staticmethod
@@ -162,63 +204,33 @@ class TokenMathV4:
         """Ceil rounding: prevent under-accounting."""
         return wad_ray_math.ray_mul_ceil(scaled_amount, borrow_index)
 
-
-class TokenMathV5:
-    """TokenMath for Pool revisions 5+ (Aave v3.5+).
-
-    Same rounding semantics as V4.
-    """
-
+    # TODO: remove this after confirming it is unnecessary
     @staticmethod
-    def get_collateral_mint_scaled_amount(amount: int, liquidity_index: int) -> int:
-        """Floor rounding: minted aTokens <= supplied amount."""
-        return wad_ray_math.ray_div_floor(amount, liquidity_index)
+    def get_scaled_from_underlying_collateral(underlying_amount: int, liquidity_index: int) -> int:
+        """Reverse of ray_mul_floor = ray_div_ceil."""
+        return wad_ray_math.ray_div_ceil(underlying_amount, liquidity_index)
 
+    # TODO: remove this after confirming it is unnecessary
     @staticmethod
-    def get_collateral_burn_scaled_amount(amount: int, liquidity_index: int) -> int:
-        """Ceil rounding: ensure sufficient balance reduction."""
-        return wad_ray_math.ray_div_ceil(amount, liquidity_index)
-
-    @staticmethod
-    def get_collateral_transfer_scaled_amount(amount: int, liquidity_index: int) -> int:
-        """Ceil rounding: ensure recipient gets at least requested."""
-        return wad_ray_math.ray_div_ceil(amount, liquidity_index)
-
-    @staticmethod
-    def get_collateral_balance(scaled_amount: int, liquidity_index: int) -> int:
-        """Floor rounding: prevent over-accounting."""
-        return wad_ray_math.ray_mul_floor(scaled_amount, liquidity_index)
-
-    @staticmethod
-    def get_debt_mint_scaled_amount(amount: int, borrow_index: int) -> int:
-        """Ceil rounding: never underaccount user's debt."""
-        return wad_ray_math.ray_div_ceil(amount, borrow_index)
-
-    @staticmethod
-    def get_debt_burn_scaled_amount(amount: int, borrow_index: int) -> int:
-        """Floor rounding: prevent over-burning."""
-        return wad_ray_math.ray_div_floor(amount, borrow_index)
-
-    @staticmethod
-    def get_debt_balance(scaled_amount: int, borrow_index: int) -> int:
-        """Ceil rounding: prevent under-accounting."""
-        return wad_ray_math.ray_mul_ceil(scaled_amount, borrow_index)
+    def get_scaled_from_underlying_debt(underlying_amount: int, borrow_index: int) -> int:
+        """Reverse of ray_mul_ceil = ray_div_floor."""
+        return wad_ray_math.ray_div_floor(underlying_amount, borrow_index)
 
 
 class TokenMathFactory:
     """Factory for creating TokenMath instances by pool version."""
 
     _TOKEN_MATH: ClassVar[dict[int, type[TokenMath]]] = {
-        1: TokenMathV1,
-        2: TokenMathV1,
-        3: TokenMathV1,
-        4: TokenMathV4,
-        5: TokenMathV5,
-        6: TokenMathV5,
-        7: TokenMathV5,
-        8: TokenMathV5,
-        9: TokenMathV5,
-        10: TokenMathV5,
+        1: HalfUpRoundingMath,
+        2: HalfUpRoundingMath,
+        3: HalfUpRoundingMath,
+        4: ExplicitRoundingMath,
+        5: ExplicitRoundingMath,
+        6: ExplicitRoundingMath,
+        7: ExplicitRoundingMath,
+        8: ExplicitRoundingMath,
+        9: ExplicitRoundingMath,
+        10: ExplicitRoundingMath,
     }
 
     @classmethod
@@ -244,10 +256,9 @@ class TokenMathFactory:
     def get_token_math_for_token_revision(cls, token_revision: int) -> TokenMath:
         """Get TokenMath instance appropriate for a token revision.
 
-        Maps token revisions to pool versions:
-        - Token rev 1-3 -> Pool v3.1-v3.3 (TokenMathV1)
-        - Token rev 4 -> Pool v3.4 (TokenMathV4)
-        - Token rev 5+ -> Pool v3.5+ (TokenMathV5)
+        Maps token revisions to rounding implementations:
+        - Token rev 1-3 -> HalfUpRoundingMath (standard half-up rounding)
+        - Token rev 4+ -> ExplicitRoundingMath (floor/ceil rounding)
 
         Args:
             token_revision: The token contract revision number

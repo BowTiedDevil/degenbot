@@ -61,18 +61,59 @@ if operation.operation_type.name == "INTEREST_ACCRUAL":
 The enrichment layer handles both cases uniformly:
 1. Extract raw amount from Pool event (unscaled)
 2. Calculate scaled amount using TokenMath:
-   - Versions 1-3: `TokenMathV1` - standard `ray_div` (half-up rounding)
-   - Version 4: `TokenMathV4` - floor/ceil rounding
-   - Versions 5+: `TokenMathV5` - same as V4
+   - Versions 1-3: `HalfUpRoundingMath` - standard `ray_div` (half-up rounding)
+   - Versions 4+: `ExplicitRoundingMath` - floor/ceil rounding
 
 **TokenMathFactory mapping:**
 ```python
 _TOKEN_MATH = {
-    1: TokenMathV1, 2: TokenMathV1, 3: TokenMathV1,
-    4: TokenMathV4,
-    5: TokenMathV5, 6: TokenMathV5, 7: TokenMathV5, 8: TokenMathV5, 9: TokenMathV5, 10: TokenMathV5,
+    1: HalfUpRoundingMath, 2: HalfUpRoundingMath, 3: HalfUpRoundingMath,
+    4: ExplicitRoundingMath, 5: ExplicitRoundingMath, 6: ExplicitRoundingMath,
+    7: ExplicitRoundingMath, 8: ExplicitRoundingMath, 9: ExplicitRoundingMath,
+    10: ExplicitRoundingMath,
 }
 ```
+
+---
+
+### Math Library Architecture
+
+**Lesson:** Three levels of math abstraction separate concerns between Pool, Token, and GHO operations.
+
+**Architecture:**
+
+The Aave module uses a layered math architecture:
+
+1. **`wad_ray_math.py`** - Low-level primitives
+   - `ray_mul`, `ray_div` - Half-up rounding
+   - `ray_mul_floor`, `ray_mul_ceil` - Explicit rounding
+   - `wad_mul`, `wad_div` - Wad arithmetic
+
+2. **TokenMath classes** - Token-level calculations
+   - `HalfUpRoundingMath` - Pool revs 1-3 (standard half-up)
+   - `ExplicitRoundingMath` - Pool revs 4+ (floor/ceil rounding)
+   - Factory pattern via `TokenMathFactory.get_token_math(pool_version)`
+
+3. **PoolMath** - Pool-level calculations
+   - `get_treasury_mint_amount()` - MINT_TO_TREASURY operations
+   - `underlying_to_scaled_collateral()` - Reverse calculations
+   - `underlying_to_scaled_debt()` - Reverse calculations
+
+4. **GhoMath** - GHO-specific calculations
+   - `calculate_discount_rate()` - stkAAVE discount rates
+   - `calculate_discounted_balance()` - Discounted debt amount
+   - `calculate_effective_debt_balance()` - Post-discount balance
+
+**Key Principle:** Pool and Token revisions are independent:
+- Use **PoolMath** for Pool-level operations (MINT_TO_TREASURY)
+- Use **TokenMath** for Token-level operations (mint/burn/transfer)
+- Use **GhoMath** for GHO discount calculations
+
+**Files:**
+- `src/degenbot/aave/libraries/wad_ray_math.py` - Primitives
+- `src/degenbot/aave/libraries/token_math.py` - Token calculations
+- `src/degenbot/aave/libraries/pool_math.py` - Pool calculations
+- `src/degenbot/aave/libraries/gho_math.py` - GHO calculations
 
 ---
 

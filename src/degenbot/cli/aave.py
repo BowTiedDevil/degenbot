@@ -27,12 +27,9 @@ from degenbot.aave.events import (
     ERC20Event,
     ScaledTokenEventType,
 )
+from degenbot.aave.libraries.gho_math import GhoMath
+from degenbot.aave.libraries.pool_math import PoolMath
 from degenbot.aave.libraries.token_math import TokenMathFactory
-from degenbot.aave.libraries.wad_ray_math import (
-    ray_div,
-    ray_div_ceil,
-    wad_mul,
-)
 from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.processors import (
     CollateralBurnEvent,
@@ -45,7 +42,6 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
 from degenbot.cli.aave_event_matching import OperationAwareEventMatcher
 from degenbot.cli.aave_transaction_operations import (
-    TOKEN_AMOUNT_MATCH_TOLERANCE,
     Operation,
     OperationType,
     ScaledTokenEvent,
@@ -2239,30 +2235,16 @@ def calculate_gho_discount_rate(
     """
     Calculate the GHO discount rate locally.
 
-    Replicates the logic from the GhoDiscountRateStrategy contract at mainnet address
+    Delegates to GhoMath.calculate_discount_rate which mirrors the logic from
+    the GhoDiscountRateStrategy contract at mainnet address
     0x4C38Ec4D1D2068540DfC11DFa4de41F733DDF812.
 
     Returns the discount rate in basis points (10000 = 100.00%).
     """
-
-    # These constants are taken from the contract
-    gho_discounted_per_discount_token = 100 * 10**18
-    discount_rate_bps = 3000
-    min_discount_token_balance = 10**15
-    min_debt_token_balance = 10**18
-
-    if discount_token_balance < min_discount_token_balance or debt_balance < min_debt_token_balance:
-        return 0
-
-    discounted_balance = wad_mul(
-        a=discount_token_balance,
-        b=gho_discounted_per_discount_token,
+    return GhoMath.calculate_discount_rate(
+        debt_balance=debt_balance,
+        discount_token_balance=discount_token_balance,
     )
-
-    if discounted_balance >= debt_balance:
-        return discount_rate_bps
-
-    return (discounted_balance * discount_rate_bps) // debt_balance
 
 
 def _refresh_discount_rate(
@@ -2739,19 +2721,12 @@ def _process_operation(
 
 def _calculate_mint_to_treasury_scaled_amount(
     scaled_event: ScaledTokenEvent,
-    tx_context: TransactionContext,
     operation: Operation,
 ) -> int:
-    """
-    Calculate scaled amount for MINT_TO_TREASURY operations.
+    """Calculate scaled amount for MINT_TO_TREASURY operations.
 
-    Uses the MintedToTreasury event amount which is available for all pool revisions.
-    For Rev 1-8: amountMinted is in underlying units, needs rayDiv to get scaled amount.
-    For Rev 9+: amountMinted equals the scaled amount directly (passed as-is to AToken).
-
-    Note: BalanceTransfer events to the treasury during liquidations are handled by
-    the liquidation operations themselves, not here. This function only calculates
-    the scaled amount for actual mints to the treasury (protocol fee accrual).
+    Delegates to PoolMath for revision-aware calculation. This ensures
+    the correct rounding mode is used based on Pool revision.
 
     Args:
         scaled_event: The scaled token Mint event
@@ -2783,24 +2758,14 @@ def _calculate_mint_to_treasury_scaled_amount(
         raise ValueError(msg)
 
     minted_amount = operation.minted_to_treasury_amount
-    logger.debug(f"MINT_TO_TREASURY minted_to_treasury_amount: {minted_amount}")
 
-    # Convert underlying amount to scaled amount
-    # Pool Rev 1-8: uses ray_div (half-up rounding)
-    # Pool Rev 9+: uses rayMulFloor, so reverse with ray_div_ceil
-    if operation.pool_revision >= 9:
-        scaled_amount = ray_div_ceil(minted_amount, scaled_event.index)
-        logger.debug(
-            f"MINT_TO_TREASURY (rev {operation.pool_revision}): ray_div_ceil({minted_amount}, "
-            f"{scaled_event.index}) = {scaled_amount}"
-        )
-    else:
-        scaled_amount = ray_div(minted_amount, scaled_event.index)
-        logger.debug(
-            f"MINT_TO_TREASURY (rev {operation.pool_revision}): ray_div({minted_amount}, "
-            f"{scaled_event.index}) = {scaled_amount}"
-        )
-    return scaled_amount
+    # Use PoolMath for revision-aware calculation
+    # This delegates to the appropriate rounding library based on Pool revision
+    return PoolMath.underlying_to_scaled_collateral(
+        underlying_amount=minted_amount,
+        liquidity_index=scaled_event.index,
+        pool_revision=operation.pool_revision,
+    )
 
 
 def _process_deficit_coverage_operation(
@@ -2845,7 +2810,6 @@ def _process_deficit_coverage_operation(
             # The burn amount may not match standard calculations because
             # it includes interest accrued during the deficit coverage
             _process_deficit_coverage_burn(
-                event=scaled_event.event,
                 tx_context=tx_context,
                 scaled_event=scaled_event,
             )
@@ -2853,7 +2817,6 @@ def _process_deficit_coverage_operation(
 
 def _process_deficit_coverage_burn(
     *,
-    event: LogReceipt,
     tx_context: TransactionContext,
     scaled_event: ScaledTokenEvent,
 ) -> None:
@@ -2967,7 +2930,6 @@ def _process_collateral_mint_with_match(
         # MINT_TO_TREASURY uses MintedToTreasury event amount
         scaled_amount = _calculate_mint_to_treasury_scaled_amount(
             scaled_event=scaled_event,
-            tx_context=tx_context,
             operation=operation,
         )
     else:

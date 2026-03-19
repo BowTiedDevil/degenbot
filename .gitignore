@@ -180,3 +180,8 @@ cython_debug/
 *.db-shm
 *.db-wal
 *.sqlite
+
+# Foundry build artifacts (Aave test contracts)
+tests/aave/libraries/contracts/cache/
+tests/aave/libraries/contracts/out/
+tests/aave/libraries/contracts/compiled/
