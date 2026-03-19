@@ -141,9 +141,10 @@ def test_price_is_inverse_of_exchange_rate(
         ethereum_uniswap_v2_wbtc_weth_liquiditypool.token0,
         ethereum_uniswap_v2_wbtc_weth_liquiditypool.token1,
     ]:
-        assert ethereum_uniswap_v2_wbtc_weth_liquiditypool.get_absolute_price(
-            token
-        ) == 1 / ethereum_uniswap_v2_wbtc_weth_liquiditypool.get_absolute_exchange_rate(token)
+        assert (
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool.get_absolute_price(token)
+            == ethereum_uniswap_v2_wbtc_weth_liquiditypool.get_absolute_exchange_rate(token) ** -1
+        )
 
 
 def test_nominal_rate_scaled_by_decimals(
