@@ -202,7 +202,6 @@ dev = [
     "pytest-asyncio",
     "pytest-cov",
     "pytest-random-order",
-    "pytest-sugar",
     "pytest-xdist",
     "python-dotenv",
     "ruff",
