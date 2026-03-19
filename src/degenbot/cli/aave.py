@@ -30,6 +30,7 @@ from degenbot.aave.events import (
 from degenbot.aave.libraries.token_math import TokenMathFactory
 from degenbot.aave.libraries.wad_ray_math import (
     ray_div,
+    ray_div_ceil,
     wad_mul,
 )
 from degenbot.aave.models import EnrichedScaledTokenEvent
@@ -2785,12 +2786,14 @@ def _calculate_mint_to_treasury_scaled_amount(
     logger.debug(f"MINT_TO_TREASURY minted_to_treasury_amount: {minted_amount}")
 
     # Convert underlying amount to scaled amount for ALL pool revisions
-    # The MintedToTreasury event amount is always in underlying units,
-    # regardless of pool revision. Convert to scaled using rayDiv.
-    # See debug/aave/0032 for the rationale on unified formula.
-    scaled_amount = ray_div(minted_amount, scaled_event.index)
+    # The MintedToTreasury event amount is calculated by the Pool contract as:
+    #   amountToMint = accruedToTreasury.rayMulFloor(index)
+    # To reverse this and get the actual scaled amount minted (accruedToTreasury),
+    # we must use ray_div_ceil (not ray_div) to match the contract's rounding.
+    # See debug/aave/0034 for the full rationale.
+    scaled_amount = ray_div_ceil(minted_amount, scaled_event.index)
     logger.debug(
-        f"MINT_TO_TREASURY: rayDiv({minted_amount}, {scaled_event.index}) = {scaled_amount}"
+        f"MINT_TO_TREASURY: ray_div_ceil({minted_amount}, {scaled_event.index}) = {scaled_amount}"
     )
     return scaled_amount
 
