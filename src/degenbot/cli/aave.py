@@ -2785,16 +2785,21 @@ def _calculate_mint_to_treasury_scaled_amount(
     minted_amount = operation.minted_to_treasury_amount
     logger.debug(f"MINT_TO_TREASURY minted_to_treasury_amount: {minted_amount}")
 
-    # Convert underlying amount to scaled amount for ALL pool revisions
-    # The MintedToTreasury event amount is calculated by the Pool contract as:
-    #   amountToMint = accruedToTreasury.rayMulFloor(index)
-    # To reverse this and get the actual scaled amount minted (accruedToTreasury),
-    # we must use ray_div_ceil (not ray_div) to match the contract's rounding.
-    # See debug/aave/0034 for the full rationale.
-    scaled_amount = ray_div_ceil(minted_amount, scaled_event.index)
-    logger.debug(
-        f"MINT_TO_TREASURY: ray_div_ceil({minted_amount}, {scaled_event.index}) = {scaled_amount}"
-    )
+    # Convert underlying amount to scaled amount
+    # Pool Rev 1-8: uses ray_div (half-up rounding)
+    # Pool Rev 9+: uses rayMulFloor, so reverse with ray_div_ceil
+    if operation.pool_revision >= 9:
+        scaled_amount = ray_div_ceil(minted_amount, scaled_event.index)
+        logger.debug(
+            f"MINT_TO_TREASURY (rev {operation.pool_revision}): ray_div_ceil({minted_amount}, "
+            f"{scaled_event.index}) = {scaled_amount}"
+        )
+    else:
+        scaled_amount = ray_div(minted_amount, scaled_event.index)
+        logger.debug(
+            f"MINT_TO_TREASURY (rev {operation.pool_revision}): ray_div({minted_amount}, "
+            f"{scaled_event.index}) = {scaled_amount}"
+        )
     return scaled_amount
 
 
