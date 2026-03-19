@@ -2103,14 +2103,11 @@ def _verify_scaled_token_positions(
             block_identifier=block_number,
         )
 
-        # Allow 2 wei tolerance for rounding errors from ray math operations
-        # See debug/aave/0032 and 0033 for MINT_TO_TREASURY rounding explanation
-        if abs(actual_scaled_balance - position.balance) > TOKEN_AMOUNT_MATCH_TOLERANCE:
-            raise AssertionError(
-                f"Balance verification failure for {position.asset}. "
-                f"User {position.user} scaled balance ({position.balance}) does not match contract "
-                f"balance ({actual_scaled_balance}) at block {block_number}"
-            )
+        assert actual_scaled_balance == position.balance, (
+            f"Balance verification failure for {position.asset}. "
+            f"User {position.user} scaled balance ({position.balance}) does not match contract "
+            f"balance ({actual_scaled_balance}) at block {block_number}"
+        )
 
         (actual_last_index,) = raw_call(
             w3=w3,
