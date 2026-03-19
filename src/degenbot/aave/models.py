@@ -236,6 +236,27 @@ class IndexScaledEvent(BaseEnrichedScaledTokenEvent):
             if scaled == expected_burn:
                 return self  # Validation passes with burn rounding
 
+        # Special case: REPAY with interest exceeding repayment amount
+        # When a DEBT_MINT or GHO_DEBT_MINT event has balance_increase > 0,
+        # it indicates interest accrued. For REPAY operations, the Pool uses
+        # burn rounding (floor) but emits a Mint event. Allow the floor-calculated value.
+        # See debug/aave/0037 for details.
+        if (
+            event_type
+            in {
+                ScaledTokenEventType.DEBT_MINT,
+                ScaledTokenEventType.GHO_DEBT_MINT,
+            }
+            and self.balance_increase is not None
+            and self.balance_increase > 0
+        ):
+            # Calculate expected with burn rounding (floor)
+            expected_burn = token_math.get_debt_burn_scaled_amount(amount=raw, borrow_index=idx)
+
+            # Accept the burn (floor) calculated value
+            if scaled == expected_burn:
+                return self  # Validation passes with burn rounding
+
         if scaled != expected:
             raise ScaledAmountValidationError(
                 message="Scaled amount validation failed",

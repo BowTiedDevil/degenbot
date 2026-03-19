@@ -3113,57 +3113,74 @@ def _process_debt_mint_with_match(
 
     # Process GHO tokens through GHO-specific processor (handles discounts for all operations)
     if is_gho:
-        # Use the effective discount from transaction context
-        effective_discount = tx_context.user_discounts.get(user.address, user.gho_discount)
-
-        # Process using GHO-specific processor
-        gho_processor = TokenProcessorFactory.get_gho_debt_processor(debt_asset.v_token_revision)
-        assert scaled_event.balance_increase is not None
-        assert scaled_event.index is not None
-        gho_result = gho_processor.process_mint_event(
-            event_data=DebtMintEvent(
-                caller=scaled_event.caller_address or scaled_event.user_address,
-                on_behalf_of=scaled_event.user_address,
-                value=scaled_event.amount,
-                balance_increase=scaled_event.balance_increase,
-                index=scaled_event.index,
-                scaled_amount=scaled_amount,
-            ),
-            previous_balance=debt_position.balance,
-            previous_index=debt_position.last_index or 0,
-            previous_discount=effective_discount,
-        )
-
-        # Apply the calculated balance delta
-        debt_position.balance += gho_result.balance_delta
-        _update_debt_position_index(
-            tx_context=tx_context,
-            debt_asset=debt_asset,
-            debt_position=debt_position,
-            event_index=scaled_event.index,
-            event_block_number=scaled_event.event["blockNumber"],
-        )
-
-        # Refresh discount if needed
-        if (
-            gho_result.should_refresh_discount
-            and tx_context.gho_asset.v_gho_discount_token is not None
-        ):
-            discount_token_balance = _get_or_init_stk_aave_balance(
-                user=user,
+        if operation.operation_type == OperationType.GHO_REPAY:
+            # Use enriched scaled_amount (calculated from Repay event in enrichment layer)
+            # instead of calling processor which derives amount from Mint event fields.
+            # This avoids 1 wei rounding errors from integer truncation in interest calculations.
+            # See debug/aave/0037 - GHO REPAY Uses Mint Event Instead of Repay Event Amount.md
+            assert enriched_event.scaled_amount is not None
+            debt_position.balance -= enriched_event.scaled_amount
+            _update_debt_position_index(
                 tx_context=tx_context,
-                log_index=scaled_event.event["logIndex"],
+                debt_asset=debt_asset,
+                debt_position=debt_position,
+                event_index=scaled_event.index,
+                event_block_number=scaled_event.event["blockNumber"],
             )
-            assert debt_position.last_index is not None
-            _refresh_discount_rate(
-                user=user,
-                has_discount_rate_strategy=tx_context.gho_asset.v_gho_discount_rate_strategy
-                is not None,
-                discount_token_balance=discount_token_balance,
-                scaled_debt_balance=debt_position.balance,
-                debt_index=debt_position.last_index,
-                wad_ray_math=gho_processor.get_math_libraries()["wad_ray"],
+        else:
+            # Use the effective discount from transaction context
+            effective_discount = tx_context.user_discounts.get(user.address, user.gho_discount)
+
+            # Process using GHO-specific processor
+            gho_processor = TokenProcessorFactory.get_gho_debt_processor(
+                debt_asset.v_token_revision
             )
+            assert scaled_event.balance_increase is not None
+            assert scaled_event.index is not None
+            gho_result = gho_processor.process_mint_event(
+                event_data=DebtMintEvent(
+                    caller=scaled_event.caller_address or scaled_event.user_address,
+                    on_behalf_of=scaled_event.user_address,
+                    value=scaled_event.amount,
+                    balance_increase=scaled_event.balance_increase,
+                    index=scaled_event.index,
+                    scaled_amount=scaled_amount,
+                ),
+                previous_balance=debt_position.balance,
+                previous_index=debt_position.last_index or 0,
+                previous_discount=effective_discount,
+            )
+
+            # Apply the calculated balance delta
+            debt_position.balance += gho_result.balance_delta
+            _update_debt_position_index(
+                tx_context=tx_context,
+                debt_asset=debt_asset,
+                debt_position=debt_position,
+                event_index=scaled_event.index,
+                event_block_number=scaled_event.event["blockNumber"],
+            )
+
+            # Refresh discount if needed
+            if (
+                gho_result.should_refresh_discount
+                and tx_context.gho_asset.v_gho_discount_token is not None
+            ):
+                discount_token_balance = _get_or_init_stk_aave_balance(
+                    user=user,
+                    tx_context=tx_context,
+                    log_index=scaled_event.event["logIndex"],
+                )
+                assert debt_position.last_index is not None
+                _refresh_discount_rate(
+                    user=user,
+                    has_discount_rate_strategy=tx_context.gho_asset.v_gho_discount_rate_strategy
+                    is not None,
+                    discount_token_balance=discount_token_balance,
+                    scaled_debt_balance=debt_position.balance,
+                    debt_index=debt_position.last_index,
+                    wad_ray_math=gho_processor.get_math_libraries()["wad_ray"],
+                )
     else:
         # Use standard debt processor for non-GHO tokens
         assert scaled_event.balance_increase is not None

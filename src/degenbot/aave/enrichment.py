@@ -235,8 +235,13 @@ class ScaledEventEnricher:
                 # emits a Mint event instead of a Burn event (VariableDebtToken _burnScaled).
                 # In this case, use DEBT_BURN calculation (floor rounding) instead of
                 # DEBT_MINT (ceil rounding) to match contract behavior.
+                # Also handles GHO_DEBT_MINT for GHO tokens.
                 operation.operation_type in {OperationType.REPAY, OperationType.GHO_REPAY}
-                and scaled_event.event_type == ScaledTokenEventType.DEBT_MINT
+                and scaled_event.event_type
+                in {
+                    ScaledTokenEventType.DEBT_MINT,
+                    ScaledTokenEventType.GHO_DEBT_MINT,
+                }
                 and scaled_event.balance_increase is not None
             ):
                 # Use DEBT_BURN for burn rounding (floor)
@@ -280,7 +285,16 @@ class ScaledEventEnricher:
             # by setting scaled_amount=None. The processing layer recalculates
             # the amount anyway for these cases.
             # See debug/aave/0031 for details.
-            if calculation_event_type != scaled_event.event_type:
+            #
+            # NOTE: Do NOT set scaled_amount=None for REPAY/GHO_REPAY with DEBT_MINT/GHO_DEBT_MINT.
+            # The processing layer now uses the enriched scaled_amount directly to avoid
+            # 1 wei rounding errors from deriving the amount from Mint event fields.
+            # See debug/aave/0037 - GHO REPAY Uses Mint Event Instead of Repay Event Amount.md
+            if calculation_event_type != scaled_event.event_type and not (
+                operation.operation_type in {OperationType.REPAY, OperationType.GHO_REPAY}
+                and scaled_event.event_type
+                in {ScaledTokenEventType.DEBT_MINT, ScaledTokenEventType.GHO_DEBT_MINT}
+            ):
                 logger.debug(
                     f"ENRICHMENT: Overriding {scaled_event.event_type.name} with "
                     f"{calculation_event_type.name} - skipping validation by setting "
