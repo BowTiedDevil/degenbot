@@ -13,17 +13,18 @@ This document captures lessons learned, architectural insights, and debugging gu
 **Contract Behavior (aToken rev_1.sol:2825-2855):**
 ```solidity
 function _transfer(address sender, address recipient, uint256 amount, uint256 index) internal {
-    // Calculate interest accrued
+    // Calculate interest accrued (tracks interest earned since last interaction)
     uint256 senderBalanceIncrease = senderScaledBalance.rayMul(index) -
         senderScaledBalance.rayMul(_userState[sender].additionalData);
     
-    // Update the stored index ONLY
+    // Update the stored index ONLY - this is the ONLY state change for interest accrual
     _userState[sender].additionalData = index.toUint128();
     
     // Transfer scaled balance
     super._transfer(sender, recipient, amount.rayDiv(index).toUint128());
     
-    // Emit Mint event for TRACKING ONLY - no _mint() call!
+    // Emit Mint event for TRACKING ONLY - no actual _mint() is called!
+    // This event is emitted solely for off-chain tracking purposes.
     if (senderBalanceIncrease > 0) {
         emit Mint(_msgSender(), sender, senderBalanceIncrease, senderBalanceIncrease, index);
     }
@@ -50,21 +51,24 @@ if operation.operation_type.name == "INTEREST_ACCRUAL":
 
 ### Pool Versions and Scaling
 
-**Lesson:** Pool versions 1-8 pass unscaled amounts to the logic library; the logic library handles scaling.
+**Lesson:** Pool revisions and token revisions are independent versioning systems that affect different aspects of amount handling.
 
-**Context:** Different Aave V3 pool revisions handle amount scaling differently:
+**Context:** Two separate versioned systems exist:
 
-- **Pool revisions 1-8:** The Pool contract passes unscaled amounts (underlying units) to the token contract, which then calculates scaled amounts internally using `rayDiv(amount, index)`.
-- **Pool revision 9+:** The Pool contract pre-calculates scaled amounts before calling the token contract.
+1. **Pool Revisions** (affects how amounts are passed between contracts):
+   - **Pool revisions 1-8:** The Pool contract passes unscaled amounts (underlying units) to the token contract
+   - **Pool revision 9+:** The Pool contract pre-calculates scaled amounts before calling the token contract
+
+2. **Token Revisions** (affects rounding math behavior):
+   - **Token revisions 1-3:** Uses `HalfUpRoundingMath` - standard `ray_div` with half-up rounding
+   - **Token revision 4+:** Uses `ExplicitRoundingMath` - explicit floor/ceil rounding
 
 **Python Implementation:**
-The enrichment layer handles both cases uniformly:
-1. Extract raw amount from Pool event (unscaled)
-2. Calculate scaled amount using TokenMath:
-   - Versions 1-3: `HalfUpRoundingMath` - standard `ray_div` (half-up rounding)
-   - Versions 4+: `ExplicitRoundingMath` - floor/ceil rounding
+The enrichment layer handles both systems independently:
+1. Pool revision determines if raw amounts need scaling before processing
+2. Token revision determines which rounding math to use via TokenMathFactory
 
-**TokenMathFactory mapping:**
+**TokenMathFactory mapping (by pool version):**
 ```python
 _TOKEN_MATH = {
     1: HalfUpRoundingMath, 2: HalfUpRoundingMath, 3: HalfUpRoundingMath,
@@ -73,6 +77,8 @@ _TOKEN_MATH = {
     10: ExplicitRoundingMath,
 }
 ```
+
+**Key Point:** While the mapping uses pool version numbers for lookup, the actual rounding behavior is determined by the token revision at runtime. Pool and token revisions typically move together but are technically independent.
 
 ---
 
@@ -241,9 +247,9 @@ GhoVariableDebtToken/
 
 ### Execution Flow Diagrams
 
-**Location:** `docs/cli/aave_pool_flows.md`
+**Location:** `docs/cli/aave.md`
 
-When debugging complex interactions or unexpected event sequences, reference the Mermaid flow diagrams which show:
+When debugging complex interactions or unexpected event sequences, reference the Mermaid flow diagrams in this file which show:
 - Complete execution paths from Pool public functions through logic libraries
 - Event emission points and their triggers
 - Decision points and conditional logic
