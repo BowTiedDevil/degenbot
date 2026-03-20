@@ -101,16 +101,16 @@ class TokenType(Enum):
 class UserOperation(Enum):
     """User operation types for Aave V3 token events."""
 
-    DEPOSIT = "DEPOSIT"
-    WITHDRAW = "WITHDRAW"
-    BORROW = "BORROW"
-    REPAY = "REPAY"
-    GHO_BORROW = "GHO BORROW"
-    GHO_REPAY = "GHO REPAY"
-    GHO_INTEREST_ACCRUAL = "GHO INTEREST ACCRUAL"
-    AAVE_STAKED = "AAVE STAKED"
     AAVE_REDEEM = "AAVE REDEEM"
+    AAVE_STAKED = "AAVE STAKED"
+    BORROW = "BORROW"
+    DEPOSIT = "DEPOSIT"
+    GHO_BORROW = "GHO BORROW"
+    GHO_INTEREST_ACCRUAL = "GHO INTEREST ACCRUAL"
+    GHO_REPAY = "GHO REPAY"
+    REPAY = "REPAY"
     STKAAVE_TRANSFER = "stkAAVE TRANSFER"
+    WITHDRAW = "WITHDRAW"
 
 
 FULL_VERIFICATION_INTERVAL = 250_000
@@ -4111,15 +4111,15 @@ def _fetch_pool_events(
         address=[pool_address],
         topic_signature=[
             [
-                AaveV3PoolEvent.SUPPLY.value,
-                AaveV3PoolEvent.WITHDRAW.value,
                 AaveV3PoolEvent.BORROW.value,
-                AaveV3PoolEvent.REPAY.value,
-                AaveV3PoolEvent.LIQUIDATION_CALL.value,
                 AaveV3PoolEvent.DEFICIT_CREATED.value,
-                AaveV3PoolEvent.RESERVE_DATA_UPDATED.value,
-                AaveV3PoolEvent.USER_E_MODE_SET.value,
+                AaveV3PoolEvent.LIQUIDATION_CALL.value,
                 AaveV3PoolEvent.MINTED_TO_TREASURY.value,
+                AaveV3PoolEvent.REPAY.value,
+                AaveV3PoolEvent.RESERVE_DATA_UPDATED.value,
+                AaveV3PoolEvent.SUPPLY.value,
+                AaveV3PoolEvent.USER_E_MODE_SET.value,
+                AaveV3PoolEvent.WITHDRAW.value,
             ]
         ],
     )
@@ -4164,11 +4164,11 @@ def _fetch_scaled_token_events(
         address=token_addresses,
         topic_signature=[
             [
-                AaveV3ScaledTokenEvent.MINT.value,
-                AaveV3ScaledTokenEvent.BURN.value,
-                AaveV3ScaledTokenEvent.BALANCE_TRANSFER.value,
-                AaveV3PoolConfigEvent.UPGRADED.value,
                 AaveV3GhoDebtTokenEvent.DISCOUNT_PERCENT_UPDATED.value,
+                AaveV3PoolConfigEvent.UPGRADED.value,
+                AaveV3ScaledTokenEvent.BALANCE_TRANSFER.value,
+                AaveV3ScaledTokenEvent.BURN.value,
+                AaveV3ScaledTokenEvent.MINT.value,
                 # Include ERC20 Transfer events for proper paired transfer matching
                 ERC20Event.TRANSFER.value,
             ]
@@ -4195,8 +4195,8 @@ def _fetch_stk_aave_events(
         address=[discount_token],
         topic_signature=[
             [
-                AaveV3StkAaveEvent.STAKED.value,
                 AaveV3StkAaveEvent.REDEEM.value,
+                AaveV3StkAaveEvent.STAKED.value,
                 ERC20Event.TRANSFER.value,
             ]
         ],
@@ -4220,11 +4220,11 @@ def _fetch_address_provider_events(
         address=[provider_address],
         topic_signature=[
             [
-                AaveV3PoolConfigEvent.PROXY_CREATED.value,
+                AaveV3PoolConfigEvent.ADDRESS_SET.value,
                 AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value,
                 AaveV3PoolConfigEvent.POOL_DATA_PROVIDER_UPDATED.value,
                 AaveV3PoolConfigEvent.POOL_UPDATED.value,
-                AaveV3PoolConfigEvent.ADDRESS_SET.value,
+                AaveV3PoolConfigEvent.PROXY_CREATED.value,
             ]
         ],
     )
