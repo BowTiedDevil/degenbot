@@ -318,6 +318,7 @@ def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress
     elif topic in {
         AaveV3PoolEvent.RESERVE_DATA_UPDATED.value,
         AaveV3PoolEvent.MINTED_TO_TREASURY.value,
+        AaveV3PoolConfigEvent.UPGRADED.value,
     }:
         # no relevant user data in these events
         pass
