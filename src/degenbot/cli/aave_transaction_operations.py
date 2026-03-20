@@ -1650,7 +1650,7 @@ class TransactionOperationsParser:
             pool_revision=pool_revision,
         )
 
-        collateral_burn_event = self._find_matching_collateral_burn(
+        collateral_adjustment_event = self._find_collateral_adjustment_event(
             user=user,
             expected_amount=repay_amount,
             scaled_events=scaled_events,
@@ -1661,8 +1661,8 @@ class TransactionOperationsParser:
         if principal_repay_event:
             scaled_token_events.append(principal_repay_event)
 
-            if collateral_burn_event:
-                scaled_token_events.append(collateral_burn_event)
+            if collateral_adjustment_event:
+                scaled_token_events.append(collateral_adjustment_event)
                 balance_transfer = self._find_balance_transfer_for_repay(
                     user=user,
                     reserve=reserve,
@@ -1671,12 +1671,12 @@ class TransactionOperationsParser:
                 )
                 if balance_transfer:
                     balance_transfer_events.append(balance_transfer)
-        elif collateral_burn_event:
-            scaled_token_events.append(collateral_burn_event)
+        elif collateral_adjustment_event:
+            scaled_token_events.append(collateral_adjustment_event)
         else:
             logger.debug(
-                f"REPAY_WITH_ATOKENS at logIndex={repay_log_index} has no matching burn event, "
-                f"creating minimal operation"
+                f"REPAY_WITH_ATOKENS at logIndex={repay_log_index} has no matching collateral "
+                f"adjustment event, creating minimal operation"
             )
 
         return Operation(
@@ -1781,7 +1781,7 @@ class TransactionOperationsParser:
         return None
 
     @staticmethod
-    def _find_matching_collateral_burn(
+    def _find_collateral_adjustment_event(
         *,
         user: ChecksumAddress,
         expected_amount: int,
@@ -1790,16 +1790,27 @@ class TransactionOperationsParser:
         pool_revision: int,
     ) -> ScaledTokenEvent | None:
         """
-        Find the closest matching collateral burn event.
+        Find the collateral adjustment event for a REPAY_WITH_ATOKENS operation.
 
-        Matches based on user address and burn amount (amount + balance_increase).
+        In a REPAY_WITH_ATOKENS operation, the user burns aTokens to repay debt.
+        The contract emits either:
+        - COLLATERAL_BURN: when burned amount > accrued interest
+        - COLLATERAL_MINT: when accrued interest > burned amount (user receives aTokens)
+
+        Both represent the same conceptual operation: adjusting collateral to repay debt.
+        The net adjustment amount is calculated from the event fields and matched against
+        the expected repayment amount from the pool event.
+
         For pool revision 9+, allows ±2 wei tolerance due to ray math rounding.
         """
 
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
                 continue
-            if ev.event_type != ScaledTokenEventType.COLLATERAL_BURN:
+            if ev.event_type not in {
+                ScaledTokenEventType.COLLATERAL_BURN,
+                ScaledTokenEventType.COLLATERAL_MINT,
+            }:
                 continue
             if ev.user_address != user:
                 continue
@@ -1808,15 +1819,17 @@ class TransactionOperationsParser:
             if ev.balance_increase is None:
                 continue
 
-            # Calculate the total burn amount (principal + interest)
-            total_burn = ev.amount + ev.balance_increase
+            # Calculate the net collateral adjustment amount
+            # BURN: user burns (amount + balance_increase) aTokens
+            # MINT: user receives (balance_increase - amount) aTokens when interest > burn
+            adjustment = ev.amount + ev.balance_increase
 
             # Pool revision 9+ uses ray math with flooring, allow ±2 wei tolerance
             # see TX: 0x8a4bc3d8f386c0d754d98766caf9033202a65a932f0f3ede035d95f039a56abe
             if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
-                if abs(total_burn - expected_amount) > TOKEN_AMOUNT_MATCH_TOLERANCE:
+                if abs(adjustment - expected_amount) > TOKEN_AMOUNT_MATCH_TOLERANCE:
                     continue
-            elif total_burn != expected_amount:
+            elif adjustment != expected_amount:
                 continue
 
             return ev
