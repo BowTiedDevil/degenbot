@@ -32,7 +32,9 @@ class ScaledTokenEventType(Enum):
 
 
 class AaveV3PoolEvent(Enum):
-    """Aave V3 Pool contract events."""
+    """
+    Aave V3 Pool contract events.
+    """
 
     SUPPLY = HexBytes("0x2b627736bca15cd5381dcf80b0bf11fd197d01a037c52b927a881a10fb73ba61")
     WITHDRAW = HexBytes("0x3115d1449a7b732c986cba18244e897a450f61e1bb8d589cd2e69e6c8924f9f7")
@@ -55,7 +57,9 @@ class AaveV3PoolEvent(Enum):
 
 
 class AaveV3ScaledTokenEvent(Enum):
-    """Aave V3 aToken/vToken events."""
+    """
+    Aave V3 aToken/vToken events.
+    """
 
     MINT = HexBytes("0x458f5fa412d0f69b08dd84872b0215675cc67bc1d5b6fd93300a1c3878b86196")
     BURN = HexBytes("0x4cf25bc1d991c17529c25213d3cc0cda295eeaad5f13f361969b12ea48015f90")
@@ -65,7 +69,9 @@ class AaveV3ScaledTokenEvent(Enum):
 
 
 class AaveV3PoolConfigEvent(Enum):
-    """Aave V3 pool configuration events."""
+    """
+    Aave V3 pool configuration events.
+    """
 
     POOL_CONFIGURATOR_UPDATED = HexBytes(
         "0x8932892569eba59c8382a089d9b732d1f49272878775235761a2a6b0309cd465"
@@ -80,7 +86,9 @@ class AaveV3PoolConfigEvent(Enum):
 
 
 class AaveV3GhoDebtTokenEvent(Enum):
-    """Aave V3 GHO debt token events."""
+    """
+    Aave V3 GHO debt token events.
+    """
 
     DISCOUNT_RATE_STRATEGY_UPDATED = HexBytes(
         "0x194bd59f47b230edccccc2be58b92dde3a5dadd835751a621af59006928bccef"
@@ -94,7 +102,9 @@ class AaveV3GhoDebtTokenEvent(Enum):
 
 
 class AaveV3StkAaveEvent(Enum):
-    """Aave V3 stkAAVE token events."""
+    """
+    Aave V3 stkAAVE token events.
+    """
 
     STAKED = HexBytes("0x6c86f3fd5118b3aa8bb4f389a617046de0a3d3d477de1a1673d227f802f616dc")
     REDEEM = HexBytes("0x3f693fff038bb8a046aa76d9516190ac7444f7d69cf952c4cbdc086fdef2d6fc")
@@ -110,6 +120,8 @@ class AaveV3RewardsControllerEvent(Enum):
 
 
 class ERC20Event(Enum):
-    """Standard ERC20 events."""
+    """
+    Standard ERC20 events.
+    """
 
     TRANSFER = HexBytes("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
