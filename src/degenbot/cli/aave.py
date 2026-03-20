@@ -144,16 +144,59 @@ def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress
     topic = event["topics"][0]
 
     if topic == AaveV3ScaledTokenEvent.MINT.value:
+        """
+        Event definition:
+            event Mint(
+                address indexed caller,
+                address indexed onBehalfOf,
+                uint256 value,
+                uint256 balanceIncrease,
+                uint256 index
+                );
+        """
+
+        user_addresses.add(decode_address(event["topics"][1]))
         user_addresses.add(decode_address(event["topics"][2]))
 
     elif topic == AaveV3ScaledTokenEvent.BURN.value:
+        """
+        Event definition:
+            event Burn(
+                address indexed from,
+                address indexed target,
+                uint256 value,
+                uint256 balanceIncrease,
+                uint256 index
+            );
+        """
+
         user_addresses.add(decode_address(event["topics"][1]))
+        user_addresses.add(decode_address(event["topics"][2]))
 
     elif topic == AaveV3ScaledTokenEvent.BALANCE_TRANSFER.value:
+        """
+        Event definition:
+            event BalanceTransfer(
+                address indexed from,
+                address indexed to,
+                uint256 value,
+                uint256 index
+            );
+        """
+
         user_addresses.add(decode_address(event["topics"][1]))
         user_addresses.add(decode_address(event["topics"][2]))
 
     elif topic == ERC20Event.TRANSFER.value:
+        """
+        Event definition:
+            event Transfer(
+                address indexed from,
+                address indexed to,
+                uint256 value
+            );
+        """
+
         from_addr = decode_address(event["topics"][1])
         to_addr = decode_address(event["topics"][2])
         if from_addr != ZERO_ADDRESS:
@@ -166,6 +209,24 @@ def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress
         AaveV3PoolEvent.USER_E_MODE_SET.value,
         AaveV3PoolEvent.DEFICIT_CREATED.value,
     }:
+        """
+        Event definitions:
+            event DiscountPercentUpdated(
+                address indexed user,
+                uint256 oldDiscountPercent,
+                uint256 indexed newDiscountPercent
+            );
+            event UserEModeSet(
+                address indexed user,
+                uint8 categoryId
+            );
+            event DeficitCreated(
+                address indexed user,
+                address indexed debtAsset,
+                uint256 amountCreated
+            );
+        """
+
         user_addresses.add(decode_address(event["topics"][1]))
 
     elif topic in {
@@ -174,14 +235,95 @@ def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress
         AaveV3PoolEvent.SUPPLY.value,
         AaveV3PoolEvent.WITHDRAW.value,
     }:
+        """
+        Event definitions:
+            event Borrow(
+                address indexed reserve,
+                address user,
+                address indexed onBehalfOf,
+                uint256 amount,
+                DataTypes.InterestRateMode interestRateMode,
+                uint256 borrowRate,
+                uint16 indexed referralCode
+            );
+            event Repay(
+                address indexed reserve,
+                address indexed user,
+                address indexed repayer,
+                uint256 amount,
+                bool useATokens
+            );
+            event Supply(
+                address indexed reserve,
+                address user,
+                address indexed onBehalfOf,
+                uint256 amount,
+                uint16 indexed referralCode
+            );
+            event Withdraw(
+                address indexed reserve,
+                address indexed user,
+                address indexed to,
+                uint256 amount
+            );
+        """
+
         user_addresses.add(decode_address(event["topics"][2]))
 
     elif topic == AaveV3PoolEvent.LIQUIDATION_CALL.value:
-        user_addresses.add(decode_address(event["topics"][3]))
+        """
+        Event definition:
+            event LiquidationCall(
+                address indexed collateralAsset,
+                address indexed debtAsset,
+                address indexed user,
+                uint256 debtToCover,
+                uint256 liquidatedCollateralAmount,
+                address liquidator,
+                bool receiveAToken
+            );
+        """
 
-    elif topic in {AaveV3StkAaveEvent.STAKED.value, AaveV3StkAaveEvent.REDEEM.value}:
+        user_addresses.add(decode_address(event["topics"][3]))
+        receive_a_token: bool
+        _, _, liquidator, receive_a_token = eth_abi.abi.decode(
+            types=["uint256", "uint256", "address", "bool"],
+            data=event["data"],
+        )
+        if receive_a_token:
+            user_addresses.add(get_checksum_address(liquidator))
+
+    elif topic in {
+        AaveV3StkAaveEvent.STAKED.value,
+        AaveV3StkAaveEvent.REDEEM.value,
+    }:
+        """
+        Event definitions:
+            event Staked(
+                address indexed from,
+                address indexed onBehalfOf,
+                uint256 amount
+            );
+            event Redeem(
+                address indexed from,
+                address indexed to,
+                uint256 amount
+            );
+        """
+
         user_addresses.add(decode_address(event["topics"][1]))
         user_addresses.add(decode_address(event["topics"][2]))
+
+    elif topic in {
+        AaveV3PoolEvent.RESERVE_DATA_UPDATED.value,
+        AaveV3PoolEvent.MINTED_TO_TREASURY.value,
+    }:
+        # no relevant user data in these events
+        pass
+
+    else:
+        msg = f"Unknown topic: {topic.to_0x_hex()}"
+        raise ValueError(msg)
 
     return user_addresses
 
