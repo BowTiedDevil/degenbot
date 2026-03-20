@@ -676,7 +676,7 @@ def aave_update(
                         market.last_update_block = working_end_block
 
                         # Perform full verification when the chunk spans a verification interval
-                        # or ends exactly on a boundary (e.g., processing a single block at 23,250,000)
+                        # or ends exactly on a boundary
                         if verify and (
                             working_end_block // FULL_VERIFICATION_INTERVAL
                             != working_start_block // FULL_VERIFICATION_INTERVAL
