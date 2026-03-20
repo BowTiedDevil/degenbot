@@ -1,3 +1,4 @@
+import contextlib
 import sys
 from enum import Enum
 from operator import itemgetter
@@ -1514,7 +1515,7 @@ def _try_fetch_token_string(
     """
 
     for func_prototype in (lower_func, upper_func):
-        try:
+        with contextlib.suppress(Exception):
             result = w3.eth.call(
                 TxParams(
                     to=token_address,
@@ -1525,19 +1526,17 @@ def _try_fetch_token_string(
                 )
             )
 
-            try:
+            with contextlib.suppress(eth_abi.exceptions.DecodingError):
                 (value,) = eth_abi.abi.decode(types=["string"], data=result)
                 return str(value)
-            except eth_abi.exceptions.DecodingError:
-                # Fallback for older tokens that return bytes32
-                (value,) = eth_abi.abi.decode(types=["bytes32"], data=result)
-                return (
-                    value.decode("utf-8", errors="ignore").strip("\x00")
-                    if isinstance(value, (bytes, HexBytes))
-                    else str(value)
-                )
-        except Exception:
-            continue
+
+            # Fallback for older tokens that return bytes32
+            (value,) = eth_abi.abi.decode(types=["bytes32"], data=result)
+            return (
+                value.decode("utf-8", errors="ignore").strip("\x00")
+                if isinstance(value, (bytes, HexBytes))
+                else str(value)
+            )
 
     return None
 
@@ -1548,9 +1547,13 @@ def _try_fetch_token_uint256(
     lower_func: str,
     upper_func: str,
 ) -> int | None:
-    """Try to fetch a uint256 value from an ERC20 token."""
+    """
+    Try to fetch a uint256 value from an ERC20 token.
+    """
+
     for func_prototype in (lower_func, upper_func):
-        try:
+        with contextlib.suppress(Exception):
+            result: int
             (result,) = raw_call(
                 w3=w3,
                 address=token_address,
@@ -1560,9 +1563,7 @@ def _try_fetch_token_uint256(
                 ),
                 return_types=["uint256"],
             )
-            return int(result)
-        except Exception:
-            continue
+            return result
 
     return None
 
