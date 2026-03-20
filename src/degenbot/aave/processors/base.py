@@ -316,6 +316,7 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
         previous_balance: int,
         previous_index: int,
         previous_discount: int,
+        actual_repay_amount: int | None = None,
     ) -> GhoScaledTokenMintResult:
         """
         Process a GHO debt mint event.
@@ -325,6 +326,9 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
             previous_balance: The user's balance before this event
             previous_index: The index at previous_balance calculation
             previous_discount: The discount percent before this transaction
+            actual_repay_amount: Optional actual repay amount from Repay event.
+                When provided, use this instead of deriving from Mint event fields.
+                This avoids 1 wei rounding errors from integer truncation.
 
         Returns:
             GhoScaledTokenMintResult with balance_delta, new_index, is_repay,

@@ -33,6 +33,7 @@ class GhoV2Processor(GhoV1Processor):
         previous_balance: int,
         previous_index: int,
         previous_discount: int,
+        actual_repay_amount: int | None = None,
     ) -> GhoScaledTokenMintResult:
         """
         Process a GHO debt mint event with full discount support.
@@ -42,6 +43,9 @@ class GhoV2Processor(GhoV1Processor):
             previous_balance: The user's balance before this event
             previous_index: The index at previous_balance calculation
             previous_discount: The discount percent before this transaction
+            actual_repay_amount: Optional actual repay amount from Repay event.
+                When provided, use this instead of deriving from Mint event fields.
+                This avoids 1 wei rounding errors from integer truncation.
 
         Returns:
             GhoMintResult with balance_delta, new_index, user_operation,
@@ -76,8 +80,15 @@ class GhoV2Processor(GhoV1Processor):
             # GHO REPAY: emitted in _burnScaled
             # The Mint event is emitted when interest > repayment amount.
             # The net balance change is burning (amount_scaled + discount_scaled).
-            # amount = balanceIncrease - value (from Mint event)
-            amount_repaid = event_data.balance_increase - event_data.value
+            # Use actual_repay_amount from Repay event if provided to avoid
+            # 1 wei rounding errors from deriving from Mint event fields.
+            # See debug/aave/0037 and 0038 for details.
+            if actual_repay_amount is not None:
+                amount_repaid = actual_repay_amount
+            else:
+                # Fallback: derive from Mint event (may have 1 wei rounding error)
+                amount_repaid = event_data.balance_increase - event_data.value
+
             repayment_scaled = wad_ray_math.ray_div(
                 a=amount_repaid,
                 b=event_data.index,
