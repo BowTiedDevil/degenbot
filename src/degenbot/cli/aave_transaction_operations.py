@@ -1111,8 +1111,8 @@ class TransactionOperationsParser:
         msg = f"Could not determine operation from event topic {topic!r}"
         raise ValueError(msg)
 
-    @staticmethod
     def _create_supply_operation(
+        self,
         *,
         operation_id: int,
         supply_event: LogReceipt,
@@ -1140,6 +1140,15 @@ class TransactionOperationsParser:
             types=["address", "uint256"], data=supply_event["data"]
         )
 
+        # Get the reserve (underlying asset) from the Supply event
+        supply_reserve = decode_address(supply_event["topics"][1])
+
+        # Get the aToken address for this reserve
+        expected_a_token = self._get_a_token_for_asset(supply_reserve)
+        assert expected_a_token is not None, (
+            f"Could not find aToken for reserve {supply_reserve} in market {self.market.id}"
+        )
+
         # Find collateral mint for this user
         # For SUPPLY: look for mints where value > balance_increase (standard deposit)
         # Match on onBehalfOf (beneficiary) from the SUPPLY event, which corresponds
@@ -1149,6 +1158,10 @@ class TransactionOperationsParser:
             if ev.event["logIndex"] in assigned_indices:
                 continue
             if ev.event_type != ScaledTokenEventType.COLLATERAL_MINT:
+                continue
+            # Verify event is from the correct aToken contract
+            event_token = get_checksum_address(ev.event["address"])
+            if event_token != expected_a_token:
                 continue
             if ev.user_address != on_behalf_of:
                 continue
@@ -1677,6 +1690,7 @@ class TransactionOperationsParser:
 
         collateral_adjustment_event = self._find_collateral_adjustment_event(
             user=user,
+            reserve=reserve,
             expected_amount=repay_amount,
             scaled_events=scaled_events,
             assigned_indices=assigned_indices,
@@ -1805,10 +1819,11 @@ class TransactionOperationsParser:
 
         return None
 
-    @staticmethod
     def _find_collateral_adjustment_event(
+        self,
         *,
         user: ChecksumAddress,
+        reserve: ChecksumAddress,
         expected_amount: int,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
@@ -1829,6 +1844,12 @@ class TransactionOperationsParser:
         For pool revision 9+, allows ±2 wei tolerance due to ray math rounding.
         """
 
+        # Get the aToken address for this reserve
+        expected_a_token = self._get_a_token_for_asset(reserve)
+        assert expected_a_token is not None, (
+            f"Could not find aToken for reserve {reserve} in market {self.market.id}"
+        )
+
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
                 continue
@@ -1836,6 +1857,10 @@ class TransactionOperationsParser:
                 ScaledTokenEventType.COLLATERAL_BURN,
                 ScaledTokenEventType.COLLATERAL_MINT,
             }:
+                continue
+            # Verify event is from the correct aToken contract
+            event_token = get_checksum_address(ev.event["address"])
+            if event_token != expected_a_token:
                 continue
             if ev.user_address != user:
                 continue
