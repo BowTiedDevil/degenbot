@@ -101,6 +101,14 @@ class AaveV3StkAaveEvent(Enum):
     SLASHED = HexBytes("0x4ed05e9673c26d2ed44f7ef6a7f2942df0ee3b5e1e17db4b99f9dcd261a339cd")
 
 
+class AaveV3RewardsControllerEvent(Enum):
+    """
+    Aave V3 RewardsController events.
+    """
+
+    REWARDS_CLAIMED = HexBytes("0xc052130bc4ef84580db505783484b067ea8b71b3bca78a7e12db7aea8658f004")
+
+
 class ERC20Event(Enum):
     """Standard ERC20 events."""
 
