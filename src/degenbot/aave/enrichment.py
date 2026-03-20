@@ -236,7 +236,13 @@ class ScaledEventEnricher:
                 # In this case, use DEBT_BURN calculation (floor rounding) instead of
                 # DEBT_MINT (ceil rounding) to match contract behavior.
                 # Also handles GHO_DEBT_MINT for GHO tokens.
-                operation.operation_type in {OperationType.REPAY, OperationType.GHO_REPAY}
+                # Includes REPAY_WITH_ATOKENS which uses the same debt repayment logic.
+                operation.operation_type
+                in {
+                    OperationType.GHO_REPAY,
+                    OperationType.REPAY,
+                    OperationType.REPAY_WITH_ATOKENS,
+                }
                 and scaled_event.event_type
                 in {
                     ScaledTokenEventType.DEBT_MINT,

@@ -3333,7 +3333,11 @@ def _process_debt_mint_with_match(
         # Check if this Mint event is part of a REPAY operation
         # In REPAY, Mint is emitted when interest > repayment, but the net effect
         # is still a burn of scaled tokens
-        if operation.operation_type in {OperationType.REPAY, OperationType.GHO_REPAY}:
+        if operation.operation_type in {
+            OperationType.GHO_REPAY,
+            OperationType.REPAY,
+            OperationType.REPAY_WITH_ATOKENS,
+        }:
             # Treat as burn: calculate actual scaled burn amount from Pool event
             # Use TokenMath to match on-chain calculation
             assert operation.pool_event is not None
