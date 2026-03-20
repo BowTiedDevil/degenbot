@@ -1214,8 +1214,8 @@ class TransactionOperationsParser:
             balance_transfer_events=[],
         )
 
-    @staticmethod
     def _create_withdraw_operation(
+        self,
         *,
         operation_id: int,
         withdraw_event: LogReceipt,
@@ -1240,12 +1240,25 @@ class TransactionOperationsParser:
         user = decode_address(withdraw_event["topics"][2])
         (withdraw_amount,) = eth_abi.abi.decode(types=["uint256"], data=withdraw_event["data"])
 
+        # Get the reserve (underlying asset) from the Withdraw event
+        withdraw_reserve = decode_address(withdraw_event["topics"][1])
+
+        # Get the aToken address for this reserve
+        expected_a_token = self._get_a_token_for_asset(withdraw_reserve)
+        assert expected_a_token is not None, (
+            f"Could not find aToken for reserve {withdraw_reserve} in market {self.market.id}"
+        )
+
         # Find collateral burn for this operation (most common case)
         collateral_burn: ScaledTokenEvent | None = None
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
                 continue
             if ev.event_type != ScaledTokenEventType.COLLATERAL_BURN:
+                continue
+            # Verify event is from the correct aToken contract
+            event_token = get_checksum_address(ev.event["address"])
+            if event_token != expected_a_token:
                 continue
             if ev.user_address != user:
                 continue
@@ -1282,6 +1295,10 @@ class TransactionOperationsParser:
                 if ev.event["logIndex"] in assigned_indices:
                     continue
                 if ev.event_type != ScaledTokenEventType.COLLATERAL_MINT:
+                    continue
+                # Verify event is from the correct aToken contract
+                event_token = get_checksum_address(ev.event["address"])
+                if event_token != expected_a_token:
                     continue
                 if ev.user_address != user:
                     continue
@@ -1336,6 +1353,10 @@ class TransactionOperationsParser:
                     ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
                 }:
                     continue
+                # Verify event is from the correct aToken contract
+                event_token = get_checksum_address(ev.event["address"])
+                if event_token != expected_a_token:
+                    continue
                 if ev.from_address != ZERO_ADDRESS:
                     continue
 
@@ -1350,6 +1371,10 @@ class TransactionOperationsParser:
                     ScaledTokenEventType.COLLATERAL_TRANSFER,
                     ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
                 }:
+                    continue
+                # Verify event is from the correct aToken contract
+                event_token = get_checksum_address(ev.event["address"])
+                if event_token != expected_a_token:
                     continue
                 if ev.target_address != ZERO_ADDRESS:
                     continue
