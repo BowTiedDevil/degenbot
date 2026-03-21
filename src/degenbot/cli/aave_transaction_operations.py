@@ -2655,6 +2655,16 @@ class TransactionOperationsParser:
             if ev.caller_address != self.pool_address:
                 continue
 
+            # Skip interest accrual events (amount == balance_increase means no new tokens)
+            # Emitted during transfers/liquidations for tracking, not actual MINT_TO_TREASURY
+            if ev.amount == ev.balance_increase:
+                logger.debug(
+                    f"Skipping interest accrual Mint event at logIndex {ev.event['logIndex']} - "
+                    f"amount ({ev.amount}) equals balance_increase ({ev.balance_increase})"
+                )
+                assigned_indices.add(ev.event["logIndex"])
+                continue
+
             # This is a mint to treasury - create operation
             logger.debug(
                 f"Creating MINT_TO_TREASURY for event at logIndex {ev.event['logIndex']}, "
@@ -2807,7 +2817,9 @@ class TransactionOperationsParser:
                         and other_ev.user_address == ev.target_address
                         and get_checksum_address(other_ev.event["address"]) == ev_token_address
                     ):
-                        # This transfer is part of a mint, skip it
+                        # Transfer from zero is ALWAYS paired with a Mint event
+                        # Mint handles state change (or is skipped for interest accrual)
+                        # Transfer should NEVER be processed separately
                         is_part_of_mint = True
                         local_assigned.add(ev.event["logIndex"])
                         break

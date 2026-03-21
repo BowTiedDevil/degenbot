@@ -117,6 +117,9 @@ class UserOperation(Enum):
 FULL_VERIFICATION_INTERVAL = 100_000
 SCALED_AMOUNT_POOL_REVISION = 9
 
+# Liquidation operation types (used to identify liquidation operations in multiple places)
+LIQUIDATION_OPERATION_TYPES = {OperationType.LIQUIDATION, OperationType.GHO_LIQUIDATION}
+
 
 class WadRayMathLibrary(Protocol):
     def ray_div(self, a: int, b: int) -> int: ...
@@ -2875,37 +2878,27 @@ def _calculate_mint_to_treasury_scaled_amount(
 
     Args:
         scaled_event: The scaled token Mint event
-        tx_context: Transaction context with Web3 and market info
         operation: The operation containing minted_to_treasury_amount
 
     Returns:
         The calculated scaled amount to add to the treasury position
     """
-
-    # No BalanceTransfer handling here - liquidation fees are processed by liquidation operations
-    # This function only handles actual mints to treasury (protocol fee accrual)
-
-    # No BalanceTransfer - use MintedToTreasury amount
     assert scaled_event.balance_increase is not None
     assert scaled_event.index is not None
 
-    # Special case: when amount == balanceIncrease, the treasury's existing
-    # aTokens accrued interest equal to the accruedToTreasury amount.
-    # No new scaled tokens are minted - the existing balance simply appreciated.
-    if scaled_event.amount == scaled_event.balance_increase:
-        logger.debug("MINT_TO_TREASURY: amount == balanceIncrease, setting scaled_amount = 0")
+    # Get the underlying amount to mint
+    # Use MintedToTreasury event if available, otherwise calculate from Mint event
+    if operation.minted_to_treasury_amount is not None:
+        minted_amount = operation.minted_to_treasury_amount
+    else:
+        # Mint event value = actual_amount + balance_increase (interest on existing balance)
+        minted_amount = scaled_event.amount - scaled_event.balance_increase
+
+    # When minted_amount is 0, only interest accrued (no new tokens minted)
+    if minted_amount == 0:
         return 0
 
-    # Get the MintedToTreasury amount from the operation
-    # This is populated during operation creation for ALL revisions
-    if operation.minted_to_treasury_amount is None:
-        msg = "MINT_TO_TREASURY operation missing minted_to_treasury_amount"
-        raise ValueError(msg)
-
-    minted_amount = operation.minted_to_treasury_amount
-
     # Use PoolMath for revision-aware calculation
-    # This delegates to the appropriate rounding library based on Pool revision
     return PoolMath.underlying_to_scaled_collateral(
         underlying_amount=minted_amount,
         liquidity_index=scaled_event.index,
@@ -3507,10 +3500,7 @@ def _process_debt_burn_with_match(
         # Bad debt liquidations have a DEFICIT_CREATED event and burn the FULL debt balance
         # Normal liquidations burn only the debtToCover amount
         is_bad_debt_liquidation = False
-        if operation and operation.operation_type in {
-            OperationType.LIQUIDATION,
-            OperationType.GHO_LIQUIDATION,
-        }:
+        if operation and operation.operation_type in LIQUIDATION_OPERATION_TYPES:
             # Check if there's a DEFICIT_CREATED event for the same user in this transaction
             for evt in tx_context.events:
                 if evt["topics"][0] == AaveV3PoolEvent.DEFICIT_CREATED.value:
@@ -3540,10 +3530,7 @@ def _process_debt_burn_with_match(
             if scaled_event.index > current_index:
                 debt_position.last_index = scaled_event.index
             return
-        if operation and operation.operation_type in {
-            OperationType.LIQUIDATION,
-            OperationType.GHO_LIQUIDATION,
-        }:
+        if operation and operation.operation_type in LIQUIDATION_OPERATION_TYPES:
             # Normal liquidation: use debtToCover from pool event
             burn_value = enriched_event.raw_amount
             logger.debug(
@@ -3590,13 +3577,21 @@ def _should_skip_collateral_transfer(
     2. This is part of a REPAY_WITH_ATOKENS operation (burn handles it)
     3. This is a protocol mint (from zero address)
     4. This is a direct burn handled by Burn event
+    5. This is an ERC20 Transfer in a liquidation operation (BalanceTransfer handles it)
+
+    Special handling for liquidations:
+    - BalanceTransfer events are NOT skipped (they contain the liquidation fees to treasury)
+    - ERC20 Transfer events ARE skipped (only the BalanceTransfer represents the actual
+      scaled balance movement to the treasury)
     """
     # Skip paired BalanceTransfer events - handled by their paired ERC20 Transfer
+    # BUT: Don't skip for liquidation operations - the BalanceTransfer IS the transfer to treasury
     if (
         scaled_event.index is not None
         and scaled_event.index > 0
         and operation
         and operation.balance_transfer_events
+        and operation.operation_type not in LIQUIDATION_OPERATION_TYPES
     ):
         for bt_event in operation.balance_transfer_events:
             if bt_event["logIndex"] == scaled_event.event["logIndex"]:
@@ -3606,8 +3601,18 @@ def _should_skip_collateral_transfer(
     if operation and operation.operation_type == OperationType.REPAY_WITH_ATOKENS:
         return True
 
-    # Skip protocol mints (from zero address)
+    # Skip protocol mints (from zero address) - except standalone BALANCE_TRANSFER operations
     if scaled_event.from_address == ZERO_ADDRESS:
+        # Keep BALANCE_TRANSFER operations (e.g., treasury fee collection), skip others
+        return not (operation and operation.operation_type == OperationType.BALANCE_TRANSFER)
+
+    # Skip ERC20 Transfers for liquidation operations - only process BalanceTransfer events
+    # The BalanceTransfer events contain the liquidation fees to the treasury
+    if (
+        scaled_event.index is None
+        and operation
+        and operation.operation_type in LIQUIDATION_OPERATION_TYPES
+    ):
         return True
 
     # Skip ERC20 transfers corresponding to direct burns (handled by Burn event)
@@ -3654,6 +3659,11 @@ def _match_paired_balance_transfer(
         Tuple of (matched_event, scaled_amount, index) or (None, None, None)
     """
     if not operation or not operation.balance_transfer_events:
+        return None, None, None
+
+    # For liquidation operations, don't match ERC20 Transfers with BalanceTransfers
+    # They represent different movements and should be processed separately
+    if operation.operation_type in LIQUIDATION_OPERATION_TYPES:
         return None, None, None
 
     for bt_event in operation.balance_transfer_events:
@@ -3737,8 +3747,12 @@ def _process_collateral_transfer(
             scaled_amount = scaled_event.amount
             transfer_index = scaled_event.index
         else:
-            # Standalone ERC20 Transfer - use current liquidity index
-            scaled_amount = scaled_event.amount
+            # Standalone ERC20 Transfer - convert to scaled units using liquidity index
+            if scaled_event.from_address == ZERO_ADDRESS:
+                # Protocol mint (e.g., treasury fee collection) - convert from underlying to scaled
+                scaled_amount = scaled_event.amount * 10**27 // collateral_asset.liquidity_index
+            else:
+                scaled_amount = scaled_event.amount
             transfer_index = collateral_asset.liquidity_index
 
     # Update sender's scaled balance
