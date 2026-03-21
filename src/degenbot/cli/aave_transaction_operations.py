@@ -1095,6 +1095,7 @@ class TransactionOperationsParser:
                 operation_id=operation_id,
                 liquidation_event=pool_event,
                 scaled_events=scaled_events,
+                all_events=all_events,
                 assigned_indices=assigned_indices,
                 pool_revision=pool_revision,
             )
@@ -2000,17 +2001,23 @@ class TransactionOperationsParser:
         debt_v_token_address: ChecksumAddress | None,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
-        is_gho: bool,  # noqa: ARG002
+        user_liquidation_count: int,
     ) -> list[ScaledTokenEvent]:
         """
         Collect secondary debt burns for other assets held by the user.
 
-        These are debts that weren't the primary liquidation target but were also
-        burned as part of the liquidation (bad debt write-off scenario).
+        Secondary burns represent bad debt write-offs where a single liquidation
+        clears multiple debt positions. When multiple liquidations exist for the
+        same user, each liquidation handles only its primary debt - secondary
+        burns are skipped to avoid misclassification.
 
         Note: Secondary debt burns can be any debt type (GHO or non-GHO), not just
         the same type as the primary debt being liquidated.
         """
+        # Skip secondary burns when multiple liquidations exist
+        # Each liquidation handles its own primary debt
+        if user_liquidation_count > 1:
+            return []
 
         secondary_burns: list[ScaledTokenEvent] = []
 
@@ -2092,6 +2099,7 @@ class TransactionOperationsParser:
         operation_id: int,
         liquidation_event: LogReceipt,
         scaled_events: list[ScaledTokenEvent],
+        all_events: list[LogReceipt],
         assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation:
@@ -2126,6 +2134,16 @@ class TransactionOperationsParser:
         collateral_a_token_address = self._get_a_token_for_asset(collateral_asset)
         debt_v_token_address = self._get_v_token_for_asset(debt_asset)
 
+        # Count how many liquidations exist for this user in this transaction
+        # Secondary debt burns should only be collected when there's a single
+        # liquidation - multiple liquidations each handle their own primary debt
+        user_liquidation_count = sum(
+            1
+            for ev in all_events
+            if ev["topics"][0] == AaveV3PoolEvent.LIQUIDATION_CALL.value
+            and decode_address(ev["topics"][3]) == user
+        )
+
         # Collect ALL debt burns for the liquidated user
         # A liquidation may burn multiple debt positions (not just the primary debt asset)
         primary_burns = self._collect_primary_debt_burns(
@@ -2142,7 +2160,7 @@ class TransactionOperationsParser:
             debt_v_token_address=debt_v_token_address,
             scaled_events=scaled_events,
             assigned_indices=assigned_indices,
-            is_gho=is_gho,
+            user_liquidation_count=user_liquidation_count,
         )
         debt_burns = primary_burns + secondary_burns
 
