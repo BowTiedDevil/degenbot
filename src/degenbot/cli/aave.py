@@ -2178,6 +2178,30 @@ def _verify_all_positions(
     )
 
 
+def _is_bad_debt_liquidation(user: AaveV3User, tx_context: TransactionContext) -> bool:
+    """
+    Check if this transaction contains a bad debt liquidation for the user.
+
+    Bad debt liquidations emit a DEFICIT_CREATED event for the user, indicating
+    the protocol is writing off debt that cannot be covered by collateral.
+
+    Event definition:
+        event DeficitCreated(
+            address indexed user,
+            address indexed debtAsset,
+            uint256 amountCreated
+        );
+    """
+
+    for evt in tx_context.events:
+        if evt["topics"][0] == AaveV3PoolEvent.DEFICIT_CREATED.value:
+            deficit_user = get_checksum_address(decode_address(evt["topics"][1]))
+
+            if deficit_user == user.address:
+                return True
+    return False
+
+
 def _verify_scaled_token_positions(
     *,
     w3: Web3,
@@ -3454,6 +3478,30 @@ def _process_debt_burn_with_match(
     # Use enriched event data for scaled amount
     scaled_amount: int | None = enriched_event.scaled_amount
 
+    # Check for bad debt liquidation first - applies to both GHO and non-GHO tokens
+    # Bad debt liquidations emit a DEFICIT_CREATED event and burn the FULL debt balance
+    if (
+        operation
+        and operation.operation_type in LIQUIDATION_OPERATION_TYPES
+        and _is_bad_debt_liquidation(user, tx_context)
+    ):
+        # Bad debt liquidation: The contract burns the ENTIRE debt balance
+        # not just the debtToCover amount. The debt position should be set to 0.
+        # This is because the protocol writes off the bad debt.
+        old_balance = debt_position.balance
+        debt_position.balance = 0
+        logger.debug(
+            f"_process_debt_burn_with_match: BAD DEBT LIQUIDATION - setting balance to 0 "
+            f"(was {old_balance})"
+        )
+        # Skip the normal processing since we've already set the balance
+        # Only update last_index if the new index is greater than current
+        if scaled_event.index is not None:
+            current_index = debt_position.last_index or 0
+            if scaled_event.index > current_index:
+                debt_position.last_index = scaled_event.index
+        return
+
     # Check if this is a GHO token and use GHO-specific processing
     if tx_context.is_gho_vtoken(token_address):
         # Use the effective discount from transaction context
@@ -3520,40 +3568,6 @@ def _process_debt_burn_with_match(
         )
         logger.debug(f"_process_debt_burn_with_match: scaled_event.index = {scaled_event.index}")
 
-        # For liquidation operations, determine if this is a bad debt (deficit) liquidation
-        # Bad debt liquidations have a DEFICIT_CREATED event and burn the FULL debt balance
-        # Normal liquidations burn only the debtToCover amount
-        is_bad_debt_liquidation = False
-        if operation and operation.operation_type in LIQUIDATION_OPERATION_TYPES:
-            # Check if there's a DEFICIT_CREATED event for the same user in this transaction
-            for evt in tx_context.events:
-                if evt["topics"][0] == AaveV3PoolEvent.DEFICIT_CREATED.value:
-                    # DEFICIT_CREATED event has user as topic[1]
-                    deficit_user = get_checksum_address("0x" + evt["topics"][1].hex()[-40:])
-                    if deficit_user == user.address:
-                        is_bad_debt_liquidation = True
-                        logger.debug(
-                            f"_process_debt_burn_with_match: Bad debt liquidation detected "
-                            f"for user {user.address}"
-                        )
-                        break
-
-        if is_bad_debt_liquidation:
-            # Bad debt liquidation: The contract burns the ENTIRE debt balance (borrowerReserveDebt)
-            # not just the debtToCover amount. The debt position should be set to 0.
-            # This is because the protocol writes off the bad debt.
-            old_balance = debt_position.balance
-            debt_position.balance = 0
-            logger.debug(
-                f"_process_debt_burn_with_match: BAD DEBT LIQUIDATION - setting balance to 0 "
-                f"(was {old_balance})"
-            )
-            # Skip the normal processing since we've already set the balance
-            # Only update last_index if the new index is greater than current
-            current_index = debt_position.last_index or 0
-            if scaled_event.index > current_index:
-                debt_position.last_index = scaled_event.index
-            return
         if operation and operation.operation_type in LIQUIDATION_OPERATION_TYPES:
             # Normal liquidation: use debtToCover from pool event
             # For Pool Rev 9+, use the scaled_amount which is the actual Burn event amount
