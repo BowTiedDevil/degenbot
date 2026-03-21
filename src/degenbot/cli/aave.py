@@ -3532,11 +3532,20 @@ def _process_debt_burn_with_match(
             return
         if operation and operation.operation_type in LIQUIDATION_OPERATION_TYPES:
             # Normal liquidation: use debtToCover from pool event
-            burn_value = enriched_event.raw_amount
-            logger.debug(
-                f"_process_debt_burn_with_match: NORMAL LIQUIDATION - using "
-                f"debtToCover={burn_value}"
-            )
+            # For Pool Rev 9+, use the scaled_amount which is the actual Burn event amount
+            # (debtToCover - balance_increase). See debug/aave/0044 for details.
+            if tx_context.pool_revision >= 9:  # noqa: PLR2004
+                burn_value = enriched_event.scaled_amount or enriched_event.raw_amount
+                logger.debug(
+                    f"_process_debt_burn_with_match: NORMAL LIQUIDATION (Pool Rev 9+) - using "
+                    f"scaled_amount={burn_value}"
+                )
+            else:
+                burn_value = enriched_event.raw_amount
+                logger.debug(
+                    f"_process_debt_burn_with_match: NORMAL LIQUIDATION - using "
+                    f"debtToCover={burn_value}"
+                )
         else:
             # Standard REPAY: use Burn event value
             burn_value = scaled_event.amount

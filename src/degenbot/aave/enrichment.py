@@ -137,13 +137,28 @@ class ScaledEventEnricher:
                             operation.pool_event
                         )
                         # Pool Revision 9+ passes pre-scaled amounts to token contracts
-                        # Skip TokenMath calculation - use raw_amount directly as scaled
+                        # The Pool calculates scaledAmount = debtToCover.rayDivFloor(index)
+                        # and passes it to vToken.burn(). We must calculate this ourselves.
+                        # See debug/aave/0044 for details
                         if self.pool_revision >= 9:  # noqa: PLR2004
+                            # Calculate scaled amount from debtToCover using the index
+                            # from the burn event: scaledAmount = debtToCover / index
+                            # (floor division)
+                            assert scaled_event.index is not None
+                            calculator = ScaledAmountCalculator(
+                                pool_revision=self.pool_revision,
+                                token_revision=token_revision,
+                            )
+                            scaled_amount = calculator.calculate(
+                                event_type=ScaledTokenEventType.DEBT_BURN,
+                                raw_amount=raw_amount,
+                                index=scaled_event.index,
+                            )
                             logger.debug(
                                 f"ENRICHMENT: Pool Rev {self.pool_revision} LIQUIDATION "
-                                f"debt amount already scaled: {raw_amount}"
+                                f"calculated scaled amount: {scaled_amount} "
+                                f"from debtToCover={raw_amount} / index={scaled_event.index}"
                             )
-                            scaled_amount = raw_amount
                             calculation_event_type = scaled_event.event_type
                             # Skip to event creation
                             return self._create_enriched_event(
