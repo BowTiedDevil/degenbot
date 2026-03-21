@@ -115,6 +115,7 @@ class UserOperation(Enum):
 
 
 FULL_VERIFICATION_INTERVAL = 100_000
+GHO_DISCOUNT_DEPRECATION_REVISION = 4
 SCALED_AMOUNT_POOL_REVISION = 9
 
 # Liquidation operation types (used to identify liquidation operations in multiple places)
@@ -1216,7 +1217,7 @@ def _process_scaled_token_upgrade_event(
         if (
             gho_asset.v_token is not None
             and aave_debt_asset.v_token.address == gho_asset.v_token.address
-            and vtoken_revision >= 4  # noqa: PLR2004
+            and vtoken_revision >= GHO_DISCOUNT_DEPRECATION_REVISION
         ):
             gho_asset.v_gho_discount_token = None
             gho_asset.v_gho_discount_rate_strategy = None
@@ -1276,7 +1277,7 @@ def _is_discount_supported(
     """
 
     revision = _get_gho_vtoken_revision(session, market)
-    return revision is not None and revision < 4  # noqa: PLR2004
+    return revision is not None and revision < GHO_DISCOUNT_DEPRECATION_REVISION
 
 
 def _prefetch_users_for_transaction(
@@ -1950,7 +1951,7 @@ def _verify_gho_discount_amounts(
     # Skip verification if discount mechanism is not supported (revision 4+)
     revision = _get_gho_vtoken_revision(session=session, market=market)
     logger.debug(f"Verifying GHO discounts: revision={revision}, market.id={market.id}")
-    if revision is None or revision >= 4:  # noqa:PLR2004
+    if revision is None or revision >= GHO_DISCOUNT_DEPRECATION_REVISION:
         logger.debug(f"Skipping GHO discount verification (revision {revision} < 4 not met)")
         return
 
@@ -3572,7 +3573,7 @@ def _process_debt_burn_with_match(
             # Normal liquidation: use debtToCover from pool event
             # For Pool Rev 9+, use the scaled_amount which is the actual Burn event amount
             # (debtToCover - balance_increase). See debug/aave/0044 for details.
-            if tx_context.pool_revision >= 9:  # noqa: PLR2004
+            if tx_context.pool_revision >= SCALED_AMOUNT_POOL_REVISION:
                 burn_value = enriched_event.scaled_amount or enriched_event.raw_amount
                 logger.debug(
                     f"_process_debt_burn_with_match: NORMAL LIQUIDATION (Pool Rev 9+) - using "
