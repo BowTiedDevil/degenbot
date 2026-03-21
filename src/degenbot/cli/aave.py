@@ -3324,21 +3324,39 @@ def _process_debt_mint_with_match(
         assert scaled_event.balance_increase is not None
         assert scaled_event.index is not None
 
-        # Check if this Mint event is part of a REPAY operation
-        # In REPAY, Mint is emitted when interest > repayment, but the net effect
+        # Check if this Mint event is part of a REPAY or LIQUIDATION operation
+        # In REPAY/LIQUIDATION, Mint is emitted when interest > repayment, but the net effect
         # is still a burn of scaled tokens
         if operation.operation_type in {
             OperationType.GHO_REPAY,
             OperationType.REPAY,
             OperationType.REPAY_WITH_ATOKENS,
+            OperationType.LIQUIDATION,
+            OperationType.GHO_LIQUIDATION,
         }:
             # Treat as burn: calculate actual scaled burn amount from Pool event
             # Use TokenMath to match on-chain calculation
             assert operation.pool_event is not None
-            repay_amount, _ = eth_abi.abi.decode(
-                types=["uint256", "bool"],
-                data=operation.pool_event["data"],
-            )
+
+            # Decode the amount based on operation type
+            # REPAY: (uint256 amount, bool useATokens)
+            # LIQUIDATION: (uint256 debtToCover, uint256 liquidatedCollateralAmount,
+            #              address liquidator, bool receiveAToken)
+            if operation.operation_type in {
+                OperationType.REPAY,
+                OperationType.GHO_REPAY,
+                OperationType.REPAY_WITH_ATOKENS,
+            }:
+                repay_amount, _ = eth_abi.abi.decode(
+                    types=["uint256", "bool"],
+                    data=operation.pool_event["data"],
+                )
+            else:  # LIQUIDATION or GHO_LIQUIDATION
+                repay_amount, _, _, _ = eth_abi.abi.decode(
+                    types=["uint256", "uint256", "address", "bool"],
+                    data=operation.pool_event["data"],
+                )
+
             # Use token revision (not pool revision) to get correct TokenMath
             token_math = TokenMathFactory.get_token_math_for_token_revision(
                 debt_asset.v_token_revision
@@ -3347,8 +3365,8 @@ def _process_debt_mint_with_match(
                 repay_amount, scaled_event.index
             )
             logger.debug(
-                f"REPAY with Mint event: treating as burn, "
-                f"repay_amount={repay_amount}, scaled_burn={actual_scaled_burn}"
+                f"{operation.operation_type.name} with Mint event: treating as burn, "
+                f"amount={repay_amount}, scaled_burn={actual_scaled_burn}"
             )
             _process_scaled_token_operation(
                 event=DebtBurnEvent(

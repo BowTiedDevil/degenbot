@@ -1953,7 +1953,7 @@ class TransactionOperationsParser:
         *,
         user: ChecksumAddress,
         debt_v_token_address: ChecksumAddress | None,
-        debt_to_cover: int,  # noqa: ARG004
+        debt_to_cover: int,
         pool_revision: int,  # noqa: ARG004
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
@@ -1965,6 +1965,10 @@ class TransactionOperationsParser:
         Uses semantic matching: a debt burn for the same user and debt asset
         in this transaction belongs to this liquidation, regardless of amounts
         or log index ordering. Amount validation happens during processing.
+
+        When multiple liquidations exist for the same user and debt asset,
+        the burn amount is matched against the debt_to_cover from the
+        LiquidationCall event to identify the correct pairing.
         """
 
         primary_burns: list[ScaledTokenEvent] = []
@@ -1981,6 +1985,16 @@ class TransactionOperationsParser:
 
             event_token_address = get_checksum_address(ev.event["address"])
             if debt_v_token_address is None or event_token_address != debt_v_token_address:
+                continue
+
+            # When multiple liquidations share the same user and debt asset,
+            # use the debt_to_cover from the LiquidationCall to identify the
+            # correct burn event. The burn amount + balance_increase should
+            # approximately match the debtToCover from the pool event.
+            total_burn = ev.amount + (ev.balance_increase or 0)
+            if abs(total_burn - debt_to_cover) > TOKEN_AMOUNT_MATCH_TOLERANCE:
+                # Burn doesn't match this liquidation's debtToCover,
+                # likely belongs to a different liquidation
                 continue
 
             # Semantic matching: the presence of a debt burn for this user and
@@ -3194,7 +3208,7 @@ class TransactionOperationsParser:
         # Standard liquidations have 1 debt burn (primary debt asset)
         # Multi-asset liquidations may have multiple debt burns (primary + secondary debts)
         # Collateral may be burned OR transferred to treasury (BalanceTransfer)
-        debt_burns = [e for e in op.scaled_token_events if e.is_debt]
+        debt_burns = [e for e in op.scaled_token_events if e.is_burn and e.is_debt]
         collateral_events = [e for e in op.scaled_token_events if e.is_collateral]
 
         # Allow multiple debt burns for multi-asset liquidations
