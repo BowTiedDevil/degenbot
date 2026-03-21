@@ -1953,7 +1953,7 @@ class TransactionOperationsParser:
         *,
         user: ChecksumAddress,
         debt_v_token_address: ChecksumAddress | None,
-        debt_to_cover: int,
+        debt_to_cover: int,  # noqa: ARG004
         pool_revision: int,  # noqa: ARG004
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
@@ -1966,9 +1966,11 @@ class TransactionOperationsParser:
         in this transaction belongs to this liquidation, regardless of amounts
         or log index ordering. Amount validation happens during processing.
 
-        When multiple liquidations exist for the same user and debt asset,
-        the burn amount is matched against the debt_to_cover from the
-        LiquidationCall event to identify the correct pairing.
+        Note: The debt_to_cover parameter from LiquidationCall events may not
+        match the actual burn amount. In Aave V3, when debtToCover >= debtBalance,
+        the entire debt is burned, which can be significantly larger than the
+        debtToCover value in the event (which may represent fees or partial amounts).
+        See debug/aave/0046 for details.
         """
 
         primary_burns: list[ScaledTokenEvent] = []
@@ -1987,19 +1989,11 @@ class TransactionOperationsParser:
             if debt_v_token_address is None or event_token_address != debt_v_token_address:
                 continue
 
-            # When multiple liquidations share the same user and debt asset,
-            # use the debt_to_cover from the LiquidationCall to identify the
-            # correct burn event. The burn amount + balance_increase should
-            # approximately match the debtToCover from the pool event.
-            total_burn = ev.amount + (ev.balance_increase or 0)
-            if abs(total_burn - debt_to_cover) > TOKEN_AMOUNT_MATCH_TOLERANCE:
-                # Burn doesn't match this liquidation's debtToCover,
-                # likely belongs to a different liquidation
-                continue
-
             # Semantic matching: the presence of a debt burn for this user and
             # asset in this transaction indicates it belongs to this liquidation.
             # We trust the smart contract event ordering/logic over amount comparisons.
+            # The debt_to_cover parameter may not match the actual burn amount
+            # when the entire debt is being liquidated. See debug/aave/0046.
             primary_burns.append(ev)
             assigned_indices.add(ev.event["logIndex"])
             if ev.index is not None and ev.index > 0:

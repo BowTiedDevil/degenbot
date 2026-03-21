@@ -3343,19 +3343,25 @@ def _process_debt_mint_with_match(
             # LIQUIDATION: (uint256 debtToCover, uint256 liquidatedCollateralAmount,
             #              address liquidator, bool receiveAToken)
             if operation.operation_type in {
-                OperationType.REPAY,
                 OperationType.GHO_REPAY,
                 OperationType.REPAY_WITH_ATOKENS,
+                OperationType.REPAY,
             }:
                 repay_amount, _ = eth_abi.abi.decode(
                     types=["uint256", "bool"],
                     data=operation.pool_event["data"],
                 )
-            else:  # LIQUIDATION or GHO_LIQUIDATION
+            elif operation.operation_type in {
+                OperationType.GHO_LIQUIDATION,
+                OperationType.LIQUIDATION,
+            }:
                 repay_amount, _, _, _ = eth_abi.abi.decode(
                     types=["uint256", "uint256", "address", "bool"],
                     data=operation.pool_event["data"],
                 )
+            else:
+                msg = f"Unhandled operation type {operation.operation_type}"
+                raise ValueError(msg)
 
             # Use token revision (not pool revision) to get correct TokenMath
             token_math = TokenMathFactory.get_token_math_for_token_revision(
