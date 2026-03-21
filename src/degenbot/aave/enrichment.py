@@ -136,6 +136,25 @@ class ScaledEventEnricher:
                         raw_amount = RawAmountExtractor.extract_liquidation_debt(
                             operation.pool_event
                         )
+                        # Pool Revision 9+ passes pre-scaled amounts to token contracts
+                        # Skip TokenMath calculation - use raw_amount directly as scaled
+                        if self.pool_revision >= 9:  # noqa: PLR2004
+                            logger.debug(
+                                f"ENRICHMENT: Pool Rev {self.pool_revision} LIQUIDATION "
+                                f"debt amount already scaled: {raw_amount}"
+                            )
+                            scaled_amount = raw_amount
+                            calculation_event_type = scaled_event.event_type
+                            # Skip to event creation
+                            return self._create_enriched_event(
+                                scaled_event=scaled_event,
+                                operation=operation,
+                                raw_amount=raw_amount,
+                                scaled_amount=scaled_amount,
+                                token_revision=token_revision,
+                                token_address=token_address,
+                                underlying_asset=underlying_asset,
+                            )
                     elif scaled_event.event_type in {
                         ScaledTokenEventType.COLLATERAL_BURN,
                         ScaledTokenEventType.COLLATERAL_TRANSFER,

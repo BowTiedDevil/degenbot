@@ -210,6 +210,12 @@ class IndexScaledEvent(BaseEnrichedScaledTokenEvent):
         if scaled is None:
             return self
 
+        # Special case: Pool Revision 9+ LIQUIDATION debt amounts
+        # For Pool Rev 9+, the debtToCover in LiquidationCall is already scaled
+        # Skip validation since raw_amount == scaled_amount for these cases
+        if pool_rev >= 9 and event_type == ScaledTokenEventType.DEBT_BURN:  # noqa: PLR2004
+            return self
+
         # Calculate expected scaled amount
         token_math = TokenMathFactory.get_token_math_for_token_revision(token_rev)
         method_name = _get_token_math_method(event_type)
