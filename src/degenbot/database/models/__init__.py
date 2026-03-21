@@ -3,11 +3,14 @@ from .base import Address, Base, BigInteger, IntMappedToString
 # isort: split
 from .aave import (
     AaveV3Asset,
+    AaveV3AssetConfig,
     AaveV3CollateralPosition,
     AaveV3Contract,
     AaveV3DebtPosition,
+    AaveV3EModeCategory,
     AaveV3Market,
     AaveV3User,
+    AaveV3UserCollateralConfig,
 )
 from .erc20 import Erc20TokenTable
 from .pools import (
@@ -33,11 +36,14 @@ from .pools import (
 
 __all__ = (
     "AaveV3Asset",
+    "AaveV3AssetConfig",
     "AaveV3CollateralPosition",
     "AaveV3Contract",
     "AaveV3DebtPosition",
+    "AaveV3EModeCategory",
     "AaveV3Market",
     "AaveV3User",
+    "AaveV3UserCollateralConfig",
     "Address",
     "AerodromeV2PoolTable",
     "AerodromeV3PoolTable",

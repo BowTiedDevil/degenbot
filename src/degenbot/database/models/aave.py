@@ -35,6 +35,11 @@ class AaveV3Market(Base):
         back_populates="market",
         cascade="all",
     )
+    e_mode_categories: Mapped[list["AaveV3EModeCategory"]] = relationship(
+        "AaveV3EModeCategory",
+        back_populates="market",
+        cascade="all",
+    )
 
     def __repr__(self) -> str:
         return (
@@ -49,6 +54,56 @@ class AaveV3Market(Base):
 ForeignKeyAaveMarketId = Annotated[
     int,
     mapped_column(ForeignKey(AaveV3Market.id), index=True),
+]
+
+
+class AaveV3EModeCategory(Base):
+    """
+    eMode category configuration for correlated assets.
+
+    Users in eMode get better LTV and liquidation terms for assets in the
+    same category. Liquidators need this to calculate effective thresholds.
+    """
+
+    __tablename__ = "aave_v3_emode_categories"
+
+    id: Mapped[PrimaryKeyInt]
+    market_id: Mapped[ForeignKeyAaveMarketId]
+
+    category_id: Mapped[int]
+    label: Mapped[str | None]
+
+    # eMode-specific risk parameters (basis points)
+    ltv: Mapped[int]
+    liquidation_threshold: Mapped[int]
+    liquidation_bonus: Mapped[int]
+    price_source: Mapped[Address | None]
+
+    # Relationships
+    market: Mapped["AaveV3Market"] = relationship(
+        "AaveV3Market",
+        back_populates="e_mode_categories",
+    )
+    assets: Mapped[list["AaveV3Asset"]] = relationship(
+        "AaveV3Asset",
+        back_populates="e_mode_category",
+    )
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(category_id={self.category_id!r}, label={self.label!r})"
+
+
+Index(
+    "ix_aave_emode_category_market_cat",
+    AaveV3EModeCategory.market_id,
+    AaveV3EModeCategory.category_id,
+    unique=True,
+)
+
+
+ForeignKeyAaveEModeCategoryId = Annotated[
+    int,
+    mapped_column(ForeignKey(AaveV3EModeCategory.id), index=True),
 ]
 
 
@@ -80,6 +135,14 @@ class AaveV3User(Base):
     gho_discount: Mapped[int]
     stk_aave_balance: Mapped[BigInteger | None]
 
+    # Isolation mode settings
+    isolation_mode_collateral_asset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("aave_v3_assets.id"),
+        index=True,
+        nullable=True,
+    )
+    isolation_mode_debt: Mapped[BigInteger] = mapped_column(default=0)
+
     # Relationships
     market: Mapped["AaveV3Market"] = relationship(
         "AaveV3Market",
@@ -95,6 +158,23 @@ class AaveV3User(Base):
         back_populates="user",
         cascade="all",
     )
+    # Isolation mode relationships
+    isolation_collateral_asset: Mapped["AaveV3Asset | None"] = relationship(
+        "AaveV3Asset",
+        foreign_keys="AaveV3User.isolation_mode_collateral_asset_id",
+        back_populates="isolation_mode_users",
+    )
+    # User collateral configuration - which assets are enabled as collateral
+    collateral_configs: Mapped[list["AaveV3UserCollateralConfig"]] = relationship(
+        "AaveV3UserCollateralConfig",
+        back_populates="user",
+        cascade="all",
+    )
+
+    @property
+    def is_isolation_mode(self) -> bool:
+        """True if user is in isolation mode (has isolated collateral)."""
+        return self.isolation_mode_collateral_asset_id is not None
 
     def __repr__(self) -> str:
         return (
@@ -131,10 +211,14 @@ class AaveV3Asset(Base):
     v_token_id: Mapped[ForeignKeyTokenId]
     v_token_revision: Mapped[int]
 
+    # eMode category assignment (denormalized for query convenience)
+    e_mode_category_id: Mapped[ForeignKeyAaveEModeCategoryId | None]
+
+    # Protocol state - updated every block
     last_update_block: Mapped[int | None]
-    liquidity_index: Mapped[BigInteger]
+    liquidity_index: Mapped[BigInteger]  # Scaled by ray (1e27)
     liquidity_rate: Mapped[BigInteger]
-    borrow_index: Mapped[BigInteger]
+    borrow_index: Mapped[BigInteger]  # Scaled by ray (1e27)
     borrow_rate: Mapped[BigInteger]
 
     # Relationships
@@ -154,6 +238,16 @@ class AaveV3Asset(Base):
         "Erc20TokenTable",
         foreign_keys="AaveV3Asset.v_token_id",
     )
+    e_mode_category: Mapped["AaveV3EModeCategory | None"] = relationship(
+        "AaveV3EModeCategory",
+        back_populates="assets",
+    )
+    asset_config: Mapped["AaveV3AssetConfig"] = relationship(
+        "AaveV3AssetConfig",
+        back_populates="asset",
+        uselist=False,
+        lazy="joined",
+    )
     collateral_positions: Mapped[list["AaveV3CollateralPosition"]] = relationship(
         "AaveV3CollateralPosition",
         back_populates="asset",
@@ -164,6 +258,38 @@ class AaveV3Asset(Base):
         back_populates="asset",
         cascade="all",
     )
+    # Isolation mode users referencing this as their collateral
+    isolation_mode_users: Mapped[list["AaveV3User"]] = relationship(
+        "AaveV3User",
+        foreign_keys="AaveV3User.isolation_mode_collateral_asset_id",
+        back_populates="isolation_collateral_asset",
+    )
+    # User collateral configs for this asset
+    collateral_user_configs: Mapped[list["AaveV3UserCollateralConfig"]] = relationship(
+        "AaveV3UserCollateralConfig",
+        back_populates="asset",
+    )
+
+    # Convenience properties for liquidation calculations
+    @property
+    def liquidation_threshold(self) -> int:
+        """Liquidation threshold in basis points (e.g., 8000 = 80%)."""
+        return self.asset_config.liquidation_threshold if self.asset_config else 0
+
+    @property
+    def ltv(self) -> int:
+        """Loan-to-Value ratio in basis points (e.g., 7500 = 75%)."""
+        return self.asset_config.ltv if self.asset_config else 0
+
+    @property
+    def liquidation_bonus(self) -> int:
+        """Liquidation bonus in basis points (e.g., 500 = 5%)."""
+        return self.asset_config.liquidation_bonus if self.asset_config else 0
+
+    @property
+    def isolation_mode(self) -> bool:
+        """True if this asset can be used as isolation mode collateral."""
+        return self.asset_config.isolation_mode if self.asset_config else False
 
     def __repr__(self) -> str:
         return (
@@ -189,6 +315,58 @@ ForeignKeyAaveAssetId = Annotated[
 ]
 
 
+class AaveV3AssetConfig(Base):
+    """
+    Asset configuration for liquidation monitoring.
+
+    Stores durable configuration values that affect liquidation calculations:
+    LTV, liquidation threshold, liquidation bonus, and feature flags.
+    Updated only when governance changes asset parameters.
+    """
+
+    __tablename__ = "aave_v3_asset_configs"
+
+    id: Mapped[PrimaryKeyInt]
+    asset_id: Mapped[ForeignKeyAaveAssetId]
+
+    # Risk parameters (in basis points: 10000 = 100%)
+    ltv: Mapped[int]
+    liquidation_threshold: Mapped[int]
+    liquidation_bonus: Mapped[int]
+    e_mode_category_id: Mapped[int | None]
+
+    # Feature flags
+    borrowing_enabled: Mapped[bool]
+    stable_borrowing_enabled: Mapped[bool]
+    flash_loan_enabled: Mapped[bool]
+
+    # Isolation mode settings (relevant for liquidations)
+    isolation_mode: Mapped[bool]
+    debt_ceiling: Mapped[BigInteger | None]
+
+    # Relationships
+    asset: Mapped["AaveV3Asset"] = relationship(
+        "AaveV3Asset",
+        back_populates="asset_config",
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"asset={self.asset!r}, "
+            f"ltv={self.ltv!r}, "
+            f"liquidation_threshold={self.liquidation_threshold!r}"
+            f")"
+        )
+
+
+Index(
+    "ix_aave_asset_config_asset",
+    AaveV3AssetConfig.asset_id,
+    unique=True,
+)
+
+
 class AaveV3CollateralPosition(Base):
     __tablename__ = "aave_v3_collateral_positions"
 
@@ -196,8 +374,8 @@ class AaveV3CollateralPosition(Base):
     user_id: Mapped[ForeignKeyAaveUserId]
     asset_id: Mapped[ForeignKeyAaveAssetId]
 
-    balance: Mapped[BigInteger]
-    last_index: Mapped[BigInteger | None]
+    balance: Mapped[BigInteger]  # Scaled balance
+    last_index: Mapped[BigInteger | None]  # Last liquidity index observed
 
     # Relationships
     user: Mapped["AaveV3User"] = relationship(
@@ -236,8 +414,8 @@ class AaveV3DebtPosition(Base):
     user_id: Mapped[ForeignKeyAaveUserId]
     asset_id: Mapped[ForeignKeyAaveAssetId]
 
-    balance: Mapped[BigInteger]
-    last_index: Mapped[BigInteger | None]
+    balance: Mapped[BigInteger]  # Scaled balance
+    last_index: Mapped[BigInteger | None]  # Last borrow index observed
 
     # Relationships
     user: Mapped["AaveV3User"] = relationship(
@@ -266,6 +444,56 @@ Index(
     AaveV3DebtPosition.user_id,
     AaveV3DebtPosition.asset_id,
     unique=True,
+)
+
+
+class AaveV3UserCollateralConfig(Base):
+    """
+    Tracks which assets each user has enabled as collateral.
+
+    A user can hold aTokens for an asset but choose not to use it as collateral.
+    This table tracks that preference state, updated by
+    ReserveUsedAsCollateralEnabled/Disabled events.
+    """
+
+    __tablename__ = "aave_v3_user_collateral_configs"
+
+    id: Mapped[PrimaryKeyInt]
+    user_id: Mapped[ForeignKeyAaveUserId]
+    asset_id: Mapped[ForeignKeyAaveAssetId]
+
+    enabled: Mapped[bool]
+
+    # Relationships
+    user: Mapped["AaveV3User"] = relationship(
+        "AaveV3User",
+        back_populates="collateral_configs",
+    )
+    asset: Mapped["AaveV3Asset"] = relationship(
+        "AaveV3Asset",
+        back_populates="collateral_user_configs",
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"user={self.user!r}, "
+            f"asset={self.asset!r}, "
+            f"enabled={self.enabled!r}"
+            f")"
+        )
+
+
+Index(
+    "ix_aave_user_collateral_config_user_asset",
+    AaveV3UserCollateralConfig.user_id,
+    AaveV3UserCollateralConfig.asset_id,
+    unique=True,
+)
+
+Index(
+    "ix_aave_user_collateral_config_enabled",
+    AaveV3UserCollateralConfig.enabled,
 )
 
 
