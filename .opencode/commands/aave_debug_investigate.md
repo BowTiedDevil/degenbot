@@ -10,12 +10,6 @@ Investigate a failed Aave update.
 
 **CRITICAL**: Do not modify any code during this investigation. Wait for review before implementing any fixes.
 
-### Issue ID Assignment
-Run the helper script to gather all initial information:
-```bash
-uv run python scripts/aave_debug_helper.py --market-id <MARKET_ID>
-```
-
 This outputs:
 - **Next issue ID** (e.g., 0030) - use this for your debug report filename
 - Market information (name, chain_id)
@@ -25,9 +19,14 @@ This outputs:
 
 **Filename Format**: `{four digit ID} - {issue title}.md` (e.g., `0030 - supply_borrow_mismatch.md`)
 
-
 ## Gather Information
 Execute `uv run degenbot aave update`.
+
+### Issue ID Assignment
+Run the helper script to gather all initial information:
+```bash
+uv run python scripts/aave_debug_helper.py --market-id <MARKET_ID>
+```
 
 Repeat the update, grepping as needed to identify the failure, information related to the user/operation/transaction/token, etc, and the block where the failed verification occurred.
 
