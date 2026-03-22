@@ -265,6 +265,22 @@ class ScaledEventEnricher:
                     "calculation (ceil rounding)"
                 )
             elif (
+                # Special case: When interest exceeds repayment amount in
+                # REPAY_WITH_ATOKENS, the aToken contract emits a Mint event with
+                # amount = balance_increase - repay_amount. Use COLLATERAL_BURN
+                # calculation (ceil rounding) to match contract behavior.
+                operation.operation_type == OperationType.REPAY_WITH_ATOKENS
+                and scaled_event.event_type == ScaledTokenEventType.COLLATERAL_MINT
+                and scaled_event.balance_increase is not None
+                and scaled_event.amount < scaled_event.balance_increase
+            ):
+                # Use COLLATERAL_BURN for burn rounding (ceil)
+                calculation_event_type = ScaledTokenEventType.COLLATERAL_BURN
+                logger.debug(
+                    "ENRICHMENT: Interest exceeds repayment - using COLLATERAL_BURN "
+                    "calculation (ceil rounding)"
+                )
+            elif (
                 # Special case: When interest exceeds repayment amount, the VariableDebtToken
                 # emits a Mint event instead of a Burn event (VariableDebtToken _burnScaled).
                 # In this case, use DEBT_BURN calculation (floor rounding) instead of

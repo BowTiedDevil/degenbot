@@ -1872,8 +1872,20 @@ class TransactionOperationsParser:
 
             # Calculate the net collateral adjustment amount
             # BURN: user burns (amount + balance_increase) aTokens
-            # MINT: user receives (balance_increase - amount) aTokens when interest > burn
-            adjustment = ev.amount + ev.balance_increase
+            #   - amount = principal portion
+            #   - balance_increase = interest accrued
+            #   - total burned = amount + balance_increase
+            # MINT: user receives net interest when interest > burn amount
+            #   - balance_increase = gross interest accrued
+            #   - amount = net interest (balance_increase - burn_amount)
+            #   - burn_amount = balance_increase - amount
+            if ev.event_type == ScaledTokenEventType.COLLATERAL_MINT:
+                # For mints in REPAY_WITH_ATOKENS, the amount field is net interest
+                # The actual burn amount = balance_increase - amount
+                adjustment = ev.balance_increase - ev.amount
+            else:
+                # For burns, total adjustment = principal + interest
+                adjustment = ev.amount + ev.balance_increase
 
             # Pool revision 9+ uses ray math with flooring, allow ±2 wei tolerance
             # see TX: 0x8a4bc3d8f386c0d754d98766caf9033202a65a932f0f3ede035d95f039a56abe

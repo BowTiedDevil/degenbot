@@ -2807,8 +2807,9 @@ def _process_operation(
             # Special case: When interest exceeds withdrawal amount, the aToken contract
             # emits a Mint event instead of a Burn event (AToken rev_4.sol:2836-2839).
             # This happens when nextBalance > previousBalance after burning.
-            # Detection: amount < balance_increase indicates the withdrawal was less than interest.
-            # In this case, we should treat it as a burn (subtract from balance), not a mint.
+            # Detection: amount < balance_increase indicates the withdrawal/repayment was less
+            # than interest. In this case, we should treat it as a burn (subtract from balance),
+            # not a mint.
             if (
                 operation.operation_type == OperationType.WITHDRAW
                 and scaled_event.balance_increase is not None
@@ -2817,6 +2818,25 @@ def _process_operation(
                 logger.debug(
                     f"WITHDRAW: Treating COLLATERAL_MINT as burn - interest exceeds withdrawal "
                     f"(amount={scaled_event.amount}, "
+                    f"balance_increase={scaled_event.balance_increase})"
+                )
+                _process_collateral_burn_with_match(
+                    event=event,
+                    tx_context=tx_context,
+                    scaled_event=scaled_event,
+                    enriched_event=enriched_event,
+                )
+            elif (
+                # Special case: In REPAY_WITH_ATOKENS, when interest exceeds repayment,
+                # the Mint event's amount field represents net interest
+                # (balance_increase - repay_amount). Treat as burn.
+                operation.operation_type == OperationType.REPAY_WITH_ATOKENS
+                and scaled_event.balance_increase is not None
+                and scaled_event.amount < scaled_event.balance_increase
+            ):
+                logger.debug(
+                    f"REPAY_WITH_ATOKENS: Treating COLLATERAL_MINT as burn - "
+                    f"interest exceeds repayment (amount={scaled_event.amount}, "
                     f"balance_increase={scaled_event.balance_increase})"
                 )
                 _process_collateral_burn_with_match(
