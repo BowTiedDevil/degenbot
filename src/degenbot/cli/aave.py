@@ -870,7 +870,7 @@ def _process_user_e_mode_set_event(
 def _process_discount_token_updated_event(
     *,
     event: LogReceipt,
-    tx_context: TransactionContext,
+    gho_asset: AaveGhoToken | None,
 ) -> None:
     """
     Process a DiscountTokenUpdated event to set the GHO vToken discount token.
@@ -884,12 +884,19 @@ def _process_discount_token_updated_event(
     ```
     """
 
+    # Ignore the event if it didn't come from the GHO VariableDebtToken contract
+    if gho_asset.v_token.address != event["address"]:
+        logger.debug(
+            "Ignoring DiscountTokenUpdated event, not from canonical GHO VariableDebtToken contract"
+        )
+        return
+
     logger.debug(f"Processing discount token updated event at block {event['blockNumber']}")
 
     old_discount_token_address = decode_address(event["topics"][1])
     new_discount_token_address = decode_address(event["topics"][2])
 
-    tx_context.gho_asset.v_gho_discount_token = new_discount_token_address
+    gho_asset.v_gho_discount_token = new_discount_token_address
 
     logger.info(
         f"SET NEW DISCOUNT TOKEN: {old_discount_token_address} -> {new_discount_token_address}"
@@ -2743,7 +2750,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         elif topic == AaveV3GhoDebtTokenEvent.DISCOUNT_TOKEN_UPDATED.value:
             _process_discount_token_updated_event(
                 event=event,
-                tx_context=tx_context,
+                gho_asset=tx_context.gho_asset,
             )
         elif topic == AaveV3GhoDebtTokenEvent.DISCOUNT_RATE_STRATEGY_UPDATED.value:
             _process_discount_rate_strategy_updated_event(
@@ -4651,12 +4658,9 @@ def update_aave_market(
         for event in discount_config_events:
             topic = event["topics"][0]
             if topic == AaveV3GhoDebtTokenEvent.DISCOUNT_TOKEN_UPDATED.value:
-                # Update the discount token directly
-                new_discount_token_address = decode_address(event["topics"][2])
-                gho_asset.v_gho_discount_token = new_discount_token_address
-                logger.info(
-                    f"SET NEW DISCOUNT TOKEN: {decode_address(event['topics'][1])} -> "
-                    f"{new_discount_token_address}"
+                _process_discount_token_updated_event(
+                    event=event,
+                    gho_asset=gho_asset,
                 )
 
         # If v_gho_discount_token is still None, try to fetch it from the contract
