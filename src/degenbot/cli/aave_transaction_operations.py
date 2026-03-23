@@ -2036,15 +2036,28 @@ class TransactionOperationsParser:
                 and debt_v_token_address is not None
                 and event_token_address == debt_v_token_address
             ):
+                # In multi-liquidation scenarios (same user + asset, multiple liquidations),
+                # match burns to operations based on amount comparison.
+                # See debug/aave/0053 for detailed explanation.
                 total_burn = ev.amount + (ev.balance_increase or 0)
-                if total_burn > debt_to_cover * 10:
+
+                # Use a tolerance range to account for interest accrual
+                # Burn can be slightly less or more than debtToCover due to:
+                # - Interest accrual between operations
+                # - Rounding in amount calculations
+                # Allow 50%-150% range for matching
+                min_expected = int(debt_to_cover * 0.5)
+                max_expected = int(debt_to_cover * 1.5)
+
+                if not (min_expected <= total_burn <= max_expected):
                     log_index = ev.event["logIndex"]
                     logger.debug(
                         f"_collect_debt_burns: Skipping burn at "
                         f"logIndex {log_index} (total_burn={total_burn}) - "
-                        f"more than 10x debtToCover ({debt_to_cover}), "
+                        f"outside expected range [{min_expected}, {max_expected}] "
+                        f"for debtToCover={debt_to_cover}, "
                         f"likely belongs to different liquidation. "
-                        f"See debug/aave/0050, debug/aave/0051"
+                        f"See debug/aave/0053"
                     )
                     continue
 
