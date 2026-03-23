@@ -908,7 +908,7 @@ def _process_discount_token_updated_event(
 def _process_discount_rate_strategy_updated_event(
     *,
     event: LogReceipt,
-    tx_context: TransactionContext,
+    gho_asset: AaveGhoToken | None,
 ) -> None:
     """
     Process a DiscountRateStrategyUpdated event to set the GHO vToken attribute
@@ -922,12 +922,19 @@ def _process_discount_rate_strategy_updated_event(
     ```
     """
 
+    # Ignore the event if it didn't come from the GHO VariableDebtToken contract
+    if gho_asset.v_token.address != event["address"]:
+        logger.debug(
+            "Ignoring DiscountTokenUpdated event, not from canonical GHO VariableDebtToken contract"
+        )
+        return
+
     logger.debug(f"Processing discount rate strategy updated event at block {event['blockNumber']}")
 
     old_discount_rate_strategy_address = decode_address(event["topics"][1])
     new_discount_rate_strategy_address = decode_address(event["topics"][2])
 
-    tx_context.gho_asset.v_gho_discount_rate_strategy = new_discount_rate_strategy_address
+    gho_asset.v_gho_discount_rate_strategy = new_discount_rate_strategy_address
 
     logger.info(
         f"SET NEW DISCOUNT RATE STRATEGY: {old_discount_rate_strategy_address} -> "
@@ -2757,7 +2764,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         elif topic == AaveV3GhoDebtTokenEvent.DISCOUNT_RATE_STRATEGY_UPDATED.value:
             _process_discount_rate_strategy_updated_event(
                 event=event,
-                tx_context=tx_context,
+                gho_asset=tx_context.gho_asset,
             )
 
 
