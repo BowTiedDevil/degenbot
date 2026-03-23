@@ -1995,18 +1995,18 @@ class TransactionOperationsParser:
         *,
         user: ChecksumAddress,
         debt_v_token_address: ChecksumAddress | None,
-        debt_to_cover: int,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         liquidation_analysis: dict[tuple[ChecksumAddress, ChecksumAddress], int],
+        liquidation_position: int = 0,
     ) -> list[ScaledTokenEvent]:
         """
-        Collect ALL debt burns for the liquidated user.
+        Collect debt burns for the liquidated user.
 
-        Uses semantic matching by user address. Accepts both GHO_DEBT_BURN and
-        DEBT_BURN event types unconditionally since GHO liquidations may clear
-        both GHO and non-GHO debt positions.
+        For multi-liquidation scenarios, uses sequential matching by execution order.
+        Burns are emitted before LiquidationCall events, so burn[i] belongs to liquidation[i].
 
+        See debug/aave/0054 for sequential matching approach.
         See debug/aave/0051 for original refactoring.
         See debug/aave/0052 for removal of is_gho-based filtering.
         """
@@ -2016,55 +2016,29 @@ class TransactionOperationsParser:
         if debt_v_token_address is not None:
             is_multi_liquidation = liquidation_analysis.get((user, debt_v_token_address), 0) > 1
 
-        for ev in scaled_events:
-            if ev.event["logIndex"] in assigned_indices:
-                continue
-            if ev.user_address != user:
-                continue
+        candidate_burns = sorted(
+            [
+                ev
+                for ev in scaled_events
+                if ev.event["logIndex"] not in assigned_indices
+                and ev.user_address == user
+                and ev.event_type
+                in {ScaledTokenEventType.DEBT_BURN, ScaledTokenEventType.GHO_DEBT_BURN}
+                and get_checksum_address(ev.event["address"]) == debt_v_token_address
+            ],
+            key=lambda e: e.event["logIndex"],
+        )
 
-            if ev.event_type not in {
-                ScaledTokenEventType.DEBT_BURN,
-                ScaledTokenEventType.GHO_DEBT_BURN,
-            }:
-                continue
-
-            event_token_address = get_checksum_address(ev.event["address"])
-
-            if (
-                is_multi_liquidation
-                and debt_to_cover > 0
-                and debt_v_token_address is not None
-                and event_token_address == debt_v_token_address
-            ):
-                # In multi-liquidation scenarios (same user + asset, multiple liquidations),
-                # match burns to operations based on amount comparison.
-                # See debug/aave/0053 for detailed explanation.
-                total_burn = ev.amount + (ev.balance_increase or 0)
-
-                # Use a tolerance range to account for interest accrual
-                # Burn can be slightly less or more than debtToCover due to:
-                # - Interest accrual between operations
-                # - Rounding in amount calculations
-                # Allow 50%-150% range for matching
-                min_expected = int(debt_to_cover * 0.5)
-                max_expected = int(debt_to_cover * 1.5)
-
-                if not (min_expected <= total_burn <= max_expected):
-                    log_index = ev.event["logIndex"]
-                    logger.debug(
-                        f"_collect_debt_burns: Skipping burn at "
-                        f"logIndex {log_index} (total_burn={total_burn}) - "
-                        f"outside expected range [{min_expected}, {max_expected}] "
-                        f"for debtToCover={debt_to_cover}, "
-                        f"likely belongs to different liquidation. "
-                        f"See debug/aave/0053"
-                    )
-                    continue
-
-            burns.append(ev)
-            assigned_indices.add(ev.event["logIndex"])
-            if ev.index is not None and ev.index > 0:
-                assigned_indices.add(ev.index)
+        if is_multi_liquidation and len(candidate_burns) > 1:
+            if liquidation_position < len(candidate_burns):
+                burns.append(candidate_burns[liquidation_position])
+                assigned_indices.add(candidate_burns[liquidation_position].event["logIndex"])
+        else:
+            for ev in candidate_burns:
+                burns.append(ev)
+                assigned_indices.add(ev.event["logIndex"])
+                if ev.index is not None and ev.index > 0:
+                    assigned_indices.add(ev.index)
 
         return burns
 
@@ -2145,10 +2119,6 @@ class TransactionOperationsParser:
         collateral_asset = decode_address(liquidation_event["topics"][1])
         debt_asset = decode_address(liquidation_event["topics"][2])
         user = decode_address(liquidation_event["topics"][3])
-        debt_to_cover, _, _, _ = eth_abi.abi.decode(
-            types=["uint256", "uint256", "address", "bool"],
-            data=liquidation_event["data"],
-        )
 
         is_gho = debt_asset == self.gho_token_address
 
@@ -2163,16 +2133,30 @@ class TransactionOperationsParser:
         # See debug/aave/0051 for architectural details
         liquidation_analysis = self._analyze_liquidation_scenarios(all_events)
 
-        # Collect ALL debt burns for the liquidated user
-        # This consolidates primary and secondary burns into a single semantic matching approach
-        # See debug/aave/0051 for architectural change details
+        # Calculate this liquidation's position among all liquidations for this (user, debt_asset)
+        # Sequential matching: burn[i] belongs to liquidation[i]
+        # See debug/aave/0054 for detailed explanation
+        liquidation_position = 0
+        for ev in all_events:
+            if ev["topics"][0] != AaveV3PoolEvent.LIQUIDATION_CALL.value:
+                continue
+            if decode_address(ev["topics"][3]) != user:
+                continue
+            if decode_address(ev["topics"][2]) != debt_asset:
+                continue
+            if ev["logIndex"] < liquidation_event["logIndex"]:
+                liquidation_position += 1
+
+        # Collect debt burns for the liquidated user
+        # Uses sequential matching for multi-liquidation scenarios
+        # See debug/aave/0054 for sequential matching approach
         debt_burns = self._collect_debt_burns(
             user=user,
             debt_v_token_address=debt_v_token_address,
-            debt_to_cover=debt_to_cover,
             scaled_events=scaled_events,
             assigned_indices=assigned_indices,
             liquidation_analysis=liquidation_analysis,
+            liquidation_position=liquidation_position,
         )
 
         # Collect collateral events (burns and transfers)
