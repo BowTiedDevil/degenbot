@@ -4,6 +4,7 @@ Provides strict validation with detailed plain-text error reporting.
 """
 
 import operator
+from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
@@ -1960,93 +1961,67 @@ class TransactionOperationsParser:
 
         return None
 
-    @staticmethod
-    def _collect_primary_debt_burns(
-        *,
-        user: ChecksumAddress,
-        debt_v_token_address: ChecksumAddress | None,
-        debt_to_cover: int,  # noqa: ARG004
-        pool_revision: int,  # noqa: ARG004
-        scaled_events: list[ScaledTokenEvent],
-        assigned_indices: set[int],
-        is_gho: bool,
-    ) -> list[ScaledTokenEvent]:
-        """
-        Collect primary debt burns matching the liquidation's debt asset.
-
-        Uses semantic matching: a debt burn for the same user and debt asset
-        in this transaction belongs to this liquidation, regardless of amounts
-        or log index ordering. Amount validation happens during processing.
-
-        Note: The debt_to_cover parameter from LiquidationCall events may not
-        match the actual burn amount. In Aave V3, when debtToCover >= debtBalance,
-        the entire debt is burned, which can be significantly larger than the
-        debtToCover value in the event (which may represent fees or partial amounts).
-        See debug/aave/0046 for details.
-        """
-
-        primary_burns: list[ScaledTokenEvent] = []
-
-        for ev in scaled_events:
-            if ev.event["logIndex"] in assigned_indices:
-                continue
-            if ev.user_address != user:
-                continue
-            if is_gho and ev.event_type != ScaledTokenEventType.GHO_DEBT_BURN:
-                continue
-            if not is_gho and ev.event_type != ScaledTokenEventType.DEBT_BURN:
-                continue
-
-            event_token_address = get_checksum_address(ev.event["address"])
-            if debt_v_token_address is None or event_token_address != debt_v_token_address:
-                continue
-
-            # Semantic matching: the presence of a debt burn for this user and
-            # asset in this transaction indicates it belongs to this liquidation.
-            # We trust the smart contract event ordering/logic over amount comparisons.
-            # The debt_to_cover parameter may not match the actual burn amount
-            # when the entire debt is being liquidated. See debug/aave/0046.
-            primary_burns.append(ev)
-            assigned_indices.add(ev.event["logIndex"])
-            if ev.index is not None and ev.index > 0:
-                assigned_indices.add(ev.index)
-            break  # Only one primary burn expected per (user, asset) pair
-
-        return primary_burns
-
-    def _collect_secondary_debt_burns(
+    def _analyze_liquidation_scenarios(
         self,
+        all_events: list[LogReceipt],
+    ) -> dict[tuple[ChecksumAddress, ChecksumAddress], int]:
+        """
+        Pre-analyze liquidations to detect multi-liquidation scenarios.
+
+        Returns a mapping of (user, debt_v_token_address) -> liquidation_count.
+        This allows proper disambiguation when the same user is liquidated
+        multiple times with the same debt asset in one transaction.
+
+        See debug/aave/0051 for architectural details.
+        """
+        liquidation_counts: Counter[tuple[ChecksumAddress, ChecksumAddress]] = Counter()
+
+        for ev in all_events:
+            if ev["topics"][0] != AaveV3PoolEvent.LIQUIDATION_CALL.value:
+                continue
+
+            user = decode_address(ev["topics"][3])
+            debt_asset = decode_address(ev["topics"][2])  # Underlying asset address
+
+            # Convert underlying to vToken address for consistent lookups
+            v_token_address = self._get_v_token_for_asset(debt_asset)
+            if v_token_address is not None:
+                liquidation_counts[user, v_token_address] += 1
+
+        return dict(liquidation_counts)
+
+    @staticmethod
+    def _collect_debt_burns(
         *,
         user: ChecksumAddress,
         debt_v_token_address: ChecksumAddress | None,
+        debt_to_cover: int,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
-        user_liquidation_count: int,
+        liquidation_analysis: dict[tuple[ChecksumAddress, ChecksumAddress], int],
     ) -> list[ScaledTokenEvent]:
         """
-        Collect secondary debt burns for other assets held by the user.
+        Collect ALL debt burns for the liquidated user.
 
-        Secondary burns represent bad debt write-offs where a single liquidation
-        clears multiple debt positions. When multiple liquidations exist for the
-        same user, each liquidation handles only its primary debt - secondary
-        burns are skipped to avoid misclassification.
+        Uses semantic matching by user address. Accepts both GHO_DEBT_BURN and
+        DEBT_BURN event types unconditionally since GHO liquidations may clear
+        both GHO and non-GHO debt positions.
 
-        Note: Secondary debt burns can be any debt type (GHO or non-GHO), not just
-        the same type as the primary debt being liquidated.
+        See debug/aave/0051 for original refactoring.
+        See debug/aave/0052 for removal of is_gho-based filtering.
         """
-        # Skip secondary burns when multiple liquidations exist
-        # Each liquidation handles its own primary debt
-        if user_liquidation_count > 1:
-            return []
+        burns: list[ScaledTokenEvent] = []
 
-        secondary_burns: list[ScaledTokenEvent] = []
+        is_multi_liquidation = False
+        if debt_v_token_address is not None:
+            is_multi_liquidation = liquidation_analysis.get((user, debt_v_token_address), 0) > 1
 
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
                 continue
             if ev.user_address != user:
                 continue
-            # Collect ALL debt burn types (both GHO and non-GHO) as secondary burns
+
             if ev.event_type not in {
                 ScaledTokenEventType.DEBT_BURN,
                 ScaledTokenEventType.GHO_DEBT_BURN,
@@ -2054,15 +2029,31 @@ class TransactionOperationsParser:
                 continue
 
             event_token_address = get_checksum_address(ev.event["address"])
-            if debt_v_token_address is not None and event_token_address == debt_v_token_address:
-                continue  # Skip primary debt burns
 
-            # Validate this is a real debt token
-            asset = self._get_asset_by_v_token(event_token_address)
-            if asset is not None:
-                secondary_burns.append(ev)
+            if (
+                is_multi_liquidation
+                and debt_to_cover > 0
+                and debt_v_token_address is not None
+                and event_token_address == debt_v_token_address
+            ):
+                total_burn = ev.amount + (ev.balance_increase or 0)
+                if total_burn > debt_to_cover * 10:
+                    log_index = ev.event["logIndex"]
+                    logger.debug(
+                        f"_collect_debt_burns: Skipping burn at "
+                        f"logIndex {log_index} (total_burn={total_burn}) - "
+                        f"more than 10x debtToCover ({debt_to_cover}), "
+                        f"likely belongs to different liquidation. "
+                        f"See debug/aave/0050, debug/aave/0051"
+                    )
+                    continue
 
-        return secondary_burns
+            burns.append(ev)
+            assigned_indices.add(ev.event["logIndex"])
+            if ev.index is not None and ev.index > 0:
+                assigned_indices.add(ev.index)
+
+        return burns
 
     @staticmethod
     def _collect_collateral_events(
@@ -2154,35 +2145,22 @@ class TransactionOperationsParser:
         collateral_a_token_address = self._get_a_token_for_asset(collateral_asset)
         debt_v_token_address = self._get_v_token_for_asset(debt_asset)
 
-        # Count how many liquidations exist for this user in this transaction
-        # Secondary debt burns should only be collected when there's a single
-        # liquidation - multiple liquidations each handle their own primary debt
-        user_liquidation_count = sum(
-            1
-            for ev in all_events
-            if ev["topics"][0] == AaveV3PoolEvent.LIQUIDATION_CALL.value
-            and decode_address(ev["topics"][3]) == user
-        )
+        # Pre-analyze liquidations to detect multi-liquidation scenarios
+        # This allows proper disambiguation without the primary/secondary split
+        # See debug/aave/0051 for architectural details
+        liquidation_analysis = self._analyze_liquidation_scenarios(all_events)
 
         # Collect ALL debt burns for the liquidated user
-        # A liquidation may burn multiple debt positions (not just the primary debt asset)
-        primary_burns = self._collect_primary_debt_burns(
+        # This consolidates primary and secondary burns into a single semantic matching approach
+        # See debug/aave/0051 for architectural change details
+        debt_burns = self._collect_debt_burns(
             user=user,
             debt_v_token_address=debt_v_token_address,
             debt_to_cover=debt_to_cover,
-            pool_revision=pool_revision,
             scaled_events=scaled_events,
             assigned_indices=assigned_indices,
-            is_gho=is_gho,
+            liquidation_analysis=liquidation_analysis,
         )
-        secondary_burns = self._collect_secondary_debt_burns(
-            user=user,
-            debt_v_token_address=debt_v_token_address,
-            scaled_events=scaled_events,
-            assigned_indices=assigned_indices,
-            user_liquidation_count=user_liquidation_count,
-        )
-        debt_burns = primary_burns + secondary_burns
 
         # Collect collateral events (burns and transfers)
         collateral_burn, collateral_transfers = self._collect_collateral_events(
