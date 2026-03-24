@@ -4661,6 +4661,9 @@ def update_aave_market(
 
     gho_asset = _get_gho_asset(session=session, market=market)
 
+    # ---
+    # TODO: check and refactor this whole block, may not be necessary
+    # ---
     # Process discount config events BEFORE fetching stkAAVE events
     # This ensures gho_asset.v_gho_discount_token is set correctly
     if gho_asset is not None:
