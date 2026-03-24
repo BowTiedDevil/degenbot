@@ -2289,8 +2289,9 @@ def _verify_scaled_token_positions(
             block_identifier=block_number,
         )
 
+        position_type = "collateral" if position_table is AaveV3CollateralPosition else "debt"
         assert actual_scaled_balance == position.balance, (
-            f"Balance verification failure for {position.asset}. "
+            f"{position_type.capitalize()} balance verification failure for {position.asset}. "
             f"User {position.user} scaled balance ({position.balance}) does not match contract "
             f"balance ({actual_scaled_balance}) at block {block_number}"
         )
@@ -2307,7 +2308,7 @@ def _verify_scaled_token_positions(
         )
 
         assert actual_last_index == position.last_index, (
-            f"Index verification failure for {position.asset}. "
+            f"{position_type.capitalize()} index verification failure for {position.asset}. "
             f"User {position.user} last_index ({position.last_index}) does not match contract "
             f"last_index ({actual_last_index}) at block {block_number}"
         )
