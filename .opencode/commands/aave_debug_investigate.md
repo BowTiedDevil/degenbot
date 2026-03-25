@@ -20,7 +20,7 @@ This outputs:
 **Filename Format**: `{four digit ID} - {issue title}.md` (e.g., `0030 - supply_borrow_mismatch.md`)
 
 ## Gather Information
-Execute `uv run degenbot aave update | tail -50`.
+Execute `uv run degenbot aave update | tail -25`.
 
 ### Issue ID Assignment
 Run the helper script to gather all initial information:
@@ -72,7 +72,7 @@ Consider alternatives to the proposed fix and evaluate them for architectural cl
 
 ## Verify the Fix
 
-Test the proposed fix by running `uv run degenbot aave update` and confirming the verification passes
+Test the proposed fix by running `uv run degenbot aave update | tail -25` and confirming the verification passes
 
 Verify the fix does not introduce regressions in previously working blocks
 
