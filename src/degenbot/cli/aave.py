@@ -41,7 +41,6 @@ from degenbot.aave.processors import (
 )
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
-from degenbot.cli.aave_event_matching import OperationAwareEventMatcher
 from degenbot.cli.aave_transaction_operations import (
     Operation,
     OperationType,
@@ -2779,15 +2778,13 @@ def _process_operation(
         )
         return
 
-    # Create enricher and matcher for this operation
+    # Create enricher for this operation
     enricher = ScaledEventEnricher(
         pool_revision=tx_context.pool_revision,
         token_revisions={},
         session=tx_context.session,
     )
-    matcher = OperationAwareEventMatcher(operation, enricher)
 
-    # Log liquidation operations for debugging
     # Process each scaled token event in the operation
     # Sort by log index to ensure events are processed in chronological order
     sorted_scaled_events = sorted(
@@ -2797,11 +2794,8 @@ def _process_operation(
     for scaled_event in sorted_scaled_events:
         event = scaled_event.event
 
-        # Find match within operation context
-        match_result = matcher.find_match(scaled_event)
-
-        # Route to appropriate handler based on event type
-        enriched_event = match_result.enriched_event
+        # Enrich the scaled event with calculated amounts
+        enriched_event = enricher.enrich(scaled_event, operation)
         if scaled_event.event_type == ScaledTokenEventType.COLLATERAL_MINT:
             # Special case: When interest exceeds withdrawal amount, the aToken contract
             # emits a Mint event instead of a Burn event (AToken rev_4.sol:2836-2839).
