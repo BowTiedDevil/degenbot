@@ -47,7 +47,6 @@ class OperationType(Enum):
     # Composite operations
     REPAY_WITH_ATOKENS = auto()  # REPAY -> DEBT_BURN + COLLATERAL_BURN
     LIQUIDATION = auto()  # LIQUIDATION_CALL -> DEBT_BURN + COLLATERAL_BURN
-    SELF_LIQUIDATION = auto()  # LIQUIDATION_CALL -> DEBT_MINT + COLLATERAL_MINT
 
     # GHO-specific operations
     GHO_BORROW = auto()  # BORROW -> GHO_DEBT_MINT
@@ -60,9 +59,6 @@ class OperationType(Enum):
     BALANCE_TRANSFER = auto()  # Standalone BalanceTransfer
     DEFICIT_COVERAGE = auto()  # BalanceTransfer + Burn pair (Umbrella deficit coverage)
     MINT_TO_TREASURY = auto()  # Pool minting aTokens to treasury (no SUPPLY event)
-    IMPLICIT_BORROW = (
-        auto()
-    )  # DEBT_MINT without BORROW event (e.g., flash loans, internal operations)
     STKAAVE_TRANSFER = auto()  # stkAAVE (GHO Discount Token) transfer
     UNKNOWN = auto()
 
@@ -2603,31 +2599,14 @@ class TransactionOperationsParser:
                 # - balance_increase > amount: net interest after repayment (in _burnScaled)
                 # - balance_increase == amount: pure interest accrual (in _accrueDebtOnAction)
                 is_interest_accrual = ev.balance_increase >= ev.amount
-                # Pure borrow: balance_increase == 0 (no interest accrued)
-                is_pure_borrow = ev.balance_increase == 0
 
                 if not is_interest_accrual:
-                    # This is either a pure borrow or borrow with interest
-                    # Skip during liquidation/flash loans as those are handled separately
+                    # Skip debt mints that are not interest accrual during
+                    # liquidation/flash loans as those are handled separately
                     if has_liquidation or has_borrow:
                         continue
-                    # For pure borrows (balance_increase == 0), create IMPLICIT_BORROW
-                    if is_pure_borrow:
-                        operations.append(
-                            Operation(
-                                operation_id=operation_id,
-                                operation_type=OperationType.IMPLICIT_BORROW,
-                                pool_revision=pool_revision,
-                                pool_event=None,
-                                scaled_token_events=[ev],
-                                transfer_events=[],
-                                balance_transfer_events=[],
-                            )
-                        )
-                        operation_id += 1
-                        continue
-                    # Borrow with interest (0 < balance_increase < amount) falls through
-                    # to be processed as INTEREST_ACCRUAL
+                    # Non-interest debt mints with no pool event are ignored
+                    continue
                 # Interest accrual falls through to be processed below
 
             # Interest accrual: process all unassigned mint events
