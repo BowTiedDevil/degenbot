@@ -492,15 +492,34 @@ def deactivate_mainnet_aave_v3(
     ),
 )
 @click.option(
-    "--verify",
-    "verify",
+    "--verify-block",
+    "verify_block",
     is_flag=True,
     default=True,
     show_default=True,
-    help=(
-        "Verify collateral and debt position balances, staked AAVE balances, and GHO discount "
-        "amounts at block boundaries."
-    ),
+    help="Verify positions at each block boundary.",
+    envvar="DEGENBOT_VERIFY_BLOCK",
+    show_envvar=True,
+)
+@click.option(
+    "--verify-chunk",
+    "verify_chunk",
+    is_flag=True,
+    default=True,
+    show_default=True,
+    help="Verify positions at chunk boundaries.",
+    envvar="DEGENBOT_VERIFY_CHUNK",
+    show_envvar=True,
+)
+@click.option(
+    "--verify-all",
+    "verify_all",
+    is_flag=True,
+    default=True,
+    show_default=True,
+    help="Verify all positions at full verification intervals (every 500k blocks).",
+    envvar="DEGENBOT_VERIFY_ALL",
+    show_envvar=True,
 )
 @click.option(
     "--one-chunk",
@@ -526,7 +545,9 @@ def aave_update(
     *,
     chunk_size: int,
     to_block: str,
-    verify: bool,
+    verify_block: bool,
+    verify_chunk: bool,
+    verify_all: bool,
     stop_after_one_chunk: bool,
     show_progress: bool,
 ) -> None:
@@ -539,7 +560,9 @@ def aave_update(
     Args:
         chunk_size: Maximum number of blocks to process before committing changes.
         to_block: Target block identifier (e.g., 'latest', 'latest:-64', 'finalized:128').
-        verify: If True, verify position balances at every block boundary.
+        verify_block: If True, verify positions at each block boundary.
+        verify_chunk: If True, verify positions at chunk boundaries.
+        verify_all: If True, verify all positions at full verification intervals.
         stop_after_one_chunk: If True, stop after processing the first chunk.
         show_progress: Toggle display of progress bars.
     """
@@ -672,7 +695,8 @@ def aave_update(
                                 end_block=working_end_block,
                                 market=market,
                                 session=session,
-                                verify=verify,
+                                verify_block=verify_block,
+                                verify_chunk=verify_chunk,
                                 show_progress=show_progress,
                             )
                         except Exception:  # noqa: BLE001
@@ -681,9 +705,7 @@ def aave_update(
 
                         market.last_update_block = working_end_block
 
-                        # Perform full verification when the chunk spans a verification interval
-                        # or ends exactly on a boundary
-                        if verify and (
+                        if verify_all and (
                             working_end_block // FULL_VERIFICATION_INTERVAL
                             != working_start_block // FULL_VERIFICATION_INTERVAL
                             or working_end_block % FULL_VERIFICATION_INTERVAL == 0
@@ -1992,6 +2014,61 @@ def _cleanup_zero_balance_positions(
     )
 
 
+def _verify_positions_for_users(
+    *,
+    w3: Web3,
+    market: AaveV3Market,
+    session: Session,
+    gho_asset: AaveGhoToken,
+    block_number: int,
+    show_progress: bool,
+    user_addresses: set[ChecksumAddress] | None = None,
+) -> None:
+    """
+    Verify positions for specified users or all users.
+
+    If user_addresses is provided, only verifies those specific users.
+    Otherwise, verifies all users in the market.
+    """
+
+    _verify_scaled_token_positions(
+        w3=w3,
+        market=market,
+        session=session,
+        position_table=AaveV3CollateralPosition,
+        block_number=block_number,
+        show_progress=show_progress,
+        user_addresses=user_addresses,
+    )
+    _verify_scaled_token_positions(
+        w3=w3,
+        market=market,
+        session=session,
+        position_table=AaveV3DebtPosition,
+        block_number=block_number,
+        show_progress=show_progress,
+        user_addresses=user_addresses,
+    )
+    _verify_stk_aave_balances(
+        w3=w3,
+        session=session,
+        market=market,
+        gho_asset=gho_asset,
+        block_number=block_number,
+        show_progress=show_progress,
+        user_addresses=user_addresses,
+    )
+    _verify_gho_discount_amounts(
+        w3=w3,
+        session=session,
+        market=market,
+        gho_asset=gho_asset,
+        block_number=block_number,
+        show_progress=show_progress,
+        user_addresses=user_addresses,
+    )
+
+
 def _verify_all_positions(
     *,
     w3: Web3,
@@ -2017,47 +2094,16 @@ def _verify_all_positions(
 
     logger.info(f"Performing full verification of all positions at block {block_number:,}")
 
-    # Verify all collateral positions
-    _verify_scaled_token_positions(
-        w3=w3,
-        market=market,
-        session=session,
-        position_table=AaveV3CollateralPosition,
-        block_number=block_number,
-        show_progress=show_progress,
-    )
-
-    # Verify all debt positions
-    _verify_scaled_token_positions(
-        w3=w3,
-        market=market,
-        session=session,
-        position_table=AaveV3DebtPosition,
-        block_number=block_number,
-        show_progress=show_progress,
-    )
-
-    # Get GHO asset for stkAAVE and discount verification
     gho_asset = _get_gho_asset(session=session, market=market)
 
-    # Verify all stkAAVE balances
-    _verify_stk_aave_balances(
+    _verify_positions_for_users(
         w3=w3,
-        session=session,
         market=market,
+        session=session,
         gho_asset=gho_asset,
         block_number=block_number,
         show_progress=show_progress,
-    )
-
-    # Verify all GHO discount amounts
-    _verify_gho_discount_amounts(
-        w3=w3,
-        session=session,
-        market=market,
-        gho_asset=gho_asset,
-        block_number=block_number,
-        show_progress=show_progress,
+        user_addresses=None,
     )
 
 
@@ -4329,7 +4375,8 @@ def update_aave_market(
     end_block: int,
     market: AaveV3Market,
     session: Session,
-    verify: bool,
+    verify_block: bool,
+    verify_chunk: bool,
     show_progress: bool,
 ) -> None:
     """
@@ -4562,8 +4609,11 @@ def update_aave_market(
         ),
     )
 
-    # Collect all users modified during this chunk for verification
-    users_modified: set[ChecksumAddress] = set()
+    # Collect users modified for verification
+    users_modified_this_block: set[ChecksumAddress] = set()
+    users_modified_this_chunk: set[ChecksumAddress] = set()
+
+    last_verified_block: int | None = None
 
     # Process transactions chronologically
     for tx_context in tqdm.tqdm(
@@ -4572,49 +4622,62 @@ def update_aave_market(
         leave=False,
         disable=not show_progress,
     ):
+        if last_verified_block is None:
+            last_verified_block = tx_context.block_number
+
+        # Update last_block when transitioning to a new block
+        if last_verified_block < tx_context.block_number:
+            # Verify previous block before moving to new block
+            if verify_block and users_modified_this_block:
+                logger.debug(
+                    f"Verifying {len(users_modified_this_block)} users at "
+                    f"block {last_verified_block}"
+                )
+                _verify_positions_for_users(
+                    w3=w3,
+                    market=market,
+                    session=session,
+                    gho_asset=gho_asset,
+                    block_number=last_verified_block,
+                    show_progress=show_progress,
+                    user_addresses=users_modified_this_block,
+                )
+                users_modified_this_block.clear()
+
+            last_verified_block = tx_context.block_number
+
+        # Track users modified in this transaction
+        users_in_transaction = _extract_user_addresses_from_transaction(events=tx_context.events)
+        users_modified_this_block.update(users_in_transaction)
+        users_modified_this_chunk.update(users_in_transaction)
+
         # Process entire transaction atomically with full context
         _process_transaction(tx_context=tx_context)
 
-        # Track users modified in this transaction
-        users_modified.update(tx_context.user_cache.keys())
+    if verify_block and users_modified_this_block:
+        assert last_verified_block is not None
+        logger.info(
+            f"Verifying {len(users_modified_this_block)} users at block {last_verified_block}"
+        )
+        _verify_positions_for_users(
+            w3=w3,
+            market=market,
+            session=session,
+            gho_asset=gho_asset,
+            block_number=last_verified_block,
+            show_progress=show_progress,
+            user_addresses=users_modified_this_block,
+        )
 
-    # Perform verification at chunk boundary for all modified users
-    if verify and users_modified:
-        _verify_scaled_token_positions(
+    if verify_chunk and users_modified_this_chunk:
+        _verify_positions_for_users(
             w3=w3,
             market=market,
             session=session,
-            position_table=AaveV3CollateralPosition,
-            block_number=end_block,
-            show_progress=show_progress,
-            user_addresses=users_modified,
-        )
-        _verify_scaled_token_positions(
-            w3=w3,
-            market=market,
-            session=session,
-            position_table=AaveV3DebtPosition,
-            block_number=end_block,
-            show_progress=show_progress,
-            user_addresses=users_modified,
-        )
-        _verify_stk_aave_balances(
-            w3=w3,
-            session=session,
-            market=market,
             gho_asset=gho_asset,
             block_number=end_block,
             show_progress=show_progress,
-            user_addresses=users_modified,
-        )
-        _verify_gho_discount_amounts(
-            w3=w3,
-            session=session,
-            market=market,
-            gho_asset=gho_asset,
-            block_number=end_block,
-            show_progress=show_progress,
-            user_addresses=users_modified,
+            user_addresses=users_modified_this_chunk,
         )
 
     logger.info(f"{market} successfully updated to block {end_block:,}")
