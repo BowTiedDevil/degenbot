@@ -495,7 +495,7 @@ def deactivate_mainnet_aave_v3(
     "--verify-block",
     "verify_block",
     is_flag=True,
-    default=True,
+    default=False,
     show_default=True,
     help="Verify positions at each block boundary.",
     envvar="DEGENBOT_VERIFY_BLOCK",
