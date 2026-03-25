@@ -1225,8 +1225,7 @@ def _process_scaled_token_upgrade_event(
         )
         aave_collateral_asset.a_token_revision = atoken_revision
         logger.info(
-            f"Upgraded aToken revision for {aave_collateral_asset.a_token.address} "
-            f"to {atoken_revision}"
+            f"Upgraded aToken revision for {aave_collateral_asset.a_token} to {atoken_revision}"
         )
     elif (
         aave_debt_asset := _get_asset_by_token_type(
@@ -1246,9 +1245,7 @@ def _process_scaled_token_upgrade_event(
             return_types=["uint256"],
         )
         aave_debt_asset.v_token_revision = vtoken_revision
-        logger.info(
-            f"Upgraded vToken revision for {aave_debt_asset.v_token.address} to {vtoken_revision}"
-        )
+        logger.info(f"Upgraded vToken revision for {aave_debt_asset.v_token} to {vtoken_revision}")
 
         # Handle GHO discount deprecation on upgrade to revision 4+
         gho_asset = _get_gho_asset(tx_context.session, tx_context.market)
