@@ -846,7 +846,8 @@ def _process_asset_initialization_event(
         borrow_rate=0,
     )
     session.add(asset)
-    logger.info(f"Added new Aave V3 asset: {asset!r}")
+    session.flush([asset])
+    logger.info(f"Added new Aave V3 asset: {asset.underlying_token!r}")
 
     # If this is the GHO asset, update the GHO token entry with the vToken reference
     gho_asset = _get_gho_asset(session, market)
