@@ -833,21 +833,20 @@ def _process_asset_initialization_event(
         return_types=["uint256"],
     )
 
-    session.add(
-        AaveV3Asset(
-            market_id=market.id,
-            underlying_asset_id=erc20_token_in_db.id,
-            a_token_id=a_token.id,
-            a_token_revision=atoken_revision,
-            v_token_id=v_token.id,
-            v_token_revision=vtoken_revision,
-            liquidity_index=0,
-            liquidity_rate=0,
-            borrow_index=0,
-            borrow_rate=0,
-        )
+    asset = AaveV3Asset(
+        market_id=market.id,
+        underlying_asset_id=erc20_token_in_db.id,
+        a_token_id=a_token.id,
+        a_token_revision=atoken_revision,
+        v_token_id=v_token.id,
+        v_token_revision=vtoken_revision,
+        liquidity_index=0,
+        liquidity_rate=0,
+        borrow_index=0,
+        borrow_rate=0,
     )
-    logger.info(f"Added new Aave V3 asset: {asset_address}")
+    session.add(asset)
+    logger.info(f"Added new Aave V3 asset: {asset!r}")
 
     # If this is the GHO asset, update the GHO token entry with the vToken reference
     gho_asset = _get_gho_asset(session, market)
