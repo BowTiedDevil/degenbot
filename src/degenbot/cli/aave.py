@@ -1296,103 +1296,6 @@ def _is_discount_supported(
     return revision is not None and revision < GHO_DISCOUNT_DEPRECATION_REVISION
 
 
-def _prefetch_users_for_transaction(
-    tx_context: TransactionContext,
-    user_addresses: set[ChecksumAddress],
-) -> dict[ChecksumAddress, AaveV3User]:
-    """
-    Batch prefetch all existing users for a transaction.
-
-    This reduces N+1 queries by loading all users in a single query upfront.
-    Returns a dictionary mapping user addresses to their AaveV3User objects.
-
-    Args:
-        tx_context: The transaction context containing session and market
-        user_addresses: Set of user addresses to prefetch
-
-    Returns:
-        Dictionary mapping address -> AaveV3User for existing users
-    """
-
-    if not user_addresses:
-        return {}
-
-    users = tx_context.session.scalars(
-        select(AaveV3User).where(
-            AaveV3User.address.in_(list(user_addresses)),
-            AaveV3User.market_id == tx_context.market.id,
-        )
-    ).all()
-
-    return {user.address: user for user in users}
-
-
-def _prefetch_positions_for_transaction(
-    tx_context: TransactionContext,
-    user_addresses: set[ChecksumAddress],
-) -> None:
-    """
-    Batch prefetch all positions for users in a transaction.
-
-    Uses existing user_cache to avoid N+1 queries. Positions are cached with
-    table class as discriminator to distinguish collateral vs debt positions
-    for the same user and asset.
-    """
-
-    # Build reverse lookup: user_id -> user_address
-    user_id_to_address = {user.id: addr for addr, user in tx_context.user_cache.items()}
-
-    if not user_id_to_address:
-        return
-
-    user_ids = list(user_id_to_address.keys())
-
-    # Query collateral positions (no JOIN needed - we have user data in cache)
-    collateral_positions = tx_context.session.scalars(
-        select(AaveV3CollateralPosition).where(AaveV3CollateralPosition.user_id.in_(user_ids))
-    ).all()
-
-    for collateral_pos in collateral_positions:
-        # INVARIANT: Every position must belong to a user in our cache
-        assert collateral_pos.user_id in user_id_to_address, (
-            f"Collateral position {collateral_pos.id} (user_id={collateral_pos.user_id}) "
-            f"found but user not in transaction user_cache. "
-            f"This indicates a logic error in user prefetching."
-        )
-
-        user_address = user_id_to_address[collateral_pos.user_id]
-        tx_context.modified_positions[
-            user_address,
-            collateral_pos.asset_id,
-            AaveV3CollateralPosition,
-        ] = collateral_pos
-
-    # Query debt positions
-    debt_positions = tx_context.session.scalars(
-        select(AaveV3DebtPosition).where(AaveV3DebtPosition.user_id.in_(user_ids))
-    ).all()
-
-    for debt_pos in debt_positions:
-        # INVARIANT: Every position must belong to a user in our cache
-        assert debt_pos.user_id in user_id_to_address, (
-            f"Debt position {debt_pos.id} (user_id={debt_pos.user_id}) "
-            f"found but user not in transaction user_cache. "
-            f"This indicates a logic error in user prefetching."
-        )
-
-        user_address = user_id_to_address[debt_pos.user_id]
-        tx_context.modified_positions[
-            user_address,
-            debt_pos.asset_id,
-            AaveV3DebtPosition,
-        ] = debt_pos
-
-    logger.debug(
-        f"Prefetched {len(collateral_positions)} collateral + {len(debt_positions)} "
-        f"debt positions for {len(user_addresses)} users"
-    )
-
-
 def _get_or_create_user(
     *,
     tx_context: TransactionContext,
@@ -1410,10 +1313,6 @@ def _get_or_create_user(
     from the contract to properly initialize their gho_discount value.
     """
 
-    # Check cache first to avoid database query
-    if user_address in tx_context.user_cache:
-        return tx_context.user_cache[user_address]
-
     # User not in cache - query database (this handles the edge case where
     # a user was added by a concurrent transaction or cache wasn't pre-filled)
     user = tx_context.session.scalar(
@@ -1424,8 +1323,6 @@ def _get_or_create_user(
     )
 
     if user is not None:
-        # Add to cache for future lookups
-        tx_context.user_cache[user_address] = user
         return user
 
     # Create new user
@@ -1479,9 +1376,6 @@ def _get_or_create_user(
     )
     tx_context.session.add(user)
     tx_context.session.flush()
-
-    # Add new user to cache
-    tx_context.user_cache[user_address] = user
 
     return user
 
@@ -1647,33 +1541,9 @@ def _get_or_create_position[T: AaveV3CollateralPosition | AaveV3DebtPosition](
 ) -> T:
     """
     Get existing position or create new one with zero balance.
-
-    Uses tx_context.modified_positions cache to avoid repeated database queries.
-    New positions are created on-demand and added to the cache.
     """
 
-    # INVARIANT: User must be in the transaction's user cache
-    assert user.address in tx_context.user_cache, (
-        f"User {user.address} not found in transaction user_cache. "
-        f"All users should be prefetched before position access. "
-        f"This indicates _get_or_create_user was not used or user_cache is corrupted."
-    )
-
-    # Check cache using table class as discriminator
-    cache_key = (user.address, asset_id, position_table)
-    if cache_key in tx_context.modified_positions:
-        cached_position = tx_context.modified_positions[cache_key]
-
-        # INVARIANT: Cached position must be of expected type
-        assert isinstance(cached_position, position_table), (
-            f"Cache type mismatch: expected {position_table.__name__}, "
-            f"got {type(cached_position).__name__} for key {cache_key}. "
-            f"This indicates cache key collision or corruption."
-        )
-
-        return cached_position
-
-    # Cache miss - query database
+    # Query database - SQLAlchemy's identity map handles caching
     existing_position = tx_context.session.scalar(
         select(position_table).where(
             position_table.user_id == user.id,
@@ -1689,16 +1559,12 @@ def _get_or_create_position[T: AaveV3CollateralPosition | AaveV3DebtPosition](
             f"This indicates a SQL error or database corruption."
         )
 
-        tx_context.modified_positions[cache_key] = existing_position
         return existing_position
 
     # Create new position
     new_position = position_table(user_id=user.id, asset_id=asset_id, balance=0)
     tx_context.session.add(new_position)
     tx_context.session.flush()
-
-    # Add new position to cache
-    tx_context.modified_positions[cache_key] = new_position
 
     return cast("T", new_position)
 
@@ -4452,31 +4318,6 @@ def _build_transaction_contexts(
             event_address=event_address,
             gho_asset=gho_asset,
         )
-
-    logger.debug(
-        f"_build_transaction_contexts: completed with {len(contexts)} transaction contexts"
-    )
-
-    # Prefetch all users for each transaction to avoid N+1 queries
-    for tx_hash, ctx in contexts.items():
-        user_addresses = _extract_user_addresses_from_transaction(ctx.events)
-        if user_addresses:
-            user_cache = _prefetch_users_for_transaction(ctx, user_addresses)
-            ctx.user_cache = user_cache
-
-            # INVARIANT: Prefetch should find or create all users
-            assert len(user_cache) <= len(user_addresses), (
-                f"User cache size exceeds expected: got {len(user_cache)}, "
-                f"expected at most {len(user_addresses)}. This indicates duplicate users."
-            )
-
-            # Prefetch positions (uses user cache)
-            _prefetch_positions_for_transaction(ctx, user_addresses)
-
-            logger.debug(
-                f"Prefetched {len(user_cache)} users and {len(ctx.modified_positions)} "
-                f"positions for transaction {tx_hash.to_0x_hex()}"
-            )
 
     return contexts
 

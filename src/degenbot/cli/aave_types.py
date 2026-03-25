@@ -17,7 +17,6 @@ from degenbot.database.models.aave import (
     AaveV3CollateralPosition,
     AaveV3DebtPosition,
     AaveV3Market,
-    AaveV3User,
 )
 
 
@@ -40,10 +39,6 @@ class TransactionContext:
     market: AaveV3Market
     session: Session
     gho_asset: AaveGhoToken
-
-    # Cached users for this transaction to avoid N+1 queries
-    # Key: user address, Value: AaveV3User object
-    user_cache: dict[ChecksumAddress, AaveV3User] = field(default_factory=dict)
 
     # Snapshot of user discount percents at the start of transaction processing
     # Key: user address, Value: discount percent at transaction start
