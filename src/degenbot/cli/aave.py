@@ -2381,6 +2381,78 @@ def _refresh_discount_rate(
     )
 
 
+def _preprocess_liquidation_aggregates(
+    tx_context: TransactionContext,
+    operations: list["Operation"],
+) -> None:
+    """
+    Preprocess liquidations to aggregate debtToCover by (user, debt_asset).
+
+    When multiple liquidations share the same debt asset in a transaction,
+    the contract may emit a single combined burn event. We aggregate
+    debtToCover from all liquidations and apply the total reduction once.
+
+    See debug/aave/0056 for architectural details.
+    """
+    liquidation_operation_types = {
+        OperationType.LIQUIDATION,
+        OperationType.GHO_LIQUIDATION,
+    }
+
+    for op in operations:
+        if op.operation_type not in liquidation_operation_types:
+            continue
+        if op.pool_event is None:
+            continue
+
+        # Extract user and debt asset from LiquidationCall event
+        user = decode_address(op.pool_event["topics"][3])
+        debt_asset = decode_address(op.pool_event["topics"][2])
+
+        # Get vToken address for this debt asset
+        debt_v_token = _get_v_token_for_underlying(
+            session=tx_context.session,
+            market=tx_context.market,
+            underlying_address=debt_asset,
+        )
+
+        if debt_v_token is None:
+            continue
+
+        # Extract debtToCover from event data
+        debt_to_cover, _, _, _ = eth_abi.abi.decode(
+            types=["uint256", "uint256", "address", "bool"],
+            data=op.pool_event["data"],
+        )
+
+        key = (user, debt_v_token)
+        tx_context.liquidation_aggregates[key] = (
+            tx_context.liquidation_aggregates.get(key, 0) + debt_to_cover
+        )
+
+        logger.debug(
+            f"_preprocess_liquidation_aggregates: user={user}, debt_v_token={debt_v_token}, "
+            f"debt_to_cover={debt_to_cover}, total={tx_context.liquidation_aggregates[key]}"
+        )
+
+
+def _get_v_token_for_underlying(
+    session: Session,
+    market: AaveV3Market,
+    underlying_address: ChecksumAddress,
+) -> ChecksumAddress | None:
+    """Get vToken address for an underlying asset."""
+    asset = session.scalar(
+        select(AaveV3Asset).where(
+            AaveV3Asset.market_id == market.id,
+            AaveV3Asset.underlying_token.has(address=underlying_address),
+        )
+    )
+    if asset is None or asset.v_token is None:
+        return None
+    return asset.v_token.address
+
+
 def _process_transaction(tx_context: TransactionContext) -> None:
     """
     Process transaction using operation-based parsing.
@@ -2558,6 +2630,11 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         for balance_transfer_ev in op.balance_transfer_events:
             logger.debug(f"  BalanceTransfer event: logIndex={balance_transfer_ev['logIndex']}")
     logger.debug("=== END OPERATIONS ===\n")
+
+    # Preprocess liquidations to aggregate debtToCover for multi-liquidation scenarios
+    # This handles cases where multiple liquidations share the same debt asset
+    # and emit a single combined burn event. See debug/aave/0056.
+    _preprocess_liquidation_aggregates(tx_context, tx_operations.operations)
 
     # Process stkAAVE transfers BEFORE operations to ensure stkAAVE balances
     # are up-to-date when GHO debt operations calculate discount rates.
@@ -3308,6 +3385,23 @@ def _process_debt_mint_with_match(
             OperationType.LIQUIDATION,
             OperationType.GHO_LIQUIDATION,
         }:
+            # For liquidations, check if there are multiple liquidations for this
+            # (user, debt_v_token) that will be aggregated. If yes, skip the Mint event
+            # because the aggregated burn processing will handle the debt reduction.
+            # This prevents double-counting in multi-liquidation scenarios.
+            # See debug/aave/0056 for details.
+            if operation.operation_type in LIQUIDATION_OPERATION_TYPES:
+                liquidation_key = (user.address, token_address)
+                aggregated_amount = tx_context.liquidation_aggregates.get(liquidation_key, 0)
+                if aggregated_amount > 0:
+                    # Multiple liquidations will be aggregated
+                    logger.debug(
+                        f"_process_debt_mint_with_match: LIQUIDATION has aggregated amount "
+                        f"for user={user.address}, debt_v_token={token_address} "
+                        f"(aggregated={aggregated_amount}) - skipping Mint event"
+                    )
+                    return
+
             # Treat as burn: calculate actual scaled burn amount from Pool event
             # Use TokenMath to match on-chain calculation
             assert operation.pool_event is not None
@@ -3519,20 +3613,49 @@ def _process_debt_burn_with_match(
         logger.debug(f"_process_debt_burn_with_match: scaled_event.index = {scaled_event.index}")
 
         if operation and operation.operation_type in LIQUIDATION_OPERATION_TYPES:
-            # Normal liquidation: use debtToCover from pool event
-            # For Pool Rev 9+, use the scaled_amount which is the actual Burn event amount
-            # (debtToCover - balance_increase). See debug/aave/0044 for details.
-            if tx_context.pool_revision >= SCALED_AMOUNT_POOL_REVISION:
-                burn_value = enriched_event.scaled_amount or enriched_event.raw_amount
+            # For liquidations, use aggregated debtToCover from all liquidations
+            # for the same (user, debt_asset) in this transaction.
+            # This handles multi-liquidation scenarios where a single burn event
+            # represents debt reduction for multiple liquidations.
+            # See debug/aave/0056 for architectural details.
+            liquidation_key = (user.address, token_address)
+
+            if liquidation_key in tx_context.processed_liquidations:
+                # This (user, debt_v_token) has already been processed
+                # Skip duplicate burn processing
                 logger.debug(
-                    f"_process_debt_burn_with_match: NORMAL LIQUIDATION (Pool Rev 9+) - using "
-                    f"scaled_amount={burn_value}"
+                    f"_process_debt_burn_with_match: LIQUIDATION already processed for "
+                    f"user={user.address}, debt_v_token={token_address} - skipping"
+                )
+                return
+
+            # Mark as processed
+            tx_context.processed_liquidations.add(liquidation_key)
+
+            # Get aggregated debtToCover for this (user, debt_asset)
+            aggregated_debt_to_cover = tx_context.liquidation_aggregates.get(liquidation_key, 0)
+
+            if aggregated_debt_to_cover > 0:
+                # Use aggregated amount
+                token_math = TokenMathFactory.get_token_math_for_token_revision(
+                    debt_asset.v_token_revision
+                )
+                burn_value = token_math.get_debt_burn_scaled_amount(
+                    aggregated_debt_to_cover, scaled_event.index
+                )
+                # Update scaled_amount to use the correct aggregated value
+                # The enriched scaled_amount was calculated with the wrong raw_amount
+                scaled_amount = burn_value
+                logger.debug(
+                    f"_process_debt_burn_with_match: LIQUIDATION using aggregated "
+                    f"debtToCover={aggregated_debt_to_cover}, scaled_burn={burn_value}"
                 )
             else:
-                burn_value = enriched_event.raw_amount
+                # Fallback to event amount if no aggregation (shouldn't happen)
+                burn_value = scaled_event.amount
                 logger.debug(
-                    f"_process_debt_burn_with_match: NORMAL LIQUIDATION - using "
-                    f"debtToCover={burn_value}"
+                    f"_process_debt_burn_with_match: LIQUIDATION no aggregation found, "
+                    f"using burn_value={burn_value}"
                 )
         else:
             # Standard REPAY: use Burn event value

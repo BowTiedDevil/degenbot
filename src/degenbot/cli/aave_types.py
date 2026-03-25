@@ -81,6 +81,19 @@ class TransactionContext:
     # Used to determine if scaled amounts need to be pre-calculated (rev 9+)
     pool_revision: int = 0
 
+    # Liquidation aggregation tracking for multi-liquidation scenarios
+    # Key: (user_address, debt_v_token_address), Value: aggregated debtToCover
+    liquidation_aggregates: dict[tuple[ChecksumAddress, ChecksumAddress], int] = field(
+        default_factory=dict
+    )
+    """Aggregated debtToCover by (user, debt_v_token) for multi-liquidation transactions."""
+
+    # Track which (user, debt_v_token) pairs have had liquidation debt processed
+    processed_liquidations: set[tuple[ChecksumAddress, ChecksumAddress]] = field(
+        default_factory=set
+    )
+    """Set of (user, debt_v_token) pairs that have been processed."""
+
     @property
     def gho_vtoken_address(self) -> ChecksumAddress | None:
         """Get the GHO vToken address if GHO asset exists."""
