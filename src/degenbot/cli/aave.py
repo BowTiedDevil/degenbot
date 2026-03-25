@@ -49,7 +49,7 @@ from degenbot.cli.aave_transaction_operations import (
     TransactionOperationsParser,
     TransactionValidationError,
 )
-from degenbot.cli.aave_types import TransactionContext
+from degenbot.cli.aave_types import TokenType, TransactionContext
 from degenbot.cli.aave_utils import decode_address
 from degenbot.cli.utils import get_web3_from_config
 from degenbot.constants import DEAD_ADDRESS, ERC_1967_IMPLEMENTATION_SLOT, MAX_UINT256, ZERO_ADDRESS
@@ -90,13 +90,6 @@ _AAVE_EVENT_TOPIC_TO_CATEGORY: dict[HexBytes, str] = {
     **{e.value: e.name for e in AaveV3GhoDebtTokenEvent},
     **{e.value: e.name for e in AaveV3PoolConfigEvent},
 }
-
-
-class TokenType(Enum):
-    """Token type for Aave V3 asset lookups."""
-
-    COLLATERAL = "a_token_id"
-    DEBT = "v_token_id"
 
 
 class UserOperation(Enum):
@@ -1212,7 +1205,7 @@ def _process_scaled_token_upgrade_event(
             session=tx_context.session,
             market=tx_context.market,
             token_address=get_checksum_address(event["address"]),
-            token_type=TokenType.COLLATERAL,
+            token_type=TokenType.A_TOKEN,
         )
     ) is not None:
         (atoken_revision,) = raw_call(
@@ -1233,7 +1226,7 @@ def _process_scaled_token_upgrade_event(
             session=tx_context.session,
             market=tx_context.market,
             token_address=get_checksum_address(event["address"]),
-            token_type=TokenType.DEBT,
+            token_type=TokenType.V_TOKEN,
         )
     ) is not None:
         (vtoken_revision,) = raw_call(
@@ -1734,7 +1727,7 @@ def _get_asset_by_token_type(
     """
 
     match token_type:
-        case TokenType.COLLATERAL:
+        case TokenType.A_TOKEN:
             return session.scalar(
                 select(AaveV3Asset)
                 .join(Erc20TokenTable, AaveV3Asset.a_token_id == Erc20TokenTable.id)
@@ -1744,7 +1737,7 @@ def _get_asset_by_token_type(
                 )
                 .options(joinedload(AaveV3Asset.a_token))
             )
-        case TokenType.DEBT:
+        case TokenType.V_TOKEN:
             return session.scalar(
                 select(AaveV3Asset)
                 .join(Erc20TokenTable, AaveV3Asset.v_token_id == Erc20TokenTable.id)
@@ -4014,14 +4007,14 @@ def _get_scaled_token_asset_by_address(
         session=session,
         market=market,
         token_address=token_address,
-        token_type=TokenType.COLLATERAL,
+        token_type=TokenType.A_TOKEN,
     )
 
     debt_asset = _get_asset_by_token_type(
         session=session,
         market=market,
         token_address=token_address,
-        token_type=TokenType.DEBT,
+        token_type=TokenType.V_TOKEN,
     )
 
     if collateral_asset is not None and debt_asset is not None:
