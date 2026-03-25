@@ -20,7 +20,7 @@ This outputs:
 **Filename Format**: `{four digit ID} - {issue title}.md` (e.g., `0030 - supply_borrow_mismatch.md`)
 
 ## Gather Information
-Execute `uv run degenbot aave update`.
+Execute `uv run degenbot aave update | tail -50`.
 
 ### Issue ID Assignment
 Run the helper script to gather all initial information:

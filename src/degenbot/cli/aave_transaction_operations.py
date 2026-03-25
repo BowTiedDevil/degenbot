@@ -503,8 +503,6 @@ class TransactionOperationsParser:
             TokenType.A_TOKEN, TokenType.V_TOKEN, TokenType.GHO_DISCOUNT or None if not found.
         """
 
-        token_address = get_checksum_address(token_address)
-
         # Check for aToken match
         if (
             self.session.scalar(
@@ -556,7 +554,7 @@ class TransactionOperationsParser:
             .join(AaveV3Asset.v_token)
             .where(
                 AaveV3Asset.market_id == self.market.id,
-                Erc20TokenTable.address == get_checksum_address(debt_token_address),
+                Erc20TokenTable.address == debt_token_address,
             )
         )
         if asset is not None:
@@ -574,7 +572,7 @@ class TransactionOperationsParser:
             .join(AaveV3Asset.underlying_token)
             .where(
                 AaveV3Asset.market_id == self.market.id,
-                Erc20TokenTable.address == get_checksum_address(underlying_asset),
+                Erc20TokenTable.address == underlying_asset,
             )
         )
         if asset is not None and asset.a_token is not None:
@@ -593,7 +591,7 @@ class TransactionOperationsParser:
             .join(AaveV3Asset.underlying_token)
             .where(
                 AaveV3Asset.market_id == self.market.id,
-                Erc20TokenTable.address == get_checksum_address(underlying_asset),
+                Erc20TokenTable.address == underlying_asset,
             )
         )
         if asset is not None and asset.v_token is not None:
@@ -626,7 +624,7 @@ class TransactionOperationsParser:
             .join(AaveV3Asset.underlying_token)
             .where(
                 AaveV3Asset.market_id == self.market.id,
-                Erc20TokenTable.address == get_checksum_address(reserve_address),
+                Erc20TokenTable.address == reserve_address,
             )
         )
 
@@ -652,7 +650,7 @@ class TransactionOperationsParser:
             .join(relationship)
             .where(
                 AaveV3Asset.market_id == self.market.id,
-                Erc20TokenTable.address == get_checksum_address(token_address),
+                Erc20TokenTable.address == token_address,
             )
         )
 
@@ -727,6 +725,32 @@ class TransactionOperationsParser:
         if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
             return abs(calculated - expected) <= tolerance
         return calculated == expected
+
+    @staticmethod
+    def _are_compatible_transfer_types(
+        ev1: ScaledTokenEvent,
+        ev2: ScaledTokenEvent,
+    ) -> bool:
+        """
+        Check if two transfer events are compatible (ERC20 Transfer + BalanceTransfer).
+
+        Allows matching between ERC20 Transfer events and BalanceTransfer events
+        of the same token type (collateral or debt).
+        """
+        if ev1.event_type == ev2.event_type:
+            return True
+
+        collateral_pair = {
+            ScaledTokenEventType.COLLATERAL_TRANSFER,
+            ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+        }
+        debt_pair = {
+            ScaledTokenEventType.DEBT_TRANSFER,
+            ScaledTokenEventType.ERC20_DEBT_TRANSFER,
+        }
+
+        event_types = {ev1.event_type, ev2.event_type}
+        return event_types in (collateral_pair, debt_pair)
 
     def parse(self, events: list[LogReceipt], tx_hash: HexBytes) -> TransactionOperations:
         """
@@ -920,7 +944,7 @@ class TransactionOperationsParser:
             data=event["data"],
         )
 
-        token_address = get_checksum_address(event["address"])
+        token_address = event["address"]
         event_type = self._get_event_type_for_token(token_address, "mint")
 
         return ScaledTokenEvent(
@@ -945,7 +969,7 @@ class TransactionOperationsParser:
             data=event["data"],
         )
 
-        token_address = get_checksum_address(event["address"])
+        token_address = event["address"]
         event_type = self._get_event_type_for_token(token_address, "burn")
 
         return ScaledTokenEvent(
@@ -975,7 +999,7 @@ class TransactionOperationsParser:
             data=event["data"],
         )
 
-        token_address = get_checksum_address(event["address"])
+        token_address = event["address"]
         event_type = self._get_event_type_for_token(token_address, "transfer")
 
         return ScaledTokenEvent(
@@ -1007,7 +1031,7 @@ class TransactionOperationsParser:
         )
 
         # Determine event type based on token type
-        token_address = get_checksum_address(event["address"])
+        token_address = event["address"]
         if token_address == self.gho_vtoken_address:
             event_type = ScaledTokenEventType.GHO_DEBT_TRANSFER
         else:
@@ -1129,7 +1153,7 @@ class TransactionOperationsParser:
         assert supply_event["topics"][0] == AaveV3PoolEvent.SUPPLY.value
 
         on_behalf_of = decode_address(supply_event["topics"][2])
-        _user, supply_amount = eth_abi.abi.decode(
+        _, supply_amount = eth_abi.abi.decode(
             types=["address", "uint256"], data=supply_event["data"]
         )
 
@@ -1153,8 +1177,7 @@ class TransactionOperationsParser:
             if ev.event_type != ScaledTokenEventType.COLLATERAL_MINT:
                 continue
             # Verify event is from the correct aToken contract
-            event_token = get_checksum_address(ev.event["address"])
-            if event_token != expected_a_token:
+            if ev.event["address"] != expected_a_token:
                 continue
             if ev.user_address != on_behalf_of:
                 continue
@@ -1260,8 +1283,7 @@ class TransactionOperationsParser:
             if ev.event_type != ScaledTokenEventType.COLLATERAL_BURN:
                 continue
             # Verify event is from the correct aToken contract
-            event_token = get_checksum_address(ev.event["address"])
-            if event_token != expected_a_token:
+            if ev.event["address"] != expected_a_token:
                 continue
             if ev.user_address != user:
                 continue
@@ -1297,8 +1319,7 @@ class TransactionOperationsParser:
                 if ev.event_type != ScaledTokenEventType.COLLATERAL_MINT:
                     continue
                 # Verify event is from the correct aToken contract
-                event_token = get_checksum_address(ev.event["address"])
-                if event_token != expected_a_token:
+                if ev.event["address"] != expected_a_token:
                     continue
                 if ev.user_address != user:
                     continue
@@ -1354,8 +1375,7 @@ class TransactionOperationsParser:
                 }:
                     continue
                 # Verify event is from the correct aToken contract
-                event_token = get_checksum_address(ev.event["address"])
-                if event_token != expected_a_token:
+                if ev.event["address"] != expected_a_token:
                     continue
                 if ev.from_address != ZERO_ADDRESS:
                     continue
@@ -1373,8 +1393,7 @@ class TransactionOperationsParser:
                 }:
                     continue
                 # Verify event is from the correct aToken contract
-                event_token = get_checksum_address(ev.event["address"])
-                if event_token != expected_a_token:
+                if ev.event["address"] != expected_a_token:
                     continue
                 if ev.target_address != ZERO_ADDRESS:
                     continue
@@ -1452,9 +1471,7 @@ class TransactionOperationsParser:
             if ev.balance_increase is None:
                 continue
 
-            reserve_asset = self._get_reserve_for_debt_token(
-                get_checksum_address(ev.event["address"])
-            )
+            reserve_asset = self._get_reserve_for_debt_token(ev.event["address"])
 
             if reserve_asset is None or reserve_asset != reserve:
                 continue
@@ -1760,9 +1777,7 @@ class TransactionOperationsParser:
             if ev.user_address != user:
                 continue
 
-            reserve_asset = self._get_reserve_for_debt_token(
-                get_checksum_address(ev.event["address"])
-            )
+            reserve_asset = self._get_reserve_for_debt_token(ev.event["address"])
 
             if reserve_asset != reserve:
                 continue
@@ -1846,8 +1861,7 @@ class TransactionOperationsParser:
             }:
                 continue
             # Verify event is from the correct aToken contract
-            event_token = get_checksum_address(ev.event["address"])
-            if event_token != expected_a_token:
+            if ev.event["address"] != expected_a_token:
                 continue
             if ev.user_address != user:
                 continue
@@ -1920,7 +1934,7 @@ class TransactionOperationsParser:
     ) -> LogReceipt | None:
         """Find BalanceTransfer event for aTokens used in repayment."""
 
-        asset = self._get_a_token_asset_by_reserve(get_checksum_address(reserve))
+        asset = self._get_a_token_asset_by_reserve(reserve)
         if asset is None:
             return None
         atoken_address = asset.a_token.address
@@ -1990,7 +2004,7 @@ class TransactionOperationsParser:
         for ev in all_events:
             if ev["topics"][0] != AaveV3PoolEvent.LIQUIDATION_CALL.value:
                 continue
-            user = get_checksum_address(decode_address(ev["topics"][3]))
+            user = decode_address(ev["topics"][3])
             counts[user] = counts.get(user, 0) + 1
         return counts
 
@@ -2051,7 +2065,7 @@ class TransactionOperationsParser:
                     and ev.user_address == user
                     and ev.event_type
                     in {ScaledTokenEventType.DEBT_BURN, ScaledTokenEventType.GHO_DEBT_BURN}
-                    and get_checksum_address(ev.event["address"]) == debt_v_token_address
+                    and ev.event["address"] == debt_v_token_address
                 ],
                 key=lambda e: e.event["logIndex"],
             )
@@ -2097,7 +2111,7 @@ class TransactionOperationsParser:
             # Match collateral events only if they belong to this liquidation's collateral asset
             # This prevents incorrect matching when a user is liquidated multiple times
             # with different collateral assets in the same transaction
-            event_token_address = get_checksum_address(ev.event["address"])
+            event_token_address = ev.event["address"]
             if (
                 collateral_a_token_address is not None
                 and event_token_address != collateral_a_token_address
@@ -2225,7 +2239,7 @@ class TransactionOperationsParser:
                 continue
 
             # Match debt mint events only if they belong to this liquidation's debt asset
-            event_token_address = get_checksum_address(scaled_event.event["address"])
+            event_token_address = scaled_event.event["address"]
             if (
                 debt_v_token_address is not None
                 and event_token_address == debt_v_token_address
@@ -2396,7 +2410,7 @@ class TransactionOperationsParser:
 
         # For each BalanceTransfer, look for a paired Burn event
         for bt_ev in balance_transfers:
-            bt_token_address = get_checksum_address(bt_ev.event["address"])
+            bt_token_address = bt_ev.event["address"]
             bt_target_user = bt_ev.target_address
 
             if bt_target_user is None:
@@ -2414,7 +2428,7 @@ class TransactionOperationsParser:
                     continue
                 if burn_ev.user_address != bt_target_user:
                     continue
-                burn_token_address = get_checksum_address(burn_ev.event["address"])
+                burn_token_address = burn_ev.event["address"]
                 if burn_token_address != bt_token_address:
                     continue
 
@@ -2443,7 +2457,7 @@ class TransactionOperationsParser:
                             continue
                         if other_ev.target_address != bt_ev.target_address:
                             continue
-                        other_token_address = get_checksum_address(other_ev.event["address"])
+                        other_token_address = other_ev.event["address"]
                         if other_token_address != bt_token_address:
                             continue
 
@@ -2718,9 +2732,7 @@ class TransactionOperationsParser:
                 """
 
                 # The Mint event's address is the aToken, so we need to find the underlying asset
-                asset = self._get_asset_by_a_token(
-                    a_token_address=get_checksum_address(ev.event["address"])
-                )
+                asset = self._get_asset_by_a_token(a_token_address=ev.event["address"])
                 if asset is not None:
                     underlying_addr = get_checksum_address(asset.underlying_token.address)
 
@@ -2787,12 +2799,153 @@ class TransactionOperationsParser:
         operation_id = starting_operation_id
         local_assigned: set[int] = set()  # Track assignments within this function
 
-        for ev in scaled_events:  # noqa:PLR1702
-            # Skip already assigned events (both externally and locally)
+        # Phase 1: Process ERC20 Transfer events and pair with BalanceTransfer events
+        transfer_operations, operation_id = TransactionOperationsParser._process_erc20_transfers(
+            scaled_events=scaled_events,
+            assigned_indices=assigned_indices,
+            local_assigned=local_assigned,
+            existing_operations=existing_operations,
+            starting_operation_id=operation_id,
+            pool_revision=pool_revision,
+        )
+        operations.extend(transfer_operations)
+
+        # Phase 2: Process standalone BalanceTransfer events (no paired ERC20 Transfer)
+        standalone_operations, operation_id = (
+            TransactionOperationsParser._process_standalone_balance_transfers(
+                scaled_events=scaled_events,
+                assigned_indices=assigned_indices,
+                local_assigned=local_assigned,
+                starting_operation_id=operation_id,
+                pool_revision=pool_revision,
+            )
+        )
+        operations.extend(standalone_operations)
+
+        # Update the assigned_indices set with locally assigned events
+        assigned_indices.update(local_assigned)
+
+        return operations
+
+    @staticmethod
+    def _is_part_of_burn(
+        ev: ScaledTokenEvent,
+        scaled_events: list[ScaledTokenEvent],
+        local_assigned: set[int],
+    ) -> bool:
+        """
+        Check if an ERC20 Transfer to zero address is part of a burn operation.
+        """
+
+        ev_token_address = ev.event["address"]
+        for other_ev in scaled_events:
+            if (
+                other_ev.event_type
+                in {
+                    ScaledTokenEventType.DEBT_BURN,
+                    ScaledTokenEventType.COLLATERAL_BURN,
+                    ScaledTokenEventType.GHO_DEBT_BURN,
+                }
+                and other_ev.user_address == ev.from_address
+                and other_ev.event["address"] == ev_token_address
+            ):
+                local_assigned.add(ev.event["logIndex"])
+                return True
+        return False
+
+    @staticmethod
+    def _is_part_of_mint(
+        ev: ScaledTokenEvent,
+        scaled_events: list[ScaledTokenEvent],
+        local_assigned: set[int],
+    ) -> bool:
+        """
+        Check if an ERC20 Transfer from zero address is part of a mint operation.
+        """
+
+        ev_token_address = ev.event["address"]
+        for other_ev in scaled_events:
+            if (
+                other_ev.event_type
+                in {
+                    ScaledTokenEventType.COLLATERAL_MINT,
+                    ScaledTokenEventType.DEBT_MINT,
+                    ScaledTokenEventType.GHO_DEBT_MINT,
+                }
+                and other_ev.user_address == ev.target_address
+                and other_ev.event["address"] == ev_token_address
+            ):
+                local_assigned.add(ev.event["logIndex"])
+                return True
+        return False
+
+    @staticmethod
+    def _find_matching_balance_transfer(
+        scaled_token_event: ScaledTokenEvent,
+        all_scaled_token_events: list[ScaledTokenEvent],
+        assigned_indices: set[int],
+        local_assigned: set[int],
+        existing_operations: list[Operation],
+    ) -> ScaledTokenEvent | None:
+        """
+        Find a matching BalanceTransfer event for an ERC20 Transfer.
+        """
+
+        # Look in unassigned events first
+        for bt_ev in all_scaled_token_events:
+            if (
+                bt_ev.event["logIndex"] in assigned_indices
+                or bt_ev.event["logIndex"] in local_assigned
+            ):
+                continue
+            if bt_ev.index is None:  # Skip ERC20 Transfers
+                continue
+            if (
+                bt_ev.from_address == scaled_token_event.from_address
+                and bt_ev.target_address == scaled_token_event.target_address
+                and bt_ev.event["address"] == scaled_token_event.event["address"]
+                and TransactionOperationsParser._are_compatible_transfer_types(
+                    bt_ev, scaled_token_event
+                )
+            ):
+                local_assigned.add(bt_ev.event["logIndex"])
+                return bt_ev
+
+        # Check existing operations (e.g., BalanceTransfer assigned to LIQUIDATION)
+        for op in existing_operations:
+            for bt_ev in op.scaled_token_events:
+                if bt_ev.index is None:  # Skip ERC20 Transfers
+                    continue
+                if (
+                    bt_ev.from_address == scaled_token_event.from_address
+                    and bt_ev.target_address == scaled_token_event.target_address
+                    and bt_ev.event["address"] == scaled_token_event.event["address"]
+                    and TransactionOperationsParser._are_compatible_transfer_types(
+                        bt_ev, scaled_token_event
+                    )
+                ):
+                    local_assigned.add(bt_ev.event["logIndex"])
+                    return bt_ev
+
+        return None
+
+    @staticmethod
+    def _process_erc20_transfers(  # noqa:PLR0917
+        scaled_events: list[ScaledTokenEvent],
+        assigned_indices: set[int],
+        local_assigned: set[int],
+        existing_operations: list[Operation],
+        starting_operation_id: int,
+        pool_revision: int,
+    ) -> tuple[list[Operation], int]:
+        """Create operations for ERC20 Transfer events, pairing with BalanceTransfer when found."""
+        operations: list[Operation] = []
+        operation_id = starting_operation_id
+
+        for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices or ev.event["logIndex"] in local_assigned:
                 continue
 
-            # Only process transfer events
             if ev.event_type not in {
                 ScaledTokenEventType.COLLATERAL_TRANSFER,
                 ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
@@ -2803,156 +2956,39 @@ class TransactionOperationsParser:
             }:
                 continue
 
-            # Check if this is an ERC20 Transfer event (index=None means no index from event)
-            # BalanceTransfer events have index > 0
-            is_erc20_transfer = ev.index is None
+            # Only process ERC20 Transfer events (index=None means no index from event)
+            if ev.index is not None:
+                continue
 
-            # Skip ERC20 Transfer events to zero address that are part of burns
-            # These are handled by the Burn events, not as balance transfers
-            if is_erc20_transfer and ev.target_address == ZERO_ADDRESS:
-                # Use semantic matching: look for any burn event for the same user and token
-                # Log index proximity is not reliable in batch transactions
-                is_part_of_burn = False
-                ev_token_address = get_checksum_address(ev.event["address"])
-                for other_ev in scaled_events:
-                    if (
-                        other_ev.event_type
-                        in {
-                            ScaledTokenEventType.DEBT_BURN,
-                            ScaledTokenEventType.COLLATERAL_BURN,
-                            ScaledTokenEventType.GHO_DEBT_BURN,
-                        }
-                        and other_ev.user_address == ev.from_address
-                        and get_checksum_address(other_ev.event["address"]) == ev_token_address
-                    ):
-                        # This transfer is part of a burn, skip it
-                        is_part_of_burn = True
-                        local_assigned.add(ev.event["logIndex"])
-                        break
-                if is_part_of_burn:
-                    continue
+            # Skip transfers to/from zero address that are part of mints/burns
+            if ev.target_address == ZERO_ADDRESS and TransactionOperationsParser._is_part_of_burn(
+                ev, scaled_events, local_assigned
+            ):
+                continue
+            if ev.from_address == ZERO_ADDRESS and TransactionOperationsParser._is_part_of_mint(
+                ev, scaled_events, local_assigned
+            ):
+                continue
 
-            # Skip ERC20 Transfer events from zero address that are part of mints
-            # These are handled by the Mint events (SUPPLY, MINT_TO_TREASURY), not as transfers
-            if is_erc20_transfer and ev.from_address == ZERO_ADDRESS:
-                # Use semantic matching: look for any mint event for the same user and token
-                # Log index proximity is not reliable in batch transactions
-                is_part_of_mint = False
-                ev_token_address = get_checksum_address(ev.event["address"])
-                for other_ev in scaled_events:
-                    if (
-                        other_ev.event_type
-                        in {
-                            ScaledTokenEventType.COLLATERAL_MINT,
-                            ScaledTokenEventType.DEBT_MINT,
-                            ScaledTokenEventType.GHO_DEBT_MINT,
-                        }
-                        and other_ev.user_address == ev.target_address
-                        and get_checksum_address(other_ev.event["address"]) == ev_token_address
-                    ):
-                        # Transfer from zero is ALWAYS paired with a Mint event
-                        # Mint handles state change (or is skipped for interest accrual)
-                        # Transfer should NEVER be processed separately
-                        is_part_of_mint = True
-                        local_assigned.add(ev.event["logIndex"])
-                        break
-                if is_part_of_mint:
-                    continue
-
-            balance_transfer_event: ScaledTokenEvent | None = None
-
-            if is_erc20_transfer:
-                # Look for a corresponding BalanceTransfer event
-                # BalanceTransfer events are decoded from SCALED_TOKEN_BALANCE_TRANSFER topic
-                for bt_ev in scaled_events:
-                    if (
-                        bt_ev.event["logIndex"] in assigned_indices
-                        or bt_ev.event["logIndex"] in local_assigned
-                    ):
-                        continue
-
-                    # ERC20 Transfer events have index=None, so skip those
-                    if bt_ev.index is None:
-                        continue
-
-                    # Check if from/to addresses match and it's the same token
-                    # Allow matching between ERC20 Transfer and BalanceTransfer events
-                    # (e.g., ERC20_COLLATERAL_TRANSFER with COLLATERAL_TRANSFER)
-                    event_types_match = (
-                        bt_ev.event_type == ev.event_type
-                        or {bt_ev.event_type, ev.event_type}
-                        == {
-                            ScaledTokenEventType.COLLATERAL_TRANSFER,
-                            ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
-                        }
-                        or {bt_ev.event_type, ev.event_type}
-                        == {
-                            ScaledTokenEventType.DEBT_TRANSFER,
-                            ScaledTokenEventType.ERC20_DEBT_TRANSFER,
-                        }
-                    )
-
-                    if (
-                        bt_ev.from_address == ev.from_address
-                        and bt_ev.target_address == ev.target_address
-                        and bt_ev.event["address"] == ev.event["address"]
-                        and event_types_match
-                    ):
-                        # Found matching BalanceTransfer
-                        balance_transfer_event = bt_ev
-                        local_assigned.add(bt_ev.event["logIndex"])
-                        break
-
-                # If not found in unassigned events, check existing operations
-                # (e.g., BalanceTransfer assigned to LIQUIDATION operation)
-                if balance_transfer_event is None:
-                    for op in existing_operations:
-                        for bt_ev in op.scaled_token_events:
-                            # Check if this is a BalanceTransfer event (has index > 0)
-                            # ERC20 Transfer events have index=None, so skip those
-                            if bt_ev.index is None:
-                                continue
-
-                            # Check if from/to addresses match and it's the same token
-                            # Allow matching between ERC20 Transfer and BalanceTransfer events
-                            event_types_match = (
-                                bt_ev.event_type == ev.event_type
-                                or {bt_ev.event_type, ev.event_type}
-                                == {
-                                    ScaledTokenEventType.COLLATERAL_TRANSFER,
-                                    ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
-                                }
-                                or {bt_ev.event_type, ev.event_type}
-                                == {
-                                    ScaledTokenEventType.DEBT_TRANSFER,
-                                    ScaledTokenEventType.ERC20_DEBT_TRANSFER,
-                                }
-                            )
-
-                            if (
-                                bt_ev.from_address == ev.from_address
-                                and bt_ev.target_address == ev.target_address
-                                and bt_ev.event["address"] == ev.event["address"]
-                                and event_types_match
-                            ):
-                                # Found matching BalanceTransfer in existing operation
-                                balance_transfer_event = bt_ev
-                                local_assigned.add(bt_ev.event["logIndex"])
-                                break
-                        if balance_transfer_event:
-                            break
-
-            # Create TRANSFER operation with both events if found
             balance_transfer_events = []
+
+            # Find matching BalanceTransfer event
+            balance_transfer_event = TransactionOperationsParser._find_matching_balance_transfer(
+                scaled_token_event=ev,
+                all_scaled_token_events=scaled_events,
+                assigned_indices=assigned_indices,
+                local_assigned=local_assigned,
+                existing_operations=existing_operations,
+            )
             if balance_transfer_event:
                 balance_transfer_events.append(balance_transfer_event.event)
 
-            # Determine operation type based on event type
-            if ev.event_type == ScaledTokenEventType.DISCOUNT_TRANSFER:
-                operation_type = OperationType.STKAAVE_TRANSFER
-            else:
-                operation_type = OperationType.BALANCE_TRANSFER
-
+            # Create operation
+            operation_type = (
+                OperationType.STKAAVE_TRANSFER
+                if ev.event_type == ScaledTokenEventType.DISCOUNT_TRANSFER
+                else OperationType.BALANCE_TRANSFER
+            )
             operations.append(
                 Operation(
                     operation_id=operation_id,
@@ -2966,10 +3002,21 @@ class TransactionOperationsParser:
             )
             operation_id += 1
 
-        # Process standalone BalanceTransfer events (no paired ERC20 Transfer)
-        # These can occur when rewards are distributed directly via BalanceTransfer
+        return operations, operation_id
+
+    @staticmethod
+    def _process_standalone_balance_transfers(
+        scaled_events: list[ScaledTokenEvent],
+        assigned_indices: set[int],
+        local_assigned: set[int],
+        starting_operation_id: int,
+        pool_revision: int,
+    ) -> tuple[list[Operation], int]:
+        """Create operations for standalone BalanceTransfer events (no paired ERC20 Transfer)."""
+        operations: list[Operation] = []
+        operation_id = starting_operation_id
+
         for ev in scaled_events:
-            # Skip already assigned events
             if ev.event["logIndex"] in assigned_indices or ev.event["logIndex"] in local_assigned:
                 continue
 
@@ -2977,7 +3024,6 @@ class TransactionOperationsParser:
             if ev.index is None or ev.index == 0:
                 continue
 
-            # Only process transfer event types
             if ev.event_type not in {
                 ScaledTokenEventType.COLLATERAL_TRANSFER,
                 ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
@@ -2988,13 +3034,12 @@ class TransactionOperationsParser:
             }:
                 continue
 
-            # Determine operation type based on event type
-            if ev.event_type == ScaledTokenEventType.DISCOUNT_TRANSFER:
-                operation_type = OperationType.STKAAVE_TRANSFER
-            else:
-                operation_type = OperationType.BALANCE_TRANSFER
+            operation_type = (
+                OperationType.STKAAVE_TRANSFER
+                if ev.event_type == ScaledTokenEventType.DISCOUNT_TRANSFER
+                else OperationType.BALANCE_TRANSFER
+            )
 
-            # Create operation for standalone BalanceTransfer
             operations.append(
                 Operation(
                     operation_id=operation_id,
@@ -3009,10 +3054,7 @@ class TransactionOperationsParser:
             local_assigned.add(ev.event["logIndex"])
             operation_id += 1
 
-        # Update the assigned_indices set with locally assigned events
-        assigned_indices.update(local_assigned)
-
-        return operations
+        return operations, operation_id
 
     def _validate_operation(self, op: Operation, tx_hash: HexBytes) -> None:
         """Strict validation of operation completeness."""
@@ -3375,8 +3417,8 @@ class TransactionOperationsParser:
                 )
 
             # All events should be for the same token
-            first_token = get_checksum_address(first_ev.event["address"])
-            last_token = get_checksum_address(last_ev.event["address"])
+            first_token = first_ev.event["address"]
+            last_token = last_ev.event["address"]
             if first_token != last_token:
                 errors.append(
                     f"DEFICIT_COVERAGE events should be for the same token: "
