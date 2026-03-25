@@ -7,6 +7,7 @@ import operator
 from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import Literal
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -87,6 +88,7 @@ class ScaledTokenEvent:
             ScaledTokenEventType.COLLATERAL_TRANSFER,
             ScaledTokenEventType.COLLATERAL_INTEREST_BURN,
             ScaledTokenEventType.COLLATERAL_INTEREST_MINT,
+            ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
         }
 
     @property
@@ -102,6 +104,7 @@ class ScaledTokenEvent:
             ScaledTokenEventType.GHO_DEBT_TRANSFER,
             ScaledTokenEventType.GHO_DEBT_INTEREST_BURN,
             ScaledTokenEventType.GHO_DEBT_INTEREST_MINT,
+            ScaledTokenEventType.ERC20_DEBT_TRANSFER,
         }
 
     @property
@@ -502,9 +505,7 @@ class TransactionOperationsParser:
 
         token_address = get_checksum_address(token_address)
 
-        # Query database directly to avoid stale ORM cache
         # Check for aToken match
-
         if (
             self.session.scalar(
                 select(AaveV3Asset)
@@ -546,69 +547,45 @@ class TransactionOperationsParser:
     def _get_reserve_for_debt_token(
         self, debt_token_address: ChecksumAddress
     ) -> ChecksumAddress | None:
-        """Get the underlying reserve address for a debt token.
-
-        Queries the database directly to avoid stale ORM relationship cache issues.
-
-        Args:
-            debt_token_address: The debt token (vToken) address.
-
-        Returns:
-            The underlying reserve asset address, or None if not found.
         """
-        checksum_addr = get_checksum_address(debt_token_address)
+        Get the underlying reserve address for a debt token.
+        """
 
-        # Query database directly to avoid stale ORM cache
         asset = self.session.scalar(
             select(AaveV3Asset)
             .join(AaveV3Asset.v_token)
             .where(
                 AaveV3Asset.market_id == self.market.id,
-                Erc20TokenTable.address == checksum_addr,
+                Erc20TokenTable.address == get_checksum_address(debt_token_address),
             )
         )
         if asset is not None:
             return get_checksum_address(asset.underlying_token.address)
+
         return None
 
     def _get_a_token_for_asset(self, underlying_asset: ChecksumAddress) -> ChecksumAddress | None:
-        """Get the aToken address for an underlying asset.
-
-        Queries the database directly to avoid stale ORM relationship cache issues.
-
-        Args:
-            underlying_asset: The underlying asset address.
-
-        Returns:
-            The aToken contract address, or None if not found.
         """
-        checksum_addr = get_checksum_address(underlying_asset)
+        Get the aToken address for an underlying asset.
+        """
 
-        # Query database directly to avoid stale ORM cache
         asset = self.session.scalar(
             select(AaveV3Asset)
             .join(AaveV3Asset.underlying_token)
             .where(
                 AaveV3Asset.market_id == self.market.id,
-                Erc20TokenTable.address == checksum_addr,
+                Erc20TokenTable.address == get_checksum_address(underlying_asset),
             )
         )
         if asset is not None and asset.a_token is not None:
             return get_checksum_address(asset.a_token.address)
+
         return None
 
     def _get_v_token_for_asset(self, underlying_asset: ChecksumAddress) -> ChecksumAddress | None:
-        """Get the vToken address for an underlying asset.
-
-        Queries the database directly to avoid stale ORM relationship cache issues.
-
-        Args:
-            underlying_asset: The underlying asset address.
-
-        Returns:
-            The vToken contract address, or None if not found.
         """
-        checksum_addr = get_checksum_address(underlying_asset)
+        Get the vToken address for an underlying asset.
+        """
 
         # Query database directly to avoid stale ORM cache
         asset = self.session.scalar(
@@ -616,11 +593,12 @@ class TransactionOperationsParser:
             .join(AaveV3Asset.underlying_token)
             .where(
                 AaveV3Asset.market_id == self.market.id,
-                Erc20TokenTable.address == checksum_addr,
+                Erc20TokenTable.address == get_checksum_address(underlying_asset),
             )
         )
         if asset is not None and asset.v_token is not None:
             return get_checksum_address(asset.v_token.address)
+
         return None
 
     def _get_pool_revision(self) -> int:
@@ -643,14 +621,12 @@ class TransactionOperationsParser:
         Get the aToken asset for a given reserve address.
         """
 
-        checksum_addr = get_checksum_address(reserve_address)
-
         return self.session.scalar(
             select(AaveV3Asset)
             .join(AaveV3Asset.underlying_token)
             .where(
                 AaveV3Asset.market_id == self.market.id,
-                Erc20TokenTable.address == checksum_addr,
+                Erc20TokenTable.address == get_checksum_address(reserve_address),
             )
         )
 
@@ -662,8 +638,6 @@ class TransactionOperationsParser:
         """
         Get the asset for a given token address.
         """
-
-        checksum_addr = get_checksum_address(token_address)
 
         # Select the appropriate relationship based on token type
         if token_type == TokenType.A_TOKEN:
@@ -678,7 +652,7 @@ class TransactionOperationsParser:
             .join(relationship)
             .where(
                 AaveV3Asset.market_id == self.market.id,
-                Erc20TokenTable.address == checksum_addr,
+                Erc20TokenTable.address == get_checksum_address(token_address),
             )
         )
 
@@ -695,6 +669,64 @@ class TransactionOperationsParser:
         """
 
         return self._get_asset_by_token(v_token_address, TokenType.V_TOKEN)
+
+    def _get_event_type_for_token(
+        self,
+        token_address: ChecksumAddress,
+        event_category: Literal["mint", "burn", "transfer"],
+    ) -> ScaledTokenEventType:
+        """
+        Determine the event type based on token type and event category.
+
+        Uses GHO token check first (special case), then falls back to token type lookup.
+        """
+
+        if event_category == "mint":
+            if token_address == self.gho_vtoken_address:
+                return ScaledTokenEventType.GHO_DEBT_MINT
+            token_type = self._get_token_type(token_address)
+            if token_type == TokenType.A_TOKEN:
+                return ScaledTokenEventType.COLLATERAL_MINT
+            if token_type == TokenType.V_TOKEN:
+                return ScaledTokenEventType.DEBT_MINT
+            msg = f"Unknown token type for mint event: {token_address}"
+            raise ValueError(msg)
+
+        if event_category == "burn":
+            if token_address == self.gho_vtoken_address:
+                return ScaledTokenEventType.GHO_DEBT_BURN
+            token_type = self._get_token_type(token_address)
+            if token_type == TokenType.A_TOKEN:
+                return ScaledTokenEventType.COLLATERAL_BURN
+            if token_type == TokenType.V_TOKEN:
+                return ScaledTokenEventType.DEBT_BURN
+            msg = f"Unknown token type for burn event: {token_address}"
+            raise ValueError(msg)
+
+        # Fall through to transfer handling
+        token_type = self._get_token_type(token_address)
+        if token_type == TokenType.A_TOKEN:
+            return ScaledTokenEventType.COLLATERAL_TRANSFER
+        if token_type == TokenType.V_TOKEN:
+            return ScaledTokenEventType.DEBT_TRANSFER
+        msg = f"Unknown token type for transfer event: {token_address}"
+        raise ValueError(msg)
+
+    @staticmethod
+    def _amounts_match(
+        calculated: int,
+        expected: int,
+        pool_revision: int,
+        tolerance: int = TOKEN_AMOUNT_MATCH_TOLERANCE,
+    ) -> bool:
+        """
+        Check if calculated amount matches expected, accounting for pool revision tolerance.
+
+        Pool revision 9+ uses ray math with flooring which can cause ±2 wei deviations.
+        """
+        if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
+            return abs(calculated - expected) <= tolerance
+        return calculated == expected
 
     def parse(self, events: list[LogReceipt], tx_hash: HexBytes) -> TransactionOperations:
         """
@@ -717,12 +749,10 @@ class TransactionOperationsParser:
         # Step 2: Identify and decode scaled token events
         scaled_events = self._extract_scaled_token_events(events)
 
-        # Get pool revision for amount scaling
-        pool_revision = self._get_pool_revision()
-
         # Step 3: Group into operations
         operations: list[Operation] = []
         assigned_log_indices: set[int] = set()
+        pool_revision = self._get_pool_revision()
 
         for i, pool_event in enumerate(pool_events):
             operation = self._create_operation_from_pool_event(
@@ -787,7 +817,7 @@ class TransactionOperationsParser:
             ev["logIndex"] for op in interest_accrual_ops for ev in op.transfer_events
         )
 
-        # Step 4d: Create TRANSFER operations for unassigned transfer events
+        # Step 4e: Create TRANSFER operations for unassigned transfer events
         transfer_ops = self._create_transfer_operations(
             scaled_events=scaled_events,
             assigned_indices=assigned_log_indices,
@@ -797,7 +827,7 @@ class TransactionOperationsParser:
         )
         operations.extend(transfer_ops)
 
-        # Step 4d: Handle unassigned events
+        # Step 4f: Handle unassigned events
         unassigned_events = [
             e
             for e in events
@@ -890,20 +920,8 @@ class TransactionOperationsParser:
             data=event["data"],
         )
 
-        # Determine event type based on token type
         token_address = get_checksum_address(event["address"])
-        if token_address == self.gho_vtoken_address:
-            event_type = ScaledTokenEventType.GHO_DEBT_MINT
-        else:
-            # Use token type lookup to determine if this is a collateral or debt mint
-            token_type = self._get_token_type(token_address)
-            if token_type == TokenType.A_TOKEN:
-                event_type = ScaledTokenEventType.COLLATERAL_MINT
-            elif token_type == TokenType.V_TOKEN:
-                event_type = ScaledTokenEventType.DEBT_MINT
-            else:
-                msg = "Unknown token type!"
-                raise ValueError(msg)
+        event_type = self._get_event_type_for_token(token_address, "mint")
 
         return ScaledTokenEvent(
             event=event,
@@ -927,20 +945,8 @@ class TransactionOperationsParser:
             data=event["data"],
         )
 
-        # Determine event type based on token type
         token_address = get_checksum_address(event["address"])
-        if token_address == self.gho_vtoken_address:
-            event_type = ScaledTokenEventType.GHO_DEBT_BURN
-        else:
-            # Use token type lookup to determine if this is a collateral or debt burn
-            token_type = self._get_token_type(token_address)
-            if token_type == TokenType.A_TOKEN:
-                event_type = ScaledTokenEventType.COLLATERAL_BURN
-            elif token_type == TokenType.V_TOKEN:
-                event_type = ScaledTokenEventType.DEBT_BURN
-            else:
-                msg = "Unknown burn event!"
-                raise ValueError(msg)
+        event_type = self._get_event_type_for_token(token_address, "burn")
 
         return ScaledTokenEvent(
             event=event,
@@ -969,19 +975,8 @@ class TransactionOperationsParser:
             data=event["data"],
         )
 
-        # Determine event type based on token type
         token_address = get_checksum_address(event["address"])
-
-        # Use token type lookup to determine if this is collateral or debt
-        token_type = self._get_token_type(token_address)
-
-        if token_type == TokenType.A_TOKEN:
-            event_type = ScaledTokenEventType.COLLATERAL_TRANSFER
-        elif token_type == TokenType.V_TOKEN:
-            event_type = ScaledTokenEventType.DEBT_TRANSFER
-        else:
-            msg = "Unknown token type!"
-            raise ValueError(msg)
+        event_type = self._get_event_type_for_token(token_address, "transfer")
 
         return ScaledTokenEvent(
             event=event,
@@ -1178,10 +1173,7 @@ class TransactionOperationsParser:
             # for an example of a supply event amount=285000000000000000, but the associated
             # Mint has a principal amount=284999999999999998
             calculated_principal = ev.amount - ev.balance_increase
-            if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
-                if abs(calculated_principal - supply_amount) > TOKEN_AMOUNT_MATCH_TOLERANCE:
-                    continue
-            elif calculated_principal != supply_amount:
+            if not self._amounts_match(calculated_principal, supply_amount, pool_revision):
                 continue
 
             collateral_mint = ev
@@ -1288,10 +1280,7 @@ class TransactionOperationsParser:
             # for an example of a withdraw event amount=500000000000000000000000, but the
             # associated Burn has a principal amount=500000000000000000000001
             calculated_burn = ev.amount + ev.balance_increase
-            if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
-                if abs(calculated_burn - withdraw_amount) > TOKEN_AMOUNT_MATCH_TOLERANCE:
-                    continue
-            elif calculated_burn != withdraw_amount:
+            if not self._amounts_match(calculated_burn, withdraw_amount, pool_revision):
                 continue
 
             collateral_burn = ev
@@ -1472,7 +1461,7 @@ class TransactionOperationsParser:
 
             # Match borrow amount to debt mint principal
             calculated_borrow = ev.amount - ev.balance_increase
-            if abs(calculated_borrow - borrow_amount) > TOKEN_AMOUNT_MATCH_TOLERANCE:
+            if not self._amounts_match(calculated_borrow, borrow_amount, pool_revision):
                 continue
 
             debt_mint = ev
@@ -1884,12 +1873,7 @@ class TransactionOperationsParser:
                 # For burns, total adjustment = principal + interest
                 adjustment = ev.amount + ev.balance_increase
 
-            # Pool revision 9+ uses ray math with flooring, allow ±2 wei tolerance
-            # see TX: 0x8a4bc3d8f386c0d754d98766caf9033202a65a932f0f3ede035d95f039a56abe
-            if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
-                if abs(adjustment - expected_amount) > TOKEN_AMOUNT_MATCH_TOLERANCE:
-                    continue
-            elif adjustment != expected_amount:
+            if not self._amounts_match(adjustment, expected_amount, pool_revision):
                 continue
 
             return ev
@@ -2230,26 +2214,26 @@ class TransactionOperationsParser:
         # Find debt mint events that represent net debt increase during liquidation
         # This happens when accrued interest > debt repayment (balance_increase > amount)
         debt_mint: ScaledTokenEvent | None = None
-        for ev in scaled_events:
-            if ev.event["logIndex"] in assigned_indices:
+        for scaled_event in scaled_events:
+            if scaled_event.event["logIndex"] in assigned_indices:
                 continue
-            if ev.user_address != user:
+            if scaled_event.user_address != user:
                 continue
-            if is_gho and ev.event_type != ScaledTokenEventType.GHO_DEBT_MINT:
+            if is_gho and scaled_event.event_type != ScaledTokenEventType.GHO_DEBT_MINT:
                 continue
-            if not is_gho and ev.event_type != ScaledTokenEventType.DEBT_MINT:
+            if not is_gho and scaled_event.event_type != ScaledTokenEventType.DEBT_MINT:
                 continue
 
             # Match debt mint events only if they belong to this liquidation's debt asset
-            event_token_address = get_checksum_address(ev.event["address"])
+            event_token_address = get_checksum_address(scaled_event.event["address"])
             if (
                 debt_v_token_address is not None
                 and event_token_address == debt_v_token_address
-                and ev.balance_increase is not None
-                and ev.balance_increase > ev.amount
+                and scaled_event.balance_increase is not None
+                and scaled_event.balance_increase > scaled_event.amount
             ):
                 # This Mint event represents net debt increase during liquidation
-                debt_mint = ev
+                debt_mint = scaled_event
                 break
 
         scaled_token_events: list[ScaledTokenEvent] = []

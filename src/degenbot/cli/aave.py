@@ -886,7 +886,7 @@ def _process_user_e_mode_set_event(
 def _process_discount_token_updated_event(
     *,
     event: LogReceipt,
-    gho_asset: AaveGhoToken | None,
+    gho_asset: AaveGhoToken,
 ) -> None:
     """
     Process a DiscountTokenUpdated event to set the GHO vToken discount token.
@@ -901,7 +901,7 @@ def _process_discount_token_updated_event(
     """
 
     # Ignore the event if it didn't come from the GHO VariableDebtToken contract
-    if gho_asset.v_token.address != event["address"]:
+    if gho_asset.v_token is None or gho_asset.v_token.address != event["address"]:
         logger.debug(
             "Ignoring DiscountTokenUpdated event, not from canonical GHO VariableDebtToken contract"
         )
@@ -922,7 +922,7 @@ def _process_discount_token_updated_event(
 def _process_discount_rate_strategy_updated_event(
     *,
     event: LogReceipt,
-    gho_asset: AaveGhoToken | None,
+    gho_asset: AaveGhoToken,
 ) -> None:
     """
     Process a DiscountRateStrategyUpdated event to set the GHO vToken attribute
@@ -937,7 +937,7 @@ def _process_discount_rate_strategy_updated_event(
     """
 
     # Ignore the event if it didn't come from the GHO VariableDebtToken contract
-    if gho_asset.v_token.address != event["address"]:
+    if gho_asset.v_token is None or gho_asset.v_token.address != event["address"]:
         logger.debug(
             "Ignoring DiscountRateStrategyUpdated event, not from canonical GHO VariableDebtToken "
             "contract"
@@ -2255,7 +2255,6 @@ def _process_scaled_token_operation(
                 event_data=event,
                 previous_balance=position.balance,
                 previous_index=position.last_index or 0,
-                scaled_delta=event.scaled_amount,
             )
             position.balance += mint_result.balance_delta
             # Only update last_index if the new index is greater than current
@@ -3576,8 +3575,8 @@ def _process_debt_burn_with_match(
                 tx_context=tx_context,
                 log_index=scaled_event.event["logIndex"],
             )
+            assert debt_position.last_index is not None
             current_index = debt_position.last_index
-            assert current_index is not None
             _refresh_discount_rate(
                 user=user,
                 has_discount_rate_strategy=tx_context.gho_asset.v_gho_discount_rate_strategy
