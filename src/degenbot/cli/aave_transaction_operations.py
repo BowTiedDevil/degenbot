@@ -295,7 +295,7 @@ class TransactionValidationError(Exception):
             lines.append("  VALIDATION ERRORS:")
             lines.extend(f"    X {err}" for err in op.validation_errors)
         else:
-            lines.append("  Status: OK Valid")
+            lines.append("  Status: Valid")
 
         lines.append("")
         return lines

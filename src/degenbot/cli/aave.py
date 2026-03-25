@@ -947,7 +947,8 @@ def _process_discount_rate_strategy_updated_event(
     # Ignore the event if it didn't come from the GHO VariableDebtToken contract
     if gho_asset.v_token.address != event["address"]:
         logger.debug(
-            "Ignoring DiscountTokenUpdated event, not from canonical GHO VariableDebtToken contract"
+            "Ignoring DiscountRateStrategyUpdated event, not from canonical GHO VariableDebtToken "
+            "contract"
         )
         return
 
@@ -1853,7 +1854,9 @@ def _verify_gho_discount_amounts(
     revision = _get_gho_vtoken_revision(session=session, market=market)
     logger.debug(f"Verifying GHO discounts: revision={revision}, market.id={market.id}")
     if revision is None or revision >= GHO_DISCOUNT_DEPRECATION_REVISION:
-        logger.debug(f"Skipping GHO discount verification (revision {revision} < 4 not met)")
+        logger.debug(
+            f"Skipping GHO discount verification for GHO VariableDebtToken revision {revision}"
+        )
         return
 
     if gho_asset.v_gho_discount_token is None:
@@ -2383,9 +2386,6 @@ def _process_transaction(tx_context: TransactionContext) -> None:
     Process transaction using operation-based parsing.
     """
 
-    # Capture user discount percents before processing events
-    # This ensures calculations use the discount in effect at the start of the transaction
-
     # Cache GHO vToken address for reuse
     gho_vtoken_address = tx_context.gho_vtoken_address
 
@@ -2445,6 +2445,8 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         else {}
     )
 
+    # Capture user discount percents before processing events
+    # This ensures calculations use the discount in effect at the start of the transaction
     for event in tx_context.events:
         topic = event["topics"][0]
         event_address = get_checksum_address(event["address"])

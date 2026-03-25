@@ -41,17 +41,8 @@ def filter_scaled_events[T: ScaledTokenEvent](
 
     Yields:
         Events matching all specified criteria
-
-    Example:
-        >>> for ev in filter_scaled_events(
-        ...     scaled_events,
-        ...     assigned_indices,
-        ...     event_type=ScaledTokenEventType.COLLATERAL_MINT,
-        ...     user_address=on_behalf_of,
-        ...     token_address=a_token_address,
-        ... ):
-        ...     process_mint_event(ev)
     """
+
     # Normalize event_type to a set for uniform checking
     type_set: AbstractSet[ScaledTokenEventType] | None
     if event_type is None:
