@@ -4656,7 +4656,7 @@ def update_aave_market(
 
     if verify_block and users_modified_this_block:
         assert last_verified_block is not None
-        logger.info(
+        logger.debug(
             f"Verifying {len(users_modified_this_block)} users at block {last_verified_block}"
         )
         _verify_positions_for_users(
