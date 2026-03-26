@@ -185,7 +185,7 @@ class TransactionContext:
             # Only process TRANSFER events from the discount token
             if event["topics"][0] != ERC20Event.TRANSFER.value:
                 continue
-            if get_checksum_address(event["address"]) != discount_token:
+            if event["address"] != discount_token:
                 continue
 
             transfer_log_index = event["logIndex"]

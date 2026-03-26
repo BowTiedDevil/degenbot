@@ -153,7 +153,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
         return generate_aerodrome_v2_pool_address(
             deployer_address=self.deployer_address,
             token_addresses=(self.token0.address, self.token1.address),
-            implementation_address=get_checksum_address(implementation_address),
+            implementation_address=implementation_address,
             stable=self.stable,
         )
 
@@ -638,6 +638,6 @@ class AerodromeV3Pool(UniswapV3Pool):
         return generate_aerodrome_v3_pool_address(
             deployer_address=self.deployer_address,
             token_addresses=(self.token0.address, self.token1.address),
-            implementation_address=get_checksum_address(implementation_address),
+            implementation_address=implementation_address,
             tick_spacing=self.tick_spacing,
         )

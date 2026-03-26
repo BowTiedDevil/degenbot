@@ -281,6 +281,7 @@ def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress
         """
 
         user_addresses.add(decode_address(event["topics"][3]))
+        liquidator: str
         receive_a_token: bool
         _, _, liquidator, receive_a_token = eth_abi.abi.decode(
             types=["uint256", "uint256", "address", "bool"],
@@ -997,6 +998,7 @@ def _process_asset_initialization_event(
     a_token_address = decode_address(event["topics"][2])
 
     # Note: stableDebtToken is deprecated in Aave V3 and no longer used, so is ignored
+    v_token_address: str
     (_, v_token_address, _) = eth_abi.abi.decode(
         types=["address", "address", "address"], data=event["data"]
     )
@@ -1025,7 +1027,7 @@ def _process_asset_initialization_event(
     (atoken_implementation_address,) = eth_abi.abi.decode(
         types=["address"],
         data=w3.eth.get_storage_at(
-            account=get_checksum_address(a_token_address),
+            account=a_token_address,
             position=ERC_1967_IMPLEMENTATION_SLOT,
             block_identifier=event["blockNumber"],
         ),
@@ -1035,7 +1037,7 @@ def _process_asset_initialization_event(
     (vtoken_implementation_address,) = eth_abi.abi.decode(
         types=["address"],
         data=w3.eth.get_storage_at(
-            account=get_checksum_address(v_token_address),
+            account=v_token_address,
             position=ERC_1967_IMPLEMENTATION_SLOT,
             block_identifier=event["blockNumber"],
         ),
@@ -1908,6 +1910,7 @@ def _fetch_discount_token_from_contract(
 
     try:
         # GHO vToken has a getDiscountToken() function
+        discount_token: str
         (discount_token,) = raw_call(
             w3=w3,
             address=gho_asset.v_token.address,
@@ -2352,7 +2355,7 @@ def _is_bad_debt_liquidation(user: AaveV3User, tx_context: TransactionContext) -
 
     for evt in tx_context.events:
         if evt["topics"][0] == AaveV3PoolEvent.DEFICIT_CREATED.value:
-            deficit_user = get_checksum_address(decode_address(evt["topics"][1]))
+            deficit_user = decode_address(evt["topics"][1])
 
             if deficit_user == user.address:
                 return True
@@ -4200,10 +4203,7 @@ def _should_skip_collateral_transfer(
             if evt["topics"][0] != AaveV3ScaledTokenEvent.BURN.value:
                 continue
             # Skip GHO debt burns - collateral burns are all other burns
-            if (
-                gho_vtoken_address is not None
-                and get_checksum_address(evt["address"]) == gho_vtoken_address
-            ):
+            if gho_vtoken_address is not None and evt["address"] == gho_vtoken_address:
                 continue
             if evt["address"] == scaled_event.event["address"]:
                 burn_user = decode_address(evt["topics"][1])
@@ -5016,11 +5016,13 @@ def update_aave_market(
             # the event is processed chronologically
             proxy_events.append(event)
         elif topic == AaveV3PoolConfigEvent.POOL_DATA_PROVIDER_UPDATED.value:
+            old_pool_data_provider_address: str
             (old_pool_data_provider_address,) = eth_abi.abi.decode(
                 types=["address"], data=event["topics"][1]
             )
             old_pool_data_provider_address = get_checksum_address(old_pool_data_provider_address)
 
+            new_pool_data_provider_address: str
             (new_pool_data_provider_address,) = eth_abi.abi.decode(
                 types=["address"], data=event["topics"][2]
             )

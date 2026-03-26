@@ -67,7 +67,7 @@ def filter_scaled_events[T: ScaledTokenEvent](
 
         # Check token address
         if token_address is not None:
-            ev_token = get_checksum_address(ev.event["address"])
+            ev_token = ev.event["address"]
             if ev_token != token_address:
                 continue
 

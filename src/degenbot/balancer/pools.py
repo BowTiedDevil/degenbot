@@ -79,6 +79,8 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
         self.vault = get_checksum_address(vault_address)
 
+        tokens: list[str]
+        balances: list[int]
         tokens, balances, _ = eth_abi.abi.decode(
             types=["address[]", "uint256[]", "uint256"],
             data=w3.eth.call(
