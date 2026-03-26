@@ -106,7 +106,6 @@ class UserOperation(Enum):
     WITHDRAW = "WITHDRAW"
 
 
-FULL_VERIFICATION_INTERVAL = 500_000
 GHO_DISCOUNT_DEPRECATION_REVISION = 4
 SCALED_AMOUNT_POOL_REVISION = 9
 
@@ -507,7 +506,7 @@ def deactivate_mainnet_aave_v3(
     "verify_all",
     default=True,
     show_default=True,
-    help="Verify all positions at full verification intervals (every 500k blocks).",
+    help="Verify all positions at full verification intervals.",
     envvar="DEGENBOT_VERIFY_ALL",
     show_envvar=True,
 )
@@ -540,6 +539,25 @@ def deactivate_mainnet_aave_v3(
     envvar="DEGENBOT_DRY_RUN",
     show_envvar=True,
 )
+@click.option(
+    "--backup/--no-backup",
+    "enable_backup",
+    default=True,
+    show_default=True,
+    help="Enable or disable database backups at verification intervals.",
+    envvar="DEGENBOT_BACKUP",
+    show_envvar=True,
+)
+@click.option(
+    "--backup-interval",
+    "backup_interval",
+    default=500_000,
+    show_default=True,
+    type=int,
+    help="Number of blocks between database backups.",
+    envvar="DEGENBOT_BACKUP_INTERVAL",
+    show_envvar=True,
+)
 def aave_update(
     *,
     chunk_size: int,
@@ -550,6 +568,8 @@ def aave_update(
     stop_after_one_chunk: bool,
     show_progress: bool,
     dry_run: bool,
+    enable_backup: bool,
+    backup_interval: int,
 ) -> None:
     """
     Update positions for active Aave markets.
@@ -566,6 +586,8 @@ def aave_update(
         stop_after_one_chunk: If True, stop after processing the first chunk.
         show_progress: Toggle display of progress bars.
         dry_run: If True, preview changes without committing to the database.
+        enable_backup: If True, create database backups at verification intervals.
+        backup_interval: Number of blocks between database backups.
     """
 
     with (  # noqa:PLR1702
@@ -715,9 +737,9 @@ def aave_update(
                         market.last_update_block = working_end_block
 
                         if verify_all and (
-                            working_end_block // FULL_VERIFICATION_INTERVAL
-                            != working_start_block // FULL_VERIFICATION_INTERVAL
-                            or working_end_block % FULL_VERIFICATION_INTERVAL == 0
+                            working_end_block // backup_interval
+                            != working_start_block // backup_interval
+                            or working_end_block % backup_interval == 0
                         ):
                             _verify_all_positions(
                                 w3=w3,
@@ -732,12 +754,15 @@ def aave_update(
                             )
 
                             session.commit()
-                            backup_sqlite_database(
-                                session=session,
-                                suffix=f"{working_end_block}",
-                                skip_confirmation=True,
-                            )
-                            logger.info(f"Created database backup at block {working_end_block:,}")
+                            if enable_backup:
+                                backup_sqlite_database(
+                                    session=session,
+                                    suffix=f"{working_end_block}",
+                                    skip_confirmation=True,
+                                )
+                                logger.info(
+                                    f"Created database backup at block {working_end_block:,}"
+                                )
                             db_session.remove()
                         else:
                             session.commit()
