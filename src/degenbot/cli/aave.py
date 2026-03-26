@@ -1937,22 +1937,17 @@ def _get_contract(
     session: Session,
     market: AaveV3Market,
     contract_name: str,
-) -> AaveV3Contract:
+) -> AaveV3Contract | None:
     """
     Get contract by name for a given market.
     """
 
-    contract = session.scalar(
+    return session.scalar(
         select(AaveV3Contract).where(
             AaveV3Contract.market_id == market.id,
             AaveV3Contract.name == contract_name,
         )
     )
-    if contract is None:
-        msg = f"{contract_name} not found for market {market.id}"
-        raise ValueError(msg)
-
-    return contract
 
 
 def _get_asset_by_token_type(
@@ -2010,6 +2005,8 @@ def _update_debt_position_index(
         market=tx_context.market,
         contract_name="POOL",
     )
+    assert pool_contract is not None
+
     fetched_index = _get_current_borrow_index_from_pool(
         w3=tx_context.w3,
         pool_address=get_checksum_address(pool_contract.address),
@@ -2832,6 +2829,8 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         market=tx_context.market,
         contract_name="POOL",
     )
+    assert pool_contract is not None
+
     parser = TransactionOperationsParser(
         market=tx_context.market,
         session=tx_context.session,
@@ -4575,6 +4574,8 @@ def _update_contract_revision(
         market=market,
         contract_name=contract_name,
     )
+    assert contract is not None
+
     contract.revision = revision
 
     logger.info(f"Upgraded revision for {contract.name} to {revision}")
@@ -5044,13 +5045,16 @@ def update_aave_market(
     proxy_events: list[LogReceipt] = []
     config_events: list[LogReceipt] = []
 
+    pool_address_provider = _get_contract(
+        session=session,
+        market=market,
+        contract_name="POOL_ADDRESS_PROVIDER",
+    )
+    assert pool_address_provider is not None
+
     for event in _fetch_address_provider_events(
         w3=w3,
-        provider_address=_get_contract(
-            session=session,
-            market=market,
-            contract_name="POOL_ADDRESS_PROVIDER",
-        ).address,
+        provider_address=get_checksum_address(pool_address_provider.address),
         start_block=start_block,
         end_block=end_block,
     ):
@@ -5090,15 +5094,11 @@ def update_aave_market(
             config_events.append(event)
 
     # Phase 2
-    try:
-        pool_configurator = _get_contract(
-            session=session,
-            market=market,
-            contract_name="POOL_CONFIGURATOR",
-        )
-    except ValueError:
-        # Configurator not initialized yet, skip reserve initialization
-        pool_configurator = None
+    pool_configurator = _get_contract(
+        session=session,
+        market=market,
+        contract_name="POOL_CONFIGURATOR",
+    )
     if pool_configurator is not None:
         for event in _fetch_reserve_initialization_events(
             w3=w3,
@@ -5122,13 +5122,12 @@ def update_aave_market(
     # Include config events for chronological processing
     all_events.extend(config_events)
 
-    try:
-        pool = _get_contract(
-            session=session,
-            market=market,
-            contract_name="POOL",
-        )
-    except ValueError:
+    pool = _get_contract(
+        session=session,
+        market=market,
+        contract_name="POOL",
+    )
+    if pool is None:
         # Pool not initialized yet, skip to next chunk
         logger.warning(f"Pool not initialized for market {market.id}, skipping")
         return
