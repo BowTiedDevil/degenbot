@@ -312,13 +312,14 @@ def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress
         user_addresses.add(decode_address(event["topics"][2]))
 
     elif topic in {
-        AaveV3PoolEvent.RESERVE_DATA_UPDATED.value,
-        AaveV3PoolEvent.MINTED_TO_TREASURY.value,
-        AaveV3PoolConfigEvent.UPGRADED.value,
-        AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value,
-        AaveV3PoolConfigEvent.POOL_UPDATED.value,
         AaveV3GhoDebtTokenEvent.DISCOUNT_RATE_STRATEGY_UPDATED.value,
         AaveV3GhoDebtTokenEvent.DISCOUNT_TOKEN_UPDATED.value,
+        AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value,
+        AaveV3PoolConfigEvent.POOL_DATA_PROVIDER_UPDATED.value,
+        AaveV3PoolConfigEvent.POOL_UPDATED.value,
+        AaveV3PoolConfigEvent.UPGRADED.value,
+        AaveV3PoolEvent.MINTED_TO_TREASURY.value,
+        AaveV3PoolEvent.RESERVE_DATA_UPDATED.value,
     }:
         # no relevant user data in these events
         pass
@@ -2981,6 +2982,13 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 tx_context=tx_context,
             )
         elif topic == AaveV3PoolConfigEvent.POOL_UPDATED.value:
+            # Verify assumption: Pool upgrade transactions should only contain
+            # the upgrade event
+            assert len(tx_context.events) == 1, (
+                f"Expected single event in Pool upgrade transaction, "
+                f"got {len(tx_context.events)}. "
+                f"Transaction: {tx_context.tx_hash.to_0x_hex()}"
+            )
             _update_contract_revision(
                 session=tx_context.session,
                 w3=tx_context.w3,
@@ -2990,6 +2998,13 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 revision_function_prototype="POOL_REVISION",
             )
         elif topic == AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value:
+            # Verify assumption: PoolConfigurator upgrade transactions should only
+            # contain the upgrade event
+            assert len(tx_context.events) == 1, (
+                f"Expected single event in PoolConfigurator upgrade transaction, "
+                f"got {len(tx_context.events)}. "
+                f"Transaction: {tx_context.tx_hash.to_0x_hex()}"
+            )
             _update_contract_revision(
                 session=tx_context.session,
                 w3=tx_context.w3,
@@ -2997,6 +3012,18 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 contract_name="POOL_CONFIGURATOR",
                 new_address=decode_address(event["topics"][2]),
                 revision_function_prototype="CONFIGURATOR_REVISION",
+            )
+        elif topic == AaveV3PoolConfigEvent.POOL_DATA_PROVIDER_UPDATED.value:
+            _process_pool_data_provider_updated_event(
+                session=tx_context.session,
+                market=tx_context.market,
+                event=event,
+            )
+        elif topic == AaveV3PoolConfigEvent.ADDRESS_SET.value:
+            _process_address_set_event(
+                session=tx_context.session,
+                market=tx_context.market,
+                event=event,
             )
         elif topic == AaveV3PoolConfigEvent.UPGRADED.value:
             _process_scaled_token_upgrade_event(
@@ -4603,46 +4630,85 @@ def _process_proxy_creation_event(
     )
 
 
-def _process_umbrella_creation_event(
+def _process_pool_data_provider_updated_event(
     *,
     session: Session,
     market: AaveV3Market,
     event: LogReceipt,
-    proxy_name: str,
-    proxy_id: bytes,
 ) -> None:
     """
-    Process an AddressSet event for UMBRELLA contract creation.
+    Process a PoolDataProviderUpdated event chronologically.
 
-    The AddressSet event structure:
-    - topics[1]: id (bytes32) - e.g., "UMBRELLA"
-    - topics[2]: oldAddress (address) - typically 0x0 for new addresses
-    - topics[3]: newAddress (address) - the actual contract address
+    Event structure:
+    - topics[1]: oldAddress (address indexed)
+    - topics[2]: newAddress (address indexed)
+    """
+    old_pool_data_provider_address = decode_address(event["topics"][1])
+    new_pool_data_provider_address = decode_address(event["topics"][2])
+
+    if old_pool_data_provider_address == ZERO_ADDRESS:
+        session.add(
+            AaveV3Contract(
+                market_id=market.id,
+                name="POOL_DATA_PROVIDER",
+                address=new_pool_data_provider_address,
+            )
+        )
+    else:
+        pool_data_provider = session.scalar(
+            select(AaveV3Contract).where(AaveV3Contract.address == old_pool_data_provider_address)
+        )
+        assert pool_data_provider is not None
+        pool_data_provider.address = new_pool_data_provider_address
+
+
+def _process_address_set_event(
+    *,
+    session: Session,
+    market: AaveV3Market,
+    event: LogReceipt,
+) -> None:
+    """
+    Process an AddressSet event chronologically.
+
+    Event structure:
+    - topics[1]: id (bytes32 indexed) - contract identifier
+    - topics[2]: oldAddress (address indexed)
+    - topics[3]: newAddress (address indexed)
     """
 
-    logger.debug(f"Processing _process_umbrella_creation_event at block {event['blockNumber']}")
+    # Decode the contract id from bytes32
+    (contract_id_bytes,) = eth_abi.abi.decode(types=["bytes32"], data=event["topics"][1])
+    contract_id = contract_id_bytes.decode("ascii").strip("\x00")
 
-    (decoded_proxy_id,) = eth_abi.abi.decode(types=["bytes32"], data=event["topics"][1])
-
-    if decoded_proxy_id != proxy_id:
-        return
-
+    old_address = decode_address(event["topics"][2])
     new_address = decode_address(event["topics"][3])
 
-    if (
-        session.scalar(select(AaveV3Contract).where(AaveV3Contract.address == new_address))
-        is not None
-    ):
-        return
-
-    market.contracts.append(
-        AaveV3Contract(
-            market_id=market.id,
-            name=proxy_name,
-            address=new_address,
-            revision=None,
+    if old_address == ZERO_ADDRESS:
+        # New contract registration
+        session.add(
+            AaveV3Contract(
+                market_id=market.id,
+                name=contract_id,
+                address=new_address,
+            )
         )
-    )
+    else:
+        # Contract address update
+        contract = session.scalar(
+            select(AaveV3Contract).where(AaveV3Contract.address == old_address)
+        )
+        if contract is not None:
+            contract.address = new_address
+        else:
+            # Contract not found by old address, create new entry
+            session.add(
+                AaveV3Contract(
+                    market_id=market.id,
+                    name=contract_id,
+                    address=new_address,
+                )
+            )
 
 
 def _process_discount_percent_updated_event(
@@ -4973,9 +5039,10 @@ def update_aave_market(
         f"block range {start_block:,} - {end_block:,}"
     )
 
-    # Phase 1: Collect proxy events
+    # Phase 1: Collect proxy events and config events
     # These events will be processed chronologically in Phase 3
     proxy_events: list[LogReceipt] = []
+    config_events: list[LogReceipt] = []
 
     for event in _fetch_address_provider_events(
         w3=w3,
@@ -5015,43 +5082,12 @@ def update_aave_market(
             # Save event for chronological processing in Phase 3. The revision will be updated when
             # the event is processed chronologically
             proxy_events.append(event)
-        elif topic == AaveV3PoolConfigEvent.POOL_DATA_PROVIDER_UPDATED.value:
-            old_pool_data_provider_address: str
-            (old_pool_data_provider_address,) = eth_abi.abi.decode(
-                types=["address"], data=event["topics"][1]
-            )
-            old_pool_data_provider_address = get_checksum_address(old_pool_data_provider_address)
-
-            new_pool_data_provider_address: str
-            (new_pool_data_provider_address,) = eth_abi.abi.decode(
-                types=["address"], data=event["topics"][2]
-            )
-            new_pool_data_provider_address = get_checksum_address(new_pool_data_provider_address)
-
-            if old_pool_data_provider_address == ZERO_ADDRESS:
-                session.add(
-                    AaveV3Contract(
-                        market_id=market.id,
-                        name="POOL_DATA_PROVIDER",
-                        address=new_pool_data_provider_address,
-                    )
-                )
-            else:
-                pool_data_provider = session.scalar(
-                    select(AaveV3Contract).where(
-                        AaveV3Contract.address == old_pool_data_provider_address
-                    )
-                )
-                assert pool_data_provider is not None
-                pool_data_provider.address = new_pool_data_provider_address
-        elif topic == AaveV3PoolConfigEvent.ADDRESS_SET.value:
-            _process_umbrella_creation_event(
-                session=session,
-                market=market,
-                event=event,
-                proxy_name="UMBRELLA",
-                proxy_id=eth_abi.abi.encode(["bytes32"], [b"UMBRELLA"]),
-            )
+        elif topic in {
+            AaveV3PoolConfigEvent.POOL_DATA_PROVIDER_UPDATED.value,
+            AaveV3PoolConfigEvent.ADDRESS_SET.value,
+        }:
+            # Save event for chronological processing in Phase 3
+            config_events.append(event)
 
     # Phase 2
     try:
@@ -5082,6 +5118,9 @@ def update_aave_market(
 
     # Include proxy upgrade events for chronological processing
     all_events.extend(proxy_events)
+
+    # Include config events for chronological processing
+    all_events.extend(config_events)
 
     try:
         pool = _get_contract(
