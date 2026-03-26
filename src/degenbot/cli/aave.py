@@ -315,6 +315,7 @@ def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress
         AaveV3PoolEvent.RESERVE_DATA_UPDATED.value,
         AaveV3PoolEvent.MINTED_TO_TREASURY.value,
         AaveV3PoolConfigEvent.UPGRADED.value,
+        AaveV3PoolConfigEvent.POOL_UPDATED.value,
         AaveV3GhoDebtTokenEvent.DISCOUNT_RATE_STRATEGY_UPDATED.value,
         AaveV3GhoDebtTokenEvent.DISCOUNT_TOKEN_UPDATED.value,
     }:
@@ -2741,6 +2742,24 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 event=event,
                 tx_context=tx_context,
             )
+        elif topic == AaveV3PoolConfigEvent.POOL_UPDATED.value:
+            _update_contract_revision(
+                session=tx_context.session,
+                w3=tx_context.w3,
+                market=tx_context.market,
+                contract_name="POOL",
+                new_address=decode_address(event["topics"][2]),
+                revision_function_prototype="POOL_REVISION",
+            )
+        elif topic == AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value:
+            _update_contract_revision(
+                session=tx_context.session,
+                w3=tx_context.w3,
+                market=tx_context.market,
+                contract_name="POOL_CONFIGURATOR",
+                new_address=decode_address(event["topics"][2]),
+                revision_function_prototype="CONFIGURATOR_REVISION",
+            )
         elif topic == AaveV3PoolConfigEvent.UPGRADED.value:
             _process_scaled_token_upgrade_event(
                 event=event,
@@ -4248,6 +4267,7 @@ def _update_contract_revision(
     Update contract revision in database.
     """
 
+    revision: int
     (revision,) = raw_call(
         w3=w3,
         address=new_address,
@@ -4688,7 +4708,10 @@ def update_aave_market(
         f"block range {start_block:,} - {end_block:,}"
     )
 
-    # Phase 1
+    # Phase 1: Collect proxy events
+    # These events will be processed chronologically in Phase 3
+    proxy_events: list[LogReceipt] = []
+
     for event in _fetch_address_provider_events(
         w3=w3,
         provider_address=_get_contract(
@@ -4720,24 +4743,13 @@ def update_aave_market(
                 proxy_id=eth_abi.abi.encode(["bytes32"], [b"POOL_CONFIGURATOR"]),
                 revision_function_prototype="CONFIGURATOR_REVISION",
             )
-        elif topic == AaveV3PoolConfigEvent.POOL_UPDATED.value:
-            _update_contract_revision(
-                session=session,
-                w3=w3,
-                market=market,
-                contract_name="POOL",
-                new_address=decode_address(event["topics"][2]),
-                revision_function_prototype="POOL_REVISION",
-            )
-        elif topic == AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value:
-            _update_contract_revision(
-                session=session,
-                w3=w3,
-                market=market,
-                contract_name="POOL_CONFIGURATOR",
-                new_address=decode_address(event["topics"][2]),
-                revision_function_prototype="CONFIGURATOR_REVISION",
-            )
+        elif topic in {
+            AaveV3PoolConfigEvent.POOL_UPDATED.value,
+            AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value,
+        }:
+            # Save event for chronological processing in Phase 3. The revision will be updated when
+            # the event is processed chronologically
+            proxy_events.append(event)
         elif topic == AaveV3PoolConfigEvent.POOL_DATA_PROVIDER_UPDATED.value:
             (old_pool_data_provider_address,) = eth_abi.abi.decode(
                 types=["address"], data=event["topics"][1]
@@ -4800,6 +4812,9 @@ def update_aave_market(
 
     # Phase 3
     all_events: list[LogReceipt] = []
+
+    # Include proxy upgrade events for chronological processing
+    all_events.extend(proxy_events)
 
     try:
         pool = _get_contract(
