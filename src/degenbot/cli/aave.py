@@ -889,6 +889,86 @@ def position_show(address: str, market: str, chain_id: int) -> None:
         click.echo()
 
 
+@aave.group()
+def market() -> None:
+    """
+    Market commands
+    """
+
+
+@market.command("show")
+@click.option(
+    "--chain-id",
+    type=int,
+    default=None,
+    show_default=True,
+    help="Filter by chain ID (default: show all chains).",
+)
+@click.option(
+    "--name",
+    type=str,
+    default=None,
+    help="Filter by market name (default: show all markets).",
+)
+def market_show(chain_id: int | None, name: str | None) -> None:
+    """
+    Display Aave market information.
+
+    Shows all markets or filters by chain ID and/or market name.
+    """
+
+    with db_session() as session:
+        query = select(AaveV3Market)
+
+        if chain_id is not None:
+            query = query.where(AaveV3Market.chain_id == chain_id)
+        if name is not None:
+            query = query.where(AaveV3Market.name == name)
+
+        markets = session.scalars(query).all()
+
+        if not markets:
+            filters = []
+            if chain_id is not None:
+                filters.append(f"chain_id={chain_id}")
+            if name is not None:
+                filters.append(f"name='{name}'")
+            filter_str = ", ".join(filters) if filters else "no filters"
+            click.echo(f"No Aave markets found ({filter_str}).")
+            return
+
+        click.echo("\nAave V3 Markets")
+        click.echo("=" * 80)
+
+        for market_obj in markets:
+            status = "active" if market_obj.active else "inactive"
+            last_update = (
+                f"{market_obj.last_update_block:,}"
+                if market_obj.last_update_block is not None
+                else "never"
+            )
+
+            click.echo(f"\nMarket: {market_obj.name}")
+            click.echo(f"  Chain ID: {market_obj.chain_id}")
+            click.echo(f"  Status: {status}")
+            click.echo(f"  Last Update Block: {last_update}")
+
+            # Count users and assets
+            user_count = len(market_obj.users) if market_obj.users else 0
+            asset_count = len(market_obj.assets) if market_obj.assets else 0
+
+            click.echo(f"  Users: {user_count}")
+            click.echo(f"  Assets: {asset_count}")
+
+            if market_obj.assets:
+                click.echo("  Asset List:")
+                for asset in market_obj.assets:
+                    token_symbol = (
+                        asset.underlying_token.symbol if asset.underlying_token else "Unknown"
+                    )
+                    click.echo(f"    - {token_symbol}")
+
+
 def _process_asset_initialization_event(
     w3: Web3,
     event: LogReceipt,
