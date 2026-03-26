@@ -2421,9 +2421,13 @@ def _preprocess_liquidation_aggregates(
             tx_context.liquidation_aggregates.get(key, 0) + debt_to_cover
         )
 
+        # Track count of liquidations for this (user, debt_v_token)
+        tx_context.liquidation_counts[key] = tx_context.liquidation_counts.get(key, 0) + 1
+
         logger.debug(
             f"_preprocess_liquidation_aggregates: user={user}, debt_v_token={debt_v_token}, "
-            f"debt_to_cover={debt_to_cover}, total={tx_context.liquidation_aggregates[key]}"
+            f"debt_to_cover={debt_to_cover}, total={tx_context.liquidation_aggregates[key]}, "
+            f"count={tx_context.liquidation_counts[key]}"
         )
 
 
@@ -3618,30 +3622,37 @@ def _process_debt_burn_with_match(
             # Mark as processed
             tx_context.processed_liquidations.add(liquidation_key)
 
-            # Get aggregated debtToCover for this (user, debt_asset)
-            aggregated_debt_to_cover = tx_context.liquidation_aggregates.get(liquidation_key, 0)
+            # Get liquidation count for this (user, debt_v_token)
+            liquidation_count = tx_context.liquidation_counts.get(liquidation_key, 1)
 
-            if aggregated_debt_to_cover > 0:
-                # Use aggregated amount
+            if liquidation_count > 1:
+                # Multi-liquidation scenario: use aggregated debtToCover
+                # The contract emits a single combined burn event for multiple liquidations
+                # We calculate the scaled burn from aggregated debtToCover to match the contract
+                aggregated_debt_to_cover = tx_context.liquidation_aggregates.get(liquidation_key, 0)
                 token_math = TokenMathFactory.get_token_math_for_token_revision(
                     debt_asset.v_token_revision
                 )
                 burn_value = token_math.get_debt_burn_scaled_amount(
                     aggregated_debt_to_cover, scaled_event.index
                 )
-                # Update scaled_amount to use the correct aggregated value
-                # The enriched scaled_amount was calculated with the wrong raw_amount
                 scaled_amount = burn_value
                 logger.debug(
-                    f"_process_debt_burn_with_match: LIQUIDATION using aggregated "
-                    f"debtToCover={aggregated_debt_to_cover}, scaled_burn={burn_value}"
+                    f"_process_debt_burn_with_match: Multi-liquidation ({liquidation_count}x) "
+                    f"using aggregated debtToCover={aggregated_debt_to_cover}, "
+                    f"scaled_burn={burn_value}"
                 )
             else:
-                # Fallback to event amount if no aggregation (shouldn't happen)
-                burn_value = scaled_event.amount
+                # Single liquidation: use burn event value + balance_increase
+                # The Burn event's value field is the principal burned, but the actual
+                # balance reduction is value + balance_increase (which equals debtToCover).
+                # This matches the contract's behavior where accrued interest is included.
+                burn_value = scaled_event.amount + (scaled_event.balance_increase or 0)
+                scaled_amount = burn_value
                 logger.debug(
-                    f"_process_debt_burn_with_match: LIQUIDATION no aggregation found, "
-                    f"using burn_value={burn_value}"
+                    f"_process_debt_burn_with_match: Single liquidation using "
+                    f"burn event value + balance_increase: {burn_value} "
+                    f"(amount={scaled_event.amount}, increase={scaled_event.balance_increase})"
                 )
         else:
             # Standard REPAY: use Burn event value

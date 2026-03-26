@@ -94,6 +94,12 @@ class TransactionContext:
     )
     """Set of (user, debt_v_token) pairs that have been processed."""
 
+    # Track count of liquidations per (user, debt_v_token) for multi-liquidation detection
+    liquidation_counts: dict[tuple[ChecksumAddress, ChecksumAddress], int] = field(
+        default_factory=dict
+    )
+    """Count of liquidations per (user, debt_v_token) pair."""
+
     @property
     def gho_vtoken_address(self) -> ChecksumAddress | None:
         """Get the GHO vToken address if GHO asset exists."""

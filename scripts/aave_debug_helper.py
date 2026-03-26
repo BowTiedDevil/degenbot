@@ -191,19 +191,22 @@ def format_output(data: dict) -> str:
         f"Pool Contract Revision: {data['pool_revision'] or 'Not found'}",
         "",
         "Assets:",
-        "-" * 80,
-        f"{'Symbol':<10} {'AToken Rev':<12} {'VToken Rev':<12} {'AToken Address':<44}",
-        "-" * 80,
+        "-" * 98,
+        f"{'Symbol':<10} {'AToken Rev':<12} {'VToken Rev':<12} "
+        f"{'AToken Address':<32} {'VToken Address':<32}",
+        "-" * 98,
     ))
 
     for asset in data["assets"]:
         symbol = asset["underlying_symbol"] or "Unknown"
-        a_token_addr = (asset["a_token_address"] or "N/A")[:42]
+        a_token_addr = (asset["a_token_address"] or "N/A")[:32]
+        v_token_addr = (asset["v_token_address"] or "N/A")[:32]
         lines.append(
             f"{symbol:<10} "
             f"{asset['a_token_revision']:<12} "
             f"{asset['v_token_revision']:<12} "
-            f"{a_token_addr:<44}"
+            f"{a_token_addr:<32} "
+            f"{v_token_addr:<32}"
         )
 
     return "\n".join(lines)
