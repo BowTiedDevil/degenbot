@@ -5243,7 +5243,7 @@ def update_aave_market(
             user_addresses=users_modified_this_block,
         )
 
-    if verify_chunk and users_modified_this_chunk:
+    if verify_chunk and not verify_block and users_modified_this_chunk:
         _verify_positions_for_users(
             w3=w3,
             market=market,
