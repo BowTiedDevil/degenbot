@@ -35,7 +35,7 @@ def database_backup() -> None:
             default=False,
         )
         if user_confirm:
-            exc.path.unlink()
+            exc.path.unlink(missing_ok=True)
             with db_session() as session:
                 backup_sqlite_database(
                     session=session,
@@ -59,7 +59,7 @@ def database_reset(*, force: bool) -> None:
         f"The existing database at {settings.database.path} will be removed and a new, empty database will be created and initialized using the schema included in {__package__} version {__version__}. Do you want to proceed?",  # noqa: E501
         default=False,
     ):
-        settings.database.path.unlink()
+        settings.database.path.unlink(missing_ok=True)
         create_new_sqlite_database(settings.database.path)
     else:
         raise click.Abort

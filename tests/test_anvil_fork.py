@@ -43,14 +43,14 @@ def test_fork_captures_output():
         # stderr should be empty
         assert not expected_stderr_path.read_text()
     finally:
-        expected_stderr_path.unlink()
+        expected_stderr_path.unlink(missing_ok=True)
 
     try:
         assert expected_stdout_path.exists()
         # stdout should have text from normal startup
         assert expected_stdout_path.read_text()
     finally:
-        expected_stdout_path.unlink()
+        expected_stdout_path.unlink(missing_ok=True)
 
 
 def test_web3_endpoints():
