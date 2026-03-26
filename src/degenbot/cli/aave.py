@@ -1203,7 +1203,7 @@ def _process_scaled_token_upgrade_event(
         aave_collateral_asset := _get_asset_by_token_type(
             session=tx_context.session,
             market=tx_context.market,
-            token_address=get_checksum_address(event["address"]),
+            token_address=event["address"],
             token_type=TokenType.A_TOKEN,
         )
     ) is not None:
@@ -1224,7 +1224,7 @@ def _process_scaled_token_upgrade_event(
         aave_debt_asset := _get_asset_by_token_type(
             session=tx_context.session,
             market=tx_context.market,
-            token_address=get_checksum_address(event["address"]),
+            token_address=event["address"],
             token_type=TokenType.V_TOKEN,
         )
     ) is not None:
@@ -1269,7 +1269,7 @@ def _process_scaled_token_upgrade_event(
             )
 
     else:
-        token_address = get_checksum_address(event["address"])
+        token_address = event["address"]
         msg = f"Unknown token type for address {token_address}. Expected aToken or vToken."
         raise ValueError(msg)
 
@@ -2478,7 +2478,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
     gho_user_addresses: set[ChecksumAddress] = set()
     for event in tx_context.events:
         topic = event["topics"][0]
-        event_address = get_checksum_address(event["address"])
+        event_address = event["address"]
 
         if (
             topic
@@ -2516,7 +2516,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
     # This ensures calculations use the discount in effect at the start of the transaction
     for event in tx_context.events:
         topic = event["topics"][0]
-        event_address = get_checksum_address(event["address"])
+        event_address = event["address"]
 
         # Capture GHO user discount percents for mint/burn events
         if (
@@ -2639,7 +2639,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         discount_token = tx_context.gho_asset.v_gho_discount_token
         for event in tx_context.events:
             topic = event["topics"][0]
-            event_address = get_checksum_address(event["address"])
+            event_address = event["address"]
             if topic == ERC20Event.TRANSFER.value and event_address == discount_token:
                 _process_stk_aave_transfer_event(
                     event=event,
@@ -2662,9 +2662,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
             # Store the token and user addresses for matching with INTEREST_ACCRUAL burns
             if operation.scaled_token_events:
                 first_event = operation.scaled_token_events[0]
-                tx_context.last_withdraw_token_address = get_checksum_address(
-                    first_event.event["address"]
-                )
+                tx_context.last_withdraw_token_address = first_event.event["address"]
                 tx_context.last_withdraw_user_address = first_event.user_address
             logger.debug(
                 f"Pre-processed WITHDRAW amount: {tx_context.last_withdraw_amount} "
@@ -2729,7 +2727,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
             continue
 
         topic = event["topics"][0]
-        event_address = get_checksum_address(event["address"])
+        event_address = event["address"]
 
         # Dispatch to appropriate handler for non-operation events
         if topic == AaveV3PoolEvent.RESERVE_DATA_UPDATED.value:
@@ -3024,7 +3022,7 @@ def _process_deficit_coverage_burn(
         return
 
     # Get collateral asset
-    token_address = get_checksum_address(scaled_event.event["address"])
+    token_address = scaled_event.event["address"]
     collateral_asset, _ = _get_scaled_token_asset_by_address(
         session=tx_context.session,
         market=tx_context.market,
@@ -3110,7 +3108,7 @@ def _process_deferred_debt_burns(
             continue
 
         topic = event["topics"][0]
-        event_address = get_checksum_address(event["address"])
+        event_address = event["address"]
 
         # Check if this is a debt burn event
         if topic != AaveV3ScaledTokenEvent.BURN.value:
@@ -3244,7 +3242,7 @@ def _process_collateral_mint_with_match(
     Process collateral (aToken) mint with operation match.
     """
 
-    token_address = get_checksum_address(scaled_event.event["address"])
+    token_address = scaled_event.event["address"]
     collateral_asset, _ = _get_scaled_token_asset_by_address(
         session=tx_context.session,
         market=tx_context.market,
@@ -3321,7 +3319,7 @@ def _process_collateral_burn_with_match(
         return
 
     # Get collateral asset first for logging
-    token_address = get_checksum_address(scaled_event.event["address"])
+    token_address = scaled_event.event["address"]
     collateral_asset, _ = _get_scaled_token_asset_by_address(
         session=tx_context.session,
         market=tx_context.market,
@@ -3410,7 +3408,7 @@ def _process_debt_mint_with_match(
     """
 
     # Get debt asset first for logging
-    token_address = get_checksum_address(scaled_event.event["address"])
+    token_address = scaled_event.event["address"]
     _, debt_asset = _get_scaled_token_asset_by_address(
         session=tx_context.session,
         market=tx_context.market,
@@ -3652,7 +3650,7 @@ def _process_debt_burn_with_match(
     """
 
     # Get debt asset first for logging
-    token_address = get_checksum_address(scaled_event.event["address"])
+    token_address = scaled_event.event["address"]
     _, debt_asset = _get_scaled_token_asset_by_address(
         session=tx_context.session,
         market=tx_context.market,
@@ -3923,10 +3921,8 @@ def _should_skip_collateral_transfer(
                 and get_checksum_address(evt["address"]) == gho_vtoken_address
             ):
                 continue
-            if get_checksum_address(evt["address"]) == get_checksum_address(
-                scaled_event.event["address"]
-            ):
-                burn_user = get_checksum_address("0x" + evt["topics"][1].hex()[-40:])
+            if evt["address"] == scaled_event.event["address"]:
+                burn_user = decode_address(evt["topics"][1])
                 if burn_user == scaled_event.from_address:
                     burn_amount = int.from_bytes(evt["data"][:32], "big")
                     if burn_amount == scaled_event.amount:
@@ -3963,9 +3959,9 @@ def _match_paired_balance_transfer(
         return None, None, None
 
     for bt_event in operation.balance_transfer_events:
-        bt_from = get_checksum_address("0x" + bt_event["topics"][1].hex()[-40:])
-        bt_to = get_checksum_address("0x" + bt_event["topics"][2].hex()[-40:])
-        bt_token = get_checksum_address(bt_event["address"])
+        bt_from = decode_address(bt_event["topics"][1])
+        bt_to = decode_address(bt_event["topics"][2])
+        bt_token = bt_event["address"]
 
         # Match by token, from, and to addresses (semantic matching)
         # Log index proximity is not reliable in batch transactions
@@ -4013,7 +4009,7 @@ def _process_collateral_transfer(
         block_number=scaled_event.event["blockNumber"],
     )
 
-    token_address = get_checksum_address(scaled_event.event["address"])
+    token_address = scaled_event.event["address"]
     collateral_asset, _ = _get_scaled_token_asset_by_address(
         session=tx_context.session,
         market=tx_context.market,
@@ -4114,7 +4110,7 @@ def _process_debt_transfer(
     )
 
     # Get debt asset
-    token_address = get_checksum_address(scaled_event.event["address"])
+    token_address = scaled_event.event["address"]
     _, debt_asset = _get_scaled_token_asset_by_address(
         session=tx_context.session,
         market=tx_context.market,
@@ -4619,7 +4615,7 @@ def _build_transaction_contexts(
         tx_hash = event["transactionHash"]
         block_num = event["blockNumber"]
         topic = event["topics"][0]
-        event_address = get_checksum_address(event["address"])
+        event_address = event["address"]
 
         logger.debug(
             f"_build_transaction_contexts: processing event "
