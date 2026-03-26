@@ -4050,7 +4050,7 @@ def _process_debt_burn_with_match(
                 #
                 # Use debtToCover from LiquidationCall event if available (more accurate).
                 # Burn event value + balance_increase can be off by 1 wei due to Solidity
-                # integer math truncation. See debug/aave/0064.
+                # integer math truncation. See debug/aave/0063.
                 if operation and operation.debt_to_cover is not None:
                     debt_to_cover = operation.debt_to_cover
                     logger.debug(
@@ -4093,7 +4093,7 @@ def _process_debt_burn_with_match(
                 #
                 # Use debtToCover from LiquidationCall event if available (more accurate).
                 # Burn event value + balance_increase can be off by 1 wei due to Solidity
-                # integer math truncation. See debug/aave/0064.
+                # integer math truncation. See debug/aave/0063.
                 if operation and operation.debt_to_cover is not None:
                     debt_to_cover = operation.debt_to_cover
                     logger.debug(
