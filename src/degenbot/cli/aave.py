@@ -530,6 +530,16 @@ def deactivate_mainnet_aave_v3(
     envvar="DEGENBOT_PROGRESS_BAR",
     show_envvar=True,
 )
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Preview changes without committing to the database.",
+    envvar="DEGENBOT_DRY_RUN",
+    show_envvar=True,
+)
 def aave_update(
     *,
     chunk_size: int,
@@ -539,6 +549,7 @@ def aave_update(
     verify_all: bool,
     stop_after_one_chunk: bool,
     show_progress: bool,
+    dry_run: bool,
 ) -> None:
     """
     Update positions for active Aave markets.
@@ -554,6 +565,7 @@ def aave_update(
         verify_all: If True, verify all positions at full verification intervals.
         stop_after_one_chunk: If True, stop after processing the first chunk.
         show_progress: Toggle display of progress bars.
+        dry_run: If True, preview changes without committing to the database.
     """
 
     with (  # noqa:PLR1702
@@ -691,6 +703,14 @@ def aave_update(
                         except Exception:  # noqa: BLE001
                             logger.exception("")
                             sys.exit(1)
+
+                        if dry_run:
+                            session.rollback()
+                            click.echo(
+                                f"Dry run: processed blocks {working_start_block:,} -> "
+                                f"{working_end_block:,} for {market.name} (no changes committed)"
+                            )
+                            continue
 
                         market.last_update_block = working_end_block
 
