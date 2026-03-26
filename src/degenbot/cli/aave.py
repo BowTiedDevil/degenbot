@@ -4370,7 +4370,7 @@ def _process_debt_transfer(
     Process debt (vToken) transfer between users.
     """
 
-    logger.debug(f"Processing _process_debt_transfer_with_match at block {event['blockNumber']}")
+    logger.debug(f"Processing _process_debt_transfer at block {event['blockNumber']}")
 
     assert scaled_event.from_address is not None
     assert scaled_event.target_address is not None

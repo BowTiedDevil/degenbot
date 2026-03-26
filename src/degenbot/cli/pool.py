@@ -84,7 +84,7 @@ class MockV3LiquidityPool(UniswapV3Pool):
         tick_data: dict[int, UniswapV3LiquidityAtTick] | None = None,
     ) -> None:
         self.sparse_liquidity_map = False
-        self._initial_state_block = MAX_UINT256  # Skip the the in-range liquidity modification step
+        self._initial_state_block = MAX_UINT256  # Skip the in-range liquidity modification step
 
         initial_state = UniswapV3PoolState(
             address=address,
@@ -121,7 +121,7 @@ class MockV4LiquidityPool(UniswapV4Pool):
         tick_data: dict[int, UniswapV4LiquidityAtTick] | None = None,
     ) -> None:
         self.sparse_liquidity_map = False
-        self._initial_state_block = MAX_UINT256  # Skip the the in-range liquidity modification step
+        self._initial_state_block = MAX_UINT256  # Skip the in-range liquidity modification step
 
         initial_state = UniswapV4PoolState(
             address=address,
@@ -263,7 +263,7 @@ def apply_v3_liquidity_updates(
     lp_helper.tick_spacing = pool_in_db.tick_spacing
 
     for liquidity_event in liquidity_events:
-        # Guard against applying a liquidity event that occured in the past
+        # Guard against applying a liquidity event that occurred in the past
         if (
             pool_in_db.liquidity_update_block is not None
             and pool_in_db.liquidity_update_log_index is not None
@@ -477,7 +477,7 @@ def apply_v4_liquidity_updates(
     )
 
     for liquidity_event in liquidity_events:
-        # Guard against applying a liquidity event that occured in the past
+        # Guard against applying a liquidity event that occurred in the past
         if (
             pool_in_db.liquidity_update_block is not None
             and pool_in_db.liquidity_update_log_index is not None
