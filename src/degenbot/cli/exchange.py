@@ -93,7 +93,7 @@ def activate_base_aerodrome_v3(
     exchange_name: str = "aerodrome_v3",
 ) -> None:
     """
-    Activate Aerodrome V2 on Base mainnet.
+    Activate Aerodrome V3 on Base mainnet.
     """
 
     with db_session() as session:
