@@ -44,6 +44,7 @@ class AaveV3Market(Base):
     def __repr__(self) -> str:
         return (
             f"{self.__class__.__name__}("
+            f"id={self.id}, "
             f"chain_id={self.chain_id!r}, "
             f"name={self.name!r}, "
             f"active={self.active!r}"
