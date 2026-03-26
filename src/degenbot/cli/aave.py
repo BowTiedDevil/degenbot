@@ -776,6 +776,119 @@ def aave_update(
             block_pbar.close()
 
 
+@aave.group()
+def position() -> None:
+    """
+    Position commands
+    """
+
+
+@position.command("show")
+@click.argument("address", type=str)
+@click.option(
+    "--market",
+    type=str,
+    default="aave_v3",
+    show_default=True,
+    help="Market name to query (default: aave_v3).",
+)
+@click.option(
+    "--chain-id",
+    type=int,
+    default=1,
+    show_default=True,
+    help="Chain ID to query (default: 1 for Ethereum mainnet).",
+)
+def position_show(address: str, market: str, chain_id: int) -> None:
+    """
+    Display current Aave positions for a user.
+
+    Shows collateral and debt positions for the specified address on the given market.
+    """
+
+    try:
+        user_address = get_checksum_address(address)
+    except Exception as exc:
+        click.echo(f"Invalid address: {address}")
+        raise click.Abort from exc
+
+    with db_session() as session:
+        # Find the market first
+        market_obj = session.scalar(
+            select(AaveV3Market).where(
+                AaveV3Market.name == market,
+                AaveV3Market.chain_id == chain_id,
+            )
+        )
+
+        if market_obj is None:
+            click.echo(f"No market found with name '{market}' on chain {chain_id}.")
+            return
+
+        # Find the user for this specific market
+        user = session.scalar(
+            select(AaveV3User).where(
+                AaveV3User.address == user_address,
+                AaveV3User.market_id == market_obj.id,
+            )
+        )
+
+        if user is None:
+            click.echo(
+                f"No Aave user found for address {user_address} in market '{market}' "
+                f"on chain {chain_id}."
+            )
+            return
+
+        # Get collateral positions
+        collateral_positions = session.scalars(
+            select(AaveV3CollateralPosition)
+            .where(AaveV3CollateralPosition.user_id == user.id)
+            .options(joinedload(AaveV3CollateralPosition.asset))
+        ).all()
+
+        # Get debt positions
+        debt_positions = session.scalars(
+            select(AaveV3DebtPosition)
+            .where(AaveV3DebtPosition.user_id == user.id)
+            .options(joinedload(AaveV3DebtPosition.asset))
+        ).all()
+
+        click.echo(f"\nAave V3 Positions for {user_address}")
+        click.echo(f"Market: {market} (Chain: {chain_id})")
+        click.echo("=" * 60)
+
+        # Display collateral positions
+        if collateral_positions:
+            click.echo("\nCollateral Positions:")
+            click.echo("-" * 60)
+            for collateral_pos in collateral_positions:
+                asset_symbol = (
+                    collateral_pos.asset.underlying_token.symbol
+                    if collateral_pos.asset.underlying_token
+                    else "Unknown"
+                )
+                click.echo(f"  {asset_symbol}: {collateral_pos.balance} (scaled)")
+        else:
+            click.echo("\nNo collateral positions found.")
+
+        # Display debt positions
+        if debt_positions:
+            click.echo("\nDebt Positions:")
+            click.echo("-" * 60)
+            for debt_pos in debt_positions:
+                asset_symbol = (
+                    debt_pos.asset.underlying_token.symbol
+                    if debt_pos.asset.underlying_token
+                    else "Unknown"
+                )
+                click.echo(f"  {asset_symbol}: {debt_pos.balance} (scaled)")
+        else:
+            click.echo("\nNo debt positions found.")
+
+        click.echo()
+
+
 def _process_asset_initialization_event(
     w3: Web3,
     event: LogReceipt,
