@@ -9,7 +9,6 @@ from collections.abc import Iterator
 from collections.abc import Set as AbstractSet
 
 from degenbot.aave.events import ScaledTokenEventType
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli.aave_transaction_operations import ScaledTokenEvent
 
 

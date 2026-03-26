@@ -10,7 +10,6 @@ from web3 import Web3
 from web3.types import LogReceipt
 
 from degenbot.aave.events import ERC20Event
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli.aave_utils import decode_address
 from degenbot.database.models.aave import (
     AaveGhoToken,
