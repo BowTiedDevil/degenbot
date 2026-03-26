@@ -485,9 +485,8 @@ def deactivate_mainnet_aave_v3(
     ),
 )
 @click.option(
-    "--verify-block",
+    "--verify-block/--no-verify-block",
     "verify_block",
-    is_flag=True,
     default=True,
     show_default=True,
     help="Verify positions at each block boundary.",
@@ -495,9 +494,8 @@ def deactivate_mainnet_aave_v3(
     show_envvar=True,
 )
 @click.option(
-    "--verify-chunk",
+    "--verify-chunk/--no-verify-chunk",
     "verify_chunk",
-    is_flag=True,
     default=True,
     show_default=True,
     help="Verify positions at chunk boundaries.",
@@ -505,9 +503,8 @@ def deactivate_mainnet_aave_v3(
     show_envvar=True,
 )
 @click.option(
-    "--verify-all",
+    "--verify-all/--no-verify-all",
     "verify_all",
-    is_flag=True,
     default=True,
     show_default=True,
     help="Verify all positions at full verification intervals (every 500k blocks).",
@@ -525,9 +522,8 @@ def deactivate_mainnet_aave_v3(
     show_envvar=True,
 )
 @click.option(
-    "--progress-bar",
+    "--progress-bar/--no-progress-bar",
     "show_progress",
-    is_flag=True,
     default=True,
     show_default=True,
     help="Show progress bars.",
