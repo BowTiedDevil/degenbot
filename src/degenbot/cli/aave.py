@@ -314,6 +314,7 @@ def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress
         AaveV3PoolEvent.RESERVE_DATA_UPDATED.value,
         AaveV3PoolEvent.MINTED_TO_TREASURY.value,
         AaveV3PoolConfigEvent.UPGRADED.value,
+        AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value,
         AaveV3PoolConfigEvent.POOL_UPDATED.value,
         AaveV3GhoDebtTokenEvent.DISCOUNT_RATE_STRATEGY_UPDATED.value,
         AaveV3GhoDebtTokenEvent.DISCOUNT_TOKEN_UPDATED.value,
