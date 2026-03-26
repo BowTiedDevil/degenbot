@@ -378,6 +378,112 @@ The 1 wei discrepancy at block 21762809 is caused by recalculating the scaled bu
 
 ---
 
-**Status:** ✅ COMPLETED
+## Update (2026-03-25): Additional Issue Discovered During 0058 Investigation
 
-**Fix Applied:** Conditional burn calculation based on liquidation count to eliminate rounding errors while maintaining correct multi-liquidation handling.
+During the investigation and fix of Issue 0058, a related problem was discovered in the transaction at block 21762809 (0x1c1984a4ae9f9e056dfc2751e68dcb7d5a02dbd15450624d07eaca768fb08026):
+
+### The Problem
+
+The second liquidation in this transaction shows an incorrect `debt_to_cover` value in the aggregation:
+
+| Liquidation | Expected debtToCover | Actual debtToCover | Issue |
+|-------------|---------------------|-------------------|-------|
+| 1 (LINK collateral) | 136,867,301 | 136,867,301 | ✅ Correct |
+| 2 (AAVE collateral) | 1,947,199,140 | 498,998,889,124 | ❌ **Wrong - equals burn event amount** |
+
+**Expected total:** 2,084,066,441  
+**Actual total:** 499,135,756,425
+
+### Root Cause
+
+The `debt_to_cover` value extracted from the second LiquidationCall event appears to be coming from the burn event's scaled amount instead of the actual liquidation event data. This suggests a parsing or event assignment issue where the burn event data is being incorrectly read as the LiquidationCall data.
+
+### Evidence
+
+From the operation parsing logs:
+```
+_preprocess_liquidation_aggregates: user=0xC5BD..., debt_to_cover=136867301, count=1
+_preprocess_liquidation_aggregates: user=0xC5BD..., debt_to_cover=498998889124, count=2
+```
+
+The second debt_to_cover (498,998,889,124) matches exactly with the burn event value shown in the operation:
+```
+Scaled event: logIndex=80, type=ScaledTokenEventType.DEBT_BURN, amount=498998889124
+```
+
+### Impact
+
+This causes the balance verification to fail:
+- Starting: 866,396,105,726
+- After first burn: 866,260,825,272 (using 135,280,454 - correct)
+- After second burn: Would use 498,998,889,124 (wrong amount)
+- Expected final: 433,198,067,802
+- Actual calculated: 367,261,936,148
+
+### Next Steps
+
+This issue requires further investigation into:
+1. How the LiquidationCall event data is being decoded
+2. Whether there's event data corruption or misalignment
+3. Why the second liquidation's debtToCover equals the burn event amount
+
+**Note:** Issue 0058 was successfully resolved with the TokenMath approach for single liquidations. This 0057 issue appears to be a separate parsing problem that existed before the 0058 fix.
+
+---
+
+## Investigation Update (2026-03-25)
+
+### On-Chain Verification
+
+Raw transaction data from the node shows the correct values:
+
+```
+LogIndex 0x4e (78): LIQUIDATION_CALL
+  User: 0xC5BD7138680fAA7bF3E6415944EecC074CeD419f
+  Collateral: 0x514910771AF9Ca656af840dff83E8264EcF986CA (LINK)
+  Debt Asset: 0xdAC17F958D2ee523a2206206994597C13D831ec7 (USDT)
+  DebtToCover: 136,867,301 (0x8286de5)
+
+LogIndex 0x59 (89): LIQUIDATION_CALL
+  User: 0xC5BD7138680fAA7bF3E6415944EecC074CeD419f
+  Collateral: 0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9 (AAVE)
+  Debt Asset: 0xdAC17F958D2ee523a2206206994597C13D831ec7 (USDT)
+  DebtToCover: 1,947,199,140 (0x742ea6caa4)
+```
+
+**Key Finding:** The on-chain data is CORRECT. Both LiquidationCall events have the expected debtToCover values.
+
+### Root Cause Update
+
+The value `498,998,889,124` (0x7436cf388a) shown in the debug logs does NOT come from either LiquidationCall event. Instead, it appears to come from:
+- A Burn event (logIndex 80) or 
+- A Transfer event (logIndex 64, 88, or 90)
+
+The debug log shows this value being extracted from `op.pool_event["data"]` in `_preprocess_liquidation_aggregates()`. This means either:
+
+1. **Wrong pool_event assigned:** The second LIQUIDATION operation is getting a Burn event as its `pool_event` instead of the actual LiquidationCall
+2. **Event misidentification:** The code is incorrectly identifying a Burn/Transfer event as a LiquidationCall
+3. **Data corruption:** Something is overwriting the pool_event data after the operations are created
+
+### Where to Look Next
+
+The issue is likely in one of these locations:
+
+1. **Operation Creation (`_create_liquidation_operation`):** Verify the `liquidation_event` passed in is the correct LiquidationCall event
+2. **Operation Storage:** Check if the `pool_event` field is being accidentally modified after creation
+3. **Event Collection:** Investigate how pool events are collected and matched to operations
+
+### Files to Check
+
+- `src/degenbot/cli/aave_transaction_operations.py` - `_create_liquidation_operation()` and `_create_operation_from_pool_event()`
+- `src/degenbot/cli/aave.py` - `_preprocess_liquidation_aggregates()` and related functions
+
+---
+
+**Status:** ⚠️ PARTIALLY RESOLVED - Rounding fix applied, but debtToCover parsing issue remains
+
+**Rounding Fix:** ✅ Applied (conditional burn calculation based on liquidation count)
+
+**Parsing Issue:** 🔍 Requires further investigation - second liquidation has incorrect debt_to_cover value
+
+**Next Step:** Add debug logging to trace which event is being used as pool_event for each LIQUIDATION operation
