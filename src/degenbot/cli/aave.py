@@ -3809,7 +3809,22 @@ def _process_debt_burn_with_match(
                 # This matches the contract's behavior where accrued interest is included.
                 # We must convert the unscaled debtToCover to scaled amount using TokenMath.
                 # See debug/aave/0059 for details on why event value is unscaled.
-                debt_to_cover = scaled_event.amount + (scaled_event.balance_increase or 0)
+                #
+                # Use debtToCover from LiquidationCall event if available (more accurate).
+                # Burn event value + balance_increase can be off by 1 wei due to Solidity
+                # integer math truncation. See debug/aave/0064.
+                if operation and operation.debt_to_cover is not None:
+                    debt_to_cover = operation.debt_to_cover
+                    logger.debug(
+                        f"_process_debt_burn_with_match: using debt_to_cover={debt_to_cover} "
+                        f"from LiquidationCall event"
+                    )
+                else:
+                    debt_to_cover = scaled_event.amount + (scaled_event.balance_increase or 0)
+                    logger.debug(
+                        f"_process_debt_burn_with_match: using derived "
+                        f"debt_to_cover={debt_to_cover} from Burn event"
+                    )
                 token_math = TokenMathFactory.get_token_math_for_token_revision(
                     debt_asset.v_token_revision
                 )
@@ -3837,7 +3852,22 @@ def _process_debt_burn_with_match(
                 # balance reduction is value + balance_increase (which equals debtToCover).
                 # This matches the contract's behavior where accrued interest is included.
                 # We must convert the unscaled debtToCover to scaled amount using TokenMath.
-                debt_to_cover = scaled_event.amount + (scaled_event.balance_increase or 0)
+                #
+                # Use debtToCover from LiquidationCall event if available (more accurate).
+                # Burn event value + balance_increase can be off by 1 wei due to Solidity
+                # integer math truncation. See debug/aave/0064.
+                if operation and operation.debt_to_cover is not None:
+                    debt_to_cover = operation.debt_to_cover
+                    logger.debug(
+                        f"_process_debt_burn_with_match: using debt_to_cover={debt_to_cover} "
+                        f"from LiquidationCall event"
+                    )
+                else:
+                    debt_to_cover = scaled_event.amount + (scaled_event.balance_increase or 0)
+                    logger.debug(
+                        f"_process_debt_burn_with_match: using derived "
+                        f"debt_to_cover={debt_to_cover} from Burn event"
+                    )
                 token_math = TokenMathFactory.get_token_math_for_token_revision(
                     debt_asset.v_token_revision
                 )

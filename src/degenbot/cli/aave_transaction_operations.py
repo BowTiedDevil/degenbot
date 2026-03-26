@@ -140,6 +140,11 @@ class Operation:
     # MintedToTreasury amount for Pool Revision 8 (underlying amount = scaled amount)
     minted_to_treasury_amount: int | None = None
 
+    # Debt amount from LiquidationCall event (in underlying units)
+    # Used for accurate debt burn calculation
+    # (Burn event amount + balance_increase can be off by 1 wei)
+    debt_to_cover: int | None = None
+
     # Validation state
     validation_errors: list[str] = field(default_factory=list)
 
@@ -2161,6 +2166,13 @@ class TransactionOperationsParser:
         debt_asset = decode_address(liquidation_event["topics"][2])
         user = decode_address(liquidation_event["topics"][3])
 
+        # Extract debtToCover from LiquidationCall event data
+        # Event data: [debtToCover, liquidatedCollateralAmount, liquidator, receiveAToken]
+        debt_to_cover, _, _, _ = eth_abi.abi.decode(
+            types=["uint256", "uint256", "address", "bool"],
+            data=liquidation_event["data"],
+        )
+
         is_gho = debt_asset == self.gho_token_address
 
         # Get token contract addresses for the collateral and debt assets
@@ -2286,6 +2298,7 @@ class TransactionOperationsParser:
             scaled_token_events=scaled_token_events,
             transfer_events=[],
             balance_transfer_events=balance_transfer_events,
+            debt_to_cover=debt_to_cover,  # Use actual debtToCover from LiquidationCall
         )
 
     def _create_deficit_operation(
