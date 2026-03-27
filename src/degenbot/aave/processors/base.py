@@ -207,6 +207,7 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
         event_data: CollateralMintEvent,
         previous_balance: int,
         previous_index: int,
+        scaled_delta: int | None = None,
     ) -> ScaledTokenMintResult:
         """
         Process a collateral mint event.
@@ -215,6 +216,7 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
             event_data: The mint event data
             previous_balance: The user's balance before this event
             previous_index: The index at previous_balance calculation
+            scaled_delta: Pre-calculated scaled amount from Pool contract for V4+
 
         Returns:
             ScaledTokenMintResult with balance_delta, new_index, and is_repay flag

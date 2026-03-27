@@ -2492,6 +2492,7 @@ def _process_scaled_token_operation(
                 event_data=event,
                 previous_balance=position.balance,
                 previous_index=position.last_index or 0,
+                scaled_delta=event.scaled_amount,
             )
             position.balance += mint_result.balance_delta
             # Only update last_index if the new index is greater than current
