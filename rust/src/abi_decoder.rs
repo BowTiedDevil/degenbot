@@ -340,16 +340,17 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_parse_type() {
-        let (base, arr) = parse_type("uint256").expect("uint256 should parse");
+        let (base, arr) = parse_type("uint256").unwrap();
         assert_eq!(base, "uint256");
         assert_eq!(arr, None);
 
-        let (base, arr) = parse_type("uint256[]").expect("uint256[] should parse");
+        let (base, arr) = parse_type("uint256[]").unwrap();
         assert_eq!(base, "uint256[]");
         assert_eq!(arr, None);
 
-        let (base, arr) = parse_type("uint256[3]").expect("uint256[3] should parse");
+        let (base, arr) = parse_type("uint256[3]").unwrap();
         assert_eq!(base, "uint256");
         assert_eq!(arr, Some(3));
     }
