@@ -3,3 +3,4 @@
 - `uv run ruff check` - Lint Python code
 - `uv run mypy` - Type check Python code
 - `uv run maturin develop` - Build Rust extension (degenbot_rs module)
+- `cd rust && cargo clippy --all-targets --all-features` - Check Rust code
