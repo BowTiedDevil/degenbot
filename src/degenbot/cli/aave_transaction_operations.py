@@ -2059,15 +2059,20 @@ class TransactionOperationsParser:
                     assigned_indices.add(ev.index)
         else:
             is_multi_liquidation = False
+            liquidation_count_for_asset = 1
             if debt_v_token_address is not None:
-                is_multi_liquidation = liquidation_analysis.get((user, debt_v_token_address), 0) > 1
+                liquidation_count_for_asset = liquidation_analysis.get(
+                    (user, debt_v_token_address), 1
+                )
+                is_multi_liquidation = liquidation_count_for_asset > 1
 
-            candidate_burns = sorted(
+            # Get ALL burns for this (user, debt_asset) to determine pattern
+            # Don't filter by assigned_indices yet - we need total count for pattern detection
+            all_burns_for_asset = sorted(
                 [
                     ev
                     for ev in scaled_events
-                    if ev.event["logIndex"] not in assigned_indices
-                    and ev.user_address == user
+                    if ev.user_address == user
                     and ev.event_type
                     in {ScaledTokenEventType.DEBT_BURN, ScaledTokenEventType.GHO_DEBT_BURN}
                     and ev.event["address"] == debt_v_token_address
@@ -2075,11 +2080,49 @@ class TransactionOperationsParser:
                 key=lambda e: e.event["logIndex"],
             )
 
-            if is_multi_liquidation and len(candidate_burns) > 1:
-                if liquidation_position < len(candidate_burns):
-                    burns.append(candidate_burns[liquidation_position])
-                    assigned_indices.add(candidate_burns[liquidation_position].event["logIndex"])
+            # Now get only unassigned burns for assignment
+            candidate_burns = [
+                ev for ev in all_burns_for_asset if ev.event["logIndex"] not in assigned_indices
+            ]
+
+            # Determine pattern: COMBINED_BURN vs SEPARATE_BURNS
+            # COMBINED_BURN: N liquidations share M burns where M < N (Issue 0056)
+            # SEPARATE_BURNS: N liquidations have N burns, one per liquidation (Issue 0065)
+            total_burn_count = len(all_burns_for_asset)
+
+            if is_multi_liquidation and len(candidate_burns) > 0:
+                if liquidation_count_for_asset == total_burn_count:
+                    # SEPARATE_BURNS pattern: Each liquidation gets exactly one burn
+                    # Get burn at position liquidation_position from ALL burns (not just unassigned)
+                    if liquidation_position < total_burn_count:
+                        target_burn = all_burns_for_asset[liquidation_position]
+                        # Only assign if not already assigned
+                        if target_burn.event["logIndex"] not in assigned_indices:
+                            burns.append(target_burn)
+                            assigned_indices.add(target_burn.event["logIndex"])
+                            if target_burn.index is not None and target_burn.index > 0:
+                                assigned_indices.add(target_burn.index)
+                elif liquidation_count_for_asset > total_burn_count:
+                    # COMBINED_BURN pattern: More liquidations than burns
+                    # All burns go to the first liquidation
+                    if liquidation_position == 0:
+                        for ev in candidate_burns:
+                            burns.append(ev)
+                            assigned_indices.add(ev.event["logIndex"])
+                            if ev.index is not None and ev.index > 0:
+                                assigned_indices.add(ev.index)
+                else:
+                    # liquidation_count < burn_count: More burns than liquidations
+                    # This shouldn't happen normally, but assign burns round-robin
+                    if liquidation_position < total_burn_count:
+                        target_burn = all_burns_for_asset[liquidation_position]
+                        if target_burn.event["logIndex"] not in assigned_indices:
+                            burns.append(target_burn)
+                            assigned_indices.add(target_burn.event["logIndex"])
+                            if target_burn.index is not None and target_burn.index > 0:
+                                assigned_indices.add(target_burn.index)
             else:
+                # Single liquidation or no burns: collect all available burns
                 for ev in candidate_burns:
                     burns.append(ev)
                     assigned_indices.add(ev.event["logIndex"])

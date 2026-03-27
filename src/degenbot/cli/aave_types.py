@@ -10,6 +10,7 @@ from web3 import Web3
 from web3.types import LogReceipt
 
 from degenbot.aave.events import ERC20Event
+from degenbot.aave.liquidation_patterns import LiquidationPatternContext
 from degenbot.cli.aave_utils import decode_address
 from degenbot.database.models.aave import (
     AaveGhoToken,
@@ -80,24 +81,18 @@ class TransactionContext:
     # Used to determine if scaled amounts need to be pre-calculated (rev 9+)
     pool_revision: int = 0
 
-    # Liquidation aggregation tracking for multi-liquidation scenarios
-    # Key: (user_address, debt_v_token_address), Value: aggregated debtToCover
-    liquidation_aggregates: dict[tuple[ChecksumAddress, ChecksumAddress], int] = field(
-        default_factory=dict
-    )
-    """Aggregated debtToCover by (user, debt_v_token) for multi-liquidation transactions."""
+    # Scaled token events for pattern detection
+    # Set during transaction operations parsing
+    scaled_token_events: list[Any] = field(default_factory=list)
+    """List of scaled token events for this transaction."""
 
-    # Track which (user, debt_v_token) pairs have had liquidation debt processed
-    processed_liquidations: set[tuple[ChecksumAddress, ChecksumAddress]] = field(
-        default_factory=set
+    # Pattern-aware liquidation context for multi-liquidation scenarios
+    # Replaces liquidation_aggregates, liquidation_counts, and processed_liquidations
+    # See debug/aave/0056 and debug/aave/0065 for pattern details.
+    liquidation_patterns: LiquidationPatternContext = field(
+        default_factory=LiquidationPatternContext
     )
-    """Set of (user, debt_v_token) pairs that have been processed."""
-
-    # Track count of liquidations per (user, debt_v_token) for multi-liquidation detection
-    liquidation_counts: dict[tuple[ChecksumAddress, ChecksumAddress], int] = field(
-        default_factory=dict
-    )
-    """Count of liquidations per (user, debt_v_token) pair."""
+    """Pattern detection and processing state for liquidations."""
 
     @property
     def gho_vtoken_address(self) -> ChecksumAddress | None:
