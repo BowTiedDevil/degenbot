@@ -2982,13 +2982,6 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 tx_context=tx_context,
             )
         elif topic == AaveV3PoolConfigEvent.POOL_UPDATED.value:
-            # Verify assumption: Pool upgrade transactions should only contain
-            # the upgrade event
-            assert len(tx_context.events) == 1, (
-                f"Expected single event in Pool upgrade transaction, "
-                f"got {len(tx_context.events)}. "
-                f"Transaction: {tx_context.tx_hash.to_0x_hex()}"
-            )
             _update_contract_revision(
                 session=tx_context.session,
                 w3=tx_context.w3,
@@ -2997,14 +2990,14 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 new_address=decode_address(event["topics"][2]),
                 revision_function_prototype="POOL_REVISION",
             )
-        elif topic == AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value:
-            # Verify assumption: PoolConfigurator upgrade transactions should only
-            # contain the upgrade event
-            assert len(tx_context.events) == 1, (
-                f"Expected single event in PoolConfigurator upgrade transaction, "
-                f"got {len(tx_context.events)}. "
-                f"Transaction: {tx_context.tx_hash.to_0x_hex()}"
+            pool_contract = _get_contract(
+                session=tx_context.session,
+                market=tx_context.market,
+                contract_name="POOL",
             )
+            assert pool_contract is not None
+            tx_context.pool_revision = pool_contract.revision
+        elif topic == AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value:
             _update_contract_revision(
                 session=tx_context.session,
                 w3=tx_context.w3,
