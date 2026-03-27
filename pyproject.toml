@@ -170,6 +170,9 @@ allow-star-arg-any = true
     "SLF",      # tests may need to access private attributes to test implementation
     "T20",      # many tests use print
 ]
+"*.pyi" = [
+    "PYI021",   # allow docstrings in stubs for IDE support
+]
 
 [tool.pytest.ini_options]
 addopts = [

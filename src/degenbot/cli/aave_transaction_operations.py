@@ -2012,7 +2012,7 @@ class TransactionOperationsParser:
         """
         burns: list[ScaledTokenEvent] = []
 
-        if user_liquidation_count == 1:
+        if user_liquidation_count == 1:  # noqa:PLR1702
             candidate_burns = sorted(
                 [
                     ev
@@ -2083,16 +2083,15 @@ class TransactionOperationsParser:
                             assigned_indices.add(ev.event["logIndex"])
                             if ev.index is not None and ev.index > 0:
                                 assigned_indices.add(ev.index)
-                else:
-                    # liquidation_count < burn_count: More burns than liquidations
-                    # This shouldn't happen normally, but assign burns round-robin
-                    if liquidation_position < total_burn_count:
-                        target_burn = all_burns_for_asset[liquidation_position]
-                        if target_burn.event["logIndex"] not in assigned_indices:
-                            burns.append(target_burn)
-                            assigned_indices.add(target_burn.event["logIndex"])
-                            if target_burn.index is not None and target_burn.index > 0:
-                                assigned_indices.add(target_burn.index)
+                # liquidation_count < burn_count: More burns than liquidations
+                # This shouldn't happen normally, but assign burns round-robin
+                elif liquidation_position < total_burn_count:
+                    target_burn = all_burns_for_asset[liquidation_position]
+                    if target_burn.event["logIndex"] not in assigned_indices:
+                        burns.append(target_burn)
+                        assigned_indices.add(target_burn.event["logIndex"])
+                        if target_burn.index is not None and target_burn.index > 0:
+                            assigned_indices.add(target_burn.index)
             else:
                 # Single liquidation or no burns: collect all available burns
                 for ev in candidate_burns:
