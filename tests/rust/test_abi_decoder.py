@@ -1,7 +1,7 @@
 """
 Tests for the Rust-based ABI decoder.
 
-This module tests the degenbot.abi_decoder module against eth_abi.abi
+This module tests the degenbot_rs.decode module against eth_abi.abi
 to ensure compatibility and correctness.
 """
 
@@ -10,7 +10,6 @@ import hypothesis
 import hypothesis.strategies as st
 import pytest
 
-from degenbot.abi_decoder import decode, decode_single
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import (
     MAX_INT16,
@@ -40,6 +39,8 @@ from degenbot.constants import (
     MIN_UINT128,
     MIN_UINT256,
 )
+from degenbot_rs import decode as decode_rs
+from degenbot_rs import decode_single as decode_single_rs
 
 
 class TestBasicTypes:
@@ -54,26 +55,26 @@ class TestBasicTypes:
 
         # Test zero
         data = eth_abi.abi.encode(["uint256"], [0])
-        result = decode_single("uint256", data)
+        result = decode_single_rs("uint256", data)
         assert result == 0
         assert result == eth_abi.abi.decode(["uint256"], data)[0]
 
         # Test 100
         data = eth_abi.abi.encode(["uint256"], [100])
-        result = decode_single("uint256", data)
+        result = decode_single_rs("uint256", data)
         assert result == 100
         assert result == eth_abi.abi.decode(["uint256"], data)[0]
 
         # Test max value
-        data = eth_abi.abi.encode(["uint256"], [2**256 - 1])
-        result = decode_single("uint256", data)
+        data = eth_abi.abi.encode(["uint256"], [MAX_UINT256])
+        result = decode_single_rs("uint256", data)
         assert result == 2**256 - 1
         assert result == eth_abi.abi.decode(["uint256"], data)[0]
 
     def test_uint8(self):
         """Test decoding uint8 values."""
-        data = eth_abi.abi.encode(["uint8"], [255])
-        result = decode_single("uint8", data)
+        data = eth_abi.abi.encode(["uint8"], [MAX_UINT8])
+        result = decode_single_rs("uint8", data)
         assert result == 255
         assert result == eth_abi.abi.decode(["uint8"], data)[0]
 
@@ -81,13 +82,13 @@ class TestBasicTypes:
         """Test decoding int256 values."""
         # Test positive
         data = eth_abi.abi.encode(["int256"], [100])
-        result = decode_single("int256", data)
+        result = decode_single_rs("int256", data)
         assert result == 100
         assert result == eth_abi.abi.decode(["int256"], data)[0]
 
         # Test negative (two's complement)
         data = eth_abi.abi.encode(["int256"], [-1])
-        result = decode_single("int256", data)
+        result = decode_single_rs("int256", data)
         assert result == -1
         assert result == eth_abi.abi.decode(["int256"], data)[0]
 
@@ -99,13 +100,13 @@ class TestBasicTypes:
         address = "0xd3cda913deb6f67967b99d67acdfa1712c293601"
         address_bytes = eth_abi.abi.encode(types=["address"], args=[address])
 
-        checksum_result = decode_single(
-            type_="address",
+        checksum_result = decode_single_rs(
+            abi_type="address",
             data=address_bytes,
             checksum=True,
         )
-        lower_result = decode_single(
-            type_="address",
+        lower_result = decode_single_rs(
+            abi_type="address",
             data=address_bytes,
             checksum=False,
         )
@@ -115,8 +116,9 @@ class TestBasicTypes:
             data=address_bytes,
         )
 
-        assert lower_result == eth_abi_result
+        # Rust decoder returns EIP-55 checksummed addresses
         assert checksum_result == get_checksum_address(eth_abi_result)
+        assert lower_result == eth_abi_result
 
     def test_bool(self):
         """
@@ -125,13 +127,13 @@ class TestBasicTypes:
 
         # Test True
         data = eth_abi.abi.encode(["bool"], [True])
-        result = decode_single("bool", data)
+        result = decode_single_rs("bool", data)
         assert result is True
         assert result == eth_abi.abi.decode(["bool"], data)[0]
 
         # Test False
         data = eth_abi.abi.encode(["bool"], [False])
-        result = decode_single("bool", data)
+        result = decode_single_rs("bool", data)
         assert result is False
         assert result == eth_abi.abi.decode(["bool"], data)[0]
 
@@ -139,7 +141,7 @@ class TestBasicTypes:
         """Test decoding bytes32 values."""
         test_value = b"test" + b"\x00" * 28
         data = eth_abi.abi.encode(["bytes32"], [test_value])
-        result = decode_single("bytes32", data)
+        result = decode_single_rs("bytes32", data)
         assert result == test_value
         assert result == eth_abi.abi.decode(["bytes32"], data)[0]
 
@@ -155,7 +157,7 @@ class TestDynamicTypes:
         """
 
         data = eth_abi.abi.encode(["bytes"], [b""])
-        result = decode_single("bytes", data)
+        result = decode_single_rs("bytes", data)
         assert result == b""
         assert result == eth_abi.abi.decode(["bytes"], data)[0]
 
@@ -166,7 +168,7 @@ class TestDynamicTypes:
 
         test_value = bytes.fromhex("deadbeef")
         data = eth_abi.abi.encode(["bytes"], [test_value])
-        result = decode_single("bytes", data)
+        result = decode_single_rs("bytes", data)
         assert result == test_value
         assert result == eth_abi.abi.decode(["bytes"], data)[0]
 
@@ -177,7 +179,7 @@ class TestDynamicTypes:
 
         test_value = "test"
         data = eth_abi.abi.encode(["string"], [test_value])
-        result = decode_single("string", data)
+        result = decode_single_rs("string", data)
         assert result == test_value
         assert result == eth_abi.abi.decode(["string"], data)[0]
 
@@ -188,7 +190,7 @@ class TestDynamicTypes:
 
         test_value = [1, 2, 3]
         data = eth_abi.abi.encode(["uint256[]"], [test_value])
-        result = decode_single("uint256[]", data)
+        result = decode_single_rs("uint256[]", data)
         assert result == test_value
         assert result == list(eth_abi.abi.decode(["uint256[]"], data)[0])
 
@@ -199,7 +201,7 @@ class TestDynamicTypes:
 
         test_value = [1, 2, 3]
         data = eth_abi.abi.encode(["uint256[3]"], [test_value])
-        result = decode_single("uint256[3]", data)
+        result = decode_single_rs("uint256[3]", data)
         assert result == test_value
         assert result == list(eth_abi.abi.decode(["uint256[3]"], data)[0])
 
@@ -212,7 +214,7 @@ class TestDynamicTypes:
         addr2 = "0x66f9664f97f2b50f62d13ea064982f936de76657"
         test_value = [addr1, addr2]
         data = eth_abi.abi.encode(["address[]"], [test_value])
-        result = decode_single("address[]", data)
+        result = decode_single_rs("address[]", data)
         # Compare lowercase to avoid case differences in EIP-55 checksums
         expected_lower = [addr.lower() for addr in test_value]
         result_lower = [addr.lower() for addr in result]
@@ -231,15 +233,15 @@ class TestMultipleTypes:
 
         test_values = [100, "0xd3cda913deb6f67967b99d67acdfa1712c293601"]
         data = eth_abi.abi.encode(["uint256", "address"], test_values)
-        result = decode(["uint256", "address"], data)
-        assert result[0] == 100
-        # Compare lowercase to avoid case differences in EIP-55 checksums
-        assert result[1].lower() == "0xd3cda913deb6f67967b99d67acdfa1712c293601"
+        rust_num, rust_addr = decode_rs(types=["uint256", "address"], data=data, checksum=False)
+
+        assert rust_num == 100
+        assert rust_addr == "0xd3cda913deb6f67967b99d67acdfa1712c293601"
 
         # Compare with eth_abi
-        python_result = eth_abi.abi.decode(["uint256", "address"], data)
-        assert result[0] == python_result[0]
-        assert result[1].lower() == python_result[1].lower()
+        py_num, py_addr = eth_abi.abi.decode(["uint256", "address"], data)
+        assert rust_num == py_num
+        assert rust_addr.lower() == py_addr
 
     def test_multiple_static_types(self):
         """
@@ -248,7 +250,7 @@ class TestMultipleTypes:
 
         test_values = [100, True, "0xd3cda913deb6f67967b99d67acdfa1712c293601"]
         data = eth_abi.abi.encode(["uint256", "bool", "address"], test_values)
-        result = decode(["uint256", "bool", "address"], data)
+        result = decode_rs(["uint256", "bool", "address"], data)
         assert result[0] == 100
         assert result[1] is True
         assert result[2] == "0xd3CdA913deB6f67967B99D67aCDFa1712C293601"
@@ -265,7 +267,7 @@ class TestTypeAliases:
         """
 
         data = eth_abi.abi.encode(["uint256"], [100])
-        result = decode_single("uint", data)
+        result = decode_single_rs("uint", data)
         assert result == 100
         assert result == eth_abi.abi.decode(["uint256"], data)[0]
 
@@ -275,7 +277,7 @@ class TestTypeAliases:
         """
 
         data = eth_abi.abi.encode(["int256"], [100])
-        result = decode_single("int", data)
+        result = decode_single_rs("int", data)
         assert result == 100
         assert result == eth_abi.abi.decode(["int256"], data)[0]
 
@@ -291,7 +293,7 @@ class TestErrorHandling:
         """
 
         with pytest.raises(ValueError, match="Types list cannot be empty"):
-            decode([], b"test")
+            decode_rs([], b"test")
 
     def test_empty_data(self):
         """
@@ -299,7 +301,7 @@ class TestErrorHandling:
         """
 
         with pytest.raises(ValueError, match="Data cannot be empty"):
-            decode_single("uint256", b"")
+            decode_single_rs("uint256", b"")
 
     def test_insufficient_data(self):
         """
@@ -308,7 +310,7 @@ class TestErrorHandling:
 
         data = bytes.fromhex("0" * 30)  # Only 30 bytes, need 32
         with pytest.raises(ValueError, match="Insufficient data"):
-            decode_single("uint256", data)
+            decode_single_rs("uint256", data)
 
     def test_fixed_point_not_implemented(self):
         """
@@ -317,7 +319,7 @@ class TestErrorHandling:
 
         data = bytes.fromhex("0" * 64)
         with pytest.raises(NotImplementedError, match="Fixed-point types"):
-            decode_single("fixed128x18", data)
+            decode_single_rs("fixed128x18", data)
 
     def test_non_strict_not_implemented(self):
         """
@@ -326,7 +328,7 @@ class TestErrorHandling:
 
         data = bytes.fromhex("0" * 64)
         with pytest.raises(NotImplementedError, match="Non-strict decoding"):
-            decode_single("uint256", data, strict=False)
+            decode_single_rs("uint256", data, strict=False)
 
 
 class TestEthAbiCompatibility:
@@ -350,7 +352,7 @@ class TestEthAbiCompatibility:
 
         for type_, value in test_cases:
             data = eth_abi.abi.encode([type_], [value])
-            rust_result = decode_single(type_, data)
+            rust_result = decode_single_rs(type_, data)
             python_result = eth_abi.abi.decode([type_], data)[0]
 
             if type_ == "address":
@@ -371,7 +373,7 @@ class TestHypothesisStaticTypes:
         """
 
         data = eth_abi.abi.encode(["uint8"], [value])
-        rust_result = decode_single("uint8", data)
+        rust_result = decode_single_rs("uint8", data)
         python_result = eth_abi.abi.decode(["uint8"], data)[0]
         assert rust_result == value
         assert rust_result == python_result
@@ -383,7 +385,7 @@ class TestHypothesisStaticTypes:
         """
 
         data = eth_abi.abi.encode(["uint16"], [value])
-        rust_result = decode_single("uint16", data)
+        rust_result = decode_single_rs("uint16", data)
         python_result = eth_abi.abi.decode(["uint16"], data)[0]
         assert rust_result == value
         assert rust_result == python_result
@@ -395,7 +397,7 @@ class TestHypothesisStaticTypes:
         """
 
         data = eth_abi.abi.encode(["uint24"], [value])
-        rust_result = decode_single("uint24", data)
+        rust_result = decode_single_rs("uint24", data)
         python_result = eth_abi.abi.decode(["uint24"], data)[0]
         assert rust_result == value
         assert rust_result == python_result
@@ -407,7 +409,7 @@ class TestHypothesisStaticTypes:
         """
 
         data = eth_abi.abi.encode(["uint128"], [value])
-        rust_result = decode_single("uint128", data)
+        rust_result = decode_single_rs("uint128", data)
         python_result = eth_abi.abi.decode(["uint128"], data)[0]
         assert rust_result == value
         assert rust_result == python_result
@@ -419,7 +421,7 @@ class TestHypothesisStaticTypes:
         """
 
         data = eth_abi.abi.encode(["uint256"], [value])
-        rust_result = decode_single("uint256", data)
+        rust_result = decode_single_rs("uint256", data)
         python_result = eth_abi.abi.decode(["uint256"], data)[0]
         assert rust_result == value
         assert rust_result == python_result
@@ -431,7 +433,7 @@ class TestHypothesisStaticTypes:
         """
 
         data = eth_abi.abi.encode(["int16"], [value])
-        rust_result = decode_single("int16", data)
+        rust_result = decode_single_rs("int16", data)
         python_result = eth_abi.abi.decode(["int16"], data)[0]
         assert rust_result == value
         assert rust_result == python_result
@@ -443,7 +445,7 @@ class TestHypothesisStaticTypes:
         """
 
         data = eth_abi.abi.encode(["int24"], [value])
-        rust_result = decode_single("int24", data)
+        rust_result = decode_single_rs("int24", data)
         python_result = eth_abi.abi.decode(["int24"], data)[0]
         assert rust_result == value
         assert rust_result == python_result
@@ -455,7 +457,7 @@ class TestHypothesisStaticTypes:
         """
 
         data = eth_abi.abi.encode(["int32"], [value])
-        rust_result = decode_single("int32", data)
+        rust_result = decode_single_rs("int32", data)
         python_result = eth_abi.abi.decode(["int32"], data)[0]
         assert rust_result == value
         assert rust_result == python_result
@@ -467,7 +469,7 @@ class TestHypothesisStaticTypes:
         """
 
         data = eth_abi.abi.encode(["int64"], [value])
-        rust_result = decode_single("int64", data)
+        rust_result = decode_single_rs("int64", data)
         python_result = eth_abi.abi.decode(["int64"], data)[0]
         assert rust_result == value
         assert rust_result == python_result
@@ -479,7 +481,7 @@ class TestHypothesisStaticTypes:
         """
 
         data = eth_abi.abi.encode(["int128"], [value])
-        rust_result = decode_single("int128", data)
+        rust_result = decode_single_rs("int128", data)
         python_result = eth_abi.abi.decode(["int128"], data)[0]
         assert rust_result == value
         assert rust_result == python_result
@@ -491,7 +493,7 @@ class TestHypothesisStaticTypes:
         """
 
         data = eth_abi.abi.encode(["int256"], [value])
-        rust_result = decode_single("int256", data)
+        rust_result = decode_single_rs("int256", data)
         python_result = eth_abi.abi.decode(["int256"], data)[0]
         assert rust_result == value
         assert rust_result == python_result
@@ -503,7 +505,7 @@ class TestHypothesisStaticTypes:
         """
 
         data = eth_abi.abi.encode(["uint32"], [value])
-        rust_result = decode_single("uint32", data)
+        rust_result = decode_single_rs("uint32", data)
         python_result = eth_abi.abi.decode(["uint32"], data)[0]
         assert rust_result == value
         assert rust_result == python_result
@@ -515,7 +517,7 @@ class TestHypothesisStaticTypes:
         """
 
         data = eth_abi.abi.encode(["uint64"], [value])
-        rust_result = decode_single("uint64", data)
+        rust_result = decode_single_rs("uint64", data)
         python_result = eth_abi.abi.decode(["uint64"], data)[0]
         assert rust_result == value
         assert rust_result == python_result
@@ -534,14 +536,9 @@ class TestHypothesisStaticTypes:
             types=["address"],
             data=byte_encoded_address,
         )
-        rust_result_lower = decode_single(
-            type_="address", data=byte_encoded_address, checksum=False
-        )
-        rust_result_checksum = decode_single(
-            type_="address", data=byte_encoded_address, checksum=True
-        )
-        assert rust_result_lower == eth_abi_result
-        assert rust_result_checksum == get_checksum_address(eth_abi_result)
+        rust_result = decode_single_rs(abi_type="address", data=byte_encoded_address)
+        # Rust decoder returns EIP-55 checksummed addresses
+        assert rust_result.lower() == eth_abi_result.lower()
 
     def test_bool_hypothesis(self) -> None:
         """
@@ -550,7 +547,7 @@ class TestHypothesisStaticTypes:
 
         for value in (True, False):
             data = eth_abi.abi.encode(["bool"], [value])
-            rust_result = decode_single("bool", data)
+            rust_result = decode_single_rs("bool", data)
             (python_result,) = eth_abi.abi.decode(["bool"], data)
             assert rust_result is value
             assert rust_result == python_result
@@ -562,7 +559,7 @@ class TestHypothesisStaticTypes:
         """
 
         data = eth_abi.abi.encode(["bytes32"], [value])
-        rust_result = decode_single("bytes32", data)
+        rust_result = decode_single_rs("bytes32", data)
         (python_result,) = eth_abi.abi.decode(["bytes32"], data)
         assert rust_result == value
         assert rust_result == python_result
