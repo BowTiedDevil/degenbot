@@ -23,7 +23,13 @@ from degenbot_rs import decode_single as _decode_single
 __all__ = ["decode", "decode_single"]
 
 
-def decode(types: Sequence[str], data: bytes, strict: bool = True) -> list[Any]:
+def decode(
+    types: Sequence[str],
+    data: bytes,
+    *,
+    strict: bool = True,
+    checksum: bool = True,
+) -> list[Any]:
     """
     Decode ABI-encoded data.
 
@@ -36,11 +42,13 @@ def decode(types: Sequence[str], data: bytes, strict: bool = True) -> list[Any]:
         data: Raw ABI-encoded bytes to decode
         strict: If True (default), performs strict validation. If False, uses
             lenient validation (not yet implemented - will raise NotImplementedError)
+        checksum: If True (default), returns checksummed addresses. If False,
+            returns lowercase hex addresses.
 
     Returns:
         A list of decoded Python values. Types are converted as follows:
         - ``uint/int`` → Python ``int``
-        - ``address`` → Python ``str`` (checksummed)
+        - ``address`` → Python ``str`` (checksummed by default)
         - ``bool`` → Python ``bool``
         - ``bytes`` → Python ``bytes``
         - ``string`` → Python ``str``
@@ -81,6 +89,10 @@ def decode(types: Sequence[str], data: bytes, strict: bool = True) -> list[Any]:
         >>> decode(["uint256[]"], data)
         [[1, 2]]
 
+        >>> # Decode with non-checksummed addresses
+        >>> decode(["address"], data, checksum=False)
+        ['0xd3cda913deb6f67967b99d67acdfa1712c293601']
+
     Note:
         This implementation uses the Rust ``alloy-sol-types`` crate for
         high-performance decoding. Type aliases are supported:
@@ -88,10 +100,16 @@ def decode(types: Sequence[str], data: bytes, strict: bool = True) -> list[Any]:
         - ``"int"`` is equivalent to ``"int256"``
         - ``"function"`` is equivalent to ``"bytes24"``
     """
-    return _decode(list(types), data, strict)
+    return _decode(list(types), data, strict, checksum)
 
 
-def decode_single(type_: str, data: bytes, strict: bool = True) -> Any:
+def decode_single(
+    type_: str,
+    data: bytes,
+    *,
+    strict: bool = True,
+    checksum: bool = True,
+) -> Any:
     """
     Decode a single ABI value.
 
@@ -103,6 +121,8 @@ def decode_single(type_: str, data: bytes, strict: bool = True) -> Any:
         data: Raw ABI-encoded bytes to decode
         strict: If True (default), performs strict validation. If False, uses
             lenient validation (not yet implemented - will raise NotImplementedError)
+        checksum: If True (default), returns checksummed addresses. If False,
+            returns lowercase hex addresses.
 
     Returns:
         The decoded Python value. See ``decode()`` for type mappings.
@@ -128,6 +148,10 @@ def decode_single(type_: str, data: bytes, strict: bool = True) -> Any:
         >>> decode_single("address", data)
         '0xd3cda913deb6f67967b99d67acdfa1712c293601'
 
+        >>> # Decode with non-checksummed address
+        >>> decode_single("address", data, checksum=False)
+        '0xd3cda913deb6f67967b99d67acdfa1712c293601'
+
         >>> # Decode a string
         >>> data = bytes.fromhex(
         ...     "0000000000000000000000000000000000000000000000000000000000000020"
@@ -141,4 +165,9 @@ def decode_single(type_: str, data: bytes, strict: bool = True) -> Any:
         This function is equivalent to calling ``decode([type_], data)[0]``,
         but is provided for convenience and clarity when working with single values.
     """
-    return _decode_single(type_, data, strict)
+    return _decode_single(
+        ty=type_,
+        data=data,
+        strict=strict,
+        checksum=checksum,
+    )

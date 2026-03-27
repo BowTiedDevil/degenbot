@@ -24,6 +24,7 @@ crate-type = ["rlib", "cdylib"]
 [dependencies]
 alloy-primitives = { version = "^1.5" }
 alloy-sol-types = { version = "^1.5", features = ["json"] }
+hex = { version = "^0.4" }
 num-bigint = { version = "^0.4" }
 pyo3 = { version = "^0.28", features = [ "abi3-py312", "extension-module", "num-bigint"] }
 thiserror = { version = "^2.0" }

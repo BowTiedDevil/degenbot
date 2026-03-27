@@ -678,6 +678,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "criterion",
+ "hex",
  "num-bigint",
  "proptest",
  "pyo3",

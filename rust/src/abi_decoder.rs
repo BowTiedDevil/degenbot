@@ -121,6 +121,7 @@ fn decode_static_value(
     ty: &str,
     data: &[u8],
     offset: usize,
+    checksum: bool,
 ) -> PyResult<(Py<PyAny>, usize)> {
     if offset + 32 > data.len() {
         return Err(PyValueError::new_err(format!(
@@ -137,7 +138,12 @@ fn decode_static_value(
             // Address is the last 20 bytes of the 32-byte word
             let addr_bytes = &word[12..32];
             let addr = Address::from_slice(addr_bytes);
-            PyString::new(py, &addr.to_string()).into()
+            let addr_str = if checksum {
+                addr.to_string()
+            } else {
+                format!("0x{}", hex::encode(addr_bytes))
+            };
+            PyString::new(py, &addr_str).into()
         }
         "bool" => {
             let is_true = word[31] != 0;
@@ -229,6 +235,7 @@ fn decode_array(
     fixed_size: Option<usize>,
     data: &[u8],
     head_offset: usize,
+    checksum: bool,
 ) -> PyResult<(Py<PyAny>, usize)> {
     let (length, data_start) = if let Some(size) = fixed_size {
         // Fixed-size array - length is known
@@ -260,7 +267,7 @@ fn decode_array(
     let mut current_offset = data_start;
 
     for _ in 0..length {
-        let (value, consumed) = decode_value(py, base_type, data, current_offset)?;
+        let (value, consumed) = decode_value(py, base_type, data, current_offset, checksum)?;
         list.append(value)?;
         current_offset += consumed;
     }
@@ -276,18 +283,19 @@ fn decode_value(
     ty: &str,
     data: &[u8],
     offset: usize,
+    checksum: bool,
 ) -> PyResult<(Py<PyAny>, usize)> {
     let (base_type, array_size) = parse_type(ty)?;
 
     if let Some(size) = array_size {
         // It's an array
-        return decode_array(py, &base_type, Some(size), data, offset);
+        return decode_array(py, &base_type, Some(size), data, offset, checksum);
     }
 
     if base_type.ends_with("[]") {
         // Dynamic array - remove the [] suffix
         let inner_type = &base_type[..base_type.len() - 2];
-        return decode_array(py, inner_type, None, data, offset);
+        return decode_array(py, inner_type, None, data, offset, checksum);
     }
 
     if base_type == "bytes" || base_type == "string" {
@@ -296,7 +304,7 @@ fn decode_value(
     }
 
     // Static types
-    decode_static_value(py, &base_type, data, offset)
+    decode_static_value(py, &base_type, data, offset, checksum)
 }
 
 /// Decode ABI-encoded data for multiple types.
@@ -306,14 +314,15 @@ fn decode_value(
 /// * `types` - List of ABI type strings
 /// * `data` - Raw ABI-encoded bytes
 /// * `strict` - If true (default), performs strict validation
+/// * `checksum` - If true (default), returns checksummed addresses
 ///
 /// # Returns
 ///
 /// A list of decoded Python values.
 #[pyfunction]
-#[pyo3(signature = (types, data, strict = true))]
+#[pyo3(signature = (types, data, strict = true, checksum = true))]
 #[allow(clippy::needless_pass_by_value)]
-pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8], strict: bool) -> PyResult<Py<PyAny>> {
+pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8], strict: bool, checksum: bool) -> PyResult<Py<PyAny>> {
     if !strict {
         return Err(PyNotImplementedError::new_err(
             "Non-strict decoding mode is not yet implemented",
@@ -341,7 +350,7 @@ pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8], strict: bool) -> 
     let mut offset = 0;
 
     for ty in &types {
-        let (value, consumed) = decode_value(py, ty, data, offset)?;
+        let (value, consumed) = decode_value(py, ty, data, offset, checksum)?;
         list.append(value)?;
         offset += consumed;
     }
@@ -353,8 +362,8 @@ pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8], strict: bool) -> 
 ///
 /// Convenience function for decoding a single value.
 #[pyfunction]
-#[pyo3(signature = (ty, data, strict = true))]
-pub fn decode_single(py: Python<'_>, ty: &str, data: &[u8], strict: bool) -> PyResult<Py<PyAny>> {
+#[pyo3(signature = (ty, data, strict = true, checksum = true))]
+pub fn decode_single(py: Python<'_>, ty: &str, data: &[u8], strict: bool, checksum: bool) -> PyResult<Py<PyAny>> {
     if !strict {
         return Err(PyNotImplementedError::new_err(
             "Non-strict decoding mode is not yet implemented",
@@ -372,7 +381,7 @@ pub fn decode_single(py: Python<'_>, ty: &str, data: &[u8], strict: bool) -> PyR
         return Err(PyValueError::new_err("Data cannot be empty"));
     }
 
-    let (value, _) = decode_value(py, ty, data, 0)?;
+    let (value, _) = decode_value(py, ty, data, 0, checksum)?;
     Ok(value)
 }
 

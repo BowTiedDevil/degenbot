@@ -33,7 +33,7 @@ def decode(types: Sequence[str], data: bytes, strict: bool = True) -> list[Any]:
 # in a list.
 #
 # Args:
-#     ty: ABI type string (e.g., "uint256", "address")
+#     type_: ABI type string (e.g., "uint256", "address")
 #     data: Raw ABI-encoded bytes to decode
 #     strict: If True (default), performs strict validation
 #
@@ -43,7 +43,7 @@ def decode(types: Sequence[str], data: bytes, strict: bool = True) -> list[Any]:
 # Raises:
 #     ValueError: If the type string is invalid, data is malformed, or decoding fails
 #     NotImplementedError: If strict=False or if fixed-point types are used
-def decode_single(ty: str, data: bytes, strict: bool = True) -> Any: ...
+def decode_single(type_: str, data: bytes, *, strict: bool = True) -> Any: ...
 
 # Converts a tick value to its corresponding sqrt price (X96 format).
 #
