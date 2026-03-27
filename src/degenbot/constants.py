@@ -27,6 +27,12 @@ MAX_INT16 = _max_int(16)
 MIN_INT24 = _min_int(24)
 MAX_INT24 = _max_int(24)
 
+MIN_INT32 = _min_int(32)
+MAX_INT32 = _max_int(32)
+
+MIN_INT64 = _min_int(64)
+MAX_INT64 = _max_int(64)
+
 MIN_INT128 = _min_int(128)
 MAX_INT128 = _max_int(128)
 
@@ -36,8 +42,17 @@ MAX_INT256 = _max_int(256)
 MIN_UINT8 = _min_uint(8)
 MAX_UINT8 = _max_uint(8)
 
+MIN_UINT16 = _min_uint(16)
+MAX_UINT16 = _max_uint(16)
+
 MIN_UINT24 = _min_uint(24)
 MAX_UINT24 = _max_uint(24)
+
+MIN_UINT32 = _min_uint(32)
+MAX_UINT32 = _max_uint(32)
+
+MIN_UINT64 = _min_uint(64)
+MAX_UINT64 = _max_uint(64)
 
 MIN_UINT128 = _min_uint(128)
 MAX_UINT128 = _max_uint(128)
