@@ -696,13 +696,13 @@ requires-dist = [
     { name = "cvxpy", specifier = ">=1.8,<2" },
     { name = "networkx", specifier = ">=3.6,<4" },
     { name = "pydantic", specifier = ">=2.12,<3" },
-    { name = "pydantic-settings", specifier = ">=2.12,<3" },
+    { name = "pydantic-settings", specifier = ">=2.13,<3" },
     { name = "scipy", specifier = ">=1.17,<2" },
     { name = "sqlalchemy", specifier = ">=2.0,<3" },
     { name = "tenacity", specifier = ">=9.1,<10" },
     { name = "tomlkit", specifier = ">=0.14,<1" },
     { name = "tqdm", specifier = ">=4.67,<5" },
-    { name = "ujson", specifier = ">=5.11,<6" },
+    { name = "ujson", specifier = ">=5.12,<6" },
     { name = "web3", specifier = ">=7.14,<8" },
 ]
 
