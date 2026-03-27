@@ -44,3 +44,20 @@ impl From<AbiDecodeError> for PyErr {
         Self::new::<PyValueError, _>(format!("ABI decode error: {err}"))
     }
 }
+
+/// Errors that can occur during address operations.
+#[derive(Debug, thiserror::Error)]
+pub enum AddressError {
+    /// Invalid address string format.
+    #[error("Invalid address string: {0}")]
+    InvalidAddress(String),
+    /// Address bytes must be exactly 20 bytes.
+    #[error("Address must be exactly 20 bytes, got {0} bytes")]
+    InvalidByteLength(usize),
+}
+
+impl From<AddressError> for PyErr {
+    fn from(err: AddressError) -> Self {
+        Self::new::<PyValueError, _>(format!("Address error: {err}"))
+    }
+}

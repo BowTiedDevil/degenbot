@@ -18,9 +18,12 @@ pub mod errors;
 pub mod tick_math;
 
 // Re-export commonly used items at the crate root
-pub use address_utils::to_checksum_address;
-pub use errors::{AbiDecodeError, TickMathError};
-pub use tick_math::{get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio};
+pub use address_utils::{to_checksum_address, to_checksum_address_bytes, to_checksum_address_str};
+pub use errors::{AbiDecodeError, AddressError, TickMathError};
+pub use tick_math::{
+    get_sqrt_ratio_at_tick, get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio,
+    get_tick_at_sqrt_ratio_internal,
+};
 
 use pyo3::prelude::*;
 
@@ -29,13 +32,13 @@ fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Tick math functions
     m.add_function(wrap_pyfunction!(tick_math::get_sqrt_ratio_at_tick, m)?)?;
     m.add_function(wrap_pyfunction!(tick_math::get_tick_at_sqrt_ratio, m)?)?;
-    
+
     // Address utilities
     m.add_function(wrap_pyfunction!(address_utils::to_checksum_address, m)?)?;
-    
+
     // ABI decoder functions
     m.add_function(wrap_pyfunction!(abi_decoder::decode, m)?)?;
     m.add_function(wrap_pyfunction!(abi_decoder::decode_single, m)?)?;
-    
+
     Ok(())
 }

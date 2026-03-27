@@ -17,7 +17,9 @@ def test_to_checksum_address_invalid_type():
 
 def test_to_checksum_address_invalid_byte_length():
     for input_length in list(range(20)) + list(range(21, 32)):
-        with pytest.raises(ValueError, match="Address must be 20 bytes"):
+        with pytest.raises(
+            ValueError, match=f"Address must be exactly 20 bytes, got {input_length} bytes"
+        ):
             degenbot_rs.to_checksum_address(b"\x00" * input_length)
 
 
