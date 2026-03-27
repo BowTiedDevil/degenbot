@@ -318,6 +318,7 @@ def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress
     elif topic in {
         AaveV3GhoDebtTokenEvent.DISCOUNT_RATE_STRATEGY_UPDATED.value,
         AaveV3GhoDebtTokenEvent.DISCOUNT_TOKEN_UPDATED.value,
+        AaveV3PoolConfigEvent.ADDRESS_SET.value,
         AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value,
         AaveV3PoolConfigEvent.POOL_DATA_PROVIDER_UPDATED.value,
         AaveV3PoolConfigEvent.POOL_UPDATED.value,
