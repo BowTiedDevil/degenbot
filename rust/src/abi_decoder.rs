@@ -54,12 +54,12 @@ fn parse_type(ty: &str) -> PyResult<(String, Option<usize>)> {
     Ok((normalized, None))
 }
 
-/// Convert bytes to a Python int (BigUint).
+/// Convert bytes to a Python int (`BigUint`).
 fn bytes_to_uint(bytes: &[u8]) -> BigUint {
     BigUint::from_bytes_be(bytes)
 }
 
-/// Convert bytes to a Python int (BigInt, signed).
+/// Convert bytes to a Python int (`BigInt`, signed).
 fn bytes_to_int(bytes: &[u8]) -> BigInt {
     BigInt::from_signed_bytes_be(bytes)
 }
@@ -104,11 +104,11 @@ fn decode_static_value(
         "bytes32" => PyBytes::new(py, word).into(),
         t if t.starts_with("uint") => {
             // Unsigned integer - use num-bigint feature which provides IntoPyObject
-            bytes_to_uint(word).into_pyobject(py).unwrap().into()
+            bytes_to_uint(word).into_pyobject(py)?.into()
         }
         t if t.starts_with("int") => {
             // Signed integer - use num-bigint feature which provides IntoPyObject
-            bytes_to_int(word).into_pyobject(py).unwrap().into()
+            bytes_to_int(word).into_pyobject(py)?.into()
         }
         _ => {
             return Err(PyValueError::new_err(format!("Unsupported type: {ty}")));
@@ -231,18 +231,22 @@ fn decode_value(
 
     if let Some(size) = array_size {
         // It's an array
-        decode_array(py, &base_type, Some(size), data, offset)
-    } else if base_type.ends_with("[]") {
+        return decode_array(py, &base_type, Some(size), data, offset);
+    }
+
+    if base_type.ends_with("[]") {
         // Dynamic array - remove the [] suffix
         let inner_type = &base_type[..base_type.len() - 2];
-        decode_array(py, inner_type, None, data, offset)
-    } else if base_type == "bytes" || base_type == "string" {
-        // Dynamic types
-        decode_dynamic_value(py, &base_type, data, offset)
-    } else {
-        // Static types
-        decode_static_value(py, &base_type, data, offset)
+        return decode_array(py, inner_type, None, data, offset);
     }
+
+    if base_type == "bytes" || base_type == "string" {
+        // Dynamic types
+        return decode_dynamic_value(py, &base_type, data, offset);
+    }
+
+    // Static types
+    decode_static_value(py, &base_type, data, offset)
 }
 
 /// Decode ABI-encoded data for multiple types.
@@ -258,6 +262,7 @@ fn decode_value(
 /// A list of decoded Python values.
 #[pyfunction]
 #[pyo3(signature = (types, data, strict = true))]
+#[allow(clippy::needless_pass_by_value)]
 pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8], strict: bool) -> PyResult<Py<PyAny>> {
     if !strict {
         return Err(PyNotImplementedError::new_err(
@@ -336,15 +341,15 @@ mod tests {
 
     #[test]
     fn test_parse_type() {
-        let (base, arr) = parse_type("uint256").unwrap();
+        let (base, arr) = parse_type("uint256").expect("uint256 should parse");
         assert_eq!(base, "uint256");
         assert_eq!(arr, None);
 
-        let (base, arr) = parse_type("uint256[]").unwrap();
+        let (base, arr) = parse_type("uint256[]").expect("uint256[] should parse");
         assert_eq!(base, "uint256[]");
         assert_eq!(arr, None);
 
-        let (base, arr) = parse_type("uint256[3]").unwrap();
+        let (base, arr) = parse_type("uint256[3]").expect("uint256[3] should parse");
         assert_eq!(base, "uint256");
         assert_eq!(arr, Some(3));
     }
