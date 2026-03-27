@@ -9,6 +9,47 @@ use pyo3::{
     prelude::*,
     types::{PyBool, PyBytes, PyList, PyString},
 };
+use std::fmt;
+
+/// Error type for ABI decoding operations.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+enum AbiDecodeError {
+    InvalidArraySize(String),
+    InsufficientData { needed: usize, have: usize, offset: usize },
+    InvalidOffset(String),
+    InvalidLength(String),
+    UnsupportedType(String),
+    UnknownDynamicType(String),
+}
+
+impl fmt::Display for AbiDecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidArraySize(ty) => {
+                write!(f, "Invalid array size in type: {ty}")
+            }
+            Self::InsufficientData { needed, have, offset } => {
+                write!(
+                    f,
+                    "Insufficient data: need {needed} bytes at offset {offset}, have {have} bytes"
+                )
+            }
+            Self::InvalidOffset(msg) => write!(f, "Invalid offset: {msg}"),
+            Self::InvalidLength(msg) => write!(f, "Invalid length: {msg}"),
+            Self::UnsupportedType(ty) => write!(f, "Unsupported type: {ty}"),
+            Self::UnknownDynamicType(ty) => write!(f, "Unknown dynamic type: {ty}"),
+        }
+    }
+}
+
+impl std::error::Error for AbiDecodeError {}
+
+impl From<AbiDecodeError> for PyErr {
+    fn from(err: AbiDecodeError) -> Self {
+        PyValueError::new_err(err.to_string())
+    }
+}
 
 /// Type aliases for ABI types.
 const TYPE_ALIASES: &[(&str, &str)] = &[
@@ -28,8 +69,9 @@ fn normalize_type(ty: &str) -> String {
     normalized.to_string()
 }
 
-/// Parse a type string and extract the base type and array info.
-fn parse_type(ty: &str) -> PyResult<(String, Option<usize>)> {
+/// Internal: Parse a type string and extract the base type and array info.
+/// Returns a Rust Result for use in pure Rust tests.
+fn parse_type_internal(ty: &str) -> Result<(String, Option<usize>), AbiDecodeError> {
     let normalized = normalize_type(ty);
 
     // Check if it's an array type
@@ -45,13 +87,21 @@ fn parse_type(ty: &str) -> PyResult<(String, Option<usize>)> {
             let size_str = &array_part[1..array_part.len() - 1];
             match size_str.parse::<usize>() {
                 Ok(size) => return Ok((base.to_string(), Some(size))),
-                Err(_) => return Err(PyValueError::new_err(format!("Invalid array size in type: {ty}"))),
+                Err(_) => {
+                    return Err(AbiDecodeError::InvalidArraySize(ty.to_string()));
+                }
             }
         }
     }
 
     // Not an array
     Ok((normalized, None))
+}
+
+/// Parse a type string and extract the base type and array info.
+/// `PyO3` wrapper that converts internal errors to `PyErr`.
+fn parse_type(ty: &str) -> PyResult<(String, Option<usize>)> {
+    parse_type_internal(ty).map_err(PyErr::from)
 }
 
 /// Convert bytes to a Python int (`BigUint`).
@@ -342,16 +392,36 @@ mod tests {
     #[test]
     #[allow(clippy::unwrap_used)]
     fn test_parse_type() {
-        let (base, arr) = parse_type("uint256").unwrap();
+        let (base, arr) = parse_type_internal("uint256").unwrap();
         assert_eq!(base, "uint256");
         assert_eq!(arr, None);
 
-        let (base, arr) = parse_type("uint256[]").unwrap();
+        let (base, arr) = parse_type_internal("uint256[]").unwrap();
         assert_eq!(base, "uint256[]");
         assert_eq!(arr, None);
 
-        let (base, arr) = parse_type("uint256[3]").unwrap();
+        let (base, arr) = parse_type_internal("uint256[3]").unwrap();
         assert_eq!(base, "uint256");
         assert_eq!(arr, Some(3));
+    }
+
+    #[test]
+    fn test_parse_type_invalid_array_size() {
+        let result = parse_type_internal("uint256[invalid]");
+        assert!(matches!(result, Err(AbiDecodeError::InvalidArraySize(_))));
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn test_parse_type_with_aliases() {
+        // Test that aliases are normalized
+        let (base, _arr) = parse_type_internal("uint").unwrap();
+        assert_eq!(base, "uint256");
+
+        let (base, _arr) = parse_type_internal("int").unwrap();
+        assert_eq!(base, "int256");
+
+        let (base, _arr) = parse_type_internal("function").unwrap();
+        assert_eq!(base, "bytes24");
     }
 }
