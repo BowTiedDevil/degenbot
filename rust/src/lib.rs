@@ -5,27 +5,37 @@
 //!
 //! # Modules
 //!
+//! - [`abi_decoder`] - High-performance ABI decoding
 //! - [`tick_math`] - Uniswap V3 tick-to-price calculations
 //! - [`address_utils`] - Ethereum address utilities
 //! - [`errors`] - Error types
 //!
 //! See individual module documentation for usage examples.
 
+pub mod abi_decoder;
 pub mod address_utils;
 pub mod errors;
 pub mod tick_math;
 
 // Re-export commonly used items at the crate root
 pub use address_utils::to_checksum_address;
-pub use errors::TickMathError;
+pub use errors::{AbiDecodeError, TickMathError};
 pub use tick_math::{get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio};
 
 use pyo3::prelude::*;
 
 #[pymodule]
 fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Tick math functions
     m.add_function(wrap_pyfunction!(tick_math::get_sqrt_ratio_at_tick, m)?)?;
     m.add_function(wrap_pyfunction!(tick_math::get_tick_at_sqrt_ratio, m)?)?;
+    
+    // Address utilities
     m.add_function(wrap_pyfunction!(address_utils::to_checksum_address, m)?)?;
+    
+    // ABI decoder functions
+    m.add_function(wrap_pyfunction!(abi_decoder::decode, m)?)?;
+    m.add_function(wrap_pyfunction!(abi_decoder::decode_single, m)?)?;
+    
     Ok(())
 }

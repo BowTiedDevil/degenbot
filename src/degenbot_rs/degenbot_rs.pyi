@@ -1,9 +1,49 @@
+from collections.abc import Sequence
+from typing import Any
+
 from eth_typing import ChecksumAddress
 
 # Rust extension module for degenbot.
 #
 # This module provides high-performance Rust implementations of common operations
 # used by the degenbot Python package.
+
+# Decodes ABI-encoded data for the specified types.
+#
+# This function decodes ABI-encoded bytes according to the provided type strings.
+# It supports all standard Solidity types including static and dynamic types,
+# arrays, and tuples.
+#
+# Args:
+#     types: List of ABI type strings (e.g., ["uint256", "address", "bytes"])
+#     data: Raw ABI-encoded bytes to decode
+#     strict: If True (default), performs strict validation
+#
+# Returns:
+#     A list of decoded Python values
+#
+# Raises:
+#     ValueError: If type strings are invalid, data is malformed, or decoding fails
+#     NotImplementedError: If strict=False or if fixed-point types are used
+def decode(types: Sequence[str], data: bytes, strict: bool = True) -> list[Any]: ...
+
+# Decodes a single ABI value.
+#
+# Convenience function for decoding a single value without wrapping the type
+# in a list.
+#
+# Args:
+#     ty: ABI type string (e.g., "uint256", "address")
+#     data: Raw ABI-encoded bytes to decode
+#     strict: If True (default), performs strict validation
+#
+# Returns:
+#     The decoded Python value
+#
+# Raises:
+#     ValueError: If the type string is invalid, data is malformed, or decoding fails
+#     NotImplementedError: If strict=False or if fixed-point types are used
+def decode_single(ty: str, data: bytes, strict: bool = True) -> Any: ...
 
 # Converts a tick value to its corresponding sqrt price (X96 format).
 #
