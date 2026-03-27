@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.10,<2"]
+requires = ["maturin>=1.12,<2"]
 build-backend = "maturin"
 
 [project]
@@ -17,13 +17,13 @@ dependencies = [
     "cvxpy >=1.8, <2",
     "networkx >= 3.6, <4",
     "pydantic >=2.12, <3",
-    "pydantic-settings >=2.12, <3",
+    "pydantic-settings >=2.13, <3",
     "scipy >=1.17, <2",
     "sqlalchemy >=2.0, <3",
     "tenacity >=9.1, <10",
     "tomlkit >= 0.14, <1",
     "tqdm >= 4.67, <5",
-    "ujson >= 5.11, <6",
+    "ujson >= 5.12, <6",
     "web3 >=7.14, <8",
 ]
 license = {text = "MIT"}
