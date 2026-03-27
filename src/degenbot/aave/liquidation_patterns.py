@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 import eth_abi.abi
 
 from degenbot.aave.events import ScaledTokenEventType
-from degenbot.cli.aave_transaction_operations import OperationType
+from degenbot.aave.operation_types import OperationType
 from degenbot.cli.aave_utils import decode_address
 from degenbot.logging import logger
 
@@ -194,7 +194,7 @@ def detect_liquidation_patterns(
         key = (event.user_address, event.event["address"])
 
         if key not in groups:
-            logger.warning(f"Orphaned burn event for {key}")
+            # logger.warning(f"Orphaned burn event for {key}")
             continue
 
         groups[key].burn_events.append((event.event["logIndex"], event.amount))

@@ -27,15 +27,13 @@ from degenbot.aave.models import (
     EnrichedScaledTokenEvent,
     EnrichmentError,
 )
+from degenbot.aave.operation_types import OperationType
 from degenbot.database.models.aave import AaveV3Asset
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.logging import logger
 
 if TYPE_CHECKING:
     from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
-
-# Import OperationType at runtime for enum comparisons
-from degenbot.cli.aave_transaction_operations import OperationType
 
 
 class ScaledEventEnricher:

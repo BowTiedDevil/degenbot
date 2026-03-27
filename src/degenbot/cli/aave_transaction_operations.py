@@ -6,7 +6,6 @@ Provides strict validation with detailed plain-text error reporting.
 import operator
 from collections import Counter
 from dataclasses import dataclass, field
-from enum import Enum, auto
 from typing import Literal
 
 import eth_abi.abi
@@ -22,6 +21,7 @@ from degenbot.aave.events import (
     ERC20Event,
     ScaledTokenEventType,
 )
+from degenbot.aave.operation_types import OperationType
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli.aave_types import TokenType
 from degenbot.cli.aave_utils import decode_address
@@ -34,34 +34,6 @@ from degenbot.logging import logger
 # Pool revision 9+ uses flooring ray division which can introduce ±2 wei variance
 TOKEN_AMOUNT_MATCH_TOLERANCE = 2
 SCALED_AMOUNT_POOL_REVISION = 9
-
-
-class OperationType(Enum):
-    """Types of Aave operations based on asset flows."""
-
-    # Standard operations
-    SUPPLY = auto()  # SUPPLY -> COLLATERAL_MINT
-    WITHDRAW = auto()  # WITHDRAW -> COLLATERAL_BURN
-    BORROW = auto()  # BORROW -> DEBT_MINT
-    REPAY = auto()  # REPAY -> DEBT_BURN
-
-    # Composite operations
-    REPAY_WITH_ATOKENS = auto()  # REPAY -> DEBT_BURN + COLLATERAL_BURN
-    LIQUIDATION = auto()  # LIQUIDATION_CALL -> DEBT_BURN + COLLATERAL_BURN
-
-    # GHO-specific operations
-    GHO_BORROW = auto()  # BORROW -> GHO_DEBT_MINT
-    GHO_REPAY = auto()  # REPAY -> GHO_DEBT_BURN
-    GHO_LIQUIDATION = auto()  # LIQUIDATION_CALL -> GHO_DEBT_BURN + COLLATERAL_BURN
-    GHO_FLASH_LOAN = auto()  # DEFICIT_CREATED -> GHO_DEBT_BURN
-
-    # Standalone events
-    INTEREST_ACCRUAL = auto()  # Mint/Burn with no pool event
-    BALANCE_TRANSFER = auto()  # Standalone BalanceTransfer
-    DEFICIT_COVERAGE = auto()  # BalanceTransfer + Burn pair (Umbrella deficit coverage)
-    MINT_TO_TREASURY = auto()  # Pool minting aTokens to treasury (no SUPPLY event)
-    STKAAVE_TRANSFER = auto()  # stkAAVE (GHO Discount Token) transfer
-    UNKNOWN = auto()
 
 
 @dataclass(frozen=True)
