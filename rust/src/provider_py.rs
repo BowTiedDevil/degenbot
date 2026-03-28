@@ -1,7 +1,7 @@
 //! `PyO3` bindings for the provider module.
 
 use crate::provider::{AlloyProvider, LogFetcher, LogFilter};
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use std::sync::Arc;
@@ -102,14 +102,9 @@ impl PyAlloyProvider {
         addresses: Option<Vec<String>>,
         topics: Option<Vec<Vec<String>>>,
     ) -> PyResult<Py<PyList>> {
-        // Use existing tokio runtime or create one
+        // Use existing tokio runtime
         let handle = tokio::runtime::Handle::try_current()
-            .unwrap_or_else(|_| {
-                tokio::runtime::Runtime::new()
-                    .expect("Failed to create tokio runtime")
-                    .handle()
-                    .clone()
-            });
+            .map_err(|_| PyRuntimeError::new_err("Failed to get tokio runtime handle"))?;
 
         let fetcher = LogFetcher::new(
             // Clone the Arc to share the provider (cheap - just increments ref count)
@@ -151,12 +146,7 @@ impl PyAlloyProvider {
     /// Get current block number.
     fn get_block_number(&self) -> PyResult<u64> {
         let handle = tokio::runtime::Handle::try_current()
-            .unwrap_or_else(|_| {
-                tokio::runtime::Runtime::new()
-                    .expect("Failed to create tokio runtime")
-                    .handle()
-                    .clone()
-            });
+            .map_err(|_| PyRuntimeError::new_err("Failed to get tokio runtime handle"))?;
 
         let block_number = handle.block_on(async {
             self.provider.get_block_number().await
@@ -168,12 +158,7 @@ impl PyAlloyProvider {
     /// Get chain ID.
     fn get_chain_id(&self) -> PyResult<u64> {
         let handle = tokio::runtime::Handle::try_current()
-            .unwrap_or_else(|_| {
-                tokio::runtime::Runtime::new()
-                    .expect("Failed to create tokio runtime")
-                    .handle()
-                    .clone()
-            });
+            .map_err(|_| PyRuntimeError::new_err("Failed to get tokio runtime handle"))?;
 
         let chain_id = handle.block_on(async {
             self.provider.get_chain_id().await

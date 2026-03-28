@@ -66,7 +66,7 @@ impl LogFilter {
                 .iter()
                 .map(|addr| {
                     Address::from_str(addr).map_err(|e| ProviderError::InvalidAddress {
-                        address: addr.to_string(),
+                        address: addr.clone(),
                         reason: format!("{e}"),
                     })
                 })
@@ -82,7 +82,7 @@ impl LogFilter {
                     .iter()
                     .map(|t| {
                         B256::from_str(t).map_err(|e| ProviderError::InvalidTopic {
-                            topic: t.to_string(),
+                            topic: t.clone(),
                             reason: format!("{e}"),
                         })
                     })
@@ -246,7 +246,7 @@ impl AlloyProvider {
         &self.rpc_url
     }
 
-    /// Execute an eth_call.
+    /// Execute an `eth_call`.
     ///
     /// # Errors
     ///
@@ -360,6 +360,7 @@ impl LogFetcher {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

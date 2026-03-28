@@ -2,7 +2,7 @@
 
 use crate::contract::{Contract, FunctionSignature};
 use crate::provider::AlloyProvider;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ impl PyContract {
     ///
     /// Args:
     ///     address: Contract address (hex string)
-    ///     provider: AlloyProvider instance (not implemented - uses Arc for now)
+    ///     provider: `AlloyProvider` instance (not implemented - uses Arc for now)
     #[new]
     fn new(address: &str) -> PyResult<Self> {
         // Create a placeholder provider - in production this would be passed in
@@ -39,12 +39,13 @@ impl PyContract {
     /// Execute a contract call.
     ///
     /// Args:
-    ///     function_signature: Function signature like "balanceOf(address)"
+    ///     `function_signature`: Function signature like "balanceOf(address)"
     ///     args: List of arguments as strings
-    ///     block_number: Optional block number to query
+    ///     `block_number`: Optional block number to query
     ///
     /// Returns:
     ///     List of decoded return values as strings
+    #[allow(clippy::needless_pass_by_value)]
     fn call(
         &self,
         py: Python<'_>,
@@ -53,12 +54,7 @@ impl PyContract {
         block_number: Option<u64>,
     ) -> PyResult<Py<PyList>> {
         let handle = tokio::runtime::Handle::try_current()
-            .unwrap_or_else(|_| {
-                tokio::runtime::Runtime::new()
-                    .expect("Failed to create tokio runtime")
-                    .handle()
-                    .clone()
-            });
+            .map_err(|_| PyRuntimeError::new_err("Failed to get tokio runtime handle"))?;
 
         let result = handle.block_on(async {
             self.contract.call(function_signature, &args, block_number).await
@@ -83,12 +79,13 @@ impl PyContract {
 /// Encode function arguments.
 ///
 /// Args:
-///     function_signature: Function signature like "transfer(address,uint256)"
+///     `function_signature`: Function signature like "transfer(address,uint256)"
 ///     args: List of arguments as strings
 ///
 /// Returns:
 ///     Encoded calldata as bytes
 #[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
 fn encode_function_call(function_signature: &str, args: Vec<String>) -> PyResult<Vec<u8>> {
     use crate::contract::{encode_arguments, FunctionSignature};
 
@@ -110,11 +107,12 @@ fn encode_function_call(function_signature: &str, args: Vec<String>) -> PyResult
 ///
 /// Args:
 ///     data: Return data as bytes
-///     output_types: List of output type strings like ["uint256", "address"]
+///     `output_types`: List of output type strings like `["uint256", "address"]`
 ///
 /// Returns:
 ///     List of decoded values as strings
 #[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
 fn decode_return_data(data: &[u8], output_types: Vec<String>) -> PyResult<Vec<String>> {
     use crate::contract::{decode_return_data as decode_impl, AbiType};
 
@@ -129,7 +127,7 @@ fn decode_return_data(data: &[u8], output_types: Vec<String>) -> PyResult<Vec<St
 /// Parse a function signature and return its selector.
 ///
 /// Args:
-///     function_signature: Function signature like "transfer(address,uint256)"
+///     `function_signature`: Function signature like "transfer(address,uint256)"
 ///
 /// Returns:
 ///     4-byte function selector as hex string

@@ -7,8 +7,8 @@ use crate::errors::{ProviderError, ProviderResult};
 use crate::provider::AlloyProvider;
 use log::{info, warn};
 use std::collections::HashMap;
-use std::sync::RwLock;
 use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 
 /// Configuration for a chain connection.
 #[derive(Debug, Clone)]
@@ -179,7 +179,7 @@ impl ChainConnectionPool {
                 }
                 Err(e) => {
                     // Log error but continue with other endpoints
-                    warn!("Failed to connect to {}: {}", url, e);
+                    warn!("Failed to connect to {url}: {e}");
                     metrics.push(EndpointMetrics::new(url.clone()));
                 }
             }
@@ -333,24 +333,20 @@ impl ConnectionManager {
     /// # Errors
     ///
     /// Returns `ProviderError::ConnectionFailed` if no endpoints can be connected.
-    #[allow(clippy::significant_drop_tightening)]
-    pub fn register_chain(&self, config: ChainConfig) -> ProviderResult<()> {
+    pub async fn register_chain(&self, config: ChainConfig) -> ProviderResult<()> {
         let pool = ChainConnectionPool::new(config)?;
         let chain_id = pool.chain_id();
         
-        let mut chains = self.chains.write().map_err(|_| ProviderError::Other {
-            message: "Failed to acquire write lock".to_string(),
-        })?;
-        
+        let mut chains = self.chains.write().await;
         chains.insert(chain_id, pool);
+        drop(chains);
         
         // Set as default if no default exists
-        let mut default = self.default_chain.write().map_err(|_| ProviderError::Other {
-            message: "Failed to acquire write lock".to_string(),
-        })?;
-        
-        if default.is_none() {
-            *default = Some(chain_id);
+        {
+            let mut default = self.default_chain.write().await;
+            if default.is_none() {
+                *default = Some(chain_id);
+            }
         }
         
         Ok(())
@@ -361,13 +357,10 @@ impl ConnectionManager {
     /// # Errors
     ///
     /// Returns `ProviderError::ChainNotRegistered` if chain is not registered.
-    #[allow(clippy::significant_drop_tightening)]
-    pub fn get_provider(&self, chain_id: u64) -> ProviderResult<()> {
-        let chains = self.chains.read().map_err(|_| ProviderError::Other {
-            message: "Failed to acquire read lock".to_string(),
-        })?;
-        
-        let _pool = chains.get(&chain_id).ok_or(ProviderError::ChainNotRegistered { chain_id })?;
+    pub async fn get_provider(&self, chain_id: u64) -> ProviderResult<()> {
+        self.chains.read().await
+            .get(&chain_id)
+            .ok_or(ProviderError::ChainNotRegistered { chain_id })?;
         
         // Clone the provider (we need to implement Clone for AlloyProvider or use Arc)
         // For now, return Ok to indicate success - actual provider access will be implemented later
@@ -379,18 +372,13 @@ impl ConnectionManager {
     /// # Errors
     ///
     /// Returns `ProviderError::ChainNotRegistered` if no default chain is set.
-    #[allow(clippy::significant_drop_tightening)]
-    pub fn get_default_provider(&self) -> ProviderResult<()> {
-        let default = self.default_chain.read().map_err(|_| ProviderError::Other {
-            message: "Failed to acquire read lock".to_string(),
-        })?;
+    pub async fn get_default_provider(&self) -> ProviderResult<()> {
+        let chain_id = self.default_chain.read().await
+            .ok_or(ProviderError::Other {
+                message: "No default chain set".to_string(),
+            })?;
         
-        let chain_id = default.ok_or(ProviderError::Other {
-            message: "No default chain set".to_string(),
-        })?;
-        
-        drop(default);
-        self.get_provider(chain_id)
+        self.get_provider(chain_id).await
     }
 
     /// Set default chain.
@@ -398,23 +386,12 @@ impl ConnectionManager {
     /// # Errors
     ///
     /// Returns `ProviderError::ChainNotRegistered` if chain is not registered.
-    #[allow(clippy::significant_drop_tightening)]
-    pub fn set_default_chain(&self, chain_id: u64) -> ProviderResult<()> {
-        let chains = self.chains.read().map_err(|_| ProviderError::Other {
-            message: "Failed to acquire read lock".to_string(),
-        })?;
-        
-        if !chains.contains_key(&chain_id) {
+    pub async fn set_default_chain(&self, chain_id: u64) -> ProviderResult<()> {
+        if !self.chains.read().await.contains_key(&chain_id) {
             return Err(ProviderError::ChainNotRegistered { chain_id });
         }
         
-        drop(chains);
-        
-        let mut default = self.default_chain.write().map_err(|_| ProviderError::Other {
-            message: "Failed to acquire write lock".to_string(),
-        })?;
-        
-        *default = Some(chain_id);
+        *self.default_chain.write().await = Some(chain_id);
         Ok(())
     }
 
@@ -423,17 +400,24 @@ impl ConnectionManager {
     /// # Errors
     ///
     /// Returns `ProviderError::ChainNotRegistered` if chain is not registered.
-    #[allow(clippy::significant_drop_tightening)]
     pub async fn health_check(&self, chain_id: u64) -> ProviderResult<HashMap<String, bool>> {
-        let mut chains = self.chains.write().map_err(|_| ProviderError::Other {
-            message: "Failed to acquire write lock".to_string(),
-        })?;
+        let mut pool = {
+            let mut chains = self.chains.write().await;
 
-        let pool = chains
-            .get_mut(&chain_id)
-            .ok_or(ProviderError::ChainNotRegistered { chain_id })?;
-
-        pool.health_check().await
+            // Get the pool out of the lock
+            chains.remove(&chain_id).ok_or(ProviderError::ChainNotRegistered { chain_id })?
+        };
+        
+        // Perform health check outside the lock
+        let result = pool.health_check().await;
+        
+        // Put the pool back
+        if result.is_ok() {
+            let mut chains = self.chains.write().await;
+            chains.insert(chain_id, pool);
+        }
+        
+        result
     }
 
     /// Get metrics for all endpoints of a chain.
@@ -441,39 +425,24 @@ impl ConnectionManager {
     /// # Errors
     ///
     /// Returns `ProviderError::ChainNotRegistered` if chain is not registered.
-    #[allow(clippy::significant_drop_tightening)]
-    pub fn get_metrics(&self, chain_id: u64) -> ProviderResult<Vec<EndpointMetrics>> {
-        let chains = self.chains.read().map_err(|_| ProviderError::Other {
-            message: "Failed to acquire read lock".to_string(),
-        })?;
-        
-        let pool = chains
+    pub async fn get_metrics(&self, chain_id: u64) -> ProviderResult<Vec<EndpointMetrics>> {
+        Ok(self.chains.read().await
             .get(&chain_id)
-            .ok_or(ProviderError::ChainNotRegistered { chain_id })?;
-        
-        Ok(pool.metrics().to_vec())
+            .ok_or(ProviderError::ChainNotRegistered { chain_id })?
+            .metrics().to_vec())
     }
 
     /// Get the default chain ID.
-    #[allow(clippy::significant_drop_tightening)]
-    pub fn get_default_chain_id(&self) -> ProviderResult<u64> {
-        let default = self.default_chain.read().map_err(|_| ProviderError::Other {
-            message: "Failed to acquire read lock".to_string(),
-        })?;
-        
-        default.ok_or_else(|| ProviderError::Other {
-            message: "No default chain set".to_string(),
-        })
+    pub async fn get_default_chain_id(&self) -> ProviderResult<u64> {
+        self.default_chain.read().await
+            .ok_or_else(|| ProviderError::Other {
+                message: "No default chain set".to_string(),
+            })
     }
 
     /// Close all connections.
-    #[allow(clippy::significant_drop_tightening)]
-    pub fn close(&self) -> ProviderResult<()> {
-        let mut chains = self.chains.write().map_err(|_| ProviderError::Other {
-            message: "Failed to acquire write lock".to_string(),
-        })?;
-        
-        chains.clear();
+    pub async fn close(&self) -> ProviderResult<()> {
+        self.chains.write().await.clear();
         Ok(())
     }
 }
@@ -517,12 +486,12 @@ mod tests {
         assert_eq!(metrics.failure_count, 1);
     }
 
-    #[test]
-    fn test_connection_manager_default_chain() {
+    #[tokio::test]
+    async fn test_connection_manager_default_chain() {
         let manager = ConnectionManager::new();
         
         // Initially no default
-        assert!(manager.get_default_provider().is_err());
+        assert!(manager.get_default_provider().await.is_err());
         
         // Register a chain
         let _config = ChainConfig::new(

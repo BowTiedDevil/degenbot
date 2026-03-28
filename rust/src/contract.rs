@@ -163,19 +163,17 @@ impl FunctionSignature {
         let sig = signature.replace(' ', "");
 
         // Extract output types if present
-        let (sig_part, output_part) = if let Some(returns_idx) = sig.find("returns(") {
+        let (sig_part, output_part) = sig.find("returns(").map_or((sig.as_str(), None), |returns_idx| {
             let outputs = &sig[returns_idx + 8..sig.len() - 1];
             (&sig[..returns_idx], Some(outputs.to_string()))
-        } else {
-            (sig.as_str(), None)
-        };
+        });
 
         // Parse function name and inputs
-        let open_paren = sig_part.find('(').ok_or(ProviderError::InvalidAbi {
+        let open_paren = sig_part.find('(').ok_or_else(|| ProviderError::InvalidAbi {
             message: format!("Missing opening parenthesis in signature: {signature}"),
         })?;
 
-        let close_paren = sig_part.find(')').ok_or(ProviderError::InvalidAbi {
+        let close_paren = sig_part.find(')').ok_or_else(|| ProviderError::InvalidAbi {
             message: format!("Missing closing parenthesis in signature: {signature}"),
         })?;
 
@@ -220,7 +218,7 @@ impl FunctionSignature {
         let mut depth = 0;
         let mut start = 0;
 
-        for (i, c) in types_str.chars().enumerate() {
+        for (i, c) in types_str.char_indices() {
             match c {
                 '(' | '[' => depth += 1,
                 ')' | ']' => depth -= 1,
@@ -244,7 +242,7 @@ impl FunctionSignature {
     fn types_to_string(types: &[AbiType]) -> String {
         types
             .iter()
-            .map(|t| Self::type_to_string(t))
+            .map(Self::type_to_string)
             .collect::<Vec<_>>()
             .join(",")
     }
@@ -334,11 +332,7 @@ fn encode_value(abi_type: &AbiType, value: &str) -> ProviderResult<Vec<u8>> {
             Ok(encoded)
         }
         AbiType::FixedBytes(size) => {
-            let hex_str = if let Some(stripped) = value.strip_prefix("0x") {
-                stripped
-            } else {
-                value
-            };
+            let hex_str = value.strip_prefix("0x").map_or(value, |stripped| stripped);
             let bytes = hex::decode(hex_str).map_err(|_| ProviderError::InvalidAbi {
                 message: format!("Invalid hex value for bytes{size}: {value}"),
             })?;
@@ -356,11 +350,7 @@ fn encode_value(abi_type: &AbiType, value: &str) -> ProviderResult<Vec<u8>> {
             Ok(encoded)
         }
         AbiType::Bytes => {
-            let hex_str = if let Some(stripped) = value.strip_prefix("0x") {
-                stripped
-            } else {
-                value
-            };
+            let hex_str = value.strip_prefix("0x").map_or(value, |stripped| stripped);
             let bytes = hex::decode(hex_str).map_err(|_| ProviderError::InvalidAbi {
                 message: format!("Invalid hex value for bytes: {value}"),
             })?;
@@ -380,7 +370,7 @@ fn encode_value(abi_type: &AbiType, value: &str) -> ProviderResult<Vec<u8>> {
             // Data (padded to 32-byte boundary)
             encoded.extend_from_slice(&bytes);
             let padding = (32 - (bytes.len() % 32)) % 32;
-            encoded.extend(std::iter::repeat(0u8).take(padding));
+            encoded.extend(std::iter::repeat_n(0u8, padding));
 
             Ok(encoded)
         }
@@ -400,17 +390,13 @@ fn encode_value(abi_type: &AbiType, value: &str) -> ProviderResult<Vec<u8>> {
             // Data (padded to 32-byte boundary)
             encoded.extend_from_slice(bytes);
             let padding = (32 - (bytes.len() % 32)) % 32;
-            encoded.extend(std::iter::repeat(0u8).take(padding));
+            encoded.extend(std::iter::repeat_n(0u8, padding));
 
             Ok(encoded)
         }
         AbiType::Array(_) | AbiType::FixedArray(_, _) => {
             // For now, arrays require hex-encoded pre-encoded data
-            let hex_str = if let Some(stripped) = value.strip_prefix("0x") {
-                stripped
-            } else {
-                value
-            };
+            let hex_str = value.strip_prefix("0x").map_or(value, |stripped| stripped);
             let bytes = hex::decode(hex_str).map_err(|_| ProviderError::InvalidAbi {
                 message: format!("Invalid hex value for array: {value}"),
             })?;
@@ -461,7 +447,9 @@ fn decode_value(data: &[u8], offset: usize, abi_type: &AbiType) -> ProviderResul
             Ok((value.to_string(), offset + 32))
         }
         AbiType::Int(_) => {
-            let value = I256::from_be_bytes::<32>(data[offset..offset + 32].try_into().unwrap());
+            let value = I256::from_be_bytes::<32>(data[offset..offset + 32].try_into().map_err(|_| ProviderError::DecodingError {
+                message: "Failed to convert bytes to I256".to_string(),
+            })?);
             Ok((value.to_string(), offset + 32))
         }
         AbiType::FixedBytes(size) => {
@@ -587,12 +575,13 @@ impl Contract {
 
     /// Get the contract address.
     #[must_use]
-    pub fn address(&self) -> Address {
+    pub const fn address(&self) -> Address {
         self.address
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

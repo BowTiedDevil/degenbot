@@ -140,37 +140,50 @@ impl PyConnectionManager {
     }
 
     /// Register a new chain.
-    fn register_chain(&self, config: &PyChainConfig) -> PyResult<()> {
-        self.inner
-            .register_chain(config.inner.clone())
-            .map_err(|e| PyValueError::new_err(format!("Failed to register chain: {e}")))?;
-        Ok(())
+    fn register_chain(&self, _py: Python<'_>, config: &PyChainConfig) -> PyResult<()> {
+        let handle = tokio::runtime::Handle::try_current()
+            .map_err(|_| PyRuntimeError::new_err("Failed to get tokio runtime handle"))?;
+
+        handle.block_on(async {
+            self.inner
+                .register_chain(config.inner.clone())
+                .await
+                .map_err(|e| PyValueError::new_err(format!("Failed to register chain: {e}")))
+        })
     }
 
     /// Set default chain.
-    fn set_default_chain(&self, chain_id: u64) -> PyResult<()> {
-        self.inner
-            .set_default_chain(chain_id)
-            .map_err(|e| PyValueError::new_err(format!("Failed to set default chain: {e}")))?;
-        Ok(())
+    fn set_default_chain(&self, _py: Python<'_>, chain_id: u64) -> PyResult<()> {
+        let handle = tokio::runtime::Handle::try_current()
+            .map_err(|_| PyRuntimeError::new_err("Failed to get tokio runtime handle"))?;
+
+        handle.block_on(async {
+            self.inner
+                .set_default_chain(chain_id)
+                .await
+                .map_err(|e| PyValueError::new_err(format!("Failed to set default chain: {e}")))
+        })
     }
 
     /// Get default chain ID.
-    fn get_default_chain_id(&self) -> PyResult<u64> {
-        self.inner
-            .get_default_chain_id()
-            .map_err(|e| PyValueError::new_err(format!("Failed to get default chain: {e}")))
+    fn get_default_chain_id(&self, _py: Python<'_>) -> PyResult<u64> {
+        let handle = tokio::runtime::Handle::try_current()
+            .map_err(|_| PyRuntimeError::new_err("Failed to get tokio runtime handle"))?;
+
+        handle.block_on(async {
+            self.inner
+                .get_default_chain_id()
+                .await
+                .map_err(|e| PyValueError::new_err(format!("Failed to get default chain: {e}")))
+        })
     }
 
     /// Perform health check on a chain.
     fn health_check(&self, py: Python<'_>, chain_id: u64) -> PyResult<Py<PyDict>> {
         let handle = tokio::runtime::Handle::try_current()
-            .unwrap_or_else(|_| {
-                tokio::runtime::Runtime::new()
-                    .expect("Failed to create tokio runtime")
-                    .handle()
-                    .clone()
-            });
+            .map_err(|_| {
+                PyRuntimeError::new_err("Failed to get tokio runtime handle")
+            })?;
 
         let results = handle
             .block_on(async { self.inner.health_check(chain_id).await })
@@ -186,10 +199,15 @@ impl PyConnectionManager {
 
     /// Get metrics for all endpoints of a chain.
     fn get_metrics(&self, py: Python<'_>, chain_id: u64) -> PyResult<Py<PyList>> {
-        let metrics = self
-            .inner
-            .get_metrics(chain_id)
-            .map_err(|e| PyValueError::new_err(format!("Failed to get metrics: {e}")))?;
+        let handle = tokio::runtime::Handle::try_current()
+            .map_err(|_| PyRuntimeError::new_err("Failed to get tokio runtime handle"))?;
+
+        let metrics = handle.block_on(async {
+            self.inner
+                .get_metrics(chain_id)
+                .await
+                .map_err(|e| PyValueError::new_err(format!("Failed to get metrics: {e}")))
+        })?;
 
         let list = PyList::empty(py);
         for m in metrics {
@@ -199,11 +217,16 @@ impl PyConnectionManager {
     }
 
     /// Close all connections.
-    fn close(&self) -> PyResult<()> {
-        self.inner
-            .close()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to close connections: {e}")))?;
-        Ok(())
+    fn close(&self, _py: Python<'_>) -> PyResult<()> {
+        let handle = tokio::runtime::Handle::try_current()
+            .map_err(|_| PyRuntimeError::new_err("Failed to get tokio runtime handle"))?;
+
+        handle.block_on(async {
+            self.inner
+                .close()
+                .await
+                .map_err(|e| PyRuntimeError::new_err(format!("Failed to close connections: {e}")))
+        })
     }
 }
 
