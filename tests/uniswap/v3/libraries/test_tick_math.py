@@ -6,16 +6,17 @@ import hypothesis
 import hypothesis.strategies
 import pytest
 
-import degenbot_rs
 from degenbot.constants import MAX_UINT160, MIN_UINT160
 from degenbot.exceptions.evm import EVMRevertError
-from degenbot.uniswap.v3_libraries.tick_math import (
+from degenbot.uniswap.v3_libraries import (
     MAX_SQRT_RATIO,
     MAX_TICK,
     MIN_SQRT_RATIO,
     MIN_TICK,
     get_sqrt_ratio_at_tick,
+    get_sqrt_ratio_at_tick_rs,
     get_tick_at_sqrt_ratio,
+    get_tick_at_sqrt_ratio_rs,
 )
 
 # Tests adapted from Typescript tests on Uniswap V3 Github repo
@@ -117,7 +118,7 @@ def test_get_tick_at_sqrt_ratio() -> None:
     )
 )
 def test_get_sqrt_ratio_at_tick_rs(tick: int):
-    assert get_sqrt_ratio_at_tick(tick) == degenbot_rs.get_sqrt_ratio_at_tick(tick)
+    assert get_sqrt_ratio_at_tick(tick) == get_sqrt_ratio_at_tick_rs(tick)
 
 
 @hypothesis.given(
@@ -127,9 +128,7 @@ def test_get_sqrt_ratio_at_tick_rs(tick: int):
     )
 )
 def test_get_tick_at_sqrt_ratio_rs(sqrt_price_x96: int):
-    assert get_tick_at_sqrt_ratio(sqrt_price_x96) == degenbot_rs.get_tick_at_sqrt_ratio(
-        sqrt_price_x96
-    )
+    assert get_tick_at_sqrt_ratio(sqrt_price_x96) == get_tick_at_sqrt_ratio_rs(sqrt_price_x96)
 
 
 @pytest.fixture(scope="session")

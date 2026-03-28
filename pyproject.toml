@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "degenbot"
-version = "0.5.1b1"
+version = "0.5.1b1.post1"
 authors = [
     { name="BowTiedDevil", email="devil@bowtieddevil.com" },
 ]
@@ -170,9 +170,6 @@ allow-star-arg-any = true
     "SLF",      # tests may need to access private attributes to test implementation
     "T20",      # many tests use print
 ]
-"*.pyi" = [
-    "PYI021",   # allow docstrings in stubs for IDE support
-]
 
 [tool.pytest.ini_options]
 addopts = [
@@ -227,7 +224,7 @@ explicit = true
 [tool.maturin]
 manifest-path = "rust/Cargo.toml"
 python-source = "src"
-module-name = "degenbot_rs"
+module-name = "degenbot._rs"
 bindings = "pyo3"
 profile = "release"
 features = ["pyo3/extension-module"]

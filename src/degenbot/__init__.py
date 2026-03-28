@@ -1,3 +1,13 @@
+from __future__ import annotations
+
+from ._rs import (
+    decode_return_data,
+    encode_function_call,
+    get_function_selector,
+    get_sqrt_ratio_at_tick,
+    get_tick_at_sqrt_ratio,
+    to_checksum_address,
+)
 from .checksum_cache import get_checksum_address
 from .config import settings
 from .connection import (
@@ -112,13 +122,19 @@ __all__ = (
     "__version__",
     "async_connection_manager",
     "connection_manager",
+    "decode_return_data",
+    "encode_function_call",
     "get_async_web3",
     "get_checksum_address",
+    "get_function_selector",
+    "get_sqrt_ratio_at_tick",
+    "get_tick_at_sqrt_ratio",
     "get_web3",
     "logger",
     "pool_registry",
     "set_async_web3",
     "set_web3",
     "settings",
+    "to_checksum_address",
     "token_registry",
 )

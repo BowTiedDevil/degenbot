@@ -22,12 +22,19 @@ name = "degenbot_rs"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
+alloy = { version = "^1.8", features = ["full"] }
+alloy-contract = { version = "^1.8" }
 alloy-primitives = { version = "^1.5" }
 alloy-sol-types = { version = "^1.5", features = ["json"] }
 hex = { version = "^0.4" }
 num-bigint = { version = "^0.4" }
 pyo3 = { version = "^0.28", features = [ "abi3-py312", "extension-module", "num-bigint"] }
+reqwest = { version = "^0.13", features = ["json", "http2"] }
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = { version = "^1.0" }
+log = { version = "^0.4" }
 thiserror = { version = "^2.0" }
+tokio = { version = "^1", features = ["rt-multi-thread", "time"] }
 
 [dev-dependencies]
 proptest = "^1.10"

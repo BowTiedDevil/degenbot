@@ -61,3 +61,68 @@ impl From<AddressError> for PyErr {
         Self::new::<PyValueError, _>(format!("Address error: {err}"))
     }
 }
+
+/// Errors that can occur during provider operations.
+#[derive(Debug, thiserror::Error, Clone)]
+pub enum ProviderError {
+    /// Request timeout.
+    #[error("Request timeout after {timeout}s: {message}")]
+    Timeout { timeout: u64, message: String },
+
+    /// Rate limit exceeded.
+    #[error("Rate limited: {message}")]
+    RateLimited { message: String },
+
+    /// Connection failed.
+    #[error("Connection failed: {message}")]
+    ConnectionFailed { message: String },
+
+    /// Invalid response from RPC.
+    #[error("Invalid response: {message}")]
+    InvalidResponse { message: String },
+
+    /// RPC error with code and message.
+    #[error("RPC error: {code} - {message}")]
+    RpcError { code: i64, message: String },
+
+    /// Invalid block range.
+    #[error("Invalid block range: {from} to {to}")]
+    InvalidBlockRange { from: u64, to: u64 },
+
+    /// Invalid Ethereum address format.
+    #[error("Invalid address format: {address} - {reason}")]
+    InvalidAddress { address: String, reason: String },
+
+    /// Invalid topic format.
+    #[error("Invalid topic format: {topic} - {reason}")]
+    InvalidTopic { topic: String, reason: String },
+
+    /// Chain not registered.
+    #[error("Chain not registered: {chain_id}")]
+    ChainNotRegistered { chain_id: u64 },
+
+    /// Anvil-specific error.
+    #[error("Anvil error: {message}")]
+    AnvilError { message: String },
+
+    /// Invalid ABI.
+    #[error("Invalid ABI: {message}")]
+    InvalidAbi { message: String },
+
+    /// Decoding error.
+    #[error("Decoding error: {message}")]
+    DecodingError { message: String },
+
+    /// Other error.
+    #[error("{message}")]
+    Other { message: String },
+}
+
+impl From<ProviderError> for PyErr {
+    fn from(err: ProviderError) -> Self {
+        PyValueError::new_err(err.to_string())
+    }
+}
+
+/// Result type alias for provider operations.
+pub type ProviderResult<T> = Result<T, ProviderError>;

@@ -1,5 +1,9 @@
-import degenbot_rs
-from degenbot.uniswap.v3_libraries.tick_math import (
+from degenbot._rs import (
+    get_sqrt_ratio_at_tick,
+    get_tick_at_sqrt_ratio,
+)
+
+from degenbot.uniswap.v3_libraries import (
     MAX_SQRT_RATIO,
     MAX_TICK,
     MIN_SQRT_RATIO,
@@ -33,7 +37,7 @@ TICK_MATH_VECTORS: list[tuple[Tick, Ratio]] = [
 
 def test_get_sqrt_ratio_at_tick_fixed_vectors():
     for tick, expected_ratio in TICK_MATH_VECTORS:
-        assert degenbot_rs.get_sqrt_ratio_at_tick(tick) == expected_ratio
+        assert get_sqrt_ratio_at_tick(tick) == expected_ratio
 
 
 SQRT_RATIO_VECTORS: list[tuple[Ratio, Tick]] = [
@@ -49,17 +53,17 @@ SQRT_RATIO_VECTORS: list[tuple[Ratio, Tick]] = [
 
 def test_get_tick_at_sqrt_ratio_fixed_vectors():
     for sqrt_ratio, expected_tick in SQRT_RATIO_VECTORS:
-        assert degenbot_rs.get_tick_at_sqrt_ratio(sqrt_ratio) == expected_tick
+        assert get_tick_at_sqrt_ratio(sqrt_ratio) == expected_tick
 
 
 def test_tick_boundaries():
-    assert degenbot_rs.get_sqrt_ratio_at_tick(MIN_TICK) == MIN_SQRT_RATIO
-    assert degenbot_rs.get_sqrt_ratio_at_tick(MAX_TICK) == MAX_SQRT_RATIO
+    assert get_sqrt_ratio_at_tick(MIN_TICK) == MIN_SQRT_RATIO
+    assert get_sqrt_ratio_at_tick(MAX_TICK) == MAX_SQRT_RATIO
 
 
 def test_sqrt_ratio_boundaries():
-    assert degenbot_rs.get_tick_at_sqrt_ratio(MIN_SQRT_RATIO) == MIN_TICK
-    assert degenbot_rs.get_tick_at_sqrt_ratio(MAX_SQRT_RATIO - 1) == MAX_TICK - 1
+    assert get_tick_at_sqrt_ratio(MIN_SQRT_RATIO) == MIN_TICK
+    assert get_tick_at_sqrt_ratio(MAX_SQRT_RATIO - 1) == MAX_TICK - 1
 
 
 def test_roundtrip_tick_to_ratio_and_back():
@@ -81,15 +85,15 @@ def test_roundtrip_tick_to_ratio_and_back():
         100000,
         500000,
     ]:
-        sqrt_ratio = degenbot_rs.get_sqrt_ratio_at_tick(tick)
-        tick_back = degenbot_rs.get_tick_at_sqrt_ratio(sqrt_ratio)
+        sqrt_ratio = get_sqrt_ratio_at_tick(tick)
+        tick_back = get_tick_at_sqrt_ratio(sqrt_ratio)
         assert tick_back == tick, f"Roundtrip failed for tick={tick}: got {tick_back}"
 
 
 def test_roundtick_boundary_roundtrip():
     """Test roundtrip at boundary values."""
-    min_sqrt_ratio = degenbot_rs.get_sqrt_ratio_at_tick(MIN_TICK)
-    assert degenbot_rs.get_tick_at_sqrt_ratio(min_sqrt_ratio) == MIN_TICK
+    min_sqrt_ratio = get_sqrt_ratio_at_tick(MIN_TICK)
+    assert get_tick_at_sqrt_ratio(min_sqrt_ratio) == MIN_TICK
 
-    max_sqrt_ratio = degenbot_rs.get_sqrt_ratio_at_tick(MAX_TICK)
-    assert degenbot_rs.get_tick_at_sqrt_ratio(max_sqrt_ratio - 1) == MAX_TICK - 1
+    max_sqrt_ratio = get_sqrt_ratio_at_tick(MAX_TICK)
+    assert get_tick_at_sqrt_ratio(max_sqrt_ratio - 1) == MAX_TICK - 1
