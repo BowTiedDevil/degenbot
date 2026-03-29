@@ -14,30 +14,62 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64
+          # Linux x86_64 (manylinux_2_28 for broader compatibility)
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            manylinux: 2_28
+            args: ""
+          # Linux ARM64 (manylinux_2_28)
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            manylinux: 2_28
+            args: ""
+          # Linux ARMv7 (32-bit ARM, manylinux_2_31)
+          - os: ubuntu-latest
+            target: armv7-unknown-linux-gnueabihf
+            manylinux: 2_31
+            args: ""
+          # Linux PowerPC64LE (IBM Power, manylinux_2_28)
+          - os: ubuntu-latest
+            target: powerpc64le-unknown-linux-gnu
+            manylinux: 2_28
+            args: ""
+          # Linux S390X (IBM Z, manylinux_2_28)
+          - os: ubuntu-latest
+            target: s390x-unknown-linux-gnu
+            manylinux: 2_28
             args: ""
           # macOS x86_64
-          - os: macos-latest
+          - os: macos-13
             target: x86_64-apple-darwin
             args: "--target x86_64-apple-darwin"
           # macOS ARM64
-          - os: macos-latest
+          - os: macos-14
             target: aarch64-apple-darwin
             args: "--target aarch64-apple-darwin"
           # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             args: ""
+          # Windows ARM64
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            args: ""
 
     steps:
       - uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        if: runner.os == 'Linux' && matrix.target != 'x86_64-unknown-linux-gnu'
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: all
 
       - name: Build wheels with maturin
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
           args: --release --out dist ${{ matrix.args }}
           sccache: 'true'
           working-directory: .
