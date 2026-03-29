@@ -39,14 +39,10 @@ jobs:
             target: s390x-unknown-linux-gnu
             manylinux: 2_28
             args: ""
-          # macOS x86_64
-          - os: macos-13
-            target: x86_64-apple-darwin
-            args: "--target x86_64-apple-darwin"
-          # macOS ARM64
+          # macOS universal2 (single wheel for both Intel and Apple Silicon)
           - os: macos-14
-            target: aarch64-apple-darwin
-            args: "--target aarch64-apple-darwin"
+            target: universal2-apple-darwin
+            args: "--target universal2-apple-darwin"
           # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
