@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
     from eth_typing import ChecksumAddress
 
-    from degenbot.cli.aave_transaction_operations import Operation
+    from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
 
 
 class LiquidationPattern(Enum):
@@ -118,7 +118,7 @@ class LiquidationPatternContext:
 
 def detect_liquidation_patterns(
     operations: list[Operation],
-    scaled_token_events: list,  # List of ScaledTokenEvent
+    scaled_token_events: list[ScaledTokenEvent],
     get_v_token_for_underlying: Callable[[ChecksumAddress], ChecksumAddress | None],
 ) -> LiquidationPatternContext:
     """

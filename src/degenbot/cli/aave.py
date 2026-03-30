@@ -2969,6 +2969,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 contract_name="POOL",
             )
             assert pool_contract is not None
+            assert pool_contract.revision is not None
             tx_context.pool_revision = pool_contract.revision
         elif topic == AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value:
             _update_contract_revision(
