@@ -343,6 +343,7 @@ class AaveV3AssetConfig(Base):
 
     # Isolation mode settings (relevant for liquidations)
     isolation_mode: Mapped[bool]
+    borrowable_in_isolation: Mapped[bool]
     debt_ceiling: Mapped[BigInteger | None]
 
     # Relationships
