@@ -10,7 +10,11 @@ use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
 
-/// Async wrapper for AlloyProvider that exposes async methods to Python.
+/// A log entry with its associated metadata.
+/// Tuple of: (address, topics, data, `block_number`, `block_hash`, `transaction_hash`, `log_index`)
+type LogEntry = (String, Vec<String>, String, Option<u64>, Option<String>, Option<String>, Option<u64>);
+
+/// Async wrapper for `AlloyProvider` that exposes async methods to Python.
 pub struct AsyncAlloyProvider {
     inner: Arc<AlloyProvider>,
 }
@@ -18,7 +22,7 @@ pub struct AsyncAlloyProvider {
 impl AsyncAlloyProvider {
     /// Create a new async provider.
     #[must_use]
-    pub fn new(provider: Arc<AlloyProvider>) -> Self {
+    pub const fn new(provider: Arc<AlloyProvider>) -> Self {
         Self { inner: provider }
     }
 
@@ -123,12 +127,12 @@ impl PyAsyncAlloyProvider {
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
 
             // Convert to a simple Vec of tuples that can be converted to Python
-            let result: Vec<(String, Vec<String>, String, Option<u64>, Option<String>, Option<String>, Option<u64>)> = logs
+            let result: Vec<LogEntry> = logs
                 .into_iter()
                 .map(|log| {
                     (
                         log.address().to_string(),
-                        log.topics().iter().map(|t| t.to_string()).collect(),
+                        log.topics().iter().map(std::string::ToString::to_string).collect(),
                         format!("0x{}", hex::encode(log.data().data.clone())),
                         log.block_number,
                         log.block_hash.map(|h| h.to_string()),

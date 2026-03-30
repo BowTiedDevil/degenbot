@@ -158,20 +158,20 @@ impl PyAlloyProvider {
         Ok(py_logs.into())
     }
 
-    /// Execute an eth_call to a contract.
+    /// Execute an `eth_call` to a contract.
     #[pyo3(signature = (to, data, block_number=None))]
     fn call(
         &self,
         py: Python<'_>,
-        to: String,
-        data: Bound<'_, PyBytes>,
+        to: &str,
+        data: &Bound<'_, PyBytes>,
         block_number: Option<u64>,
     ) -> PyResult<Py<PyBytes>> {
         use alloy_primitives::Address;
         use std::str::FromStr;
 
         // Parse the address
-        let to_address = Address::from_str(&to)
+        let to_address = Address::from_str(to)
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
 
         // Get the data bytes

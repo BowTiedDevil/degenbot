@@ -20,7 +20,7 @@ impl PyContract {
     ///
     /// Args:
     ///     address: Contract address (hex string)
-    ///     provider_url: RPC provider URL (optional, defaults to localhost)
+    ///     `provider_url`: RPC provider URL (optional, defaults to localhost)
     #[new]
     #[pyo3(signature = (address, provider_url=None))]
     fn new(address: &str, provider_url: Option<&str>) -> PyResult<Self> {

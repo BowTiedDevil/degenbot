@@ -21,7 +21,7 @@ impl PyAsyncContract {
     ///
     /// Args:
     ///     address: Contract address (hex string)
-    ///     provider_url: RPC provider URL (HTTP/HTTPS or IPC path)
+    ///     `provider_url`: RPC provider URL (HTTP/HTTPS or IPC path)
     #[new]
     fn new(address: &str, provider_url: &str) -> PyResult<Self> {
         let runtime = tokio::runtime::Runtime::new()
@@ -44,9 +44,9 @@ impl PyAsyncContract {
     /// Execute a contract call asynchronously.
     ///
     /// Args:
-    ///     function_signature: Function signature like "balanceOf(address)"
+    ///     `function_signature`: Function signature like "balanceOf(address)"
     ///     args: List of arguments as strings
-    ///     block_number: Optional block number to query
+    ///     `block_number`: Optional block number to query
     ///
     /// Returns:
     ///     List of decoded return values as strings
@@ -73,8 +73,8 @@ impl PyAsyncContract {
     /// Batch execute multiple contract calls asynchronously.
     ///
     /// Args:
-    ///     calls: List of (function_signature, args) tuples
-    ///     block_number: Optional block number to query
+    ///     calls: List of (`function_signature`, args) tuples
+    ///     `block_number`: Optional block number to query
     ///
     /// Returns:
     ///     List of results, where each result is a list of decoded return values

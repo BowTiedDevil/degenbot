@@ -291,7 +291,7 @@ impl AlloyProvider {
                     "parentHash": block.header.parent_hash.to_string(),
                     "miner": block.header.beneficiary.to_string(),
                     "difficulty": block.header.difficulty.to_string(),
-                    "totalDifficulty": block.header.total_difficulty.map_or_else(|| String::new(), |d: U256| d.to_string()),
+                    "totalDifficulty": block.header.total_difficulty.map_or_else(String::new, |d: U256| d.to_string()),
                     "gasLimit": block.header.gas_limit.to_string(),
                     "gasUsed": block.header.gas_used.to_string(),
                     "transactions": block.transactions.len(),
