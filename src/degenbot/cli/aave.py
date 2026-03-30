@@ -60,11 +60,14 @@ from degenbot.database import db_session
 from degenbot.database.models.aave import (
     AaveGhoToken,
     AaveV3Asset,
+    AaveV3AssetConfig,
     AaveV3CollateralPosition,
     AaveV3Contract,
     AaveV3DebtPosition,
+    AaveV3EModeCategory,
     AaveV3Market,
     AaveV3User,
+    AaveV3UserCollateralConfig,
 )
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.operations import backup_sqlite_database
@@ -325,6 +328,8 @@ def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress
         AaveV3PoolConfigEvent.UPGRADED.value,
         AaveV3PoolEvent.MINTED_TO_TREASURY.value,
         AaveV3PoolEvent.RESERVE_DATA_UPDATED.value,
+        AaveV3PoolEvent.RESERVE_USED_AS_COLLATERAL_DISABLED.value,
+        AaveV3PoolEvent.RESERVE_USED_AS_COLLATERAL_ENABLED.value,
     }:
         # no relevant user data in these events
         pass
@@ -975,6 +980,490 @@ def market_show(chain_id: int | None, name: str | None) -> None:
                         asset.underlying_token.symbol if asset.underlying_token else "Unknown"
                     )
                     click.echo(f"    - {token_symbol}")
+
+
+def _decode_reserve_configuration_bitmap(config_bitmap: int) -> dict[str, int | bool | None]:
+    """
+    Decode a ReserveConfigurationMap bitmap from the Pool contract.
+
+    Based on Aave V3 ReserveConfiguration library bit positions:
+    - bits 0-15: LTV
+    - bits 16-31: Liquidation threshold
+    - bits 32-47: Liquidation bonus
+    - bits 56: Active
+    - bits 57: Frozen
+    - bits 58: Borrowing enabled
+    - bits 60: Paused
+    - bits 61: Borrowable in isolation (can this asset be borrowed against isolated collateral)
+    - bits 63: Flashloan enabled
+    - bits 168-175: eMode category (deprecated in v3.4+, but kept for compatibility)
+    - bits 212-251: Debt ceiling (isolation mode debt ceiling)
+
+    Note: isolation_mode is determined by debt_ceiling > 0, not by a flag bit.
+    An asset is in isolation mode if it has a debt ceiling set.
+    """
+
+    e_mode_category = (config_bitmap >> 168) & 0xFF
+    debt_ceiling = (config_bitmap >> 212) & 0xFFFFFFFFFF
+    return {
+        "ltv": config_bitmap & 0xFFFF,
+        "liquidation_threshold": (config_bitmap >> 16) & 0xFFFF,
+        "liquidation_bonus": (config_bitmap >> 32) & 0xFFFF,
+        "borrowing_enabled": bool((config_bitmap >> 58) & 1),
+        "flash_loan_enabled": bool((config_bitmap >> 63) & 1),
+        "borrowable_in_isolation": bool((config_bitmap >> 61) & 1),
+        "isolation_mode": debt_ceiling > 0,
+        "debt_ceiling": debt_ceiling,
+        "e_mode_category_id": e_mode_category if e_mode_category > 0 else None,
+    }
+
+
+def _process_collateral_configuration_changed_event(
+    *,
+    w3: Web3,
+    session: Session,
+    event: LogReceipt,
+    market: AaveV3Market,
+) -> AaveV3AssetConfig | None:
+    """
+    Process a CollateralConfigurationChanged event to update asset configuration.
+
+    Fetches full configuration from the Pool contract via getConfiguration()
+    and decodes the bitmap to populate all config fields.
+
+    Reference:
+    ```
+    event CollateralConfigurationChanged(
+        address indexed asset,
+        uint256 ltv,
+        uint256 liquidationThreshold,
+        uint256 liquidationBonus
+    );
+    ```
+    """
+
+    asset_address = decode_address(event["topics"][1])
+
+    # Find the asset in the database
+    asset = session.scalar(
+        select(AaveV3Asset).where(
+            AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address))
+        )
+    )
+
+    if asset is None:
+        logger.warning(
+            f"Received CollateralConfigurationChanged for unknown asset: {asset_address}"
+        )
+        return None
+
+    # Get the Pool contract address
+    pool_contract = _get_contract(
+        session=session,
+        market=market,
+        contract_name="POOL",
+    )
+
+    if pool_contract is None:
+        logger.warning(
+            f"Pool contract not found for market {market.id}, cannot fetch full configuration"
+        )
+        return None
+
+    # Fetch full configuration from Pool contract
+    (config_bitmap,) = raw_call(
+        w3=w3,
+        address=pool_contract.address,
+        calldata=encode_function_calldata(
+            function_prototype="getConfiguration(address)",
+            function_arguments=[asset_address],
+        ),
+        return_types=["uint256"],
+        block_identifier=event["blockNumber"],
+    )
+
+    # Decode the configuration bitmap
+    decoded = _decode_reserve_configuration_bitmap(config_bitmap)
+
+    # Get or create the asset config
+    config = session.scalar(select(AaveV3AssetConfig).where(AaveV3AssetConfig.asset_id == asset.id))
+
+    if config is None:
+        config = AaveV3AssetConfig(
+            asset_id=asset.id,
+            ltv=decoded["ltv"],
+            liquidation_threshold=decoded["liquidation_threshold"],
+            liquidation_bonus=decoded["liquidation_bonus"],
+            borrowing_enabled=decoded["borrowing_enabled"],
+            stable_borrowing_enabled=False,
+            flash_loan_enabled=decoded["flash_loan_enabled"],
+            borrowable_in_isolation=decoded["borrowable_in_isolation"],
+            isolation_mode=decoded["isolation_mode"],
+            debt_ceiling=decoded["debt_ceiling"],
+            e_mode_category_id=decoded["e_mode_category_id"],
+        )
+        session.add(config)
+        logger.info(f"Created AaveV3AssetConfig for {asset_address}")
+    else:
+        config.ltv = decoded["ltv"]
+        config.liquidation_threshold = decoded["liquidation_threshold"]
+        config.liquidation_bonus = decoded["liquidation_bonus"]
+        config.borrowing_enabled = decoded["borrowing_enabled"]
+        config.flash_loan_enabled = decoded["flash_loan_enabled"]
+        config.borrowable_in_isolation = decoded["borrowable_in_isolation"]
+        config.isolation_mode = decoded["isolation_mode"]
+        config.debt_ceiling = decoded["debt_ceiling"]
+        config.e_mode_category_id = decoded["e_mode_category_id"]
+        logger.info(f"Updated AaveV3AssetConfig for {asset_address}")
+
+    return config
+
+
+def _process_e_mode_category_added_event(
+    *,
+    session: Session,
+    event: LogReceipt,
+    market_id: int,
+) -> AaveV3EModeCategory | None:
+    """
+    Process an EModeCategoryAdded event to update eMode category configuration.
+
+    Reference:
+    ```
+    event EModeCategoryAdded(
+        uint8 indexed categoryId,
+        uint256 ltv,
+        uint256 liquidationThreshold,
+        uint256 liquidationBonus,
+        address oracle,
+        string label
+    );
+    ```
+    """
+
+    category_id = int.from_bytes(event["topics"][1], "big")
+
+    # Decode non-indexed parameters
+    ltv, liquidation_threshold, liquidation_bonus, oracle, label = eth_abi.abi.decode(
+        types=["uint256", "uint256", "uint256", "address", "string"],
+        data=HexBytes(event["data"]),
+    )
+
+    # Check if category already exists
+    category = session.scalar(
+        select(AaveV3EModeCategory).where(
+            AaveV3EModeCategory.market_id == market_id,
+            AaveV3EModeCategory.category_id == category_id,
+        )
+    )
+
+    if category is None:
+        category = AaveV3EModeCategory(
+            market_id=market_id,
+            category_id=category_id,
+            label=label,
+            ltv=int(ltv),
+            liquidation_threshold=int(liquidation_threshold),
+            liquidation_bonus=int(liquidation_bonus),
+            price_source=get_checksum_address(oracle) if oracle else None,
+        )
+        session.add(category)
+        logger.info(f"Created AaveV3EModeCategory: {label} (ID: {category_id})")
+    else:
+        category.ltv = int(ltv)
+        category.liquidation_threshold = int(liquidation_threshold)
+        category.liquidation_bonus = int(liquidation_bonus)
+        category.price_source = get_checksum_address(oracle) if oracle else None
+        category.label = label
+        logger.info(f"Updated AaveV3EModeCategory: {label} (ID: {category_id})")
+
+    return category
+
+
+def _process_emode_asset_category_changed_event(
+    *,
+    session: Session,
+    event: LogReceipt,
+    market_id: int,
+) -> AaveV3AssetConfig | None:
+    """
+    Process an EModeAssetCategoryChanged event (older Aave versions).
+
+    Updates the asset's eMode category assignment.
+
+    Reference:
+    ```
+    event EModeAssetCategoryChanged(
+        address indexed asset,
+        uint8 oldCategoryId,
+        uint8 newCategoryId
+    );
+    ```
+    """
+    asset_address = decode_address(event["topics"][1])
+
+    # Decode non-indexed parameters
+    old_category_id, new_category_id = eth_abi.abi.decode(
+        types=["uint8", "uint8"],
+        data=HexBytes(event["data"]),
+    )
+
+    # Find the asset
+    asset = session.scalar(
+        select(AaveV3Asset).where(
+            AaveV3Asset.market_id == market_id,
+            AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
+        )
+    )
+    assert asset is not None
+
+    # Get or create the asset config
+    config = session.scalar(select(AaveV3AssetConfig).where(AaveV3AssetConfig.asset_id == asset.id))
+
+    if config is None:
+        config = AaveV3AssetConfig(
+            asset_id=asset.id,
+            ltv=0,
+            liquidation_threshold=0,
+            liquidation_bonus=0,
+            borrowing_enabled=False,
+            stable_borrowing_enabled=False,
+            flash_loan_enabled=False,
+            borrowable_in_isolation=False,
+            isolation_mode=False,
+            debt_ceiling=None,
+            e_mode_category_id=int(new_category_id) if new_category_id > 0 else None,
+        )
+        session.add(config)
+        logger.info(
+            f"Created AaveV3AssetConfig for {asset_address} with eMode category {new_category_id}"
+        )
+    else:
+        config.e_mode_category_id = int(new_category_id) if new_category_id > 0 else None
+        logger.info(
+            f"Updated eMode category for {asset_address}: {old_category_id} -> {new_category_id}"
+        )
+
+    return config
+
+
+def _process_asset_collateral_in_emode_changed_event(
+    *,
+    session: Session,
+    event: LogReceipt,
+    market_id: int,
+) -> AaveV3AssetConfig | None:
+    """
+    Process an AssetCollateralInEModeChanged event (newer Aave versions v3.4+).
+
+    This event is emitted when an asset is added or removed as collateral
+    in an eMode category. The category_id in the event is the asset's primary
+    eMode category.
+
+    Reference:
+    ```
+    event AssetCollateralInEModeChanged(
+        address indexed asset,
+        uint8 categoryId,
+        bool collateral
+    );
+    ```
+    """
+    asset_address = decode_address(event["topics"][1])
+
+    # Decode non-indexed parameters
+    category_id, is_collateral = eth_abi.abi.decode(
+        types=["uint8", "bool"],
+        data=HexBytes(event["data"]),
+    )
+
+    # Find the asset
+    asset = session.scalar(
+        select(AaveV3Asset).where(
+            AaveV3Asset.market_id == market_id,
+            AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
+        )
+    )
+
+    if asset is None:
+        logger.warning(f"AssetCollateralInEModeChanged for unknown asset: {asset_address}")
+        return None
+
+    # Get or create the asset config
+    config = session.scalar(select(AaveV3AssetConfig).where(AaveV3AssetConfig.asset_id == asset.id))
+
+    if config is None:
+        # Only set e_mode_category_id if this asset is being added as collateral
+        e_mode_cat = int(category_id) if is_collateral and category_id > 0 else None
+        config = AaveV3AssetConfig(
+            asset_id=asset.id,
+            ltv=0,
+            liquidation_threshold=0,
+            liquidation_bonus=0,
+            borrowing_enabled=False,
+            stable_borrowing_enabled=False,
+            flash_loan_enabled=False,
+            borrowable_in_isolation=False,
+            isolation_mode=False,
+            debt_ceiling=None,
+            e_mode_category_id=e_mode_cat,
+        )
+        session.add(config)
+        logger.info(
+            f"Created AaveV3AssetConfig for {asset_address} with eMode category {e_mode_cat}"
+        )
+    # Update category if asset is being added as collateral, clear if removed
+    elif is_collateral and category_id > 0:
+        config.e_mode_category_id = int(category_id)
+        logger.info(f"Set eMode category for {asset_address} to {category_id} (collateral enabled)")
+    elif not is_collateral and config.e_mode_category_id == category_id:
+        # Only clear if removing from the current category
+        config.e_mode_category_id = None
+        logger.info(f"Cleared eMode category for {asset_address} (collateral disabled)")
+
+    return config
+
+
+def _process_reserve_used_as_collateral_enabled_event(
+    *,
+    session: Session,
+    event: LogReceipt,
+    market_id: int,
+) -> AaveV3UserCollateralConfig | None:
+    """
+    Process a ReserveUsedAsCollateralEnabled event.
+
+    Reference:
+    ```
+    event ReserveUsedAsCollateralEnabled(
+        address indexed reserve,
+        address indexed user
+    );
+    ```
+    """
+
+    asset_address = decode_address(event["topics"][1])
+    user_address = decode_address(event["topics"][2])
+
+    # Find the asset
+    asset = session.scalar(
+        select(AaveV3Asset).where(
+            AaveV3Asset.market_id == market_id,
+            AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
+        )
+    )
+
+    if asset is None:
+        logger.warning(f"ReserveUsedAsCollateralEnabled for unknown asset: {asset_address}")
+        return None
+
+    # Find or create the user
+    user = session.scalar(
+        select(AaveV3User).where(
+            AaveV3User.market_id == market_id,
+            AaveV3User.address == get_checksum_address(user_address),
+        )
+    )
+
+    if user is None:
+        user = AaveV3User(
+            market_id=market_id,
+            address=get_checksum_address(user_address),
+            e_mode=0,
+            gho_discount=0,
+        )
+        session.add(user)
+        session.flush([user])
+        logger.debug(f"Created AaveV3User: {user_address}")
+
+    # Get or create the collateral config
+    config = session.scalar(
+        select(AaveV3UserCollateralConfig).where(
+            AaveV3UserCollateralConfig.user_id == user.id,
+            AaveV3UserCollateralConfig.asset_id == asset.id,
+        )
+    )
+
+    if config is None:
+        config = AaveV3UserCollateralConfig(
+            user_id=user.id,
+            asset_id=asset.id,
+            enabled=True,
+        )
+        session.add(config)
+    else:
+        config.enabled = True
+
+    logger.debug(f"Collateral enabled for user {user_address} asset {asset_address}")
+    return config
+
+
+def _process_reserve_used_as_collateral_disabled_event(
+    *,
+    session: Session,
+    event: LogReceipt,
+    market_id: int,
+) -> AaveV3UserCollateralConfig | None:
+    """
+    Process a ReserveUsedAsCollateralDisabled event.
+
+    Reference:
+    ```
+    event ReserveUsedAsCollateralDisabled(
+        address indexed reserve,
+        address indexed user
+    );
+    ```
+    """
+
+    asset_address = decode_address(event["topics"][1])
+    user_address = decode_address(event["topics"][2])
+
+    # Find the asset
+    asset = session.scalar(
+        select(AaveV3Asset).where(
+            AaveV3Asset.market_id == market_id,
+            AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
+        )
+    )
+
+    if asset is None:
+        logger.warning(f"ReserveUsedAsCollateralDisabled for unknown asset: {asset_address}")
+        return None
+
+    # Find the user
+    user = session.scalar(
+        select(AaveV3User).where(
+            AaveV3User.market_id == market_id,
+            AaveV3User.address == get_checksum_address(user_address),
+        )
+    )
+
+    if user is None:
+        logger.warning(f"ReserveUsedAsCollateralDisabled for unknown user: {user_address}")
+        return None
+
+    # Get the collateral config
+    config = session.scalar(
+        select(AaveV3UserCollateralConfig).where(
+            AaveV3UserCollateralConfig.user_id == user.id,
+            AaveV3UserCollateralConfig.asset_id == asset.id,
+        )
+    )
+
+    if config is None:
+        # No existing config - create one disabled
+        config = AaveV3UserCollateralConfig(
+            user_id=user.id,
+            asset_id=asset.id,
+            enabled=False,
+        )
+        session.add(config)
+    else:
+        config.enabled = False
+
+    logger.debug(f"Collateral disabled for user {user_address} asset {asset_address}")
+    return config
 
 
 def _process_asset_initialization_event(
@@ -3012,6 +3501,18 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 event=event,
                 gho_asset=tx_context.gho_asset,
             )
+        elif topic == AaveV3PoolEvent.RESERVE_USED_AS_COLLATERAL_ENABLED.value:
+            _process_reserve_used_as_collateral_enabled_event(
+                session=tx_context.session,
+                event=event,
+                market_id=tx_context.market.id,
+            )
+        elif topic == AaveV3PoolEvent.RESERVE_USED_AS_COLLATERAL_DISABLED.value:
+            _process_reserve_used_as_collateral_disabled_event(
+                session=tx_context.session,
+                event=event,
+                market_id=tx_context.market.id,
+            )
 
 
 def _process_operation(
@@ -4743,6 +5244,8 @@ def _fetch_pool_events(
                 AaveV3PoolEvent.MINTED_TO_TREASURY.value,
                 AaveV3PoolEvent.REPAY.value,
                 AaveV3PoolEvent.RESERVE_DATA_UPDATED.value,
+                AaveV3PoolEvent.RESERVE_USED_AS_COLLATERAL_DISABLED.value,
+                AaveV3PoolEvent.RESERVE_USED_AS_COLLATERAL_ENABLED.value,
                 AaveV3PoolEvent.SUPPLY.value,
                 AaveV3PoolEvent.USER_E_MODE_SET.value,
                 AaveV3PoolEvent.WITHDRAW.value,
@@ -4758,7 +5261,7 @@ def _fetch_reserve_initialization_events(
     end_block: int,
 ) -> list[LogReceipt]:
     """
-    Fetch Pool Configurator events for reserve initialization.
+    Fetch Pool Configurator events for reserve initialization and configuration changes.
     """
 
     return fetch_logs_retrying(
@@ -4766,7 +5269,15 @@ def _fetch_reserve_initialization_events(
         start_block=start_block,
         end_block=end_block,
         address=[configurator_address],
-        topic_signature=[[AaveV3PoolEvent.RESERVE_INITIALIZED.value]],
+        topic_signature=[
+            [
+                AaveV3PoolConfigEvent.ASSET_COLLATERAL_IN_EMODE_CHANGED.value,
+                AaveV3PoolConfigEvent.COLLATERAL_CONFIGURATION_CHANGED.value,
+                AaveV3PoolConfigEvent.EMODE_ASSET_CATEGORY_CHANGED.value,
+                AaveV3PoolConfigEvent.EMODE_CATEGORY_ADDED.value,
+                AaveV3PoolConfigEvent.RESERVE_INITIALIZED.value,
+            ]
+        ],
     )
 
 
@@ -5067,12 +5578,39 @@ def update_aave_market(
             start_block=start_block,
             end_block=end_block,
         ):
-            _process_asset_initialization_event(
-                w3=w3,
-                event=event,
-                market=market,
-                session=session,
-            )
+            topic = event["topics"][0]
+            if topic == AaveV3PoolConfigEvent.RESERVE_INITIALIZED.value:
+                _process_asset_initialization_event(
+                    w3=w3,
+                    event=event,
+                    market=market,
+                    session=session,
+                )
+            elif topic == AaveV3PoolConfigEvent.COLLATERAL_CONFIGURATION_CHANGED.value:
+                _process_collateral_configuration_changed_event(
+                    w3=w3,
+                    session=session,
+                    event=event,
+                    market=market,
+                )
+            elif topic == AaveV3PoolConfigEvent.EMODE_CATEGORY_ADDED.value:
+                _process_e_mode_category_added_event(
+                    session=session,
+                    event=event,
+                    market_id=market.id,
+                )
+            elif topic == AaveV3PoolConfigEvent.EMODE_ASSET_CATEGORY_CHANGED.value:
+                _process_emode_asset_category_changed_event(
+                    session=session,
+                    event=event,
+                    market_id=market.id,
+                )
+            elif topic == AaveV3PoolConfigEvent.ASSET_COLLATERAL_IN_EMODE_CHANGED.value:
+                _process_asset_collateral_in_emode_changed_event(
+                    session=session,
+                    event=event,
+                    market_id=market.id,
+                )
 
     # Phase 3
     all_events: list[LogReceipt] = []
