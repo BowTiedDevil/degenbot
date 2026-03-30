@@ -11,29 +11,38 @@ use std::sync::Arc;
 #[pyclass(name = "Contract")]
 pub struct PyContract {
     contract: Contract,
+    runtime: tokio::runtime::Runtime,
 }
 
 #[pymethods]
 impl PyContract {
-    /// Create a new contract instance.
+    /// Create a new contract instance with embedded tokio runtime.
     ///
     /// Args:
     ///     address: Contract address (hex string)
-    ///     provider: `AlloyProvider` instance (not implemented - uses Arc for now)
+    ///     provider_url: RPC provider URL (optional, defaults to localhost)
     #[new]
-    fn new(address: &str) -> PyResult<Self> {
-        // Create a placeholder provider - in production this would be passed in
-        // For now, we'll need to implement provider passing properly
-        let provider = Arc::new(
-            AlloyProvider::new("http://localhost:8545", 10, 30, 10).map_err(|e| {
-                PyValueError::new_err(format!("Failed to create provider: {e}"))
-            })?,
-        );
+    #[pyo3(signature = (address, provider_url=None))]
+    fn new(address: &str, provider_url: Option<&str>) -> PyResult<Self> {
+        // Default provider URL if not provided
+        let url = provider_url.unwrap_or("http://localhost:8545");
+        
+        // Create a dedicated tokio runtime for this contract
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)  // Default to 4 threads for contract calls
+            .enable_all()
+            .build()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create tokio runtime: {e}")))?;
+
+        // Create the provider inside the runtime context
+        let provider = runtime.block_on(async {
+            AlloyProvider::new(url, 10, 30, 10)
+        }).map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
 
         let contract =
-            Contract::new(address, provider).map_err(|e| PyValueError::new_err(format!("{e}")))?;
+            Contract::new(address, Arc::new(provider)).map_err(|e| PyValueError::new_err(format!("{e}")))?;
 
-        Ok(Self { contract })
+        Ok(Self { contract, runtime })
     }
 
     /// Execute a contract call.
@@ -53,10 +62,8 @@ impl PyContract {
         args: Vec<String>,
         block_number: Option<u64>,
     ) -> PyResult<Py<PyList>> {
-        let handle = tokio::runtime::Handle::try_current()
-            .map_err(|_| PyRuntimeError::new_err("Failed to get tokio runtime handle"))?;
-
-        let result = handle.block_on(async {
+        // Use our embedded runtime to execute async code
+        let result = self.runtime.block_on(async {
             self.contract.call(function_signature, &args, block_number).await
         }).map_err(|e| PyValueError::new_err(format!("Contract call failed: {e}")))?;
 

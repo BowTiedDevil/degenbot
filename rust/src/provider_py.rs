@@ -63,11 +63,12 @@ impl PyLogFilter {
 pub struct PyAlloyProvider {
     provider: Arc<AlloyProvider>,
     max_blocks_per_request: u64,
+    runtime: tokio::runtime::Runtime,
 }
 
 #[pymethods]
 impl PyAlloyProvider {
-    /// Create a new provider.
+    /// Create a new provider with embedded tokio runtime.
     #[new]
     #[pyo3(signature = (rpc_url, max_connections=10, timeout=30.0, max_retries=10, max_blocks_per_request=5000))]
     #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
@@ -78,17 +79,30 @@ impl PyAlloyProvider {
         max_retries: u32,
         max_blocks_per_request: u64,
     ) -> PyResult<Self> {
-        let provider = AlloyProvider::new(
-            rpc_url,
-            max_connections,
-            timeout as u64,  // Cast is intentional - timeout is always positive
-            max_retries,
-        )
-        .map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
+        // Create a dedicated tokio runtime for this provider
+        // max_connections is used for both:
+        // 1. Runtime worker threads (concurrent execution)
+        // 2. HTTP connection pool size (in AlloyProvider)
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(max_connections as usize)
+            .enable_all()
+            .build()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create tokio runtime: {e}")))?;
+
+        // Create the provider inside the runtime context
+        let provider = runtime.block_on(async {
+            AlloyProvider::new(
+                rpc_url,
+                max_connections,
+                timeout as u64,
+                max_retries,
+            )
+        }).map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
 
         Ok(Self {
             provider: Arc::new(provider),
             max_blocks_per_request,
+            runtime,
         })
     }
 
@@ -102,17 +116,14 @@ impl PyAlloyProvider {
         addresses: Option<Vec<String>>,
         topics: Option<Vec<Vec<String>>>,
     ) -> PyResult<Py<PyList>> {
-        // Use existing tokio runtime
-        let handle = tokio::runtime::Handle::try_current()
-            .map_err(|_| PyRuntimeError::new_err("Failed to get tokio runtime handle"))?;
-
         let fetcher = LogFetcher::new(
             // Clone the Arc to share the provider (cheap - just increments ref count)
             Arc::clone(&self.provider),
             self.max_blocks_per_request,
         );
 
-        let logs = handle.block_on(async {
+        // Use our embedded runtime to execute async code
+        let logs = self.runtime.block_on(async {
             fetcher
                 .fetch_logs_chunked(from_block, to_block, addresses, topics)
                 .await
@@ -145,10 +156,8 @@ impl PyAlloyProvider {
 
     /// Get current block number.
     fn get_block_number(&self) -> PyResult<u64> {
-        let handle = tokio::runtime::Handle::try_current()
-            .map_err(|_| PyRuntimeError::new_err("Failed to get tokio runtime handle"))?;
-
-        let block_number = handle.block_on(async {
+        // Use our embedded runtime to execute async code
+        let block_number = self.runtime.block_on(async {
             self.provider.get_block_number().await
         }).map_err(|e| PyValueError::new_err(format!("Failed to get block number: {e}")))?;
 
@@ -157,10 +166,8 @@ impl PyAlloyProvider {
 
     /// Get chain ID.
     fn get_chain_id(&self) -> PyResult<u64> {
-        let handle = tokio::runtime::Handle::try_current()
-            .map_err(|_| PyRuntimeError::new_err("Failed to get tokio runtime handle"))?;
-
-        let chain_id = handle.block_on(async {
+        // Use our embedded runtime to execute async code
+        let chain_id = self.runtime.block_on(async {
             self.provider.get_chain_id().await
         }).map_err(|e| PyValueError::new_err(format!("Failed to get chain ID: {e}")))?;
 

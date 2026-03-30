@@ -6,6 +6,10 @@ from degenbot.exceptions import DegenbotValueError
 from .async_connection_manager import AsyncConnectionManager
 from .connection_manager import ConnectionManager
 
+# New Alloy-based connection manager (Phase 2)
+from .manager import ChainConfig
+from .manager import ConnectionManager as AlloyConnectionManager
+
 
 def get_async_web3() -> AsyncWeb3[AsyncBaseProvider]:
     if async_connection_manager.default_chain_id is None:
@@ -62,6 +66,8 @@ async_connection_manager = AsyncConnectionManager()
 
 
 __all__ = (
+    "AlloyConnectionManager",
+    "ChainConfig",
     "async_connection_manager",
     "connection_manager",
     "get_async_web3",

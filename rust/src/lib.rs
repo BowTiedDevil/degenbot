@@ -11,11 +11,15 @@
 //! - [`errors`] - Error types
 //! - [`provider`] - Ethereum RPC provider with Alloy
 //! - [`contract`] - Smart contract interface
+//! - [`async_provider`] - Async Ethereum provider
+//! - [`async_contract`] - Async contract interface
 //!
 //! See individual module documentation for usage examples.
 
 pub mod abi_decoder;
 pub mod address_utils;
+pub mod async_contract;
+pub mod async_provider;
 pub mod connection;
 pub mod connection_py;
 pub mod contract;
@@ -57,6 +61,10 @@ fn _rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Contract module
     contract_py::add_contract_module(m)?;
+
+    // Async modules
+    m.add_class::<async_provider::PyAsyncAlloyProvider>()?;
+    m.add_class::<async_contract::PyAsyncContract>()?;
 
     Ok(())
 }

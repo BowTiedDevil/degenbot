@@ -260,16 +260,16 @@ impl AlloyProvider {
         use alloy::rpc::types::TransactionRequest;
 
         self.retry_with_backoff(|| async {
-            let mut tx = TransactionRequest::default()
+            let tx = TransactionRequest::default()
                 .to(*to)
                 .input(data.clone().into());
 
-            // Set block number if provided
-            if let Some(block) = block_number {
-                tx = tx.nonce(block);
-            }
-
-            let result = self.inner.call(tx.clone()).await.map_err(|e| {
+            // Call at specific block if provided, otherwise use latest
+            let result = if let Some(block) = block_number {
+                self.inner.call(tx).block(block.into()).await
+            } else {
+                self.inner.call(tx).await
+            }.map_err(|e| {
                 ProviderError::RpcError {
                     code: -1,
                     message: format!("eth_call failed: {e}"),
