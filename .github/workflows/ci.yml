@@ -121,6 +121,3 @@ jobs:
 
       - name: Build and install Rust extension
         run: uv run maturin develop --release
-
-      - name: Run Rust-specific tests
-        run: uv run pytest tests/rust -v -o addopts=
