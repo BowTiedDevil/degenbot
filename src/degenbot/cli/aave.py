@@ -499,7 +499,7 @@ def deactivate_mainnet_aave_v3(
 @click.option(
     "--verify-block/--no-verify-block",
     "verify_block",
-    default=True,
+    default=False,
     show_default=True,
     help="Verify positions at each block boundary.",
     envvar="DEGENBOT_VERIFY_BLOCK",
@@ -555,7 +555,7 @@ def deactivate_mainnet_aave_v3(
 @click.option(
     "--backup/--no-backup",
     "enable_backup",
-    default=True,
+    default=False,
     show_default=True,
     help="Enable or disable database backups at verification intervals.",
     envvar="DEGENBOT_BACKUP",
