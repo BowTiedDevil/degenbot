@@ -13,7 +13,7 @@ from degenbot.contract import (
     encode_function_call,
     get_function_selector,
 )
-from degenbot.provider import AlloyProvider, LogEntry, LogFilter
+from degenbot.provider import AlloyProvider, LogFilter
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -131,20 +131,6 @@ class TestLogFilter:
         """Test LogFilter raises error for invalid block range."""
         with pytest.raises(ValueError, match="to_block must be >= from_block"):
             LogFilter(from_block=2000, to_block=1000)
-
-    def test_log_entry_creation(self):
-        """Test LogEntry dataclass creation."""
-        entry = LogEntry(
-            address=WETH_ADDRESS,
-            topics=["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"],
-            data=b"\x00" * 64,
-            block_number=18000000,
-            block_hash="0x1234...",
-            transaction_hash="0xabcd...",
-            log_index=0,
-        )
-        assert entry.block_number == 18000000
-        assert len(entry.data) == 64
 
 
 class TestContractClass:
