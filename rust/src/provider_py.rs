@@ -69,6 +69,10 @@ pub struct PyAlloyProvider {
 #[pymethods]
 impl PyAlloyProvider {
     /// Create a new provider with embedded tokio runtime.
+    ///
+    /// Automatically detects connection type from URL:
+    /// - HTTP/HTTPS URLs use HTTP transport with connection pooling
+    /// - File paths (Unix: /path, Windows: \\.\pipe\...) use IPC transport
     #[new]
     #[pyo3(signature = (rpc_url, max_connections=10, timeout=30.0, max_retries=10, max_blocks_per_request=5000))]
     #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
@@ -96,7 +100,7 @@ impl PyAlloyProvider {
                 max_connections,
                 timeout as u64,
                 max_retries,
-            )
+            ).await
         }).map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
 
         Ok(Self {
@@ -107,7 +111,7 @@ impl PyAlloyProvider {
     }
 
     /// Fetch logs synchronously (blocking).
-    #[pyo3(signature = (from_block, to_block, addresses=None, topics=None))]
+    #[pyo3(signature = (*, from_block, to_block, addresses=None, topics=None))]
     fn get_logs(
         &self,
         py: Python<'_>,
@@ -154,6 +158,36 @@ impl PyAlloyProvider {
         Ok(py_logs.into())
     }
 
+    /// Execute an eth_call to a contract.
+    #[pyo3(signature = (to, data, block_number=None))]
+    fn call(
+        &self,
+        py: Python<'_>,
+        to: String,
+        data: Bound<'_, PyBytes>,
+        block_number: Option<u64>,
+    ) -> PyResult<Py<PyBytes>> {
+        use alloy_primitives::Address;
+        use std::str::FromStr;
+
+        // Parse the address
+        let to_address = Address::from_str(&to)
+            .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
+
+        // Get the data bytes
+        let data_bytes: &[u8] = data.as_bytes();
+
+        // Execute eth_call using the runtime
+        let result = self.runtime.block_on(async {
+            self.provider
+                .eth_call(&to_address, alloy_primitives::Bytes::from(data_bytes.to_vec()), block_number)
+                .await
+        }).map_err(|e| PyValueError::new_err(format!("eth_call failed: {e}")))?;
+
+        // Return the result as PyBytes
+        Ok(PyBytes::new(py, &result).into())
+    }
+
     /// Get current block number.
     fn get_block_number(&self) -> PyResult<u64> {
         // Use our embedded runtime to execute async code
@@ -172,6 +206,64 @@ impl PyAlloyProvider {
         }).map_err(|e| PyValueError::new_err(format!("Failed to get chain ID: {e}")))?;
 
         Ok(chain_id)
+    }
+
+    /// Get a block by number.
+    ///
+    /// Returns a dictionary with block information including:
+    /// - number: Block number
+    /// - hash: Block hash
+    /// - timestamp: Block timestamp
+    /// - parentHash: Parent block hash
+    /// - miner: Miner address
+    /// - difficulty: Block difficulty
+    /// - totalDifficulty: Total difficulty
+    /// - gasLimit: Gas limit
+    /// - gasUsed: Gas used
+    /// - transactions: Number of transactions
+    fn get_block<'py>(&self, py: Python<'py>, block_number: u64) -> PyResult<Option<Bound<'py, PyDict>>> {
+        // Use our embedded runtime to execute async code
+        let block = self.runtime.block_on(async {
+            self.provider.get_block(block_number).await
+        }).map_err(|e| PyValueError::new_err(format!("Failed to get block: {e}")))?;
+        
+        match block {
+            Some(block_json) => {
+                let dict = PyDict::new(py);
+                if let Some(number) = block_json.get("number") {
+                    dict.set_item("number", number.as_u64().unwrap_or(0))?;
+                }
+                if let Some(hash) = block_json.get("hash") {
+                    dict.set_item("hash", hash.as_str().unwrap_or(""))?;
+                }
+                if let Some(timestamp) = block_json.get("timestamp") {
+                    dict.set_item("timestamp", timestamp.as_u64().unwrap_or(0))?;
+                }
+                if let Some(parent_hash) = block_json.get("parentHash") {
+                    dict.set_item("parentHash", parent_hash.as_str().unwrap_or(""))?;
+                }
+                if let Some(miner) = block_json.get("miner") {
+                    dict.set_item("miner", miner.as_str().unwrap_or(""))?;
+                }
+                if let Some(difficulty) = block_json.get("difficulty") {
+                    dict.set_item("difficulty", difficulty.as_str().unwrap_or("0"))?;
+                }
+                if let Some(total_difficulty) = block_json.get("totalDifficulty") {
+                    dict.set_item("totalDifficulty", total_difficulty.as_str().unwrap_or(""))?;
+                }
+                if let Some(gas_limit) = block_json.get("gasLimit") {
+                    dict.set_item("gasLimit", gas_limit.as_str().unwrap_or("0"))?;
+                }
+                if let Some(gas_used) = block_json.get("gasUsed") {
+                    dict.set_item("gasUsed", gas_used.as_str().unwrap_or("0"))?;
+                }
+                if let Some(transactions) = block_json.get("transactions") {
+                    dict.set_item("transactions", transactions.as_u64().unwrap_or(0))?;
+                }
+                Ok(Some(dict))
+            }
+            None => Ok(None),
+        }
     }
 
     /// Close the provider.

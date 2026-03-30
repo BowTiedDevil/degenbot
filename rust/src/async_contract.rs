@@ -21,13 +21,17 @@ impl PyAsyncContract {
     ///
     /// Args:
     ///     address: Contract address (hex string)
-    ///     provider_url: RPC provider URL
+    ///     provider_url: RPC provider URL (HTTP/HTTPS or IPC path)
     #[new]
     fn new(address: &str, provider_url: &str) -> PyResult<Self> {
-        let provider = Arc::new(
-            AlloyProvider::new(provider_url, 10, 30, 10)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?,
-        );
+        let runtime = tokio::runtime::Runtime::new()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))?;
+        
+        let provider = runtime.block_on(async {
+            AlloyProvider::new(provider_url, 10, 30, 10).await
+        }).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
+        
+        let provider = Arc::new(provider);
 
         let contract = Contract::new(address, provider)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;

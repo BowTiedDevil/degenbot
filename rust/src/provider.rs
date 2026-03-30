@@ -1,18 +1,32 @@
 //! Ethereum RPC provider implementation using Alloy.
 //!
 //! Provides high-performance HTTP/HTTPS connections with connection pooling,
-//! retry logic, and batch request support.
+//! retry logic, and batch request support. Also supports IPC endpoints for
+//! local node connections.
 
 use crate::errors::{ProviderError, ProviderResult};
 use alloy::network::Ethereum;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::{Filter, Log};
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_transport_ipc::IpcConnect;
+use alloy_transport_ws::WsConnect;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Type of transport connection.
+#[derive(Clone)]
+pub enum ConnectionType {
+    /// HTTP/HTTPS endpoint.
+    Http(Arc<Client>),
+    /// WebSocket endpoint (ws:// or wss://).
+    WebSocket,
+    /// IPC endpoint (Unix domain socket or Windows named pipe).
+    Ipc,
+}
 
 /// Filter criteria for log fetching.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -100,6 +114,7 @@ pub struct AlloyProvider {
     inner: Arc<dyn Provider<Ethereum>>,
     rpc_url: String,
     max_retries: u32,
+    connection_type: ConnectionType,
 }
 
 impl Clone for AlloyProvider {
@@ -108,6 +123,7 @@ impl Clone for AlloyProvider {
             inner: Arc::clone(&self.inner),
             rpc_url: self.rpc_url.clone(),
             max_retries: self.max_retries,
+            connection_type: self.connection_type.clone(),
         }
     }
 }
@@ -115,34 +131,77 @@ impl Clone for AlloyProvider {
 impl AlloyProvider {
     /// Create a new provider with the given RPC URL.
     ///
+    /// Automatically detects the connection type based on the URL:
+    /// - HTTP/HTTPS URLs use HTTP transport with connection pooling
+    /// - File paths (starting with / or \\) use IPC transport
+    ///
     /// # Errors
     ///
-    /// Returns `ProviderError::ConnectionFailed` if the HTTP client cannot be created.
-    pub fn new(
+    /// Returns `ProviderError::ConnectionFailed` if the HTTP client cannot be created
+    /// or IPC connection fails.
+    pub async fn new(
         rpc_url: &str,
         max_connections: u32,
         timeout_secs: u64,
         max_retries: u32,
     ) -> ProviderResult<Self> {
-        let client = Client::builder()
-            .pool_max_idle_per_host(max_connections as usize)
-            .timeout(Duration::from_secs(timeout_secs))
-            .build()
-            .map_err(|e| ProviderError::ConnectionFailed {
-                message: format!("Failed to create HTTP client: {e}"),
-            })?;
+        let connection_type = if rpc_url.starts_with("http://") || rpc_url.starts_with("https://") {
+            // HTTP endpoint
+            let client = Client::builder()
+                .pool_max_idle_per_host(max_connections as usize)
+                .timeout(Duration::from_secs(timeout_secs))
+                .build()
+                .map_err(|e| ProviderError::ConnectionFailed {
+                    message: format!("Failed to create HTTP client: {e}"),
+                })?;
+            ConnectionType::Http(Arc::new(client))
+        } else if rpc_url.starts_with("ws://") || rpc_url.starts_with("wss://") {
+            // WebSocket endpoint
+            ConnectionType::WebSocket
+        } else {
+            // IPC endpoint (file path)
+            ConnectionType::Ipc
+        };
 
-        let url = rpc_url.parse().map_err(|e| ProviderError::ConnectionFailed {
-            message: format!("Invalid RPC URL: {e}"),
-        })?;
+        let provider: Arc<dyn Provider<Ethereum>> = match &connection_type {
+            ConnectionType::Http(client) => {
+                let url = rpc_url.parse().map_err(|e| ProviderError::ConnectionFailed {
+                    message: format!("Invalid RPC URL: {e}"),
+                })?;
 
-        let provider = ProviderBuilder::<_, _, Ethereum>::new()
-            .connect_reqwest(client, url);
+                let provider = ProviderBuilder::<_, _, Ethereum>::new()
+                    .connect_reqwest((**client).clone(), url);
+                Arc::new(provider)
+            }
+            ConnectionType::WebSocket => {
+                // WebSocket connection
+                let ws_connect = WsConnect::new(rpc_url.to_string());
+                let provider = ProviderBuilder::<_, _, Ethereum>::new()
+                    .connect_ws(ws_connect)
+                    .await
+                    .map_err(|e| ProviderError::ConnectionFailed {
+                        message: format!("Failed to connect to WebSocket endpoint: {e}"),
+                    })?;
+                Arc::new(provider)
+            }
+            ConnectionType::Ipc => {
+                // IPC connection via Unix domain socket or Windows named pipe
+                let ipc_connect: IpcConnect<String> = IpcConnect::new(rpc_url.to_string());
+                let provider = ProviderBuilder::<_, _, Ethereum>::new()
+                    .connect_ipc(ipc_connect)
+                    .await
+                    .map_err(|e| ProviderError::ConnectionFailed {
+                        message: format!("Failed to connect to IPC endpoint: {e}"),
+                    })?;
+                Arc::new(provider)
+            }
+        };
 
         Ok(Self {
-            inner: Arc::new(provider),
+            inner: provider,
             rpc_url: rpc_url.to_string(),
             max_retries,
+            connection_type,
         })
     }
 
@@ -201,6 +260,45 @@ impl AlloyProvider {
                     message: format!("Failed to get logs: {e}"),
                 })?;
             Ok(result)
+        })
+        .await
+    }
+
+    /// Get a block by number.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::RpcError` if the RPC call fails.
+    pub async fn get_block(&self, block_number: u64) -> ProviderResult<Option<serde_json::Value>> {
+        use alloy::eips::BlockNumberOrTag;
+        
+        self.retry_with_backoff(|| async {
+            let block_num_tag = BlockNumberOrTag::Number(block_number);
+            let result = self.inner
+                .get_block_by_number(block_num_tag)
+                .await
+                .map_err(|e| ProviderError::RpcError {
+                    code: -1,
+                    message: format!("Failed to get block: {e}"),
+                })?;
+            
+            // Convert to JSON value for flexibility
+            let json_value = result.map(|block| {
+                serde_json::json!({
+                    "number": block.header.number,
+                    "hash": block.header.hash.to_string(),
+                    "timestamp": block.header.timestamp,
+                    "parentHash": block.header.parent_hash.to_string(),
+                    "miner": block.header.beneficiary.to_string(),
+                    "difficulty": block.header.difficulty.to_string(),
+                    "totalDifficulty": block.header.total_difficulty.map_or_else(|| String::new(), |d: U256| d.to_string()),
+                    "gasLimit": block.header.gas_limit.to_string(),
+                    "gasUsed": block.header.gas_used.to_string(),
+                    "transactions": block.transactions.len(),
+                })
+            });
+            
+            Ok(json_value)
         })
         .await
     }

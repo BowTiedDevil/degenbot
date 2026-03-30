@@ -36,7 +36,7 @@ impl PyContract {
 
         // Create the provider inside the runtime context
         let provider = runtime.block_on(async {
-            AlloyProvider::new(url, 10, 30, 10)
+            AlloyProvider::new(url, 10, 30, 10).await
         }).map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
 
         let contract =

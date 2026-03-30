@@ -62,12 +62,20 @@ impl PyAsyncAlloyProvider {
     ///
     /// Note: This is a placeholder constructor. In production, this would
     /// be created from an existing provider or connection manager.
+    ///
+    /// Automatically detects connection type from URL:
+    /// - HTTP/HTTPS URLs use HTTP transport
+    /// - File paths use IPC transport
     #[new]
     fn new(rpc_url: &str) -> PyResult<Self> {
-        let provider = Arc::new(
-            AlloyProvider::new(rpc_url, 10, 30, 10)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?,
-        );
+        let runtime = tokio::runtime::Runtime::new()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))?;
+        
+        let provider = runtime.block_on(async {
+            AlloyProvider::new(rpc_url, 10, 30, 10).await
+        }).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
+        
+        let provider = Arc::new(provider);
 
         Ok(Self { provider })
     }

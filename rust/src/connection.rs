@@ -162,7 +162,7 @@ impl ChainConnectionPool {
     /// # Errors
     ///
     /// Returns `ProviderError::ConnectionFailed` if no endpoints can be connected.
-    pub fn new(config: ChainConfig) -> ProviderResult<Self> {
+    pub async fn new(config: ChainConfig) -> ProviderResult<Self> {
         let mut providers = Vec::with_capacity(config.rpc_urls.len());
         let mut metrics = Vec::with_capacity(config.rpc_urls.len());
 
@@ -172,7 +172,7 @@ impl ChainConnectionPool {
                 config.max_connections,
                 config.timeout_secs,
                 config.max_retries,
-            ) {
+            ).await {
                 Ok(provider) => {
                     providers.push(provider);
                     metrics.push(EndpointMetrics::new(url.clone()));
@@ -334,7 +334,7 @@ impl ConnectionManager {
     ///
     /// Returns `ProviderError::ConnectionFailed` if no endpoints can be connected.
     pub async fn register_chain(&self, config: ChainConfig) -> ProviderResult<()> {
-        let pool = ChainConnectionPool::new(config)?;
+        let pool = ChainConnectionPool::new(config).await?;
         let chain_id = pool.chain_id();
         
         let mut chains = self.chains.write().await;
