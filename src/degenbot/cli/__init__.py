@@ -3,9 +3,11 @@ import os
 from pathlib import Path
 
 import click
-from coverage import Coverage
 
 from degenbot.logging import logger
+
+if os.environ.get("DEGENBOT_COVERAGE"):
+    from coverage import Coverage
 
 
 @click.group()

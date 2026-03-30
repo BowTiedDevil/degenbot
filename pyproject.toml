@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "degenbot"
-version = "0.6.0a1"
+version = "0.6.0a1.post1"
 authors = [
     { name="BowTiedDevil", email="devil@bowtieddevil.com" },
 ]
