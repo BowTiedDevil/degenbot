@@ -13,7 +13,7 @@ use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
 
 /// A log entry with its associated metadata.
-/// Tuple of: (address, topics, data, block_number, block_hash, transaction_hash, log_index)
+/// Tuple of: (`address`, `topics`, `data`, `block_number`, `block_hash`, `transaction_hash`, `log_index`)
 type LogEntry = (
     String,
     Vec<String>,
