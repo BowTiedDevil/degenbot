@@ -39,6 +39,7 @@ pyo3-log = { version = "^0.13" }
 rand = { version = "^0.8" }
 thiserror = { version = "^2.0" }
 tokio = { version = "^1", features = ["rt-multi-thread", "time"] }
+parking_lot = { version = "^0.12" }
 
 [dev-dependencies]
 proptest = "^1.10"

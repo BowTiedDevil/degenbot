@@ -7,9 +7,10 @@ use crate::errors::{ProviderError, ProviderResult};
 use crate::provider::AlloyProvider;
 use alloy::primitives::{Address, Bytes, U256};
 use alloy_primitives::I256;
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// ABI type information parsed from function signature.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -556,19 +557,17 @@ impl Contract {
     /// Parse and cache a function signature.
     fn parse_function_signature(&self, signature: &str) -> ProviderResult<FunctionSignature> {
         // Try to get from cache first
-        if let Ok(cache) = self.signature_cache.read() {
-            if let Some(func) = cache.get(signature) {
-                return Ok(func.clone());
-            }
+        let cache = self.signature_cache.read();
+        if let Some(func) = cache.get(signature) {
+            return Ok(func.clone());
         }
+        drop(cache);
 
         // Parse the signature
         let func = FunctionSignature::parse(signature)?;
 
         // Cache it
-        if let Ok(mut cache) = self.signature_cache.write() {
-            cache.insert(signature.to_string(), func.clone());
-        }
+        self.signature_cache.write().insert(signature.to_string(), func.clone());
 
         Ok(func)
     }

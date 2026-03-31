@@ -1635,6 +1635,7 @@ dependencies = [
  "hex",
  "log",
  "num-bigint",
+ "parking_lot",
  "proptest",
  "pyo3",
  "pyo3-async-runtimes",
