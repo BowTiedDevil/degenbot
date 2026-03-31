@@ -196,14 +196,15 @@ markers = [
 
 [dependency-groups]
 dev = [
+    "coverage",
     "hypothesis",
     "maturin",
     "mypy",
-    "pytest",
     "pytest-asyncio",
     "pytest-cov",
     "pytest-random-order",
     "pytest-xdist",
+    "pytest",
     "python-dotenv",
     "ruff",
 ]
