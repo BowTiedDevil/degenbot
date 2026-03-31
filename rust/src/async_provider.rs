@@ -5,7 +5,8 @@
 
 use crate::errors::ProviderResult;
 use crate::provider::{AlloyProvider, LogFilter};
-use crate::provider_py::{json_to_py, PyAlloyProvider};
+use crate::provider_py::PyAlloyProvider;
+use crate::utils::json_to_py;
 use alloy::rpc::types::Log;
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
