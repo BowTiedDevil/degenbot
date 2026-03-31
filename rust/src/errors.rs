@@ -20,17 +20,30 @@ impl From<TickMathError> for PyErr {
 }
 
 /// Errors that can occur during ABI decoding.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone)]
 pub enum AbiDecodeError {
-    /// Failed to parse an ABI type string.
-    #[error("Failed to parse ABI type: {0}")]
-    InvalidType(String),
-    /// Decoding operation failed.
-    #[error("Decoding failed: {0}")]
-    DecodeError(String),
+    /// Invalid array size in type string.
+    #[error("Invalid array size in type: {0}")]
+    InvalidArraySize(String),
     /// Insufficient data provided for decoding.
-    #[error("Insufficient data for decoding")]
-    InsufficientData,
+    #[error("Insufficient data: need {needed} bytes at offset {offset}, have {have} bytes")]
+    InsufficientData {
+        /// Number of bytes needed.
+        needed: usize,
+        /// Number of bytes available.
+        have: usize,
+        /// Offset where data was needed.
+        offset: usize,
+    },
+    /// Invalid offset value in encoded data.
+    #[error("Invalid offset: {0}")]
+    InvalidOffset(String),
+    /// Invalid length value in encoded data.
+    #[error("Invalid length: {0}")]
+    InvalidLength(String),
+    /// Unsupported or invalid ABI type.
+    #[error("Unsupported type: {0}")]
+    UnsupportedType(String),
     /// Fixed-point types are not yet implemented.
     #[error("Fixed-point types are not yet implemented")]
     FixedPointNotImplemented,

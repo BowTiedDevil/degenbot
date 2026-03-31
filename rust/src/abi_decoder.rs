@@ -2,6 +2,7 @@
 //!
 //! High-performance decoding of ABI-encoded data.
 
+use crate::errors::AbiDecodeError;
 use alloy_primitives::Address;
 use num_bigint::{BigInt, BigUint};
 use pyo3::{
@@ -10,7 +11,6 @@ use pyo3::{
     types::{PyBool, PyBytes, PyList, PyString},
 };
 use std::borrow::Cow;
-use thiserror::Error;
 
 /// Size of a word in ABI encoding (32 bytes).
 const WORD_SIZE: usize = 32;
@@ -131,31 +131,6 @@ impl ParsedType {
 
     fn element_type_str(&self) -> Option<&str> {
         self.base_str.as_deref()
-    }
-}
-
-/// Error type for ABI decoding operations.
-#[derive(Debug, Clone, Error)]
-enum AbiDecodeError {
-    #[error("Invalid array size in type: {0}")]
-    InvalidArraySize(String),
-    #[error("Insufficient data: need {needed} bytes at offset {offset}, have {have} bytes")]
-    InsufficientData {
-        needed: usize,
-        have: usize,
-        offset: usize,
-    },
-    #[error("Invalid offset: {0}")]
-    InvalidOffset(String),
-    #[error("Invalid length: {0}")]
-    InvalidLength(String),
-    #[error("Unsupported type: {0}")]
-    UnsupportedType(String),
-}
-
-impl From<AbiDecodeError> for PyErr {
-    fn from(err: AbiDecodeError) -> Self {
-        PyValueError::new_err(err.to_string())
     }
 }
 
