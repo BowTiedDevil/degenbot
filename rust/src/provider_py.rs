@@ -1,7 +1,8 @@
 //! `PyO3` bindings for the provider module.
 
 use crate::provider::{AlloyProvider, LogFetcher, LogFilter};
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use crate::runtime::get_runtime;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use std::sync::Arc;
@@ -100,12 +101,11 @@ impl PyLogFilter {
 pub struct PyAlloyProvider {
     pub provider: Arc<AlloyProvider>,
     max_blocks_per_request: u64,
-    runtime: tokio::runtime::Runtime,
 }
 
 #[pymethods]
 impl PyAlloyProvider {
-    /// Create a new provider with embedded tokio runtime.
+    /// Create a new provider.
     ///
     /// Automatically detects connection type from URL:
     /// - HTTP/HTTPS URLs use HTTP transport with connection pooling
@@ -120,18 +120,8 @@ impl PyAlloyProvider {
         max_retries: u32,
         max_blocks_per_request: u64,
     ) -> PyResult<Self> {
-        // Create a dedicated tokio runtime for this provider
-        // max_connections is used for both:
-        // 1. Runtime worker threads (concurrent execution)
-        // 2. HTTP connection pool size (in AlloyProvider)
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(max_connections as usize)
-            .enable_all()
-            .build()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create tokio runtime: {e}")))?;
-
-        // Create the provider inside the runtime context
-        let provider = runtime.block_on(async {
+        // Use the shared runtime to create the provider
+        let provider = get_runtime().block_on(async {
             AlloyProvider::new(
                 rpc_url,
                 max_connections,
@@ -143,7 +133,6 @@ impl PyAlloyProvider {
         Ok(Self {
             provider: Arc::new(provider),
             max_blocks_per_request,
-            runtime,
         })
     }
 
@@ -163,8 +152,8 @@ impl PyAlloyProvider {
             self.max_blocks_per_request,
         );
 
-        // Use our embedded runtime to execute async code
-        let logs = self.runtime.block_on(async {
+        // Use the shared runtime to execute async code
+        let logs = get_runtime().block_on(async {
             fetcher
                 .fetch_logs_chunked(from_block, to_block, addresses, topics)
                 .await
@@ -214,8 +203,8 @@ impl PyAlloyProvider {
         // Get the data bytes
         let data_bytes: &[u8] = data.as_bytes();
 
-        // Execute eth_call using the runtime
-        let result = self.runtime.block_on(async {
+        // Execute eth_call using the shared runtime
+        let result = get_runtime().block_on(async {
             self.provider
                 .eth_call(&to_address, alloy_primitives::Bytes::from(data_bytes.to_vec()), block_number)
                 .await
@@ -227,8 +216,8 @@ impl PyAlloyProvider {
 
     /// Get current block number.
     fn get_block_number(&self) -> PyResult<u64> {
-        // Use our embedded runtime to execute async code
-        let block_number = self.runtime.block_on(async {
+        // Use the shared runtime to execute async code
+        let block_number = get_runtime().block_on(async {
             self.provider.get_block_number().await
         }).map_err(|e| PyValueError::new_err(format!("Failed to get block number: {e}")))?;
 
@@ -237,8 +226,8 @@ impl PyAlloyProvider {
 
     /// Get chain ID.
     fn get_chain_id(&self) -> PyResult<u64> {
-        // Use our embedded runtime to execute async code
-        let chain_id = self.runtime.block_on(async {
+        // Use the shared runtime to execute async code
+        let chain_id = get_runtime().block_on(async {
             self.provider.get_chain_id().await
         }).map_err(|e| PyValueError::new_err(format!("Failed to get chain ID: {e}")))?;
 
@@ -250,8 +239,8 @@ impl PyAlloyProvider {
     /// Returns the full block data including header and transactions.
     /// All field names use `snake_case` for Python consistency.
     fn get_block<'py>(&self, py: Python<'py>, block_number: u64) -> PyResult<Option<Bound<'py, PyAny>>> {
-        // Use our embedded runtime to execute async code
-        let block = self.runtime.block_on(async {
+        // Use the shared runtime to execute async code
+        let block = get_runtime().block_on(async {
             self.provider.get_block(block_number).await
         }).map_err(|e| PyValueError::new_err(format!("Failed to get block: {e}")))?;
         
@@ -277,7 +266,7 @@ impl PyAlloyProvider {
 
     /// Get current gas price.
     fn get_gas_price(&self) -> PyResult<String> {
-        let gas_price = self.runtime.block_on(async {
+        let gas_price = get_runtime().block_on(async {
             self.provider.get_gas_price().await
         }).map_err(|e| PyValueError::new_err(format!("Failed to get gas price: {e}")))?;
 
@@ -309,8 +298,8 @@ impl PyAlloyProvider {
         // Get the data bytes
         let data_bytes: &[u8] = data.as_bytes();
 
-        // Execute estimation using the runtime
-        let gas = self.runtime.block_on(async {
+        // Execute estimation using the shared runtime
+        let gas = get_runtime().block_on(async {
             self.provider
                 .estimate_gas(&to_address, alloy_primitives::Bytes::from(data_bytes.to_vec()), from_address.as_ref(), value, block_number)
                 .await
@@ -322,7 +311,7 @@ impl PyAlloyProvider {
     /// Get a transaction by hash.
     fn get_transaction<'py>(&self, py: Python<'py>, tx_hash: &str) -> PyResult<Option<Bound<'py, PyAny>>> {
         let tx_hash = tx_hash.to_string();
-        let tx = self.runtime.block_on(async {
+        let tx = get_runtime().block_on(async {
             self.provider.get_transaction(&tx_hash).await
         }).map_err(|e| PyValueError::new_err(format!("Failed to get transaction: {e}")))?;
 
@@ -339,7 +328,7 @@ impl PyAlloyProvider {
     /// Get a transaction receipt by hash.
     fn get_transaction_receipt<'py>(&self, py: Python<'py>, tx_hash: &str) -> PyResult<Option<Bound<'py, PyAny>>> {
         let tx_hash = tx_hash.to_string();
-        let receipt = self.runtime.block_on(async {
+        let receipt = get_runtime().block_on(async {
             self.provider.get_transaction_receipt(&tx_hash).await
         }).map_err(|e| PyValueError::new_err(format!("Failed to get transaction receipt: {e}")))?;
 

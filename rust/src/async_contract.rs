@@ -5,6 +5,7 @@
 
 use crate::contract::Contract;
 use crate::provider::AlloyProvider;
+use crate::runtime::get_runtime;
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
@@ -24,13 +25,11 @@ impl PyAsyncContract {
     ///     `provider_url`: RPC provider URL (HTTP/HTTPS or IPC path)
     #[new]
     fn new(address: &str, provider_url: &str) -> PyResult<Self> {
-        let runtime = tokio::runtime::Runtime::new()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))?;
-        
-        let provider = runtime.block_on(async {
+        // Use the shared runtime to create the provider
+        let provider = get_runtime().block_on(async {
             AlloyProvider::new(provider_url, 10, 30, 10).await
         }).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
-        
+
         let provider = Arc::new(provider);
 
         let contract = Contract::new(address, provider)

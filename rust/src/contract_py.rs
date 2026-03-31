@@ -2,7 +2,8 @@
 
 use crate::contract::{Contract, FunctionSignature};
 use crate::provider::AlloyProvider;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use crate::runtime::get_runtime;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use std::sync::Arc;
@@ -11,12 +12,11 @@ use std::sync::Arc;
 #[pyclass(name = "Contract")]
 pub struct PyContract {
     contract: Contract,
-    runtime: tokio::runtime::Runtime,
 }
 
 #[pymethods]
 impl PyContract {
-    /// Create a new contract instance with embedded tokio runtime.
+    /// Create a new contract instance.
     ///
     /// Args:
     ///     address: Contract address (hex string)
@@ -26,23 +26,16 @@ impl PyContract {
     fn new(address: &str, provider_url: Option<&str>) -> PyResult<Self> {
         // Default provider URL if not provided
         let url = provider_url.unwrap_or("http://localhost:8545");
-        
-        // Create a dedicated tokio runtime for this contract
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(4)  // Default to 4 threads for contract calls
-            .enable_all()
-            .build()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create tokio runtime: {e}")))?;
 
-        // Create the provider inside the runtime context
-        let provider = runtime.block_on(async {
+        // Use the shared runtime to create the provider
+        let provider = get_runtime().block_on(async {
             AlloyProvider::new(url, 10, 30, 10).await
         }).map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
 
         let contract =
             Contract::new(address, Arc::new(provider)).map_err(|e| PyValueError::new_err(format!("{e}")))?;
 
-        Ok(Self { contract, runtime })
+        Ok(Self { contract })
     }
 
     /// Execute a contract call.
@@ -62,8 +55,8 @@ impl PyContract {
         args: Vec<String>,
         block_number: Option<u64>,
     ) -> PyResult<Py<PyList>> {
-        // Use our embedded runtime to execute async code
-        let result = self.runtime.block_on(async {
+        // Use the shared runtime to execute async code
+        let result = get_runtime().block_on(async {
             self.contract.call(function_signature, &args, block_number).await
         }).map_err(|e| PyValueError::new_err(format!("Contract call failed: {e}")))?;
 

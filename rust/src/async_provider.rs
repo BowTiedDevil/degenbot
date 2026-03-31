@@ -12,8 +12,16 @@ use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
 
 /// A log entry with its associated metadata.
-/// Tuple of: (address, topics, data, `block_number`, `block_hash`, `transaction_hash`, `log_index`)
-type LogEntry = (String, Vec<String>, String, Option<u64>, Option<String>, Option<String>, Option<u64>);
+/// Tuple of: (address, topics, data, block_number, block_hash, transaction_hash, log_index)
+type LogEntry = (
+    String,
+    Vec<String>,
+    String,
+    Option<u64>,
+    Option<String>,
+    Option<String>,
+    Option<u64>,
+);
 
 /// Async wrapper for `AlloyProvider` that exposes async methods to Python.
 pub struct AsyncAlloyProvider {
@@ -108,9 +116,14 @@ impl PyAsyncAlloyProvider {
         max_retries: u32,
     ) -> PyResult<Bound<'_, PyAny>> {
         future_into_py(py, async move {
-            let provider = AlloyProvider::new(&rpc_url, max_connections, timeout as u64, max_retries)
-                .await
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to create provider: {e}")))?;
+            let provider =
+                AlloyProvider::new(&rpc_url, max_connections, timeout as u64, max_retries)
+                    .await
+                    .map_err(|e| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to create provider: {e}"
+                        ))
+                    })?;
 
             Ok(Self {
                 provider: Arc::new(provider),
@@ -166,7 +179,10 @@ impl PyAsyncAlloyProvider {
                 .map(|log| {
                     (
                         log.address().to_string(),
-                        log.topics().iter().map(std::string::ToString::to_string).collect(),
+                        log.topics()
+                            .iter()
+                            .map(std::string::ToString::to_string)
+                            .collect(),
                         format!("0x{}", hex::encode(log.data().data.clone())),
                         log.block_number,
                         log.block_hash.map(|h| h.to_string()),
@@ -193,15 +209,18 @@ impl PyAsyncAlloyProvider {
 
             // Step 2: Convert to Python objects (need GIL)
             // Use Python::attach to temporarily acquire GIL
-            let result = Python::attach(|py| {
-                match block {
-                    Some(json_val) => {
-                        let py_obj = json_to_py(py, json_val)?;
-                        Ok::<_, PyErr>(Some(py_obj.unbind()))
-                    }
-                    None => Ok(None),
+            let result = Python::attach(|py| match block {
+                Some(json_val) => {
+                    let py_obj = json_to_py(py, json_val)?;
+                    Ok::<_, PyErr>(Some(py_obj.unbind()))
                 }
-            }).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to convert block data: {e}")))?;
+                None => Ok(None),
+            })
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "Failed to convert block data: {e}"
+                ))
+            })?;
 
             Ok::<_, PyErr>(result)
         })
