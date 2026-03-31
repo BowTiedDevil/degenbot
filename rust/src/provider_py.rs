@@ -61,7 +61,7 @@ impl PyLogFilter {
 /// Python wrapper for `AlloyProvider`.
 #[pyclass(name = "AlloyProvider")]
 pub struct PyAlloyProvider {
-    provider: Arc<AlloyProvider>,
+    pub provider: Arc<AlloyProvider>,
     max_blocks_per_request: u64,
     runtime: tokio::runtime::Runtime,
 }

@@ -16,20 +16,20 @@ class TestAsyncProviderWithLiveConnection:
 
     async def test_async_get_block_number(self):
         """Test fetching current block number asynchronously from live RPC."""
-        provider = AsyncAlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
+        provider = await AsyncAlloyProvider.create(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
         block_number = await provider.get_block_number()
         assert isinstance(block_number, int)
         assert block_number > 0
 
     async def test_async_get_chain_id(self):
         """Test fetching chain ID asynchronously from live RPC."""
-        provider = AsyncAlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
+        provider = await AsyncAlloyProvider.create(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
         chain_id = await provider.get_chain_id()
         assert chain_id == 1  # Ethereum mainnet
 
     async def test_async_get_logs(self):
         """Test fetching logs with filter asynchronously from live RPC."""
-        provider = AsyncAlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
+        provider = await AsyncAlloyProvider.create(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
         # WETH contract
         logs = await provider.get_logs(
             from_block=18000000,
@@ -42,5 +42,5 @@ class TestAsyncProviderWithLiveConnection:
 
     async def test_async_provider_properties(self):
         """Test async provider property access."""
-        provider = AsyncAlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
+        provider = await AsyncAlloyProvider.create(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
         assert provider.rpc_url == ETHEREUM_ARCHIVE_NODE_HTTP_URI

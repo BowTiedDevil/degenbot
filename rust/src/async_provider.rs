@@ -5,6 +5,7 @@
 
 use crate::errors::ProviderResult;
 use crate::provider::{AlloyProvider, LogFilter};
+use crate::provider_py::PyAlloyProvider;
 use alloy::rpc::types::Log;
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
@@ -20,7 +21,7 @@ pub struct AsyncAlloyProvider {
 }
 
 impl AsyncAlloyProvider {
-    /// Create a new async provider.
+    /// Create a new async provider from an existing provider.
     #[must_use]
     pub const fn new(provider: Arc<AlloyProvider>) -> Self {
         Self { inner: provider }
@@ -62,26 +63,47 @@ pub struct PyAsyncAlloyProvider {
 
 #[pymethods]
 impl PyAsyncAlloyProvider {
-    /// Create a new async provider.
+    /// Create a new async provider from an existing sync provider.
     ///
-    /// Note: This is a placeholder constructor. In production, this would
-    /// be created from an existing provider or connection manager.
-    ///
-    /// Automatically detects connection type from URL:
-    /// - HTTP/HTTPS URLs use HTTP transport
-    /// - File paths use IPC transport
+    /// This constructor takes a `PyAlloyProvider` and creates an async wrapper
+    /// around it. The async provider uses Python's asyncio event loop instead
+    /// of creating its own runtime.
     #[new]
-    fn new(rpc_url: &str) -> PyResult<Self> {
-        let runtime = tokio::runtime::Runtime::new()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))?;
-        
-        let provider = runtime.block_on(async {
-            AlloyProvider::new(rpc_url, 10, 30, 10).await
-        }).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
-        
-        let provider = Arc::new(provider);
+    fn new(sync_provider: &PyAlloyProvider) -> Self {
+        Self {
+            provider: sync_provider.provider.clone(),
+        }
+    }
 
-        Ok(Self { provider })
+    /// Create a new async provider from RPC URL.
+    ///
+    /// This is an async factory method that creates both the underlying provider
+    /// and the async wrapper in one call.
+    ///
+    /// # Arguments
+    /// * `rpc_url` - The RPC endpoint URL
+    /// * `max_connections` - Maximum number of concurrent connections (default: 10)
+    /// * `timeout` - Request timeout in seconds (default: 30.0)
+    /// * `max_retries` - Maximum retry attempts (default: 10)
+    #[staticmethod]
+    #[pyo3(signature = (rpc_url, max_connections=10, timeout=30.0, max_retries=10))]
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+    fn create(
+        py: Python<'_>,
+        rpc_url: String,
+        max_connections: u32,
+        timeout: f64,
+        max_retries: u32,
+    ) -> PyResult<Bound<'_, PyAny>> {
+        future_into_py(py, async move {
+            let provider = AlloyProvider::new(&rpc_url, max_connections, timeout as u64, max_retries)
+                .await
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to create provider: {e}")))?;
+
+            Ok(Self {
+                provider: Arc::new(provider),
+            })
+        })
     }
 
     /// Get current block number asynchronously.

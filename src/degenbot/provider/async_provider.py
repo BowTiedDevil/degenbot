@@ -8,7 +8,7 @@ Example:
     >>> from degenbot.provider.async_provider import AsyncAlloyProvider
     >>>
     >>> async def main():
-    ...     provider = AsyncAlloyProvider("https://eth.example.com")
+    ...     provider = await AsyncAlloyProvider.create("https://eth.example.com")
     ...     block_number = await provider.get_block_number()
     ...     print(f"Current block: {block_number}")
     ...
@@ -28,18 +28,14 @@ class AsyncAlloyProvider:
 
     Provides async methods for non-blocking RPC calls.
 
-    Args:
-        rpc_url: HTTP/HTTPS endpoint URL
-        max_connections: Maximum concurrent connections (default: 10)
-        timeout: Request timeout in seconds (default: 30.0)
-        max_retries: Maximum retry attempts (default: 10)
+    Use `create()` to instantiate:
 
     Example:
         >>> import asyncio
         >>> from degenbot.provider.async_provider import AsyncAlloyProvider
         >>>
         >>> async def main():
-        ...     provider = AsyncAlloyProvider("https://eth-mainnet.example.com")
+        ...     provider = await AsyncAlloyProvider.create("https://eth-mainnet.example.com")
         ...     block_number = await provider.get_block_number()
         ...     chain_id = await provider.get_chain_id()
         ...     print(f"Chain {chain_id} at block {block_number}")
@@ -47,13 +43,26 @@ class AsyncAlloyProvider:
         >>> asyncio.run(main())
     """
 
-    def __init__(
-        self,
+    def __init__(self, provider: _AsyncAlloyProvider, rpc_url: str) -> None:
+        """Initialize with an existing provider instance.
+
+        Use `create()` to instantiate new providers.
+
+        Args:
+            provider: The underlying Rust provider instance
+            rpc_url: RPC endpoint URL
+        """
+        self._provider = provider
+        self._rpc_url = rpc_url
+
+    @classmethod
+    async def create(
+        cls,
         rpc_url: str,
         max_connections: int = 10,
         timeout: float = 30.0,
         max_retries: int = 10,
-    ) -> None:
+    ) -> AsyncAlloyProvider:
         """Create a new async provider.
 
         Args:
@@ -61,9 +70,12 @@ class AsyncAlloyProvider:
             max_connections: Max concurrent connections (not yet implemented)
             timeout: Request timeout (not yet implemented)
             max_retries: Max retry attempts (not yet implemented)
+
+        Returns:
+            A new AsyncAlloyProvider instance
         """
-        self._provider = _AsyncAlloyProvider(rpc_url)
-        self._rpc_url = rpc_url
+        provider = await _AsyncAlloyProvider.create(rpc_url, max_connections, timeout, max_retries)
+        return cls(provider, rpc_url)
 
     @property
     def rpc_url(self) -> str:
