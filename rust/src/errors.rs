@@ -97,9 +97,9 @@ pub enum ProviderError {
     #[error("Invalid topic format: {topic} - {reason}")]
     InvalidTopic { topic: String, reason: String },
 
-    /// Chain not registered.
-    #[error("Chain not registered: {chain_id}")]
-    ChainNotRegistered { chain_id: u64 },
+    /// Invalid parameters.
+    #[error("Invalid parameters: {message}")]
+    InvalidParams { message: String },
 
     /// Anvil-specific error.
     #[error("Anvil error: {message}")]

@@ -20,8 +20,7 @@ pub mod abi_decoder;
 pub mod address_utils;
 pub mod async_contract;
 pub mod async_provider;
-pub mod connection;
-pub mod connection_py;
+
 pub mod contract;
 pub mod contract_py;
 pub mod errors;
@@ -31,7 +30,7 @@ pub mod tick_math;
 
 // Re-export commonly used items at the crate root
 pub use address_utils::{to_checksum_address, to_checksum_address_bytes, to_checksum_address_str};
-pub use connection::{ChainConfig, ConnectionManager, EndpointMetrics, HealthStatus};
+
 pub use errors::{AbiDecodeError, AddressError, ProviderError, TickMathError};
 pub use tick_math::{
     get_sqrt_ratio_at_tick, get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio,
@@ -42,6 +41,9 @@ use pyo3::prelude::*;
 
 #[pymodule]
 fn _rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Initialize logging bridge from Rust to Python
+    pyo3_log::init();
+
     // Tick math functions
     m.add_function(wrap_pyfunction!(tick_math::get_sqrt_ratio_at_tick, m)?)?;
     m.add_function(wrap_pyfunction!(tick_math::get_tick_at_sqrt_ratio, m)?)?;
@@ -55,9 +57,6 @@ fn _rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Provider module
     provider_py::add_provider_module(m)?;
-
-    // Connection module
-    connection_py::add_connection_module(m)?;
 
     // Contract module
     contract_py::add_contract_module(m)?;

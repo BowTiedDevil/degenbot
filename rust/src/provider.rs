@@ -8,24 +8,98 @@ use crate::errors::{ProviderError, ProviderResult};
 use alloy::network::Ethereum;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::{Filter, Log};
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, B256};
 use alloy_transport_ipc::IpcConnect;
 use alloy_transport_ws::WsConnect;
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Type of transport connection.
-#[derive(Clone)]
-pub enum ConnectionType {
-    /// HTTP/HTTPS endpoint.
-    Http(Arc<Client>),
-    /// WebSocket endpoint (ws:// or wss://).
-    WebSocket,
-    /// IPC endpoint (Unix domain socket or Windows named pipe).
-    Ipc,
+/// Recursively convert camelCase keys in a JSON Value to `snake_case`.
+fn convert_keys_to_snake_case(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut new_map = serde_json::Map::new();
+            for (key, val) in map {
+                let snake_key = camel_to_snake_case(&key);
+                new_map.insert(snake_key, convert_keys_to_snake_case(val));
+            }
+            serde_json::Value::Object(new_map)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(convert_keys_to_snake_case).collect())
+        }
+        other => other,
+    }
+}
+
+/// Convert a camelCase string to `snake_case`.
+fn camel_to_snake_case(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() * 2);
+    let mut prev_upper = false;
+
+    for (i, c) in s.chars().enumerate() {
+        if c.is_ascii_uppercase() {
+            if !prev_upper && i > 0 {
+                result.push('_');
+            }
+            result.push(c.to_ascii_lowercase());
+            prev_upper = true;
+        } else if c.is_ascii_digit() && !result.is_empty() && !prev_upper {
+            // Insert underscore before digit if preceded by lowercase letter
+            result.push('_');
+            result.push(c);
+            prev_upper = false;
+        } else {
+            result.push(c);
+            prev_upper = false;
+        }
+    }
+
+    result
+}
+
+/// Constants for retry logic.
+const INITIAL_RETRY_DELAY_MS: u64 = 100;
+const MAX_RETRY_DELAY_MS: u64 = 30_000; // 30 seconds
+const BACKOFF_MULTIPLIER: u64 = 2;
+const MAX_JITTER_MS: u64 = 100; // Add up to 100ms of jitter
+
+/// Convert an Alloy error to a `ProviderError` with appropriate classification.
+fn alloy_error_to_provider_error(e: impl std::fmt::Display, context: &str) -> ProviderError {
+    let error_str = e.to_string();
+    
+    // Check for specific error patterns and classify appropriately
+    if error_str.contains("429") || error_str.contains("rate limit") || error_str.contains("RateLimit") {
+        ProviderError::RateLimited {
+            message: format!("{context}: {error_str}"),
+        }
+    } else if error_str.contains("timeout") || error_str.contains("timed out") {
+        ProviderError::Timeout {
+            timeout: 30, // Default timeout
+            message: format!("{context}: {error_str}"),
+        }
+    } else if error_str.contains("connection") || error_str.contains("Connection") {
+        ProviderError::ConnectionFailed {
+            message: format!("{context}: {error_str}"),
+        }
+    } else {
+        // Try to extract error code from JSON-RPC error
+        let code = error_str.find("code:").map_or(-1, |code_start| {
+            error_str[code_start..].find(',').map_or(-1, |code_end| {
+                error_str[code_start + 5..code_start + code_end]
+                    .trim()
+                    .parse::<i64>()
+                    .unwrap_or(-1)
+            })
+        });
+        
+        ProviderError::RpcError {
+            code,
+            message: format!("{context}: {error_str}"),
+        }
+    }
 }
 
 /// Filter criteria for log fetching.
@@ -114,7 +188,6 @@ pub struct AlloyProvider {
     inner: Arc<dyn Provider<Ethereum>>,
     rpc_url: String,
     max_retries: u32,
-    connection_type: ConnectionType,
 }
 
 impl Clone for AlloyProvider {
@@ -123,7 +196,6 @@ impl Clone for AlloyProvider {
             inner: Arc::clone(&self.inner),
             rpc_url: self.rpc_url.clone(),
             max_retries: self.max_retries,
-            connection_type: self.connection_type.clone(),
         }
     }
 }
@@ -133,7 +205,7 @@ impl AlloyProvider {
     ///
     /// Automatically detects the connection type based on the URL:
     /// - HTTP/HTTPS URLs use HTTP transport with connection pooling
-    /// - File paths (starting with / or \\) use IPC transport
+    /// - File paths (starting with / or \) use IPC transport
     ///
     /// # Errors
     ///
@@ -141,67 +213,45 @@ impl AlloyProvider {
     /// or IPC connection fails.
     pub async fn new(
         rpc_url: &str,
-        max_connections: u32,
-        timeout_secs: u64,
+        _max_connections: u32,
+        _timeout_secs: u64,
         max_retries: u32,
     ) -> ProviderResult<Self> {
-        let connection_type = if rpc_url.starts_with("http://") || rpc_url.starts_with("https://") {
-            // HTTP endpoint
-            let client = Client::builder()
-                .pool_max_idle_per_host(max_connections as usize)
-                .timeout(Duration::from_secs(timeout_secs))
-                .build()
-                .map_err(|e| ProviderError::ConnectionFailed {
-                    message: format!("Failed to create HTTP client: {e}"),
-                })?;
-            ConnectionType::Http(Arc::new(client))
+        let provider: Arc<dyn Provider<Ethereum>> = if rpc_url.starts_with("http://") || rpc_url.starts_with("https://") {
+            // HTTP endpoint - use Alloy's built-in HTTP transport
+            let url = rpc_url.parse().map_err(|e| ProviderError::ConnectionFailed {
+                message: format!("Invalid RPC URL: {e}"),
+            })?;
+
+            let provider = ProviderBuilder::<_, _, Ethereum>::new()
+                .connect_http(url);
+            Arc::new(provider)
         } else if rpc_url.starts_with("ws://") || rpc_url.starts_with("wss://") {
-            // WebSocket endpoint
-            ConnectionType::WebSocket
-        } else {
-            // IPC endpoint (file path)
-            ConnectionType::Ipc
-        };
-
-        let provider: Arc<dyn Provider<Ethereum>> = match &connection_type {
-            ConnectionType::Http(client) => {
-                let url = rpc_url.parse().map_err(|e| ProviderError::ConnectionFailed {
-                    message: format!("Invalid RPC URL: {e}"),
+            // WebSocket connection
+            let ws_connect = WsConnect::new(rpc_url.to_string());
+            let provider = ProviderBuilder::<_, _, Ethereum>::new()
+                .connect_ws(ws_connect)
+                .await
+                .map_err(|e| ProviderError::ConnectionFailed {
+                    message: format!("Failed to connect to WebSocket endpoint: {e}"),
                 })?;
-
-                let provider = ProviderBuilder::<_, _, Ethereum>::new()
-                    .connect_reqwest((**client).clone(), url);
-                Arc::new(provider)
-            }
-            ConnectionType::WebSocket => {
-                // WebSocket connection
-                let ws_connect = WsConnect::new(rpc_url.to_string());
-                let provider = ProviderBuilder::<_, _, Ethereum>::new()
-                    .connect_ws(ws_connect)
-                    .await
-                    .map_err(|e| ProviderError::ConnectionFailed {
-                        message: format!("Failed to connect to WebSocket endpoint: {e}"),
-                    })?;
-                Arc::new(provider)
-            }
-            ConnectionType::Ipc => {
-                // IPC connection via Unix domain socket or Windows named pipe
-                let ipc_connect: IpcConnect<String> = IpcConnect::new(rpc_url.to_string());
-                let provider = ProviderBuilder::<_, _, Ethereum>::new()
-                    .connect_ipc(ipc_connect)
-                    .await
-                    .map_err(|e| ProviderError::ConnectionFailed {
-                        message: format!("Failed to connect to IPC endpoint: {e}"),
-                    })?;
-                Arc::new(provider)
-            }
+            Arc::new(provider)
+        } else {
+            // IPC connection via Unix domain socket or Windows named pipe
+            let ipc_connect: IpcConnect<String> = IpcConnect::new(rpc_url.to_string());
+            let provider = ProviderBuilder::<_, _, Ethereum>::new()
+                .connect_ipc(ipc_connect)
+                .await
+                .map_err(|e| ProviderError::ConnectionFailed {
+                    message: format!("Failed to connect to IPC endpoint: {e}"),
+                })?;
+            Arc::new(provider)
         };
 
         Ok(Self {
             inner: provider,
             rpc_url: rpc_url.to_string(),
             max_retries,
-            connection_type,
         })
     }
 
@@ -215,10 +265,7 @@ impl AlloyProvider {
             let result: u64 = self.inner
                 .get_block_number()
                 .await
-                .map_err(|e| ProviderError::RpcError {
-                    code: -1,
-                    message: format!("Failed to get block number: {e}"),
-                })?;
+                .map_err(|e| alloy_error_to_provider_error(e, "Failed to get block number"))?;
             Ok(result)
         })
         .await
@@ -234,10 +281,7 @@ impl AlloyProvider {
             let result: u64 = self.inner
                 .get_chain_id()
                 .await
-                .map_err(|e| ProviderError::RpcError {
-                    code: -1,
-                    message: format!("Failed to get chain ID: {e}"),
-                })?;
+                .map_err(|e| alloy_error_to_provider_error(e, "Failed to get chain ID"))?;
             Ok(result)
         })
         .await
@@ -255,16 +299,17 @@ impl AlloyProvider {
             let result: Vec<Log> = self.inner
                 .get_logs(&alloy_filter)
                 .await
-                .map_err(|e| ProviderError::RpcError {
-                    code: -1,
-                    message: format!("Failed to get logs: {e}"),
-                })?;
+                .map_err(|e| alloy_error_to_provider_error(e, "Failed to get logs"))?;
             Ok(result)
         })
         .await
     }
 
     /// Get a block by number.
+    ///
+    /// Returns the full block data including header and transactions.
+    /// All field names are converted from camelCase to `snake_case` for Python
+    /// consistency.
     ///
     /// # Errors
     ///
@@ -277,25 +322,13 @@ impl AlloyProvider {
             let result = self.inner
                 .get_block_by_number(block_num_tag)
                 .await
-                .map_err(|e| ProviderError::RpcError {
-                    code: -1,
-                    message: format!("Failed to get block: {e}"),
-                })?;
+                .map_err(|e| alloy_error_to_provider_error(e, "Failed to get block"))?;
             
-            // Convert to JSON value for flexibility
+            // Serialize the full block and convert keys to snake_case
             let json_value = result.map(|block| {
-                serde_json::json!({
-                    "number": block.header.number,
-                    "hash": block.header.hash.to_string(),
-                    "timestamp": block.header.timestamp,
-                    "parentHash": block.header.parent_hash.to_string(),
-                    "miner": block.header.beneficiary.to_string(),
-                    "difficulty": block.header.difficulty.to_string(),
-                    "totalDifficulty": block.header.total_difficulty.map_or_else(String::new, |d: U256| d.to_string()),
-                    "gasLimit": block.header.gas_limit.to_string(),
-                    "gasUsed": block.header.gas_used.to_string(),
-                    "transactions": block.transactions.len(),
-                })
+                let value = serde_json::to_value(block)
+                    .unwrap_or(serde_json::Value::Null);
+                convert_keys_to_snake_case(value)
             });
             
             Ok(json_value)
@@ -304,6 +337,10 @@ impl AlloyProvider {
     }
 
     /// Retry an async operation with exponential backoff.
+    ///
+    /// Uses exponential backoff with jitter to avoid thundering herd problems.
+    /// All retryable errors (rate limit, timeout, connection failures) receive
+    /// the same backoff treatment.
     async fn retry_with_backoff<F, Fut, T>(&self, operation: F) -> ProviderResult<T>
     where
         F: Fn() -> Fut + Send + Sync,
@@ -311,7 +348,7 @@ impl AlloyProvider {
         T: Send,
     {
         let mut attempt = 0;
-        let mut delay = Duration::from_millis(100);
+        let mut delay_ms = INITIAL_RETRY_DELAY_MS;
 
         loop {
             match operation().await {
@@ -323,16 +360,30 @@ impl AlloyProvider {
                     }
 
                     // Check if it's a retryable error
-                    match &e {
-                        ProviderError::RateLimited { .. } => {
-                            delay *= 2;
-                        }
-                        ProviderError::Timeout { .. } | ProviderError::ConnectionFailed { .. } => {}
-                        _ => return Err(e),
+                    let is_retryable = matches!(
+                        &e,
+                        ProviderError::RateLimited { .. }
+                            | ProviderError::Timeout { .. }
+                            | ProviderError::ConnectionFailed { .. }
+                    );
+
+                    if !is_retryable {
+                        return Err(e);
                     }
 
-                    tokio::time::sleep(delay).await;
-                    delay = std::cmp::min(delay * 2, Duration::from_secs(30));
+                    // Calculate delay with exponential backoff and jitter
+                    // Add random jitter to prevent thundering herd
+                    let jitter = if MAX_JITTER_MS > 0 {
+                        rand::random::<u64>() % MAX_JITTER_MS
+                    } else {
+                        0
+                    };
+                    
+                    let sleep_duration = Duration::from_millis(delay_ms + jitter);
+                    tokio::time::sleep(sleep_duration).await;
+
+                    // Exponential backoff with cap
+                    delay_ms = std::cmp::min(delay_ms * BACKOFF_MULTIPLIER, MAX_RETRY_DELAY_MS);
                 }
             }
         }
@@ -367,42 +418,145 @@ impl AlloyProvider {
                 self.inner.call(tx).block(block.into()).await
             } else {
                 self.inner.call(tx).await
-            }.map_err(|e| {
-                ProviderError::RpcError {
-                    code: -1,
-                    message: format!("eth_call failed: {e}"),
-                }
-            })?;
+            }.map_err(|e| alloy_error_to_provider_error(e, "eth_call failed"))?;
 
             Ok(result)
         })
         .await
     }
-}
 
-/// Log receipt with decoded fields.
-#[derive(Debug, Clone)]
-pub struct LogReceipt {
-    pub address: String,
-    pub topics: Vec<String>,
-    pub data: Vec<u8>,
-    pub block_number: Option<u64>,
-    pub block_hash: Option<String>,
-    pub transaction_hash: Option<String>,
-    pub log_index: Option<u64>,
-}
+    /// Get the current gas price.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::RpcError` if the RPC call fails.
+    pub async fn get_gas_price(&self) -> ProviderResult<u128> {
+        self.retry_with_backoff(|| async {
+            let result: u128 = self.inner
+                .get_gas_price()
+                .await
+                .map_err(|e| alloy_error_to_provider_error(e, "Failed to get gas price"))?;
+            Ok(result)
+        })
+        .await
+    }
 
-impl From<Log> for LogReceipt {
-    fn from(log: Log) -> Self {
-        Self {
-            address: log.address().to_string(),
-            topics: log.topics().iter().map(ToString::to_string).collect(),
-            data: log.data().data.to_vec(),
-            block_number: log.block_number,
-            block_hash: log.block_hash.map(|h| h.to_string()),
-            transaction_hash: log.transaction_hash.map(|h| h.to_string()),
-            log_index: log.log_index,
-        }
+    /// Estimate gas for a transaction.
+    ///
+    /// # Arguments
+    /// * `to` - Target address
+    /// * `data` - Transaction data
+    /// * `from` - Optional sender address
+    /// * `value` - Optional value in wei
+    /// * `block_number` - Optional block number to estimate at
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::RpcError` if the RPC call fails.
+    pub async fn estimate_gas(
+        &self,
+        to: &Address,
+        data: Bytes,
+        from: Option<&Address>,
+        value: Option<u128>,
+        block_number: Option<u64>,
+    ) -> ProviderResult<u64> {
+        use alloy::rpc::types::TransactionRequest;
+
+        self.retry_with_backoff(|| async {
+            let mut tx = TransactionRequest::default()
+                .to(*to)
+                .input(data.clone().into());
+
+            if let Some(addr) = from {
+                tx = tx.from(*addr);
+            }
+
+            if let Some(val) = value {
+                tx = tx.value(alloy_primitives::U256::from(val));
+            }
+
+            // Estimate at specific block if provided, otherwise use pending
+            let result = if let Some(block) = block_number {
+                self.inner.estimate_gas(tx).block(block.into()).await
+            } else {
+                self.inner.estimate_gas(tx).await
+            }.map_err(|e| alloy_error_to_provider_error(e, "Failed to estimate gas"))?;
+
+            Ok(result)
+        })
+        .await
+    }
+
+    /// Get a transaction by hash.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::RpcError` if the RPC call fails.
+    pub async fn get_transaction(
+        &self,
+        tx_hash: &str,
+    ) -> ProviderResult<Option<serde_json::Value>> {
+        use alloy::primitives::FixedBytes;
+        use std::str::FromStr;
+
+        let hash = FixedBytes::from_str(tx_hash)
+            .map_err(|e| ProviderError::InvalidParams {
+                message: format!("Invalid transaction hash: {e}"),
+            })?;
+
+        self.retry_with_backoff(|| async {
+            let result = self.inner
+                .get_transaction_by_hash(hash)
+                .await
+                .map_err(|e| alloy_error_to_provider_error(e, "Failed to get transaction"))?;
+
+            // Convert to JSON value - use serde to handle the inner transaction structure
+            let json_value = result.map(|tx| {
+                // First serialize to JSON string, then parse back to Value
+                // This handles the nested structure correctly
+                let json_str = serde_json::to_string(&tx).unwrap_or_default();
+                serde_json::from_str(&json_str).unwrap_or_else(|_| serde_json::json!({}))
+            });
+
+            Ok(json_value)
+        })
+        .await
+    }
+
+    /// Get a transaction receipt by hash.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::RpcError` if the RPC call fails.
+    pub async fn get_transaction_receipt(
+        &self,
+        tx_hash: &str,
+    ) -> ProviderResult<Option<serde_json::Value>> {
+        use alloy::primitives::FixedBytes;
+        use std::str::FromStr;
+
+        let hash = FixedBytes::from_str(tx_hash)
+            .map_err(|e| ProviderError::InvalidParams {
+                message: format!("Invalid transaction hash: {e}"),
+            })?;
+
+        self.retry_with_backoff(|| async {
+            let result = self.inner
+                .get_transaction_receipt(hash)
+                .await
+                .map_err(|e| alloy_error_to_provider_error(e, "Failed to get transaction receipt"))?;
+
+            // Convert to JSON value - use serde to handle the receipt structure
+            let json_value = result.map(|receipt| {
+                // First serialize to JSON string, then parse back to Value
+                let json_str = serde_json::to_string(&receipt).unwrap_or_default();
+                serde_json::from_str(&json_str).unwrap_or_else(|_| serde_json::json!({}))
+            });
+
+            Ok(json_value)
+        })
+        .await
     }
 }
 
@@ -495,20 +649,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_log_receipt_from_log() {
-        // Since we can't easily create a Log without mocking, we'll test the struct
-        let receipt = LogReceipt {
-            address: "0x1234".to_string(),
-            topics: vec!["0xabcd".to_string()],
-            data: vec![1, 2, 3],
-            block_number: Some(100),
-            block_hash: Some("0xhash".to_string()),
-            transaction_hash: Some("0xtxhash".to_string()),
-            log_index: Some(5),
-        };
-
-        assert_eq!(receipt.address, "0x1234");
-        assert_eq!(receipt.topics.len(), 1);
-    }
 }

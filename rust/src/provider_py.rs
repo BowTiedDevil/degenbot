@@ -6,6 +6,43 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use std::sync::Arc;
 
+/// Convert a `serde_json::Value` to a Python object.
+pub fn json_to_py(py: Python<'_>, value: serde_json::Value) -> PyResult<Bound<'_, pyo3::types::PyAny>> {
+    match value {
+        serde_json::Value::Null => Ok(py.None().into_bound(py)),
+        serde_json::Value::Bool(b) => {
+            let py_bool = b.into_pyobject(py).map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("Failed to convert bool"))?;
+            Ok(Bound::clone(&py_bool).into_any())
+        }
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(i.into_pyobject(py).map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("Failed to convert i64"))?.into_any())
+            } else if let Some(u) = n.as_u64() {
+                Ok(u.into_pyobject(py).map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("Failed to convert u64"))?.into_any())
+            } else if let Some(f) = n.as_f64() {
+                Ok(f.into_pyobject(py).map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("Failed to convert f64"))?.into_any())
+            } else {
+                Ok(py.None().into_bound(py))
+            }
+        }
+        serde_json::Value::String(s) => Ok(s.into_pyobject(py).map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("Failed to convert string"))?.into_any()),
+        serde_json::Value::Array(arr) => {
+            let py_list = PyList::empty(py);
+            for item in arr {
+                py_list.append(json_to_py(py, item)?)?;
+            }
+            Ok(py_list.into_any())
+        }
+        serde_json::Value::Object(map) => {
+            let py_dict = PyDict::new(py);
+            for (key, value) in map {
+                py_dict.set_item(key, json_to_py(py, value)?)?;
+            }
+            Ok(py_dict.into_any())
+        }
+    }
+}
+
 /// Python wrapper for `LogFilter`.
 #[pyclass(name = "LogFilter", from_py_object)]
 #[derive(Clone)]
@@ -210,18 +247,9 @@ impl PyAlloyProvider {
 
     /// Get a block by number.
     ///
-    /// Returns a dictionary with block information including:
-    /// - number: Block number
-    /// - hash: Block hash
-    /// - timestamp: Block timestamp
-    /// - parentHash: Parent block hash
-    /// - miner: Miner address
-    /// - difficulty: Block difficulty
-    /// - totalDifficulty: Total difficulty
-    /// - gasLimit: Gas limit
-    /// - gasUsed: Gas used
-    /// - transactions: Number of transactions
-    fn get_block<'py>(&self, py: Python<'py>, block_number: u64) -> PyResult<Option<Bound<'py, PyDict>>> {
+    /// Returns the full block data including header and transactions.
+    /// All field names use `snake_case` for Python consistency.
+    fn get_block<'py>(&self, py: Python<'py>, block_number: u64) -> PyResult<Option<Bound<'py, PyAny>>> {
         // Use our embedded runtime to execute async code
         let block = self.runtime.block_on(async {
             self.provider.get_block(block_number).await
@@ -229,38 +257,8 @@ impl PyAlloyProvider {
         
         match block {
             Some(block_json) => {
-                let dict = PyDict::new(py);
-                if let Some(number) = block_json.get("number") {
-                    dict.set_item("number", number.as_u64().unwrap_or(0))?;
-                }
-                if let Some(hash) = block_json.get("hash") {
-                    dict.set_item("hash", hash.as_str().unwrap_or(""))?;
-                }
-                if let Some(timestamp) = block_json.get("timestamp") {
-                    dict.set_item("timestamp", timestamp.as_u64().unwrap_or(0))?;
-                }
-                if let Some(parent_hash) = block_json.get("parentHash") {
-                    dict.set_item("parentHash", parent_hash.as_str().unwrap_or(""))?;
-                }
-                if let Some(miner) = block_json.get("miner") {
-                    dict.set_item("miner", miner.as_str().unwrap_or(""))?;
-                }
-                if let Some(difficulty) = block_json.get("difficulty") {
-                    dict.set_item("difficulty", difficulty.as_str().unwrap_or("0"))?;
-                }
-                if let Some(total_difficulty) = block_json.get("totalDifficulty") {
-                    dict.set_item("totalDifficulty", total_difficulty.as_str().unwrap_or(""))?;
-                }
-                if let Some(gas_limit) = block_json.get("gasLimit") {
-                    dict.set_item("gasLimit", gas_limit.as_str().unwrap_or("0"))?;
-                }
-                if let Some(gas_used) = block_json.get("gasUsed") {
-                    dict.set_item("gasUsed", gas_used.as_str().unwrap_or("0"))?;
-                }
-                if let Some(transactions) = block_json.get("transactions") {
-                    dict.set_item("transactions", transactions.as_u64().unwrap_or(0))?;
-                }
-                Ok(Some(dict))
+                let py_value = json_to_py(py, block_json)?;
+                Ok(Some(py_value))
             }
             None => Ok(None),
         }
@@ -275,6 +273,84 @@ impl PyAlloyProvider {
     #[getter]
     fn rpc_url(&self) -> String {
         self.provider.rpc_url().to_string()
+    }
+
+    /// Get current gas price.
+    fn get_gas_price(&self) -> PyResult<String> {
+        let gas_price = self.runtime.block_on(async {
+            self.provider.get_gas_price().await
+        }).map_err(|e| PyValueError::new_err(format!("Failed to get gas price: {e}")))?;
+
+        Ok(gas_price.to_string())
+    }
+
+    /// Estimate gas for a transaction.
+    #[pyo3(signature = (to, data, from=None, value=None, block_number=None))]
+    fn estimate_gas(
+        &self,
+        to: &str,
+        data: &Bound<'_, PyBytes>,
+        from: Option<&str>,
+        value: Option<u128>,
+        block_number: Option<u64>,
+    ) -> PyResult<u64> {
+        use alloy_primitives::Address;
+        use std::str::FromStr;
+
+        // Parse addresses
+        let to_address = Address::from_str(to)
+            .map_err(|e| PyValueError::new_err(format!("Invalid 'to' address: {e}")))?;
+
+        let from_address = from
+            .map(Address::from_str)
+            .transpose()
+            .map_err(|e| PyValueError::new_err(format!("Invalid 'from' address: {e}")))?;
+
+        // Get the data bytes
+        let data_bytes: &[u8] = data.as_bytes();
+
+        // Execute estimation using the runtime
+        let gas = self.runtime.block_on(async {
+            self.provider
+                .estimate_gas(&to_address, alloy_primitives::Bytes::from(data_bytes.to_vec()), from_address.as_ref(), value, block_number)
+                .await
+        }).map_err(|e| PyValueError::new_err(format!("Failed to estimate gas: {e}")))?;
+
+        Ok(gas)
+    }
+
+    /// Get a transaction by hash.
+    fn get_transaction<'py>(&self, py: Python<'py>, tx_hash: &str) -> PyResult<Option<Bound<'py, PyAny>>> {
+        let tx_hash = tx_hash.to_string();
+        let tx = self.runtime.block_on(async {
+            self.provider.get_transaction(&tx_hash).await
+        }).map_err(|e| PyValueError::new_err(format!("Failed to get transaction: {e}")))?;
+
+        match tx {
+            Some(tx_json) => {
+                let py_obj = json_to_py(py, tx_json)
+                    .map_err(|e| PyValueError::new_err(format!("Failed to convert transaction: {e}")))?;
+                Ok(Some(py_obj))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Get a transaction receipt by hash.
+    fn get_transaction_receipt<'py>(&self, py: Python<'py>, tx_hash: &str) -> PyResult<Option<Bound<'py, PyAny>>> {
+        let tx_hash = tx_hash.to_string();
+        let receipt = self.runtime.block_on(async {
+            self.provider.get_transaction_receipt(&tx_hash).await
+        }).map_err(|e| PyValueError::new_err(format!("Failed to get transaction receipt: {e}")))?;
+
+        match receipt {
+            Some(receipt_json) => {
+                let py_obj = json_to_py(py, receipt_json)
+                    .map_err(|e| PyValueError::new_err(format!("Failed to convert receipt: {e}")))?;
+                Ok(Some(py_obj))
+            }
+            None => Ok(None),
+        }
     }
 }
 

@@ -152,5 +152,22 @@ class AsyncAlloyProvider:
             for log in logs
         ]
 
+    async def get_block(self, block_number: int) -> dict[str, Any] | None:
+        """Get a block by number asynchronously.
+
+        Returns the full block data including header and transactions.
+        All field names use snake_case for Python consistency.
+
+        Args:
+            block_number: Block number to fetch
+
+        Returns:
+            Block dictionary with all fields, or None if block not found
+
+        Raises:
+            ValueError: If the RPC call fails
+        """
+        return await self._provider.get_block(block_number)
+
 
 __all__ = ["AsyncAlloyProvider"]

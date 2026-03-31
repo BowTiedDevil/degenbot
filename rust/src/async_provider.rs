@@ -5,7 +5,7 @@
 
 use crate::errors::ProviderResult;
 use crate::provider::{AlloyProvider, LogFilter};
-use crate::provider_py::PyAlloyProvider;
+use crate::provider_py::{json_to_py, PyAlloyProvider};
 use alloy::rpc::types::Log;
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
@@ -52,6 +52,18 @@ impl AsyncAlloyProvider {
     /// Returns `ProviderError` if the RPC call fails or filter is invalid.
     pub async fn get_logs(&self, filter: &LogFilter) -> ProviderResult<Vec<Log>> {
         self.inner.get_logs(filter).await
+    }
+
+    /// Get a block by number asynchronously.
+    ///
+    /// Returns the full block data including header and transactions.
+    /// All field names use `snake_case` for Python consistency.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::RpcError` if the RPC call fails.
+    pub async fn get_block(&self, block_number: u64) -> ProviderResult<Option<serde_json::Value>> {
+        self.inner.get_block(block_number).await
     }
 }
 
@@ -163,6 +175,33 @@ impl PyAsyncAlloyProvider {
                     )
                 })
                 .collect();
+
+            Ok::<_, PyErr>(result)
+        })
+    }
+
+    /// Get a block by number asynchronously.
+    fn get_block<'py>(&self, py: Python<'py>, block_number: u64) -> PyResult<Bound<'py, PyAny>> {
+        let provider = Arc::clone(&self.provider);
+
+        future_into_py(py, async move {
+            // Step 1: Async work (GIL released automatically by future_into_py)
+            let block = provider
+                .get_block(block_number)
+                .await
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
+
+            // Step 2: Convert to Python objects (need GIL)
+            // Use Python::attach to temporarily acquire GIL
+            let result = Python::attach(|py| {
+                match block {
+                    Some(json_val) => {
+                        let py_obj = json_to_py(py, json_val)?;
+                        Ok::<_, PyErr>(Some(py_obj.unbind()))
+                    }
+                    None => Ok(None),
+                }
+            }).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to convert block data: {e}")))?;
 
             Ok::<_, PyErr>(result)
         })
