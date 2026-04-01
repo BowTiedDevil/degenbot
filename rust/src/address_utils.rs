@@ -110,6 +110,7 @@ pub fn to_checksum_address(py: Python<'_>, address: &Bound<'_, PyAny>) -> PyResu
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 

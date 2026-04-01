@@ -347,8 +347,8 @@ fn decode_static_value(
                 // This invariant is maintained because:
                 // - buf[0] and buf[1] are set to ASCII '0' and 'x'
                 // - buf[2..] is filled by hex::encode_to_slice with hex digits (0-9, a-f)
-                #[allow(clippy::unwrap_used)]
-                let addr_str = std::str::from_utf8(&buf).unwrap();
+                #[allow(clippy::expect_used)]
+                let addr_str = std::str::from_utf8(&buf).expect("hex-encoded address should be valid UTF-8");
                 PyString::new(py, addr_str)
             };
             value.into()
@@ -647,7 +647,7 @@ pub fn decode_single(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::useless_vec)]
+    #![allow(clippy::useless_vec, clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
 

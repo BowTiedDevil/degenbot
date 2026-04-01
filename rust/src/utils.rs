@@ -159,7 +159,7 @@ fn convert_to_hexbytes_recursive<'py>(
             field_name.is_some_and(|name| hexbytes_fields.contains(name) && is_hex_string(&s));
 
         if should_convert_hexbytes {
-            return hex_to_fast_hexbytes(py, &s).map(|fhb| fhb.into_any());
+            return hex_to_fast_hexbytes(py, &s).map(pyo3::Bound::into_any);
         }
 
         // Check if this is a numeric field with a hex string value

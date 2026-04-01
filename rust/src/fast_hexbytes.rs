@@ -11,6 +11,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 /// Static format string for buffer protocol (avoids allocation per getbuffer call).
+#[allow(clippy::unwrap_used)]
 static FORMAT_B: std::sync::LazyLock<std::ffi::CString> =
     std::sync::LazyLock::new(|| std::ffi::CString::new("B").unwrap());
 
@@ -131,17 +132,17 @@ impl FastHexBytes {
             let indices = slice.indices(len.try_into().unwrap_or(isize::MAX))?;
             let step = indices.step;
             let start = indices.start;
-            let stop = indices.stop;
+            let stop_idx = indices.stop;
 
             // Python slice iteration logic:
-            // - For positive step: include indices where i < stop
-            // - For negative step: include indices where i > stop
-            // - The stop value is normalized by indices() to -1 for negative step
+            // - For positive step: include indices where i < stop_idx
+            // - For negative step: include indices where i > stop_idx
+            // - The stop_idx value is normalized by indices() to -1 for negative step
             //   when slicing to the beginning
 
             let sliced: Vec<u8> = if step == 1 {
-                let start_usize = start.max(0) as usize;
-                let stop_usize = stop.clamp(0, len as isize) as usize;
+                let start_usize = start.max(0).cast_unsigned();
+                let stop_usize = stop_idx.clamp(0, len.cast_signed()).cast_unsigned();
                 self.bytes[start_usize..stop_usize].to_vec()
             } else {
                 // For negative step, we need to iterate like Python does
@@ -149,20 +150,20 @@ impl FastHexBytes {
                 let mut i = start;
 
                 if step < 0 {
-                    // Negative step: continue while i > stop
-                    while i > stop {
+                    // Negative step: continue while i > stop_idx
+                    while i > stop_idx {
                         // Convert to usize index, bounds check
-                        if i >= 0 && (i as usize) < len {
-                            result.push(self.bytes[i as usize]);
+                        if i >= 0 && i.cast_unsigned() < len {
+                            result.push(self.bytes[i.cast_unsigned()]);
                         }
                         i += step;
                     }
                 } else {
                     // Positive step > 1
-                    let stop_clamped = stop.min(len as isize);
+                    let stop_clamped = stop_idx.min(len.cast_signed());
                     while i < stop_clamped {
-                        if i >= 0 && (i as usize) < len {
-                            result.push(self.bytes[i as usize]);
+                        if i >= 0 && i.cast_unsigned() < len {
+                            result.push(self.bytes[i.cast_unsigned()]);
                         }
                         i += step;
                     }
@@ -171,7 +172,7 @@ impl FastHexBytes {
             };
 
             // Return FastHexBytes for consistent type and pre-computed hex
-            let result = FastHexBytes::from_bytes(&sliced);
+            let result = Self::from_bytes(&sliced);
             return Ok(result.into_pyobject(py)?.into_any());
         }
 
@@ -230,7 +231,7 @@ impl FastHexBytes {
         }
 
         // Compare with hex string - check prefix once instead of two comparisons
-        if let Ok(other_str) = other.extract::<&str>() {
+        other.extract::<&str>().is_ok_and(|other_str| {
             let other_bytes = other_str.as_bytes();
             // Check if string starts with "0x" or "0X"
             if other_bytes.len() >= 2
@@ -243,9 +244,7 @@ impl FastHexBytes {
                 // No prefix - compare without our prefix, case-insensitively
                 self.hex[2..].eq_ignore_ascii_case(other_str)
             }
-        } else {
-            false
-        }
+        })
     }
 
     /// Hash based on bytes content.
@@ -258,12 +257,8 @@ impl FastHexBytes {
     /// Check if a byte value is contained in the bytes.
     ///
     /// Supports `in` operator for checking byte values (0-255).
-    fn __contains__(&self, item: &Bound<'_, PyAny>) -> PyResult<bool> {
-        if let Ok(byte) = item.extract::<u8>() {
-            Ok(self.bytes.contains(&byte))
-        } else {
-            Ok(false)
-        }
+    fn __contains__(&self, item: &Bound<'_, PyAny>) -> bool {
+        item.extract::<u8>().is_ok_and(|byte| self.bytes.contains(&byte))
     }
 
     /// Support pickle serialization.
@@ -351,27 +346,27 @@ impl FastHexBytes {
             // Transfer ownership to the buffer - PyO3 handles the reference count
             (*view).obj = slf.into_any().into_ptr();
 
-            (*view).buf = data.as_ptr() as *mut std::ffi::c_void;
-            (*view).len = len as pyo3::ffi::Py_ssize_t;
+            (*view).buf = data.as_ptr().cast_mut().cast();
+            (*view).len = len.cast_signed();
             (*view).readonly = 1;
             (*view).itemsize = 1;
 
             // Format string - only set if requested (static, no allocation)
             (*view).format = if (flags & pyo3::ffi::PyBUF_FORMAT) == pyo3::ffi::PyBUF_FORMAT {
-                FORMAT_B.as_ptr() as *mut i8
+                FORMAT_B.as_ptr().cast_mut()
             } else {
                 std::ptr::null_mut()
             };
 
             (*view).ndim = 1;
             (*view).shape = if (flags & PyBUF_ND) == PyBUF_ND {
-                &mut (*view).len
+                &raw mut (*view).len
             } else {
                 std::ptr::null_mut()
             };
 
             (*view).strides = if (flags & PyBUF_STRIDES) == PyBUF_STRIDES {
-                &mut (*view).itemsize
+                &raw mut (*view).itemsize
             } else {
                 std::ptr::null_mut()
             };
@@ -459,6 +454,7 @@ pub fn create_fast_hexbytes_from_hex<'py>(
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 
