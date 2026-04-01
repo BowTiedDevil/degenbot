@@ -111,15 +111,13 @@ pub fn to_checksum_address(py: Python<'_>, address: &Bound<'_, PyAny>) -> PyResu
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-
     use super::*;
 
     #[test]
     fn test_checksum_from_str() {
         let result = to_checksum_address_str("0x66f9664f97f2b50f62d13ea064982f936de76657");
         assert!(result.is_ok());
-        let checksummed = result.unwrap();
+        let checksummed = result.expect("valid address should checksum successfully");
         // Verify it's properly checksummed (has mixed case)
         assert!(checksummed.contains(|c: char| c.is_ascii_uppercase()));
         assert!(checksummed.contains(|c: char| c.is_ascii_lowercase()));

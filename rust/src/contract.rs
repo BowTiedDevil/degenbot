@@ -580,28 +580,27 @@ impl Contract {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_abi_type_parse() {
-        assert_eq!(AbiType::parse("address").unwrap(), AbiType::Address);
-        assert_eq!(AbiType::parse("bool").unwrap(), AbiType::Bool);
-        assert_eq!(AbiType::parse("uint256").unwrap(), AbiType::Uint(256));
-        assert_eq!(AbiType::parse("uint8").unwrap(), AbiType::Uint(8));
-        assert_eq!(AbiType::parse("int256").unwrap(), AbiType::Int(256));
-        assert_eq!(AbiType::parse("bytes").unwrap(), AbiType::Bytes);
-        assert_eq!(AbiType::parse("bytes32").unwrap(), AbiType::FixedBytes(32));
-        assert_eq!(AbiType::parse("string").unwrap(), AbiType::String);
+        assert_eq!(AbiType::parse("address").expect("address should parse"), AbiType::Address);
+        assert_eq!(AbiType::parse("bool").expect("bool should parse"), AbiType::Bool);
+        assert_eq!(AbiType::parse("uint256").expect("uint256 should parse"), AbiType::Uint(256));
+        assert_eq!(AbiType::parse("uint8").expect("uint8 should parse"), AbiType::Uint(8));
+        assert_eq!(AbiType::parse("int256").expect("int256 should parse"), AbiType::Int(256));
+        assert_eq!(AbiType::parse("bytes").expect("bytes should parse"), AbiType::Bytes);
+        assert_eq!(AbiType::parse("bytes32").expect("bytes32 should parse"), AbiType::FixedBytes(32));
+        assert_eq!(AbiType::parse("string").expect("string should parse"), AbiType::String);
 
         // Array types
         assert_eq!(
-            AbiType::parse("address[]").unwrap(),
+            AbiType::parse("address[]").expect("address[] should parse"),
             AbiType::Array(Box::new(AbiType::Address))
         );
         assert_eq!(
-            AbiType::parse("uint256[5]").unwrap(),
+            AbiType::parse("uint256[5]").expect("uint256[5] should parse"),
             AbiType::FixedArray(Box::new(AbiType::Uint(256)), 5)
         );
     }
@@ -615,7 +614,7 @@ mod tests {
 
     #[test]
     fn test_function_signature_parse() {
-        let sig = FunctionSignature::parse("transfer(address,uint256)").unwrap();
+        let sig = FunctionSignature::parse("transfer(address,uint256)").expect("transfer signature should parse");
         assert_eq!(sig.name, "transfer");
         assert_eq!(sig.inputs.len(), 2);
         assert_eq!(sig.inputs[0], AbiType::Address);
@@ -623,7 +622,7 @@ mod tests {
         assert!(sig.outputs.is_empty());
         assert_eq!(sig.selector.len(), 4);
 
-        let sig = FunctionSignature::parse("balanceOf(address) returns (uint256)").unwrap();
+        let sig = FunctionSignature::parse("balanceOf(address) returns (uint256)").expect("balanceOf signature should parse");
         assert_eq!(sig.name, "balanceOf");
         assert_eq!(sig.inputs.len(), 1);
         assert_eq!(sig.outputs.len(), 1);
@@ -633,28 +632,28 @@ mod tests {
     #[test]
     fn test_encode_address() {
         let addr = "0x742d35Cc6634C0532925a3b8D4C9db96590d6B75";
-        let encoded = encode_value(&AbiType::Address, addr).unwrap();
+        let encoded = encode_value(&AbiType::Address, addr).expect("address should encode");
         assert_eq!(encoded.len(), 32);
         assert_eq!(
             &encoded[12..],
-            hex::decode("742d35Cc6634C0532925a3b8D4C9db96590d6B75").unwrap()
+            hex::decode("742d35Cc6634C0532925a3b8D4C9db96590d6B75").expect("valid hex should decode")
         );
     }
 
     #[test]
     fn test_encode_bool() {
-        let encoded = encode_value(&AbiType::Bool, "true").unwrap();
+        let encoded = encode_value(&AbiType::Bool, "true").expect("bool true should encode");
         assert_eq!(encoded.len(), 32);
         assert_eq!(encoded[31], 1);
 
-        let encoded = encode_value(&AbiType::Bool, "false").unwrap();
+        let encoded = encode_value(&AbiType::Bool, "false").expect("bool false should encode");
         assert_eq!(encoded.len(), 32);
         assert_eq!(encoded[31], 0);
     }
 
     #[test]
     fn test_encode_uint() {
-        let encoded = encode_value(&AbiType::Uint(256), "12345").unwrap();
+        let encoded = encode_value(&AbiType::Uint(256), "12345").expect("uint256 should encode");
         assert_eq!(encoded.len(), 32);
         // Last bytes should be 0x3039 (12345 in hex)
         assert_eq!(encoded[28], 0);
@@ -666,13 +665,13 @@ mod tests {
     #[test]
     fn test_function_selector() {
         // transfer(address,uint256) selector
-        let sig = FunctionSignature::parse("transfer(address,uint256)").unwrap();
+        let sig = FunctionSignature::parse("transfer(address,uint256)").expect("transfer signature should parse");
         // Expected selector: first 4 bytes of keccak256("transfer(address,uint256)")
         // Should be 0xa9059cbb
         assert_eq!(hex::encode(sig.selector), "a9059cbb");
 
         // balanceOf(address) selector
-        let sig = FunctionSignature::parse("balanceOf(address)").unwrap();
+        let sig = FunctionSignature::parse("balanceOf(address)").expect("balanceOf signature should parse");
         // Expected: 0x70a08231
         assert_eq!(hex::encode(sig.selector), "70a08231");
     }

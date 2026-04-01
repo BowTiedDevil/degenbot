@@ -612,7 +612,6 @@ impl LogFetcher {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -623,7 +622,7 @@ mod tests {
             200,
             Some(vec!["0x1234567890abcdef".to_string()]),
             Some(vec![vec!["0xabcd1234".to_string()]]),
-        ).unwrap();
+        ).expect("valid log filter should be created");
 
         assert_eq!(filter.from_block, Some(100));
         assert_eq!(filter.to_block, Some(200));

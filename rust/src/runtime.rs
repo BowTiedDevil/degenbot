@@ -50,7 +50,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::unwrap_used)]
     fn test_runtime_can_spawn_tasks() {
         let runtime = get_runtime();
         
@@ -58,7 +57,7 @@ mod tests {
             let handle = tokio::spawn(async {
                 42
             });
-            handle.await.unwrap()
+            handle.await.expect("spawned task should complete successfully")
         });
         
         assert_eq!(result, 42);

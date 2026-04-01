@@ -647,7 +647,6 @@ pub fn decode_single(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     #![allow(clippy::useless_vec)]
 
     use super::*;
@@ -674,15 +673,15 @@ mod tests {
 
     #[test]
     fn test_parse_type_and_array() {
-        let (base, arr) = parse_type_and_array("uint256").unwrap();
+        let (base, arr) = parse_type_and_array("uint256").expect("uint256 should parse");
         assert_eq!(base, "uint256");
         assert!(matches!(arr, ArrayKind::None));
 
-        let (base, arr) = parse_type_and_array("uint256[]").unwrap();
+        let (base, arr) = parse_type_and_array("uint256[]").expect("uint256[] should parse");
         assert_eq!(base, "uint256");
         assert!(matches!(arr, ArrayKind::Dynamic));
 
-        let (base, arr) = parse_type_and_array("uint256[3]").unwrap();
+        let (base, arr) = parse_type_and_array("uint256[3]").expect("uint256[3] should parse");
         assert_eq!(base, "uint256");
         assert!(matches!(arr, ArrayKind::Fixed(3)));
     }
@@ -748,31 +747,49 @@ mod tests {
 
     #[test]
     fn test_parse_type_with_aliases() {
-        let parsed = ParsedType::new("uint").unwrap();
+        let parsed = ParsedType::new("uint").expect("uint alias should parse");
         assert!(matches!(parsed.base, AbiType::Uint(256)));
         assert!(matches!(parsed.array, ArrayKind::None));
 
-        let parsed = ParsedType::new("int").unwrap();
+        let parsed = ParsedType::new("int").expect("int alias should parse");
         assert!(matches!(parsed.base, AbiType::Int(256)));
 
-        let parsed = ParsedType::new("function").unwrap();
+        let parsed = ParsedType::new("function").expect("function alias should parse");
         assert!(matches!(parsed.base, AbiType::Bytes(24)));
     }
 
     #[test]
     fn test_parsed_type_is_dynamic() {
         // Static types
-        assert!(!ParsedType::new("uint256").unwrap().is_dynamic());
-        assert!(!ParsedType::new("address").unwrap().is_dynamic());
-        assert!(!ParsedType::new("bool").unwrap().is_dynamic());
-        assert!(!ParsedType::new("bytes32").unwrap().is_dynamic());
-        assert!(!ParsedType::new("uint256[3]").unwrap().is_dynamic());
+        assert!(!ParsedType::new("uint256")
+            .expect("uint256 should parse")
+            .is_dynamic());
+        assert!(!ParsedType::new("address")
+            .expect("address should parse")
+            .is_dynamic());
+        assert!(!ParsedType::new("bool")
+            .expect("bool should parse")
+            .is_dynamic());
+        assert!(!ParsedType::new("bytes32")
+            .expect("bytes32 should parse")
+            .is_dynamic());
+        assert!(!ParsedType::new("uint256[3]")
+            .expect("uint256[3] should parse")
+            .is_dynamic());
 
         // Dynamic types
-        assert!(ParsedType::new("bytes").unwrap().is_dynamic());
-        assert!(ParsedType::new("string").unwrap().is_dynamic());
-        assert!(ParsedType::new("uint256[]").unwrap().is_dynamic());
-        assert!(ParsedType::new("address[][3]").unwrap().is_dynamic());
+        assert!(ParsedType::new("bytes")
+            .expect("bytes should parse")
+            .is_dynamic());
+        assert!(ParsedType::new("string")
+            .expect("string should parse")
+            .is_dynamic());
+        assert!(ParsedType::new("uint256[]")
+            .expect("uint256[] should parse")
+            .is_dynamic());
+        assert!(ParsedType::new("address[][3]")
+            .expect("address[][3] should parse")
+            .is_dynamic());
     }
 
     #[test]
@@ -784,7 +801,8 @@ mod tests {
         // At position 64: length value (5)
         data[95] = 5;
 
-        let (content_start, length) = read_offset_and_length(&data, 0).unwrap();
+        let (content_start, length) =
+            read_offset_and_length(&data, 0).expect("valid offset/length data should parse");
         assert_eq!(content_start, 64 + 32); // offset + WORD_SIZE
         assert_eq!(length, 5);
     }
