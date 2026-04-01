@@ -9,7 +9,7 @@
 
 ### Rust
 - `cargo clippy --all-targets --all-features --manifest-path rust/Cargo.toml` - Run Rust code checks
-- `cargo test --manifest-path rust/Cargo.toml` - Run Rust tests
+- `cargo test --manifest-path rust/Cargo.toml --no-default-features` - Run Rust tests
 
 ## Database
 - SQLite database path configured in `~/.config/degenbot/config.toml`
