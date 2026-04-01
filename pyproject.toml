@@ -148,6 +148,7 @@ ignore = [
     "PLR0913",  # too-many-arguments
     "PLR0914",  # too-many-local-variables
     "PLR0915",  # too-many-statements
+    "PYI021",   # required for IDE to show wrapped Rust code info
     "RUF067",   # non-empty-init-module
     "S101",     # asserts are used often, but not as input validation
 ]
