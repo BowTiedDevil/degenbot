@@ -8,12 +8,10 @@
 - `uv run mypy` - Run Python code type checks
 
 ### Rust
-- `uv run maturin build` - Build Rust extension (degenbot_rs module)
-- `cd rust && cargo clippy --all-targets --all-features` - Run Rust code checks
-- `cd rust && cargo test` - Run Rust tests
+- `cargo clippy --all-targets --all-features --manifest-path rust/Cargo.toml` - Run Rust code checks
+- `cargo test --manifest-path rust/Cargo.toml` - Run Rust tests
 
 ## Database
-
 - SQLite database path configured in `~/.config/degenbot/config.toml`
 - SQLAlchemy ORM models in `src/degenbot/database/models/`
 - Use scoped session from `degenbot.database.db_session()`
