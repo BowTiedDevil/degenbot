@@ -5,6 +5,7 @@
 
 use crate::errors::{ProviderError, ProviderResult};
 use crate::provider::AlloyProvider;
+use alloy::hex;
 use alloy::primitives::{Address, Bytes, U256};
 use alloy::primitives::I256;
 use parking_lot::RwLock;

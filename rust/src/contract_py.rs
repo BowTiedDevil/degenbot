@@ -3,6 +3,7 @@
 use crate::contract::{Contract, FunctionSignature};
 use crate::provider::AlloyProvider;
 use crate::runtime::get_runtime;
+use alloy::hex;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyList;

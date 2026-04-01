@@ -4,6 +4,7 @@
 //! string, eliminating conversion overhead. Implements Python buffer protocol
 //! for seamless bytes compatibility.
 
+use alloy::hex;
 use pyo3::exceptions::{PyIndexError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyByteArray, PyBytes, PyMemoryView, PySlice, PyType};
@@ -282,7 +283,7 @@ impl FastHexBytes {
         } else if let Ok(other_bytes) = other.extract::<Vec<u8>>() {
             other_bytes
         } else if let Ok(other_str) = other.extract::<String>() {
-            hex::decode(other_str.trim_start_matches("0x"))
+            hex::decode(other_str.trim_start_matches("0x")).map_err(|e| PyValueError::new_err(format!("Invalid hex string: {e}")))
                 .map_err(|e| PyValueError::new_err(format!("Invalid hex string: {e}")))?
         } else {
             return Err(PyTypeError::new_err(format!(
@@ -390,7 +391,7 @@ impl FastHexBytes {
     /// Create from byte slice.
     #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        let hex = format!("0x{}", hex::encode(bytes));
+        let hex = hex::encode_prefixed(bytes);
         Self {
             bytes: bytes.to_vec(),
             hex,
@@ -409,8 +410,7 @@ impl FastHexBytes {
             stripped.to_string()
         };
 
-        let bytes = hex::decode(&padded)
-            .map_err(|e| PyValueError::new_err(format!("Invalid hex string: {e}")))?;
+        let bytes = hex::decode(&padded).map_err(|e| PyValueError::new_err(format!("Invalid hex string: {e}")))?;
 
         // Pre-compute hex with lowercase 0x prefix
         let hex = format!("0x{}", padded.to_lowercase());

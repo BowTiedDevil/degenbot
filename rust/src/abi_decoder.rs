@@ -3,6 +3,7 @@
 //! High-performance decoding of ABI-encoded data.
 
 use crate::errors::AbiDecodeError;
+use alloy::hex;
 use alloy::primitives::Address;
 use num_bigint::{BigInt, BigUint};
 use pyo3::{
