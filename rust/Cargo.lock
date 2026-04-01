@@ -1626,11 +1626,6 @@ name = "degenbot_rs"
 version = "0.0.0"
 dependencies = [
  "alloy",
- "alloy-contract",
- "alloy-primitives",
- "alloy-sol-types",
- "alloy-transport-ipc",
- "alloy-transport-ws",
  "criterion",
  "hex",
  "log",

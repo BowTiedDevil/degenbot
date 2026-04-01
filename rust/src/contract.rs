@@ -6,7 +6,7 @@
 use crate::errors::{ProviderError, ProviderResult};
 use crate::provider::AlloyProvider;
 use alloy::primitives::{Address, Bytes, U256};
-use alloy_primitives::I256;
+use alloy::primitives::I256;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::str::FromStr;

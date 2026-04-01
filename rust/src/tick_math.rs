@@ -13,7 +13,7 @@
 //! Functions return `Result<T, TickMathError>` for proper error handling.
 
 use crate::errors::TickMathError;
-use alloy_primitives::{
+use alloy::primitives::{
     aliases::{I24, I256, U160, U256},
     uint,
 };
@@ -186,7 +186,7 @@ pub fn get_sqrt_ratio_at_tick_internal(tick: i32) -> Result<U160, TickMathError>
 ///
 /// ```
 /// use degenbot_rs::tick_math::get_tick_at_sqrt_ratio_internal;
-/// use alloy_primitives::U160;
+/// use alloy::primitives::U160;
 /// use std::str::FromStr;
 ///
 /// let sqrt_price = U160::from_str("79228162514264337593543950336").unwrap();

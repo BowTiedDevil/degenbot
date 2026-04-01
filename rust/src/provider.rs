@@ -8,9 +8,9 @@ use crate::errors::{ProviderError, ProviderResult};
 use alloy::network::Ethereum;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::{Filter, Log};
-use alloy_primitives::{Address, Bytes, B256};
-use alloy_transport_ipc::IpcConnect;
-use alloy_transport_ws::WsConnect;
+use alloy::primitives::{Address, Bytes, B256};
+use alloy::transports::ipc::IpcConnect;
+use alloy::transports::ws::WsConnect;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -496,7 +496,7 @@ impl AlloyProvider {
             }
 
             if let Some(val) = value {
-                tx = tx.value(alloy_primitives::U256::from(val));
+                tx = tx.value(alloy::primitives::U256::from(val));
             }
 
             // Estimate at specific block if provided, otherwise use pending

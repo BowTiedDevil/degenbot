@@ -140,7 +140,7 @@ impl PyAlloyProvider {
             }
             dict.set_item("topics", topics_list)?;
 
-            // data: dynamic bytes (alloy_primitives::Bytes wraps Vec<u8>)
+            // data: dynamic bytes (alloy::primitives::Bytes wraps Vec<u8>)
             let data = &log.data().data;
             let data_fhb = create_fast_hexbytes(py, data)?;
             dict.set_item("data", data_fhb)?;
@@ -182,7 +182,7 @@ impl PyAlloyProvider {
         data: &Bound<'_, PyBytes>,
         block_number: Option<u64>,
     ) -> PyResult<Py<PyAny>> {
-        use alloy_primitives::Address;
+        use alloy::primitives::Address;
         use std::str::FromStr;
 
         // Parse the address
@@ -198,7 +198,7 @@ impl PyAlloyProvider {
                 self.provider
                     .eth_call(
                         &to_address,
-                        alloy_primitives::Bytes::from(data_bytes.to_vec()),
+                        alloy::primitives::Bytes::from(data_bytes.to_vec()),
                         block_number,
                     )
                     .await
@@ -219,7 +219,7 @@ impl PyAlloyProvider {
         address: &str,
         block_number: Option<u64>,
     ) -> PyResult<Py<PyAny>> {
-        use alloy_primitives::Address;
+        use alloy::primitives::Address;
         use std::str::FromStr;
 
         // Parse the address
@@ -311,7 +311,7 @@ impl PyAlloyProvider {
         value: Option<u128>,
         block_number: Option<u64>,
     ) -> PyResult<u64> {
-        use alloy_primitives::Address;
+        use alloy::primitives::Address;
         use std::str::FromStr;
 
         // Parse addresses
@@ -332,7 +332,7 @@ impl PyAlloyProvider {
                 self.provider
                     .estimate_gas(
                         &to_address,
-                        alloy_primitives::Bytes::from(data_bytes.to_vec()),
+                        alloy::primitives::Bytes::from(data_bytes.to_vec()),
                         from_address.as_ref(),
                         value,
                         block_number,

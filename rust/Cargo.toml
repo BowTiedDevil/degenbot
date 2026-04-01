@@ -23,11 +23,6 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 alloy = { version = "^1.8", features = ["full"] }
-alloy-transport-ipc = { version = "^1.8" }
-alloy-transport-ws = { version = "^1.8" }
-alloy-contract = { version = "^1.8" }
-alloy-primitives = { version = "^1.5" }
-alloy-sol-types = { version = "^1.5", features = ["json"] }
 hex = { version = "^0.4" }
 num-bigint = { version = "^0.4" }
 pyo3 = { version = "^0.28", features = [ "abi3-py312", "num-bigint", "serde"] }

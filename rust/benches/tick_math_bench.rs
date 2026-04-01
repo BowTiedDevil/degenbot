@@ -28,7 +28,7 @@ fn tick_to_price_benchmark(c: &mut Criterion) {
 }
 
 fn price_to_tick_benchmark(c: &mut Criterion) {
-    use alloy_primitives::U160;
+    use alloy::primitives::U160;
     use std::str::FromStr;
 
     let ratio_0 = U160::from_str("79228162514264337593543950336").expect("valid ratio");

@@ -185,7 +185,7 @@ impl PyAsyncAlloyProvider {
                     }
                     dict.set_item("topics", topics_list)?;
 
-                    // data: dynamic bytes (alloy_primitives::Bytes wraps Vec<u8>)
+                    // data: dynamic bytes (alloy::primitives::Bytes wraps Vec<u8>)
                     let data = &log.data().data;
                     let data_fhb = create_fast_hexbytes(py, data)?;
                     dict.set_item("data", data_fhb)?;

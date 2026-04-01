@@ -3,7 +3,7 @@
 //! Provides functions for Ethereum address manipulation.
 
 use crate::errors::AddressError;
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
