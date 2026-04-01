@@ -30,7 +30,7 @@ alloy-primitives = { version = "^1.5" }
 alloy-sol-types = { version = "^1.5", features = ["json"] }
 hex = { version = "^0.4" }
 num-bigint = { version = "^0.4" }
-pyo3 = { version = "^0.28", features = [ "abi3-py312", "extension-module", "num-bigint", "serde"] }
+pyo3 = { version = "^0.28", features = [ "abi3-py312", "num-bigint", "serde"] }
 pyo3-async-runtimes = { version = "^0.28", features = ["tokio-runtime"] }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
@@ -40,6 +40,10 @@ rand = { version = "^0.8" }
 thiserror = { version = "^2.0" }
 tokio = { version = "^1", features = ["rt-multi-thread", "time"] }
 parking_lot = { version = "^0.12" }
+
+[features]
+default = ["extension-module"]
+extension-module = ["pyo3/extension-module"]
 
 [dev-dependencies]
 proptest = "^1.10"

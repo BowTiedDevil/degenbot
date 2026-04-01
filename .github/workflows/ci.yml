@@ -55,11 +55,11 @@ jobs:
 
       - name: Run Tests
         working-directory: ./rust
-        run: cargo test
+        run: cargo test --no-default-features
 
       - name: Run Benchmarks
         working-directory: ./rust
-        run: cargo bench
+        run: cargo bench --no-default-features
 
   rust-build:
     name: Rust Build
