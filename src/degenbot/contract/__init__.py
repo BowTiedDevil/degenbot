@@ -25,10 +25,6 @@ Example:
     ...     ("symbol()", []),
     ...     ("decimals()", []),
     ... ])
-
-Note:
-    This module requires the Rust extension to be built.
-    Run `uv run maturin develop` to build it.
 """
 
 from __future__ import annotations
