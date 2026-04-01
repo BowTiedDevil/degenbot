@@ -42,9 +42,11 @@ ETHEREUM_ARCHIVE_NODE_WS_URI: str = env_values.get(
     "ETHEREUM_ARCHIVE_NODE_WS_URI", "wss://eth.llamarpc.com/"
 )
 ETHEREUM_FULL_NODE_HTTP_URI: str = env_values.get(
-    "ETHEREUM_FULL_NODE_HTTP_URI", "http://localhost:8545/"
+    "ETHEREUM_FULL_NODE_HTTP_URI", "https://eth.llamarpc.com/"
 )
-ETHEREUM_FULL_NODE_WS_URI: str = env_values.get("ETHEREUM_FULL_NODE_WS_URI", "ws://localhost:8546/")
+ETHEREUM_FULL_NODE_WS_URI: str = env_values.get(
+    "ETHEREUM_FULL_NODE_WS_URI", "wss://eth.llamarpc.com/"
+)
 
 
 def pytest_addoption(parser: Parser):

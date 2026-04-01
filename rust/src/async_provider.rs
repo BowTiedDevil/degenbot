@@ -4,25 +4,15 @@
 //! Ethereum RPC operations.
 
 use crate::errors::ProviderResult;
+use crate::fast_hexbytes::create_fast_hexbytes;
 use crate::provider::{AlloyProvider, LogFilter};
 use crate::provider_py::PyAlloyProvider;
-use crate::utils::json_to_py;
+use crate::utils::json_to_py_with_hexbytes;
 use alloy::rpc::types::Log;
 use pyo3::prelude::*;
+use pyo3::types::PyList;
 use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
-
-/// A log entry with its associated metadata.
-/// Tuple of: (`address`, `topics`, `data`, `block_number`, `block_hash`, `transaction_hash`, `log_index`)
-type LogEntry = (
-    String,
-    Vec<String>,
-    String,
-    Option<u64>,
-    Option<String>,
-    Option<String>,
-    Option<u64>,
-);
 
 /// Async wrapper for `AlloyProvider` that exposes async methods to Python.
 pub struct AsyncAlloyProvider {
@@ -174,24 +164,60 @@ impl PyAsyncAlloyProvider {
                 .await
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
 
-            // Convert to a simple Vec of tuples that can be converted to Python
-            let result: Vec<LogEntry> = logs
-                .into_iter()
-                .map(|log| {
-                    (
-                        log.address().to_string(),
-                        log.topics()
-                            .iter()
-                            .map(std::string::ToString::to_string)
-                            .collect(),
-                        format!("0x{}", hex::encode(log.data().data.clone())),
-                        log.block_number,
-                        log.block_hash.map(|h| h.to_string()),
-                        log.transaction_hash.map(|h| h.to_string()),
-                        log.log_index,
-                    )
-                })
-                .collect();
+            // Convert logs to Python list of dicts with HexBytes for appropriate fields
+            // Use Python::attach to get GIL for Python object creation
+            let result = Python::attach(|py| {
+                let py_logs = PyList::empty(py);
+
+                for log in logs {
+                    let dict = pyo3::types::PyDict::new(py);
+
+                    // address: access inner bytes array directly (Address is wrapper around [u8; 20])
+                    let address = log.address();
+                    let address_fhb = create_fast_hexbytes(py, address.as_ref())?;
+                    dict.set_item("address", address_fhb)?;
+
+                    // topics: list of B256 hashes (B256 is wrapper around [u8; 32])
+                    let topics_list = PyList::empty(py);
+                    for topic in log.topics() {
+                        let topic_fhb = create_fast_hexbytes(py, topic.as_ref())?;
+                        topics_list.append(topic_fhb)?;
+                    }
+                    dict.set_item("topics", topics_list)?;
+
+                    // data: dynamic bytes (alloy_primitives::Bytes wraps Vec<u8>)
+                    let data = &log.data().data;
+                    let data_fhb = create_fast_hexbytes(py, data)?;
+                    dict.set_item("data", data_fhb)?;
+
+                    // blockNumber as int
+                    dict.set_item("blockNumber", log.block_number)?;
+
+                    // blockHash as FastHexBytes (optional)
+                    if let Some(block_hash) = log.block_hash {
+                        let block_hash_fhb = create_fast_hexbytes(py, block_hash.as_ref())?;
+                        dict.set_item("blockHash", block_hash_fhb)?;
+                    } else {
+                        dict.set_item("blockHash", py.None())?;
+                    }
+
+                    // transactionHash as FastHexBytes (optional)
+                    if let Some(tx_hash) = log.transaction_hash {
+                        let tx_hash_fhb = create_fast_hexbytes(py, tx_hash.as_ref())?;
+                        dict.set_item("transactionHash", tx_hash_fhb)?;
+                    } else {
+                        dict.set_item("transactionHash", py.None())?;
+                    }
+
+                    // logIndex as int
+                    dict.set_item("logIndex", log.log_index)?;
+
+                    py_logs.append(dict)?;
+                }
+
+                Ok::<_, PyErr>(py_logs.unbind())
+            })
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to convert logs: {e}")))?;
 
             Ok::<_, PyErr>(result)
         })
@@ -212,7 +238,8 @@ impl PyAsyncAlloyProvider {
             // Use Python::attach to temporarily acquire GIL
             let result = Python::attach(|py| match block {
                 Some(json_val) => {
-                    let py_obj = json_to_py(py, json_val)?;
+                    // Use json_to_py_with_hexbytes to convert with automatic HexBytes detection
+                    let py_obj = json_to_py_with_hexbytes(py, json_val)?;
                     Ok::<_, PyErr>(Some(py_obj.unbind()))
                 }
                 None => Ok(None),

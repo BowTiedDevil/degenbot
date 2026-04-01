@@ -305,6 +305,29 @@ impl AlloyProvider {
         .await
     }
 
+    /// Get contract code at an address.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::RpcError` if the RPC call fails.
+    pub async fn get_code(
+        &self,
+        address: &Address,
+        block_number: Option<u64>,
+    ) -> ProviderResult<Bytes> {
+        self.retry_with_backoff(|| async {
+            let result = if let Some(block) = block_number {
+                self.inner.get_code_at(*address).block_id(block.into()).await
+            } else {
+                self.inner.get_code_at(*address).await
+            }
+            .map_err(|e| alloy_error_to_provider_error(e, "Failed to get code"))?;
+
+            Ok(result)
+        })
+        .await
+    }
+
     /// Get a block by number.
     ///
     /// Returns the full block data including header and transactions.

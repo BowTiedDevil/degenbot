@@ -41,11 +41,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Self, cast
 
-from hexbytes import HexBytes
-
 from degenbot._rs import AlloyProvider as _AlloyProvider
 
 if TYPE_CHECKING:
+    from hexbytes import HexBytes
+
     from degenbot.types.aliases import BlockNumber
 
 
@@ -83,7 +83,7 @@ class EthNamespace:
         msg = "get_balance not yet implemented in AlloyProvider"
         raise NotImplementedError(msg)
 
-    def get_code(self, address: str, block_identifier: int | str = "latest") -> bytes:
+    def get_code(self, address: str, block_identifier: int | str = "latest") -> HexBytes:
         """
         Get the code at an address.
 
@@ -92,10 +92,20 @@ class EthNamespace:
             block_identifier: Block number or "latest" (default: "latest")
 
         Returns:
-            Contract bytecode as bytes
+            Contract bytecode as HexBytes
         """
-        msg = "get_code not yet implemented in AlloyProvider"
-        raise NotImplementedError(msg)
+        # Determine block number
+        block_num: int | None = None
+        if isinstance(block_identifier, str):
+            if block_identifier == "latest":
+                block_num = None
+            else:
+                msg = f"Block identifier '{block_identifier}' not supported"
+                raise NotImplementedError(msg)
+        else:
+            block_num = block_identifier
+
+        return self._provider.get_code(address, block_num)
 
     def get_transaction_count(self, address: str, block_identifier: int | str = "latest") -> int:
         """
@@ -184,7 +194,7 @@ class EthNamespace:
         self,
         transaction: dict[str, Any],
         block_identifier: int | str | None = None,
-    ) -> bytes:
+    ) -> HexBytes:
         """
         Execute an eth_call (web3.py compatible).
 
@@ -193,7 +203,7 @@ class EthNamespace:
             block_identifier: Block number or "latest" (default: latest)
 
         Returns:
-            Raw return data from the contract call
+            Raw return data from the contract call as HexBytes
 
         Example:
             >>> result = provider.eth.call({
@@ -426,32 +436,13 @@ class AlloyProvider:
             raise ValueError(msg)
 
         # Call Rust provider's get_logs with keyword arguments
-        # The Rust provider returns list[dict[str, Any]] with string fields
-        # Convert to web3.py compatible format with HexBytes for hex fields
-        raw_logs: list[dict[str, Any]] = self._provider.get_logs(
+        # The Rust provider now returns list[dict[str, Any]] with HexBytes for hex fields
+        return self._provider.get_logs(
             from_block=from_block_val,
             to_block=to_block_val,
             addresses=addresses_val,
             topics=topics_val,
         )
-
-        # Convert string hex fields to HexBytes for web3.py compatibility
-        result: list[dict[str, Any]] = []
-        for log in raw_logs:
-            converted_log: dict[str, Any] = {
-                "address": log["address"],
-                "topics": [HexBytes(t) for t in log["topics"]],
-                "data": log["data"],
-                "blockNumber": log["blockNumber"],
-                "blockHash": HexBytes(log["blockHash"]) if log.get("blockHash") else None,
-                "transactionHash": HexBytes(log["transactionHash"])
-                if log.get("transactionHash")
-                else None,
-                "logIndex": log["logIndex"],
-            }
-            result.append(converted_log)
-
-        return result
 
     def get_block_number(self) -> int:
         """Get current block number."""
@@ -462,15 +453,31 @@ class AlloyProvider:
         return cast("int", self._provider.get_chain_id())
 
     def get_block(self, block_number: int) -> dict[str, Any] | None:
-        """Get a block by number."""
+        """Get a block by number.
+
+        Returns:
+            Block data as dictionary with HexBytes for hash fields, or None if not found.
+        """
         return cast("dict[str, Any] | None", self._provider.get_block(block_number))
+
+    def get_code(self, address: str, block_number: int | None = None) -> HexBytes:
+        """Get contract code at an address.
+
+        Args:
+            address: Contract address
+            block_number: Block number to get code at (default: latest)
+
+        Returns:
+            Contract bytecode as HexBytes
+        """
+        return cast("HexBytes", self._provider.get_code(address, block_number))
 
     def call(
         self,
         to: str,
         data: bytes,
         block_number: int | None = None,
-    ) -> bytes:
+    ) -> HexBytes:
         """
         Execute an eth_call to a contract.
 
@@ -480,7 +487,7 @@ class AlloyProvider:
             block_number: Block number to execute call at (default: latest)
 
         Returns:
-            Raw return data from the contract call
+            Raw return data from the contract call as HexBytes
 
         Example:
             >>> # Call ERC20 balanceOf
@@ -490,7 +497,7 @@ class AlloyProvider:
             >>> result = provider.call("0xTokenAddress", calldata)
             >>> balance = int.from_bytes(result, "big")
         """
-        return cast("bytes", self._provider.call(to, data, block_number))
+        return cast("HexBytes", self._provider.call(to, data, block_number))
 
     def close(self) -> None:
         """Close connection pool and release resources."""

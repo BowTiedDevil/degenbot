@@ -4,6 +4,7 @@ use pyo3::{exceptions::PyValueError, PyErr};
 
 /// Errors that can occur during tick math calculations.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum TickMathError {
     /// Invalid tick value outside the valid range [-887272, 887272].
     #[error("Invalid tick value: {0}")]
@@ -21,6 +22,7 @@ impl From<TickMathError> for PyErr {
 
 /// Errors that can occur during ABI decoding.
 #[derive(Debug, thiserror::Error, Clone)]
+#[non_exhaustive]
 pub enum AbiDecodeError {
     /// Invalid array size in type string.
     #[error("Invalid array size in type: {0}")]
@@ -60,6 +62,7 @@ impl From<AbiDecodeError> for PyErr {
 
 /// Errors that can occur during address operations.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum AddressError {
     /// Invalid address string format.
     #[error("Invalid address string: {0}")]
@@ -77,6 +80,7 @@ impl From<AddressError> for PyErr {
 
 /// Errors that can occur during provider operations.
 #[derive(Debug, thiserror::Error, Clone)]
+#[non_exhaustive]
 pub enum ProviderError {
     /// Request timeout.
     #[error("Request timeout after {timeout}s: {message}")]

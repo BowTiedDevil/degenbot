@@ -137,20 +137,8 @@ class AsyncAlloyProvider:
         if topics is None:
             topics = []
 
-        # The Rust function returns tuples, convert to dicts
-        logs = await self._provider.get_logs(from_block, to_block, addresses, topics)
-        return [
-            {
-                "address": log[0],
-                "topics": log[1],
-                "data": log[2],
-                "blockNumber": log[3],
-                "blockHash": log[4],
-                "transactionHash": log[5],
-                "logIndex": log[6],
-            }
-            for log in logs
-        ]
+        # The Rust function now returns dicts with HexBytes for hash fields
+        return await self._provider.get_logs(from_block, to_block, addresses, topics)
 
     async def get_block(self, block_number: int) -> dict[str, Any] | None:
         """Get a block by number asynchronously.
