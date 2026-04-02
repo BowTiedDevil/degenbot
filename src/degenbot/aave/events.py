@@ -140,6 +140,25 @@ class AaveV3RewardsControllerEvent(Enum):
     REWARDS_CLAIMED = HexBytes("0xc052130bc4ef84580db505783484b067ea8b71b3bca78a7e12db7aea8658f004")
 
 
+class AaveV3OracleEvent(Enum):
+    """
+    Aave V3 Oracle contract events.
+
+    These events are emitted by the AaveOracle contract when its
+    configuration changes.
+    """
+
+    ASSET_SOURCE_UPDATED = HexBytes(
+        "0x22c5b7b2d8561d39f7f210b6b326a1aa69f15311163082308ac4877db6339dc1"
+    )
+    BASE_CURRENCY_SET = HexBytes(
+        "0xe27c4c1372396a3d15a9922f74f9dfc7c72b1ad6d63868470787249c356454c1"
+    )
+    FALLBACK_ORACLE_UPDATED = HexBytes(
+        "0xce7a780d33665b1ea097af5f155e3821b809ecbaa839d3b33aa83ba28168cefb"
+    )
+
+
 class ERC20Event(Enum):
     """
     Standard ERC20 events.
