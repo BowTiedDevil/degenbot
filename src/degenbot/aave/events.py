@@ -100,6 +100,9 @@ class AaveV3PoolConfigEvent(Enum):
         "0xc853974cfbf81487a14a23565917bee63f527853bcb5fa54f2ae1cdf8a38356d"
     )
     POOL_UPDATED = HexBytes("0x90affc163f1a2dfedcd36aa02ed992eeeba8100a4014f0b4cdc20ea265a66627")
+    PRICE_ORACLE_UPDATED = HexBytes(
+        "0x56b5f80d8cac1479698aa7d01605fd6111e90b15fc4d2b377417f46034876cbd"
+    )
     PROXY_CREATED = HexBytes("0x4a465a9bd819d9662563c1e11ae958f8109e437e7f4bf1c6ef0b9a7b3f35d478")
     RESERVE_INITIALIZED = HexBytes(
         "0x3a0ca721fc364424566385a1aa271ed508cc2c0949c2272575fb3013a163a45f"
@@ -150,12 +153,6 @@ class AaveV3OracleEvent(Enum):
 
     ASSET_SOURCE_UPDATED = HexBytes(
         "0x22c5b7b2d8561d39f7f210b6b326a1aa69f15311163082308ac4877db6339dc1"
-    )
-    BASE_CURRENCY_SET = HexBytes(
-        "0xe27c4c1372396a3d15a9922f74f9dfc7c72b1ad6d63868470787249c356454c1"
-    )
-    FALLBACK_ORACLE_UPDATED = HexBytes(
-        "0xce7a780d33665b1ea097af5f155e3821b809ecbaa839d3b33aa83ba28168cefb"
     )
 
 

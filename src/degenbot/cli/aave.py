@@ -324,12 +324,11 @@ def _extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress
         AaveV3GhoDebtTokenEvent.DISCOUNT_RATE_STRATEGY_UPDATED.value,
         AaveV3GhoDebtTokenEvent.DISCOUNT_TOKEN_UPDATED.value,
         AaveV3OracleEvent.ASSET_SOURCE_UPDATED.value,
-        AaveV3OracleEvent.BASE_CURRENCY_SET.value,
-        AaveV3OracleEvent.FALLBACK_ORACLE_UPDATED.value,
         AaveV3PoolConfigEvent.ADDRESS_SET.value,
         AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value,
         AaveV3PoolConfigEvent.POOL_DATA_PROVIDER_UPDATED.value,
         AaveV3PoolConfigEvent.POOL_UPDATED.value,
+        AaveV3PoolConfigEvent.PRICE_ORACLE_UPDATED.value,
         AaveV3PoolConfigEvent.UPGRADED.value,
         AaveV3PoolEvent.MINTED_TO_TREASURY.value,
         AaveV3PoolEvent.RESERVE_DATA_UPDATED.value,
@@ -1578,6 +1577,28 @@ def _process_asset_initialization_event(
     session.add(asset)
     session.flush([asset])
     logger.info(f"Added new Aave V3 asset: {asset.underlying_token!r}")
+
+    # Fetch and set the initial price source from the oracle
+    oracle_contract = _get_contract(
+        session=session,
+        market=market,
+        contract_name="PRICE_ORACLE",
+    )
+    assert oracle_contract is not None
+
+    (price_source,) = raw_call(
+        w3=w3,
+        address=oracle_contract.address,
+        calldata=encode_function_calldata(
+            function_prototype="getSourceOfAsset(address)",
+            function_arguments=[asset_address],
+        ),
+        return_types=["address"],
+        block_identifier=event["blockNumber"],
+    )
+    if price_source != ZERO_ADDRESS:
+        asset.price_source = get_checksum_address(price_source)
+        logger.info(f"Set initial price source for {asset_address} to {price_source}")
 
     # If this is the GHO asset, update the GHO token entry with the vToken reference
     gho_asset = _get_gho_asset(session, market)
@@ -3486,6 +3507,18 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 market=tx_context.market,
                 event=event,
             )
+        elif topic == AaveV3PoolConfigEvent.PRICE_ORACLE_UPDATED.value:
+            _process_price_oracle_updated_event(
+                session=tx_context.session,
+                market=tx_context.market,
+                event=event,
+            )
+        elif topic == AaveV3OracleEvent.ASSET_SOURCE_UPDATED.value:
+            _process_asset_source_updated_event(
+                session=tx_context.session,
+                market=tx_context.market,
+                event=event,
+            )
         elif topic == AaveV3PoolConfigEvent.UPGRADED.value:
             _process_scaled_token_upgrade_event(
                 event=event,
@@ -5146,8 +5179,9 @@ def _process_address_set_event(
     """
 
     # Decode the contract id from bytes32
+    contract_id_bytes: bytes
     (contract_id_bytes,) = eth_abi.abi.decode(types=["bytes32"], data=event["topics"][1])
-    contract_id = contract_id_bytes.decode("ascii").strip("\x00")
+    contract_name = contract_id_bytes.decode("ascii").strip("\x00")
 
     old_address = decode_address(event["topics"][2])
     new_address = decode_address(event["topics"][3])
@@ -5157,26 +5191,120 @@ def _process_address_set_event(
         session.add(
             AaveV3Contract(
                 market_id=market.id,
-                name=contract_id,
+                name=contract_name,
                 address=new_address,
             )
         )
+        logger.info(f"Registered contract {contract_name}: @ {new_address}")
     else:
         # Contract address update
         contract = session.scalar(
             select(AaveV3Contract).where(AaveV3Contract.address == old_address)
         )
-        if contract is not None:
-            contract.address = new_address
-        else:
-            # Contract not found by old address, create new entry
-            session.add(
-                AaveV3Contract(
-                    market_id=market.id,
-                    name=contract_id,
-                    address=new_address,
-                )
+        assert contract is not None
+        contract.address = new_address
+        logger.info(f"Updated contract {contract_name}: {old_address} -> {new_address}")
+
+
+def _process_price_oracle_updated_event(
+    *,
+    session: Session,
+    market: AaveV3Market,
+    event: LogReceipt,
+) -> None:
+    """
+    Process a PriceOracleUpdated event from the PoolAddressesProvider.
+
+    Event structure:
+    - topics[1]: oldAddress (address indexed)
+    - topics[2]: newAddress (address indexed)
+
+    This event is emitted when the price oracle address is updated in the
+    PoolAddressesProvider. We use it to track the canonical oracle address.
+
+    Event definition:
+        event PriceOracleUpdated(
+            address indexed oldAddress,
+            address indexed newAddress
+        );
+    """
+
+    old_address = decode_address(event["topics"][1])
+    new_address = decode_address(event["topics"][2])
+
+    logger.info(
+        f"PriceOracleUpdated: oldAddress={old_address}, newAddress={new_address} "
+        f"(block {event['blockNumber']})"
+    )
+
+    # Register or update the PRICE_ORACLE in the database
+    existing_oracle = session.scalar(
+        select(AaveV3Contract).where(
+            AaveV3Contract.market_id == market.id,
+            AaveV3Contract.name == "PRICE_ORACLE",
+        )
+    )
+
+    if existing_oracle is None:
+        session.add(
+            AaveV3Contract(
+                market_id=market.id,
+                name="PRICE_ORACLE",
+                address=new_address,
             )
+        )
+        logger.info(f"Registered PRICE_ORACLE at {new_address} from PriceOracleUpdated event")
+    elif existing_oracle.address != new_address:
+        # Update to the new oracle address
+        existing_oracle.address = new_address
+        logger.info(f"Updated PRICE_ORACLE: {existing_oracle.address} -> {new_address}")
+
+
+def _process_asset_source_updated_event(
+    *,
+    session: Session,
+    market: AaveV3Market,
+    event: LogReceipt,
+) -> None:
+    """
+    Process an AssetSourceUpdated event from the AaveOracle.
+
+    Event structure:
+    - topics[1]: asset (address indexed)
+    - topics[2]: source (address indexed)
+
+    Updates the asset's price_source field in the database.
+
+    Event definition:
+        event AssetSourceUpdated(
+            address indexed asset,
+            address indexed source
+        );
+    """
+
+    asset_address = decode_address(event["topics"][1])
+    source_address = decode_address(event["topics"][2])
+
+    # Find the asset by underlying token address
+    asset = session.scalar(
+        select(AaveV3Asset).where(
+            AaveV3Asset.market_id == market.id,
+            AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
+        )
+    )
+
+    if asset is None:
+        logger.warning(
+            f"AssetSourceUpdated for unknown asset: {asset_address}, "
+            f"source={source_address} (block {event['blockNumber']})"
+        )
+        return
+
+    asset.price_source = get_checksum_address(source_address)
+    logger.info(
+        f"AssetSourceUpdated: asset={asset_address}, source={source_address} "
+        f"(block {event['blockNumber']})"
+    )
 
 
 def _process_discount_percent_updated_event(
@@ -5366,6 +5494,7 @@ def _fetch_address_provider_events(
                 AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value,
                 AaveV3PoolConfigEvent.POOL_DATA_PROVIDER_UPDATED.value,
                 AaveV3PoolConfigEvent.POOL_UPDATED.value,
+                AaveV3PoolConfigEvent.PRICE_ORACLE_UPDATED.value,
                 AaveV3PoolConfigEvent.PROXY_CREATED.value,
             ]
         ],
@@ -5389,6 +5518,31 @@ def _fetch_discount_config_events(
             [
                 AaveV3GhoDebtTokenEvent.DISCOUNT_RATE_STRATEGY_UPDATED.value,
                 AaveV3GhoDebtTokenEvent.DISCOUNT_TOKEN_UPDATED.value,
+            ]
+        ],
+    )
+
+
+def _fetch_oracle_events(
+    w3: Web3,
+    oracle_address: ChecksumAddress | None,
+    start_block: int,
+    end_block: int,
+) -> list[LogReceipt]:
+    """
+    Fetch AaveOracle events for oracle configuration changes.
+
+    If oracle_address is None, fetches events from all contracts (discovery mode).
+    """
+
+    return fetch_logs_retrying(
+        w3=w3,
+        start_block=start_block,
+        end_block=end_block,
+        address=[oracle_address] if oracle_address is not None else None,
+        topic_signature=[
+            [
+                AaveV3OracleEvent.ASSET_SOURCE_UPDATED.value,
             ]
         ],
     )
@@ -5565,6 +5719,7 @@ def update_aave_market(
             proxy_events.append(event)
         elif topic in {
             AaveV3PoolConfigEvent.POOL_DATA_PROVIDER_UPDATED.value,
+            AaveV3PoolConfigEvent.PRICE_ORACLE_UPDATED.value,
             AaveV3PoolConfigEvent.ADDRESS_SET.value,
         }:
             # Save event for chronological processing in Phase 3
@@ -5643,6 +5798,23 @@ def update_aave_market(
         end_block=end_block,
     )
     all_events.extend(pool_events)
+
+    # Fetch oracle events - discover oracle from events if not yet known
+    oracle_contract = _get_contract(
+        session=session,
+        market=market,
+        contract_name="PRICE_ORACLE",
+    )
+    oracle_address = (
+        get_checksum_address(oracle_contract.address) if oracle_contract is not None else None
+    )
+    oracle_events = _fetch_oracle_events(
+        w3=w3,
+        oracle_address=oracle_address,
+        start_block=start_block,
+        end_block=end_block,
+    )
+    all_events.extend(oracle_events)
 
     known_scaled_token_addresses = set(
         _get_all_scaled_token_addresses(
