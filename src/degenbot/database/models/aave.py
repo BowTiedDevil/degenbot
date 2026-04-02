@@ -215,6 +215,9 @@ class AaveV3Asset(Base):
     # eMode category assignment (denormalized for query convenience)
     e_mode_category_id: Mapped[ForeignKeyAaveEModeCategoryId | None]
 
+    # Price oracle source for this asset
+    price_source: Mapped[Address | None]
+
     # Protocol state - updated every block
     last_update_block: Mapped[int | None]
     liquidity_index: Mapped[BigInteger]  # Scaled by ray (1e27)
