@@ -55,11 +55,11 @@ jobs:
 
       - name: Run Tests
         working-directory: ./rust
-        run: cargo test --no-default-features
+        run: cargo test
 
       - name: Run Benchmarks
         working-directory: ./rust
-        run: cargo bench --no-default-features
+        run: cargo bench
 
   rust-build:
     name: Rust Build
@@ -81,7 +81,7 @@ jobs:
 
       - name: Build
         working-directory: ./rust
-        run: cargo build --release
+        run: cargo build --release --features extension-module
 
   python-test:
     name: Python Tests

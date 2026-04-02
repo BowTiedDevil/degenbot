@@ -148,6 +148,7 @@ Function docs with structured sections:
 
 - Unit tests in `#[cfg(test)]` modules within each file
 - Property-based tests using `proptest` for mathematical invariants
+- Run tests with `cargo test` (no flags needed)
 - Example from `tick_math.rs`:
 ```rust
 #[cfg(test)]
@@ -163,6 +164,31 @@ mod proptests {
         }
     }
 }
+```
+
+## Build Commands
+
+The Rust crate uses the `extension-module` feature to build as a Python extension module:
+
+```bash
+# Run Rust tests
+cargo test
+
+# Run Rust benchmarks
+cargo bench
+
+# Build release library (links Python - for testing only)
+cargo build --release
+
+# Build Python extension (correct for distribution)
+cargo build --release --features extension-module
+```
+
+For convenience, use the `justfile` at the project root:
+```bash
+just test-rust      # Run Rust tests
+just dev            # Build and install Python extension
+just test-all       # Run all Rust and Python tests
 ```
 
 ## Solidity/EVM Notes
