@@ -57,10 +57,6 @@ jobs:
         working-directory: ./rust
         run: cargo test
 
-      - name: Run Benchmarks
-        working-directory: ./rust
-        run: cargo bench
-
   rust-build:
     name: Rust Build
     runs-on: ubuntu-latest

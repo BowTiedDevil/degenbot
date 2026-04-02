@@ -42,11 +42,6 @@ extension-module = ["pyo3/extension-module"]
 
 [dev-dependencies]
 proptest = "^1.10"
-criterion = { version = "^0.8", features = ["html_reports"] }
-
-[[bench]]
-name = "tick_math_bench"
-harness = false
 
 [profile.release]
 lto = "thin"

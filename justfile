@@ -11,10 +11,6 @@ default:
 test-rust:
     cd rust && cargo test
 
-# Run Rust benchmarks
-bench-rust:
-    cd rust && cargo bench
-
 # Run Rust linter (clippy)
 lint-rust:
     cd rust && cargo clippy --all-targets --all-features -- -D warnings

@@ -175,9 +175,6 @@ The Rust crate uses the `extension-module` feature to build as a Python extensio
 # Run Rust tests
 cargo test
 
-# Run Rust benchmarks
-cargo bench
-
 # Build release library (links Python - for testing only)
 cargo build --release
 
