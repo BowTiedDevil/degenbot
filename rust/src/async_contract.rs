@@ -5,7 +5,7 @@
 
 use crate::contract::Contract;
 use crate::provider::AlloyProvider;
-use crate::runtime::get_runtime;
+use futures::future::join_all;
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
@@ -23,20 +23,26 @@ impl PyAsyncContract {
     /// Args:
     ///     address: Contract address (hex string)
     ///     `provider_url`: RPC provider URL (HTTP/HTTPS or IPC path)
-    #[new]
-    fn new(address: &str, provider_url: &str) -> PyResult<Self> {
-        // Use the shared runtime to create the provider
-        let provider = get_runtime().block_on(async {
-            AlloyProvider::new(provider_url, 10, 30, 10).await
-        }).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
+    #[staticmethod]
+    #[pyo3(signature = (address, provider_url))]
+    fn create(
+        py: Python<'_>,
+        address: String,
+        provider_url: String,
+    ) -> PyResult<Bound<'_, PyAny>> {
+        future_into_py(py, async move {
+            let provider = AlloyProvider::new(&provider_url, 10)
+                .await
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
 
-        let provider = Arc::new(provider);
+            let provider = Arc::new(provider);
 
-        let contract = Contract::new(address, provider)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
+            let contract = Contract::new(&address, provider)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
 
-        Ok(Self {
-            contract: Arc::new(contract),
+            Ok(Self {
+                contract: Arc::new(contract),
+            })
         })
     }
 
@@ -69,7 +75,7 @@ impl PyAsyncContract {
         })
     }
 
-    /// Batch execute multiple contract calls asynchronously.
+    /// Batch execute multiple contract calls in parallel.
     ///
     /// Args:
     ///     calls: List of (`function_signature`, args) tuples
@@ -87,21 +93,25 @@ impl PyAsyncContract {
         let contract = Arc::clone(&self.contract);
 
         future_into_py(py, async move {
-            let mut results = Vec::with_capacity(calls.len());
+            let futures: Vec<_> = calls
+                .into_iter()
+                .map(|(func_sig, args)| {
+                    let contract = Arc::clone(&contract);
+                    async move {
+                        contract
+                            .call(&func_sig, &args, block_number)
+                            .await
+                            .map_err(|e| {
+                                pyo3::exceptions::PyValueError::new_err(format!(
+                                    "Contract call failed: {e}"
+                                ))
+                            })
+                    }
+                })
+                .collect();
 
-            for (func_sig, args) in calls {
-                let result = contract
-                    .call(&func_sig, &args, block_number)
-                    .await
-                    .map_err(|e| {
-                        pyo3::exceptions::PyValueError::new_err(format!(
-                            "Contract call failed: {e}"
-                        ))
-                    })?;
-                results.push(result);
-            }
-
-            Ok::<_, PyErr>(results)
+            let results: Result<Vec<_>, _> = join_all(futures).await.into_iter().collect();
+            results
         })
     }
 

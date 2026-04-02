@@ -72,6 +72,12 @@ impl FastHexBytes {
             }
         }
 
+        // Handle bool (must come before int because bool is subclass of int in Python)
+        if let Ok(b) = value.extract::<bool>() {
+            let bytes = if b { vec![0x01] } else { vec![0x00] };
+            return Ok(Self::from_bytes(&bytes));
+        }
+
         // Handle int (convert to hex then bytes)
         // Use BigUint to support EVM-sized integers (up to 256 bits)
         if let Ok(n) = value.extract::<num_bigint::BigUint>() {
@@ -80,12 +86,6 @@ impl FastHexBytes {
                 return Self::from_hex("0x0");
             }
             return Self::from_hex(&format!("0x{n:x}"));
-        }
-
-        // Handle bool
-        if let Ok(b) = value.extract::<bool>() {
-            let bytes = if b { vec![0x01] } else { vec![0x00] };
-            return Ok(Self::from_bytes(&bytes));
         }
 
         Err(PyTypeError::new_err(format!(
@@ -259,7 +259,8 @@ impl FastHexBytes {
     ///
     /// Supports `in` operator for checking byte values (0-255).
     fn __contains__(&self, item: &Bound<'_, PyAny>) -> bool {
-        item.extract::<u8>().is_ok_and(|byte| self.bytes.contains(&byte))
+        item.extract::<u8>()
+            .is_ok_and(|byte| self.bytes.contains(&byte))
     }
 
     /// Support pickle serialization.
@@ -283,7 +284,7 @@ impl FastHexBytes {
         } else if let Ok(other_bytes) = other.extract::<Vec<u8>>() {
             other_bytes
         } else if let Ok(other_str) = other.extract::<String>() {
-            hex::decode(other_str.trim_start_matches("0x")).map_err(|e| PyValueError::new_err(format!("Invalid hex string: {e}")))
+            hex::decode(other_str.trim_start_matches("0x"))
                 .map_err(|e| PyValueError::new_err(format!("Invalid hex string: {e}")))?
         } else {
             return Err(PyTypeError::new_err(format!(
@@ -410,7 +411,8 @@ impl FastHexBytes {
             stripped.to_string()
         };
 
-        let bytes = hex::decode(&padded).map_err(|e| PyValueError::new_err(format!("Invalid hex string: {e}")))?;
+        let bytes = hex::decode(&padded)
+            .map_err(|e| PyValueError::new_err(format!("Invalid hex string: {e}")))?;
 
         // Pre-compute hex with lowercase 0x prefix
         let hex = format!("0x{}", padded.to_lowercase());

@@ -24,6 +24,12 @@ impl From<TickMathError> for PyErr {
 #[derive(Debug, thiserror::Error, Clone)]
 #[non_exhaustive]
 pub enum AbiDecodeError {
+    /// Empty types list provided.
+    #[error("Types list cannot be empty")]
+    EmptyTypesList,
+    /// Empty data provided for decoding.
+    #[error("Data cannot be empty")]
+    EmptyData,
     /// Invalid array size in type string.
     #[error("Invalid array size in type: {0}")]
     InvalidArraySize(String),
@@ -130,6 +136,10 @@ pub enum ProviderError {
     #[error("Decoding error: {message}")]
     DecodingError { message: String },
 
+    /// Serialization error.
+    #[error("Serialization error: {message}")]
+    SerializationError { message: String },
+
     /// Other error.
     #[error("{message}")]
     Other { message: String },
@@ -137,7 +147,20 @@ pub enum ProviderError {
 
 impl From<ProviderError> for PyErr {
     fn from(err: ProviderError) -> Self {
-        PyValueError::new_err(err.to_string())
+        let msg = format!("Provider error: {err}");
+        match err {
+            ProviderError::Timeout { .. } => Self::new::<pyo3::exceptions::PyTimeoutError, _>(msg),
+            ProviderError::ConnectionFailed { .. } => {
+                Self::new::<pyo3::exceptions::PyConnectionError, _>(msg)
+            }
+            ProviderError::RateLimited { .. }
+            | ProviderError::RpcError { .. }
+            | ProviderError::SerializationError { .. }
+            | ProviderError::InvalidResponse { .. }
+            | ProviderError::AnvilError { .. }
+            | ProviderError::Other { .. } => Self::new::<pyo3::exceptions::PyRuntimeError, _>(msg),
+            _ => Self::new::<PyValueError, _>(msg),
+        }
     }
 }
 

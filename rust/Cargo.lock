@@ -1647,6 +1647,7 @@ version = "0.0.0"
 dependencies = [
  "alloy",
  "criterion",
+ "futures",
  "log",
  "num-bigint",
  "parking_lot",

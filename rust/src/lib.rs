@@ -13,10 +13,12 @@
 //! - [`contract`] - Smart contract interface
 //! - [`async_provider`] - Async Ethereum provider
 //! - [`async_contract`] - Async contract interface
+//! - [`signature_parser`] - Robust function signature parsing
 //!
 //! See individual module documentation for usage examples.
 
 pub mod abi_decoder;
+pub mod abi_types;
 pub mod address_utils;
 pub mod async_contract;
 pub mod async_provider;
@@ -28,6 +30,7 @@ pub mod fast_hexbytes;
 pub mod provider;
 pub mod provider_py;
 pub mod runtime;
+pub mod signature_parser;
 pub mod tick_math;
 pub mod utils;
 

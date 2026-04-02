@@ -1,8 +1,25 @@
 //! Shared Tokio runtime management.
 //!
-//! This module provides a singleton runtime instance that can be shared
-//! across multiple Python-bound objects, avoiding the overhead of creating
-//! a separate runtime for each contract or provider instance.
+//! This module provides a singleton multi-threaded Tokio runtime instance
+//! that can be shared across multiple Python-bound objects, avoiding the
+//! overhead of creating a separate runtime for each contract or provider instance.
+//!
+//! # Why Multi-Threaded?
+//!
+//! The runtime uses `Runtime::new()` (multi-threaded scheduler) rather than
+//! `new_current_thread()` to support concurrent RPC calls from multiple Python
+//! threads. With Python 3.13+ free-threading (no GIL), multiple threads can
+//! call into Rust provider/contract methods simultaneously. A multi-threaded
+//! Tokio runtime enables true parallelism for these I/O-bound operations,
+//! while a current-thread runtime would serialize them into a bottleneck.
+//!
+//! Thread count is tunable via the `TOKIO_WORKER_THREADS` environment variable.
+//!
+//! # Lazy Initialization
+//!
+//! The runtime is only created on first call to `get_runtime()`. Pure Rust
+//! functions (`tick_math`, `abi_decoder`, `address_utils`) never initialize
+//! it, so scripts that don't use provider/contract code pay no runtime cost.
 //!
 //! # Usage
 //!

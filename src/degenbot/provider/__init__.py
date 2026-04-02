@@ -313,8 +313,6 @@ class AlloyProvider:
 
     Args:
         rpc_url: HTTP/HTTPS endpoint URL
-        max_connections: Maximum concurrent connections (default: 10)
-        timeout: Request timeout in seconds (default: 30.0)
         max_retries: Maximum retry attempts (default: 10)
         max_blocks_per_request: Maximum blocks per log request (default: 5000)
 
@@ -341,22 +339,16 @@ class AlloyProvider:
     def __init__(
         self,
         rpc_url: str,
-        max_connections: int = 10,
-        timeout: float = 30.0,
         max_retries: int = 10,
         max_blocks_per_request: int = 5000,
     ) -> None:
         self._rpc_url = rpc_url
-        self._max_connections = max_connections
-        self._timeout = timeout
         self._max_retries = max_retries
         self._max_blocks_per_request = max_blocks_per_request
 
         # Initialize Rust provider
         self._provider = _AlloyProvider(
             rpc_url=rpc_url,
-            max_connections=max_connections,
-            timeout=timeout,
             max_retries=max_retries,
             max_blocks_per_request=max_blocks_per_request,
         )

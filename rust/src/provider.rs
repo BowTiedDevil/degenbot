@@ -9,8 +9,10 @@ use alloy::network::Ethereum;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::{Filter, Log};
 use alloy::primitives::{Address, Bytes, B256};
+use alloy::transports::{RpcError, TransportErrorKind};
 use alloy::transports::ipc::IpcConnect;
 use alloy::transports::ws::WsConnect;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -20,7 +22,19 @@ use std::time::Duration;
 fn convert_keys_to_snake_case(value: serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(map) => {
-            let mut new_map = serde_json::Map::new();
+            // First pass: check if any keys need conversion
+            let needs_conversion = map.keys().any(|key| {
+                let snake_key = camel_to_snake_case(key);
+                snake_key != *key
+            });
+
+            if !needs_conversion {
+                // Fast path: return original if all keys are already snake_case
+                return serde_json::Value::Object(map);
+            }
+
+            // Second pass: build new map with converted keys
+            let mut new_map = serde_json::Map::with_capacity(map.len());
             for (key, val) in map {
                 let snake_key = camel_to_snake_case(&key);
                 new_map.insert(snake_key, convert_keys_to_snake_case(val));
@@ -66,39 +80,74 @@ const MAX_RETRY_DELAY_MS: u64 = 30_000; // 30 seconds
 const BACKOFF_MULTIPLIER: u64 = 2;
 const MAX_JITTER_MS: u64 = 100; // Add up to 100ms of jitter
 
-/// Convert an Alloy error to a `ProviderError` with appropriate classification.
-fn alloy_error_to_provider_error(e: impl std::fmt::Display, context: &str) -> ProviderError {
-    let error_str = e.to_string();
-    
-    // Check for specific error patterns and classify appropriately
-    if error_str.contains("429") || error_str.contains("rate limit") || error_str.contains("RateLimit") {
-        ProviderError::RateLimited {
-            message: format!("{context}: {error_str}"),
+/// Convert an Alloy `RpcError` to a `ProviderError` with appropriate classification.
+///
+/// Uses type-based matching on the Alloy error enum instead of string scraping:
+/// - `RpcError::Transport(TransportErrorKind::HttpError)` with 429 → `RateLimited`
+/// - `RpcError::Transport(TransportErrorKind::HttpError)` with 5xx → `ConnectionFailed`
+/// - `RpcError::Transport` with retryable transport errors → `ConnectionFailed`
+/// - `RpcError::ErrorResp` → `RpcError` with the JSON-RPC error code
+/// - `RpcError::LocalUsageError` → `Other`
+/// - Other → `RpcError` with code -1
+fn alloy_error_to_provider_error(e: &RpcError<TransportErrorKind>, context: &str) -> ProviderError {
+    let message = format!("{context}: {e}");
+
+    // Check for transport-level errors
+    if let Some(transport_err) = e.as_transport_err() {
+        // HTTP 429 = rate limited
+        if let Some(http_err) = transport_err.as_http_error() {
+            let status = http_err.status;
+            if status == 429 {
+                return ProviderError::RateLimited { message };
+            }
+            // 5xx server errors are retryable as connection failures
+            if (500..600).contains(&status) {
+                return ProviderError::ConnectionFailed { message };
+            }
         }
-    } else if error_str.contains("timeout") || error_str.contains("timed out") {
-        ProviderError::Timeout {
-            timeout: 30, // Default timeout
-            message: format!("{context}: {error_str}"),
+
+        // Backend gone or pubsub unavailable = connection failed
+        if transport_err.is_backend_gone() || transport_err.is_pubsub_unavailable() {
+            return ProviderError::ConnectionFailed { message };
         }
-    } else if error_str.contains("connection") || error_str.contains("Connection") {
-        ProviderError::ConnectionFailed {
-            message: format!("{context}: {error_str}"),
+
+        // Use Alloy's built-in retry heuristic for other transport errors
+        if transport_err.is_retry_err() {
+            return ProviderError::Timeout {
+                timeout: 30,
+                message,
+            };
         }
-    } else {
-        // Try to extract error code from JSON-RPC error
-        let code = error_str.find("code:").map_or(-1, |code_start| {
-            error_str[code_start..].find(',').map_or(-1, |code_end| {
-                error_str[code_start + 5..code_start + code_end]
-                    .trim()
-                    .parse::<i64>()
-                    .unwrap_or(-1)
-            })
-        });
-        
-        ProviderError::RpcError {
-            code,
-            message: format!("{context}: {error_str}"),
-        }
+
+        // Other transport errors → RPC error
+        return ProviderError::RpcError {
+            code: -1,
+            message,
+        };
+    }
+
+    // Server returned an error response (JSON-RPC error)
+    if let Some(error_resp) = e.as_error_resp() {
+        return ProviderError::RpcError {
+            code: error_resp.code,
+            message,
+        };
+    }
+
+    // Local usage errors (signer errors, pre-processing failures)
+    if e.is_local_usage_error() {
+        return ProviderError::Other { message };
+    }
+
+    // Serialization/deserialization errors
+    if e.is_ser_error() || e.is_deser_error() {
+        return ProviderError::SerializationError { message };
+    }
+
+    // Fallback
+    ProviderError::RpcError {
+        code: -1,
+        message,
     }
 }
 
@@ -211,12 +260,7 @@ impl AlloyProvider {
     ///
     /// Returns `ProviderError::ConnectionFailed` if the HTTP client cannot be created
     /// or IPC connection fails.
-    pub async fn new(
-        rpc_url: &str,
-        _max_connections: u32,
-        _timeout_secs: u64,
-        max_retries: u32,
-    ) -> ProviderResult<Self> {
+    pub async fn new(rpc_url: &str, max_retries: u32) -> ProviderResult<Self> {
         let provider: Arc<dyn Provider<Ethereum>> = if rpc_url.starts_with("http://") || rpc_url.starts_with("https://") {
             // HTTP endpoint - use Alloy's built-in HTTP transport
             let url = rpc_url.parse().map_err(|e| ProviderError::ConnectionFailed {
@@ -265,7 +309,7 @@ impl AlloyProvider {
             let result: u64 = self.inner
                 .get_block_number()
                 .await
-                .map_err(|e| alloy_error_to_provider_error(e, "Failed to get block number"))?;
+                .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get block number"))?;
             Ok(result)
         })
         .await
@@ -281,7 +325,7 @@ impl AlloyProvider {
             let result: u64 = self.inner
                 .get_chain_id()
                 .await
-                .map_err(|e| alloy_error_to_provider_error(e, "Failed to get chain ID"))?;
+                .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get chain ID"))?;
             Ok(result)
         })
         .await
@@ -299,7 +343,7 @@ impl AlloyProvider {
             let result: Vec<Log> = self.inner
                 .get_logs(&alloy_filter)
                 .await
-                .map_err(|e| alloy_error_to_provider_error(e, "Failed to get logs"))?;
+                .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get logs"))?;
             Ok(result)
         })
         .await
@@ -321,7 +365,7 @@ impl AlloyProvider {
             } else {
                 self.inner.get_code_at(*address).await
             }
-            .map_err(|e| alloy_error_to_provider_error(e, "Failed to get code"))?;
+            .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get code"))?;
 
             Ok(result)
         })
@@ -345,14 +389,17 @@ impl AlloyProvider {
             let result = self.inner
                 .get_block_by_number(block_num_tag)
                 .await
-                .map_err(|e| alloy_error_to_provider_error(e, "Failed to get block"))?;
+                .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get block"))?;
             
             // Serialize the full block and convert keys to snake_case
             let json_value = result.map(|block| {
-                let value = serde_json::to_value(block)
-                    .unwrap_or(serde_json::Value::Null);
-                convert_keys_to_snake_case(value)
-            });
+                let value = serde_json::to_value(block).map_err(|e| {
+                    ProviderError::SerializationError {
+                        message: format!("Failed to serialize block: {e}"),
+                    }
+                })?;
+                Ok(convert_keys_to_snake_case(value))
+            }).transpose()?;
             
             Ok(json_value)
         })
@@ -395,13 +442,9 @@ impl AlloyProvider {
                     }
 
                     // Calculate delay with exponential backoff and jitter
-                    // Add random jitter to prevent thundering herd
-                    let jitter = if MAX_JITTER_MS > 0 {
-                        rand::random::<u64>() % MAX_JITTER_MS
-                    } else {
-                        0
-                    };
-                    
+                    // Use random_range for uniform distribution (avoids modulo bias)
+                    let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
+
                     let sleep_duration = Duration::from_millis(delay_ms + jitter);
                     tokio::time::sleep(sleep_duration).await;
 
@@ -441,7 +484,7 @@ impl AlloyProvider {
                 self.inner.call(tx).block(block.into()).await
             } else {
                 self.inner.call(tx).await
-            }.map_err(|e| alloy_error_to_provider_error(e, "eth_call failed"))?;
+            }.map_err(|e| alloy_error_to_provider_error(&e, "eth_call failed"))?;
 
             Ok(result)
         })
@@ -458,7 +501,7 @@ impl AlloyProvider {
             let result: u128 = self.inner
                 .get_gas_price()
                 .await
-                .map_err(|e| alloy_error_to_provider_error(e, "Failed to get gas price"))?;
+                .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get gas price"))?;
             Ok(result)
         })
         .await
@@ -504,7 +547,7 @@ impl AlloyProvider {
                 self.inner.estimate_gas(tx).block(block.into()).await
             } else {
                 self.inner.estimate_gas(tx).await
-            }.map_err(|e| alloy_error_to_provider_error(e, "Failed to estimate gas"))?;
+            }.map_err(|e| alloy_error_to_provider_error(&e, "Failed to estimate gas"))?;
 
             Ok(result)
         })
@@ -532,15 +575,14 @@ impl AlloyProvider {
             let result = self.inner
                 .get_transaction_by_hash(hash)
                 .await
-                .map_err(|e| alloy_error_to_provider_error(e, "Failed to get transaction"))?;
+                .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get transaction"))?;
 
-            // Convert to JSON value - use serde to handle the inner transaction structure
+            // Convert to JSON value
             let json_value = result.map(|tx| {
-                // First serialize to JSON string, then parse back to Value
-                // This handles the nested structure correctly
-                let json_str = serde_json::to_string(&tx).unwrap_or_default();
-                serde_json::from_str(&json_str).unwrap_or_else(|_| serde_json::json!({}))
-            });
+                serde_json::to_value(&tx).map_err(|e| ProviderError::SerializationError {
+                    message: format!("Failed to serialize transaction: {e}"),
+                })
+            }).transpose()?;
 
             Ok(json_value)
         })
@@ -568,14 +610,14 @@ impl AlloyProvider {
             let result = self.inner
                 .get_transaction_receipt(hash)
                 .await
-                .map_err(|e| alloy_error_to_provider_error(e, "Failed to get transaction receipt"))?;
+                .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get transaction receipt"))?;
 
-            // Convert to JSON value - use serde to handle the receipt structure
+            // Convert to JSON value
             let json_value = result.map(|receipt| {
-                // First serialize to JSON string, then parse back to Value
-                let json_str = serde_json::to_string(&receipt).unwrap_or_default();
-                serde_json::from_str(&json_str).unwrap_or_else(|_| serde_json::json!({}))
-            });
+                serde_json::to_value(&receipt).map_err(|e| ProviderError::SerializationError {
+                    message: format!("Failed to serialize transaction receipt: {e}"),
+                })
+            }).transpose()?;
 
             Ok(json_value)
         })

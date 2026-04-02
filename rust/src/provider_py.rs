@@ -3,14 +3,14 @@
 use crate::fast_hexbytes::create_fast_hexbytes;
 use crate::provider::{AlloyProvider, LogFetcher, LogFilter};
 use crate::runtime::get_runtime;
-use crate::utils::json_to_py_with_hexbytes;
+use crate::utils::{json_to_py_with_hexbytes, log_to_py_dict};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList};
+use pyo3::types::{PyBytes, PyList};
 use std::sync::Arc;
 
 /// Python wrapper for `LogFilter`.
-#[pyclass(name = "LogFilter", from_py_object)]
+#[pyclass(name = "LogFilter", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyLogFilter {
     pub inner: LogFilter,
@@ -74,19 +74,16 @@ impl PyAlloyProvider {
     /// - HTTP/HTTPS URLs use HTTP transport with connection pooling
     /// - File paths (Unix: /path, Windows: \\.\pipe\...) use IPC transport
     #[new]
-    #[pyo3(signature = (rpc_url, max_connections=10, timeout=30.0, max_retries=10, max_blocks_per_request=5000))]
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+    #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000))]
     fn new(
         rpc_url: &str,
-        max_connections: u32,
-        timeout: f64,
         max_retries: u32,
         max_blocks_per_request: u64,
     ) -> PyResult<Self> {
         // Use the shared runtime to create the provider
         let provider = get_runtime()
             .block_on(async {
-                AlloyProvider::new(rpc_url, max_connections, timeout as u64, max_retries).await
+                AlloyProvider::new(rpc_url, max_retries).await
             })
             .map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
 
@@ -122,51 +119,9 @@ impl PyAlloyProvider {
             .map_err(|e| PyValueError::new_err(format!("Failed to fetch logs: {e}")))?;
 
         // Convert logs to Python list of dicts with HexBytes for appropriate fields
-        // Use optimized path: Alloy stores raw bytes, access directly without hex decode
         let py_logs = PyList::empty(py);
         for log in logs {
-            let dict = PyDict::new(py);
-
-            // address: access inner bytes array directly (Address is wrapper around [u8; 20])
-            let address = log.address();
-            let address_fhb = create_fast_hexbytes(py, address.as_ref())?;
-            dict.set_item("address", address_fhb)?;
-
-            // topics: list of B256 hashes (B256 is wrapper around [u8; 32])
-            let topics_list = PyList::empty(py);
-            for topic in log.topics() {
-                let topic_fhb = create_fast_hexbytes(py, topic.as_ref())?;
-                topics_list.append(topic_fhb)?;
-            }
-            dict.set_item("topics", topics_list)?;
-
-            // data: dynamic bytes (alloy::primitives::Bytes wraps Vec<u8>)
-            let data = &log.data().data;
-            let data_fhb = create_fast_hexbytes(py, data)?;
-            dict.set_item("data", data_fhb)?;
-
-            // blockNumber as int
-            dict.set_item("blockNumber", log.block_number)?;
-
-            // blockHash as FastHexBytes (optional)
-            if let Some(block_hash) = log.block_hash {
-                let block_hash_fhb = create_fast_hexbytes(py, block_hash.as_ref())?;
-                dict.set_item("blockHash", block_hash_fhb)?;
-            } else {
-                dict.set_item("blockHash", py.None())?;
-            }
-
-            // transactionHash as FastHexBytes (optional)
-            if let Some(tx_hash) = log.transaction_hash {
-                let tx_hash_fhb = create_fast_hexbytes(py, tx_hash.as_ref())?;
-                dict.set_item("transactionHash", tx_hash_fhb)?;
-            } else {
-                dict.set_item("transactionHash", py.None())?;
-            }
-
-            // logIndex as int
-            dict.set_item("logIndex", log.log_index)?;
-
+            let dict = log_to_py_dict(py, &log)?;
             py_logs.append(dict)?;
         }
 

@@ -59,22 +59,18 @@ class AsyncAlloyProvider:
     async def create(
         cls,
         rpc_url: str,
-        max_connections: int = 10,
-        timeout: float = 30.0,
         max_retries: int = 10,
     ) -> AsyncAlloyProvider:
         """Create a new async provider.
 
         Args:
             rpc_url: RPC endpoint URL
-            max_connections: Max concurrent connections (not yet implemented)
-            timeout: Request timeout (not yet implemented)
-            max_retries: Max retry attempts (not yet implemented)
+            max_retries: Max retry attempts
 
         Returns:
             A new AsyncAlloyProvider instance
         """
-        provider = await _AsyncAlloyProvider.create(rpc_url, max_connections, timeout, max_retries)
+        provider = await _AsyncAlloyProvider.create(rpc_url, max_retries)
         return cls(provider, rpc_url)
 
     @property

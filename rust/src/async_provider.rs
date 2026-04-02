@@ -4,10 +4,9 @@
 //! Ethereum RPC operations.
 
 use crate::errors::ProviderResult;
-use crate::fast_hexbytes::create_fast_hexbytes;
 use crate::provider::{AlloyProvider, LogFilter};
 use crate::provider_py::PyAlloyProvider;
-use crate::utils::json_to_py_with_hexbytes;
+use crate::utils::{json_to_py_with_hexbytes, log_to_py_dict};
 use alloy::rpc::types::Log;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
@@ -93,22 +92,17 @@ impl PyAsyncAlloyProvider {
     ///
     /// # Arguments
     /// * `rpc_url` - The RPC endpoint URL
-    /// * `max_connections` - Maximum number of concurrent connections (default: 10)
-    /// * `timeout` - Request timeout in seconds (default: 30.0)
     /// * `max_retries` - Maximum retry attempts (default: 10)
     #[staticmethod]
-    #[pyo3(signature = (rpc_url, max_connections=10, timeout=30.0, max_retries=10))]
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+    #[pyo3(signature = (rpc_url, max_retries=10))]
     fn create(
         py: Python<'_>,
         rpc_url: String,
-        max_connections: u32,
-        timeout: f64,
         max_retries: u32,
     ) -> PyResult<Bound<'_, PyAny>> {
         future_into_py(py, async move {
             let provider =
-                AlloyProvider::new(&rpc_url, max_connections, timeout as u64, max_retries)
+                AlloyProvider::new(&rpc_url, max_retries)
                     .await
                     .map_err(|e| {
                         pyo3::exceptions::PyValueError::new_err(format!(
@@ -170,48 +164,7 @@ impl PyAsyncAlloyProvider {
                 let py_logs = PyList::empty(py);
 
                 for log in logs {
-                    let dict = pyo3::types::PyDict::new(py);
-
-                    // address: access inner bytes array directly (Address is wrapper around [u8; 20])
-                    let address = log.address();
-                    let address_fhb = create_fast_hexbytes(py, address.as_ref())?;
-                    dict.set_item("address", address_fhb)?;
-
-                    // topics: list of B256 hashes (B256 is wrapper around [u8; 32])
-                    let topics_list = PyList::empty(py);
-                    for topic in log.topics() {
-                        let topic_fhb = create_fast_hexbytes(py, topic.as_ref())?;
-                        topics_list.append(topic_fhb)?;
-                    }
-                    dict.set_item("topics", topics_list)?;
-
-                    // data: dynamic bytes (alloy::primitives::Bytes wraps Vec<u8>)
-                    let data = &log.data().data;
-                    let data_fhb = create_fast_hexbytes(py, data)?;
-                    dict.set_item("data", data_fhb)?;
-
-                    // blockNumber as int
-                    dict.set_item("blockNumber", log.block_number)?;
-
-                    // blockHash as FastHexBytes (optional)
-                    if let Some(block_hash) = log.block_hash {
-                        let block_hash_fhb = create_fast_hexbytes(py, block_hash.as_ref())?;
-                        dict.set_item("blockHash", block_hash_fhb)?;
-                    } else {
-                        dict.set_item("blockHash", py.None())?;
-                    }
-
-                    // transactionHash as FastHexBytes (optional)
-                    if let Some(tx_hash) = log.transaction_hash {
-                        let tx_hash_fhb = create_fast_hexbytes(py, tx_hash.as_ref())?;
-                        dict.set_item("transactionHash", tx_hash_fhb)?;
-                    } else {
-                        dict.set_item("transactionHash", py.None())?;
-                    }
-
-                    // logIndex as int
-                    dict.set_item("logIndex", log.log_index)?;
-
+                    let dict = log_to_py_dict(py, &log)?;
                     py_logs.append(dict)?;
                 }
 

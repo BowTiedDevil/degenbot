@@ -7,6 +7,7 @@ use alloy::hex;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
+use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
 
 /// Python wrapper for a Contract.
@@ -22,21 +23,26 @@ impl PyContract {
     /// Args:
     ///     address: Contract address (hex string)
     ///     `provider_url`: RPC provider URL (optional, defaults to localhost)
-    #[new]
+    #[staticmethod]
     #[pyo3(signature = (address, provider_url=None))]
-    fn new(address: &str, provider_url: Option<&str>) -> PyResult<Self> {
+    fn create(
+        py: Python<'_>,
+        address: String,
+        provider_url: Option<String>,
+    ) -> PyResult<Bound<'_, PyAny>> {
         // Default provider URL if not provided
-        let url = provider_url.unwrap_or("http://localhost:8545");
+        let url = provider_url.unwrap_or_else(|| "http://localhost:8545".to_string());
 
-        // Use the shared runtime to create the provider
-        let provider = get_runtime().block_on(async {
-            AlloyProvider::new(url, 10, 30, 10).await
-        }).map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
+        future_into_py(py, async move {
+            let provider = AlloyProvider::new(&url, 10)
+                .await
+                .map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
 
-        let contract =
-            Contract::new(address, Arc::new(provider)).map_err(|e| PyValueError::new_err(format!("{e}")))?;
+            let contract = Contract::new(&address, Arc::new(provider))
+                .map_err(|e| PyValueError::new_err(format!("{e}")))?;
 
-        Ok(Self { contract })
+            Ok(Self { contract })
+        })
     }
 
     /// Execute a contract call.
@@ -57,9 +63,11 @@ impl PyContract {
         block_number: Option<u64>,
     ) -> PyResult<Py<PyList>> {
         // Use the shared runtime to execute async code
-        let result = get_runtime().block_on(async {
-            self.contract.call(function_signature, &args, block_number).await
-        }).map_err(|e| PyValueError::new_err(format!("Contract call failed: {e}")))?;
+        let result = get_runtime()
+            .block_on(async {
+                self.contract.call(function_signature, &args, block_number).await
+            })
+            .map_err(|e| PyValueError::new_err(format!("Contract call failed: {e}")))?;
 
         // Convert results to Python list
         let py_list = PyList::empty(py);
@@ -115,7 +123,8 @@ fn encode_function_call(function_signature: &str, args: Vec<String>) -> PyResult
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 fn decode_return_data(data: &[u8], output_types: Vec<String>) -> PyResult<Vec<String>> {
-    use crate::contract::{decode_return_data as decode_impl, AbiType};
+    use crate::abi_types::AbiType;
+    use crate::contract::decode_return_data as decode_impl;
 
     let types: Vec<AbiType> = output_types
         .iter()

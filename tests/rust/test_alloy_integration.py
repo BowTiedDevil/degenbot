@@ -192,8 +192,6 @@ class TestProviderInitialization:
         """Test AlloyProvider can be initialized with custom parameters."""
         provider = AlloyProvider(
             rpc_url="https://example.com/rpc",
-            max_connections=20,
-            timeout=60.0,
             max_retries=5,
             max_blocks_per_request=1000,
         )
