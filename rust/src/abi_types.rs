@@ -90,10 +90,18 @@ impl fmt::Display for AbiTypeError {
             Self::UnknownType(t) => write!(f, "Unknown ABI type: {t}"),
             Self::InvalidArraySize(s) => write!(f, "Invalid array size: {s}"),
             Self::InvalidBitWidth { type_name, bits } => {
-                write!(f, "Invalid bit width for {type_name}: {bits}")
+                if *bits == 0 {
+                    write!(f, "Invalid bit width for {type_name}: expected number after 'int'/'uint'")
+                } else {
+                    write!(f, "Invalid bit width for {type_name}: {bits} (must be 8-256, multiple of 8)")
+                }
             }
             Self::InvalidByteSize { type_name, size } => {
-                write!(f, "Invalid byte size for {type_name}: {size}")
+                if *size == 0 {
+                    write!(f, "Invalid byte size for {type_name}: expected number after 'bytes'")
+                } else {
+                    write!(f, "Invalid byte size for {type_name}: {size} (must be 1-32)")
+                }
             }
         }
     }
@@ -175,6 +183,7 @@ fn parse_abi_type(s: &str) -> Result<AbiType, AbiTypeError> {
 }
 
 /// Parse a normalized base type string (no arrays).
+#[allow(clippy::option_if_let_else)]
 fn parse_base_type(normalized: &str) -> Result<AbiType, AbiTypeError> {
     match normalized {
         "address" => Ok(AbiType::Address),
@@ -183,35 +192,41 @@ fn parse_base_type(normalized: &str) -> Result<AbiType, AbiTypeError> {
         "string" => Ok(AbiType::String),
         t => {
             if let Some(n_str) = t.strip_prefix("bytes") {
-                let n = n_str
-                    .parse::<usize>()
-                    .ok()
-                    .filter(|&n| n > 0 && n <= 32)
-                    .ok_or_else(|| AbiTypeError::InvalidByteSize {
+                match n_str.parse::<usize>() {
+                    Ok(n) if n > 0 && n <= 32 => Ok(AbiType::FixedBytes(n)),
+                    Ok(n) => Err(AbiTypeError::InvalidByteSize {
                         type_name: t.to_string(),
-                        size: n_str.parse().unwrap_or(0),
-                    })?;
-                Ok(AbiType::FixedBytes(n))
+                        size: n,
+                    }),
+                    Err(_) => Err(AbiTypeError::InvalidByteSize {
+                        type_name: t.to_string(),
+                        size: 0,
+                    }),
+                }
             } else if let Some(n_str) = t.strip_prefix("uint") {
-                let bits = n_str
-                    .parse::<usize>()
-                    .ok()
-                    .filter(|&n| n > 0 && n <= 256 && n % 8 == 0)
-                    .ok_or_else(|| AbiTypeError::InvalidBitWidth {
+                match n_str.parse::<usize>() {
+                    Ok(bits) if bits > 0 && bits <= 256 && bits % 8 == 0 => Ok(AbiType::Uint(bits)),
+                    Ok(bits) => Err(AbiTypeError::InvalidBitWidth {
                         type_name: t.to_string(),
-                        bits: n_str.parse().unwrap_or(0),
-                    })?;
-                Ok(AbiType::Uint(bits))
+                        bits,
+                    }),
+                    Err(_) => Err(AbiTypeError::InvalidBitWidth {
+                        type_name: t.to_string(),
+                        bits: 0,
+                    }),
+                }
             } else if let Some(n_str) = t.strip_prefix("int") {
-                let bits = n_str
-                    .parse::<usize>()
-                    .ok()
-                    .filter(|&n| n > 0 && n <= 256 && n % 8 == 0)
-                    .ok_or_else(|| AbiTypeError::InvalidBitWidth {
+                match n_str.parse::<usize>() {
+                    Ok(bits) if bits > 0 && bits <= 256 && bits % 8 == 0 => Ok(AbiType::Int(bits)),
+                    Ok(bits) => Err(AbiTypeError::InvalidBitWidth {
                         type_name: t.to_string(),
-                        bits: n_str.parse().unwrap_or(0),
-                    })?;
-                Ok(AbiType::Int(bits))
+                        bits,
+                    }),
+                    Err(_) => Err(AbiTypeError::InvalidBitWidth {
+                        type_name: t.to_string(),
+                        bits: 0,
+                    }),
+                }
             } else {
                 Err(AbiTypeError::UnknownType(t.to_string()))
             }
@@ -315,6 +330,35 @@ mod tests {
             AbiType::parse("uint256[invalid]"),
             Err(AbiTypeError::InvalidArraySize(_))
         ));
+    }
+
+    #[test]
+    fn test_parse_invalid_types_error_messages() {
+        // Non-numeric suffix should give clear "expected number" message
+        let err = AbiType::parse("bytesfoo").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("expected number"), "Error message: {msg}");
+
+        let err = AbiType::parse("uintbar").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("expected number"), "Error message: {msg}");
+
+        let err = AbiType::parse("intbaz").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("expected number"), "Error message: {msg}");
+
+        // Out-of-range values should show the actual value and constraints
+        let err = AbiType::parse("bytes33").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains('3') && msg.contains("must be 1-32"), "Error message: {msg}");
+
+        let err = AbiType::parse("uint7").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains('7') && msg.contains("multiple of 8"), "Error message: {msg}");
+
+        let err = AbiType::parse("uint257").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("257") && msg.contains("8-256"), "Error message: {msg}");
     }
 
     #[test]

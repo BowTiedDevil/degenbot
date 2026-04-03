@@ -123,7 +123,7 @@ impl FastHexBytes {
             if idx < 0 || idx >= len {
                 return Err(PyIndexError::new_err("index out of range"));
             }
-            let idx_usize: usize = idx.try_into().unwrap_or(0);
+            let idx_usize: usize = idx.cast_unsigned();
             return Ok(self.bytes[idx_usize].into_pyobject(py)?.into_any());
         }
 
