@@ -71,9 +71,15 @@ The enrichment layer handles both systems independently:
 **TokenMathFactory mapping (by pool version):**
 ```python
 _TOKEN_MATH = {
-    1: HalfUpRoundingMath, 2: HalfUpRoundingMath, 3: HalfUpRoundingMath,
-    4: ExplicitRoundingMath, 5: ExplicitRoundingMath, 6: ExplicitRoundingMath,
-    7: ExplicitRoundingMath, 8: ExplicitRoundingMath, 9: ExplicitRoundingMath,
+    1: HalfUpRoundingMath,
+    2: HalfUpRoundingMath,
+    3: HalfUpRoundingMath,
+    4: ExplicitRoundingMath,
+    5: ExplicitRoundingMath,
+    6: ExplicitRoundingMath,
+    7: ExplicitRoundingMath,
+    8: ExplicitRoundingMath,
+    9: ExplicitRoundingMath,
     10: ExplicitRoundingMath,
 }
 ```
@@ -290,10 +296,10 @@ These diagrams help identify:
 ```python
 # In aave_transaction_operations.py
 class ScaledTokenEventType(StrEnum):
-    COLLATERAL_TRANSFER = auto()      # AToken BalanceTransfer (has index)
+    COLLATERAL_TRANSFER = auto()  # AToken BalanceTransfer (has index)
     ERC20_COLLATERAL_TRANSFER = auto()  # Standard ERC20 Transfer (no index)
-    DEBT_TRANSFER = auto()            # vToken BalanceTransfer (has index)
-    ERC20_DEBT_TRANSFER = auto()      # Standard ERC20 Transfer (no index)
+    DEBT_TRANSFER = auto()  # vToken BalanceTransfer (has index)
+    ERC20_DEBT_TRANSFER = auto()  # Standard ERC20 Transfer (no index)
 ```
 
 **Enrichment Handling:**
@@ -413,7 +419,7 @@ Separate matching from validation:
 # Matching phase - trust the semantic relationship
 matched_event = find_event(user=user, asset=asset)
 
-# Processing phase - validate amounts make sense  
+# Processing phase - validate amounts make sense
 if matched_event.amount > position.balance * 2:
     logger.warning(f"Unusually large burn: {matched_event.amount}")
 ```
