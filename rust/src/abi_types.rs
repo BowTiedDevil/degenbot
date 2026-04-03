@@ -91,16 +91,28 @@ impl fmt::Display for AbiTypeError {
             Self::InvalidArraySize(s) => write!(f, "Invalid array size: {s}"),
             Self::InvalidBitWidth { type_name, bits } => {
                 if *bits == 0 {
-                    write!(f, "Invalid bit width for {type_name}: expected number after 'int'/'uint'")
+                    write!(
+                        f,
+                        "Invalid bit width for {type_name}: expected number after 'int'/'uint'"
+                    )
                 } else {
-                    write!(f, "Invalid bit width for {type_name}: {bits} (must be 8-256, multiple of 8)")
+                    write!(
+                        f,
+                        "Invalid bit width for {type_name}: {bits} (must be 8-256, multiple of 8)"
+                    )
                 }
             }
             Self::InvalidByteSize { type_name, size } => {
                 if *size == 0 {
-                    write!(f, "Invalid byte size for {type_name}: expected number after 'bytes'")
+                    write!(
+                        f,
+                        "Invalid byte size for {type_name}: expected number after 'bytes'"
+                    )
                 } else {
-                    write!(f, "Invalid byte size for {type_name}: {size} (must be 1-32)")
+                    write!(
+                        f,
+                        "Invalid byte size for {type_name}: {size} (must be 1-32)"
+                    )
                 }
             }
         }
@@ -350,15 +362,24 @@ mod tests {
         // Out-of-range values should show the actual value and constraints
         let err = AbiType::parse("bytes33").unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains('3') && msg.contains("must be 1-32"), "Error message: {msg}");
+        assert!(
+            msg.contains('3') && msg.contains("must be 1-32"),
+            "Error message: {msg}"
+        );
 
         let err = AbiType::parse("uint7").unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains('7') && msg.contains("multiple of 8"), "Error message: {msg}");
+        assert!(
+            msg.contains('7') && msg.contains("multiple of 8"),
+            "Error message: {msg}"
+        );
 
         let err = AbiType::parse("uint257").unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("257") && msg.contains("8-256"), "Error message: {msg}");
+        assert!(
+            msg.contains("257") && msg.contains("8-256"),
+            "Error message: {msg}"
+        );
     }
 
     #[test]

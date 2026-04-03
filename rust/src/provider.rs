@@ -7,13 +7,13 @@
 use crate::errors::{ProviderError, ProviderResult};
 use alloy::consensus::{Header as ConsensusHeader, TxEnvelope};
 use alloy::network::Ethereum;
+use alloy::primitives::{Address, Bytes, B256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::eth::{Block, Header as RpcHeader, Transaction};
 use alloy::rpc::types::{Filter, Log};
-use alloy::primitives::{Address, Bytes, B256};
-use alloy::transports::{RpcError, TransportErrorKind};
 use alloy::transports::ipc::IpcConnect;
 use alloy::transports::ws::WsConnect;
+use alloy::transports::{RpcError, TransportErrorKind};
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -66,10 +66,7 @@ fn alloy_error_to_provider_error(e: &RpcError<TransportErrorKind>, context: &str
         }
 
         // Other transport errors → RPC error
-        return ProviderError::RpcError {
-            code: -1,
-            message,
-        };
+        return ProviderError::RpcError { code: -1, message };
     }
 
     // Server returned an error response (JSON-RPC error)
@@ -91,10 +88,7 @@ fn alloy_error_to_provider_error(e: &RpcError<TransportErrorKind>, context: &str
     }
 
     // Fallback
-    ProviderError::RpcError {
-        code: -1,
-        message,
-    }
+    ProviderError::RpcError { code: -1, message }
 }
 
 /// Filter criteria for log fetching.
@@ -119,7 +113,10 @@ impl LogFilter {
         topics: Option<Vec<Vec<String>>>,
     ) -> ProviderResult<Self> {
         if from_block > to_block {
-            return Err(ProviderError::InvalidBlockRange { from: from_block, to: to_block });
+            return Err(ProviderError::InvalidBlockRange {
+                from: from_block,
+                to: to_block,
+            });
         }
 
         Ok(Self {
@@ -221,36 +218,38 @@ impl AlloyProvider {
     /// Returns `ProviderError::ConnectionFailed` if the HTTP client cannot be created
     /// or IPC connection fails.
     pub async fn new(rpc_url: &str, max_retries: u32) -> ProviderResult<Self> {
-        let provider: Arc<dyn Provider<Ethereum>> = if rpc_url.starts_with("http://") || rpc_url.starts_with("https://") {
-            // HTTP endpoint - use Alloy's built-in HTTP transport
-            let url = rpc_url.parse().map_err(|e| ProviderError::ConnectionFailed {
-                message: format!("Invalid RPC URL: {e}"),
-            })?;
+        let provider: Arc<dyn Provider<Ethereum>> =
+            if rpc_url.starts_with("http://") || rpc_url.starts_with("https://") {
+                // HTTP endpoint - use Alloy's built-in HTTP transport
+                let url = rpc_url
+                    .parse()
+                    .map_err(|e| ProviderError::ConnectionFailed {
+                        message: format!("Invalid RPC URL: {e}"),
+                    })?;
 
-            let provider = ProviderBuilder::<_, _, Ethereum>::new()
-                .connect_http(url);
-            Arc::new(provider)
-        } else if rpc_url.starts_with("ws://") || rpc_url.starts_with("wss://") {
-            // WebSocket connection
-            let ws_connect = WsConnect::new(rpc_url.to_string());
-            let provider = ProviderBuilder::<_, _, Ethereum>::new()
-                .connect_ws(ws_connect)
-                .await
-                .map_err(|e| ProviderError::ConnectionFailed {
-                    message: format!("Failed to connect to WebSocket endpoint: {e}"),
-                })?;
-            Arc::new(provider)
-        } else {
-            // IPC connection via Unix domain socket or Windows named pipe
-            let ipc_connect: IpcConnect<String> = IpcConnect::new(rpc_url.to_string());
-            let provider = ProviderBuilder::<_, _, Ethereum>::new()
-                .connect_ipc(ipc_connect)
-                .await
-                .map_err(|e| ProviderError::ConnectionFailed {
-                    message: format!("Failed to connect to IPC endpoint: {e}"),
-                })?;
-            Arc::new(provider)
-        };
+                let provider = ProviderBuilder::<_, _, Ethereum>::new().connect_http(url);
+                Arc::new(provider)
+            } else if rpc_url.starts_with("ws://") || rpc_url.starts_with("wss://") {
+                // WebSocket connection
+                let ws_connect = WsConnect::new(rpc_url.to_string());
+                let provider = ProviderBuilder::<_, _, Ethereum>::new()
+                    .connect_ws(ws_connect)
+                    .await
+                    .map_err(|e| ProviderError::ConnectionFailed {
+                        message: format!("Failed to connect to WebSocket endpoint: {e}"),
+                    })?;
+                Arc::new(provider)
+            } else {
+                // IPC connection via Unix domain socket or Windows named pipe
+                let ipc_connect: IpcConnect<String> = IpcConnect::new(rpc_url.to_string());
+                let provider = ProviderBuilder::<_, _, Ethereum>::new()
+                    .connect_ipc(ipc_connect)
+                    .await
+                    .map_err(|e| ProviderError::ConnectionFailed {
+                        message: format!("Failed to connect to IPC endpoint: {e}"),
+                    })?;
+                Arc::new(provider)
+            };
 
         Ok(Self {
             inner: provider,
@@ -266,7 +265,8 @@ impl AlloyProvider {
     /// Returns `ProviderError::RpcError` if the RPC call fails.
     pub async fn get_block_number(&self) -> ProviderResult<u64> {
         self.retry_with_backoff(|| async {
-            let result: u64 = self.inner
+            let result: u64 = self
+                .inner
                 .get_block_number()
                 .await
                 .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get block number"))?;
@@ -282,7 +282,8 @@ impl AlloyProvider {
     /// Returns `ProviderError::RpcError` if the RPC call fails.
     pub async fn get_chain_id(&self) -> ProviderResult<u64> {
         self.retry_with_backoff(|| async {
-            let result: u64 = self.inner
+            let result: u64 = self
+                .inner
                 .get_chain_id()
                 .await
                 .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get chain ID"))?;
@@ -300,7 +301,8 @@ impl AlloyProvider {
         let alloy_filter = filter.to_alloy_filter()?;
 
         self.retry_with_backoff(|| async {
-            let result: Vec<Log> = self.inner
+            let result: Vec<Log> = self
+                .inner
                 .get_logs(&alloy_filter)
                 .await
                 .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get logs"))?;
@@ -321,7 +323,10 @@ impl AlloyProvider {
     ) -> ProviderResult<Bytes> {
         self.retry_with_backoff(|| async {
             let result = if let Some(block) = block_number {
-                self.inner.get_code_at(*address).block_id(block.into()).await
+                self.inner
+                    .get_code_at(*address)
+                    .block_id(block.into())
+                    .await
             } else {
                 self.inner.get_code_at(*address).await
             }
@@ -342,14 +347,13 @@ impl AlloyProvider {
     pub async fn get_block(
         &self,
         block_number: u64,
-    ) -> ProviderResult<
-        Option<Block<Transaction<TxEnvelope>, RpcHeader<ConsensusHeader>>>,
-    > {
+    ) -> ProviderResult<Option<Block<Transaction<TxEnvelope>, RpcHeader<ConsensusHeader>>>> {
         use alloy::eips::BlockNumberOrTag;
 
         self.retry_with_backoff(|| async {
             let block_num_tag = BlockNumberOrTag::Number(block_number);
-            let result = self.inner
+            let result = self
+                .inner
                 .get_block_by_number(block_num_tag)
                 .await
                 .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get block"))?;
@@ -437,7 +441,8 @@ impl AlloyProvider {
                 self.inner.call(tx).block(block.into()).await
             } else {
                 self.inner.call(tx).await
-            }.map_err(|e| alloy_error_to_provider_error(&e, "eth_call failed"))?;
+            }
+            .map_err(|e| alloy_error_to_provider_error(&e, "eth_call failed"))?;
 
             Ok(result)
         })
@@ -451,7 +456,8 @@ impl AlloyProvider {
     /// Returns `ProviderError::RpcError` if the RPC call fails.
     pub async fn get_gas_price(&self) -> ProviderResult<u128> {
         self.retry_with_backoff(|| async {
-            let result: u128 = self.inner
+            let result: u128 = self
+                .inner
                 .get_gas_price()
                 .await
                 .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get gas price"))?;
@@ -500,7 +506,8 @@ impl AlloyProvider {
                 self.inner.estimate_gas(tx).block(block.into()).await
             } else {
                 self.inner.estimate_gas(tx).await
-            }.map_err(|e| alloy_error_to_provider_error(&e, "Failed to estimate gas"))?;
+            }
+            .map_err(|e| alloy_error_to_provider_error(&e, "Failed to estimate gas"))?;
 
             Ok(result)
         })
@@ -519,23 +526,25 @@ impl AlloyProvider {
         use alloy::primitives::FixedBytes;
         use std::str::FromStr;
 
-        let hash = FixedBytes::from_str(tx_hash)
-            .map_err(|e| ProviderError::InvalidParams {
-                message: format!("Invalid transaction hash: {e}"),
-            })?;
+        let hash = FixedBytes::from_str(tx_hash).map_err(|e| ProviderError::InvalidParams {
+            message: format!("Invalid transaction hash: {e}"),
+        })?;
 
         self.retry_with_backoff(|| async {
-            let result = self.inner
+            let result = self
+                .inner
                 .get_transaction_by_hash(hash)
                 .await
                 .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get transaction"))?;
 
             // Convert to JSON value
-            let json_value = result.map(|tx| {
-                serde_json::to_value(&tx).map_err(|e| ProviderError::SerializationError {
-                    message: format!("Failed to serialize transaction: {e}"),
+            let json_value = result
+                .map(|tx| {
+                    serde_json::to_value(&tx).map_err(|e| ProviderError::SerializationError {
+                        message: format!("Failed to serialize transaction: {e}"),
+                    })
                 })
-            }).transpose()?;
+                .transpose()?;
 
             Ok(json_value)
         })
@@ -554,23 +563,27 @@ impl AlloyProvider {
         use alloy::primitives::FixedBytes;
         use std::str::FromStr;
 
-        let hash = FixedBytes::from_str(tx_hash)
-            .map_err(|e| ProviderError::InvalidParams {
-                message: format!("Invalid transaction hash: {e}"),
-            })?;
+        let hash = FixedBytes::from_str(tx_hash).map_err(|e| ProviderError::InvalidParams {
+            message: format!("Invalid transaction hash: {e}"),
+        })?;
 
         self.retry_with_backoff(|| async {
-            let result = self.inner
+            let result = self
+                .inner
                 .get_transaction_receipt(hash)
                 .await
-                .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get transaction receipt"))?;
+                .map_err(|e| {
+                    alloy_error_to_provider_error(&e, "Failed to get transaction receipt")
+                })?;
 
             // Convert to JSON value
-            let json_value = result.map(|receipt| {
-                serde_json::to_value(&receipt).map_err(|e| ProviderError::SerializationError {
-                    message: format!("Failed to serialize transaction receipt: {e}"),
+            let json_value = result
+                .map(|receipt| {
+                    serde_json::to_value(&receipt).map_err(|e| ProviderError::SerializationError {
+                        message: format!("Failed to serialize transaction receipt: {e}"),
+                    })
                 })
-            }).transpose()?;
+                .transpose()?;
 
             Ok(json_value)
         })
@@ -608,7 +621,10 @@ impl LogFetcher {
         topics: Option<Vec<Vec<String>>>,
     ) -> ProviderResult<Vec<Log>> {
         if from_block > to_block {
-            return Err(ProviderError::InvalidBlockRange { from: from_block, to: to_block });
+            return Err(ProviderError::InvalidBlockRange {
+                from: from_block,
+                to: to_block,
+            });
         }
 
         let mut all_logs = Vec::new();
@@ -618,7 +634,8 @@ impl LogFetcher {
             let chunk_end =
                 std::cmp::min(current_block + self.max_blocks_per_request - 1, to_block);
 
-            let filter = LogFilter::new(current_block, chunk_end, addresses.clone(), topics.clone())?;
+            let filter =
+                LogFilter::new(current_block, chunk_end, addresses.clone(), topics.clone())?;
             let logs = self.provider.get_logs(&filter).await?;
             all_logs.extend(logs);
 
@@ -641,7 +658,8 @@ mod tests {
             200,
             Some(vec!["0x1234567890abcdef".to_string()]),
             Some(vec![vec!["0xabcd1234".to_string()]]),
-        ).expect("valid log filter should be created");
+        )
+        .expect("valid log filter should be created");
 
         assert_eq!(filter.from_block, Some(100));
         assert_eq!(filter.to_block, Some(200));
@@ -669,9 +687,18 @@ mod tests {
         let alloy_filter = filter.to_alloy_filter().expect("conversion succeeds");
         let topics = &alloy_filter.topics;
 
-        assert_eq!(topics[0].clone().into_iter().collect::<Vec<_>>(), vec![B256::from_str(topic0_val).unwrap()]);
-        assert_eq!(topics[1].clone().into_iter().collect::<Vec<_>>(), vec![B256::from_str(topic1_val).unwrap()]);
-        assert_eq!(topics[2].clone().into_iter().collect::<Vec<_>>(), vec![B256::from_str(topic2_val).unwrap()]);
+        assert_eq!(
+            topics[0].clone().into_iter().collect::<Vec<_>>(),
+            vec![B256::from_str(topic0_val).unwrap()]
+        );
+        assert_eq!(
+            topics[1].clone().into_iter().collect::<Vec<_>>(),
+            vec![B256::from_str(topic1_val).unwrap()]
+        );
+        assert_eq!(
+            topics[2].clone().into_iter().collect::<Vec<_>>(),
+            vec![B256::from_str(topic2_val).unwrap()]
+        );
     }
 
     #[test]
@@ -681,11 +708,17 @@ mod tests {
             200,
             None,
             Some(vec![
-                vec!["0x0000000000000000000000000000000000000000000000000000000000000001".to_string()],
+                vec![
+                    "0x0000000000000000000000000000000000000000000000000000000000000001"
+                        .to_string(),
+                ],
                 vec![],
                 vec![],
                 vec![],
-                vec!["0x0000000000000000000000000000000000000000000000000000000000000002".to_string()],
+                vec![
+                    "0x0000000000000000000000000000000000000000000000000000000000000002"
+                        .to_string(),
+                ],
             ]),
         )
         .expect("valid filter");
@@ -702,12 +735,7 @@ mod tests {
 
     #[test]
     fn test_log_filter_invalid_range() {
-        let result = LogFilter::new(
-            200,
-            100,
-            None,
-            None,
-        );
+        let result = LogFilter::new(200, 100, None, None);
 
         assert!(result.is_err());
         match result {
@@ -718,5 +746,4 @@ mod tests {
             _ => panic!("Expected InvalidBlockRange error"),
         }
     }
-
 }

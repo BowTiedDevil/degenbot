@@ -59,7 +59,9 @@ impl PyContract {
         // Use the shared runtime to execute async code
         let result = get_runtime()
             .block_on(async {
-                self.contract.call(function_signature, &args, block_number).await
+                self.contract
+                    .call(function_signature, &args, block_number)
+                    .await
             })
             .map_err(|e| PyValueError::new_err(format!("Contract call failed: {e}")))?;
 

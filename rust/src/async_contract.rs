@@ -25,11 +25,7 @@ impl PyAsyncContract {
     ///     `provider_url`: RPC provider URL (HTTP/HTTPS or IPC path)
     #[staticmethod]
     #[pyo3(signature = (address, provider_url))]
-    fn create(
-        py: Python<'_>,
-        address: String,
-        provider_url: String,
-    ) -> PyResult<Bound<'_, PyAny>> {
+    fn create(py: Python<'_>, address: String, provider_url: String) -> PyResult<Bound<'_, PyAny>> {
         future_into_py(py, async move {
             let provider = AlloyProvider::new(&provider_url, 10)
                 .await

@@ -41,7 +41,9 @@ static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 fn build_runtime() -> Runtime {
-    let env_worker_count = std::env::var(ENV_VAR).ok().and_then(|v| v.parse::<usize>().ok());
+    let env_worker_count = std::env::var(ENV_VAR)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok());
 
     if env_worker_count.is_none() {
         std::env::remove_var(ENV_VAR);
@@ -53,7 +55,10 @@ fn build_runtime() -> Runtime {
         builder.worker_threads(n);
     }
 
-    builder.enable_all().build().expect("Failed to create Tokio runtime")
+    builder
+        .enable_all()
+        .build()
+        .expect("Failed to create Tokio runtime")
 }
 
 /// Get the shared Tokio runtime instance.
@@ -92,7 +97,9 @@ mod tests {
 
         let result = runtime.block_on(async {
             let handle = tokio::spawn(async { 42 });
-            handle.await.expect("spawned task should complete successfully")
+            handle
+                .await
+                .expect("spawned task should complete successfully")
         });
 
         assert_eq!(result, 42);

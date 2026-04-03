@@ -41,20 +41,15 @@ impl PyAsyncAlloyProvider {
     /// * `max_retries` - Maximum retry attempts (default: 10)
     #[staticmethod]
     #[pyo3(signature = (rpc_url, max_retries=10))]
-    fn create(
-        py: Python<'_>,
-        rpc_url: String,
-        max_retries: u32,
-    ) -> PyResult<Bound<'_, PyAny>> {
+    fn create(py: Python<'_>, rpc_url: String, max_retries: u32) -> PyResult<Bound<'_, PyAny>> {
         future_into_py(py, async move {
-            let provider =
-                AlloyProvider::new(&rpc_url, max_retries)
-                    .await
-                    .map_err(|e| {
-                        pyo3::exceptions::PyValueError::new_err(format!(
-                            "Failed to create provider: {e}"
-                        ))
-                    })?;
+            let provider = AlloyProvider::new(&rpc_url, max_retries)
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Failed to create provider: {e}"
+                    ))
+                })?;
 
             Ok(Self {
                 provider: Arc::new(provider),
@@ -116,7 +111,9 @@ impl PyAsyncAlloyProvider {
 
                 Ok::<_, PyErr>(py_logs.unbind())
             })
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to convert logs: {e}")))?;
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to convert logs: {e}"))
+            })?;
 
             Ok::<_, PyErr>(result)
         })

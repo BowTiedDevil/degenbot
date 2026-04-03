@@ -75,16 +75,10 @@ impl PyAlloyProvider {
     /// - File paths (Unix: /path, Windows: \\.\pipe\...) use IPC transport
     #[new]
     #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000))]
-    fn new(
-        rpc_url: &str,
-        max_retries: u32,
-        max_blocks_per_request: u64,
-    ) -> PyResult<Self> {
+    fn new(rpc_url: &str, max_retries: u32, max_blocks_per_request: u64) -> PyResult<Self> {
         // Use the shared runtime to create the provider
         let provider = get_runtime()
-            .block_on(async {
-                AlloyProvider::new(rpc_url, max_retries).await
-            })
+            .block_on(async { AlloyProvider::new(rpc_url, max_retries).await })
             .map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
 
         Ok(Self {
