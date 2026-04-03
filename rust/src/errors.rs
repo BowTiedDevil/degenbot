@@ -166,3 +166,52 @@ impl From<ProviderError> for PyErr {
 
 /// Result type alias for provider operations.
 pub type ProviderResult<T> = Result<T, ProviderError>;
+
+/// Errors that can occur during contract ABI encoding/decoding.
+#[derive(Debug, thiserror::Error, Clone)]
+#[non_exhaustive]
+pub enum ContractError {
+    /// Invalid ABI type or value.
+    #[error("Invalid ABI: {message}")]
+    InvalidAbi {
+        /// Description of the ABI validation failure.
+        message: String,
+    },
+    /// Invalid address format.
+    #[error("Invalid address: {address} - {reason}")]
+    InvalidAddress {
+        /// The address string that failed validation.
+        address: String,
+        /// Why the address is invalid.
+        reason: String,
+    },
+    /// Encoding failure.
+    #[error("Encoding error: {message}")]
+    EncodingError {
+        /// Description of the encoding failure.
+        message: String,
+    },
+    /// Decoding failure.
+    #[error("Decoding error: {message}")]
+    DecodingError {
+        /// Description of the decoding failure.
+        message: String,
+    },
+}
+
+impl From<ContractError> for ProviderError {
+    fn from(err: ContractError) -> Self {
+        Self::Other {
+            message: err.to_string(),
+        }
+    }
+}
+
+impl From<ContractError> for PyErr {
+    fn from(err: ContractError) -> Self {
+        Self::new::<PyValueError, _>(format!("{err}"))
+    }
+}
+
+/// Result type alias for contract ABI encoding/decoding operations.
+pub type ContractResult<T> = Result<T, ContractError>;

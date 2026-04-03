@@ -91,16 +91,18 @@ pub fn to_checksum_address_bytes(bytes: &[u8]) -> Result<String, AddressError> {
 /// }
 /// ```
 #[pyfunction(signature = (address))]
-pub fn to_checksum_address(py: Python<'_>, address: &Bound<'_, PyAny>) -> PyResult<String> {
+pub fn to_checksum_address(address: &Bound<'_, PyAny>) -> PyResult<String> {
+    // GIL detachment is of minor benefit here: the checksum computation is
+    // trivial (Address::from_str + EIP-55 hashing, microseconds), so the
+    // overhead of releasing and reacquiring the GIL would exceed the cost
+    // of simply computing the result while holding it.
     if let Ok(s) = address.extract::<&str>() {
         return to_checksum_address_str(s)
-            .map(|checksummed| py.detach(|| checksummed))
             .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()));
     }
 
     if let Ok(bytes) = address.extract::<&[u8]>() {
         return to_checksum_address_bytes(bytes)
-            .map(|checksummed| py.detach(|| checksummed))
             .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()));
     }
 

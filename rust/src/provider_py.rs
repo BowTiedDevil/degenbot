@@ -3,7 +3,7 @@
 use crate::fast_hexbytes::create_fast_hexbytes;
 use crate::provider::{AlloyProvider, LogFetcher, LogFilter};
 use crate::runtime::get_runtime;
-use crate::utils::{json_to_py_with_hexbytes, log_to_py_dict};
+use crate::utils::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
@@ -221,16 +221,14 @@ impl PyAlloyProvider {
         py: Python<'py>,
         block_number: u64,
     ) -> PyResult<Option<Bound<'py, PyAny>>> {
-        // Use the shared runtime to execute async code
         let block = get_runtime()
             .block_on(async { self.provider.get_block(block_number).await })
             .map_err(|e| PyValueError::new_err(format!("Failed to get block: {e}")))?;
 
         match block {
-            Some(block_json) => {
-                // Use json_to_py_with_hexbytes to convert with automatic HexBytes detection
-                let py_value = json_to_py_with_hexbytes(py, block_json)?;
-                Ok(Some(py_value))
+            Some(block) => {
+                let py_dict = block_to_py_dict(py, &block)?;
+                Ok(Some(py_dict.into_any()))
             }
             None => Ok(None),
         }

@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## Refactoring & Feature Development
+
+Use Red/Green TDD while refactoring and implementing new features.
+
 ## Commands
 
 ### Python

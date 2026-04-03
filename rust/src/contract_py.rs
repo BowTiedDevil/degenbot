@@ -1,13 +1,12 @@
 //! `PyO3` bindings for the contract module.
 
-use crate::contract::{Contract, FunctionSignature};
+use crate::contract::{encode_arguments, Contract, FunctionSignature};
 use crate::provider::AlloyProvider;
 use crate::runtime::get_runtime;
 use alloy::hex;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
-use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
 
 /// Python wrapper for a Contract.
@@ -23,26 +22,21 @@ impl PyContract {
     /// Args:
     ///     address: Contract address (hex string)
     ///     `provider_url`: RPC provider URL (optional, defaults to localhost)
-    #[staticmethod]
+    #[new]
     #[pyo3(signature = (address, provider_url=None))]
-    fn create(
-        py: Python<'_>,
-        address: String,
-        provider_url: Option<String>,
-    ) -> PyResult<Bound<'_, PyAny>> {
+    fn new(address: &str, provider_url: Option<String>) -> PyResult<Self> {
         // Default provider URL if not provided
         let url = provider_url.unwrap_or_else(|| "http://localhost:8545".to_string());
 
-        future_into_py(py, async move {
-            let provider = AlloyProvider::new(&url, 10)
-                .await
-                .map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
+        // Use the shared runtime to create the provider synchronously
+        let provider = get_runtime()
+            .block_on(async { AlloyProvider::new(&url, 10).await })
+            .map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
 
-            let contract = Contract::new(&address, Arc::new(provider))
-                .map_err(|e| PyValueError::new_err(format!("{e}")))?;
+        let contract = Contract::new(address, Arc::new(provider))
+            .map_err(|e| PyValueError::new_err(format!("{e}")))?;
 
-            Ok(Self { contract })
-        })
+        Ok(Self { contract })
     }
 
     /// Execute a contract call.
@@ -96,13 +90,9 @@ impl PyContract {
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 fn encode_function_call(function_signature: &str, args: Vec<String>) -> PyResult<Vec<u8>> {
-    use crate::contract::{encode_arguments, FunctionSignature};
+    let func = FunctionSignature::parse(function_signature)?;
 
-    let func =
-        FunctionSignature::parse(function_signature).map_err(|e| PyValueError::new_err(format!("{e}")))?;
-
-    let encoded_args =
-        encode_arguments(&func.inputs, &args).map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    let encoded_args = encode_arguments(&func.inputs, &args)?;
 
     // Build calldata: selector + encoded_args
     let mut calldata = Vec::with_capacity(4 + encoded_args.len());
@@ -131,7 +121,7 @@ fn decode_return_data(data: &[u8], output_types: Vec<String>) -> PyResult<Vec<St
         .map(|t| AbiType::parse(t).map_err(|e| PyValueError::new_err(format!("{e}"))))
         .collect::<PyResult<Vec<_>>>()?;
 
-    decode_impl(data, &types).map_err(|e| PyValueError::new_err(format!("{e}")))
+    decode_impl(data, &types).map_err(Into::into)
 }
 
 /// Parse a function signature and return its selector.
@@ -143,8 +133,7 @@ fn decode_return_data(data: &[u8], output_types: Vec<String>) -> PyResult<Vec<St
 ///     4-byte function selector as hex string
 #[pyfunction]
 fn get_function_selector(function_signature: &str) -> PyResult<String> {
-    let func =
-        FunctionSignature::parse(function_signature).map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    let func = FunctionSignature::parse(function_signature)?;
     Ok(format!("0x{}", hex::encode(func.selector)))
 }
 

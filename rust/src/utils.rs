@@ -4,6 +4,14 @@
 
 use crate::fast_hexbytes::create_fast_hexbytes;
 use crate::fast_hexbytes::FastHexBytes;
+use alloy::consensus::{
+    Header as ConsensusHeader, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip7702,
+    TxEnvelope, TxLegacy,
+};
+use alloy::eips::eip4895::Withdrawal;
+use alloy::network::primitives::BlockTransactions;
+use alloy::primitives::{TxKind, B256, U256};
+use alloy::rpc::types::eth::{Block, Header as RpcHeader, Transaction};
 use alloy::rpc::types::Log;
 use num_bigint::BigUint;
 use pyo3::prelude::*;
@@ -101,81 +109,6 @@ fn hex_to_fast_hexbytes<'py>(py: Python<'py>, hex_str: &str) -> PyResult<Bound<'
     fhb.into_pyobject(py)
 }
 
-/// Recursively convert hex strings to `FastHexBytes` in a Python object.
-///
-/// This function walks through a Python object (dict, list, or value) and converts
-/// string values that look like hex strings (start with "0x") to `FastHexBytes` objects
-/// if the field name is in the known `FastHexBytes` field list.
-fn convert_to_hexbytes_recursive<'py>(
-    py: Python<'py>,
-    obj: Bound<'py, PyAny>,
-    field_name: Option<&str>,
-) -> PyResult<Bound<'py, PyAny>> {
-    // If it's a dict, process each key-value pair
-    if let Ok(dict) = obj.cast::<PyDict>() {
-        let new_dict = PyDict::new(py);
-        for (key, value) in dict {
-            let key_str: String = key.extract()?;
-            // Recursively convert the value, passing the key as context
-            let converted = convert_to_hexbytes_recursive(py, value, Some(&key_str))?;
-            new_dict.set_item(key_str, converted)?;
-        }
-        return Ok(new_dict.into_any());
-    }
-
-    // If it's a list, process each element
-    if let Ok(list) = obj.cast::<PyList>() {
-        let new_list = PyList::empty(py);
-        for item in list.iter() {
-            // For lists, check if items should be converted to FastHexBytes
-            // This handles cases like "topics" which is a list of hex strings
-            let should_convert = field_name.is_some_and(|name| HEXBYTES_FIELDS.contains(name));
-
-            if should_convert {
-                // Try to convert string items to FastHexBytes
-                if let Ok(s) = item.extract::<String>() {
-                    if is_hex_string(&s) {
-                        let fhb = hex_to_fast_hexbytes(py, &s)?;
-                        new_list.append(fhb)?;
-                        continue;
-                    }
-                }
-            }
-
-            // Otherwise, recursively process the item
-            let converted = convert_to_hexbytes_recursive(py, item, field_name)?;
-            new_list.append(converted)?;
-        }
-        return Ok(new_list.into_any());
-    }
-
-    // If it's a string, check if it should be converted to FastHexBytes or int
-    if let Ok(s) = obj.extract::<String>() {
-        let should_convert_hexbytes =
-            field_name.is_some_and(|name| HEXBYTES_FIELDS.contains(name) && is_hex_string(&s));
-
-        if should_convert_hexbytes {
-            return hex_to_fast_hexbytes(py, &s).map(pyo3::Bound::into_any);
-        }
-
-        // Check if this is a numeric field with a hex string value
-        let should_convert_numeric =
-            field_name.is_some_and(|name| NUMERIC_FIELDS.contains(name) && is_hex_string(&s));
-
-        if should_convert_numeric {
-            // Convert hex string to int (using BigUint to support arbitrary size)
-            let bytes = alloy::hex::decode(&s[2..]).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid hex number: {e}"))
-            })?;
-            let val = BigUint::from_bytes_be(&bytes);
-            return Ok(val.into_pyobject(py)?.into_any());
-        }
-    }
-
-    // Return the object as-is
-    Ok(obj)
-}
-
 /// Convert a single Alloy `Log` to a Python dict with `FastHexBytes` for binary fields.
 ///
 /// This is the shared implementation used by both sync and async provider log conversion.
@@ -228,16 +161,15 @@ pub fn log_to_py_dict<'py>(py: Python<'py>, log: &Log) -> PyResult<Bound<'py, Py
 
 /// Convert a `serde_json::Value` to a Python object with `FastHexBytes` conversion.
 ///
-/// This function converts JSON values to their Python equivalents:
+/// Single-pass conversion that builds Python objects directly from JSON, converting
+/// hex strings in recognized Ethereum fields to `FastHexBytes` or integers as appropriate.
+///
 /// - `null` → `None`
 /// - `bool` → `bool`
 /// - `number` → `int` or `float`
-/// - `string` → `str` (or `FastHexBytes` for hex strings in recognized fields)
+/// - `string` → `str` (or `FastHexBytes`/`int` for recognized hex fields)
 /// - `array` → `list`
 /// - `object` → `dict`
-///
-/// Hex strings (starting with "0x") in fields matching known Ethereum hash/address/data
-/// field names are automatically converted to `FastHexBytes` objects.
 ///
 /// # Errors
 ///
@@ -246,74 +178,452 @@ pub fn json_to_py_with_hexbytes(
     py: Python<'_>,
     value: serde_json::Value,
 ) -> PyResult<Bound<'_, PyAny>> {
-    // First convert JSON to basic Python object
-    let py_obj = json_to_py(py, value)?;
-    // Then convert hex strings to FastHexBytes
-    convert_to_hexbytes_recursive(py, py_obj, None)
+    json_to_py_inner(py, value, None)
 }
 
-/// Convert a `serde_json::Value` to a Python object (basic conversion without `HexBytes`).
-///
-/// This function converts JSON values to their Python equivalents:
-/// - `null` → `None`
-/// - `bool` → `bool`
-/// - `number` → `int` or `float`
-/// - `string` → `str`
-/// - `array` → `list`
-/// - `object` → `dict`
-///
-/// # Errors
-///
-/// Returns `PyRuntimeError` if conversion fails for any value type.
-pub fn json_to_py(py: Python<'_>, value: serde_json::Value) -> PyResult<Bound<'_, PyAny>> {
+/// Single-pass recursive JSON-to-Python conversion with field-aware hex handling.
+fn json_to_py_inner<'py>(
+    py: Python<'py>,
+    value: serde_json::Value,
+    field_name: Option<&str>,
+) -> PyResult<Bound<'py, PyAny>> {
     match value {
         serde_json::Value::Null => Ok(py.None().into_bound(py)),
         serde_json::Value::Bool(b) => {
-            let py_bool = b
-                .into_pyobject(py)
-                .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("Failed to convert bool"))?;
+            let py_bool = b.into_pyobject(py)?;
             Ok(Bound::clone(&py_bool).into_any())
         }
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                Ok(i.into_pyobject(py)
-                    .map_err(|_| {
-                        pyo3::exceptions::PyRuntimeError::new_err("Failed to convert i64")
-                    })?
-                    .into_any())
+                Ok(i.into_pyobject(py)?.into_any())
             } else if let Some(u) = n.as_u64() {
-                Ok(u.into_pyobject(py)
-                    .map_err(|_| {
-                        pyo3::exceptions::PyRuntimeError::new_err("Failed to convert u64")
-                    })?
-                    .into_any())
+                Ok(u.into_pyobject(py)?.into_any())
             } else if let Some(f) = n.as_f64() {
-                Ok(f.into_pyobject(py)
-                    .map_err(|_| {
-                        pyo3::exceptions::PyRuntimeError::new_err("Failed to convert f64")
-                    })?
-                    .into_any())
+                Ok(f.into_pyobject(py)?.into_any())
             } else {
                 Ok(py.None().into_bound(py))
             }
         }
-        serde_json::Value::String(s) => Ok(s
-            .into_pyobject(py)
-            .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("Failed to convert string"))?
-            .into_any()),
+        serde_json::Value::String(s) => {
+            if field_name.is_some_and(|name| HEXBYTES_FIELDS.contains(name)) && is_hex_string(&s) {
+                return hex_to_fast_hexbytes(py, &s).map(Bound::into_any);
+            }
+            if field_name.is_some_and(|name| NUMERIC_FIELDS.contains(name)) && is_hex_string(&s) {
+                let bytes = alloy::hex::decode(&s[2..]).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Invalid hex number: {e}"))
+                })?;
+                let val = BigUint::from_bytes_be(&bytes);
+                return Ok(val.into_pyobject(py)?.into_any());
+            }
+            Ok(s.into_pyobject(py)?.into_any())
+        }
         serde_json::Value::Array(arr) => {
             let py_list = PyList::empty(py);
             for item in arr {
-                py_list.append(json_to_py(py, item)?)?;
+                py_list.append(json_to_py_inner(py, item, field_name)?)?;
             }
             Ok(py_list.into_any())
         }
         serde_json::Value::Object(map) => {
             let py_dict = PyDict::new(py);
-            for (key, value) in map {
-                py_dict.set_item(key, json_to_py(py, value)?)?;
+            for (key, val) in map {
+                py_dict.set_item(&key, json_to_py_inner(py, val, Some(&key))?)?;
             }
             Ok(py_dict.into_any())
         }
     }
+}
+
+fn u256_to_py<'py>(py: Python<'py>, val: &U256) -> PyResult<Bound<'py, PyAny>> {
+    let bytes: [u8; 32] = val.to_be_bytes();
+    let biguint = BigUint::from_bytes_be(&bytes);
+    Ok(biguint.into_pyobject(py)?.into_any())
+}
+
+fn set_opt_u64(dict: &Bound<'_, PyDict>, key: &str, val: Option<u64>) -> PyResult<()> {
+    val.map_or_else(
+        || dict.set_item(key, dict.py().None()),
+        |v| dict.set_item(key, v),
+    )
+}
+
+fn set_opt_u128(dict: &Bound<'_, PyDict>, key: &str, val: Option<u128>) -> PyResult<()> {
+    val.map_or_else(
+        || dict.set_item(key, dict.py().None()),
+        |v| dict.set_item(key, v),
+    )
+}
+
+fn set_opt_u256(dict: &Bound<'_, PyDict>, key: &str, val: Option<&U256>) -> PyResult<()> {
+    match val {
+        Some(v) => {
+            let int_val = u256_to_py(dict.py(), v)?;
+            dict.set_item(key, int_val)
+        }
+        None => dict.set_item(key, dict.py().None()),
+    }
+}
+
+fn set_opt_b256(dict: &Bound<'_, PyDict>, key: &str, val: Option<B256>) -> PyResult<()> {
+    match val {
+        Some(v) => {
+            let fhb = create_fast_hexbytes(dict.py(), v.as_ref())?;
+            dict.set_item(key, fhb)
+        }
+        None => dict.set_item(key, dict.py().None()),
+    }
+}
+
+fn tx_kind_to_py<'py>(py: Python<'py>, kind: &TxKind) -> PyResult<Bound<'py, PyAny>> {
+    match kind {
+        TxKind::Call(addr) => Ok(create_fast_hexbytes(py, addr.as_ref())?.into_any()),
+        TxKind::Create => Ok(py.None().into_bound(py)),
+    }
+}
+
+fn access_list_to_py<'py>(
+    py: Python<'py>,
+    access_list: &alloy::eips::eip2930::AccessList,
+) -> PyResult<Bound<'py, PyList>> {
+    let py_list = PyList::empty(py);
+    for item in access_list.iter() {
+        let item_dict = PyDict::new(py);
+        item_dict.set_item("address", create_fast_hexbytes(py, item.address.as_ref())?)?;
+        let storage_keys = PyList::empty(py);
+        for key in &item.storage_keys {
+            storage_keys.append(create_fast_hexbytes(py, key.as_ref())?)?;
+        }
+        item_dict.set_item("storageKeys", storage_keys)?;
+        py_list.append(item_dict)?;
+    }
+    Ok(py_list)
+}
+
+fn blob_hashes_to_py<'py>(
+    py: Python<'py>,
+    hashes: &[alloy::primitives::B256],
+) -> PyResult<Bound<'py, PyList>> {
+    let py_list = PyList::empty(py);
+    for hash in hashes {
+        py_list.append(create_fast_hexbytes(py, hash.as_ref())?)?;
+    }
+    Ok(py_list)
+}
+
+fn set_signature_fields(
+    dict: &Bound<'_, PyDict>,
+    sig: &alloy::primitives::Signature,
+    tx_type: u8,
+) -> PyResult<()> {
+    let py = dict.py();
+
+    let r_bytes: [u8; 32] = sig.r().to_be_bytes();
+    let s_bytes: [u8; 32] = sig.s().to_be_bytes();
+    dict.set_item("r", create_fast_hexbytes(py, &r_bytes)?)?;
+    dict.set_item("s", create_fast_hexbytes(py, &s_bytes)?)?;
+
+    let v: u64 = u64::from(sig.v());
+    dict.set_item("v", v)?;
+
+    if tx_type != 0 {
+        let y_parity: bool = sig.v();
+        dict.set_item("y_parity", y_parity)?;
+    }
+
+    Ok(())
+}
+
+fn set_legacy_tx_fields(dict: &Bound<'_, PyDict>, tx: &TxLegacy) -> PyResult<()> {
+    let py = dict.py();
+
+    if let Some(chain_id) = tx.chain_id {
+        dict.set_item("chain_id", chain_id)?;
+    } else {
+        dict.set_item("chain_id", py.None())?;
+    }
+    dict.set_item("nonce", tx.nonce)?;
+    dict.set_item("gas_price", tx.gas_price)?;
+    dict.set_item("gas", tx.gas_limit)?;
+    dict.set_item("to", tx_kind_to_py(py, &tx.to)?)?;
+    dict.set_item("value", u256_to_py(py, &tx.value)?)?;
+    dict.set_item("input", create_fast_hexbytes(py, &tx.input)?)?;
+
+    Ok(())
+}
+
+fn set_eip2930_tx_fields(dict: &Bound<'_, PyDict>, tx: &TxEip2930) -> PyResult<()> {
+    let py = dict.py();
+
+    dict.set_item("chain_id", tx.chain_id)?;
+    dict.set_item("nonce", tx.nonce)?;
+    dict.set_item("gas_price", tx.gas_price)?;
+    dict.set_item("gas", tx.gas_limit)?;
+    dict.set_item("to", tx_kind_to_py(py, &tx.to)?)?;
+    dict.set_item("value", u256_to_py(py, &tx.value)?)?;
+    dict.set_item("input", create_fast_hexbytes(py, &tx.input)?)?;
+    dict.set_item("access_list", access_list_to_py(py, &tx.access_list)?)?;
+
+    Ok(())
+}
+
+fn set_eip1559_tx_fields(dict: &Bound<'_, PyDict>, tx: &TxEip1559) -> PyResult<()> {
+    let py = dict.py();
+
+    dict.set_item("chain_id", tx.chain_id)?;
+    dict.set_item("nonce", tx.nonce)?;
+    dict.set_item("max_fee_per_gas", tx.max_fee_per_gas)?;
+    dict.set_item("max_priority_fee_per_gas", tx.max_priority_fee_per_gas)?;
+    dict.set_item("gas", tx.gas_limit)?;
+    dict.set_item("to", tx_kind_to_py(py, &tx.to)?)?;
+    dict.set_item("value", u256_to_py(py, &tx.value)?)?;
+    dict.set_item("input", create_fast_hexbytes(py, &tx.input)?)?;
+    dict.set_item("access_list", access_list_to_py(py, &tx.access_list)?)?;
+
+    Ok(())
+}
+
+fn set_eip4844_tx_fields(dict: &Bound<'_, PyDict>, tx: &TxEip4844) -> PyResult<()> {
+    let py = dict.py();
+
+    dict.set_item("chain_id", tx.chain_id)?;
+    dict.set_item("nonce", tx.nonce)?;
+    dict.set_item("max_fee_per_gas", tx.max_fee_per_gas)?;
+    dict.set_item("max_priority_fee_per_gas", tx.max_priority_fee_per_gas)?;
+    dict.set_item("gas", tx.gas_limit)?;
+    dict.set_item("to", create_fast_hexbytes(py, tx.to.as_ref())?)?;
+    dict.set_item("value", u256_to_py(py, &tx.value)?)?;
+    dict.set_item("input", create_fast_hexbytes(py, &tx.input)?)?;
+    dict.set_item("access_list", access_list_to_py(py, &tx.access_list)?)?;
+    dict.set_item("max_fee_per_blob_gas", tx.max_fee_per_blob_gas)?;
+    dict.set_item(
+        "blob_versioned_hashes",
+        blob_hashes_to_py(py, &tx.blob_versioned_hashes)?,
+    )?;
+
+    Ok(())
+}
+
+fn set_eip7702_tx_fields(dict: &Bound<'_, PyDict>, tx: &TxEip7702) -> PyResult<()> {
+    let py = dict.py();
+
+    dict.set_item("chain_id", tx.chain_id)?;
+    dict.set_item("nonce", tx.nonce)?;
+    dict.set_item("max_fee_per_gas", tx.max_fee_per_gas)?;
+    dict.set_item("max_priority_fee_per_gas", tx.max_priority_fee_per_gas)?;
+    dict.set_item("gas", tx.gas_limit)?;
+    dict.set_item("to", create_fast_hexbytes(py, tx.to.as_ref())?)?;
+    dict.set_item("value", u256_to_py(py, &tx.value)?)?;
+    dict.set_item("input", create_fast_hexbytes(py, &tx.input)?)?;
+    dict.set_item("access_list", access_list_to_py(py, &tx.access_list)?)?;
+
+    let auth_list = PyList::empty(py);
+    for auth in &tx.authorization_list {
+        let auth_dict = PyDict::new(py);
+        auth_dict.set_item("chain_id", u256_to_py(py, auth.chain_id())?)?;
+        auth_dict.set_item(
+            "address",
+            create_fast_hexbytes(py, auth.address().as_ref())?,
+        )?;
+        auth_dict.set_item("nonce", auth.nonce())?;
+        let r_bytes: [u8; 32] = auth.r().to_be_bytes();
+        let s_bytes: [u8; 32] = auth.s().to_be_bytes();
+        auth_dict.set_item("r", create_fast_hexbytes(py, &r_bytes)?)?;
+        auth_dict.set_item("s", create_fast_hexbytes(py, &s_bytes)?)?;
+        auth_dict.set_item("v", auth.y_parity())?;
+        auth_list.append(auth_dict)?;
+    }
+    dict.set_item("authorization_list", auth_list)?;
+
+    Ok(())
+}
+
+fn transaction_to_py_dict<'py>(
+    py: Python<'py>,
+    tx: &Transaction<TxEnvelope>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+
+    let recovered = tx.as_recovered();
+    let from_addr = recovered.signer();
+    let envelope = recovered.inner();
+
+    let tx_type: u8 = envelope.tx_type().into();
+
+    dict.set_item("hash", create_fast_hexbytes(py, envelope.hash().as_ref())?)?;
+    dict.set_item("type", tx_type)?;
+    dict.set_item("from", create_fast_hexbytes(py, from_addr.as_ref())?)?;
+
+    set_opt_u64(&dict, "block_number", tx.block_number)?;
+    set_opt_b256(&dict, "block_hash", tx.block_hash)?;
+    set_opt_u64(&dict, "transaction_index", tx.transaction_index)?;
+    set_opt_u128(&dict, "effective_gas_price", tx.effective_gas_price)?;
+
+    match envelope {
+        TxEnvelope::Legacy(signed_tx) => {
+            set_legacy_tx_fields(&dict, signed_tx.tx())?;
+            set_signature_fields(&dict, signed_tx.signature(), 0)?;
+        }
+        TxEnvelope::Eip2930(signed_tx) => {
+            set_eip2930_tx_fields(&dict, signed_tx.tx())?;
+            set_signature_fields(&dict, signed_tx.signature(), 1)?;
+        }
+        TxEnvelope::Eip1559(signed_tx) => {
+            set_eip1559_tx_fields(&dict, signed_tx.tx())?;
+            set_signature_fields(&dict, signed_tx.signature(), 2)?;
+        }
+        TxEnvelope::Eip4844(signed_tx) => {
+            match signed_tx.tx() {
+                TxEip4844Variant::TxEip4844(eip4844_tx) => {
+                    set_eip4844_tx_fields(&dict, eip4844_tx)?;
+                }
+                TxEip4844Variant::TxEip4844WithSidecar(tx_with_sidecar) => {
+                    set_eip4844_tx_fields(&dict, tx_with_sidecar.tx())?;
+                }
+            }
+            set_signature_fields(&dict, signed_tx.signature(), 3)?;
+        }
+        TxEnvelope::Eip7702(signed_tx) => {
+            set_eip7702_tx_fields(&dict, signed_tx.tx())?;
+            set_signature_fields(&dict, signed_tx.signature(), 4)?;
+        }
+    }
+
+    Ok(dict)
+}
+
+fn consensus_header_to_py_dict<'py>(
+    py: Python<'py>,
+    header: &ConsensusHeader,
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+
+    dict.set_item(
+        "parent_hash",
+        create_fast_hexbytes(py, header.parent_hash.as_ref())?,
+    )?;
+    dict.set_item(
+        "sha3_uncles",
+        create_fast_hexbytes(py, header.ommers_hash.as_ref())?,
+    )?;
+    dict.set_item(
+        "miner",
+        create_fast_hexbytes(py, header.beneficiary.as_ref())?,
+    )?;
+    dict.set_item(
+        "state_root",
+        create_fast_hexbytes(py, header.state_root.as_ref())?,
+    )?;
+    dict.set_item(
+        "transactions_root",
+        create_fast_hexbytes(py, header.transactions_root.as_ref())?,
+    )?;
+    dict.set_item(
+        "receipts_root",
+        create_fast_hexbytes(py, header.receipts_root.as_ref())?,
+    )?;
+    dict.set_item(
+        "logs_bloom",
+        create_fast_hexbytes(py, header.logs_bloom.as_ref())?,
+    )?;
+    dict.set_item("difficulty", u256_to_py(py, &header.difficulty)?)?;
+    dict.set_item("number", header.number)?;
+    dict.set_item("gas_limit", header.gas_limit)?;
+    dict.set_item("gas_used", header.gas_used)?;
+    dict.set_item("timestamp", header.timestamp)?;
+    dict.set_item("extra_data", create_fast_hexbytes(py, &header.extra_data)?)?;
+    dict.set_item(
+        "mix_hash",
+        create_fast_hexbytes(py, header.mix_hash.as_ref())?,
+    )?;
+    dict.set_item("nonce", create_fast_hexbytes(py, header.nonce.as_ref())?)?;
+
+    set_opt_u64(&dict, "base_fee_per_gas", header.base_fee_per_gas)?;
+    set_opt_b256(&dict, "withdrawals_root", header.withdrawals_root)?;
+    set_opt_u64(&dict, "blob_gas_used", header.blob_gas_used)?;
+    set_opt_u64(&dict, "excess_blob_gas", header.excess_blob_gas)?;
+    set_opt_b256(
+        &dict,
+        "parent_beacon_block_root",
+        header.parent_beacon_block_root,
+    )?;
+    set_opt_b256(&dict, "requests_hash", header.requests_hash)?;
+
+    Ok(dict)
+}
+
+fn withdrawal_to_py_dict<'py>(
+    py: Python<'py>,
+    withdrawal: &Withdrawal,
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    dict.set_item("index", withdrawal.index)?;
+    dict.set_item("validator_index", withdrawal.validator_index)?;
+    dict.set_item(
+        "address",
+        create_fast_hexbytes(py, withdrawal.address.as_ref())?,
+    )?;
+    dict.set_item("amount", withdrawal.amount)?;
+    Ok(dict)
+}
+
+pub fn block_to_py_dict<'py>(
+    py: Python<'py>,
+    block: &Block<Transaction<TxEnvelope>, RpcHeader<ConsensusHeader>>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+
+    dict.set_item(
+        "hash",
+        create_fast_hexbytes(py, block.header.hash.as_ref())?,
+    )?;
+
+    let inner_dict = consensus_header_to_py_dict(py, &block.header.inner)?;
+    for (key, val) in inner_dict.iter() {
+        dict.set_item(&key, val)?;
+    }
+
+    set_opt_u256(
+        &dict,
+        "total_difficulty",
+        block.header.total_difficulty.as_ref(),
+    )?;
+    set_opt_u256(&dict, "size", block.header.size.as_ref())?;
+
+    let uncles_list = PyList::empty(py);
+    for uncle in &block.uncles {
+        uncles_list.append(create_fast_hexbytes(py, uncle.as_ref())?)?;
+    }
+    dict.set_item("uncles", uncles_list)?;
+
+    match &block.transactions {
+        BlockTransactions::Full(txs) => {
+            let tx_list = PyList::empty(py);
+            for tx in txs {
+                tx_list.append(transaction_to_py_dict(py, tx)?)?;
+            }
+            dict.set_item("transactions", tx_list)?;
+        }
+        BlockTransactions::Hashes(hashes) => {
+            let hash_list = PyList::empty(py);
+            for hash in hashes {
+                hash_list.append(create_fast_hexbytes(py, hash.as_ref())?)?;
+            }
+            dict.set_item("transactions", hash_list)?;
+        }
+        BlockTransactions::Uncle => {
+            dict.set_item("transactions", py.None())?;
+        }
+    }
+
+    if let Some(withdrawals) = &block.withdrawals {
+        let w_list = PyList::empty(py);
+        for w in withdrawals {
+            w_list.append(withdrawal_to_py_dict(py, w)?)?;
+        }
+        dict.set_item("withdrawals", w_list)?;
+    } else {
+        dict.set_item("withdrawals", py.None())?;
+    }
+
+    Ok(dict)
 }

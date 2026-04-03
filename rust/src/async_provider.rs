@@ -1,69 +1,15 @@
 //! Async Ethereum RPC provider implementation using Alloy.
 //!
-//! Provides async variants of the provider methods for non-blocking
-//! Ethereum RPC operations.
+//! Provides a Python-facing async provider that wraps `AlloyProvider`
+//! methods for non-blocking Ethereum RPC operations via `PyO3`.
 
-use crate::errors::ProviderResult;
 use crate::provider::{AlloyProvider, LogFilter};
 use crate::provider_py::PyAlloyProvider;
-use crate::utils::{json_to_py_with_hexbytes, log_to_py_dict};
-use alloy::rpc::types::Log;
+use crate::utils::{block_to_py_dict, log_to_py_dict};
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
-
-/// Async wrapper for `AlloyProvider` that exposes async methods to Python.
-pub struct AsyncAlloyProvider {
-    inner: Arc<AlloyProvider>,
-}
-
-impl AsyncAlloyProvider {
-    /// Create a new async provider from an existing provider.
-    #[must_use]
-    pub const fn new(provider: Arc<AlloyProvider>) -> Self {
-        Self { inner: provider }
-    }
-
-    /// Get current block number asynchronously.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ProviderError::RpcError` if the RPC call fails.
-    pub async fn get_block_number(&self) -> ProviderResult<u64> {
-        self.inner.get_block_number().await
-    }
-
-    /// Get chain ID asynchronously.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ProviderError::RpcError` if the RPC call fails.
-    pub async fn get_chain_id(&self) -> ProviderResult<u64> {
-        self.inner.get_chain_id().await
-    }
-
-    /// Fetch logs asynchronously.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ProviderError` if the RPC call fails or filter is invalid.
-    pub async fn get_logs(&self, filter: &LogFilter) -> ProviderResult<Vec<Log>> {
-        self.inner.get_logs(filter).await
-    }
-
-    /// Get a block by number asynchronously.
-    ///
-    /// Returns the full block data including header and transactions.
-    /// All field names use `snake_case` for Python consistency.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ProviderError::RpcError` if the RPC call fails.
-    pub async fn get_block(&self, block_number: u64) -> ProviderResult<Option<serde_json::Value>> {
-        self.inner.get_block(block_number).await
-    }
-}
 
 /// Python wrapper for async provider operations.
 #[pyclass(name = "AsyncAlloyProvider")]
@@ -181,19 +127,15 @@ impl PyAsyncAlloyProvider {
         let provider = Arc::clone(&self.provider);
 
         future_into_py(py, async move {
-            // Step 1: Async work (GIL released automatically by future_into_py)
             let block = provider
                 .get_block(block_number)
                 .await
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
 
-            // Step 2: Convert to Python objects (need GIL)
-            // Use Python::attach to temporarily acquire GIL
             let result = Python::attach(|py| match block {
-                Some(json_val) => {
-                    // Use json_to_py_with_hexbytes to convert with automatic HexBytes detection
-                    let py_obj = json_to_py_with_hexbytes(py, json_val)?;
-                    Ok::<_, PyErr>(Some(py_obj.unbind()))
+                Some(block_val) => {
+                    let py_dict = block_to_py_dict(py, &block_val)?;
+                    Ok::<_, PyErr>(Some(py_dict.into_any().unbind()))
                 }
                 None => Ok(None),
             })
@@ -205,15 +147,5 @@ impl PyAsyncAlloyProvider {
 
             Ok::<_, PyErr>(result)
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[tokio::test]
-    async fn test_async_provider_creation() {
-        // This test verifies the async provider can be created
-        // Note: This would need a real RPC URL to test properly
-        // For now we just verify the types compile correctly
     }
 }

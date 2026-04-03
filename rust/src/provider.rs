@@ -5,8 +5,10 @@
 //! local node connections.
 
 use crate::errors::{ProviderError, ProviderResult};
+use alloy::consensus::{Header as ConsensusHeader, TxEnvelope};
 use alloy::network::Ethereum;
 use alloy::providers::{Provider, ProviderBuilder};
+use alloy::rpc::types::eth::{Block, Header as RpcHeader, Transaction};
 use alloy::rpc::types::{Filter, Log};
 use alloy::primitives::{Address, Bytes, B256};
 use alloy::transports::{RpcError, TransportErrorKind};
@@ -17,62 +19,6 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-
-/// Recursively convert camelCase keys in a JSON Value to `snake_case`.
-fn convert_keys_to_snake_case(value: serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(map) => {
-            // First pass: check if any keys need conversion
-            let needs_conversion = map.keys().any(|key| {
-                let snake_key = camel_to_snake_case(key);
-                snake_key != *key
-            });
-
-            if !needs_conversion {
-                // Fast path: return original if all keys are already snake_case
-                return serde_json::Value::Object(map);
-            }
-
-            // Second pass: build new map with converted keys
-            let mut new_map = serde_json::Map::with_capacity(map.len());
-            for (key, val) in map {
-                let snake_key = camel_to_snake_case(&key);
-                new_map.insert(snake_key, convert_keys_to_snake_case(val));
-            }
-            serde_json::Value::Object(new_map)
-        }
-        serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(arr.into_iter().map(convert_keys_to_snake_case).collect())
-        }
-        other => other,
-    }
-}
-
-/// Convert a camelCase string to `snake_case`.
-fn camel_to_snake_case(s: &str) -> String {
-    let mut result = String::with_capacity(s.len() * 2);
-    let mut prev_upper = false;
-
-    for (i, c) in s.chars().enumerate() {
-        if c.is_ascii_uppercase() {
-            if !prev_upper && i > 0 {
-                result.push('_');
-            }
-            result.push(c.to_ascii_lowercase());
-            prev_upper = true;
-        } else if c.is_ascii_digit() && !result.is_empty() && !prev_upper {
-            // Insert underscore before digit if preceded by lowercase letter
-            result.push('_');
-            result.push(c);
-            prev_upper = false;
-        } else {
-            result.push(c);
-            prev_upper = false;
-        }
-    }
-
-    result
-}
 
 /// Constants for retry logic.
 const INITIAL_RETRY_DELAY_MS: u64 = 100;
@@ -212,9 +158,12 @@ impl LogFilter {
             filter = filter.address(addresses);
         }
 
-        // Convert topics
+        // Convert topics — each element maps to a topic position (0-3)
         if !self.topics.is_empty() {
-            for topic_list in &self.topics {
+            for (i, topic_list) in self.topics.iter().enumerate() {
+                if topic_list.is_empty() {
+                    continue;
+                }
                 let topics: Vec<B256> = topic_list
                     .iter()
                     .map(|t| {
@@ -224,7 +173,18 @@ impl LogFilter {
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                filter = filter.event_signature(topics);
+                filter = match i {
+                    0 => filter.event_signature(topics),
+                    1 => filter.topic1(topics),
+                    2 => filter.topic2(topics),
+                    3 => filter.topic3(topics),
+                    _ => {
+                        return Err(ProviderError::InvalidTopic {
+                            topic: String::new(),
+                            reason: format!("topic position {i} is out of range (max 3)"),
+                        })
+                    }
+                };
             }
         }
 
@@ -375,33 +335,26 @@ impl AlloyProvider {
     /// Get a block by number.
     ///
     /// Returns the full block data including header and transactions.
-    /// All field names are converted from camelCase to `snake_case` for Python
-    /// consistency.
     ///
     /// # Errors
     ///
     /// Returns `ProviderError::RpcError` if the RPC call fails.
-    pub async fn get_block(&self, block_number: u64) -> ProviderResult<Option<serde_json::Value>> {
+    pub async fn get_block(
+        &self,
+        block_number: u64,
+    ) -> ProviderResult<
+        Option<Block<Transaction<TxEnvelope>, RpcHeader<ConsensusHeader>>>,
+    > {
         use alloy::eips::BlockNumberOrTag;
-        
+
         self.retry_with_backoff(|| async {
             let block_num_tag = BlockNumberOrTag::Number(block_number);
             let result = self.inner
                 .get_block_by_number(block_num_tag)
                 .await
                 .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get block"))?;
-            
-            // Serialize the full block and convert keys to snake_case
-            let json_value = result.map(|block| {
-                let value = serde_json::to_value(block).map_err(|e| {
-                    ProviderError::SerializationError {
-                        message: format!("Failed to serialize block: {e}"),
-                    }
-                })?;
-                Ok(convert_keys_to_snake_case(value))
-            }).transpose()?;
-            
-            Ok(json_value)
+
+            Ok(result)
         })
         .await
     }
@@ -693,6 +646,58 @@ mod tests {
         assert_eq!(filter.from_block, Some(100));
         assert_eq!(filter.to_block, Some(200));
         assert_eq!(filter.addresses.len(), 1);
+    }
+
+    #[test]
+    fn test_to_alloy_filter_maps_topic_positions() {
+        let topic0_val = "0x0000000000000000000000000000000000000000000000000000000000000001";
+        let topic1_val = "0x0000000000000000000000000000000000000000000000000000000000000002";
+        let topic2_val = "0x0000000000000000000000000000000000000000000000000000000000000003";
+
+        let filter = LogFilter::new(
+            100,
+            200,
+            None,
+            Some(vec![
+                vec![topic0_val.to_string()],
+                vec![topic1_val.to_string()],
+                vec![topic2_val.to_string()],
+            ]),
+        )
+        .expect("valid filter");
+
+        let alloy_filter = filter.to_alloy_filter().expect("conversion succeeds");
+        let topics = &alloy_filter.topics;
+
+        assert_eq!(topics[0].clone().into_iter().collect::<Vec<_>>(), vec![B256::from_str(topic0_val).unwrap()]);
+        assert_eq!(topics[1].clone().into_iter().collect::<Vec<_>>(), vec![B256::from_str(topic1_val).unwrap()]);
+        assert_eq!(topics[2].clone().into_iter().collect::<Vec<_>>(), vec![B256::from_str(topic2_val).unwrap()]);
+    }
+
+    #[test]
+    fn test_to_alloy_filter_rejects_topic_position_out_of_range() {
+        let filter = LogFilter::new(
+            100,
+            200,
+            None,
+            Some(vec![
+                vec!["0x0000000000000000000000000000000000000000000000000000000000000001".to_string()],
+                vec![],
+                vec![],
+                vec![],
+                vec!["0x0000000000000000000000000000000000000000000000000000000000000002".to_string()],
+            ]),
+        )
+        .expect("valid filter");
+
+        let result = filter.to_alloy_filter();
+        assert!(result.is_err());
+        match result {
+            Err(ProviderError::InvalidTopic { reason, .. }) => {
+                assert!(reason.contains("out of range"));
+            }
+            _ => panic!("Expected InvalidTopic error"),
+        }
     }
 
     #[test]

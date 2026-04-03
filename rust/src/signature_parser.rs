@@ -23,6 +23,8 @@ pub enum ParseError {
     InvalidType { pos: usize, err: AbiTypeError },
     /// Empty function name.
     EmptyFunctionName,
+    /// Unmatched bracket in type string.
+    UnmatchedBracket { pos: usize },
 }
 
 impl std::fmt::Display for ParseError {
@@ -49,6 +51,9 @@ impl std::fmt::Display for ParseError {
             }
             Self::EmptyFunctionName => {
                 write!(f, "function name cannot be empty")
+            }
+            Self::UnmatchedBracket { pos } => {
+                write!(f, "at position {pos}: unmatched '[' in type string")
             }
         }
     }
@@ -156,7 +161,7 @@ impl<'a> SignatureParser<'a> {
 
             // Parse type string (collect until comma or closing paren)
             let type_start = self.pos;
-            let type_str = self.collect_type_string();
+            let type_str = self.collect_type_string()?;
 
             if type_str.is_empty() {
                 return Err(ParseError::UnexpectedChar {
@@ -193,28 +198,25 @@ impl<'a> SignatureParser<'a> {
     }
 
     /// Collect a type string (handles nested brackets for arrays).
-    #[allow(clippy::unnested_or_patterns)]
-    fn collect_type_string(&mut self) -> String {
+    fn collect_type_string(&mut self) -> Result<String, ParseError> {
         let mut depth = 0;
         let mut result = String::new();
 
         loop {
             match self.chars.peek() {
-                None | Some(')') | Some(',') if depth == 0 => break,
+                Some(')' | ',') if depth == 0 => break,
                 Some('[') => {
                     depth += 1;
-                    // Safe: we just peeked '[' so consume will succeed
-                    #[allow(clippy::expect_used)]
-                    result.push(self.consume_char('[').expect("peeked '['"));
+                    result.push('[');
+                    self.advance();
                 }
                 Some(']') => {
                     if depth == 0 {
                         break;
                     }
                     depth -= 1;
-                    // Safe: we just peeked ']' so consume will succeed
-                    #[allow(clippy::expect_used)]
-                    result.push(self.consume_char(']').expect("peeked ']'"));
+                    result.push(']');
+                    self.advance();
                 }
                 Some(&c) => {
                     if c.is_whitespace() && depth == 0 {
@@ -223,11 +225,14 @@ impl<'a> SignatureParser<'a> {
                     result.push(c);
                     self.advance();
                 }
+                None if depth > 0 => {
+                    return Err(ParseError::UnmatchedBracket { pos: self.pos });
+                }
                 None => break,
             }
         }
 
-        result
+        Ok(result)
     }
 
     /// Parse an identifier (function name).
@@ -449,5 +454,14 @@ mod tests {
         let err = parse_signature("()").unwrap_err();
         // ')' is not a valid start for an identifier
         assert!(matches!(err, ParseError::UnexpectedChar { .. }));
+    }
+
+    #[test]
+    fn test_unmatched_bracket() {
+        let err = parse_signature("foo(uint256[)").unwrap_err();
+        assert!(
+            matches!(err, ParseError::UnmatchedBracket { .. }),
+            "Got unexpected error type: {err:?}",
+        );
     }
 }

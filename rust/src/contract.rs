@@ -3,7 +3,7 @@
 //! Provides high-level contract interaction with automatic ABI encoding
 //! for function calls and automatic decoding of return values.
 
-use crate::errors::{ProviderError, ProviderResult};
+use crate::errors::{ContractError, ContractResult, ProviderError, ProviderResult};
 use crate::provider::AlloyProvider;
 use crate::signature_parser;
 use alloy::hex;
@@ -35,10 +35,10 @@ impl FunctionSignature {
     ///
     /// # Errors
     ///
-    /// Returns `ProviderError::InvalidAbi` if the signature is invalid.
-    pub fn parse(signature: &str) -> ProviderResult<Self> {
+    /// Returns `ContractError::InvalidAbi` if the signature is invalid.
+    pub fn parse(signature: &str) -> ContractResult<Self> {
         let parsed = signature_parser::parse_signature(signature).map_err(|e| {
-            ProviderError::InvalidAbi {
+            ContractError::InvalidAbi {
                 message: format!("Invalid signature '{signature}': {e}"),
             }
         })?;
@@ -75,9 +75,13 @@ impl FunctionSignature {
 }
 
 /// Encode arguments for an ABI function call.
-pub fn encode_arguments(types: &[AbiType], args: &[String]) -> ProviderResult<Bytes> {
+///
+/// Uses proper Solidity ABI head/tail encoding: each parameter gets a slot in
+/// the head (32 bytes for dynamic types storing an offset, or the full inline
+/// encoding for static types). Dynamic type data is appended in the tail.
+pub fn encode_arguments(types: &[AbiType], args: &[String]) -> ContractResult<Bytes> {
     if types.len() != args.len() {
-        return Err(ProviderError::InvalidAbi {
+        return Err(ContractError::InvalidAbi {
             message: format!(
                 "Argument count mismatch: expected {}, got {}",
                 types.len(),
@@ -86,23 +90,43 @@ pub fn encode_arguments(types: &[AbiType], args: &[String]) -> ProviderResult<By
         });
     }
 
-    let mut encoded = Vec::new();
+    let mut encoded_values: Vec<Vec<u8>> = Vec::with_capacity(types.len());
+    let mut head_size: usize = 0;
 
     for (abi_type, arg) in types.iter().zip(args.iter()) {
-        let encoded_arg = encode_value(abi_type, arg)?;
-        encoded.extend_from_slice(&encoded_arg);
+        let encoded = encode_value(abi_type, arg)?;
+        if abi_type.is_dynamic() {
+            head_size += 32;
+        } else {
+            head_size += encoded.len();
+        }
+        encoded_values.push(encoded);
     }
 
-    Ok(Bytes::from(encoded))
+    let mut head = Vec::with_capacity(head_size);
+    let mut tail = Vec::new();
+
+    for (encoded, abi_type) in encoded_values.iter().zip(types.iter()) {
+        if abi_type.is_dynamic() {
+            let offset = head_size + tail.len();
+            head.extend_from_slice(&U256::from(offset).to_be_bytes_vec());
+            tail.extend_from_slice(encoded);
+        } else {
+            head.extend_from_slice(encoded);
+        }
+    }
+
+    head.extend(tail);
+    Ok(Bytes::from(head))
 }
 
 /// Encode a single value based on its ABI type.
 #[allow(clippy::too_many_lines)]
-fn encode_value(abi_type: &AbiType, value: &str) -> ProviderResult<Vec<u8>> {
+fn encode_value(abi_type: &AbiType, value: &str) -> ContractResult<Vec<u8>> {
     match abi_type {
         AbiType::Address => {
             let addr =
-                Address::from_str(value.trim()).map_err(|_| ProviderError::InvalidAddress {
+                Address::from_str(value.trim()).map_err(|_| ContractError::InvalidAddress {
                     address: value.to_string(),
                     reason: "Invalid address format".to_string(),
                 })?;
@@ -127,7 +151,7 @@ fn encode_value(abi_type: &AbiType, value: &str) -> ProviderResult<Vec<u8>> {
                     || U256::from_str(trimmed),
                     |hex_str| U256::from_str_radix(hex_str, 16),
                 )
-                .map_err(|_| ProviderError::InvalidAbi {
+                .map_err(|_| ContractError::InvalidAbi {
                     message: format!("Invalid uint{bits} value: {value}"),
                 })?;
             // U256 is already 32 bytes
@@ -140,14 +164,14 @@ fn encode_value(abi_type: &AbiType, value: &str) -> ProviderResult<Vec<u8>> {
                 .or_else(|| trimmed.strip_prefix("0X"))
                 .map_or_else(
                     || {
-                        I256::from_str(trimmed).map_err(|_| ProviderError::InvalidAbi {
+                        I256::from_str(trimmed).map_err(|_| ContractError::InvalidAbi {
                             message: format!("Invalid int{bits} value: {value}"),
                         })
                     },
                     |hex_str| {
                         U256::from_str_radix(hex_str, 16)
                             .map(I256::from_raw)
-                            .map_err(|_| ProviderError::InvalidAbi {
+                            .map_err(|_| ContractError::InvalidAbi {
                                 message: format!("Invalid int{bits} value: {value}"),
                             })
                     },
@@ -160,11 +184,11 @@ fn encode_value(abi_type: &AbiType, value: &str) -> ProviderResult<Vec<u8>> {
         }
         AbiType::FixedBytes(size) => {
             let hex_str = value.strip_prefix("0x").map_or(value, |stripped| stripped);
-            let bytes = hex::decode(hex_str).map_err(|_| ProviderError::InvalidAbi {
+            let bytes = hex::decode(hex_str).map_err(|_| ContractError::InvalidAbi {
                 message: format!("Invalid hex value for bytes{size}: {value}"),
             })?;
             if bytes.len() != *size {
-                return Err(ProviderError::InvalidAbi {
+                return Err(ContractError::InvalidAbi {
                     message: format!(
                         "bytes{size} requires exactly {size} bytes, got {}",
                         bytes.len()
@@ -178,23 +202,15 @@ fn encode_value(abi_type: &AbiType, value: &str) -> ProviderResult<Vec<u8>> {
         }
         AbiType::Bytes => {
             let hex_str = value.strip_prefix("0x").map_or(value, |stripped| stripped);
-            let bytes = hex::decode(hex_str).map_err(|_| ProviderError::InvalidAbi {
+            let bytes = hex::decode(hex_str).map_err(|_| ContractError::InvalidAbi {
                 message: format!("Invalid hex value for bytes: {value}"),
             })?;
 
-            // Dynamic type: offset to data location (for single value, this is 32)
-            // followed by length and data
             let mut encoded = Vec::new();
 
-            // Offset (32 bytes for this single dynamic value)
-            let offset = U256::from(32);
-            encoded.extend_from_slice(&offset.to_be_bytes_vec());
-
-            // Length
             let length = U256::from(bytes.len());
             encoded.extend_from_slice(&length.to_be_bytes_vec());
 
-            // Data (padded to 32-byte boundary)
             encoded.extend_from_slice(&bytes);
             let padding = (32 - (bytes.len() % 32)) % 32;
             encoded.extend(std::iter::repeat_n(0u8, padding));
@@ -206,27 +222,17 @@ fn encode_value(abi_type: &AbiType, value: &str) -> ProviderResult<Vec<u8>> {
 
             let mut encoded = Vec::new();
 
-            // Offset
-            let offset = U256::from(32);
-            encoded.extend_from_slice(&offset.to_be_bytes_vec());
-
-            // Length
             let length = U256::from(bytes.len());
             encoded.extend_from_slice(&length.to_be_bytes_vec());
 
-            // Data (padded to 32-byte boundary)
             encoded.extend_from_slice(bytes);
             let padding = (32 - (bytes.len() % 32)) % 32;
             encoded.extend(std::iter::repeat_n(0u8, padding));
 
             Ok(encoded)
         }
-        AbiType::Array(element_type) => {
-            encode_dynamic_array(element_type, value)
-        }
-        AbiType::FixedArray(element_type, size) => {
-            encode_fixed_array(element_type, *size, value)
-        }
+        AbiType::Array(element_type) => encode_dynamic_array(element_type, value),
+        AbiType::FixedArray(element_type, size) => encode_fixed_array(element_type, *size, value),
     }
 }
 
@@ -234,14 +240,12 @@ fn encode_value(abi_type: &AbiType, value: &str) -> ProviderResult<Vec<u8>> {
 ///
 /// Accepts `["elem1", "elem2"]` format with optional whitespace.
 /// Returns error if input is not a valid JSON array.
-fn parse_json_array(input: &str) -> ProviderResult<Vec<&str>> {
+fn parse_json_array(input: &str) -> ContractResult<Vec<&str>> {
     let trimmed = input.trim();
 
     if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
-        return Err(ProviderError::InvalidAbi {
-            message: format!(
-                "Array value must be enclosed in square brackets, got: '{input}'"
-            ),
+        return Err(ContractError::InvalidAbi {
+            message: format!("Array value must be enclosed in square brackets, got: '{input}'"),
         });
     }
 
@@ -282,36 +286,26 @@ fn parse_json_array(input: &str) -> ProviderResult<Vec<&str>> {
 }
 
 /// Encode a dynamic array (e.g., `uint256[]`).
-fn encode_dynamic_array(element_type: &AbiType, value: &str) -> ProviderResult<Vec<u8>> {
+fn encode_dynamic_array(element_type: &AbiType, value: &str) -> ContractResult<Vec<u8>> {
     let elements = parse_json_array(value)?;
 
-    // Encode the elements
     let encoded_elements = encode_array_elements(element_type, &elements)?;
 
-    // Dynamic array layout: offset (32 bytes) + length (32 bytes) + encoded elements
-    let mut result = Vec::with_capacity(64 + encoded_elements.len());
+    let mut result = Vec::with_capacity(32 + encoded_elements.len());
 
-    // Offset (32 bytes - points to the start of the array data)
-    result.extend_from_slice(&U256::from(32).to_be_bytes_vec());
+    let length = U256::from(elements.len());
+    result.extend_from_slice(&length.to_be_bytes_vec());
 
-    // Length (32 bytes)
-    result.extend_from_slice(&U256::from(elements.len()).to_be_bytes_vec());
-
-    // Encoded elements
     result.extend(encoded_elements);
 
     Ok(result)
 }
 
 /// Encode a fixed-size array (e.g., `uint256[3]`).
-fn encode_fixed_array(
-    element_type: &AbiType,
-    size: usize,
-    value: &str,
-) -> ProviderResult<Vec<u8>> {
+fn encode_fixed_array(element_type: &AbiType, size: usize, value: &str) -> ContractResult<Vec<u8>> {
     // Defensive check - should be caught at parse time
     if size == 0 {
-        return Err(ProviderError::InvalidAbi {
+        return Err(ContractError::InvalidAbi {
             message: "Cannot encode zero-element fixed array (e.g., uint256[0]) - not supported by Solidity".to_string(),
         });
     }
@@ -319,10 +313,12 @@ fn encode_fixed_array(
     let elements = parse_json_array(value)?;
 
     if elements.len() != size {
-        return Err(ProviderError::InvalidAbi {
+        return Err(ContractError::InvalidAbi {
             message: format!(
                 "Fixed array of size {} requires exactly {} elements, got {}",
-                size, size, elements.len()
+                size,
+                size,
+                elements.len()
             ),
         });
     }
@@ -331,7 +327,7 @@ fn encode_fixed_array(
 }
 
 /// Encode array elements without the array header.
-fn encode_array_elements(element_type: &AbiType, elements: &[&str]) -> ProviderResult<Vec<u8>> {
+fn encode_array_elements(element_type: &AbiType, elements: &[&str]) -> ContractResult<Vec<u8>> {
     // For static element types, encode directly
     // For dynamic element types, we need to compute offsets
     if element_type.is_dynamic() {
@@ -345,20 +341,19 @@ fn encode_array_elements(element_type: &AbiType, elements: &[&str]) -> ProviderR
 fn encode_static_array_elements(
     element_type: &AbiType,
     elements: &[&str],
-) -> ProviderResult<Vec<u8>> {
+) -> ContractResult<Vec<u8>> {
     let mut result = Vec::new();
 
     for (i, element) in elements.iter().enumerate() {
-        let encoded = encode_value(element_type, element).map_err(|e| {
-            ProviderError::InvalidAbi {
+        let encoded =
+            encode_value(element_type, element).map_err(|e| ContractError::InvalidAbi {
                 message: format!(
                     "Failed to encode array element {} of {}: {}",
                     i + 1,
                     elements.len(),
                     e
                 ),
-            }
-        })?;
+            })?;
         result.extend(encoded);
     }
 
@@ -369,7 +364,7 @@ fn encode_static_array_elements(
 fn encode_dynamic_array_elements(
     element_type: &AbiType,
     elements: &[&str],
-) -> ProviderResult<Vec<u8>> {
+) -> ContractResult<Vec<u8>> {
     // For dynamic elements, we need to:
     // 1. Compute the offsets for each element
     // 2. Encode the offsets
@@ -378,16 +373,15 @@ fn encode_dynamic_array_elements(
     // First, pre-encode all elements to know their sizes
     let mut encoded_elements: Vec<Vec<u8>> = Vec::with_capacity(elements.len());
     for (i, element) in elements.iter().enumerate() {
-        let encoded = encode_value(element_type, element).map_err(|e| {
-            ProviderError::InvalidAbi {
+        let encoded =
+            encode_value(element_type, element).map_err(|e| ContractError::InvalidAbi {
                 message: format!(
                     "Failed to encode array element {} of {}: {}",
                     i + 1,
                     elements.len(),
                     e
                 ),
-            }
-        })?;
+            })?;
         encoded_elements.push(encoded);
     }
 
@@ -422,7 +416,7 @@ fn encode_dynamic_array_elements(
 }
 
 /// Decode return data based on expected ABI types.
-pub fn decode_return_data(data: &[u8], types: &[AbiType]) -> ProviderResult<Vec<String>> {
+pub fn decode_return_data(data: &[u8], types: &[AbiType]) -> ContractResult<Vec<String>> {
     if data.is_empty() {
         return Ok(Vec::new());
     }
@@ -440,9 +434,9 @@ pub fn decode_return_data(data: &[u8], types: &[AbiType]) -> ProviderResult<Vec<
 }
 
 /// Decode a single value from the data.
-fn decode_value(data: &[u8], offset: usize, abi_type: &AbiType) -> ProviderResult<(String, usize)> {
+fn decode_value(data: &[u8], offset: usize, abi_type: &AbiType) -> ContractResult<(String, usize)> {
     if data.len() < offset + 32 {
-        return Err(ProviderError::DecodingError {
+        return Err(ContractError::DecodingError {
             message: "Insufficient data for decoding".to_string(),
         });
     }
@@ -465,7 +459,7 @@ fn decode_value(data: &[u8], offset: usize, abi_type: &AbiType) -> ProviderResul
         AbiType::Int(_) => {
             let value =
                 I256::from_be_bytes::<32>(data[offset..offset + 32].try_into().map_err(|_| {
-                    ProviderError::DecodingError {
+                    ContractError::DecodingError {
                         message: "Failed to convert bytes to I256".to_string(),
                     }
                 })?);
@@ -479,26 +473,26 @@ fn decode_value(data: &[u8], offset: usize, abi_type: &AbiType) -> ProviderResul
             // Dynamic types: offset to data location
             let data_offset: usize = U256::from_be_slice(&data[offset..offset + 32])
                 .try_into()
-                .map_err(|_| ProviderError::DecodingError {
+                .map_err(|_| ContractError::DecodingError {
                     message: "Data offset exceeds platform addressable range".to_string(),
                 })?;
 
             if data.len() < data_offset + 32 {
-                return Err(ProviderError::DecodingError {
+                return Err(ContractError::DecodingError {
                     message: "Invalid dynamic data offset".to_string(),
                 });
             }
 
             let length: usize = U256::from_be_slice(&data[data_offset..data_offset + 32])
                 .try_into()
-                .map_err(|_| ProviderError::DecodingError {
+                .map_err(|_| ContractError::DecodingError {
                     message: "Data length exceeds platform addressable range".to_string(),
                 })?;
             let value_start = data_offset + 32;
             let value_end = value_start + length;
 
             if data.len() < value_end {
-                return Err(ProviderError::DecodingError {
+                return Err(ContractError::DecodingError {
                     message: "Insufficient data for dynamic value".to_string(),
                 });
             }
@@ -512,9 +506,7 @@ fn decode_value(data: &[u8], offset: usize, abi_type: &AbiType) -> ProviderResul
                 Ok((format!("0x{}", hex::encode(value_bytes)), offset + 32))
             }
         }
-        AbiType::Array(element_type) => {
-            decode_dynamic_array(data, offset, element_type)
-        }
+        AbiType::Array(element_type) => decode_dynamic_array(data, offset, element_type),
         AbiType::FixedArray(element_type, size) => {
             decode_fixed_array(data, offset, element_type, *size)
         }
@@ -526,16 +518,16 @@ fn decode_dynamic_array(
     data: &[u8],
     offset: usize,
     element_type: &AbiType,
-) -> ProviderResult<(String, usize)> {
+) -> ContractResult<(String, usize)> {
     // Read the offset to array data
     let data_offset: usize = U256::from_be_slice(&data[offset..offset + 32])
         .try_into()
-        .map_err(|_| ProviderError::DecodingError {
+        .map_err(|_| ContractError::DecodingError {
             message: "Array offset exceeds platform addressable range".to_string(),
         })?;
 
     if data.len() < data_offset + 32 {
-        return Err(ProviderError::DecodingError {
+        return Err(ContractError::DecodingError {
             message: format!(
                 "Invalid array data offset: {} exceeds data length {}",
                 data_offset,
@@ -547,19 +539,46 @@ fn decode_dynamic_array(
     // Read the length
     let length: usize = U256::from_be_slice(&data[data_offset..data_offset + 32])
         .try_into()
-        .map_err(|_| ProviderError::DecodingError {
+        .map_err(|_| ContractError::DecodingError {
             message: "Array length exceeds platform addressable range".to_string(),
         })?;
 
-    // Decode elements
+    // Validate length against available data to prevent OOM from malformed input
     let elements_data_start = data_offset + 32;
+    if length > 0 && elements_data_start >= data.len() {
+        return Err(ContractError::DecodingError {
+            message: format!(
+                "Array length {} with no element data available (data length: {})",
+                length,
+                data.len()
+            ),
+        });
+    }
+
+    // For static element types, we can calculate exact minimum data required
+    if !element_type.is_dynamic() {
+        // Each static element requires exactly 32 bytes
+        let min_data_needed = elements_data_start + (length * 32);
+        if data.len() < min_data_needed {
+            return Err(ContractError::DecodingError {
+                message: format!(
+                    "Array length {} requires at least {} bytes but only {} available",
+                    length,
+                    min_data_needed,
+                    data.len()
+                ),
+            });
+        }
+    }
+
+    // Decode elements
     let mut values = Vec::with_capacity(length);
     let mut element_offset = elements_data_start;
 
     for i in 0..length {
         let (value, new_offset) =
             decode_value(data, element_offset, element_type).map_err(|e| {
-                ProviderError::DecodingError {
+                ContractError::DecodingError {
                     message: format!(
                         "Failed to decode array element {} of {}: {}",
                         i + 1,
@@ -582,10 +601,10 @@ fn decode_fixed_array(
     offset: usize,
     element_type: &AbiType,
     size: usize,
-) -> ProviderResult<(String, usize)> {
+) -> ContractResult<(String, usize)> {
     // Defensive check
     if size == 0 {
-        return Err(ProviderError::DecodingError {
+        return Err(ContractError::DecodingError {
             message: "Cannot decode zero-element fixed array (e.g., uint256[0]) - not supported by Solidity".to_string(),
         });
     }
@@ -596,7 +615,7 @@ fn decode_fixed_array(
     for i in 0..size {
         let (value, new_offset) =
             decode_value(data, element_offset, element_type).map_err(|e| {
-                ProviderError::DecodingError {
+                ContractError::DecodingError {
                     message: format!(
                         "Failed to decode fixed array element {} of {}: {}",
                         i + 1,
@@ -618,7 +637,7 @@ pub struct Contract {
     address: Address,
     provider: Arc<AlloyProvider>,
     /// Cache of parsed function signatures by name
-    signature_cache: Arc<RwLock<HashMap<String, FunctionSignature>>>,
+    signature_cache: Arc<RwLock<HashMap<String, Arc<FunctionSignature>>>>,
 }
 
 impl Contract {
@@ -644,7 +663,7 @@ impl Contract {
     ///
     /// # Errors
     ///
-    /// Returns `ProviderError` if the call fails or encoding/decoding fails.
+    /// Returns `ProviderError` or `ContractError` if the call fails or encoding/decoding fails.
     pub async fn call(
         &self,
         function_signature: &str,
@@ -669,25 +688,22 @@ impl Contract {
             .await?;
 
         // Decode return values
-        decode_return_data(&result, &func.outputs)
+        decode_return_data(&result, &func.outputs).map_err(Into::into)
     }
 
     /// Parse and cache a function signature.
-    fn parse_function_signature(&self, signature: &str) -> ProviderResult<FunctionSignature> {
-        // Try to get from cache first
+    fn parse_function_signature(&self, signature: &str) -> ProviderResult<Arc<FunctionSignature>> {
         let cache = self.signature_cache.read();
         if let Some(func) = cache.get(signature) {
-            return Ok(func.clone());
+            return Ok(Arc::clone(func));
         }
         drop(cache);
 
-        // Parse the signature
-        let func = FunctionSignature::parse(signature)?;
+        let func = Arc::new(FunctionSignature::parse(signature)?);
 
-        // Cache it
         self.signature_cache
             .write()
-            .insert(signature.to_string(), func.clone());
+            .insert(signature.to_string(), Arc::clone(&func));
 
         Ok(func)
     }
@@ -989,51 +1005,35 @@ mod tests {
 
     #[test]
     fn test_encode_empty_dynamic_array() {
-        // Empty dynamic array: offset + length 0
         let encoded = encode_value(&AbiType::Array(Box::new(AbiType::Uint(256))), "[]")
             .expect("should encode empty array");
-        assert_eq!(encoded.len(), 64); // offset (32) + length (32)
+        assert_eq!(encoded.len(), 32);
 
-        // First 32 bytes: offset = 32
-        assert_eq!(&encoded[0..32], U256::from(32).to_be_bytes_vec().as_slice());
-        // Second 32 bytes: length = 0
-        assert_eq!(&encoded[32..64], U256::from(0).to_be_bytes_vec().as_slice());
+        assert_eq!(&encoded[0..32], U256::from(0).to_be_bytes_vec().as_slice());
     }
 
     #[test]
     fn test_encode_dynamic_uint_array() {
-        // [1, 2, 3] as uint256[]
         let encoded = encode_value(&AbiType::Array(Box::new(AbiType::Uint(256))), "[1, 2, 3]")
             .expect("should encode uint256[]");
 
-        // Should be: offset (32) + length (3) + 3 * 32 bytes of uint values
-        assert_eq!(encoded.len(), 64 + 96);
+        assert_eq!(encoded.len(), 32 + 96);
 
-        // Verify offset and length
-        assert_eq!(&encoded[0..32], U256::from(32).to_be_bytes_vec().as_slice());
-        assert_eq!(&encoded[32..64], U256::from(3).to_be_bytes_vec().as_slice());
+        assert_eq!(&encoded[0..32], U256::from(3).to_be_bytes_vec().as_slice());
 
-        // Verify values
-        assert_eq!(
-            U256::from_be_slice(&encoded[64..96]),
-            U256::from(1)
-        );
-        assert_eq!(
-            U256::from_be_slice(&encoded[96..128]),
-            U256::from(2)
-        );
-        assert_eq!(
-            U256::from_be_slice(&encoded[128..160]),
-            U256::from(3)
-        );
+        assert_eq!(U256::from_be_slice(&encoded[32..64]), U256::from(1));
+        assert_eq!(U256::from_be_slice(&encoded[64..96]), U256::from(2));
+        assert_eq!(U256::from_be_slice(&encoded[96..128]), U256::from(3));
     }
 
     #[test]
     fn test_encode_fixed_uint_array() {
         // [10, 20, 30] as uint256[3]
-        let encoded =
-            encode_value(&AbiType::FixedArray(Box::new(AbiType::Uint(256)), 3), "[10, 20, 30]")
-                .expect("should encode uint256[3]");
+        let encoded = encode_value(
+            &AbiType::FixedArray(Box::new(AbiType::Uint(256)), 3),
+            "[10, 20, 30]",
+        )
+        .expect("should encode uint256[3]");
 
         // Fixed array: no offset, no length, just 3 * 32 bytes
         assert_eq!(encoded.len(), 96);
@@ -1046,8 +1046,10 @@ mod tests {
     #[test]
     fn test_encode_fixed_array_wrong_size() {
         // uint256[3] with 2 elements should error
-        let result =
-            encode_value(&AbiType::FixedArray(Box::new(AbiType::Uint(256)), 3), "[1, 2]");
+        let result = encode_value(
+            &AbiType::FixedArray(Box::new(AbiType::Uint(256)), 3),
+            "[1, 2]",
+        );
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -1057,7 +1059,6 @@ mod tests {
 
     #[test]
     fn test_encode_dynamic_address_array() {
-        // Address array
         let addr1 = "0x742d35Cc6634C0532925a3b8D4C9db96590d6B75";
         let addr2 = "0x66f9664f97f2b50f62d13ea064982f936de76657";
         let input = format!("[{addr1}, {addr2}]");
@@ -1065,26 +1066,30 @@ mod tests {
         let encoded = encode_value(&AbiType::Array(Box::new(AbiType::Address)), &input)
             .expect("should encode address[]");
 
-        // offset (32) + length (2) + 2 * 32 bytes
-        assert_eq!(encoded.len(), 64 + 64);
+        assert_eq!(encoded.len(), 32 + 64);
 
-        // Verify values are right-padded addresses
-        let addr1_encoded = &encoded[64..96];
-        assert_eq!(&addr1_encoded[12..], hex::decode("742d35Cc6634C0532925a3b8D4C9db96590d6B75").unwrap().as_slice());
+        let addr1_encoded = &encoded[32..64];
+        assert_eq!(
+            &addr1_encoded[12..],
+            hex::decode("742d35Cc6634C0532925a3b8D4C9db96590d6B75")
+                .unwrap()
+                .as_slice()
+        );
     }
 
     #[test]
     fn test_encode_dynamic_bool_array() {
-        // [true, false, true]
-        let encoded = encode_value(&AbiType::Array(Box::new(AbiType::Bool)), "[true, false, true]")
-            .expect("should encode bool[]");
+        let encoded = encode_value(
+            &AbiType::Array(Box::new(AbiType::Bool)),
+            "[true, false, true]",
+        )
+        .expect("should encode bool[]");
 
-        // offset + length + 3 * 32 bytes
-        assert_eq!(encoded.len(), 64 + 96);
+        assert_eq!(encoded.len(), 32 + 96);
 
-        assert_eq!(encoded[64 + 31], 1);
-        assert_eq!(encoded[96 + 31], 0);
-        assert_eq!(encoded[128 + 31], 1);
+        assert_eq!(encoded[32 + 31], 1);
+        assert_eq!(encoded[64 + 31], 0);
+        assert_eq!(encoded[96 + 31], 1);
     }
 
     #[test]
@@ -1108,9 +1113,8 @@ mod tests {
     #[test]
     fn test_encode_string_array() {
         // ["hello", "world"] as string[]
-        let encoded =
-            encode_value(&AbiType::Array(Box::new(AbiType::String)), "[hello, world]")
-                .expect("should encode string[]");
+        let encoded = encode_value(&AbiType::Array(Box::new(AbiType::String)), "[hello, world]")
+            .expect("should encode string[]");
 
         // Dynamic array of dynamic strings has complex layout
         // Just verify it encodes without error
@@ -1120,11 +1124,185 @@ mod tests {
     #[test]
     fn test_encode_bytes_array() {
         // [0x1234, 0x5678] as bytes[]
-        let encoded =
-            encode_value(&AbiType::Array(Box::new(AbiType::Bytes)), "[0x1234, 0x5678]")
-                .expect("should encode bytes[]");
+        let encoded = encode_value(
+            &AbiType::Array(Box::new(AbiType::Bytes)),
+            "[0x1234, 0x5678]",
+        )
+        .expect("should encode bytes[]");
 
         assert!(encoded.len() >= 64);
+    }
+
+    // =========================================================================
+    // encode_arguments: correct ABI head/tail offset encoding
+    // =========================================================================
+
+    #[allow(dead_code)]
+    fn wrap_with_offset(data: &[u8]) -> Vec<u8> {
+        let mut wrapped = Vec::with_capacity(32 + data.len());
+        wrapped.extend_from_slice(&U256::from(32).to_be_bytes_vec());
+        wrapped.extend_from_slice(data);
+        wrapped
+    }
+
+    #[test]
+    fn test_encode_arguments_static_then_dynamic() {
+        // f(uint256, bytes) with (1, 0x1234)
+        // ABI encoding:
+        //   Head: [uint256(1)][offset=64]
+        //   Tail: [length=2][0x1234 padded to 32 bytes]
+        let types = vec![AbiType::Uint(256), AbiType::Bytes];
+        let args = vec!["1".to_string(), "0x1234".to_string()];
+
+        let encoded = encode_arguments(&types, &args).expect("should encode mixed args");
+
+        assert_eq!(encoded.len(), 128);
+
+        // Head slot 0: uint256 = 1
+        assert_eq!(U256::from_be_slice(&encoded[0..32]), U256::from(1));
+
+        // Head slot 1: offset = 64 (2 head slots × 32 bytes)
+        let offset = U256::from_be_slice(&encoded[32..64]);
+        assert_eq!(offset, U256::from(64), "offset should be 64, got {offset}");
+
+        // Tail: bytes length = 2
+        assert_eq!(U256::from_be_slice(&encoded[64..96]), U256::from(2));
+
+        // Tail: bytes data
+        assert_eq!(encoded[96], 0x12);
+        assert_eq!(encoded[97], 0x34);
+    }
+
+    #[test]
+    fn test_encode_arguments_two_dynamic_params() {
+        // f(bytes, bytes) with (0x1234, 0x5678)
+        // ABI encoding:
+        //   Head: [offset=64][offset=128]
+        //   Tail: [length=2][0x1234+pad][length=2][0x5678+pad]
+        let types = vec![AbiType::Bytes, AbiType::Bytes];
+        let args = vec!["0x1234".to_string(), "0x5678".to_string()];
+
+        let encoded = encode_arguments(&types, &args).expect("should encode");
+
+        assert_eq!(encoded.len(), 192);
+
+        // Head: offsets
+        assert_eq!(U256::from_be_slice(&encoded[0..32]), U256::from(64));
+        assert_eq!(U256::from_be_slice(&encoded[32..64]), U256::from(128));
+
+        // First bytes tail
+        assert_eq!(U256::from_be_slice(&encoded[64..96]), U256::from(2));
+        assert_eq!(encoded[96], 0x12);
+        assert_eq!(encoded[97], 0x34);
+
+        // Second bytes tail
+        assert_eq!(U256::from_be_slice(&encoded[128..160]), U256::from(2));
+        assert_eq!(encoded[160], 0x56);
+        assert_eq!(encoded[161], 0x78);
+    }
+
+    #[test]
+    fn test_encode_arguments_static_dynamic_static_dynamic() {
+        // f(uint256, string, bool, bytes) with (42, "hello", true, 0xabcd)
+        // Head size = 4 × 32 = 128
+        // Offsets point into the tail past the 128-byte head
+        let types = vec![
+            AbiType::Uint(256),
+            AbiType::String,
+            AbiType::Bool,
+            AbiType::Bytes,
+        ];
+        let args = vec![
+            "42".to_string(),
+            "hello".to_string(),
+            "true".to_string(),
+            "0xabcd".to_string(),
+        ];
+
+        let encoded = encode_arguments(&types, &args).expect("should encode");
+
+        // Head
+        assert_eq!(U256::from_be_slice(&encoded[0..32]), U256::from(42)); // uint256
+        let string_offset = U256::from_be_slice(&encoded[32..64]);
+        assert_eq!(
+            string_offset,
+            U256::from(128),
+            "string offset should be 128"
+        );
+        assert_eq!(encoded[64 + 31], 1); // bool true
+        let bytes_offset = U256::from_be_slice(&encoded[96..128]);
+        assert_eq!(bytes_offset, U256::from(192), "bytes offset should be 192");
+
+        // String tail at offset 128
+        assert_eq!(U256::from_be_slice(&encoded[128..160]), U256::from(5)); // "hello" length
+        assert_eq!(&encoded[160..165], b"hello");
+
+        // Bytes tail at offset 192
+        assert_eq!(U256::from_be_slice(&encoded[192..224]), U256::from(2)); // 0xabcd length
+        assert_eq!(encoded[224], 0xab);
+        assert_eq!(encoded[225], 0xcd);
+    }
+
+    #[test]
+    fn test_encode_arguments_static_fixed_array_and_dynamic() {
+        // f(uint256[3], bytes) with ([10, 20, 30], 0xff)
+        // uint256[3] is static (96 bytes inline in head)
+        // Head size = 96 + 32 = 128
+        let types = vec![
+            AbiType::FixedArray(Box::new(AbiType::Uint(256)), 3),
+            AbiType::Bytes,
+        ];
+        let args = vec!["[10, 20, 30]".to_string(), "0xff".to_string()];
+
+        let encoded = encode_arguments(&types, &args).expect("should encode");
+
+        // Static uint256[3] inline
+        assert_eq!(U256::from_be_slice(&encoded[0..32]), U256::from(10));
+        assert_eq!(U256::from_be_slice(&encoded[32..64]), U256::from(20));
+        assert_eq!(U256::from_be_slice(&encoded[64..96]), U256::from(30));
+
+        // Offset to bytes = 128 (96 static + 32 offset slot)
+        let offset = U256::from_be_slice(&encoded[96..128]);
+        assert_eq!(
+            offset,
+            U256::from(128),
+            "offset should be 128, got {offset}"
+        );
+
+        // Bytes tail
+        assert_eq!(U256::from_be_slice(&encoded[128..160]), U256::from(1));
+        assert_eq!(encoded[160], 0xff);
+    }
+
+    #[test]
+    fn test_encode_arguments_dynamic_array_with_static_elements() {
+        // f(uint256[], uint256) with ([1,2,3], 42)
+        // Head: [offset_to_array][uint256(42)]
+        // Tail: [length=3][1][2][3]
+        let types = vec![
+            AbiType::Array(Box::new(AbiType::Uint(256))),
+            AbiType::Uint(256),
+        ];
+        let args = vec!["[1, 2, 3]".to_string(), "42".to_string()];
+
+        let encoded = encode_arguments(&types, &args).expect("should encode");
+
+        // Head slot 0: offset to array data = 64
+        let offset = U256::from_be_slice(&encoded[0..32]);
+        assert_eq!(
+            offset,
+            U256::from(64),
+            "array offset should be 64, got {offset}"
+        );
+
+        // Head slot 1: uint256 = 42
+        assert_eq!(U256::from_be_slice(&encoded[32..64]), U256::from(42));
+
+        // Tail: array length + elements
+        assert_eq!(U256::from_be_slice(&encoded[64..96]), U256::from(3));
+        assert_eq!(U256::from_be_slice(&encoded[96..128]), U256::from(1));
+        assert_eq!(U256::from_be_slice(&encoded[128..160]), U256::from(2));
+        assert_eq!(U256::from_be_slice(&encoded[160..192]), U256::from(3));
     }
 
     // =========================================================================
@@ -1148,14 +1326,13 @@ mod tests {
 
     #[test]
     fn test_decode_dynamic_uint_array() {
-        // Encode [1, 2, 3] then decode it
         let encoded = encode_value(&AbiType::Array(Box::new(AbiType::Uint(256))), "[1, 2, 3]")
             .expect("should encode");
 
-        let (value, _) = decode_value(&encoded, 0, &AbiType::Array(Box::new(AbiType::Uint(256))))
+        let wrapped = wrap_with_offset(&encoded);
+        let (value, _) = decode_value(&wrapped, 0, &AbiType::Array(Box::new(AbiType::Uint(256))))
             .expect("should decode");
 
-        // Check the decoded value matches expected format
         assert!(value.contains('1'));
         assert!(value.contains('2'));
         assert!(value.contains('3'));
@@ -1166,13 +1343,18 @@ mod tests {
     #[test]
     fn test_decode_fixed_uint_array() {
         // Encode [10, 20, 30] as uint256[3]
-        let encoded =
-            encode_value(&AbiType::FixedArray(Box::new(AbiType::Uint(256)), 3), "[10, 20, 30]")
-                .expect("should encode");
+        let encoded = encode_value(
+            &AbiType::FixedArray(Box::new(AbiType::Uint(256)), 3),
+            "[10, 20, 30]",
+        )
+        .expect("should encode");
 
-        let (value, consumed) =
-            decode_value(&encoded, 0, &AbiType::FixedArray(Box::new(AbiType::Uint(256)), 3))
-                .expect("should decode");
+        let (value, consumed) = decode_value(
+            &encoded,
+            0,
+            &AbiType::FixedArray(Box::new(AbiType::Uint(256)), 3),
+        )
+        .expect("should decode");
 
         assert!(value.contains("10"));
         assert!(value.contains("20"));
@@ -1188,7 +1370,8 @@ mod tests {
         let encoded = encode_value(&AbiType::Array(Box::new(AbiType::Address)), &input)
             .expect("should encode");
 
-        let (value, _) = decode_value(&encoded, 0, &AbiType::Array(Box::new(AbiType::Address)))
+        let wrapped = wrap_with_offset(&encoded);
+        let (value, _) = decode_value(&wrapped, 0, &AbiType::Array(Box::new(AbiType::Address)))
             .expect("should decode");
 
         assert!(value.contains("742d35cc6634c0532925a3b8d4c9db96590d6b75"));
@@ -1196,7 +1379,6 @@ mod tests {
 
     #[test]
     fn test_array_roundtrip() {
-        // Encode and decode should produce consistent results
         let test_cases = vec![
             ("[]", AbiType::Array(Box::new(AbiType::Uint(256)))),
             ("[1]", AbiType::Array(Box::new(AbiType::Uint(256)))),
@@ -1206,14 +1388,75 @@ mod tests {
 
         for (input, abi_type) in test_cases {
             let encoded = encode_value(&abi_type, input).expect("should encode");
-            let (decoded, _) = decode_value(&encoded, 0, &abi_type).expect("should decode");
 
-            // For roundtrip, we can't expect exact string match due to formatting,
-            // but we can verify the structure is preserved
+            let wrapped = wrap_with_offset(&encoded);
+            let (decoded, _) = decode_value(&wrapped, 0, &abi_type).expect("should decode");
+
             assert!(
                 decoded.starts_with('[') && decoded.ends_with(']'),
                 "Decoded value should be an array: {decoded}"
             );
         }
+    }
+
+    // =========================================================================
+    // Invalid length validation tests
+    // =========================================================================
+
+    #[test]
+    fn test_decode_dynamic_array_with_length_exceeding_data() {
+        // Craft malformed ABI data where length claims more elements than data can contain
+        // Structure:
+        // - bytes 0..32: offset = 32 (points to length field)
+        // - bytes 32..64: length = 1_000_000 (claims 1 million elements)
+        // - bytes 64..96: only 1 element worth of data
+        // Total: 96 bytes, but claims 1 million * 32 = 32 million bytes of elements
+        let mut data = vec![0u8; 96];
+
+        // Offset to array data (right after this offset field)
+        data[0..32].copy_from_slice(&U256::from(32).to_be_bytes_vec());
+
+        // Malicious length: claims 1 million elements
+        data[32..64].copy_from_slice(&U256::from(1_000_000).to_be_bytes_vec());
+
+        // Only 1 element of actual data
+        data[64..96].copy_from_slice(&U256::from(42).to_be_bytes_vec());
+
+        // Decoding should fail with a clear error, not panic or allocate massive memory
+        let result = decode_value(&data, 0, &AbiType::Array(Box::new(AbiType::Uint(256))));
+
+        assert!(
+            result.is_err(),
+            "Should reject array with length exceeding available data"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("requires at least") && err.to_string().contains("available"),
+            "Error should mention bytes required vs available: {err}"
+        );
+    }
+
+    #[test]
+    fn test_decode_dynamic_array_with_valid_length_at_boundary() {
+        // Test that valid arrays at the data boundary still work
+        // Structure:
+        // - bytes 0..32: offset = 32
+        // - bytes 32..64: length = 2
+        // - bytes 64..128: 2 elements (64 bytes)
+        // Total: 128 bytes, length = 2, exactly fits
+        let mut data = vec![0u8; 128];
+
+        data[0..32].copy_from_slice(&U256::from(32).to_be_bytes_vec());
+        data[32..64].copy_from_slice(&U256::from(2).to_be_bytes_vec());
+        data[64..96].copy_from_slice(&U256::from(1).to_be_bytes_vec());
+        data[96..128].copy_from_slice(&U256::from(2).to_be_bytes_vec());
+
+        let (value, consumed) =
+            decode_value(&data, 0, &AbiType::Array(Box::new(AbiType::Uint(256))))
+                .expect("should decode valid array");
+
+        assert!(value.contains('1'));
+        assert!(value.contains('2'));
+        assert_eq!(consumed, 32);
     }
 }

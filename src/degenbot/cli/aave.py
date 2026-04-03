@@ -37,6 +37,10 @@ from degenbot.aave.liquidation_patterns import (
     detect_liquidation_patterns,
 )
 from degenbot.aave.models import EnrichedScaledTokenEvent
+from degenbot.aave.position_analysis import (
+    UserPositionSummary,
+    analyze_positions_for_market,
+)
 from degenbot.aave.processors import (
     CollateralBurnEvent,
     CollateralMintEvent,
@@ -117,6 +121,9 @@ class UserOperation(Enum):
 
 GHO_DISCOUNT_DEPRECATION_REVISION = 4
 SCALED_AMOUNT_POOL_REVISION = 9
+
+# Display limit for position risk analysis output
+POSITION_RISK_DISPLAY_LIMIT = 20
 
 # Liquidation operation types (used to identify liquidation operations in multiple places)
 LIQUIDATION_OPERATION_TYPES = {OperationType.LIQUIDATION, OperationType.GHO_LIQUIDATION}
@@ -904,6 +911,167 @@ def position_show(address: str, market: str, chain_id: int) -> None:
             click.echo("\nNo debt positions found.")
 
         click.echo()
+
+
+@position.command("risk")
+@click.option(
+    "--market",
+    type=str,
+    default="aave_v3",
+    show_default=True,
+    help="Market name to analyze (default: aave_v3).",
+)
+@click.option(
+    "--chain-id",
+    type=int,
+    default=1,
+    show_default=True,
+    help="Chain ID (default: 1 for Ethereum mainnet).",
+)
+@click.option(
+    "--threshold",
+    type=float,
+    default=1.1,
+    show_default=True,
+    help="Health factor threshold for 'at risk' classification.",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Maximum number of users to analyze (for testing).",
+)
+@click.option(
+    "--show-positions",
+    is_flag=True,
+    default=False,
+    help="Show detailed position information for at-risk users.",
+)
+@click.option(
+    "--skip-prices",
+    is_flag=True,
+    default=False,
+    help="Skip fetching prices from oracle (faster, but HF values are relative).",
+)
+def position_risk(  # noqa: PLR0917
+    market: str,
+    chain_id: int,
+    threshold: float,
+    limit: int | None,
+    show_positions: bool,  # noqa: FBT001
+    skip_prices: bool,  # noqa: FBT001
+) -> None:
+    """
+    Analyze positions for liquidation risk.
+
+    Identifies users with low health factors who are at risk of liquidation.
+    Users are categorized as:
+    - Liquidatable: Health factor < 1.0
+    - At risk: Health factor < threshold (default 1.1)
+    - Safe: Health factor >= threshold
+
+    By default, prices are fetched from the Aave oracle for accurate health
+    factor calculations. Use --skip-prices for faster analysis when you only
+    need relative risk comparisons.
+    """
+
+    # Get Web3 instance for price fetching
+    w3 = None if skip_prices else get_web3_from_config(chain_id=chain_id)
+
+    with db_session() as session:
+        # Find the market
+        market_obj = session.scalar(
+            select(AaveV3Market).where(
+                AaveV3Market.name == market,
+                AaveV3Market.chain_id == chain_id,
+            )
+        )
+
+        if market_obj is None:
+            click.echo(f"No market found with name '{market}' on chain {chain_id}.")
+            return
+
+        click.echo(f"\nAnalyzing positions for market: {market} (Chain: {chain_id})")
+        click.echo(f"Health factor threshold: {threshold}")
+        click.echo("=" * 60)
+
+        # Analyze positions
+        result = analyze_positions_for_market(
+            session=session,
+            market_id=market_obj.id,
+            health_factor_threshold=threshold,
+            limit=limit,
+            w3=w3,
+        )
+
+        # Display summary
+        click.echo("\nAnalysis Summary:")
+        click.echo(f"  Total users with debt: {result.total_users}")
+        click.echo(f"  Safe users:            {len(result.safe_users)}")
+        click.echo(f"  At risk (HF < {threshold}):  {result.at_risk_count}")
+        click.echo(f"  Liquidatable (HF < 1): {result.liquidatable_count}")
+
+        # Display liquidatable users
+        if result.liquidatable_users:
+            click.echo(f"\n{'=' * 60}")
+            click.echo("LIQUIDATABLE POSITIONS (HF < 1.0)")
+            click.echo("=" * 60)
+            for user_summary in result.liquidatable_users[:POSITION_RISK_DISPLAY_LIMIT]:
+                _display_user_risk(user_summary, show_positions=show_positions)
+
+            if len(result.liquidatable_users) > POSITION_RISK_DISPLAY_LIMIT:
+                remaining = len(result.liquidatable_users) - POSITION_RISK_DISPLAY_LIMIT
+                click.echo(f"  ... and {remaining} more")
+
+        # Display at-risk users
+        if result.at_risk_users:
+            click.echo(f"\n{'=' * 60}")
+            click.echo(f"AT-RISK POSITIONS (HF < {threshold})")
+            click.echo("=" * 60)
+            for user_summary in result.at_risk_users[:POSITION_RISK_DISPLAY_LIMIT]:
+                _display_user_risk(user_summary, show_positions=show_positions)
+
+            if len(result.at_risk_users) > POSITION_RISK_DISPLAY_LIMIT:
+                remaining = len(result.at_risk_users) - POSITION_RISK_DISPLAY_LIMIT
+                click.echo(f"  ... and {remaining} more")
+
+
+def _display_user_risk(
+    user_summary: UserPositionSummary,
+    *,
+    show_positions: bool,
+) -> None:
+    """Display risk information for a single user."""
+    hf_str = f"{user_summary.health_factor:.4f}" if user_summary.health_factor else "N/A"
+    ltv_str = f"{user_summary.max_ltv_ratio:.2%}" if user_summary.max_ltv_ratio else "N/A"
+
+    click.echo(f"\n  User: {user_summary.user_address}")
+    click.echo(f"    Health Factor: {hf_str}")
+    click.echo(f"    Max LTV Ratio: {ltv_str}")
+
+    if user_summary.emode_category_id:
+        click.echo(f"    eMode Category: {user_summary.emode_category_id}")
+    if user_summary.is_isolation_mode:
+        click.echo("    Isolation Mode: Yes")
+
+    if show_positions:
+        if user_summary.collateral_positions:
+            click.echo("    Collateral:")
+            for pos in user_summary.collateral_positions:
+                if pos.actual_balance > 0:
+                    enabled_str = "" if pos.is_enabled_as_collateral else " (disabled)"
+                    emode_str = " [eMode]" if pos.in_emode else ""
+                    click.echo(
+                        f"      {pos.asset_symbol}: {pos.actual_balance:,} "
+                        f"(LT: {pos.liquidation_threshold / 100:.0f}%){enabled_str}{emode_str}"
+                    )
+
+        if user_summary.debt_positions:
+            click.echo("    Debt:")
+            for pos in user_summary.debt_positions:
+                if pos.actual_balance > 0:
+                    emode_str = " [eMode]" if pos.in_emode else ""
+                    click.echo(f"      {pos.asset_symbol}: {pos.actual_balance:,}{emode_str}")
 
 
 @aave.group()
