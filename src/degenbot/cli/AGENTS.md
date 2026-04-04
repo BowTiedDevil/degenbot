@@ -213,6 +213,9 @@ The Aave module uses a layered math architecture:
 ### Testing Commands
 
 ```bash
+# Run Python tests
+just test-python
+
 # Run specific block range
 uv run degenbot aave update --chunk 1
 

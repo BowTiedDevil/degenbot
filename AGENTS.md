@@ -6,15 +6,21 @@ Use Red/Green TDD while refactoring and implementing new features.
 
 ## Commands
 
+Uses `just` (see justfile). Key commands:
+
 ### Python
-- `uv run pytest -x -q --no-header --tb=no -n0 --no-cov` - Run Python tests
-- `uv run ruff check` - Run Python code lint checks
-- `uv run mypy` - Run Python code type checks
+- `just test-python` - Run Python tests
+- `just test-python-cov` - Run Python tests with coverage
+- `just lint` - Run all linters (Rust + Python)
 
 ### Rust
-- `cargo clippy --all-targets --all-features --manifest-path rust/Cargo.toml` - Run Rust code checks
-- `cargo test --manifest-path rust/Cargo.toml` - Run Rust tests
-- `cargo build --release --features extension-module --manifest-path rust/Cargo.toml` - Build Python extension
+- `just test-rust` - Run Rust tests
+- `just lint-rust` - Run Rust linter (clippy)
+- `just build-rust-extension` - Build Python extension
+
+### Combined
+- `just test-all` - Run all tests (Rust + Python)
+- `just dev` - Build and install Python extension in development mode
 
 ## Database
 - SQLite database path configured in `~/.config/degenbot/config.toml`

@@ -169,24 +169,15 @@ mod proptests {
 
 ## Build Commands
 
-The Rust crate uses the `extension-module` feature to build as a Python extension module:
+Uses `just` from the project root (see justfile):
 
 ```bash
-# Run Rust tests
-cargo test
-
-# Build release library (links Python - for testing only)
-cargo build --release
-
-# Build Python extension (correct for distribution)
-cargo build --release --features extension-module
-```
-
-For convenience, use the `justfile` at the project root:
-```bash
-just test-rust      # Run Rust tests
-just dev            # Build and install Python extension
-just test-all       # Run all Rust and Python tests
+just test-rust           # Run Rust tests
+just lint-rust           # Run Rust linter (clippy)
+just build-rust-debug    # Build release library (links Python)
+just build-rust-extension # Build Python extension (correct for distribution)
+just dev                 # Build and install Python extension in dev mode
+just test-all            # Run all Rust and Python tests
 ```
 
 ## Solidity/EVM Notes
