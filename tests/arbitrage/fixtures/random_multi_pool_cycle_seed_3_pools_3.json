@@ -1,0 +1,31 @@
+{
+  "id": "random_multi_pool_cycle_seed_3_pools_3",
+  "cycle_type": "v2_v2",
+  "pool_states": {
+    "0x0000000000000000000000000000000000000003": {
+      "type": "v2",
+      "address": "0x0000000000000000000000000000000000000003",
+      "block": 0,
+      "reserves_token0": 31622776601,
+      "reserves_token1": 31622776601
+    },
+    "0x0000000000000000000000000000000000000004": {
+      "type": "v2",
+      "address": "0x0000000000000000000000000000000000000004",
+      "block": 0,
+      "reserves_token0": 31297646214,
+      "reserves_token1": 31951284551
+    },
+    "0x0000000000000000000000000000000000000005": {
+      "type": "v2",
+      "address": "0x0000000000000000000000000000000000000005",
+      "block": 0,
+      "reserves_token0": 31081978053,
+      "reserves_token1": 32172984559
+    }
+  },
+  "input_token_address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+  "expected_optimal_input": 0,
+  "expected_profit": 0,
+  "profit_tolerance_bps": 10
+}
