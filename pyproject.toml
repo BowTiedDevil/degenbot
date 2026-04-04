@@ -1,10 +1,10 @@
 [build-system]
-requires = ["maturin>=1.12,<2"]
+requires = ["maturin ~= 1.12"]
 build-backend = "maturin"
 
 [project]
 name = "degenbot"
-version = "0.6.0a1.post1"
+version = "0.6.0a2"
 authors = [
     { name="BowTiedDevil", email="devil@bowtieddevil.com" },
 ]
@@ -12,19 +12,19 @@ description = "Python classes to aid rapid development of Uniswap (V2, V3, V4), 
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "alembic >= 1.18, <2",
-    "click >=8.3, <9",
-    "cvxpy >=1.8, <2",
-    "networkx >= 3.6, <4",
-    "pydantic >=2.12, <3",
-    "pydantic-settings >=2.13, <3",
-    "scipy >=1.17, <2",
-    "sqlalchemy >=2.0, <3",
-    "tenacity >=9.1, <10",
-    "tomlkit >= 0.14, <1",
-    "tqdm >= 4.67, <5",
-    "ujson >= 5.12, <6",
-    "web3 >=7.14, <8",
+    "alembic ~= 1.18",
+    "click ~= 8.3",
+    "cvxpy ~= 1.8",
+    "networkx ~= 3.6",
+    "pydantic ~= 2.12",
+    "pydantic-settings ~= 2.13",
+    "scipy ~= 1.17",
+    "sqlalchemy ~= 2.0",
+    "tenacity ~= 9.1",
+    "tomlkit ~= 0.14",
+    "tqdm ~= 4.67",
+    "ujson ~= 5.12",
+    "web3 ~= 7.14",
 ]
 license = {text = "MIT"}
 license-files = ["LICENSE"]
