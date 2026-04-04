@@ -220,12 +220,7 @@ just test-python
 uv run degenbot aave update --chunk 1
 
 # Check specific transaction
-uv run python3 -c "
-from web3 import Web3
-w3 = Web3(Web3.HTTPProvider('http://node:8545'))
-tx = w3.eth.get_transaction_receipt('0x...')
-print(tx)
-"
+cast receipt 0x... --rpc-url http://node:8545
 
 # Verify on-chain balance
 cast call <aToken_address> "scaledBalanceOf(address)" <user_address> --block <block_number> --rpc-url http://node:8545
