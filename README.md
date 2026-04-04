@@ -633,7 +633,7 @@ EIP-55 checksummed address conversion:
 from degenbot._rs import to_checksum_address
 
 checksummed = to_checksum_address("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-# Returns: "0xDeaDbeefDeadBeefDeadBeefDeadBeefDeadBeef"
+# Returns: "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF"
 ```
 
 ### Provider Classes
