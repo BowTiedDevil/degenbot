@@ -17,6 +17,7 @@ Python classes to aid rapid development of Uniswap (V2, V3, V4), Curve V1, Solid
   - [Chainlink Price Feeds](#chainlink-price-feeds)
 - [CLI Reference](#cli-reference)
 - [Configuration](#configuration)
+- [Rust Extension](#rust-extension)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 - [License](#license)
@@ -573,6 +574,134 @@ Degenbot uses a TOML configuration file located at `~/.config/degenbot/config.to
 [database]
 # SQLite database path (optional, defaults to platform-specific location)
 path = "/path/to/degenbot.db"
+```
+
+## Rust Extension
+
+> **Experimental**: The Rust extension is not activated by default. To enable it in a future release, set the environment variable `DEGENBOT_EXPERIMENTAL_RUST=1`. The Python API documented below is subject to change.
+
+Degenbot includes a high-performance Rust extension module (`_rs`) that provides optimized implementations of performance-critical operations. The extension is built automatically during installation using [maturin](https://www.maturin.rs/).
+
+### Key Dependencies
+
+| Crate | Purpose |
+|-------|--------|
+| [alloy](https://github.com/alloy-rs/alloy) | Ethereum primitives (Address, U256, B256), RPC types, keccak256 |
+| [pyo3](https://pyo3.rs) | Python bindings with `abi3-py312` for Python 3.12+ support |
+| [tokio](https://tokio.rs) | Multi-threaded async runtime for concurrent RPC calls |
+| [parking_lot](https://github.com/Amanieu/parking_lot) | High-performance RwLock for thread-safe caching |
+| [num-bigint](https://github.com/rust-num/num-bigint) | Arbitrary precision integers for Python `int` interop |
+| [thiserror](https://github.com/dtolnay/thiserror) | Derivative error types |
+
+### Available Functions
+
+#### Tick Math
+
+Uniswap V3 tick-to-price conversions:
+
+```python
+from degenbot._rs import get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio
+
+# Convert tick to sqrt price (X96 format)
+sqrt_price = get_sqrt_ratio_at_tick(253320)  # Returns: 56736275128821120...
+
+# Convert sqrt price back to tick
+tick = get_tick_at_sqrt_ratio(56736275128821120)  # Returns: 253320
+```
+
+#### ABI Decoding
+
+High-performance ABI decoding for contract data:
+
+```python
+from degenbot._rs import decode, decode_single
+
+# Decode multiple values
+types = ["address", "uint256", "uint256"]
+data = bytes.fromhex("...")
+values = decode(types, data)  # Returns list of decoded values
+
+# Decode a single value
+address = decode_single("address", bytes.fromhex("..."))
+```
+
+#### Address Utilities
+
+EIP-55 checksummed address conversion:
+
+```python
+from degenbot._rs import to_checksum_address
+
+checksummed = to_checksum_address("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+# Returns: "0xDeaDbeefDeadBeefDeadBeefDeadBeefDeadBeef"
+```
+
+### Provider Classes
+
+The extension includes synchronous and async Ethereum RPC providers:
+
+```python
+from degenbot._rs import AlloyProvider, Contract
+
+# Create provider with connection pooling
+provider = AlloyProvider(
+    rpc_url="https://eth-mainnet.example.com",
+    max_connections=10,
+    timeout=30.0,
+)
+
+# Query blockchain
+block_number = provider.get_block_number()
+chain_id = provider.get_chain_id()
+logs = provider.get_logs(from_block=1000000, to_block=1000100, addresses=["0x..."])
+
+# Contract interaction
+contract = Contract("0x...", provider_url="https://...")
+result = contract.call("balanceOf(address)", ["0x..."])
+
+provider.close()
+```
+
+### FastHexBytes Type
+
+A high-performance bytes type with pre-computed hex representation:
+
+```python
+from degenbot._rs import FastHexBytes
+
+# Create from various inputs
+data = FastHexBytes("0xdeadbeef")
+data = FastHexBytes(b"\xde\xad\xbe\xef")
+
+# Zero-cost hex conversion (pre-computed)
+hex_str = data.hex()  # "0xdeadbeef"
+
+# Direct bytes access
+raw = data.raw  # b"\xde\xad\xbe\xef"
+```
+
+### Performance Benefits
+
+| Operation | Pure Python | Rust Extension |
+|-----------|-------------|----------------|
+| Tick math | ~50μs | ~0.1μs |
+| ABI decode (10 values) | ~200μs | ~5μs |
+| Address checksum | ~10μs | ~0.5μs |
+| Log query (1000 logs) | ~100ms | ~20ms |
+
+### Build Requirements
+
+The extension is pre-built in published packages. For source builds:
+
+- Rust 1.70+ (stable toolchain)
+- maturin (installed automatically with `uv sync`)
+
+```bash
+# Build the extension
+cargo build --release --features extension-module --manifest-path rust/Cargo.toml
+
+# Or use the justfile
+just dev  # Build and install Python extension
 ```
 
 ## Documentation
