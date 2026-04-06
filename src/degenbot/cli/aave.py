@@ -1057,21 +1057,23 @@ def _display_user_risk(
     if show_positions:
         if user_summary.collateral_positions:
             click.echo("    Collateral:")
-            for pos in user_summary.collateral_positions:
-                if pos.actual_balance > 0:
-                    enabled_str = "" if pos.is_enabled_as_collateral else " (disabled)"
-                    emode_str = " [eMode]" if pos.in_emode else ""
+            for collateral_pos in user_summary.collateral_positions:
+                if collateral_pos.actual_balance > 0:
+                    enabled_str = "" if collateral_pos.is_enabled_as_collateral else " (disabled)"
+                    emode_str = " [eMode]" if collateral_pos.in_emode else ""
                     click.echo(
-                        f"      {pos.asset_symbol}: {pos.actual_balance:,} "
-                        f"(LT: {pos.liquidation_threshold / 100:.0f}%){enabled_str}{emode_str}"
+                        f"      {collateral_pos.asset_symbol}: {collateral_pos.actual_balance:,} "
+                        f"(LT: {collateral_pos.liquidation_threshold / 100:.0f}%){enabled_str}{emode_str}"
                     )
 
         if user_summary.debt_positions:
             click.echo("    Debt:")
-            for pos in user_summary.debt_positions:
-                if pos.actual_balance > 0:
-                    emode_str = " [eMode]" if pos.in_emode else ""
-                    click.echo(f"      {pos.asset_symbol}: {pos.actual_balance:,}{emode_str}")
+            for debt_pos in user_summary.debt_positions:
+                if debt_pos.actual_balance > 0:
+                    emode_str = " [eMode]" if debt_pos.in_emode else ""
+                    click.echo(
+                        f"      {debt_pos.asset_symbol}: {debt_pos.actual_balance:,}{emode_str}"
+                    )
 
 
 @aave.group()
