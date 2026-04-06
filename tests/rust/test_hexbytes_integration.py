@@ -84,15 +84,15 @@ class TestHexBytesConversion:
 
     def test_eth_call_returns_hexbytes(self, ethereum_mainnet_alloy_provider: AlloyProvider):
         """
-        Test that eth_call returns FastHexBytes.
+        Test that call returns FastHexBytes.
         """
 
         # Call balanceOf for WETH
         # balanceOf selector: 0x70a08231
-        result = ethereum_mainnet_alloy_provider.eth.call({
-            "to": WETH_ADDRESS,
-            "data": "0x70a08231000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-        })
+        result = ethereum_mainnet_alloy_provider.call(
+            to=WETH_ADDRESS,
+            data=bytes.fromhex("70a08231000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+        )
 
         assert isinstance(result, FastHexBytes)
         assert len(result) == 32  # uint256 return value
@@ -104,7 +104,7 @@ class TestHexBytesConversion:
         Test that get_block returns FastHexBytes for hash fields.
         """
 
-        block = ethereum_mainnet_alloy_provider.eth.get_block(12_369_621)
+        block = ethereum_mainnet_alloy_provider.get_block(12_369_621)
 
         assert block is not None
 
@@ -122,7 +122,7 @@ class TestHexBytesConversion:
         Test that get_block returns int for numeric fields.
         """
 
-        block = ethereum_mainnet_alloy_provider.eth.get_block(12_369_621)
+        block = ethereum_mainnet_alloy_provider.get_block(12_369_621)
 
         assert block is not None
 
@@ -137,7 +137,7 @@ class TestHexBytesConversion:
         Test that get_code returns FastHexBytes."""
 
         # Get code for WETH contract
-        code = ethereum_mainnet_alloy_provider.eth.get_code(WETH_ADDRESS)
+        code = ethereum_mainnet_alloy_provider.get_code(WETH_ADDRESS)
 
         assert isinstance(code, FastHexBytes)
         assert len(code) > 0

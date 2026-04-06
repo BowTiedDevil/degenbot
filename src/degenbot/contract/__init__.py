@@ -27,27 +27,15 @@ Example:
     ... ])
 """
 
-from __future__ import annotations
+from collections.abc import Sequence
+from typing import Any
 
-from typing import TYPE_CHECKING, Any, cast
+from eth_typing import ChecksumAddress as Address
 
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from eth_typing import ChecksumAddress as Address
-
-from degenbot._rs import (
-    Contract as _Contract,
-)
-from degenbot._rs import (
-    decode_return_data as _decode_return_data,
-)
-from degenbot._rs import (
-    encode_function_call as _encode_function_call,
-)
-from degenbot._rs import (
-    get_function_selector as _get_function_selector,
-)
+from degenbot._rs import Contract as _Contract
+from degenbot._rs import decode_return_data as _decode_return_data
+from degenbot._rs import encode_function_call as _encode_function_call
+from degenbot._rs import get_function_selector as _get_function_selector
 
 
 class Contract:
@@ -162,9 +150,8 @@ class Contract:
         if isinstance(block_number, int):
             block_num = block_number
         elif block_number is not None and block_number != "latest":
-            raise NotImplementedError(
-                f"Block tag '{block_number}' not yet implemented. Use int or 'latest'."
-            )
+            msg = f"Block tag '{block_number}' not yet implemented. Use int or 'latest'."
+            raise NotImplementedError(msg)
 
         return list(self._contract.call(function_signature, list(args), block_num))
 
@@ -202,8 +189,8 @@ class Contract:
             results.append(result)
         return results
 
+    @staticmethod
     def encode_function_call(
-        self,
         function_signature: str,
         args: Sequence[str] | None = None,
     ) -> bytes:
@@ -229,7 +216,7 @@ class Contract:
         """
         if args is None:
             args = []
-        return cast("bytes", _encode_function_call(function_signature, list(args)))
+        return _encode_function_call(function_signature, list(args))
 
     @staticmethod
     def get_function_selector(function_signature: str) -> str:
@@ -248,7 +235,7 @@ class Contract:
             >>> Contract.get_function_selector("balanceOf(address)")
             '0x70a08231'
         """
-        return cast("str", _get_function_selector(function_signature))
+        return _get_function_selector(function_signature)
 
     @staticmethod
     def decode_return_data(data: bytes, output_types: Sequence[str]) -> list[str]:
@@ -269,7 +256,7 @@ class Contract:
             ... )
             >>> balance, owner = decoded
         """
-        return cast("list[str]", _decode_return_data(data, list(output_types)))
+        return _decode_return_data(data, list(output_types))
 
 
 def get_function_selector(function_signature: str) -> str:
@@ -286,7 +273,7 @@ def get_function_selector(function_signature: str) -> str:
         >>> get_function_selector("transfer(address,uint256)")
         '0xa9059cbb'
     """
-    return cast("str", _get_function_selector(function_signature))
+    return _get_function_selector(function_signature)
 
 
 def encode_function_call(function_signature: str, args: Sequence[str] | None = None) -> bytes:
@@ -302,7 +289,7 @@ def encode_function_call(function_signature: str, args: Sequence[str] | None = N
     """
     if args is None:
         args = []
-    return cast("bytes", _encode_function_call(function_signature, list(args)))
+    return _encode_function_call(function_signature, list(args))
 
 
 def decode_return_data(data: bytes, output_types: Sequence[str]) -> list[str]:
@@ -316,7 +303,7 @@ def decode_return_data(data: bytes, output_types: Sequence[str]) -> list[str]:
     Returns:
         List of decoded values as strings
     """
-    return cast("list[str]", _decode_return_data(data, list(output_types)))
+    return _decode_return_data(data, list(output_types))
 
 
 __all__ = [

@@ -18,9 +18,7 @@ Example:
     >>> asyncio.run(main())
 """
 
-from __future__ import annotations
-
-from typing import Any, Sequence
+from collections.abc import Sequence
 
 from degenbot._rs import AsyncContract as _AsyncContract
 

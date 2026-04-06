@@ -15,9 +15,7 @@ Example:
     >>> asyncio.run(main())
 """
 
-from __future__ import annotations
-
-from typing import Any
+from typing import Any, Self
 
 from degenbot._rs import AsyncAlloyProvider as _AsyncAlloyProvider
 
@@ -60,7 +58,7 @@ class AsyncAlloyProvider:
         cls,
         rpc_url: str,
         max_retries: int = 10,
-    ) -> AsyncAlloyProvider:
+    ) -> Self:
         """Create a new async provider.
 
         Args:
