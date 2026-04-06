@@ -14,7 +14,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, joinedload
 from tqdm.contrib.logging import logging_redirect_tqdm
 from web3.exceptions import ContractLogicError
-from web3.types import LogReceipt, TxParams
+from web3.types import LogReceipt
 
 from degenbot.aave.deployments import EthereumMainnetAaveV3
 from degenbot.aave.enrichment import ScaledEventEnricher
@@ -84,6 +84,8 @@ from degenbot.functions import (
 )
 from degenbot.logging import logger
 from degenbot.provider.interface import ProviderAdapter
+from degenbot.utils import to_bytes
+from degenbot.utils.bytes import HexBytesLike
 
 if TYPE_CHECKING:
     from eth_typing.evm import BlockParams
@@ -94,13 +96,13 @@ if TYPE_CHECKING:
     )
 
 # Module-level cache: topic -> category name for Aave events
-_AAVE_EVENT_TOPIC_TO_CATEGORY: dict[HexBytes, str] = {
-    **{e.value: e.name for e in AaveV3PoolEvent},
-    **{e.value: e.name for e in AaveV3StkAaveEvent},
-    **{e.value: e.name for e in AaveV3ScaledTokenEvent},
-    **{e.value: e.name for e in AaveV3GhoDebtTokenEvent},
-    **{e.value: e.name for e in AaveV3PoolConfigEvent},
-    **{e.value: e.name for e in AaveV3OracleEvent},
+_AAVE_EVENT_TOPIC_TO_CATEGORY: dict[bytes, str] = {
+    **{bytes(e.value): e.name for e in AaveV3PoolEvent},
+    **{bytes(e.value): e.name for e in AaveV3StkAaveEvent},
+    **{bytes(e.value): e.name for e in AaveV3ScaledTokenEvent},
+    **{bytes(e.value): e.name for e in AaveV3GhoDebtTokenEvent},
+    **{bytes(e.value): e.name for e in AaveV3PoolConfigEvent},
+    **{bytes(e.value): e.name for e in AaveV3OracleEvent},
 }
 
 
@@ -1321,7 +1323,7 @@ def _process_e_mode_category_added_event(
     # Decode non-indexed parameters
     ltv, liquidation_threshold, liquidation_bonus, oracle, label = eth_abi.abi.decode(
         types=["uint256", "uint256", "uint256", "address", "string"],
-        data=HexBytes(event["data"]),
+        data=to_bytes(event["data"]),
     )
 
     # Check if category already exists
@@ -1380,7 +1382,7 @@ def _process_emode_asset_category_changed_event(
     # Decode non-indexed parameters
     old_category_id, new_category_id = eth_abi.abi.decode(
         types=["uint8", "uint8"],
-        data=HexBytes(event["data"]),
+        data=to_bytes(event["data"]),
     )
 
     # Find the asset
@@ -1449,7 +1451,7 @@ def _process_asset_collateral_in_emode_changed_event(
     # Decode non-indexed parameters
     category_id, is_collateral = eth_abi.abi.decode(
         types=["uint8", "bool"],
-        data=HexBytes(event["data"]),
+        data=to_bytes(event["data"]),
     )
 
     # Find the asset
@@ -2390,7 +2392,7 @@ def _try_fetch_token_string(
             (value,) = eth_abi.abi.decode(types=["bytes32"], data=result)
             return (
                 value.decode("utf-8", errors="ignore").strip("\x00")
-                if isinstance(value, (bytes, HexBytes))
+                if isinstance(value, bytes)
                 else str(value)
             )
 
@@ -3007,7 +3009,7 @@ def _verify_all_positions(
         market: The Aave V3 market to verify
         session: Database session
         block_number: The block number to verify against
-        no_progress: If True, disable progress bars
+        show_progress: If True, show progress bars
     """
 
     logger.info(f"Performing full verification of all positions at block {block_number:,}")

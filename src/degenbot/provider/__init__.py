@@ -309,10 +309,15 @@ class AlloyProvider:
     ) -> HexBytes:
         """Get storage at a given position.
 
-        Not yet implemented for AlloyProvider.
+        Args:
+            address: Contract address
+            position: Storage slot position (supports large values like mapping slots)
+            block_number: Block number to get storage at (default: latest)
+
+        Returns:
+            Storage value at the position as HexBytes (32 bytes)
         """
-        msg = "get_storage_at not implemented for AlloyProvider"
-        raise NotImplementedError(msg)
+        return cast("HexBytes", self._provider.get_storage_at(address, position, block_number))
 
     def get_transaction_count(
         self,

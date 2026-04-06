@@ -22,11 +22,9 @@ Example:
     >>> result = provider.call(to="0x...", data=calldata)
 """
 
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, Self, runtime_checkable
 
 from hexbytes import HexBytes
-
-from degenbot.provider import AlloyProvider
 
 
 @runtime_checkable
@@ -130,7 +128,7 @@ class ProviderAdapter:
 
     def __init__(
         self,
-        provider: AlloyProvider | Any,  # noqa: ANN401
+        provider: Any,  # noqa: ANN401
         *,
         provider_type: Literal["web3", "alloy"],
     ) -> None:
@@ -144,7 +142,7 @@ class ProviderAdapter:
         self._provider_type = provider_type
 
     @classmethod
-    def from_web3(cls, w3: Any) -> ProviderAdapter:  # noqa: ANN401
+    def from_web3(cls, w3: Any) -> Self:  # noqa: ANN401
         """Create an adapter wrapping a Web3 instance.
 
         Args:
@@ -156,7 +154,7 @@ class ProviderAdapter:
         return cls(provider=w3, provider_type="web3")
 
     @classmethod
-    def from_alloy(cls, alloy: AlloyProvider) -> ProviderAdapter:
+    def from_alloy(cls, alloy: Any) -> Self:  # noqa: ANN401
         """Create an adapter wrapping an AlloyProvider instance.
 
         Args:
@@ -173,7 +171,7 @@ class ProviderAdapter:
         return self._provider_type
 
     @property
-    def underlying(self) -> AlloyProvider | Any:  # noqa: ANN401
+    def underlying(self) -> Any:  # noqa: ANN401
         """Get the underlying provider instance."""
         return self._provider
 
@@ -350,9 +348,7 @@ class ProviderAdapter:
             if block is not None:
                 return self._provider.eth.get_storage_at(address, position, block)
             return self._provider.eth.get_storage_at(address, position)
-        # AlloyProvider doesn't have get_storage_at yet
-        msg = "get_storage_at not implemented for AlloyProvider"
-        raise NotImplementedError(msg)
+        return self._provider.get_storage_at(address, position, block)
 
     def get_transaction_count(
         self,
