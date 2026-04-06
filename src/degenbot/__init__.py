@@ -8,6 +8,18 @@ from ._rs import (
     get_tick_at_sqrt_ratio,
     to_checksum_address,
 )
+from .abi_adapter import (
+    AbiAdapter,
+    AbiBackend,
+    AbiDecodeError,
+    AbiEncodeError,
+    AbiUnsupportedOperation,
+    get_default_adapter,
+    get_default_backend,
+)
+from .abi_adapter import decode as abi_decode
+from .abi_adapter import decode_single as abi_decode_single
+from .abi_adapter import encode as abi_encode
 from .checksum_cache import get_checksum_address
 from .config import settings
 from .connection import (
@@ -75,6 +87,11 @@ from .uniswap import (
 )
 
 __all__ = (
+    "AbiAdapter",
+    "AbiBackend",
+    "AbiDecodeError",
+    "AbiEncodeError",
+    "AbiUnsupportedOperation",
     "AerodromeV2Pool",
     "AerodromeV2PoolManager",
     "AerodromeV2PoolState",
@@ -120,12 +137,17 @@ __all__ = (
     "UniswapV4PoolExternalUpdate",
     "UniswapV4PoolState",
     "__version__",
+    "abi_decode",
+    "abi_decode_single",
+    "abi_encode",
     "async_connection_manager",
     "connection_manager",
     "decode_return_data",
     "encode_function_call",
     "get_async_web3",
     "get_checksum_address",
+    "get_default_adapter",
+    "get_default_backend",
     "get_function_selector",
     "get_sqrt_ratio_at_tick",
     "get_tick_at_sqrt_ratio",

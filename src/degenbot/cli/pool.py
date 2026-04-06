@@ -8,7 +8,6 @@ import click
 import eth_typing
 import pydantic
 import tqdm
-from eth_abi.abi import decode as abi_decode
 from eth_typing.evm import BlockParams, ChecksumAddress
 from hexbytes import HexBytes
 from sqlalchemy import delete, select
@@ -18,6 +17,7 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from web3 import Web3
 from web3.types import LogReceipt
 
+from degenbot import abi_decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
 from degenbot.cli.utils import get_web3_from_config
