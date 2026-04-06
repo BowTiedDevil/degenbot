@@ -83,6 +83,7 @@ from degenbot.functions import (
     raw_call,
 )
 from degenbot.logging import logger
+from degenbot.provider.interface import ProviderAdapter
 
 if TYPE_CHECKING:
     from eth_typing.evm import BlockParams

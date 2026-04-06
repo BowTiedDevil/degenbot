@@ -21,7 +21,6 @@ from dataclasses import dataclass, field
 from eth_typing import ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
-from web3 import Web3
 from web3.exceptions import ContractLogicError
 
 from degenbot.aave.libraries.wad_ray_math import ray_mul_ceil, ray_mul_floor
@@ -36,6 +35,7 @@ from degenbot.database.models.aave import (
 )
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
+from degenbot.provider.interface import ProviderAdapter
 
 # Basis points constant (10000 = 100%)
 BASIS_POINTS = 10000
@@ -252,7 +252,7 @@ def get_oracle_address_for_market(session: Session, market_id: int) -> ChecksumA
 
 
 def fetch_asset_prices(
-    w3: Web3,
+    provider: ProviderAdapter,
     oracle_address: ChecksumAddress,
     asset_addresses: set[ChecksumAddress],
 ) -> dict[ChecksumAddress, int]:
@@ -262,7 +262,7 @@ def fetch_asset_prices(
     Uses batch calls to minimize RPC requests.
 
     Args:
-        w3: Web3 instance
+        provider: ProviderAdapter instance
         oracle_address: Price oracle contract address
         asset_addresses: Set of asset addresses to fetch prices for
 
@@ -274,7 +274,7 @@ def fetch_asset_prices(
     for asset_address in asset_addresses:
         try:
             (price,) = raw_call(
-                w3=w3,
+                w3=provider,
                 address=oracle_address,
                 calldata=encode_function_calldata(
                     function_prototype="getAssetPrice(address)",
@@ -613,7 +613,7 @@ def analyze_positions_for_market(
     market_id: int,
     health_factor_threshold: float = HEALTH_FACTOR_AT_RISK_THRESHOLD,
     limit: int | None = None,
-    w3: Web3 | None = None,
+    provider: ProviderAdapter | None = None,
 ) -> PositionAnalysisResult:
     """
     Analyze all user positions in a market for liquidation risk.
@@ -621,7 +621,7 @@ def analyze_positions_for_market(
     This is the main entry point for position analysis. It queries
     all users with debt positions and calculates their health factors.
 
-    If w3 is provided, prices are fetched from the Aave oracle for
+    If provider is provided, prices are fetched from the Aave oracle for
     accurate health factor calculations. Otherwise, positions are
     analyzed without price adjustments (useful for single-asset analysis).
 
@@ -630,16 +630,16 @@ def analyze_positions_for_market(
         market_id: Market ID to analyze
         health_factor_threshold: Threshold for "at risk" classification
         limit: Maximum number of users to analyze (for testing)
-        w3: Web3 instance for fetching oracle prices (optional)
+        provider: ProviderAdapter for fetching oracle prices (optional)
 
     Returns:
         PositionAnalysisResult with categorized users
     """
     result = PositionAnalysisResult()
 
-    # Get oracle address and fetch prices if w3 provided
+    # Get oracle address and fetch prices if provider provided
     price_map: dict[ChecksumAddress, int] = {}
-    if w3 is not None:
+    if provider is not None:
         oracle_address = get_oracle_address_for_market(session, market_id)
         if oracle_address is None:
             logger.warning("Price oracle not found for market, prices will not be applied")
@@ -648,7 +648,7 @@ def analyze_positions_for_market(
             asset_addresses = _collect_asset_addresses(session, market_id)
             if asset_addresses:
                 logger.info(f"Fetching prices for {len(asset_addresses)} assets from oracle...")
-                price_map = fetch_asset_prices(w3, oracle_address, asset_addresses)
+                price_map = fetch_asset_prices(provider, oracle_address, asset_addresses)
 
     # Query users with debt positions (users without debt can't be liquidated)
     # Use unique() because joinedload on debt_positions (a collection) creates duplicate rows
