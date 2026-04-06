@@ -169,6 +169,7 @@ cython_debug/
 .vscode
 
 # Opencode
+.opencode/*
 .opencode/plans
 .opencode/skills
 .opencode/tmp
