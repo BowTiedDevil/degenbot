@@ -20,7 +20,7 @@ use std::sync::LazyLock;
 
 /// Field names that should be converted to `HexBytes`.
 /// These are commonly used field names for Ethereum hashes and data.
-/// Note: Address fields are converted to checksummed strings, not HexBytes.
+/// Note: Address fields are converted to checksummed strings, not `HexBytes`.
 static HEXBYTES_FIELDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
         "hash",
@@ -111,10 +111,10 @@ fn is_hex_string(s: &str) -> bool {
     s.starts_with("0x") && s[2..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
-/// Create a HexBytes object from bytes.
+/// Create a `HexBytes` object from bytes.
 ///
-/// Uses the `hexbytes` package's HexBytes class for compatibility with
-/// web3.py and eth_abi libraries.
+/// Uses the `hexbytes` package's `HexBytes` class for compatibility with
+/// web3.py and `eth_abi` libraries.
 pub fn create_hexbytes<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyAny>> {
     let hexbytes_module = py.import("hexbytes")?;
     let hexbytes_class = hexbytes_module.getattr("HexBytes")?;
