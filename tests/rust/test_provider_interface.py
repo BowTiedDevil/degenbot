@@ -3,7 +3,6 @@
 import pytest
 from hexbytes import HexBytes
 
-from degenbot._rs import FastHexBytes
 from degenbot.anvil_fork import AnvilFork
 from degenbot.provider import AlloyProvider, EthereumProvider, LogFilter, ProviderAdapter
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
@@ -93,7 +92,7 @@ class TestProviderAdapterWithLiveConnection:
         with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
             adapter = ProviderAdapter.from_alloy(alloy)
             code = adapter.get_code(WETH_ADDRESS, 18_000_000)
-            assert isinstance(code, (bytes, HexBytes, FastHexBytes))
+            assert isinstance(code, (bytes, HexBytes))
             assert len(code) > 0
 
     def test_alloy_adapter_call(self):
@@ -107,7 +106,7 @@ class TestProviderAdapterWithLiveConnection:
                 data=calldata,
                 block=18_000_000,
             )
-            assert isinstance(result, (bytes, HexBytes, FastHexBytes))
+            assert isinstance(result, (bytes, HexBytes))
             assert len(result) == 32  # uint256 return
 
     def test_alloy_adapter_get_logs(self):
@@ -214,7 +213,7 @@ class TestWeb3Adapter:
             block=18_000_000,
         )
 
-        assert isinstance(result, (bytes, HexBytes, FastHexBytes))
+        assert isinstance(result, (bytes, HexBytes))
         assert len(result) == 32  # uint256 return
 
     def test_web3_adapter_get_code(self, fork_mainnet_full: AnvilFork):
@@ -222,7 +221,7 @@ class TestWeb3Adapter:
         adapter = ProviderAdapter.from_web3(fork_mainnet_full.w3)
 
         code = adapter.get_code(WETH_ADDRESS, 18_000_000)
-        assert isinstance(code, (bytes, HexBytes, FastHexBytes))
+        assert isinstance(code, (bytes, HexBytes))
         assert len(code) > 0
 
     def test_web3_adapter_get_logs(self, fork_mainnet_full: AnvilFork):

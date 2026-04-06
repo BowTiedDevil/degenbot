@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from ._rs import (
-    FastHexBytes,
     decode_return_data,
     encode_function_call,
     get_function_selector,
@@ -93,7 +92,6 @@ __all__ = (
     "Erc20Token",
     "Erc20TokenManager",
     "EtherPlaceholder",
-    "FastHexBytes",
     "PancakeswapV2Pool",
     "PancakeswapV2PoolManager",
     "PancakeswapV3Pool",

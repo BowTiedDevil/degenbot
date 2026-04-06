@@ -26,7 +26,6 @@ pub mod async_provider;
 pub mod contract;
 pub mod contract_py;
 pub mod errors;
-pub mod fast_hexbytes;
 pub mod provider;
 pub mod provider_py;
 pub mod runtime;
@@ -66,9 +65,6 @@ fn _rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Contract module
     contract_py::add_contract_module(m)?;
-
-    // FastHexBytes type (high-performance bytes with pre-computed hex)
-    m.add_class::<fast_hexbytes::FastHexBytes>()?;
 
     // Async modules
     m.add_class::<async_provider::PyAsyncAlloyProvider>()?;

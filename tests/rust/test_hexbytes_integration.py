@@ -1,12 +1,14 @@
 """
-Tests for FastHexBytes conversion in AlloyProvider.
+Tests for HexBytes and address conversion in AlloyProvider.
 
-These tests verify that the provider returns FastHexBytes for hash/address/data fields.
+These tests verify that the provider returns:
+- HexBytes for hash and data fields
+- Checksummed strings for address fields
 """
 
 import pytest
+from hexbytes import HexBytes
 
-from degenbot import FastHexBytes
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.provider import AlloyProvider
@@ -26,14 +28,14 @@ def ethereum_mainnet_alloy_provider(fork_mainnet_full: AnvilFork) -> AlloyProvid
 
 class TestHexBytesConversion:
     """
-    Test that appropriate fields are converted to FastHexBytes.
+    Test that appropriate fields are converted to HexBytes or checksummed strings.
     """
 
-    def test_get_logs_returns_hexbytes_for_hash_fields(
+    def test_get_logs_returns_checksummed_address(
         self, ethereum_mainnet_alloy_provider: AlloyProvider
     ):
         """
-        Test that get_logs returns FastHexBytes for address, topics, blockHash, and transactionHash.
+        Test that get_logs returns checksummed address strings for the address field.
         """
 
         # Fetch a known log from the Uniswap V3 factory
@@ -46,19 +48,40 @@ class TestHexBytesConversion:
         assert len(logs) > 0
         log = logs[0]
 
-        assert isinstance(log["address"], FastHexBytes)
+        # address should be a checksummed string
+        assert isinstance(log["address"], str)
+        assert log["address"] == UNISWAP_V3_FACTORY
+        # Verify it's checksummed (has mixed case)
+        assert log["address"] != log["address"].lower()
+        assert log["address"] != log["address"].upper()
+
+    def test_get_logs_returns_hexbytes_for_hash_fields(
+        self, ethereum_mainnet_alloy_provider: AlloyProvider
+    ):
+        """
+        Test that get_logs returns HexBytes for topics, blockHash, and transactionHash.
+        """
+
+        logs = ethereum_mainnet_alloy_provider.get_logs(
+            from_block=12_369_621,
+            to_block=12_369_621,
+            addresses=[UNISWAP_V3_FACTORY],
+        )
+
+        assert len(logs) > 0
+        log = logs[0]
 
         assert isinstance(log["topics"], list)
         for topic in log["topics"]:
-            assert isinstance(topic, FastHexBytes)
+            assert isinstance(topic, HexBytes)
 
-        assert isinstance(log["data"], FastHexBytes)
+        assert isinstance(log["data"], HexBytes)
 
         if log.get("blockHash"):
-            assert isinstance(log["blockHash"], FastHexBytes)
+            assert isinstance(log["blockHash"], HexBytes)
 
         if log.get("transactionHash"):
-            assert isinstance(log["transactionHash"], FastHexBytes)
+            assert isinstance(log["transactionHash"], HexBytes)
 
     def test_get_logs_returns_int_for_numeric_fields(
         self, ethereum_mainnet_alloy_provider: AlloyProvider
@@ -84,7 +107,7 @@ class TestHexBytesConversion:
 
     def test_eth_call_returns_hexbytes(self, ethereum_mainnet_alloy_provider: AlloyProvider):
         """
-        Test that call returns FastHexBytes.
+        Test that call returns HexBytes (for eth_abi compatibility).
         """
 
         # Call balanceOf for WETH
@@ -94,26 +117,43 @@ class TestHexBytesConversion:
             data=bytes.fromhex("70a08231000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         )
 
-        assert isinstance(result, FastHexBytes)
+        assert isinstance(result, HexBytes)
         assert len(result) == 32  # uint256 return value
 
-    def test_get_block_returns_hexbytes_for_hash_fields(
+    def test_get_block_returns_checksummed_address_for_miner(
         self, ethereum_mainnet_alloy_provider: AlloyProvider
     ):
         """
-        Test that get_block returns FastHexBytes for hash fields.
+        Test that get_block returns checksummed address string for miner field.
         """
 
         block = ethereum_mainnet_alloy_provider.get_block(12_369_621)
 
         assert block is not None
 
-        # Verify hash fields are FastHexBytes
-        assert isinstance(block["hash"], FastHexBytes)
-        assert isinstance(block["parent_hash"], FastHexBytes)
-        assert isinstance(block["state_root"], FastHexBytes)
-        assert isinstance(block["transactions_root"], FastHexBytes)
-        assert isinstance(block["receipts_root"], FastHexBytes)
+        # miner should be a checksummed string
+        assert isinstance(block["miner"], str)
+        # Verify it's checksummed (has mixed case)
+        assert block["miner"] != block["miner"].lower()
+        assert block["miner"] != block["miner"].upper()
+
+    def test_get_block_returns_hexbytes_for_hash_fields(
+        self, ethereum_mainnet_alloy_provider: AlloyProvider
+    ):
+        """
+        Test that get_block returns HexBytes for hash fields.
+        """
+
+        block = ethereum_mainnet_alloy_provider.get_block(12_369_621)
+
+        assert block is not None
+
+        # Verify hash fields are HexBytes
+        assert isinstance(block["hash"], HexBytes)
+        assert isinstance(block["parent_hash"], HexBytes)
+        assert isinstance(block["state_root"], HexBytes)
+        assert isinstance(block["transactions_root"], HexBytes)
+        assert isinstance(block["receipts_root"], HexBytes)
 
     def test_get_block_returns_int_for_numeric_fields(
         self, ethereum_mainnet_alloy_provider: AlloyProvider
@@ -134,25 +174,49 @@ class TestHexBytesConversion:
 
     def test_get_code_returns_hexbytes(self, ethereum_mainnet_alloy_provider: AlloyProvider):
         """
-        Test that get_code returns FastHexBytes."""
+        Test that get_code returns HexBytes (for eth_abi compatibility).
+        """
 
         # Get code for WETH contract
         code = ethereum_mainnet_alloy_provider.get_code(WETH_ADDRESS)
 
-        assert isinstance(code, FastHexBytes)
+        assert isinstance(code, HexBytes)
         assert len(code) > 0
 
-
-class TestHexBytesBehavior:
-    """
-    Test FastHexBytes objects have expected behavior.
-    """
-
-    def test_hexbytes_can_be_compared_with_bytes(
+    def test_transaction_has_checksummed_addresses(
         self, ethereum_mainnet_alloy_provider: AlloyProvider
     ):
         """
-        Test that FastHexBytes can be compared with bytes and converted to hex strings.
+        Test that transactions have checksummed address strings for from/to fields.
+        """
+
+        block = ethereum_mainnet_alloy_provider.get_block(12_369_621)
+
+        assert block is not None
+        transactions = block.get("transactions", [])
+        if transactions and isinstance(transactions, list) and len(transactions) > 0:
+            tx = transactions[0]
+            if isinstance(tx, dict):
+                # from should be a checksummed string
+                assert isinstance(tx["from"], str)
+                assert tx["from"] != tx["from"].lower()
+                assert tx["from"] != tx["from"].upper()
+
+                # to can be None (contract creation) or checksummed string
+                if tx.get("to") is not None:
+                    assert isinstance(tx["to"], str)
+                    assert tx["to"] != tx["to"].lower()
+                    assert tx["to"] != tx["to"].upper()
+
+
+class TestAddressBehavior:
+    """
+    Test address string behavior.
+    """
+
+    def test_address_is_checksummed(self, ethereum_mainnet_alloy_provider: AlloyProvider):
+        """
+        Test that addresses are returned as checksummed strings.
         """
 
         logs = ethereum_mainnet_alloy_provider.get_logs(
@@ -164,16 +228,19 @@ class TestHexBytesBehavior:
         assert len(logs) > 0
         address = logs[0]["address"]
 
-        # Should be able to compare with bytes (HexBytes equality works with bytes)
-        expected_bytes = bytes.fromhex(UNISWAP_V3_FACTORY[2:])  # Remove 0x prefix for fromhex
-        assert address == expected_bytes
+        # Should be a string
+        assert isinstance(address, str)
 
-        # Convert FastHexBytes to hex string
-        assert address.to_0x_hex().lower() == UNISWAP_V3_FACTORY.lower()
+        # Should match the expected checksummed address
+        assert address == UNISWAP_V3_FACTORY
+
+        # Should be 42 characters (0x + 40 hex chars)
+        assert len(address) == 42
+        assert address.startswith("0x")
 
     def test_hexbytes_has_hex_method(self, ethereum_mainnet_alloy_provider: AlloyProvider):
         """
-        Test that FastHexBytes has hex() method that returns lowercase hex string.
+        Test that HexBytes has hex() method that returns hex string.
         """
 
         logs = ethereum_mainnet_alloy_provider.get_logs(
@@ -183,9 +250,11 @@ class TestHexBytesBehavior:
         )
 
         assert len(logs) > 0
-        address = logs[0]["address"]
+        topic = logs[0]["topics"][0]
 
-        # Should have hex() method that returns lowercase hex string (without 0x prefix)
-        hex_str = address.hex()
-        assert hex_str == UNISWAP_V3_FACTORY.lower()  # Remove 0x for comparison
-        assert len(hex_str) == 42
+        # Topics should be HexBytes
+        assert isinstance(topic, HexBytes)
+
+        # HexBytes.hex() returns hex string without 0x prefix
+        hex_str = topic.hex()
+        assert len(hex_str) == 64  # 32 bytes = 64 hex chars
