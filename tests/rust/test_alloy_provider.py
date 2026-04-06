@@ -95,10 +95,9 @@ class TestAlloyProviderStubMethods:
         with pytest.raises(NotImplementedError, match="get_balance not implemented"):
             alloy_provider.get_balance("0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", 18000000)
 
-    def test_get_storage_at_raises_not_implemented(self, alloy_provider: AlloyProvider):
-        """Test get_storage_at raises NotImplementedError."""
-        with pytest.raises(NotImplementedError, match="get_storage_at not implemented"):
-            alloy_provider.get_storage_at("0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", 0)
+    def test_get_storage_at_is_callable(self, alloy_provider: AlloyProvider):
+        """Test get_storage_at is callable (now implemented)."""
+        assert callable(alloy_provider.get_storage_at)
 
     def test_get_transaction_count_raises_not_implemented(self, alloy_provider: AlloyProvider):
         """Test get_transaction_count raises NotImplementedError."""
@@ -148,3 +147,9 @@ class TestProviderDefaults:
         sig = inspect.signature(alloy_provider.get_block)
         # block_number is required, no default
         assert sig.parameters["block_number"].default is inspect.Parameter.empty
+
+    def test_get_storage_at_default_block_number(self, alloy_provider: AlloyProvider):
+        """Test get_storage_at has None default for block_number (latest)."""
+        sig = inspect.signature(alloy_provider.get_storage_at)
+        default = sig.parameters["block_number"].default
+        assert default is None

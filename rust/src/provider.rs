@@ -7,7 +7,7 @@
 use crate::errors::{ProviderError, ProviderResult};
 use alloy::consensus::{Header as ConsensusHeader, TxEnvelope};
 use alloy::network::Ethereum;
-use alloy::primitives::{Address, Bytes, B256};
+use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::eth::{Block, Header as RpcHeader, Transaction};
 use alloy::rpc::types::{Filter, Log};
@@ -586,6 +586,36 @@ impl AlloyProvider {
                 .transpose()?;
 
             Ok(json_value)
+        })
+        .await
+    }
+
+    /// Get storage at a given address and position.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::RpcError` if the RPC call fails.
+    pub async fn get_storage_at(
+        &self,
+        address: &Address,
+        position: U256,
+        block_number: Option<u64>,
+    ) -> ProviderResult<B256> {
+        use alloy::eips::BlockNumberOrTag;
+
+        self.retry_with_backoff(|| async {
+            let result = if let Some(block) = block_number {
+                self.inner
+                    .get_storage_at(*address, position)
+                    .block_id(BlockNumberOrTag::Number(block).into())
+                    .await
+            } else {
+                self.inner.get_storage_at(*address, position).await
+            }
+            .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get storage"))?;
+
+            // Convert U256 to B256 (32-byte storage slot)
+            Ok(B256::from(result.to_be_bytes::<32>()))
         })
         .await
     }

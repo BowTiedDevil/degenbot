@@ -337,6 +337,50 @@ impl PyAlloyProvider {
             None => Ok(None),
         }
     }
+
+    /// Get storage at a given address and position.
+    #[pyo3(signature = (address, position, block_number=None))]
+    fn get_storage_at(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        position: &Bound<'_, PyAny>,
+        block_number: Option<u64>,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::primitives::{Address, U256};
+        use num_bigint::BigUint;
+        use std::str::FromStr;
+
+        // Parse the address
+        let addr = Address::from_str(address)
+            .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
+
+        // Extract position as U256 (supports large integers like mapping slots)
+        let pos = if let Ok(biguint) = position.extract::<BigUint>() {
+            let bytes = biguint.to_bytes_be();
+            U256::try_from_be_slice(&bytes).ok_or_else(|| {
+                PyValueError::new_err("Position value is too large (exceeds 256 bits)")
+            })?
+        } else if let Ok(bytes) = position.extract::<&[u8]>() {
+            U256::try_from_be_slice(bytes).ok_or_else(|| {
+                PyValueError::new_err("Failed to parse position from bytes")
+            })?
+        } else {
+            return Err(PyValueError::new_err(
+                "Position must be an integer or bytes",
+            ));
+        };
+
+        // Execute eth_getStorageAt using the shared runtime
+        let result = get_runtime()
+            .block_on(async { self.provider.get_storage_at(&addr, pos, block_number).await })
+            .map_err(|e| PyValueError::new_err(format!("Failed to get storage: {e}")))?;
+
+        // Create HexBytes from result (32-byte storage slot)
+        let result_hb = create_hexbytes(py, result.as_slice())?;
+
+        Ok(result_hb.into())
+    }
 }
 
 /// Add provider module to Python module.

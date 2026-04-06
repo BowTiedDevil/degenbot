@@ -119,6 +119,25 @@ class TestProviderAdapterWithLiveConnection:
             )
             assert isinstance(logs, list)
 
+    def test_alloy_adapter_get_storage_at(self):
+        """Test getting storage through adapter."""
+        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
+            adapter = ProviderAdapter.from_alloy(alloy)
+            # Slot 0 of WETH contract at a specific block
+            storage = adapter.get_storage_at(WETH_ADDRESS, 0, 18_000_000)
+            assert isinstance(storage, (bytes, HexBytes))
+            assert len(storage) == 32  # Always 32 bytes
+
+    def test_alloy_adapter_get_storage_at_large_position(self):
+        """Test getting storage with large position (like mapping slots)."""
+        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
+            adapter = ProviderAdapter.from_alloy(alloy)
+            # Large position simulating a mapping slot
+            large_position = 0x6C34D219A4B1E5E2F2E3D4C5B6A7F8E9D0C1B2A3F4E5D6C7B8A9F0E1D2C3B4A5
+            storage = adapter.get_storage_at(WETH_ADDRESS, large_position, 18_000_000)
+            assert isinstance(storage, (bytes, HexBytes))
+            assert len(storage) == 32  # Always 32 bytes
+
     def test_alloy_adapter_properties(self):
         """Test adapter properties with live connection."""
         with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy:
@@ -241,6 +260,14 @@ class TestWeb3Adapter:
         balance = adapter.get_balance(WETH_ADDRESS, 18_000_000)
         assert isinstance(balance, int)
         assert balance >= 0
+
+    def test_web3_adapter_get_storage_at(self, fork_mainnet_full: AnvilFork):
+        """Test get_storage_at through Web3 adapter."""
+        adapter = ProviderAdapter.from_web3(fork_mainnet_full.w3)
+
+        storage = adapter.get_storage_at(WETH_ADDRESS, 0, 18_000_000)
+        assert isinstance(storage, (bytes, HexBytes))
+        assert len(storage) == 32  # Always 32 bytes
 
     def test_web3_adapter_get_transaction_count(self, fork_mainnet_full: AnvilFork):
         """Test get_transaction_count through Web3 adapter."""
