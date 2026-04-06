@@ -6,7 +6,6 @@ import eth_abi
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from sqlalchemy.orm import Session
-from web3 import Web3
 from web3.types import LogReceipt
 
 from degenbot.aave.events import ERC20Event
@@ -18,6 +17,7 @@ from degenbot.database.models.aave import (
     AaveV3DebtPosition,
     AaveV3Market,
 )
+from degenbot.provider.interface import ProviderAdapter
 
 
 class TokenType(Enum):
@@ -32,7 +32,7 @@ class TokenType(Enum):
 class TransactionContext:
     """Context for processing a single transaction as a sequence of events."""
 
-    w3: Web3
+    provider: ProviderAdapter
     tx_hash: HexBytes
     block_number: int
     events: list[LogReceipt]

@@ -8,6 +8,7 @@ from web3 import HTTPProvider, IPCProvider, JSONBaseProvider, LegacyWebSocketPro
 from degenbot.config import CONFIG_FILE, settings
 from degenbot.connection.connection_manager import _fast_decode_rpc_response
 from degenbot.provider import AlloyProvider
+from degenbot.provider.interface import ProviderAdapter
 
 
 def _get_use_alloy_from_env() -> bool:
@@ -17,21 +18,34 @@ def _get_use_alloy_from_env() -> bool:
 
 def get_web3_from_config(
     *, chain_id: int, optimize: bool = True, use_alloy: bool | None = None
-) -> Web3 | AlloyProvider:
+) -> ProviderAdapter:
+    """Get a ProviderAdapter for the given chain ID.
+
+    Args:
+        chain_id: The chain ID to get a provider for
+        optimize: Whether to optimize Web3 (removes middleware, uses fast JSON decoding)
+        use_alloy: Force use of AlloyProvider (default: from env var DEGENBOT_USE_ALLOY_PROVIDER)
+
+    Returns:
+        A ProviderAdapter wrapping either Web3 or AlloyProvider
+    """
     if use_alloy is None:
         use_alloy = _get_use_alloy_from_env()
     match endpoint := settings.rpc.get(chain_id):
         case HttpUrl():
             if use_alloy:
-                return AlloyProvider(str(endpoint))
+                alloy = AlloyProvider(str(endpoint))
+                return ProviderAdapter.from_alloy(alloy)
             w3 = Web3(HTTPProvider(str(endpoint)))
         case WebsocketUrl():
             if use_alloy:
-                return AlloyProvider(str(endpoint))
+                alloy = AlloyProvider(str(endpoint))
+                return ProviderAdapter.from_alloy(alloy)
             w3 = Web3(LegacyWebSocketProvider(str(endpoint)))
         case Path():
             if use_alloy:
-                return AlloyProvider(str(endpoint))
+                alloy = AlloyProvider(str(endpoint))
+                return ProviderAdapter.from_alloy(alloy)
             w3 = Web3(IPCProvider(str(endpoint)))
         case None:
             msg = f"Chain ID {chain_id} does not have an RPC defined in config file {CONFIG_FILE}"
@@ -51,4 +65,4 @@ def get_web3_from_config(
             assert isinstance(w3.provider, JSONBaseProvider)
         w3.provider.decode_rpc_response = _fast_decode_rpc_response  # type:ignore[method-assign]
 
-    return w3
+    return ProviderAdapter.from_web3(w3)

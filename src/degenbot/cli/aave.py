@@ -13,7 +13,6 @@ from hexbytes import HexBytes
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, joinedload
 from tqdm.contrib.logging import logging_redirect_tqdm
-from web3 import Web3
 from web3.exceptions import ContractLogicError
 from web3.types import LogReceipt, TxParams
 
@@ -379,10 +378,10 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
 
     pool_address_provider = EthereumMainnetAaveV3.pool_address_provider
 
-    w3 = get_web3_from_config(chain_id=chain_id)
+    provider = get_web3_from_config(chain_id=chain_id)
 
     (market_name,) = raw_call(
-        w3=w3,
+        w3=provider,
         address=pool_address_provider,
         calldata=encode_function_calldata(
             function_prototype="getMarketId()",
@@ -423,7 +422,7 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
             # GHO tokens are chain-unique, so create a single entry that all markets on this chain
             # will share.
             gho_asset_token = _get_or_create_erc20_token(
-                w3=w3,
+                provider=provider,
                 session=session,
                 chain_id=market.chain_id,
                 token_address=gho_token_address,
@@ -634,7 +633,7 @@ def aave_update(
             raise DegenbotValueError(msg)
 
         for chain_id in active_chains:
-            w3 = get_web3_from_config(chain_id=chain_id)
+            provider = get_web3_from_config(chain_id=chain_id)
 
             with db_session() as session:
                 active_markets = session.scalars(
@@ -670,10 +669,11 @@ def aave_update(
                     raise ValueError(msg)
 
                 last_block = (
-                    get_number_for_block_identifier(identifier=block_tag, w3=w3) + block_offset
+                    get_number_for_block_identifier(identifier=block_tag, w3=provider)
+                    + block_offset
                 )
 
-            current_block_number = get_number_for_block_identifier(identifier="latest", w3=w3)
+            current_block_number = get_number_for_block_identifier(identifier="latest", w3=provider)
             if last_block > current_block_number:
                 msg = f"{to_block} is ahead of the current chain tip."
                 raise ValueError(msg)
@@ -737,7 +737,7 @@ def aave_update(
                     for market in markets_to_update:
                         try:
                             update_aave_market(
-                                w3=w3,
+                                provider=provider,
                                 start_block=working_start_block,
                                 end_block=working_end_block,
                                 market=market,
@@ -766,7 +766,7 @@ def aave_update(
                             or working_end_block % backup_interval == 0
                         ):
                             _verify_all_positions(
-                                w3=w3,
+                                provider=provider,
                                 market=market,
                                 session=session,
                                 block_number=working_end_block,
@@ -975,8 +975,8 @@ def position_risk(  # noqa: PLR0917
     need relative risk comparisons.
     """
 
-    # Get Web3 instance for price fetching
-    w3 = None if skip_prices else get_web3_from_config(chain_id=chain_id)
+    # Get provider for price fetching
+    provider = None if skip_prices else get_web3_from_config(chain_id=chain_id)
 
     with db_session() as session:
         # Find the market
@@ -1001,7 +1001,7 @@ def position_risk(  # noqa: PLR0917
             market_id=market_obj.id,
             health_factor_threshold=threshold,
             limit=limit,
-            w3=w3,
+            provider=provider,
         )
 
         # Display summary
@@ -1194,7 +1194,7 @@ def _decode_reserve_configuration_bitmap(config_bitmap: int) -> dict[str, int | 
 
 def _process_collateral_configuration_changed_event(
     *,
-    w3: Web3,
+    provider: ProviderAdapter,
     session: Session,
     event: LogReceipt,
     market: AaveV3Market,
@@ -1246,7 +1246,7 @@ def _process_collateral_configuration_changed_event(
 
     # Fetch full configuration from Pool contract
     (config_bitmap,) = raw_call(
-        w3=w3,
+        w3=provider,
         address=pool_contract.address,
         calldata=encode_function_calldata(
             function_prototype="getConfiguration(address)",
@@ -1641,7 +1641,7 @@ def _process_reserve_used_as_collateral_disabled_event(
 
 
 def _process_asset_initialization_event(
-    w3: Web3,
+    provider: ProviderAdapter,
     event: LogReceipt,
     market: AaveV3Market,
     session: Session,
@@ -1674,19 +1674,19 @@ def _process_asset_initialization_event(
     v_token_address = get_checksum_address(v_token_address)
 
     erc20_token_in_db = _get_or_create_erc20_token(
-        w3=w3,
+        provider=provider,
         session=session,
         chain_id=market.chain_id,
         token_address=asset_address,
     )
     a_token = _get_or_create_erc20_token(
-        w3=w3,
+        provider=provider,
         session=session,
         chain_id=market.chain_id,
         token_address=a_token_address,
     )
     v_token = _get_or_create_erc20_token(
-        w3=w3,
+        provider=provider,
         session=session,
         chain_id=market.chain_id,
         token_address=v_token_address,
@@ -1695,26 +1695,26 @@ def _process_asset_initialization_event(
     # Per EIP-1967, the implementation address is stored at a known storage slot
     (atoken_implementation_address,) = eth_abi.abi.decode(
         types=["address"],
-        data=w3.eth.get_storage_at(
-            account=a_token_address,
+        data=provider.get_storage_at(
+            address=a_token_address,
             position=ERC_1967_IMPLEMENTATION_SLOT,
-            block_identifier=event["blockNumber"],
+            block=event["blockNumber"],
         ),
     )
     atoken_implementation_address = get_checksum_address(atoken_implementation_address)
 
     (vtoken_implementation_address,) = eth_abi.abi.decode(
         types=["address"],
-        data=w3.eth.get_storage_at(
-            account=v_token_address,
+        data=provider.get_storage_at(
+            address=v_token_address,
             position=ERC_1967_IMPLEMENTATION_SLOT,
-            block_identifier=event["blockNumber"],
+            block=event["blockNumber"],
         ),
     )
     vtoken_implementation_address = get_checksum_address(vtoken_implementation_address)
 
     (atoken_revision,) = raw_call(
-        w3=w3,
+        w3=provider,
         address=atoken_implementation_address,
         calldata=encode_function_calldata(
             function_prototype="ATOKEN_REVISION()",
@@ -1723,7 +1723,7 @@ def _process_asset_initialization_event(
         return_types=["uint256"],
     )
     (vtoken_revision,) = raw_call(
-        w3=w3,
+        w3=provider,
         address=vtoken_implementation_address,
         calldata=encode_function_calldata(
             function_prototype="DEBT_TOKEN_REVISION()",
@@ -1757,7 +1757,7 @@ def _process_asset_initialization_event(
     assert oracle_contract is not None
 
     (price_source,) = raw_call(
-        w3=w3,
+        w3=provider,
         address=oracle_contract.address,
         calldata=encode_function_calldata(
             function_prototype="getSourceOfAsset(address)",
@@ -1913,7 +1913,7 @@ def _get_or_init_stk_aave_balance(
     if user.stk_aave_balance is None:
         balance: int
         (balance,) = raw_call(
-            w3=tx_context.w3,
+            w3=tx_context.provider,
             address=discount_token,
             calldata=encode_function_calldata(
                 function_prototype="balanceOf(address)",
@@ -2137,7 +2137,7 @@ def _process_scaled_token_upgrade_event(
         )
     ) is not None:
         (atoken_revision,) = raw_call(
-            w3=tx_context.w3,
+            w3=tx_context.provider,
             address=new_implementation_address,
             calldata=encode_function_calldata(
                 function_prototype="ATOKEN_REVISION()",
@@ -2158,7 +2158,7 @@ def _process_scaled_token_upgrade_event(
         )
     ) is not None:
         (vtoken_revision,) = raw_call(
-            w3=tx_context.w3,
+            w3=tx_context.provider,
             address=new_implementation_address,
             calldata=encode_function_calldata(
                 function_prototype="DEBT_TOKEN_REVISION()",
@@ -2284,7 +2284,7 @@ def _get_or_create_user(
     ):
         try:
             (discount_percent,) = raw_call(
-                w3=tx_context.w3,
+                w3=tx_context.provider,
                 address=gho_vtoken_address,
                 calldata=encode_function_calldata(
                     function_prototype="getDiscountPercent(address)",
@@ -2322,7 +2322,7 @@ def _get_or_create_user(
 
 
 def _fetch_erc20_token_metadata(
-    w3: Web3,
+    provider: ProviderAdapter,
     token_address: ChecksumAddress,
 ) -> tuple[str | None, str | None, int | None]:
     """
@@ -2332,7 +2332,7 @@ def _fetch_erc20_token_metadata(
     to uppercase versions and bytes32 decoding as needed.
 
     Args:
-        chain_id: The chain ID where the token exists
+        provider: ProviderAdapter for blockchain calls
         token_address: The token contract address
 
     Returns:
@@ -2340,19 +2340,19 @@ def _fetch_erc20_token_metadata(
     """
 
     name = _try_fetch_token_string(
-        w3=w3,
+        provider=provider,
         token_address=token_address,
         lower_func="name()",
         upper_func="NAME()",
     )
     symbol = _try_fetch_token_string(
-        w3=w3,
+        provider=provider,
         token_address=token_address,
         lower_func="symbol()",
         upper_func="SYMBOL()",
     )
     decimals = _try_fetch_token_uint256(
-        w3=w3,
+        provider=provider,
         token_address=token_address,
         lower_func="decimals()",
         upper_func="DECIMALS()",
@@ -2362,7 +2362,7 @@ def _fetch_erc20_token_metadata(
 
 
 def _try_fetch_token_string(
-    w3: Web3,
+    provider: ProviderAdapter,
     token_address: ChecksumAddress,
     lower_func: str,
     upper_func: str,
@@ -2373,14 +2373,12 @@ def _try_fetch_token_string(
 
     for func_prototype in (lower_func, upper_func):
         with contextlib.suppress(Exception):
-            result = w3.eth.call(
-                TxParams(
-                    to=token_address,
-                    data=encode_function_calldata(
-                        function_prototype=func_prototype,
-                        function_arguments=None,
-                    ),
-                )
+            result = provider.call(
+                to=token_address,
+                data=encode_function_calldata(
+                    function_prototype=func_prototype,
+                    function_arguments=None,
+                ),
             )
 
             with contextlib.suppress(eth_abi.exceptions.DecodingError):
@@ -2399,7 +2397,7 @@ def _try_fetch_token_string(
 
 
 def _try_fetch_token_uint256(
-    w3: Web3,
+    provider: ProviderAdapter,
     token_address: ChecksumAddress,
     lower_func: str,
     upper_func: str,
@@ -2412,7 +2410,7 @@ def _try_fetch_token_uint256(
         with contextlib.suppress(Exception):
             result: int
             (result,) = raw_call(
-                w3=w3,
+                w3=provider,
                 address=token_address,
                 calldata=encode_function_calldata(
                     function_prototype=func_prototype,
@@ -2426,7 +2424,7 @@ def _try_fetch_token_uint256(
 
 
 def _get_or_create_erc20_token(
-    w3: Web3,
+    provider: ProviderAdapter,
     session: Session,
     chain_id: int,
     token_address: ChecksumAddress,
@@ -2450,7 +2448,7 @@ def _get_or_create_erc20_token(
 
         # Attempt to fetch metadata from blockchain
         name, symbol, decimals = _fetch_erc20_token_metadata(
-            w3=w3,
+            provider=provider,
             token_address=token_address,
         )
 
@@ -2584,7 +2582,7 @@ def _get_gho_asset(
 
 
 def _fetch_discount_token_from_contract(
-    w3: Web3,
+    provider: ProviderAdapter,
     gho_asset: AaveGhoToken,
     block_number: int,
 ) -> ChecksumAddress | None:
@@ -2603,7 +2601,7 @@ def _fetch_discount_token_from_contract(
         # GHO vToken has a getDiscountToken() function
         discount_token: str
         (discount_token,) = raw_call(
-            w3=w3,
+            w3=provider,
             address=gho_asset.v_token.address,
             calldata=encode_function_calldata(
                 function_prototype="getDiscountToken()",
@@ -2698,7 +2696,7 @@ def _update_debt_position_index(
     assert pool_contract is not None
 
     fetched_index = _get_current_borrow_index_from_pool(
-        w3=tx_context.w3,
+        provider=tx_context.provider,
         pool_address=get_checksum_address(pool_contract.address),
         underlying_asset_address=get_checksum_address(debt_asset.underlying_token.address),
         block_number=event_block_number,
@@ -2713,7 +2711,7 @@ def _update_debt_position_index(
 
 
 def _get_current_borrow_index_from_pool(
-    w3: Web3,
+    provider: ProviderAdapter,
     pool_address: ChecksumAddress,
     underlying_asset_address: ChecksumAddress,
     block_number: int,
@@ -2725,7 +2723,7 @@ def _get_current_borrow_index_from_pool(
     by a ReserveDataUpdated event) to get the current global index.
 
     Args:
-        w3: Web3 instance
+        provider: ProviderAdapter for blockchain calls
         pool_address: The Aave Pool contract address
         underlying_asset_address: The underlying asset address (e.g., GHO token)
         block_number: The block number to query at
@@ -2737,7 +2735,7 @@ def _get_current_borrow_index_from_pool(
     try:
         borrow_index: int
         (borrow_index,) = raw_call(
-            w3=w3,
+            w3=provider,
             address=pool_address,
             calldata=encode_function_calldata(
                 function_prototype="getReserveNormalizedVariableDebt(address)",
@@ -2754,7 +2752,7 @@ def _get_current_borrow_index_from_pool(
 
 def _verify_gho_discount_amounts(
     *,
-    w3: Web3,
+    provider: ProviderAdapter,
     session: Session,
     market: AaveV3Market,
     gho_asset: AaveGhoToken,
@@ -2814,7 +2812,7 @@ def _verify_gho_discount_amounts(
     ):
         try:
             (discount_percent,) = raw_call(
-                w3=w3,
+                w3=provider,
                 address=gho_vtoken_address,
                 calldata=encode_function_calldata(
                     function_prototype="getDiscountPercent(address)",
@@ -2837,7 +2835,7 @@ def _verify_gho_discount_amounts(
 
 def _verify_stk_aave_balances(
     *,
-    w3: Web3,
+    provider: ProviderAdapter,
     session: Session,
     market: AaveV3Market,
     gho_asset: AaveGhoToken,
@@ -2878,7 +2876,7 @@ def _verify_stk_aave_balances(
         assert user.stk_aave_balance is not None
 
         (actual_balance,) = raw_call(
-            w3=w3,
+            w3=provider,
             address=discount_token,
             calldata=encode_function_calldata(
                 function_prototype="balanceOf(address)",
@@ -2935,7 +2933,7 @@ def _cleanup_zero_balance_positions(
 
 def _verify_positions_for_users(
     *,
-    w3: Web3,
+    provider: ProviderAdapter,
     market: AaveV3Market,
     session: Session,
     gho_asset: AaveGhoToken,
@@ -2951,7 +2949,7 @@ def _verify_positions_for_users(
     """
 
     _verify_scaled_token_positions(
-        w3=w3,
+        provider=provider,
         market=market,
         session=session,
         position_table=AaveV3CollateralPosition,
@@ -2960,7 +2958,7 @@ def _verify_positions_for_users(
         user_addresses=user_addresses,
     )
     _verify_scaled_token_positions(
-        w3=w3,
+        provider=provider,
         market=market,
         session=session,
         position_table=AaveV3DebtPosition,
@@ -2969,7 +2967,7 @@ def _verify_positions_for_users(
         user_addresses=user_addresses,
     )
     _verify_stk_aave_balances(
-        w3=w3,
+        provider=provider,
         session=session,
         market=market,
         gho_asset=gho_asset,
@@ -2978,7 +2976,7 @@ def _verify_positions_for_users(
         user_addresses=user_addresses,
     )
     _verify_gho_discount_amounts(
-        w3=w3,
+        provider=provider,
         session=session,
         market=market,
         gho_asset=gho_asset,
@@ -2990,7 +2988,7 @@ def _verify_positions_for_users(
 
 def _verify_all_positions(
     *,
-    w3: Web3,
+    provider: ProviderAdapter,
     market: AaveV3Market,
     session: Session,
     block_number: int,
@@ -3004,7 +3002,7 @@ def _verify_all_positions(
     entire market.
 
     Args:
-        w3: Web3 instance for blockchain calls
+        provider: ProviderAdapter for blockchain calls
         market: The Aave V3 market to verify
         session: Database session
         block_number: The block number to verify against
@@ -3016,7 +3014,7 @@ def _verify_all_positions(
     gho_asset = _get_gho_asset(session=session, market=market)
 
     _verify_positions_for_users(
-        w3=w3,
+        provider=provider,
         market=market,
         session=session,
         gho_asset=gho_asset,
@@ -3052,7 +3050,7 @@ def _is_bad_debt_liquidation(user: AaveV3User, tx_context: TransactionContext) -
 
 def _verify_scaled_token_positions(
     *,
-    w3: Web3,
+    provider: ProviderAdapter,
     market: AaveV3Market,
     session: Session,
     position_table: type[AaveV3CollateralPosition | AaveV3DebtPosition],
@@ -3110,7 +3108,7 @@ def _verify_scaled_token_positions(
             raise ValueError(msg)
 
         (actual_scaled_balance,) = raw_call(
-            w3=w3,
+            w3=provider,
             address=token_address,
             calldata=encode_function_calldata(
                 function_prototype="scaledBalanceOf(address)",
@@ -3128,7 +3126,7 @@ def _verify_scaled_token_positions(
         )
 
         (actual_last_index,) = raw_call(
-            w3=w3,
+            w3=provider,
             address=token_address,
             calldata=encode_function_calldata(
                 function_prototype="getPreviousIndex(address)",
@@ -3455,7 +3453,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
 
                 try:
                     (discount_percent,) = raw_call(
-                        w3=tx_context.w3,
+                        w3=tx_context.provider,
                         address=gho_vtoken_address,
                         calldata=encode_function_calldata(
                             function_prototype="getDiscountPercent(address)",
@@ -3642,7 +3640,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         elif topic == AaveV3PoolConfigEvent.POOL_UPDATED.value:
             _update_contract_revision(
                 session=tx_context.session,
-                w3=tx_context.w3,
+                provider=tx_context.provider,
                 market=tx_context.market,
                 contract_name="POOL",
                 new_address=decode_address(event["topics"][2]),
@@ -3659,7 +3657,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         elif topic == AaveV3PoolConfigEvent.POOL_CONFIGURATOR_UPDATED.value:
             _update_contract_revision(
                 session=tx_context.session,
-                w3=tx_context.w3,
+                provider=tx_context.provider,
                 market=tx_context.market,
                 contract_name="POOL_CONFIGURATOR",
                 new_address=decode_address(event["topics"][2]),
@@ -5218,7 +5216,7 @@ def _get_all_scaled_token_addresses(
 def _update_contract_revision(
     *,
     session: Session,
-    w3: Web3,
+    provider: ProviderAdapter,
     market: AaveV3Market,
     contract_name: str,
     new_address: ChecksumAddress,
@@ -5230,7 +5228,7 @@ def _update_contract_revision(
 
     revision: int
     (revision,) = raw_call(
-        w3=w3,
+        w3=provider,
         address=new_address,
         calldata=encode_function_calldata(
             function_prototype=f"{revision_function_prototype}()",
@@ -5253,7 +5251,7 @@ def _update_contract_revision(
 
 def _process_proxy_creation_event(
     *,
-    w3: Web3,
+    provider: ProviderAdapter,
     session: Session,
     market: AaveV3Market,
     event: LogReceipt,
@@ -5282,7 +5280,7 @@ def _process_proxy_creation_event(
         return
 
     (revision,) = raw_call(
-        w3=w3,
+        w3=provider,
         address=implementation_address,
         calldata=encode_function_calldata(
             function_prototype=f"{revision_function_prototype}()",
@@ -5525,7 +5523,7 @@ def _process_discount_percent_updated_event(
 
 
 def _fetch_pool_events(
-    w3: Web3,
+    provider: ProviderAdapter,
     pool_address: ChecksumAddress,
     start_block: int,
     end_block: int,
@@ -5535,7 +5533,7 @@ def _fetch_pool_events(
     """
 
     return fetch_logs_retrying(
-        w3=w3,
+        w3=provider,
         start_block=start_block,
         end_block=end_block,
         address=[pool_address],
@@ -5558,7 +5556,7 @@ def _fetch_pool_events(
 
 
 def _fetch_reserve_initialization_events(
-    w3: Web3,
+    provider: ProviderAdapter,
     configurator_address: ChecksumAddress,
     start_block: int,
     end_block: int,
@@ -5568,7 +5566,7 @@ def _fetch_reserve_initialization_events(
     """
 
     return fetch_logs_retrying(
-        w3=w3,
+        w3=provider,
         start_block=start_block,
         end_block=end_block,
         address=[configurator_address],
@@ -5585,7 +5583,7 @@ def _fetch_reserve_initialization_events(
 
 
 def _fetch_scaled_token_events(
-    w3: Web3,
+    provider: ProviderAdapter,
     token_addresses: list[ChecksumAddress],
     start_block: int,
     end_block: int,
@@ -5598,7 +5596,7 @@ def _fetch_scaled_token_events(
         return []
 
     return fetch_logs_retrying(
-        w3=w3,
+        w3=provider,
         start_block=start_block,
         end_block=end_block,
         address=token_addresses,
@@ -5617,7 +5615,7 @@ def _fetch_scaled_token_events(
 
 
 def _fetch_stk_aave_events(
-    w3: Web3,
+    provider: ProviderAdapter,
     discount_token: ChecksumAddress | None,
     start_block: int,
     end_block: int,
@@ -5629,7 +5627,7 @@ def _fetch_stk_aave_events(
     if not discount_token:
         return []
     return fetch_logs_retrying(
-        w3=w3,
+        w3=provider,
         start_block=start_block,
         end_block=end_block,
         address=[discount_token],
@@ -5644,7 +5642,7 @@ def _fetch_stk_aave_events(
 
 
 def _fetch_address_provider_events(
-    w3: Web3,
+    provider: ProviderAdapter,
     provider_address: ChecksumAddress,
     start_block: int,
     end_block: int,
@@ -5654,7 +5652,7 @@ def _fetch_address_provider_events(
     """
 
     return fetch_logs_retrying(
-        w3=w3,
+        w3=provider,
         start_block=start_block,
         end_block=end_block,
         address=[provider_address],
@@ -5672,7 +5670,7 @@ def _fetch_address_provider_events(
 
 
 def _fetch_discount_config_events(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
 ) -> list[LogReceipt]:
@@ -5681,7 +5679,7 @@ def _fetch_discount_config_events(
     """
 
     return fetch_logs_retrying(
-        w3=w3,
+        w3=provider,
         start_block=start_block,
         end_block=end_block,
         topic_signature=[
@@ -5694,7 +5692,7 @@ def _fetch_discount_config_events(
 
 
 def _fetch_oracle_events(
-    w3: Web3,
+    provider: ProviderAdapter,
     oracle_address: ChecksumAddress | None,
     start_block: int,
     end_block: int,
@@ -5706,7 +5704,7 @@ def _fetch_oracle_events(
     """
 
     return fetch_logs_retrying(
-        w3=w3,
+        w3=provider,
         start_block=start_block,
         end_block=end_block,
         address=[oracle_address] if oracle_address is not None else None,
@@ -5720,7 +5718,7 @@ def _fetch_oracle_events(
 
 def _log_event_categorization(
     *,
-    topic: HexBytes,
+    topic: HexBytesLike,
     event_address: ChecksumAddress,
     gho_asset: AaveGhoToken,
 ) -> None:
@@ -5752,7 +5750,7 @@ def _build_transaction_contexts(
     events: list[LogReceipt],
     market: AaveV3Market,
     session: Session,
-    w3: Web3,
+    provider: ProviderAdapter,
     gho_asset: AaveGhoToken,
     pool_contract: AaveV3Contract,
 ) -> dict[HexBytes, TransactionContext]:
@@ -5781,7 +5779,7 @@ def _build_transaction_contexts(
                 f"_build_transaction_contexts: creating new context for tx={tx_hash.to_0x_hex()}"
             )
             contexts[tx_hash] = TransactionContext(
-                w3=w3,
+                provider=provider,
                 tx_hash=tx_hash,
                 block_number=block_num,
                 events=[],
@@ -5817,7 +5815,7 @@ def _build_transaction_contexts(
 
 def update_aave_market(
     *,
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     market: AaveV3Market,
@@ -5854,7 +5852,7 @@ def update_aave_market(
     assert pool_address_provider is not None
 
     for event in _fetch_address_provider_events(
-        w3=w3,
+        provider=provider,
         provider_address=get_checksum_address(pool_address_provider.address),
         start_block=start_block,
         end_block=end_block,
@@ -5863,7 +5861,7 @@ def update_aave_market(
 
         if topic == AaveV3PoolConfigEvent.PROXY_CREATED.value:
             _process_proxy_creation_event(
-                w3=w3,
+                provider=provider,
                 session=session,
                 market=market,
                 event=event,
@@ -5872,7 +5870,7 @@ def update_aave_market(
                 revision_function_prototype="POOL_REVISION",
             )
             _process_proxy_creation_event(
-                w3=w3,
+                provider=provider,
                 session=session,
                 market=market,
                 event=event,
@@ -5903,7 +5901,7 @@ def update_aave_market(
     )
     if pool_configurator is not None:
         for event in _fetch_reserve_initialization_events(
-            w3=w3,
+            provider=provider,
             configurator_address=pool_configurator.address,
             start_block=start_block,
             end_block=end_block,
@@ -5911,14 +5909,14 @@ def update_aave_market(
             topic = event["topics"][0]
             if topic == AaveV3PoolConfigEvent.RESERVE_INITIALIZED.value:
                 _process_asset_initialization_event(
-                    w3=w3,
+                    provider=provider,
                     event=event,
                     market=market,
                     session=session,
                 )
             elif topic == AaveV3PoolConfigEvent.COLLATERAL_CONFIGURATION_CHANGED.value:
                 _process_collateral_configuration_changed_event(
-                    w3=w3,
+                    provider=provider,
                     session=session,
                     event=event,
                     market=market,
@@ -5962,7 +5960,7 @@ def update_aave_market(
         return
 
     pool_events = _fetch_pool_events(
-        w3=w3,
+        provider=provider,
         pool_address=pool.address,
         start_block=start_block,
         end_block=end_block,
@@ -5979,7 +5977,7 @@ def update_aave_market(
         get_checksum_address(oracle_contract.address) if oracle_contract is not None else None
     )
     oracle_events = _fetch_oracle_events(
-        w3=w3,
+        provider=provider,
         oracle_address=oracle_address,
         start_block=start_block,
         end_block=end_block,
@@ -5989,12 +5987,12 @@ def update_aave_market(
     known_scaled_token_addresses = set(
         _get_all_scaled_token_addresses(
             session=session,
-            chain_id=w3.eth.chain_id,
+            chain_id=provider.chain_id,
         )
     )
 
     scaled_token_events = _fetch_scaled_token_events(
-        w3=w3,
+        provider=provider,
         token_addresses=list(known_scaled_token_addresses),
         start_block=start_block,
         end_block=end_block,
@@ -6002,7 +6000,7 @@ def update_aave_market(
     all_events.extend(scaled_token_events)
 
     discount_config_events = _fetch_discount_config_events(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
     )
@@ -6030,7 +6028,7 @@ def update_aave_market(
         if gho_asset.v_gho_discount_token is None:
             try:
                 discount_token_from_contract = _fetch_discount_token_from_contract(
-                    w3=w3,
+                    provider=provider,
                     gho_asset=gho_asset,
                     block_number=start_block,
                 )
@@ -6044,7 +6042,7 @@ def update_aave_market(
 
         all_events.extend(
             _fetch_stk_aave_events(
-                w3=w3,
+                provider=provider,
                 discount_token=gho_asset.v_gho_discount_token,
                 start_block=start_block,
                 end_block=end_block,
@@ -6056,7 +6054,7 @@ def update_aave_market(
         events=all_events,
         market=market,
         session=session,
-        w3=w3,
+        provider=provider,
         gho_asset=gho_asset,
         pool_contract=pool,
     )
@@ -6094,7 +6092,7 @@ def update_aave_market(
                     f"block {last_verified_block}"
                 )
                 _verify_positions_for_users(
-                    w3=w3,
+                    provider=provider,
                     market=market,
                     session=session,
                     gho_asset=gho_asset,
@@ -6120,7 +6118,7 @@ def update_aave_market(
             f"Verifying {len(users_modified_this_block)} users at block {last_verified_block}"
         )
         _verify_positions_for_users(
-            w3=w3,
+            provider=provider,
             market=market,
             session=session,
             gho_asset=gho_asset,
@@ -6131,7 +6129,7 @@ def update_aave_market(
 
     if verify_chunk and not verify_block and users_modified_this_chunk:
         _verify_positions_for_users(
-            w3=w3,
+            provider=provider,
             market=market,
             session=session,
             gho_asset=gho_asset,

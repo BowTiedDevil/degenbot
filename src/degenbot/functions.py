@@ -28,10 +28,14 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.evm import InvalidUint256
 from degenbot.exceptions.fetching import LogFetchingTimeout
 from degenbot.logging import logger
+from degenbot.provider.interface import ProviderAdapter
 from degenbot.types.aliases import BlockNumber
 
 if TYPE_CHECKING:
     from eth_account.datastructures import SignedMessage
+
+# Type alias for functions that accept either Web3 or ProviderAdapter
+Web3OrProvider = Web3 | ProviderAdapter
 
 
 def create2_address(
@@ -171,7 +175,7 @@ def _reduce_working_span(
 
 def fetch_logs_retrying(
     *,
-    w3: Web3,
+    w3: Web3OrProvider,
     start_block: BlockNumber,
     end_block: BlockNumber,
     max_retries: int = 10,
@@ -187,6 +191,15 @@ def fetch_logs_retrying(
 
     See `https://ethereum.org/developers/docs/apis/json-rpc/#eth_getfilterchanges` for formatting of
     topic signatures.
+
+    Args:
+        w3: Web3 instance or ProviderAdapter
+        start_block: Starting block number
+        end_block: Ending block number
+        max_retries: Maximum retry attempts
+        max_blocks_per_request: Maximum blocks per request
+        address: Contract addresses to filter
+        topic_signature: Event topic signatures
     """
 
     if end_block < start_block:
@@ -216,6 +229,39 @@ def fetch_logs_retrying(
 
     event_logs: list[LogReceipt] = []
 
+    # Helper to get logs - handles both Web3 and ProviderAdapter
+    def _get_logs(
+        provider: Web3OrProvider,
+        from_block: int,
+        to_block: int,
+        addr: list[ChecksumAddress],
+        topics: Sequence[Sequence[HexBytes] | HexBytes],
+    ) -> list[LogReceipt]:
+        # Check if it's a ProviderAdapter by checking for the attribute
+        if hasattr(provider, "get_logs") and hasattr(provider, "_provider_type"):
+            # It's a ProviderAdapter
+            topics_str: list[list[str]] = []
+            for topic in topics:
+                if isinstance(topic, HexBytes):
+                    topics_str.append([topic.to_0x_hex()])
+                else:
+                    topics_str.append([t.to_0x_hex() for t in topic])
+            return provider.get_logs(
+                from_block=from_block,
+                to_block=to_block,
+                addresses=addr or None,
+                topics=topics_str or None,
+            )
+        # It's Web3
+        return provider.eth.get_logs(
+            FilterParams(
+                address=addr,
+                fromBlock=from_block,
+                toBlock=to_block,
+                topics=topics,
+            )
+        )
+
     while True:
         try:
             for attempt in retrier:
@@ -228,14 +274,7 @@ def fetch_logs_retrying(
                             f" ({chunk_end - start_block + 1} blocks)"
                         )
                         event_logs.extend(
-                            w3.eth.get_logs(
-                                FilterParams(
-                                    address=address,
-                                    fromBlock=start_block,
-                                    toBlock=chunk_end,
-                                    topics=topic_signature,
-                                )
-                            )
+                            _get_logs(w3, start_block, chunk_end, address, topic_signature)
                         )
                     except Exception:
                         old_working_span = working_span
@@ -359,14 +398,44 @@ async def fetch_logs_retrying_async(
             raise LogFetchingTimeout(max_retries=max_retries) from None
 
 
-def get_number_for_block_identifier(identifier: BlockIdentifier | None, w3: Web3) -> BlockNumber:
+def get_number_for_block_identifier(
+    identifier: BlockIdentifier | None, w3: Web3OrProvider
+) -> BlockNumber:
+    """
+    Convert a block identifier to a block number.
+
+    Args:
+        identifier: Block identifier (None, int, or string tag like 'latest')
+        w3: Web3 instance or ProviderAdapter
+
+    Returns:
+        Block number as integer
+    """
+
+    # Helper to get block number - handles both Web3 and ProviderAdapter
+    def _get_block_number(provider: Web3OrProvider) -> int:
+        if hasattr(provider, "get_block_number") and hasattr(provider, "_provider_type"):
+            # It's a ProviderAdapter
+            return provider.get_block_number()
+        return provider.eth.get_block_number()
+
+    def _get_block(provider: Web3OrProvider, block_id: str) -> dict[str, Any]:
+        if hasattr(provider, "get_block") and hasattr(provider, "_provider_type"):
+            # It's a ProviderAdapter
+            result = provider.get_block(block_id)
+            if result is None:
+                msg = f"Block {block_id} not found"
+                raise DegenbotValueError(message=msg)
+            return result
+        return provider.eth.get_block(block_id)
+
     match identifier:
         case None:
-            return w3.eth.get_block_number()
+            return _get_block_number(w3)
         case int() as block_number_as_int:
             return block_number_as_int
         case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
-            block = w3.eth.get_block(block_tag)
+            block = _get_block(w3, block_tag)
             block_number = block.get("number")
             if TYPE_CHECKING:
                 assert block_number is not None
@@ -459,7 +528,7 @@ def raise_if_invalid_uint256(number: int) -> None:
 
 
 def raw_call(
-    w3: Web3,
+    w3: Web3OrProvider,
     address: ChecksumAddress,
     calldata: bytes,
     return_types: list[str],
@@ -467,15 +536,38 @@ def raw_call(
 ) -> tuple[Any, ...]:
     """
     Perform an eth_call at the given address and return the decoded response.
+
+    Args:
+        w3: Web3 instance or ProviderAdapter
+        address: Contract address to call
+        calldata: Encoded function call data
+        return_types: ABI types for decoding the response
+        block_identifier: Block number or tag for the call
+
+    Returns:
+        Decoded response as tuple
     """
+
+    # Helper to make the call - handles both Web3 and ProviderAdapter
+    def _make_call(
+        provider: Web3OrProvider,
+        to_addr: ChecksumAddress,
+        data: bytes,
+        block: BlockIdentifier | None,
+    ) -> HexBytes:
+        if hasattr(provider, "call") and hasattr(provider, "_provider_type"):
+            # It's a ProviderAdapter
+            block_num = block if isinstance(block, int) else None
+            return provider.call(to=to_addr, data=data, block=block_num)
+        return provider.eth.call(
+            transaction=TxParams(
+                to=to_addr,
+                data=data,
+            ),
+            block_identifier=block,
+        )
 
     return eth_abi.abi.decode(
         types=return_types,
-        data=w3.eth.call(
-            transaction=TxParams(
-                to=address,
-                data=calldata,
-            ),
-            block_identifier=block_identifier,
-        ),
+        data=_make_call(w3, address, calldata, block_identifier),
     )
