@@ -212,7 +212,7 @@ dev = [
 ]
 
 [tool.uv]
-exclude-newer = "7 days"
+exclude-newer = "14 days"
 link-mode = "copy"
 cache-keys = [
     {file = "pyproject.toml"}, 
