@@ -6,142 +6,25 @@
 //!
 //! This module uses a two-layer architecture:
 //!
-//! 1. **Pure Rust core**: `DecodedValue` enum and `decode_rust()` functions that operate
+//! 1. **Pure Rust core**: `decode_rust()` functions that operate
 //!    entirely without `PyO3` dependencies. This enables:
 //!    - Unit testing without Python
 //!    - Parallel decoding without GIL
 //!    - Reuse in non-Python Rust code
 //!
 //! 2. **Thin `PyO3` wrapper**: `decode()` and `decode_single()` functions that convert
-//!    `DecodedValue` results to Python objects in a single pass.
+//!    `AbiValue` results to Python objects in a single pass.
 
+use crate::abi_types::AbiValue;
 use crate::errors::AbiDecodeError;
 use alloy::dyn_abi::DynSolType;
 use alloy::hex;
 use alloy::primitives::Address;
-use num_bigint::{BigInt, BigUint};
 use pyo3::{
     exceptions::{PyNotImplementedError, PyValueError},
     prelude::*,
     types::{PyBool, PyBytes, PyList, PyString},
 };
-
-// =============================================================================
-// DecodedValue - Pure Rust representation of decoded ABI values
-// =============================================================================
-
-/// Represents a decoded ABI value in pure Rust.
-///
-/// This enum captures all possible ABI types without any Python dependencies,
-/// enabling pure Rust testing and GIL-free processing.
-#[derive(Clone, Debug, PartialEq)]
-pub enum DecodedValue {
-    /// Ethereum address (20 bytes)
-    Address([u8; 20]),
-    /// Boolean value
-    Bool(bool),
-    /// Fixed-size bytes (bytes1-bytes32)
-    FixedBytes(Vec<u8>),
-    /// Dynamic bytes
-    Bytes(Vec<u8>),
-    /// Unsigned integer
-    Uint(BigUint),
-    /// Signed integer
-    Int(BigInt),
-    /// String
-    String(String),
-    /// Array of values
-    Array(Vec<Self>),
-}
-
-impl DecodedValue {
-    /// Convert a `DynSolValue` from alloy to `DecodedValue`.
-    fn from_alloy(value: alloy::dyn_abi::DynSolValue) -> Result<Self, AbiDecodeError> {
-        use alloy::dyn_abi::DynSolValue;
-
-        match value {
-            DynSolValue::Address(addr) => Ok(Self::Address(addr.into())),
-            DynSolValue::Bool(b) => Ok(Self::Bool(b)),
-            DynSolValue::Uint(u, _bits) => {
-                // Convert U256 to BigUint
-                let bytes = u.to_be_bytes_vec();
-                Ok(Self::Uint(BigUint::from_bytes_be(&bytes)))
-            }
-            DynSolValue::Int(i, _bits) => {
-                // Convert I256 to BigInt
-                let (sign, abs) = i.into_sign_and_abs();
-                let bytes = abs.to_be_bytes_vec();
-                // Convert alloy Sign to num_bigint Sign
-                let num_sign = match sign {
-                    alloy::primitives::Sign::Positive => num_bigint::Sign::Plus,
-                    alloy::primitives::Sign::Negative => num_bigint::Sign::Minus,
-                };
-                let big_int = BigInt::from_bytes_be(num_sign, &bytes);
-                Ok(Self::Int(big_int))
-            }
-            DynSolValue::FixedBytes(fb, size) => Ok(Self::FixedBytes(fb[..size].to_vec())),
-            DynSolValue::Bytes(b) => Ok(Self::Bytes(b)),
-            DynSolValue::String(s) => Ok(Self::String(s)),
-            DynSolValue::Array(arr) | DynSolValue::FixedArray(arr) => {
-                let values: Result<Vec<Self>, AbiDecodeError> =
-                    arr.into_iter().map(Self::from_alloy).collect();
-                Ok(Self::Array(values?))
-            }
-            DynSolValue::Tuple(vals) => {
-                // Treat tuples as arrays for Python compatibility
-                let values: Result<Vec<Self>, AbiDecodeError> =
-                    vals.into_iter().map(Self::from_alloy).collect();
-                Ok(Self::Array(values?))
-            }
-            DynSolValue::Function(_) => Err(AbiDecodeError::UnsupportedType(
-                "Unsupported alloy value type".to_string(),
-            )),
-        }
-    }
-
-    /// Convert this value to a Python object.
-    ///
-    /// This is the single point where GIL is needed for conversion.
-    fn to_python<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        match self {
-            Self::Address(addr_bytes) => {
-                let addr = Address::from_slice(addr_bytes);
-                Ok(PyString::new(py, &addr.to_string()).into_any())
-            }
-            Self::Bool(b) => Ok(PyBool::new(py, *b).to_owned().into_any()),
-            Self::FixedBytes(bytes) | Self::Bytes(bytes) => Ok(PyBytes::new(py, bytes).into_any()),
-            Self::Uint(n) => n.into_pyobject(py).map(pyo3::Bound::into_any),
-            Self::Int(n) => n.into_pyobject(py).map(pyo3::Bound::into_any),
-            Self::String(s) => Ok(PyString::new(py, s).into_any()),
-            Self::Array(values) => {
-                let list = PyList::empty(py);
-                for value in values {
-                    list.append(value.to_python(py)?)?;
-                }
-                Ok(list.into_any())
-            }
-        }
-    }
-
-    /// Convert this value to a Python object with raw hex address (no checksum).
-    fn to_python_raw_address<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        match self {
-            Self::Address(addr_bytes) => {
-                let mut buf = [0u8; 42];
-                buf[0] = b'0';
-                buf[1] = b'x';
-                hex::encode_to_slice(addr_bytes, &mut buf[2..]).map_err(|e| {
-                    PyValueError::new_err(format!("Failed to encode address to hex: {e}"))
-                })?;
-                let addr_str = std::str::from_utf8(&buf).map_err(|e| {
-                    PyValueError::new_err(format!("Invalid UTF-8 in hex address: {e}"))
-                })?;
-                Ok(PyString::new(py, addr_str).into_any())
-            }
-            _ => self.to_python(py),
-        }
-    }
-}
 
 // =============================================================================
 // Pure Rust decoding functions
@@ -159,12 +42,12 @@ impl DecodedValue {
 ///
 /// # Returns
 ///
-/// A vector of `DecodedValue` enums representing the decoded values.
+/// A vector of `AbiValue` enums representing the decoded values.
 ///
 /// # Errors
 ///
 /// Returns `AbiDecodeError` if decoding fails.
-pub fn decode_rust(types: &[&str], data: &[u8]) -> Result<Vec<DecodedValue>, AbiDecodeError> {
+pub fn decode_rust(types: &[&str], data: &[u8]) -> Result<Vec<AbiValue>, AbiDecodeError> {
     if types.is_empty() {
         return Err(AbiDecodeError::EmptyTypesList);
     }
@@ -172,9 +55,7 @@ pub fn decode_rust(types: &[&str], data: &[u8]) -> Result<Vec<DecodedValue>, Abi
     // Check for fixed-point types (not yet implemented)
     for ty in types {
         if ty.contains("fixed") || ty.contains("ufixed") {
-            return Err(AbiDecodeError::UnsupportedType(
-                "Fixed-point types (fixed/ufixed) are not yet implemented".to_string(),
-            ));
+            return Err(AbiDecodeError::FixedPointNotImplemented);
         }
     }
 
@@ -207,18 +88,16 @@ pub fn decode_rust(types: &[&str], data: &[u8]) -> Result<Vec<DecodedValue>, Abi
         }
     };
 
-    // Convert each DynSolValue to DecodedValue
-    values.into_iter().map(DecodedValue::from_alloy).collect()
+    // Convert each DynSolValue to AbiValue
+    values.into_iter().map(AbiValue::from_alloy).collect()
 }
 
 /// Decode a single ABI value (pure Rust).
 ///
 /// Convenience function for decoding a single value without Python dependencies.
-pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<DecodedValue, AbiDecodeError> {
+pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDecodeError> {
     if abi_type.contains("fixed") || abi_type.contains("ufixed") {
-        return Err(AbiDecodeError::UnsupportedType(
-            "Fixed-point types (fixed/ufixed) are not yet implemented".to_string(),
-        ));
+        return Err(AbiDecodeError::FixedPointNotImplemented);
     }
 
     if data.is_empty() {
@@ -232,26 +111,122 @@ pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<DecodedValue, A
         .abi_decode(data)
         .map_err(|e| AbiDecodeError::InvalidOffset(format!("Decoding failed: {e}")))?;
 
-    DecodedValue::from_alloy(decoded)
+    AbiValue::from_alloy(decoded)
+}
+
+/// Decode ABI-encoded data using pre-parsed `AbiType` values.
+///
+/// This is more efficient than `decode_rust()` because it avoids
+/// string parsing for each type. Use this when you already have
+/// `AbiType` instances (e.g., from `FunctionSignature::outputs`).
+///
+/// # Arguments
+///
+/// * `types` - Slice of `AbiType` values
+/// * `data` - Raw ABI-encoded bytes
+///
+/// # Returns
+///
+/// A vector of `AbiValue` enums representing the decoded values.
+///
+/// # Errors
+///
+/// Returns `AbiDecodeError` if decoding fails.
+///
+/// # Example
+///
+/// ```ignore
+/// use crate::abi_types::{AbiType, AbiValue};
+///
+/// let types = vec![AbiType::Uint(256), AbiType::Bool];
+/// let encoded = ...; // ABI-encoded data
+///
+/// let decoded = decode_for_types(&types, &encoded)?;
+/// ```
+pub fn decode_for_types(types: &[crate::abi_types::AbiType], data: &[u8]) -> Result<Vec<AbiValue>, AbiDecodeError> {
+    if types.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if data.is_empty() {
+        return Err(AbiDecodeError::EmptyData);
+    }
+
+    // Convert types to DynSolType without string parsing
+    let mut parsed_types = Vec::with_capacity(types.len());
+    for ty in types {
+        let alloy_type = ty.to_alloy_type()?;
+        parsed_types.push(alloy_type);
+    }
+
+    // Create a tuple type to decode all values at once
+    let tuple_type = DynSolType::Tuple(parsed_types);
+
+    // Decode the data
+    let decoded = tuple_type
+        .abi_decode(data)
+        .map_err(|e| AbiDecodeError::InvalidOffset(format!("Decoding failed: {e}")))?;
+
+    // Extract values from the tuple
+    let values = match decoded {
+        alloy::dyn_abi::DynSolValue::Tuple(vals) => vals,
+        other => vec![other],
+    };
+
+    // Convert each DynSolValue to AbiValue
+    values.into_iter().map(AbiValue::from_alloy).collect()
 }
 
 // =============================================================================
 // Python conversion
 // =============================================================================
 
-/// Convert a slice of `DecodedValue` to a Python list.
+/// Convert an `AbiValue` to a Python object.
+fn abi_value_to_python<'py>(value: &AbiValue, py: Python<'py>, checksum: bool) -> PyResult<Bound<'py, PyAny>> {
+    match value {
+        AbiValue::Address(addr_bytes) => {
+            if checksum {
+                let addr = Address::from_slice(addr_bytes);
+                Ok(PyString::new(py, &addr.to_string()).into_any())
+            } else {
+                let mut buf = [0u8; 42];
+                buf[0] = b'0';
+                buf[1] = b'x';
+                hex::encode_to_slice(addr_bytes, &mut buf[2..]).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to encode address to hex: {e}"))
+                })?;
+                let addr_str = std::str::from_utf8(&buf).map_err(|e| {
+                    PyValueError::new_err(format!("Invalid UTF-8 in hex address: {e}"))
+                })?;
+                Ok(PyString::new(py, addr_str).into_any())
+            }
+        }
+        AbiValue::Bool(b) => Ok(PyBool::new(py, *b).to_owned().into_any()),
+        AbiValue::FixedBytes(bytes) | AbiValue::Bytes(bytes) => {
+            Ok(PyBytes::new(py, bytes).into_any())
+        }
+        AbiValue::Uint(n) => n.into_pyobject(py).map(pyo3::Bound::into_any),
+        AbiValue::Int(n) => n.into_pyobject(py).map(pyo3::Bound::into_any),
+        AbiValue::String(s) => Ok(PyString::new(py, s).into_any()),
+        AbiValue::Array(values) => {
+            let list = PyList::empty(py);
+            for value in values {
+                list.append(abi_value_to_python(value, py, checksum)?)?;
+            }
+            Ok(list.into_any())
+        }
+    }
+}
+
+/// Convert a slice of `AbiValue` to a Python list.
 fn decoded_values_to_py_list<'py>(
     py: Python<'py>,
-    values: &[DecodedValue],
+    values: &[AbiValue],
     checksum: bool,
 ) -> PyResult<Bound<'py, PyList>> {
     let list = PyList::empty(py);
     for value in values {
-        let py_value = if checksum {
-            value.to_python(py)?
-        } else {
-            value.to_python_raw_address(py)?
-        };
+        let py_value = abi_value_to_python(value, py, checksum)?;
         list.append(py_value)?;
     }
     Ok(list)
@@ -305,7 +280,7 @@ pub fn decode(
     let type_refs: Vec<&str> = type_strings.iter().map(String::as_str).collect();
 
     let values = py.detach(|| decode_rust(&type_refs, data)).map_err(|e| {
-        if matches!(&e, AbiDecodeError::UnsupportedType(msg) if msg.contains("fixed")) {
+        if matches!(e, AbiDecodeError::FixedPointNotImplemented) {
             PyNotImplementedError::new_err(format!("{e}"))
         } else {
             PyValueError::new_err(format!("{e}"))
@@ -341,18 +316,14 @@ pub fn decode_single(
     let value = py
         .detach(|| decode_single_rust(abi_type, data))
         .map_err(|e| {
-            if matches!(&e, AbiDecodeError::UnsupportedType(msg) if msg.contains("fixed")) {
+            if matches!(e, AbiDecodeError::FixedPointNotImplemented) {
                 PyNotImplementedError::new_err(format!("{e}"))
             } else {
                 PyValueError::new_err(format!("{e}"))
             }
         })?;
 
-    let py_value = if checksum {
-        value.to_python(py)?
-    } else {
-        value.to_python_raw_address(py)?
-    };
+    let py_value = abi_value_to_python(&value, py, checksum)?;
     Ok(py_value.unbind())
 }
 
@@ -372,6 +343,7 @@ mod tests {
     )]
 
     use super::*;
+    use num_bigint::{BigInt, BigUint};
 
     #[test]
     fn test_decode_uint256_rust() {
@@ -381,7 +353,7 @@ mod tests {
 
         let result = decode_single_rust("uint256", &data).expect("should decode uint256");
         match result {
-            DecodedValue::Uint(n) => assert_eq!(n, BigUint::from(12345u64)),
+            AbiValue::Uint(n) => assert_eq!(n, BigUint::from(12345u64)),
             _ => panic!("Expected Uint variant"),
         }
     }
@@ -395,7 +367,7 @@ mod tests {
 
         let result = decode_single_rust("address", &data).expect("should decode address");
         match result {
-            DecodedValue::Address(addr) => {
+            AbiValue::Address(addr) => {
                 for (i, byte) in addr.iter().enumerate() {
                     assert_eq!(*byte, 0x10 + i as u8);
                 }
@@ -411,14 +383,14 @@ mod tests {
 
         let result = decode_single_rust("bool", &data).expect("should decode bool true");
         match result {
-            DecodedValue::Bool(b) => assert!(b),
+            AbiValue::Bool(b) => assert!(b),
             _ => panic!("Expected Bool variant"),
         }
 
         data[31] = 0;
         let result = decode_single_rust("bool", &data).expect("should decode bool false");
         match result {
-            DecodedValue::Bool(b) => assert!(!b),
+            AbiValue::Bool(b) => assert!(!b),
             _ => panic!("Expected Bool variant"),
         }
     }
@@ -429,7 +401,7 @@ mod tests {
 
         let result = decode_single_rust("bytes32", &data).expect("should decode bytes32");
         match result {
-            DecodedValue::FixedBytes(bytes) => {
+            AbiValue::FixedBytes(bytes) => {
                 assert_eq!(bytes.len(), 32);
                 for i in 0..32 {
                     assert_eq!(bytes[i], i as u8);
@@ -451,7 +423,7 @@ mod tests {
 
         let result = decode_single_rust("bytes", &data).expect("should decode bytes");
         match result {
-            DecodedValue::Bytes(bytes) => {
+            AbiValue::Bytes(bytes) => {
                 assert_eq!(bytes, vec![0xAA, 0xBB, 0xCC]);
             }
             _ => panic!("Expected Bytes variant"),
@@ -470,7 +442,7 @@ mod tests {
 
         let result = decode_single_rust("string", &data).expect("should decode string");
         match result {
-            DecodedValue::String(s) => {
+            AbiValue::String(s) => {
                 assert_eq!(s, "Hello, World!");
             }
             _ => panic!("Expected String variant"),
@@ -488,11 +460,11 @@ mod tests {
 
         let result = decode_single_rust("uint256[3]", &data).expect("should decode uint256[3]");
         match result {
-            DecodedValue::Array(values) => {
+            AbiValue::Array(values) => {
                 assert_eq!(values.len(), 3);
                 for (i, val) in values.iter().enumerate() {
                     match val {
-                        DecodedValue::Uint(n) => assert_eq!(*n, BigUint::from(i as u64 + 1)),
+                        AbiValue::Uint(n) => assert_eq!(*n, BigUint::from(i as u64 + 1)),
                         _ => panic!("Expected Uint in array"),
                     }
                 }
@@ -517,14 +489,14 @@ mod tests {
 
         let result = decode_single_rust("uint256[]", &data).expect("should decode uint256[]");
         match result {
-            DecodedValue::Array(values) => {
+            AbiValue::Array(values) => {
                 assert_eq!(values.len(), 2);
                 match &values[0] {
-                    DecodedValue::Uint(n) => assert_eq!(*n, BigUint::from(10u64)),
+                    AbiValue::Uint(n) => assert_eq!(*n, BigUint::from(10u64)),
                     _ => panic!("Expected Uint"),
                 }
                 match &values[1] {
-                    DecodedValue::Uint(n) => assert_eq!(*n, BigUint::from(20u64)),
+                    AbiValue::Uint(n) => assert_eq!(*n, BigUint::from(20u64)),
                     _ => panic!("Expected Uint"),
                 }
             }
@@ -553,15 +525,15 @@ mod tests {
         assert_eq!(result.len(), 3);
 
         match &result[0] {
-            DecodedValue::Uint(n) => assert_eq!(*n, BigUint::from(42u64)),
+            AbiValue::Uint(n) => assert_eq!(*n, BigUint::from(42u64)),
             _ => panic!("Expected Uint"),
         }
         match &result[1] {
-            DecodedValue::Bool(b) => assert!(*b),
+            AbiValue::Bool(b) => assert!(*b),
             _ => panic!("Expected Bool"),
         }
         match &result[2] {
-            DecodedValue::Address(addr) => {
+            AbiValue::Address(addr) => {
                 assert_eq!(addr[19], 1);
             }
             _ => panic!("Expected Address"),
@@ -574,39 +546,108 @@ mod tests {
 
         let result = decode_single_rust("int256", &data).expect("should decode int256");
         match result {
-            DecodedValue::Int(n) => assert_eq!(n, BigInt::from(-1)),
+            AbiValue::Int(n) => assert_eq!(n, BigInt::from(-1)),
             _ => panic!("Expected Int variant"),
         }
     }
 
     #[test]
-    fn test_decoded_value_to_python_roundtrip() {
+    fn test_abi_value_to_python_roundtrip() {
         #[allow(unsafe_code)]
         unsafe {
             pyo3::with_embedded_python_interpreter(|py| {
-                let val = DecodedValue::Uint(BigUint::from(123_456_789_u64));
-                let py_val = val.to_python(py).expect("should convert to Python");
+                let val = AbiValue::Uint(BigUint::from(123_456_789_u64));
+                let py_val = abi_value_to_python(&val, py, true).expect("should convert to Python");
                 let n: u64 = py_val.extract().expect("should extract as u64");
                 assert_eq!(n, 123_456_789_u64);
 
-                let val = DecodedValue::Bool(true);
-                let py_val = val.to_python(py).expect("should convert to Python");
+                let val = AbiValue::Bool(true);
+                let py_val = abi_value_to_python(&val, py, true).expect("should convert to Python");
                 let b: bool = py_val.extract().expect("should extract as bool");
                 assert!(b);
 
-                let val = DecodedValue::String("Hello".to_string());
-                let py_val = val.to_python(py).expect("should convert to Python");
+                let val = AbiValue::String("Hello".to_string());
+                let py_val = abi_value_to_python(&val, py, true).expect("should convert to Python");
                 let s: String = py_val.extract().expect("should extract as String");
                 assert_eq!(s, "Hello");
 
-                let val = DecodedValue::Array(vec![
-                    DecodedValue::Uint(BigUint::from(1u64)),
-                    DecodedValue::Uint(BigUint::from(2u64)),
+                let val = AbiValue::Array(vec![
+                    AbiValue::Uint(BigUint::from(1u64)),
+                    AbiValue::Uint(BigUint::from(2u64)),
                 ]);
-                let py_val = val.to_python(py).expect("should convert to Python");
+                let py_val = abi_value_to_python(&val, py, true).expect("should convert to Python");
                 let list: Vec<u64> = py_val.extract().expect("should extract as Vec<u64>");
                 assert_eq!(list, vec![1, 2]);
             });
         }
+    }
+
+    // =========================================================================
+    // decode_for_types tests (pre-parsed AbiType)
+    // =========================================================================
+
+    #[test]
+    fn test_decode_for_types_basic() {
+        use crate::abi_types::AbiType;
+
+        // Encode uint256 and bool
+        let mut data = Vec::new();
+        let mut word1 = vec![0u8; 32];
+        word1[31] = 42;
+        data.extend(word1);
+
+        let mut word2 = vec![0u8; 32];
+        word2[31] = 1;
+        data.extend(word2);
+
+        let types = vec![AbiType::Uint(256), AbiType::Bool];
+        let decoded = decode_for_types(&types, &data).expect("should decode");
+
+        assert_eq!(decoded.len(), 2);
+        match &decoded[0] {
+            AbiValue::Uint(n) => assert_eq!(*n, BigUint::from(42u64)),
+            _ => panic!("Expected Uint"),
+        }
+        match &decoded[1] {
+            AbiValue::Bool(b) => assert!(*b),
+            _ => panic!("Expected Bool"),
+        }
+    }
+
+    #[test]
+    fn test_decode_for_types_matches_decode_rust() {
+        use crate::abi_types::AbiType;
+
+        // Create test data
+        let mut data = Vec::new();
+        let mut word1 = vec![0u8; 32];
+        word1[31] = 42;
+        data.extend(word1);
+
+        let mut word2 = vec![0u8; 32];
+        word2[31] = 1;
+        data.extend(word2);
+
+        let mut word3 = vec![0u8; 32];
+        word3[19] = 1;
+        data.extend(word3);
+
+        // Compare both methods
+        let types_str = vec!["uint256", "bool", "address"];
+        let types_abi = vec![AbiType::Uint(256), AbiType::Bool, AbiType::Address];
+
+        let decoded_rust = decode_rust(&types_str, &data).expect("should decode");
+        let decoded_for_types = decode_for_types(&types_abi, &data).expect("should decode");
+
+        assert_eq!(decoded_rust, decoded_for_types);
+    }
+
+    #[test]
+    fn test_decode_for_types_empty() {
+        use crate::abi_types::AbiType;
+
+        let types: Vec<AbiType> = vec![];
+        let decoded = decode_for_types(&types, &[]).expect("empty types should succeed");
+        assert!(decoded.is_empty());
     }
 }

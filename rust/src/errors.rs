@@ -21,7 +21,7 @@ impl From<TickMathError> for PyErr {
 }
 
 /// Errors that can occur during ABI decoding.
-#[derive(Debug, thiserror::Error, Clone)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AbiDecodeError {
     /// Empty types list provided.
@@ -210,6 +210,22 @@ impl From<ContractError> for ProviderError {
 impl From<ContractError> for PyErr {
     fn from(err: ContractError) -> Self {
         Self::new::<PyValueError, _>(format!("{err}"))
+    }
+}
+
+impl From<crate::errors::AbiDecodeError> for ContractError {
+    fn from(err: crate::errors::AbiDecodeError) -> Self {
+        match err {
+            crate::errors::AbiDecodeError::UnsupportedType(msg) => Self::InvalidAbi { message: msg },
+            crate::errors::AbiDecodeError::InvalidLength(msg)
+            | crate::errors::AbiDecodeError::InvalidOffset(msg) => Self::DecodingError { message: msg },
+            crate::errors::AbiDecodeError::InsufficientData { .. } => Self::DecodingError {
+                message: err.to_string(),
+            },
+            other => Self::DecodingError {
+                message: other.to_string(),
+            },
+        }
     }
 }
 

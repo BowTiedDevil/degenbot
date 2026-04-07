@@ -1,10 +1,21 @@
-//! Unified ABI type representation.
+//! Unified ABI type and value representation.
 //!
-//! This module provides a single `AbiType` enum used by both the ABI decoder
-//! (`abi_decoder.rs`) and the contract interface (`contract.rs`), eliminating
-//! duplicated type parsing logic.
+//! This module provides:
+//! - `AbiType` enum for representing ABI type signatures
+//! - `AbiValue` enum for representing encoded/decoded ABI values
+//!
+//! Used by `abi_decoder.rs`, `abi_encoder.rs`, and `contract.rs` to ensure
+//! consistent type handling across the codebase.
 
+use crate::errors::{AbiDecodeError, ContractError};
+use alloy::dyn_abi::DynSolValue;
+use alloy::hex;
+use alloy::primitives::{Address, I256, U256};
+use num_bigint::{BigInt, BigUint};
+use num_traits::{Num, Signed, Zero};
+use std::borrow::Cow;
 use std::fmt;
+use std::str::FromStr;
 
 /// Represents an Ethereum ABI type.
 ///
@@ -61,6 +72,66 @@ impl AbiType {
             Self::Uint(bits) | Self::Int(bits) => Some(*bits),
             Self::FixedBytes(n) => Some(*n * 8),
             _ => None,
+        }
+    }
+
+    /// Get the canonical type string without allocating for common types.
+    ///
+    /// This is more efficient than `to_string()` for types that don't need
+    /// formatting (e.g., `address`, `bool`, `bytes`). Sized types like
+    /// `uint256` still allocate but this avoids intermediate collections.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let ty = AbiType::Address;
+    /// assert_eq!(ty.type_str(), "address");
+    ///
+    /// let ty = AbiType::Uint(256);
+    /// assert_eq!(ty.type_str(), "uint256");
+    /// ```
+    #[must_use]
+    pub fn type_str(&self) -> Cow<'static, str> {
+        match self {
+            Self::Address => Cow::Borrowed("address"),
+            Self::Bool => Cow::Borrowed("bool"),
+            Self::Bytes => Cow::Borrowed("bytes"),
+            Self::String => Cow::Borrowed("string"),
+            Self::Uint(bits) => Cow::Owned(format!("uint{bits}")),
+            Self::Int(bits) => Cow::Owned(format!("int{bits}")),
+            Self::FixedBytes(size) => Cow::Owned(format!("bytes{size}")),
+            Self::Array(inner) => Cow::Owned(format!("{}[]", inner.type_str())),
+            Self::FixedArray(inner, size) => Cow::Owned(format!("{}[{size}]", inner.type_str())),
+        }
+    }
+
+    /// Convert this `AbiType` to an alloy `DynSolType`.
+    ///
+    /// This enables direct encoding/decoding without string parsing.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AbiDecodeError::UnsupportedType` if the type cannot be converted
+    /// (should not happen for valid `AbiType` instances).
+    pub fn to_alloy_type(&self) -> Result<alloy::dyn_abi::DynSolType, AbiDecodeError> {
+        use alloy::dyn_abi::DynSolType;
+
+        match self {
+            Self::Address => Ok(DynSolType::Address),
+            Self::Bool => Ok(DynSolType::Bool),
+            Self::Uint(bits) => Ok(DynSolType::Uint(*bits)),
+            Self::Int(bits) => Ok(DynSolType::Int(*bits)),
+            Self::FixedBytes(size) => Ok(DynSolType::FixedBytes(*size)),
+            Self::Bytes => Ok(DynSolType::Bytes),
+            Self::String => Ok(DynSolType::String),
+            Self::Array(inner) => {
+                let inner_type = inner.to_alloy_type()?;
+                Ok(DynSolType::Array(Box::new(inner_type)))
+            }
+            Self::FixedArray(inner, size) => {
+                let inner_type = inner.to_alloy_type()?;
+                Ok(DynSolType::FixedArray(Box::new(inner_type), *size))
+            }
         }
     }
 }
@@ -283,6 +354,329 @@ fn type_to_string(abi_type: &AbiType) -> String {
         AbiType::Array(inner) => format!("{}[]", type_to_string(inner)),
         AbiType::FixedArray(inner, size) => format!("{}[{size}]", type_to_string(inner)),
     }
+}
+
+// =============================================================================
+// AbiValue - Unified representation of ABI values
+// =============================================================================
+
+/// Represents an ABI value for encoding/decoding.
+///
+/// This enum captures all possible ABI types without any Python dependencies,
+/// enabling pure Rust testing and GIL-free processing.
+#[derive(Clone, Debug, PartialEq)]
+pub enum AbiValue {
+    /// Ethereum address (20 bytes)
+    Address([u8; 20]),
+    /// Boolean value
+    Bool(bool),
+    /// Fixed-size bytes (bytes1-bytes32)
+    FixedBytes(Vec<u8>),
+    /// Dynamic bytes
+    Bytes(Vec<u8>),
+    /// Unsigned integer
+    Uint(BigUint),
+    /// Signed integer
+    Int(BigInt),
+    /// String
+    String(String),
+    /// Array of values
+    Array(Vec<Self>),
+}
+
+impl AbiValue {
+    /// Convert an `AbiValue` to a `DynSolValue` for encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AbiDecodeError` if conversion fails (e.g., value too large).
+    pub fn to_alloy(&self) -> Result<DynSolValue, AbiDecodeError> {
+        match self {
+            Self::Address(addr) => {
+                let addr = Address::from_slice(addr);
+                Ok(DynSolValue::Address(addr))
+            }
+            Self::Bool(b) => Ok(DynSolValue::Bool(*b)),
+            Self::FixedBytes(bytes) => {
+                let size = bytes.len();
+                if size > 32 {
+                    return Err(AbiDecodeError::UnsupportedType(format!(
+                        "bytes{size} requires at most 32 bytes, got {size}"
+                    )));
+                }
+                let mut arr = [0u8; 32];
+                arr[..size].copy_from_slice(bytes);
+                Ok(DynSolValue::FixedBytes(
+                    alloy::primitives::FixedBytes::<32>::new(arr),
+                    size,
+                ))
+            }
+            Self::Bytes(bytes) => Ok(DynSolValue::Bytes(bytes.clone())),
+            Self::String(s) => Ok(DynSolValue::String(s.clone())),
+            Self::Uint(n) => {
+                let bytes = n.to_bytes_be();
+                if bytes.len() > 32 {
+                    return Err(AbiDecodeError::UnsupportedType(
+                        "Value exceeds uint256 max".to_string(),
+                    ));
+                }
+                // Pad to 32 bytes
+                let mut arr = [0u8; 32];
+                arr[32 - bytes.len()..].copy_from_slice(&bytes);
+                let u256 = U256::from_be_bytes(arr);
+                Ok(DynSolValue::Uint(u256, 256))
+            }
+            Self::Int(n) => {
+                let (sign, bytes) = n.to_bytes_be();
+                if bytes.len() > 32 {
+                    return Err(AbiDecodeError::UnsupportedType(
+                        "Value exceeds int256 range".to_string(),
+                    ));
+                }
+                // Convert to I256 with proper sign extension
+                let i256 = if sign == num_bigint::Sign::Minus && !n.is_zero() {
+                    // For negative numbers, we need two's complement
+                    let abs_val = n.abs();
+                    // to_bytes_be on positive BigInt returns (Plus, bytes)
+                    let (_, abs_bytes) = abs_val.to_bytes_be();
+                    let mut arr = [0u8; 32];
+                    if abs_bytes.len() <= 32 {
+                        arr[32 - abs_bytes.len()..].copy_from_slice(&abs_bytes);
+                    }
+                    let abs_u256 = U256::from_be_bytes(arr);
+                    // Two's complement: invert and add 1
+                    let inverted = !abs_u256;
+                    let neg_u256 = inverted + U256::from(1);
+                    I256::from_raw(neg_u256)
+                } else {
+                    let mut arr = [0u8; 32];
+                    arr[32 - bytes.len()..].copy_from_slice(&bytes);
+                    I256::from_raw(U256::from_be_bytes(arr))
+                };
+                Ok(DynSolValue::Int(i256, 256))
+            }
+            Self::Array(values) => {
+                let alloy_values: Result<Vec<_>, _> = values.iter().map(Self::to_alloy).collect();
+                Ok(DynSolValue::Array(alloy_values?))
+            }
+        }
+    }
+
+    /// Convert a `DynSolValue` from alloy to `AbiValue`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AbiDecodeError` if the alloy type is unsupported.
+    pub fn from_alloy(value: DynSolValue) -> Result<Self, AbiDecodeError> {
+        match value {
+            DynSolValue::Address(addr) => Ok(Self::Address(addr.into())),
+            DynSolValue::Bool(b) => Ok(Self::Bool(b)),
+            DynSolValue::Uint(u, _bits) => {
+                let bytes = u.to_be_bytes_vec();
+                Ok(Self::Uint(BigUint::from_bytes_be(&bytes)))
+            }
+            DynSolValue::Int(i, _bits) => {
+                let (sign, abs) = i.into_sign_and_abs();
+                let bytes = abs.to_be_bytes_vec();
+                let num_sign = match sign {
+                    alloy::primitives::Sign::Positive => num_bigint::Sign::Plus,
+                    alloy::primitives::Sign::Negative => num_bigint::Sign::Minus,
+                };
+                let big_int = BigInt::from_bytes_be(num_sign, &bytes);
+                Ok(Self::Int(big_int))
+            }
+            DynSolValue::FixedBytes(fb, size) => Ok(Self::FixedBytes(fb[..size].to_vec())),
+            DynSolValue::Bytes(b) => Ok(Self::Bytes(b)),
+            DynSolValue::String(s) => Ok(Self::String(s)),
+            DynSolValue::Array(arr) | DynSolValue::FixedArray(arr) => {
+                let values: Result<Vec<Self>, _> = arr.into_iter().map(Self::from_alloy).collect();
+                Ok(Self::Array(values?))
+            }
+            DynSolValue::Tuple(vals) => {
+                // Treat tuples as arrays
+                let values: Result<Vec<Self>, _> = vals.into_iter().map(Self::from_alloy).collect();
+                Ok(Self::Array(values?))
+            }
+            DynSolValue::Function(_) => Err(AbiDecodeError::UnsupportedType(
+                "function type not supported".to_string(),
+            )),
+        }
+    }
+
+    /// Parse a string argument into an `AbiValue` based on the expected type.
+    ///
+    /// Used by `contract.rs` to convert string arguments from Python into
+    /// typed values for encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ContractError` if the string cannot be parsed for the given type.
+    pub fn from_str_arg(abi_type: &AbiType, arg: &str) -> Result<Self, ContractError> {
+        let trimmed = arg.trim();
+        match abi_type {
+            AbiType::Address => {
+                let addr =
+                    Address::from_str(trimmed).map_err(|_| ContractError::InvalidAddress {
+                        address: trimmed.to_string(),
+                        reason: "Invalid address format".to_string(),
+                    })?;
+                Ok(Self::Address(addr.into()))
+            }
+            AbiType::Bool => {
+                let value = trimmed.to_lowercase() == "true" || trimmed == "1";
+                Ok(Self::Bool(value))
+            }
+            AbiType::Uint(_) => {
+                let uint_val =
+                    parse_uint_with_hex_prefix(trimmed).map_err(|_| ContractError::InvalidAbi {
+                        message: format!("Invalid uint value: {arg}"),
+                    })?;
+                Ok(Self::Uint(uint_val))
+            }
+            AbiType::Int(_) => {
+                let int_val =
+                    parse_int_with_hex_prefix(trimmed).map_err(|_| ContractError::InvalidAbi {
+                        message: format!("Invalid int value: {arg}"),
+                    })?;
+                Ok(Self::Int(int_val))
+            }
+            AbiType::FixedBytes(size) => {
+                let hex_str = trimmed.strip_prefix("0x").unwrap_or(trimmed);
+                let bytes = hex::decode(hex_str).map_err(|_| ContractError::InvalidAbi {
+                    message: format!("Invalid hex value for bytes{size}: {arg}"),
+                })?;
+                if bytes.len() != *size {
+                    return Err(ContractError::InvalidAbi {
+                        message: format!(
+                            "bytes{size} requires exactly {size} bytes, got {}",
+                            bytes.len()
+                        ),
+                    });
+                }
+                Ok(Self::FixedBytes(bytes))
+            }
+            AbiType::Bytes => {
+                let hex_str = trimmed.strip_prefix("0x").unwrap_or(trimmed);
+                let bytes = hex::decode(hex_str).map_err(|_| ContractError::InvalidAbi {
+                    message: format!("Invalid hex value for bytes: {arg}"),
+                })?;
+                Ok(Self::Bytes(bytes))
+            }
+            AbiType::String => Ok(Self::String(trimmed.to_string())),
+            AbiType::Array(element_type) => {
+                // Parse JSON array format
+                let elements = parse_json_array(trimmed)?;
+                let values: Result<Vec<_>, _> = elements
+                    .iter()
+                    .map(|elem| Self::from_str_arg(element_type, elem))
+                    .collect();
+                Ok(Self::Array(values?))
+            }
+            AbiType::FixedArray(element_type, size) => {
+                let elements = parse_json_array(trimmed)?;
+                if elements.len() != *size {
+                    return Err(ContractError::InvalidAbi {
+                        message: format!(
+                            "Fixed array of size {size} requires exactly {size} elements, got {}",
+                            elements.len()
+                        ),
+                    });
+                }
+                let values: Result<Vec<_>, _> = elements
+                    .iter()
+                    .map(|elem| Self::from_str_arg(element_type, elem))
+                    .collect();
+                Ok(Self::Array(values?))
+            }
+        }
+    }
+
+    /// Convert this value to a string for contract return values.
+    ///
+    /// Used by `contract.rs` to format decoded values as strings for Python.
+    #[must_use]
+    pub fn to_contract_string(&self) -> String {
+        match self {
+            Self::Address(addr) => format!("0x{}", hex::encode(addr)),
+            Self::Bool(b) => b.to_string(),
+            Self::FixedBytes(bytes) | Self::Bytes(bytes) => format!("0x{}", hex::encode(bytes)),
+            Self::Uint(n) => n.to_string(),
+            Self::Int(n) => n.to_string(),
+            Self::String(s) => s.clone(),
+            Self::Array(values) => {
+                let elements: Vec<String> = values.iter().map(Self::to_contract_string).collect();
+                format!("[{}]", elements.join(", "))
+            }
+        }
+    }
+}
+
+/// Parse a uint value, handling optional hex prefix (0x or 0X).
+fn parse_uint_with_hex_prefix(s: &str) -> Result<BigUint, num_bigint::ParseBigIntError> {
+    s.strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .map_or_else(
+            || BigUint::from_str(s),
+            |hex_str| BigUint::from_str_radix(hex_str, 16),
+        )
+}
+
+/// Parse an int value, handling optional hex prefix (0x or 0X).
+fn parse_int_with_hex_prefix(s: &str) -> Result<BigInt, num_bigint::ParseBigIntError> {
+    s.strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .map_or_else(
+            || BigInt::from_str(s),
+            |hex_str| BigInt::from_str_radix(hex_str, 16),
+        )
+}
+
+/// Parse a JSON array string into individual element strings.
+///
+/// Accepts `["elem1", "elem2"]` format with optional whitespace.
+fn parse_json_array(input: &str) -> Result<Vec<&str>, ContractError> {
+    let trimmed = input.trim();
+
+    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+        return Err(ContractError::InvalidAbi {
+            message: format!("Array value must be enclosed in square brackets, got: '{input}'"),
+        });
+    }
+
+    let content = &trimmed[1..trimmed.len() - 1];
+    let content = content.trim();
+
+    if content.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Split by comma, respecting nested brackets
+    let mut elements = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+
+    for (i, c) in content.char_indices() {
+        match c {
+            '[' => depth += 1,
+            ']' => depth -= 1,
+            ',' if depth == 0 => {
+                let element = &content[start..i].trim();
+                if !element.is_empty() || i > start {
+                    elements.push(*element);
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+
+    // Add the last element
+    let last_element = &content[start..].trim();
+    if !last_element.is_empty() || start < content.len() {
+        elements.push(*last_element);
+    }
+
+    Ok(elements)
 }
 
 // =============================================================================

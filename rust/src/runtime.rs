@@ -39,8 +39,7 @@ const ENV_VAR: &str = "TOKIO_WORKER_THREADS";
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
-#[allow(clippy::expect_used, clippy::unwrap_used)]
-fn build_runtime() -> Runtime {
+fn build_runtime() -> Result<Runtime, std::io::Error> {
     let env_worker_count = std::env::var(ENV_VAR)
         .ok()
         .and_then(|v| v.parse::<usize>().ok());
@@ -55,10 +54,7 @@ fn build_runtime() -> Runtime {
         builder.worker_threads(n);
     }
 
-    builder
-        .enable_all()
-        .build()
-        .expect("Failed to create Tokio runtime")
+    builder.enable_all().build()
 }
 
 /// Get the shared Tokio runtime instance.
@@ -73,9 +69,10 @@ fn build_runtime() -> Runtime {
 ///
 /// Panics if the runtime fails to create (e.g., if the system cannot
 /// spawn the required threads).
-#[allow(clippy::expect_used)]
 pub fn get_runtime() -> &'static Runtime {
-    RUNTIME.get_or_init(build_runtime)
+    RUNTIME.get_or_init(|| {
+        build_runtime().unwrap_or_else(|e| panic!("Failed to create Tokio runtime: {e}"))
+    })
 }
 
 #[cfg(test)]
@@ -108,7 +105,7 @@ mod tests {
     #[test]
     fn test_build_runtime_respects_env_var() {
         std::env::set_var(ENV_VAR, "2");
-        let rt = build_runtime();
+        let rt = build_runtime().unwrap();
         std::env::remove_var(ENV_VAR);
 
         let result = rt.block_on(async {
@@ -121,7 +118,7 @@ mod tests {
     #[test]
     fn test_build_runtime_ignores_invalid_env() {
         std::env::set_var(ENV_VAR, "not_a_number");
-        let rt = build_runtime();
+        let rt = build_runtime().unwrap();
         std::env::remove_var(ENV_VAR);
 
         let result = rt.block_on(async {
