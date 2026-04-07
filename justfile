@@ -9,19 +9,19 @@ default:
 
 # Run Rust tests
 test-rust:
-    cd rust && cargo test
+    cargo test --manifest-path rust/Cargo.toml
 
 # Run Rust linter (clippy)
 lint-rust:
-    cd rust && cargo clippy --all-targets --all-features -- -D warnings
+    cargo clippy --all-targets --all-features --manifest-path rust/Cargo.toml -- -D warnings
 
 # Build Rust release library (links Python - for testing only)
 build-rust-debug:
-    cd rust && cargo build --release
+    cargo build --release --manifest-path rust/Cargo.toml
 
 # Build Rust extension module (correct for Python extension)
 build-rust-extension:
-    cd rust && cargo build --release --features extension-module
+    cargo build --release --features extension-module --manifest-path rust/Cargo.toml
 
 # ========== Python Development ==========
 
@@ -52,15 +52,15 @@ lint: lint-rust
     uv run mypy src/
 
 # Format all code
-format:
-    cd rust && cargo fmt
+format: 
+    cargo fmt --manifest-path rust/Cargo.toml
     uv run ruff format src/
 
 # ========== CI/CD ==========
 
 # Simulate CI Rust checks
 ci-rust: lint-rust test-rust
-    cd rust && cargo build --release --features extension-module
+    cargo build --release --features extension-module --manifest-path rust/Cargo.toml
 
 # Simulate full CI pipeline
 ci-full: ci-rust test-python
@@ -69,9 +69,9 @@ ci-full: ci-rust test-python
 
 # Build documentation
 docs:
-    cd rust && cargo doc --no-deps
+    cargo doc --no-deps --manifest-path rust/Cargo.toml
     uv run mkdocs build 2>/dev/null || echo "mkdocs not configured"
 
 # Serve documentation locally
 serve-docs:
-    cd rust && cargo doc --open 2>/dev/null || echo "Open rust/target/doc/degenbot_rs/index.html"
+    cargo doc --open 2>/dev/null --manifest-path rust/Cargo.toml || echo "Open rust/target/doc/degenbot_rs/index.html"
