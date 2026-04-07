@@ -71,21 +71,18 @@ pub fn decode_rust(types: &[&str], data: &[u8]) -> Result<Vec<AbiValue>, AbiDeco
         parsed_types.push(parsed);
     }
 
-    // Create a tuple type to decode all values at once
+    // Decode the data using abi_decode_params for proper parameter encoding
+    // This handles both single types and multiple types correctly
+    // For tuples, abi_decode_params uses sequence encoding (no extra offset)
     let tuple_type = DynSolType::Tuple(parsed_types);
-
-    // Decode the data
     let decoded = tuple_type
-        .abi_decode(data)
+        .abi_decode_params(data)
         .map_err(|e| AbiDecodeError::InvalidOffset(format!("Decoding failed: {e}")))?;
 
-    // Extract values from the tuple
+    // Extract values from the tuple (or single value)
     let values = match decoded {
         alloy::dyn_abi::DynSolValue::Tuple(vals) => vals,
-        other => {
-            // Single value case - wrap in a vec
-            vec![other]
-        }
+        other => vec![other],
     };
 
     // Convert each DynSolValue to AbiValue
@@ -159,15 +156,15 @@ pub fn decode_for_types(types: &[crate::abi_types::AbiType], data: &[u8]) -> Res
         parsed_types.push(alloy_type);
     }
 
-    // Create a tuple type to decode all values at once
+    // Decode the data using abi_decode_params for proper parameter encoding
+    // This handles both single types and multiple types correctly
+    // For tuples, abi_decode_params uses sequence encoding (no extra offset)
     let tuple_type = DynSolType::Tuple(parsed_types);
-
-    // Decode the data
     let decoded = tuple_type
-        .abi_decode(data)
+        .abi_decode_params(data)
         .map_err(|e| AbiDecodeError::InvalidOffset(format!("Decoding failed: {e}")))?;
 
-    // Extract values from the tuple
+    // Extract values from the tuple (or single value)
     let values = match decoded {
         alloy::dyn_abi::DynSolValue::Tuple(vals) => vals,
         other => vec![other],

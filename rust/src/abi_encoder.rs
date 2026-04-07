@@ -145,9 +145,11 @@ pub fn encode_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>, AbiDe
         alloy_values.push(alloy_value);
     }
 
-    // Encode as a tuple (multiple parameters are encoded as a tuple)
+    // Encode the values using abi_encode_params for proper parameter encoding
+    // For tuples, abi_encode_params uses sequence encoding (no extra offset)
+    // For single values, it delegates to abi_encode()
     let tuple_value = alloy::dyn_abi::DynSolValue::Tuple(alloy_values);
-    Ok(tuple_value.abi_encode())
+    Ok(tuple_value.abi_encode_params())
 }
 
 /// Encode multiple ABI values using pre-parsed `AbiType` values.
@@ -203,9 +205,11 @@ pub fn encode_for_types(types: &[crate::abi_types::AbiType], values: &[AbiValue]
         alloy_values.push(alloy_value);
     }
 
-    // Encode as a tuple (multiple parameters are encoded as a tuple)
+    // Encode the values using abi_encode_params for proper parameter encoding
+    // For tuples, abi_encode_params uses sequence encoding (no extra offset)
+    // For single values, it delegates to abi_encode()
     let tuple_value = alloy::dyn_abi::DynSolValue::Tuple(alloy_values);
-    Ok(tuple_value.abi_encode())
+    Ok(tuple_value.abi_encode_params())
 }
 
 // =============================================================================
