@@ -6,6 +6,7 @@
 //! # Modules
 //!
 //! - [`abi_decoder`] - High-performance ABI decoding
+//! - [`abi_encoder`] - High-performance ABI encoding
 //! - [`tick_math`] - Uniswap V3 tick-to-price calculations
 //! - [`address_utils`] - Ethereum address utilities
 //! - [`errors`] - Error types
@@ -18,6 +19,7 @@
 //! See individual module documentation for usage examples.
 
 pub mod abi_decoder;
+pub mod abi_encoder;
 pub mod abi_types;
 pub mod address_utils;
 pub mod async_contract;
@@ -59,6 +61,10 @@ fn _rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // ABI decoder functions
     m.add_function(wrap_pyfunction!(abi_decoder::decode, m)?)?;
     m.add_function(wrap_pyfunction!(abi_decoder::decode_single, m)?)?;
+
+    // ABI encoder functions
+    m.add_function(wrap_pyfunction!(abi_encoder::encode, m)?)?;
+    m.add_function(wrap_pyfunction!(abi_encoder::encode_single, m)?)?;
 
     // Provider module
     provider_py::add_provider_module(m)?;

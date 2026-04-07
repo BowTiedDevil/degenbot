@@ -1,6 +1,6 @@
 //! ABI decoding for Ethereum data.
 //!
-//! High-performance decoding of ABI-encoded data.
+//! High-performance decoding of ABI-encoded data using alloy's `dyn_abi`.
 //!
 //! # Architecture
 //!
@@ -15,8 +15,8 @@
 //! 2. **Thin `PyO3` wrapper**: `decode()` and `decode_single()` functions that convert
 //!    `DecodedValue` results to Python objects in a single pass.
 
-use crate::abi_types::AbiType;
 use crate::errors::AbiDecodeError;
+use alloy::dyn_abi::DynSolType;
 use alloy::hex;
 use alloy::primitives::Address;
 use num_bigint::{BigInt, BigUint};
@@ -25,15 +25,6 @@ use pyo3::{
     prelude::*,
     types::{PyBool, PyBytes, PyList, PyString},
 };
-
-/// Size of a word in ABI encoding (32 bytes).
-const WORD_SIZE: usize = 32;
-
-/// Size of an Ethereum address in bytes.
-const ADDRESS_BYTES: usize = 20;
-
-/// Offset of address data within a word (32 - 20 = 12).
-const ADDRESS_OFFSET_IN_WORD: usize = WORD_SIZE - ADDRESS_BYTES;
 
 // =============================================================================
 // DecodedValue - Pure Rust representation of decoded ABI values
@@ -46,7 +37,7 @@ const ADDRESS_OFFSET_IN_WORD: usize = WORD_SIZE - ADDRESS_BYTES;
 #[derive(Clone, Debug, PartialEq)]
 pub enum DecodedValue {
     /// Ethereum address (20 bytes)
-    Address([u8; ADDRESS_BYTES]),
+    Address([u8; 20]),
     /// Boolean value
     Bool(bool),
     /// Fixed-size bytes (bytes1-bytes32)
@@ -64,6 +55,57 @@ pub enum DecodedValue {
 }
 
 impl DecodedValue {
+    /// Convert a `DynSolValue` from alloy to `DecodedValue`.
+    fn from_alloy(value: alloy::dyn_abi::DynSolValue) -> Result<Self, AbiDecodeError> {
+        use alloy::dyn_abi::DynSolValue;
+
+        match value {
+            DynSolValue::Address(addr) => Ok(Self::Address(addr.into())),
+            DynSolValue::Bool(b) => Ok(Self::Bool(b)),
+            DynSolValue::Uint(u, _bits) => {
+                // Convert U256 to BigUint
+                let bytes = u.to_be_bytes_vec();
+                Ok(Self::Uint(BigUint::from_bytes_be(&bytes)))
+            }
+            DynSolValue::Int(i, _bits) => {
+                // Convert I256 to BigInt
+                let (sign, abs) = i.into_sign_and_abs();
+                let bytes = abs.to_be_bytes_vec();
+                // Convert alloy Sign to num_bigint Sign
+                let num_sign = match sign {
+                    alloy::primitives::Sign::Positive => num_bigint::Sign::Plus,
+                    alloy::primitives::Sign::Negative => num_bigint::Sign::Minus,
+                };
+                let big_int = BigInt::from_bytes_be(num_sign, &bytes);
+                Ok(Self::Int(big_int))
+            }
+            DynSolValue::FixedBytes(fb, size) => {
+                Ok(Self::FixedBytes(fb[..size].to_vec()))
+            }
+            DynSolValue::Bytes(b) => Ok(Self::Bytes(b)),
+            DynSolValue::String(s) => Ok(Self::String(s)),
+            DynSolValue::Array(arr) => {
+                let values: Result<Vec<Self>, AbiDecodeError> =
+                    arr.into_iter().map(Self::from_alloy).collect();
+                Ok(Self::Array(values?))
+            }
+            DynSolValue::FixedArray(arr) => {
+                let values: Result<Vec<Self>, AbiDecodeError> =
+                    arr.into_iter().map(Self::from_alloy).collect();
+                Ok(Self::Array(values?))
+            }
+            DynSolValue::Tuple(vals) => {
+                // Treat tuples as arrays for Python compatibility
+                let values: Result<Vec<Self>, AbiDecodeError> =
+                    vals.into_iter().map(Self::from_alloy).collect();
+                Ok(Self::Array(values?))
+            }
+            _ => Err(AbiDecodeError::UnsupportedType(format!(
+                "Unsupported alloy value type"
+            ))),
+        }
+    }
+
     /// Convert this value to a Python object.
     ///
     /// This is the single point where GIL is needed for conversion.
@@ -74,7 +116,9 @@ impl DecodedValue {
                 Ok(PyString::new(py, &addr.to_string()).into_any())
             }
             Self::Bool(b) => Ok(PyBool::new(py, *b).to_owned().into_any()),
-            Self::FixedBytes(bytes) | Self::Bytes(bytes) => Ok(PyBytes::new(py, bytes).into_any()),
+            Self::FixedBytes(bytes) | Self::Bytes(bytes) => {
+                Ok(PyBytes::new(py, bytes).into_any())
+            }
             Self::Uint(n) => n.into_pyobject(py).map(pyo3::Bound::into_any),
             Self::Int(n) => n.into_pyobject(py).map(pyo3::Bound::into_any),
             Self::String(s) => Ok(PyString::new(py, s).into_any()),
@@ -109,189 +153,8 @@ impl DecodedValue {
 }
 
 // =============================================================================
-// Byte utilities - Pure Rust
-// =============================================================================
-
-/// Convert bytes to a `BigUint`.
-#[inline]
-fn bytes_to_uint(bytes: &[u8]) -> BigUint {
-    BigUint::from_bytes_be(bytes)
-}
-
-/// Convert bytes to a `BigInt` (signed).
-#[inline]
-fn bytes_to_int(bytes: &[u8]) -> BigInt {
-    BigInt::from_signed_bytes_be(bytes)
-}
-
-/// Read an offset and length from data at the given position.
-/// Returns (`data_start`, length) or an error if the data is invalid.
-#[inline]
-fn read_offset_and_length(
-    data: &[u8],
-    read_offset: usize,
-) -> Result<(usize, usize), AbiDecodeError> {
-    if read_offset + WORD_SIZE > data.len() {
-        return Err(AbiDecodeError::InsufficientData {
-            needed: WORD_SIZE,
-            have: data.len(),
-            offset: read_offset,
-        });
-    }
-
-    let offset_bytes = &data[read_offset..read_offset + WORD_SIZE];
-    let content_offset: usize = bytes_to_uint(offset_bytes)
-        .try_into()
-        .map_err(|_| AbiDecodeError::InvalidOffset("value too large".to_string()))?;
-
-    if content_offset + WORD_SIZE > data.len() {
-        return Err(AbiDecodeError::InvalidOffset(format!(
-            "offset {content_offset} points beyond data length {}",
-            data.len()
-        )));
-    }
-
-    let length_bytes = &data[content_offset..content_offset + WORD_SIZE];
-    let length: usize = bytes_to_uint(length_bytes)
-        .try_into()
-        .map_err(|_| AbiDecodeError::InvalidLength("value too large".to_string()))?;
-
-    let data_start = content_offset
-        .checked_add(WORD_SIZE)
-        .ok_or_else(|| AbiDecodeError::InvalidOffset("arithmetic overflow".to_string()))?;
-
-    Ok((data_start, length))
-}
-
-// =============================================================================
 // Pure Rust decoding functions
 // =============================================================================
-
-/// Decode a single static value from data at the given offset.
-/// Returns the decoded value and the number of bytes consumed (always 32 for static types).
-fn decode_static_value_rust(
-    type_: &AbiType,
-    data: &[u8],
-    offset: usize,
-) -> Result<(DecodedValue, usize), AbiDecodeError> {
-    if offset + WORD_SIZE > data.len() {
-        return Err(AbiDecodeError::InsufficientData {
-            needed: WORD_SIZE,
-            have: data.len(),
-            offset,
-        });
-    }
-
-    let word = &data[offset..offset + WORD_SIZE];
-
-    let value: DecodedValue = match type_ {
-        AbiType::Address => {
-            let mut addr_bytes = [0u8; ADDRESS_BYTES];
-            addr_bytes.copy_from_slice(&word[ADDRESS_OFFSET_IN_WORD..WORD_SIZE]);
-            DecodedValue::Address(addr_bytes)
-        }
-        AbiType::Bool => {
-            let is_true = word[WORD_SIZE - 1] != 0;
-            DecodedValue::Bool(is_true)
-        }
-        AbiType::FixedBytes(n) => {
-            let start = WORD_SIZE - *n;
-            DecodedValue::FixedBytes(word[start..WORD_SIZE].to_vec())
-        }
-        AbiType::Uint(_) => DecodedValue::Uint(bytes_to_uint(word)),
-        AbiType::Int(_) => DecodedValue::Int(bytes_to_int(word)),
-        AbiType::Bytes | AbiType::String | AbiType::Array(_) | AbiType::FixedArray(_, _) => {
-            return Err(AbiDecodeError::InvalidOffset(
-                "Dynamic or array type should not be decoded as static value".to_string(),
-            ));
-        }
-    };
-
-    Ok((value, WORD_SIZE))
-}
-
-/// Decode a dynamic type (bytes or string) from data.
-/// Returns the decoded value and the number of bytes consumed from the head.
-fn decode_dynamic_value_rust(
-    type_: &AbiType,
-    data: &[u8],
-    read_offset: usize,
-) -> Result<(DecodedValue, usize), AbiDecodeError> {
-    let (data_start, length) = read_offset_and_length(data, read_offset)?;
-
-    let data_end = data_start
-        .checked_add(length)
-        .ok_or_else(|| AbiDecodeError::InvalidLength("arithmetic overflow".to_string()))?;
-
-    if data_end > data.len() {
-        return Err(AbiDecodeError::InsufficientData {
-            needed: data_end,
-            have: data.len(),
-            offset: data_start,
-        });
-    }
-
-    let dynamic_data = &data[data_start..data_end];
-
-    let value: DecodedValue = match type_ {
-        AbiType::Bytes => DecodedValue::Bytes(dynamic_data.to_vec()),
-        AbiType::String => {
-            let s = std::str::from_utf8(dynamic_data).map_err(|e| {
-                AbiDecodeError::InvalidLength(format!("Invalid UTF-8 in string: {e}"))
-            })?;
-            DecodedValue::String(s.to_string())
-        }
-        _ => {
-            return Err(AbiDecodeError::UnsupportedType(format!(
-                "Type {type_:?} cannot be decoded as dynamic value"
-            )));
-        }
-    };
-
-    Ok((value, WORD_SIZE))
-}
-
-/// Decode an array from data.
-fn decode_array_rust(
-    element_type: &AbiType,
-    length: usize,
-    data: &[u8],
-    data_start: usize,
-) -> Result<(DecodedValue, usize), AbiDecodeError> {
-    let mut current_offset = data_start;
-    let mut values = Vec::with_capacity(length);
-
-    for _ in 0..length {
-        let (value, consumed) = decode_value_rust(element_type, data, current_offset)?;
-        values.push(value);
-        current_offset = current_offset.checked_add(consumed).ok_or_else(|| {
-            AbiDecodeError::InvalidOffset("arithmetic overflow in offset calculation".to_string())
-        })?;
-    }
-
-    let head_size = current_offset - data_start;
-    Ok((DecodedValue::Array(values), head_size))
-}
-
-/// Decode a value from an `AbiType`.
-fn decode_value_rust(
-    type_: &AbiType,
-    data: &[u8],
-    offset: usize,
-) -> Result<(DecodedValue, usize), AbiDecodeError> {
-    match type_ {
-        AbiType::Bytes | AbiType::String => decode_dynamic_value_rust(type_, data, offset),
-        AbiType::Array(element_type) => {
-            let (data_start, length) = read_offset_and_length(data, offset)?;
-            decode_array_rust(element_type, length, data, data_start)
-        }
-        AbiType::FixedArray(element_type, size) => {
-            let size = *size;
-            decode_array_rust(element_type, size, data, offset)
-        }
-        _ => decode_static_value_rust(type_, data, offset),
-    }
-}
 
 /// Decode ABI-encoded data for multiple types (pure Rust).
 ///
@@ -328,24 +191,37 @@ pub fn decode_rust(types: &[&str], data: &[u8]) -> Result<Vec<DecodedValue>, Abi
         return Err(AbiDecodeError::EmptyData);
     }
 
-    // Parse all types once using the shared AbiType parser
+    // Parse all types using DynSolType
     let mut parsed_types = Vec::with_capacity(types.len());
     for ty in types {
-        let parsed =
-            AbiType::parse(ty).map_err(|e| AbiDecodeError::UnsupportedType(e.to_string()))?;
+        let parsed = DynSolType::parse(ty).map_err(|e| {
+            AbiDecodeError::UnsupportedType(format!("Invalid type '{ty}': {e}"))
+        })?;
         parsed_types.push(parsed);
     }
 
-    let mut values = Vec::with_capacity(types.len());
-    let mut offset = 0;
+    // Create a tuple type to decode all values at once
+    let tuple_type = DynSolType::Tuple(parsed_types);
 
-    for parsed in &parsed_types {
-        let (value, consumed) = decode_value_rust(parsed, data, offset)?;
-        values.push(value);
-        offset += consumed;
-    }
+    // Decode the data
+    let decoded = tuple_type
+        .abi_decode(data)
+        .map_err(|e| AbiDecodeError::InvalidOffset(format!("Decoding failed: {e}")))?;
 
-    Ok(values)
+    // Extract values from the tuple
+    let values = match decoded {
+        alloy::dyn_abi::DynSolValue::Tuple(vals) => vals,
+        other => {
+            // Single value case - wrap in a vec
+            vec![other]
+        }
+    };
+
+    // Convert each DynSolValue to DecodedValue
+    values
+        .into_iter()
+        .map(DecodedValue::from_alloy)
+        .collect()
 }
 
 /// Decode a single ABI value (pure Rust).
@@ -362,10 +238,15 @@ pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<DecodedValue, A
         return Err(AbiDecodeError::EmptyData);
     }
 
-    let parsed =
-        AbiType::parse(abi_type).map_err(|e| AbiDecodeError::UnsupportedType(e.to_string()))?;
-    let (value, _) = decode_value_rust(&parsed, data, 0)?;
-    Ok(value)
+    let parsed = DynSolType::parse(abi_type).map_err(|e| {
+        AbiDecodeError::UnsupportedType(format!("Invalid type '{abi_type}': {e}"))
+    })?;
+
+    let decoded = parsed
+        .abi_decode(data)
+        .map_err(|e| AbiDecodeError::InvalidOffset(format!("Decoding failed: {e}")))?;
+
+    DecodedValue::from_alloy(decoded)
 }
 
 // =============================================================================
@@ -503,136 +384,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_base_type() {
-        assert!(matches!(AbiType::parse("address"), Ok(AbiType::Address)));
-        assert!(matches!(AbiType::parse("bool"), Ok(AbiType::Bool)));
-        assert!(matches!(AbiType::parse("uint256"), Ok(AbiType::Uint(256))));
-        assert!(matches!(AbiType::parse("int128"), Ok(AbiType::Int(128))));
-        assert!(matches!(
-            AbiType::parse("bytes32"),
-            Ok(AbiType::FixedBytes(32))
-        ));
-        assert!(matches!(AbiType::parse("bytes"), Ok(AbiType::Bytes)));
-        assert!(matches!(AbiType::parse("string"), Ok(AbiType::String)));
-    }
-
-    #[test]
-    fn test_parse_array_types() {
-        assert!(matches!(AbiType::parse("uint256"), Ok(AbiType::Uint(256))));
-        assert!(matches!(AbiType::parse("uint256[]"), Ok(AbiType::Array(_))));
-        assert!(matches!(
-            AbiType::parse("uint256[3]"),
-            Ok(AbiType::FixedArray(_, 3))
-        ));
-    }
-
-    #[test]
-    fn test_parse_type_invalid_array_size() {
-        let result = AbiType::parse("uint256[invalid]");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_invalid_type_returns_error() {
-        let result = AbiType::parse("invalid_type");
-        assert!(result.is_err());
-
-        let result = AbiType::parse("invalid_type[]");
-        assert!(result.is_err());
-
-        let result = AbiType::parse("uint256");
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_parse_type_with_aliases() {
-        assert!(matches!(AbiType::parse("uint"), Ok(AbiType::Uint(256))));
-        assert!(matches!(AbiType::parse("int"), Ok(AbiType::Int(256))));
-        assert!(matches!(
-            AbiType::parse("function"),
-            Ok(AbiType::FixedBytes(24))
-        ));
-    }
-
-    #[test]
-    fn test_is_dynamic() {
-        assert!(!AbiType::parse("uint256").unwrap().is_dynamic());
-        assert!(!AbiType::parse("address").unwrap().is_dynamic());
-        assert!(!AbiType::parse("bool").unwrap().is_dynamic());
-        assert!(!AbiType::parse("bytes32").unwrap().is_dynamic());
-        assert!(!AbiType::parse("uint256[3]").unwrap().is_dynamic());
-
-        assert!(AbiType::parse("bytes").unwrap().is_dynamic());
-        assert!(AbiType::parse("string").unwrap().is_dynamic());
-        assert!(AbiType::parse("uint256[]").unwrap().is_dynamic());
-        assert!(AbiType::parse("address[][3]").unwrap().is_dynamic());
-    }
-
-    #[test]
-    fn test_read_offset_and_length() {
-        let mut data = vec![0u8; 128];
-        data[31] = 64;
-        data[95] = 5;
-
-        let (content_start, length) =
-            read_offset_and_length(&data, 0).expect("valid offset/length data should parse");
-        assert_eq!(content_start, 64 + 32);
-        assert_eq!(length, 5);
-    }
-
-    #[test]
-    fn test_read_offset_and_length_insufficient_data() {
-        let data = vec![0u8; 16];
-        let result = read_offset_and_length(&data, 0);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_static_value_boundary_conditions() {
-        let data = vec![0u8; 32];
-        let offset: usize = 0;
-        let word_size: usize = 32;
-        assert!(offset + word_size <= data.len());
-
-        let data = vec![0u8; 31];
-        let offset: usize = 0;
-        assert!(offset + word_size > data.len());
-
-        let data = vec![0u8; 32];
-        let offset: usize = 1;
-        assert!(offset + word_size > data.len());
-
-        let data = vec![0u8; 33];
-        let offset: usize = 1;
-        assert!(offset + word_size <= data.len());
-
-        let data = vec![0u8; 64];
-        let offset: usize = 32;
-        assert!(offset + word_size <= data.len());
-    }
-
-    #[test]
-    fn test_offset_overflow_protection() {
-        let result = usize::MAX.checked_add(1);
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_read_offset_overflow_in_return() {
-        let max_offset = usize::MAX - WORD_SIZE + 1;
-        let result = max_offset.checked_add(WORD_SIZE);
-        assert!(result.is_none());
-
-        let safe_offset = usize::MAX - WORD_SIZE;
-        let result = safe_offset.checked_add(WORD_SIZE);
-        assert!(result.is_some());
-    }
-
-    // =========================================================================
-    // Pure Rust decoding tests
-    // =========================================================================
-
-    #[test]
     fn test_decode_uint256_rust() {
         let mut data = vec![0u8; 32];
         data[30] = 0x30;
@@ -705,7 +456,8 @@ mod tests {
         data[63] = 3;
         data.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
         data.extend_from_slice(&[
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0,
         ]);
 
         let result = decode_single_rust("bytes", &data).expect("should decode bytes");

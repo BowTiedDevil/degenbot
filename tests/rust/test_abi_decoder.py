@@ -309,7 +309,7 @@ class TestErrorHandling:
         """
 
         data = bytes.fromhex("0" * 30)  # Only 30 bytes, need 32
-        with pytest.raises(ValueError, match="Insufficient data"):
+        with pytest.raises(ValueError, match="Decoding failed"):
             decode_single_rs("uint256", data)
 
     def test_fixed_point_not_implemented(self):
