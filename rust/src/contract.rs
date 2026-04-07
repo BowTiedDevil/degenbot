@@ -633,6 +633,7 @@ fn decode_fixed_array(
 }
 
 /// Contract interface for calling contract functions.
+#[derive(Clone)]
 pub struct Contract {
     address: Address,
     provider: Arc<AlloyProvider>,

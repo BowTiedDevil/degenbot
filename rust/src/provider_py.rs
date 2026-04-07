@@ -74,11 +74,15 @@ impl PyAlloyProvider {
     /// - File paths (Unix: /path, Windows: \\.\pipe\...) use IPC transport
     #[new]
     #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000))]
-    fn new(rpc_url: &str, max_retries: u32, max_blocks_per_request: u64) -> PyResult<Self> {
-        // Use the shared runtime to create the provider
-        let provider = get_runtime()
-            .block_on(async { AlloyProvider::new(rpc_url, max_retries).await })
-            .map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
+    fn new(py: Python<'_>, rpc_url: &str, max_retries: u32, max_blocks_per_request: u64) -> PyResult<Self> {
+        // Copy string before detaching from GIL
+        let rpc_url = rpc_url.to_string();
+
+        // Release GIL during provider creation to allow parallel instantiation
+        let provider = py.detach(|| {
+            get_runtime().block_on(async { AlloyProvider::new(&rpc_url, max_retries).await })
+        })
+        .map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
 
         Ok(Self {
             provider: Arc::new(provider),
@@ -102,12 +106,14 @@ impl PyAlloyProvider {
             self.max_blocks_per_request,
         );
 
-        // Use the shared runtime to execute async code
-        let logs = get_runtime()
-            .block_on(async {
-                fetcher
-                    .fetch_logs_chunked(from_block, to_block, addresses, topics)
-                    .await
+        // Release GIL during RPC calls to allow parallel execution
+        let logs = py
+            .detach(|| {
+                get_runtime().block_on(async {
+                    fetcher
+                        .fetch_logs_chunked(from_block, to_block, addresses, topics)
+                        .await
+                })
             })
             .map_err(|e| PyValueError::new_err(format!("Failed to fetch logs: {e}")))?;
 
@@ -137,19 +143,16 @@ impl PyAlloyProvider {
         let to_address = Address::from_str(to)
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
 
-        // Get the data bytes
-        let data_bytes: &[u8] = data.as_bytes();
+        // Get the data bytes (copy before releasing GIL)
+        let data_bytes = alloy::primitives::Bytes::from(data.as_bytes().to_vec());
+        let provider = Arc::clone(&self.provider);
 
-        // Execute eth_call using the shared runtime
-        let result = get_runtime()
-            .block_on(async {
-                self.provider
-                    .eth_call(
-                        &to_address,
-                        alloy::primitives::Bytes::from(data_bytes.to_vec()),
-                        block_number,
-                    )
-                    .await
+        // Release GIL during RPC call
+        let result = py
+            .detach(|| {
+                get_runtime().block_on(async {
+                    provider.eth_call(&to_address, data_bytes, block_number).await
+                })
             })
             .map_err(|e| PyValueError::new_err(format!("eth_call failed: {e}")))?;
 
@@ -174,9 +177,14 @@ impl PyAlloyProvider {
         let addr = Address::from_str(address)
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
 
-        // Execute eth_getCode using the shared runtime
-        let result = get_runtime()
-            .block_on(async { self.provider.get_code(&addr, block_number).await })
+        let provider = Arc::clone(&self.provider);
+
+        // Release GIL during RPC call
+        let result = py
+            .detach(|| {
+                get_runtime()
+                    .block_on(async { provider.get_code(&addr, block_number).await })
+            })
             .map_err(|e| PyValueError::new_err(format!("Failed to get code: {e}")))?;
 
         // Create HexBytes from result
@@ -186,20 +194,24 @@ impl PyAlloyProvider {
     }
 
     /// Get current block number.
-    fn get_block_number(&self) -> PyResult<u64> {
-        // Use the shared runtime to execute async code
-        let block_number = get_runtime()
-            .block_on(async { self.provider.get_block_number().await })
+    fn get_block_number(&self, py: Python<'_>) -> PyResult<u64> {
+        let provider = Arc::clone(&self.provider);
+
+        // Release GIL during RPC call
+        let block_number = py
+            .detach(|| get_runtime().block_on(async { provider.get_block_number().await }))
             .map_err(|e| PyValueError::new_err(format!("Failed to get block number: {e}")))?;
 
         Ok(block_number)
     }
 
     /// Get chain ID.
-    fn get_chain_id(&self) -> PyResult<u64> {
-        // Use the shared runtime to execute async code
-        let chain_id = get_runtime()
-            .block_on(async { self.provider.get_chain_id().await })
+    fn get_chain_id(&self, py: Python<'_>) -> PyResult<u64> {
+        let provider = Arc::clone(&self.provider);
+
+        // Release GIL during RPC call
+        let chain_id = py
+            .detach(|| get_runtime().block_on(async { provider.get_chain_id().await }))
             .map_err(|e| PyValueError::new_err(format!("Failed to get chain ID: {e}")))?;
 
         Ok(chain_id)
@@ -214,8 +226,11 @@ impl PyAlloyProvider {
         py: Python<'py>,
         block_number: u64,
     ) -> PyResult<Option<Bound<'py, PyAny>>> {
-        let block = get_runtime()
-            .block_on(async { self.provider.get_block(block_number).await })
+        let provider = Arc::clone(&self.provider);
+
+        // Release GIL during RPC call
+        let block = py
+            .detach(|| get_runtime().block_on(async { provider.get_block(block_number).await }))
             .map_err(|e| PyValueError::new_err(format!("Failed to get block: {e}")))?;
 
         match block {
@@ -239,9 +254,12 @@ impl PyAlloyProvider {
     }
 
     /// Get current gas price.
-    fn get_gas_price(&self) -> PyResult<String> {
-        let gas_price = get_runtime()
-            .block_on(async { self.provider.get_gas_price().await })
+    fn get_gas_price(&self, py: Python<'_>) -> PyResult<String> {
+        let provider = Arc::clone(&self.provider);
+
+        // Release GIL during RPC call
+        let gas_price = py
+            .detach(|| get_runtime().block_on(async { provider.get_gas_price().await }))
             .map_err(|e| PyValueError::new_err(format!("Failed to get gas price: {e}")))?;
 
         Ok(gas_price.to_string())
@@ -251,6 +269,7 @@ impl PyAlloyProvider {
     #[pyo3(signature = (to, data, from=None, value=None, block_number=None))]
     fn estimate_gas(
         &self,
+        py: Python<'_>,
         to: &str,
         data: &Bound<'_, PyBytes>,
         from: Option<&str>,
@@ -269,21 +288,18 @@ impl PyAlloyProvider {
             .transpose()
             .map_err(|e| PyValueError::new_err(format!("Invalid 'from' address: {e}")))?;
 
-        // Get the data bytes
-        let data_bytes: &[u8] = data.as_bytes();
+        // Get the data bytes (copy before releasing GIL)
+        let data_bytes = alloy::primitives::Bytes::from(data.as_bytes().to_vec());
+        let provider = Arc::clone(&self.provider);
 
-        // Execute estimation using the shared runtime
-        let gas = get_runtime()
-            .block_on(async {
-                self.provider
-                    .estimate_gas(
-                        &to_address,
-                        alloy::primitives::Bytes::from(data_bytes.to_vec()),
-                        from_address.as_ref(),
-                        value,
-                        block_number,
-                    )
-                    .await
+        // Release GIL during RPC call
+        let gas = py
+            .detach(|| {
+                get_runtime().block_on(async {
+                    provider
+                        .estimate_gas(&to_address, data_bytes, from_address.as_ref(), value, block_number)
+                        .await
+                })
             })
             .map_err(|e| PyValueError::new_err(format!("Failed to estimate gas: {e}")))?;
 
@@ -297,8 +313,11 @@ impl PyAlloyProvider {
         tx_hash: &str,
     ) -> PyResult<Option<Bound<'py, PyAny>>> {
         let tx_hash = tx_hash.to_string();
-        let tx = get_runtime()
-            .block_on(async { self.provider.get_transaction(&tx_hash).await })
+        let provider = Arc::clone(&self.provider);
+
+        // Release GIL during RPC call
+        let tx = py
+            .detach(|| get_runtime().block_on(async { provider.get_transaction(&tx_hash).await }))
             .map_err(|e| PyValueError::new_err(format!("Failed to get transaction: {e}")))?;
 
         match tx {
@@ -320,8 +339,11 @@ impl PyAlloyProvider {
         tx_hash: &str,
     ) -> PyResult<Option<Bound<'py, PyAny>>> {
         let tx_hash = tx_hash.to_string();
-        let receipt = get_runtime()
-            .block_on(async { self.provider.get_transaction_receipt(&tx_hash).await })
+        let provider = Arc::clone(&self.provider);
+
+        // Release GIL during RPC call
+        let receipt = py
+            .detach(|| get_runtime().block_on(async { provider.get_transaction_receipt(&tx_hash).await }))
             .map_err(|e| {
                 PyValueError::new_err(format!("Failed to get transaction receipt: {e}"))
             })?;
@@ -371,9 +393,13 @@ impl PyAlloyProvider {
             ));
         };
 
-        // Execute eth_getStorageAt using the shared runtime
-        let result = get_runtime()
-            .block_on(async { self.provider.get_storage_at(&addr, pos, block_number).await })
+        let provider = Arc::clone(&self.provider);
+
+        // Release GIL during RPC call
+        let result = py
+            .detach(|| {
+                get_runtime().block_on(async { provider.get_storage_at(&addr, pos, block_number).await })
+            })
             .map_err(|e| PyValueError::new_err(format!("Failed to get storage: {e}")))?;
 
         // Create HexBytes from result (32-byte storage slot)

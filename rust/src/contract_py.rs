@@ -24,16 +24,17 @@ impl PyContract {
     ///     `provider_url`: RPC provider URL (optional, defaults to localhost)
     #[new]
     #[pyo3(signature = (address, provider_url=None))]
-    fn new(address: &str, provider_url: Option<String>) -> PyResult<Self> {
+    fn new(py: Python<'_>, address: &str, provider_url: Option<String>) -> PyResult<Self> {
         // Default provider URL if not provided
         let url = provider_url.unwrap_or_else(|| "http://localhost:8545".to_string());
+        let address = address.to_string();
 
-        // Use the shared runtime to create the provider synchronously
-        let provider = get_runtime()
-            .block_on(async { AlloyProvider::new(&url, 10).await })
+        // Release GIL during provider creation
+        let provider = py
+            .detach(|| get_runtime().block_on(async { AlloyProvider::new(&url, 10).await }))
             .map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
 
-        let contract = Contract::new(address, Arc::new(provider))
+        let contract = Contract::new(&address, Arc::new(provider))
             .map_err(|e| PyValueError::new_err(format!("{e}")))?;
 
         Ok(Self { contract })
@@ -56,12 +57,15 @@ impl PyContract {
         args: Vec<String>,
         block_number: Option<u64>,
     ) -> PyResult<Py<PyList>> {
-        // Use the shared runtime to execute async code
-        let result = get_runtime()
-            .block_on(async {
-                self.contract
-                    .call(function_signature, &args, block_number)
-                    .await
+        let function_signature = function_signature.to_string();
+        let contract = self.contract.clone();
+
+        // Release GIL during RPC call
+        let result = py
+            .detach(|| {
+                get_runtime().block_on(async {
+                    contract.call(&function_signature, &args, block_number).await
+                })
             })
             .map_err(|e| PyValueError::new_err(format!("Contract call failed: {e}")))?;
 
