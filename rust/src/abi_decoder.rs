@@ -79,17 +79,10 @@ impl DecodedValue {
                 let big_int = BigInt::from_bytes_be(num_sign, &bytes);
                 Ok(Self::Int(big_int))
             }
-            DynSolValue::FixedBytes(fb, size) => {
-                Ok(Self::FixedBytes(fb[..size].to_vec()))
-            }
+            DynSolValue::FixedBytes(fb, size) => Ok(Self::FixedBytes(fb[..size].to_vec())),
             DynSolValue::Bytes(b) => Ok(Self::Bytes(b)),
             DynSolValue::String(s) => Ok(Self::String(s)),
-            DynSolValue::Array(arr) => {
-                let values: Result<Vec<Self>, AbiDecodeError> =
-                    arr.into_iter().map(Self::from_alloy).collect();
-                Ok(Self::Array(values?))
-            }
-            DynSolValue::FixedArray(arr) => {
+            DynSolValue::Array(arr) | DynSolValue::FixedArray(arr) => {
                 let values: Result<Vec<Self>, AbiDecodeError> =
                     arr.into_iter().map(Self::from_alloy).collect();
                 Ok(Self::Array(values?))
@@ -100,9 +93,9 @@ impl DecodedValue {
                     vals.into_iter().map(Self::from_alloy).collect();
                 Ok(Self::Array(values?))
             }
-            _ => Err(AbiDecodeError::UnsupportedType(format!(
-                "Unsupported alloy value type"
-            ))),
+            DynSolValue::Function(_) => Err(AbiDecodeError::UnsupportedType(
+                "Unsupported alloy value type".to_string(),
+            )),
         }
     }
 
@@ -116,9 +109,7 @@ impl DecodedValue {
                 Ok(PyString::new(py, &addr.to_string()).into_any())
             }
             Self::Bool(b) => Ok(PyBool::new(py, *b).to_owned().into_any()),
-            Self::FixedBytes(bytes) | Self::Bytes(bytes) => {
-                Ok(PyBytes::new(py, bytes).into_any())
-            }
+            Self::FixedBytes(bytes) | Self::Bytes(bytes) => Ok(PyBytes::new(py, bytes).into_any()),
             Self::Uint(n) => n.into_pyobject(py).map(pyo3::Bound::into_any),
             Self::Int(n) => n.into_pyobject(py).map(pyo3::Bound::into_any),
             Self::String(s) => Ok(PyString::new(py, s).into_any()),
@@ -194,9 +185,8 @@ pub fn decode_rust(types: &[&str], data: &[u8]) -> Result<Vec<DecodedValue>, Abi
     // Parse all types using DynSolType
     let mut parsed_types = Vec::with_capacity(types.len());
     for ty in types {
-        let parsed = DynSolType::parse(ty).map_err(|e| {
-            AbiDecodeError::UnsupportedType(format!("Invalid type '{ty}': {e}"))
-        })?;
+        let parsed = DynSolType::parse(ty)
+            .map_err(|e| AbiDecodeError::UnsupportedType(format!("Invalid type '{ty}': {e}")))?;
         parsed_types.push(parsed);
     }
 
@@ -218,10 +208,7 @@ pub fn decode_rust(types: &[&str], data: &[u8]) -> Result<Vec<DecodedValue>, Abi
     };
 
     // Convert each DynSolValue to DecodedValue
-    values
-        .into_iter()
-        .map(DecodedValue::from_alloy)
-        .collect()
+    values.into_iter().map(DecodedValue::from_alloy).collect()
 }
 
 /// Decode a single ABI value (pure Rust).
@@ -238,9 +225,8 @@ pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<DecodedValue, A
         return Err(AbiDecodeError::EmptyData);
     }
 
-    let parsed = DynSolType::parse(abi_type).map_err(|e| {
-        AbiDecodeError::UnsupportedType(format!("Invalid type '{abi_type}': {e}"))
-    })?;
+    let parsed = DynSolType::parse(abi_type)
+        .map_err(|e| AbiDecodeError::UnsupportedType(format!("Invalid type '{abi_type}': {e}")))?;
 
     let decoded = parsed
         .abi_decode(data)
@@ -298,10 +284,9 @@ fn decoded_values_to_py_list<'py>(
 /// - Clean separation of concerns
 #[pyfunction]
 #[pyo3(signature = (types, data, strict = true, checksum = true))]
-#[allow(clippy::needless_pass_by_value)]
 pub fn decode(
     py: Python<'_>,
-    types: Vec<String>,
+    types: &Bound<'_, PyList>,
     data: &[u8],
     strict: bool,
     checksum: bool,
@@ -312,7 +297,12 @@ pub fn decode(
         ));
     }
 
-    let type_refs: Vec<&str> = types.iter().map(String::as_str).collect();
+    // Extract type strings from Python list
+    let type_strings: Vec<String> = types
+        .iter()
+        .map(|t| t.extract::<String>())
+        .collect::<Result<_, _>>()?;
+    let type_refs: Vec<&str> = type_strings.iter().map(String::as_str).collect();
 
     let values = py.detach(|| decode_rust(&type_refs, data)).map_err(|e| {
         if matches!(&e, AbiDecodeError::UnsupportedType(msg) if msg.contains("fixed")) {
@@ -456,8 +446,7 @@ mod tests {
         data[63] = 3;
         data.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
         data.extend_from_slice(&[
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         ]);
 
         let result = decode_single_rust("bytes", &data).expect("should decode bytes");

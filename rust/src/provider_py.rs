@@ -37,8 +37,8 @@ impl PyLogFilter {
     }
 
     #[getter]
-    #[allow(clippy::wrong_self_convention)]
-    const fn from_block(&self) -> Option<u64> {
+    #[pyo3(name = "from_block")]
+    const fn get_from_block(&self) -> Option<u64> {
         self.inner.from_block
     }
 
@@ -74,15 +74,21 @@ impl PyAlloyProvider {
     /// - File paths (Unix: /path, Windows: \\.\pipe\...) use IPC transport
     #[new]
     #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000))]
-    fn new(py: Python<'_>, rpc_url: &str, max_retries: u32, max_blocks_per_request: u64) -> PyResult<Self> {
+    fn new(
+        py: Python<'_>,
+        rpc_url: &str,
+        max_retries: u32,
+        max_blocks_per_request: u64,
+    ) -> PyResult<Self> {
         // Copy string before detaching from GIL
         let rpc_url = rpc_url.to_string();
 
         // Release GIL during provider creation to allow parallel instantiation
-        let provider = py.detach(|| {
-            get_runtime().block_on(async { AlloyProvider::new(&rpc_url, max_retries).await })
-        })
-        .map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
+        let provider = py
+            .detach(|| {
+                get_runtime().block_on(async { AlloyProvider::new(&rpc_url, max_retries).await })
+            })
+            .map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
 
         Ok(Self {
             provider: Arc::new(provider),
@@ -151,7 +157,9 @@ impl PyAlloyProvider {
         let result = py
             .detach(|| {
                 get_runtime().block_on(async {
-                    provider.eth_call(&to_address, data_bytes, block_number).await
+                    provider
+                        .eth_call(&to_address, data_bytes, block_number)
+                        .await
                 })
             })
             .map_err(|e| PyValueError::new_err(format!("eth_call failed: {e}")))?;
@@ -182,8 +190,7 @@ impl PyAlloyProvider {
         // Release GIL during RPC call
         let result = py
             .detach(|| {
-                get_runtime()
-                    .block_on(async { provider.get_code(&addr, block_number).await })
+                get_runtime().block_on(async { provider.get_code(&addr, block_number).await })
             })
             .map_err(|e| PyValueError::new_err(format!("Failed to get code: {e}")))?;
 
@@ -243,9 +250,10 @@ impl PyAlloyProvider {
     }
 
     /// Close the provider.
-    #[allow(clippy::unused_self)]
     const fn close(&self) {
-        // No-op for now
+        // No-op for now - provider connection is managed internally
+        // This method exists for API compatibility
+        let _ = self;
     }
 
     #[getter]
@@ -297,7 +305,13 @@ impl PyAlloyProvider {
             .detach(|| {
                 get_runtime().block_on(async {
                     provider
-                        .estimate_gas(&to_address, data_bytes, from_address.as_ref(), value, block_number)
+                        .estimate_gas(
+                            &to_address,
+                            data_bytes,
+                            from_address.as_ref(),
+                            value,
+                            block_number,
+                        )
                         .await
                 })
             })
@@ -343,7 +357,9 @@ impl PyAlloyProvider {
 
         // Release GIL during RPC call
         let receipt = py
-            .detach(|| get_runtime().block_on(async { provider.get_transaction_receipt(&tx_hash).await }))
+            .detach(|| {
+                get_runtime().block_on(async { provider.get_transaction_receipt(&tx_hash).await })
+            })
             .map_err(|e| {
                 PyValueError::new_err(format!("Failed to get transaction receipt: {e}"))
             })?;
@@ -384,9 +400,8 @@ impl PyAlloyProvider {
                 PyValueError::new_err("Position value is too large (exceeds 256 bits)")
             })?
         } else if let Ok(bytes) = position.extract::<&[u8]>() {
-            U256::try_from_be_slice(bytes).ok_or_else(|| {
-                PyValueError::new_err("Failed to parse position from bytes")
-            })?
+            U256::try_from_be_slice(bytes)
+                .ok_or_else(|| PyValueError::new_err("Failed to parse position from bytes"))?
         } else {
             return Err(PyValueError::new_err(
                 "Position must be an integer or bytes",
@@ -398,7 +413,8 @@ impl PyAlloyProvider {
         // Release GIL during RPC call
         let result = py
             .detach(|| {
-                get_runtime().block_on(async { provider.get_storage_at(&addr, pos, block_number).await })
+                get_runtime()
+                    .block_on(async { provider.get_storage_at(&addr, pos, block_number).await })
             })
             .map_err(|e| PyValueError::new_err(format!("Failed to get storage: {e}")))?;
 

@@ -37,7 +37,11 @@ pub enum AbiEncodeError {
     /// Invalid type string.
     InvalidType(String),
     /// Invalid value for the given type.
-    InvalidValue { abi_type: String, value: String, reason: String },
+    InvalidValue {
+        abi_type: String,
+        value: String,
+        reason: String,
+    },
     /// Argument count mismatch.
     ArgumentMismatch { expected: usize, actual: usize },
     /// Unsupported type.
@@ -48,11 +52,18 @@ impl std::fmt::Display for AbiEncodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidType(t) => write!(f, "Invalid ABI type: {t}"),
-            Self::InvalidValue { abi_type, value, reason } => {
+            Self::InvalidValue {
+                abi_type,
+                value,
+                reason,
+            } => {
                 write!(f, "Invalid value for type '{abi_type}': {value} - {reason}")
             }
             Self::ArgumentMismatch { expected, actual } => {
-                write!(f, "Argument count mismatch: expected {expected}, got {actual}")
+                write!(
+                    f,
+                    "Argument count mismatch: expected {expected}, got {actual}"
+                )
             }
             Self::UnsupportedType(t) => write!(f, "Unsupported type: {t}"),
         }
@@ -110,7 +121,10 @@ impl AbiValue {
                 }
                 let mut arr = [0u8; 32];
                 arr[..size].copy_from_slice(bytes);
-                Ok(DynSolValue::FixedBytes(alloy::primitives::FixedBytes::<32>::new(arr), size))
+                Ok(DynSolValue::FixedBytes(
+                    alloy::primitives::FixedBytes::<32>::new(arr),
+                    size,
+                ))
             }
             Self::Bytes(bytes) => Ok(DynSolValue::Bytes(bytes.clone())),
             Self::String(s) => Ok(DynSolValue::String(s.clone())),
@@ -161,8 +175,7 @@ impl AbiValue {
                 Ok(DynSolValue::Int(i256, 256))
             }
             Self::Array(values) => {
-                let alloy_values: Result<Vec<_>, _> =
-                    values.iter().map(|v| v.to_alloy()).collect();
+                let alloy_values: Result<Vec<_>, _> = values.iter().map(Self::to_alloy).collect();
                 Ok(DynSolValue::Array(alloy_values?))
             }
         }
@@ -170,6 +183,11 @@ impl AbiValue {
 
     /// Create from a Python object.
     fn from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Self> {
+        // Use a recursive helper that captures py from outer scope
+        fn convert_item(item: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<AbiValue> {
+            AbiValue::from_python(py, item)
+        }
+
         // Try bool first (before int, since bool is subclass of int in Python)
         if let Ok(b) = obj.cast::<PyBool>() {
             return Ok(Self::Bool(b.is_true()));
@@ -203,10 +221,8 @@ impl AbiValue {
 
         // Try list (for arrays)
         if let Ok(list) = obj.cast::<PyList>() {
-            let values: Result<Vec<Self>, _> = list
-                .iter()
-                .map(|item| Self::from_python(py, &item))
-                .collect();
+            let values: Result<Vec<Self>, _> =
+                list.iter().map(|item| convert_item(&item, py)).collect();
             return Ok(Self::Array(values?));
         }
 
@@ -249,7 +265,10 @@ pub fn encode_single_rust(abi_type: &str, value: &AbiValue) -> Result<Vec<u8>, A
                 return Err(AbiEncodeError::InvalidValue {
                     abi_type: abi_type.to_string(),
                     value: hex::encode(bytes),
-                    reason: format!("bytes{size} requires exactly {size} bytes, got {}", bytes.len()),
+                    reason: format!(
+                        "bytes{size} requires exactly {size} bytes, got {}",
+                        bytes.len()
+                    ),
                 });
             }
             let mut arr = [0u8; 32];
@@ -303,8 +322,8 @@ pub fn encode_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>, AbiEn
     // Parse types and convert values
     let mut alloy_values = Vec::with_capacity(types.len());
     for (ty, value) in types.iter().zip(values.iter()) {
-        let parsed_ty = DynSolType::parse(ty)
-            .map_err(|e| AbiEncodeError::InvalidType(format!("{ty}: {e}")))?;
+        let parsed_ty =
+            DynSolType::parse(ty).map_err(|e| AbiEncodeError::InvalidType(format!("{ty}: {e}")))?;
         let alloy_value = value.to_alloy()?;
 
         // Verify type compatibility
@@ -339,8 +358,12 @@ pub fn encode_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>, AbiEn
 ///
 /// The ABI-encoded bytes.
 #[pyfunction]
-pub fn encode_single(py: Python<'_>, abi_type: &str, value: Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
-    let abi_value = AbiValue::from_python(py, &value)?;
+pub fn encode_single(
+    py: Python<'_>,
+    abi_type: &str,
+    value: &Bound<'_, PyAny>,
+) -> PyResult<Vec<u8>> {
+    let abi_value = AbiValue::from_python(py, value)?;
     encode_single_rust(abi_type, &abi_value).map_err(|e| PyValueError::new_err(format!("{e}")))
 }
 
@@ -356,7 +379,11 @@ pub fn encode_single(py: Python<'_>, abi_type: &str, value: Bound<'_, PyAny>) ->
 /// The ABI-encoded bytes.
 #[pyfunction]
 #[pyo3(signature = (types, values))]
-pub fn encode(py: Python<'_>, types: Vec<String>, values: Bound<'_, PyList>) -> PyResult<Vec<u8>> {
+pub fn encode(
+    py: Python<'_>,
+    types: &Bound<'_, PyList>,
+    values: &Bound<'_, PyList>,
+) -> PyResult<Vec<u8>> {
     if types.len() != values.len() {
         return Err(PyValueError::new_err(format!(
             "Type count {} does not match value count {}",
@@ -370,7 +397,13 @@ pub fn encode(py: Python<'_>, types: Vec<String>, values: Bound<'_, PyList>) -> 
         .map(|v| AbiValue::from_python(py, &v))
         .collect();
 
-    let type_refs: Vec<&str> = types.iter().map(String::as_str).collect();
+    // Extract type strings from Python list
+    let type_strings: Vec<String> = types
+        .iter()
+        .map(|t| t.extract::<String>())
+        .collect::<Result<_, _>>()?;
+    let type_refs: Vec<&str> = type_strings.iter().map(String::as_str).collect();
+
     encode_rust(&type_refs, &abi_values?).map_err(|e| PyValueError::new_err(format!("{e}")))
 }
 
@@ -490,10 +523,7 @@ mod tests {
 
     #[test]
     fn test_encode_multiple() {
-        let values = vec![
-            AbiValue::Uint(BigUint::from(42u64)),
-            AbiValue::Bool(true),
-        ];
+        let values = vec![AbiValue::Uint(BigUint::from(42u64)), AbiValue::Bool(true)];
         let encoded = encode_rust(&["uint256", "bool"], &values).unwrap();
         assert_eq!(encoded.len(), 64);
         // First word: 42
@@ -505,7 +535,7 @@ mod tests {
     #[test]
     fn test_roundtrip() {
         // Encode then decode should give back the same value
-        let original = BigUint::from(12345678901234567890u128);
+        let original = BigUint::from(12_345_678_901_234_567_890_u128);
         let value = AbiValue::Uint(original.clone());
         let encoded = encode_single_rust("uint256", &value).unwrap();
 
@@ -526,7 +556,7 @@ mod tests {
         use crate::abi_decoder::{decode_single_rust, DecodedValue};
 
         // Test uint256
-        let original = BigUint::from(12345678901234567890u128);
+        let original = BigUint::from(12_345_678_901_234_567_890_u128);
         let value = AbiValue::Uint(original.clone());
         let encoded = encode_single_rust("uint256", &value).unwrap();
         let decoded = decode_single_rust("uint256", &encoded).unwrap();

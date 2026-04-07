@@ -1138,7 +1138,7 @@ mod tests {
     // encode_arguments: correct ABI head/tail offset encoding
     // =========================================================================
 
-    #[allow(dead_code)]
+    /// Wrap encoded data with a 32-byte offset prefix pointing to the data.
     fn wrap_with_offset(data: &[u8]) -> Vec<u8> {
         let mut wrapped = Vec::with_capacity(32 + data.len());
         wrapped.extend_from_slice(&U256::from(32).to_be_bytes_vec());

@@ -51,17 +51,8 @@ static HEXBYTES_FIELDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
 });
 
 /// Field names that should be converted to checksummed address strings.
-static ADDRESS_FIELDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    [
-        "address",
-        "miner",
-        "from",
-        "to",
-    ]
-    .iter()
-    .copied()
-    .collect()
-});
+static ADDRESS_FIELDS: LazyLock<HashSet<&'static str>> =
+    LazyLock::new(|| ["address", "miner", "from", "to"].iter().copied().collect());
 
 /// Field names that should be converted to integers.
 /// These are numeric fields that may be returned as hex strings by the JSON-RPC API.
@@ -145,10 +136,9 @@ fn hex_to_hexbytes<'py>(py: Python<'py>, hex_str: &str) -> PyResult<Bound<'py, P
 /// Convert a hex string to a checksummed address string.
 fn hex_to_checksum_address(hex_str: &str) -> PyResult<String> {
     to_checksum_address_bytes(
-        &alloy::hex::decode(hex_str.trim_start_matches("0x").trim_start_matches("0X"))
-            .map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid hex string: {e}"))
-            })?,
+        &alloy::hex::decode(hex_str.trim_start_matches("0x").trim_start_matches("0X")).map_err(
+            |e| pyo3::exceptions::PyValueError::new_err(format!("Invalid hex string: {e}")),
+        )?,
     )
     .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
 }
@@ -326,7 +316,9 @@ fn set_opt_b256(dict: &Bound<'_, PyDict>, key: &str, val: Option<B256>) -> PyRes
 
 fn tx_kind_to_py<'py>(py: Python<'py>, kind: &TxKind) -> PyResult<Bound<'py, PyAny>> {
     match kind {
-        TxKind::Call(addr) => Ok(address_to_checksum_string(addr).into_pyobject(py)?.into_any()),
+        TxKind::Call(addr) => Ok(address_to_checksum_string(addr)
+            .into_pyobject(py)?
+            .into_any()),
         TxKind::Create => Ok(py.None().into_bound(py)),
     }
 }
@@ -544,10 +536,19 @@ fn consensus_header_to_py_dict<'py>(
 ) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
 
-    dict.set_item("parent_hash", create_hexbytes(py, header.parent_hash.as_ref())?)?;
-    dict.set_item("sha3_uncles", create_hexbytes(py, header.ommers_hash.as_ref())?)?;
+    dict.set_item(
+        "parent_hash",
+        create_hexbytes(py, header.parent_hash.as_ref())?,
+    )?;
+    dict.set_item(
+        "sha3_uncles",
+        create_hexbytes(py, header.ommers_hash.as_ref())?,
+    )?;
     dict.set_item("miner", address_to_checksum_string(&header.beneficiary))?;
-    dict.set_item("state_root", create_hexbytes(py, header.state_root.as_ref())?)?;
+    dict.set_item(
+        "state_root",
+        create_hexbytes(py, header.state_root.as_ref())?,
+    )?;
     dict.set_item(
         "transactions_root",
         create_hexbytes(py, header.transactions_root.as_ref())?,
@@ -556,7 +557,10 @@ fn consensus_header_to_py_dict<'py>(
         "receipts_root",
         create_hexbytes(py, header.receipts_root.as_ref())?,
     )?;
-    dict.set_item("logs_bloom", create_hexbytes(py, header.logs_bloom.as_ref())?)?;
+    dict.set_item(
+        "logs_bloom",
+        create_hexbytes(py, header.logs_bloom.as_ref())?,
+    )?;
     dict.set_item("difficulty", u256_to_py(py, &header.difficulty)?)?;
     dict.set_item("number", header.number)?;
     dict.set_item("gas_limit", header.gas_limit)?;

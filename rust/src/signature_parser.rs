@@ -63,9 +63,6 @@ impl std::error::Error for ParseError {}
 
 /// Parser state for function signatures.
 struct SignatureParser<'a> {
-    /// Original input string (kept for potential error message improvements).
-    #[allow(dead_code)]
-    input: &'a str,
     chars: Peekable<Chars<'a>>,
     pos: usize,
 }
@@ -73,7 +70,6 @@ struct SignatureParser<'a> {
 impl<'a> SignatureParser<'a> {
     fn new(input: &'a str) -> Self {
         Self {
-            input,
             chars: input.chars().peekable(),
             pos: 0,
         }

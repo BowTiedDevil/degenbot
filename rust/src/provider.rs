@@ -630,8 +630,7 @@ pub struct LogFetcher {
 impl LogFetcher {
     /// Create a new log fetcher.
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn new(provider: Arc<AlloyProvider>, max_blocks_per_request: u64) -> Self {
+    pub const fn new(provider: Arc<AlloyProvider>, max_blocks_per_request: u64) -> Self {
         Self {
             provider,
             max_blocks_per_request,

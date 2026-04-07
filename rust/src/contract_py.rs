@@ -49,22 +49,29 @@ impl PyContract {
     ///
     /// Returns:
     ///     List of decoded return values as strings
-    #[allow(clippy::needless_pass_by_value)]
     fn call(
         &self,
         py: Python<'_>,
         function_signature: &str,
-        args: Vec<String>,
+        args: &Bound<'_, PyList>,
         block_number: Option<u64>,
     ) -> PyResult<Py<PyList>> {
         let function_signature = function_signature.to_string();
         let contract = self.contract.clone();
 
+        // Extract args from Python list
+        let args: Vec<String> = args
+            .iter()
+            .map(|a| a.extract::<String>())
+            .collect::<Result<_, _>>()?;
+
         // Release GIL during RPC call
         let result = py
             .detach(|| {
                 get_runtime().block_on(async {
-                    contract.call(&function_signature, &args, block_number).await
+                    contract
+                        .call(&function_signature, &args, block_number)
+                        .await
                 })
             })
             .map_err(|e| PyValueError::new_err(format!("Contract call failed: {e}")))?;
@@ -94,9 +101,14 @@ impl PyContract {
 /// Returns:
 ///     Encoded calldata as bytes
 #[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-fn encode_function_call(function_signature: &str, args: Vec<String>) -> PyResult<Vec<u8>> {
+fn encode_function_call(function_signature: &str, args: &Bound<'_, PyList>) -> PyResult<Vec<u8>> {
     let func = FunctionSignature::parse(function_signature)?;
+
+    // Extract args from Python list
+    let args: Vec<String> = args
+        .iter()
+        .map(|a| a.extract::<String>())
+        .collect::<Result<_, _>>()?;
 
     let encoded_args = encode_arguments(&func.inputs, &args)?;
 
@@ -117,10 +129,15 @@ fn encode_function_call(function_signature: &str, args: Vec<String>) -> PyResult
 /// Returns:
 ///     List of decoded values as strings
 #[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-fn decode_return_data(data: &[u8], output_types: Vec<String>) -> PyResult<Vec<String>> {
+fn decode_return_data(data: &[u8], output_types: &Bound<'_, PyList>) -> PyResult<Vec<String>> {
     use crate::abi_types::AbiType;
     use crate::contract::decode_return_data as decode_impl;
+
+    // Extract types from Python list
+    let output_types: Vec<String> = output_types
+        .iter()
+        .map(|t| t.extract::<String>())
+        .collect::<Result<_, _>>()?;
 
     let types: Vec<AbiType> = output_types
         .iter()
