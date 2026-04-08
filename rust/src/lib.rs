@@ -21,6 +21,7 @@
 pub mod abi_decoder;
 pub mod abi_encoder;
 pub mod abi_types;
+pub mod alloy_py;
 pub mod address_utils;
 pub mod async_contract;
 pub mod async_provider;
