@@ -1251,7 +1251,7 @@ mod tests {
         }
 
         // Decode batch
-        let refs: Vec<&[u8]> = encoded_items.iter().map(|v| v.as_slice()).collect();
+        let refs: Vec<&[u8]> = encoded_items.iter().map(Vec::as_slice).collect();
         let decoded_batch = cached.decode_batch(&refs).unwrap();
         assert_eq!(decoded_batch.len(), 3);
 
@@ -1273,17 +1273,17 @@ mod tests {
         let cached = CachedAbiTypes::new(&["address", "uint256"]).unwrap();
 
         // Create multiple value sets
-        let values_batch: Vec<Vec<AbiValue>> = (0..5)
+        let values_batch: Vec<Vec<AbiValue>> = (0u8..5)
             .map(|i| {
                 vec![
-                    AbiValue::Address([i as u8; 20]),
-                    AbiValue::Uint(alloy::primitives::U256::from(i * 100)),
+                    AbiValue::Address([i; 20]),
+                    AbiValue::Uint(alloy::primitives::U256::from(u64::from(i) * 100)),
                 ]
             })
             .collect();
 
         // Encode batch
-        let refs: Vec<&[AbiValue]> = values_batch.iter().map(|v| v.as_slice()).collect();
+        let refs: Vec<&[AbiValue]> = values_batch.iter().map(Vec::as_slice).collect();
         let encoded_batch = cached.encode_batch(&refs).unwrap();
         assert_eq!(encoded_batch.len(), 5);
 
