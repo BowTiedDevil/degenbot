@@ -9,7 +9,7 @@ default:
 
 # Run Rust tests
 test-rust:
-    cargo test --manifest-path rust/Cargo.toml
+    cargo test --features auto-initialize --manifest-path rust/Cargo.toml -- --test-threads=1
 
 # Run Rust linter (clippy)
 lint-rust:
