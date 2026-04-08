@@ -186,8 +186,8 @@ def detect_liquidation_patterns(
 
         key = (event.user_address, event.event["address"])
 
+        # TODO: see if these events can be pre-filtered
         if key not in groups:
-            # logger.warning(f"Orphaned burn event for {key}")
             continue
 
         groups[key].burn_events.append((event.event["logIndex"], event.amount))
