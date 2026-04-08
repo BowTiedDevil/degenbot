@@ -121,13 +121,17 @@ def token_math_wrappers(
     # Use the first pre-funded Anvil account as deployer
     deployer = w3.eth.accounts[0]
 
-    compiled_dir = pathlib.Path(__file__).parent / "contracts" / "compiled"
+    compiled_dir = pathlib.Path(__file__).parent / "contracts" / ".foundry" / "out"
 
     wrappers = {}
     revisions = [1, 4, 9]
 
     for revision in revisions:
-        artifact_path = compiled_dir / f"TestTokenMathWrapper_Rev{revision}.json"
+        artifact_path = (
+            compiled_dir
+            / f"TestTokenMathWrapper_Rev{revision}.sol"
+            / f"TestTokenMathWrapper_Rev{revision}.json"
+        )
         artifact = _load_contract_artifact(artifact_path)
 
         contract = _deploy_contract(w3, artifact, deployer)

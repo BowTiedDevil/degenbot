@@ -1,7 +1,7 @@
 [profile.default]
 src = "src"
-out = "out"
-cache_path = "cache"
+out = ".foundry/out"
+cache_path = ".foundry/cache"
 libs = []
 
 # Compiler settings

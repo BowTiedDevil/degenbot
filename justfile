@@ -33,12 +33,16 @@ dev:
 build-wheels:
     uv run maturin build --release
 
+# Compile Solidity test contracts
+compile-test-contracts:
+    cd tests/aave/libraries/contracts && forge build --quiet
+
 # Run Python tests
-test-python:
+test-python: compile-test-contracts
     uv run pytest tests/ -x -q --no-header
 
 # Run Python tests with coverage
-test-python-cov:
+test-python-cov: compile-test-contracts
     uv run pytest tests/ -x -q --no-header --cov=src/degenbot --cov-branch
 
 # Run all tests (Rust + Python)
