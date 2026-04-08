@@ -318,13 +318,15 @@ fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Abi
 ///
 /// The ABI-encoded bytes.
 #[pyfunction]
-pub fn encode_single(
-    py: Python<'_>,
+pub fn encode_single<'py>(
+    py: Python<'py>,
     abi_type: &str,
     value: &Bound<'_, PyAny>,
-) -> PyResult<Vec<u8>> {
+) -> PyResult<Bound<'py, PyBytes>> {
     let abi_value = abi_value_from_python(py, value)?;
-    encode_single_rust(abi_type, &abi_value).map_err(|e| PyValueError::new_err(format!("{e}")))
+    let encoded = encode_single_rust(abi_type, &abi_value)
+        .map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    Ok(PyBytes::new(py, &encoded))
 }
 
 /// Encode multiple ABI values.
@@ -339,11 +341,11 @@ pub fn encode_single(
 /// The ABI-encoded bytes.
 #[pyfunction]
 #[pyo3(signature = (types, values))]
-pub fn encode(
-    py: Python<'_>,
+pub fn encode<'py>(
+    py: Python<'py>,
     types: &Bound<'_, PyList>,
     values: &Bound<'_, PyList>,
-) -> PyResult<Vec<u8>> {
+) -> PyResult<Bound<'py, PyBytes>> {
     if types.len() != values.len() {
         return Err(PyValueError::new_err(format!(
             "Type count {} does not match value count {}",
@@ -364,7 +366,9 @@ pub fn encode(
         .collect::<Result<_, _>>()?;
     let type_refs: Vec<&str> = type_strings.iter().map(String::as_str).collect();
 
-    encode_rust(&type_refs, &abi_values?).map_err(|e| PyValueError::new_err(format!("{e}")))
+    let encoded = encode_rust(&type_refs, &abi_values?)
+        .map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    Ok(PyBytes::new(py, &encoded))
 }
 
 // =============================================================================

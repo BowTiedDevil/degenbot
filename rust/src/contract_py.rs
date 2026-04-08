@@ -6,7 +6,7 @@ use crate::runtime::get_runtime;
 use alloy::hex;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyList;
+use pyo3::types::{PyBytes, PyList};
 use std::sync::Arc;
 
 /// Python wrapper for a Contract.
@@ -101,7 +101,11 @@ impl PyContract {
 /// Returns:
 ///     Encoded calldata as bytes
 #[pyfunction]
-fn encode_function_call(function_signature: &str, args: &Bound<'_, PyList>) -> PyResult<Vec<u8>> {
+fn encode_function_call<'py>(
+    py: Python<'py>,
+    function_signature: &str,
+    args: &Bound<'_, PyList>,
+) -> PyResult<Bound<'py, PyBytes>> {
     let func = FunctionSignature::parse(function_signature)?;
 
     // Extract args from Python list
@@ -117,7 +121,7 @@ fn encode_function_call(function_signature: &str, args: &Bound<'_, PyList>) -> P
     calldata.extend_from_slice(&func.selector);
     calldata.extend_from_slice(&encoded_args);
 
-    Ok(calldata)
+    Ok(PyBytes::new(py, &calldata))
 }
 
 /// Decode return data.
