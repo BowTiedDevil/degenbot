@@ -27,7 +27,7 @@ build-rust-extension:
 
 # Build and install Python extension in development mode
 dev:
-    uv run maturin develop --release
+    uv run maturin develop
 
 # Build Python extension wheels
 build-wheels:
