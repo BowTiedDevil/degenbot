@@ -18,7 +18,7 @@
 use crate::abi_types::AbiValue;
 use crate::errors::AbiDecodeError;
 use alloy::dyn_abi::{DynSolType, DynSolValue};
-use num_bigint::{BigInt, BigUint};
+use alloy::primitives::{I256, U256};
 use pyo3::{
     exceptions::PyValueError,
     prelude::*,
@@ -178,7 +178,7 @@ pub fn encode_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>, AbiDe
 ///
 /// let types = vec![AbiType::Uint(256), AbiType::Bool];
 /// let values = vec![
-///     AbiValue::Uint(BigUint::from(42u64)),
+///     AbiValue::Uint(U256::from(42u64)),
 ///     AbiValue::Bool(true),
 /// ];
 ///
@@ -228,13 +228,49 @@ fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Abi
         return Ok(AbiValue::Bool(b.is_true()));
     }
 
-    // Try int - try BigUint first for positive values, then BigInt
-    if let Ok(big_uint) = obj.extract::<BigUint>() {
-        return Ok(AbiValue::Uint(big_uint));
+    // Try int - extract as i128 first to detect sign, then convert to U256/I256
+    // Python integers can be arbitrarily large, but we only support up to 256 bits
+    if let Ok(int_val) = obj.extract::<i128>() {
+        // Small integer fits in i128
+        if int_val >= 0 {
+            return Ok(AbiValue::Uint(U256::from(int_val.cast_unsigned())));
+        }
+        return Ok(AbiValue::Int(I256::try_from(int_val).map_err(|_| {
+            PyValueError::new_err("Integer conversion failed")
+        })?));
     }
-    if let Ok(big_int) = obj.extract::<BigInt>() {
-        // BigInt succeeded but BigUint failed, so it's negative
-        return Ok(AbiValue::Int(big_int));
+
+    // For larger integers, try to extract via Python's to_bytes method
+    // Check if it's an integer type
+    let int_type = py.import("builtins")?.getattr("int")?;
+    if obj.is_instance(&int_type)? {
+        // Try to get the sign
+        let is_negative = obj.call_method0("__lt__")?.call1((0,))?.extract::<bool>()?;
+
+        if is_negative {
+            // Negative integer - need to handle as I256
+            // Get absolute value and negate
+            let abs_val = obj.call_method0("__abs__")?;
+            let bytes = abs_val.call_method1("to_bytes", (32, "big", false))?;
+            let bytes: &[u8] = bytes.extract()?;
+            let u256 = U256::from_be_bytes(
+                <[u8; 32]>::try_from(bytes).map_err(|_| {
+                    PyValueError::new_err("Integer value out of range for int256")
+                })?,
+            );
+            // Negate for negative value
+            let i256 = I256::from_raw(u256).wrapping_neg();
+            return Ok(AbiValue::Int(i256));
+        }
+        // Positive integer
+        let bytes = obj.call_method1("to_bytes", (32, "big"))?;
+        let bytes: &[u8] = bytes.extract()?;
+        let u256 = U256::from_be_bytes(
+            <[u8; 32]>::try_from(bytes).map_err(|_| {
+                PyValueError::new_err("Integer value out of range for uint256")
+            })?,
+        );
+        return Ok(AbiValue::Uint(u256));
     }
 
     // Try string (for addresses)
@@ -341,12 +377,12 @@ mod tests {
 
     use super::*;
     use alloy::hex;
-    use alloy::primitives::Address;
+    use alloy::primitives::{Address, I256, U256};
     use std::str::FromStr;
 
     #[test]
     fn test_encode_uint256() {
-        let value = AbiValue::Uint(BigUint::from(12345u64));
+        let value = AbiValue::Uint(U256::from(12345u64));
         let encoded = encode_single_rust("uint256", &value).unwrap();
         assert_eq!(encoded.len(), 32);
         // Value should be in the last bytes
@@ -428,7 +464,7 @@ mod tests {
 
     #[test]
     fn test_encode_int_negative() {
-        let value = AbiValue::Int(BigInt::from(-1));
+        let value = AbiValue::Int(I256::MINUS_ONE);
         let encoded = encode_single_rust("int256", &value).unwrap();
         assert_eq!(encoded.len(), 32);
         // -1 in two's complement should be all 0xFF
@@ -438,9 +474,9 @@ mod tests {
     #[test]
     fn test_encode_array() {
         let values = vec![
-            AbiValue::Uint(BigUint::from(1u64)),
-            AbiValue::Uint(BigUint::from(2u64)),
-            AbiValue::Uint(BigUint::from(3u64)),
+            AbiValue::Uint(U256::from(1u64)),
+            AbiValue::Uint(U256::from(2u64)),
+            AbiValue::Uint(U256::from(3u64)),
         ];
         let value = AbiValue::Array(values);
         let encoded = encode_single_rust("uint256[]", &value).unwrap();
@@ -450,7 +486,7 @@ mod tests {
 
     #[test]
     fn test_encode_multiple() {
-        let values = vec![AbiValue::Uint(BigUint::from(42u64)), AbiValue::Bool(true)];
+        let values = vec![AbiValue::Uint(U256::from(42u64)), AbiValue::Bool(true)];
         let encoded = encode_rust(&["uint256", "bool"], &values).unwrap();
         assert_eq!(encoded.len(), 64);
         // First word: 42
@@ -464,10 +500,7 @@ mod tests {
         use crate::abi_types::AbiType;
 
         let types = vec![AbiType::Uint(256), AbiType::Bool];
-        let values = vec![
-            AbiValue::Uint(BigUint::from(42u64)),
-            AbiValue::Bool(true),
-        ];
+        let values = vec![AbiValue::Uint(U256::from(42u64)), AbiValue::Bool(true)];
 
         let encoded = encode_for_types(&types, &values).unwrap();
         assert_eq!(encoded.len(), 64);
@@ -485,8 +518,8 @@ mod tests {
 
         let types = vec![AbiType::Array(Box::new(AbiType::Uint(256)))];
         let values = vec![AbiValue::Array(vec![
-            AbiValue::Uint(BigUint::from(1u64)),
-            AbiValue::Uint(BigUint::from(2u64)),
+            AbiValue::Uint(U256::from(1u64)),
+            AbiValue::Uint(U256::from(2u64)),
         ])];
 
         let encoded = encode_for_types(&types, &values).unwrap();
@@ -500,8 +533,8 @@ mod tests {
     #[test]
     fn test_roundtrip() {
         // Encode then decode should give back the same value
-        let original = BigUint::from(12_345_678_901_234_567_890_u128);
-        let value = AbiValue::Uint(original.clone());
+        let original = U256::from(12_345_678_901_234_567_890_u128);
+        let value = AbiValue::Uint(original);
         let encoded = encode_single_rust("uint256", &value).unwrap();
 
         // Decode using alloy
@@ -509,8 +542,7 @@ mod tests {
         let decoded = ty.abi_decode(&encoded).unwrap();
 
         if let alloy::dyn_abi::DynSolValue::Uint(u, _) = decoded {
-            let decoded_uint = BigUint::from_bytes_be(&u.to_be_bytes_vec());
-            assert_eq!(decoded_uint, original);
+            assert_eq!(u, original);
         } else {
             panic!("Expected Uint");
         }
@@ -521,8 +553,8 @@ mod tests {
         use crate::abi_decoder::decode_single_rust;
 
         // Test uint256
-        let original = BigUint::from(12_345_678_901_234_567_890_u128);
-        let value = AbiValue::Uint(original.clone());
+        let original = U256::from(12_345_678_901_234_567_890_u128);
+        let value = AbiValue::Uint(original);
         let encoded = encode_single_rust("uint256", &value).unwrap();
         let decoded = decode_single_rust("uint256", &encoded).unwrap();
         match decoded {

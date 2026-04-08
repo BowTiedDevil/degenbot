@@ -1506,8 +1506,6 @@ dependencies = [
  "alloy",
  "futures",
  "log",
- "num-bigint",
- "num-traits",
  "parking_lot",
  "proptest",
  "pyo3",
@@ -2909,8 +2907,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91fd8e38a3b50ed1167fb981cd6fd60147e091784c427b8f7183a7ee32c31c12"
 dependencies = [
  "libc",
- "num-bigint",
- "num-traits",
  "once_cell",
  "portable-atomic",
  "pyo3-build-config",

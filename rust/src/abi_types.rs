@@ -11,8 +11,6 @@ use crate::errors::{AbiDecodeError, ContractError};
 use alloy::dyn_abi::DynSolValue;
 use alloy::hex;
 use alloy::primitives::{Address, I256, U256};
-use num_bigint::{BigInt, BigUint};
-use num_traits::{Num, Signed, Zero};
 use std::borrow::Cow;
 use std::fmt;
 use std::str::FromStr;
@@ -364,7 +362,7 @@ fn type_to_string(abi_type: &AbiType) -> String {
 ///
 /// This enum captures all possible ABI types without any Python dependencies,
 /// enabling pure Rust testing and GIL-free processing.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AbiValue {
     /// Ethereum address (20 bytes)
     Address([u8; 20]),
@@ -374,10 +372,10 @@ pub enum AbiValue {
     FixedBytes(Vec<u8>),
     /// Dynamic bytes
     Bytes(Vec<u8>),
-    /// Unsigned integer
-    Uint(BigUint),
-    /// Signed integer
-    Int(BigInt),
+    /// Unsigned integer (up to 256 bits)
+    Uint(U256),
+    /// Signed integer (up to 256 bits)
+    Int(I256),
     /// String
     String(String),
     /// Array of values
@@ -414,46 +412,12 @@ impl AbiValue {
             Self::Bytes(bytes) => Ok(DynSolValue::Bytes(bytes.clone())),
             Self::String(s) => Ok(DynSolValue::String(s.clone())),
             Self::Uint(n) => {
-                let bytes = n.to_bytes_be();
-                if bytes.len() > 32 {
-                    return Err(AbiDecodeError::UnsupportedType(
-                        "Value exceeds uint256 max".to_string(),
-                    ));
-                }
-                // Pad to 32 bytes
-                let mut arr = [0u8; 32];
-                arr[32 - bytes.len()..].copy_from_slice(&bytes);
-                let u256 = U256::from_be_bytes(arr);
-                Ok(DynSolValue::Uint(u256, 256))
+                // U256 is already in the correct format
+                Ok(DynSolValue::Uint(*n, 256))
             }
             Self::Int(n) => {
-                let (sign, bytes) = n.to_bytes_be();
-                if bytes.len() > 32 {
-                    return Err(AbiDecodeError::UnsupportedType(
-                        "Value exceeds int256 range".to_string(),
-                    ));
-                }
-                // Convert to I256 with proper sign extension
-                let i256 = if sign == num_bigint::Sign::Minus && !n.is_zero() {
-                    // For negative numbers, we need two's complement
-                    let abs_val = n.abs();
-                    // to_bytes_be on positive BigInt returns (Plus, bytes)
-                    let (_, abs_bytes) = abs_val.to_bytes_be();
-                    let mut arr = [0u8; 32];
-                    if abs_bytes.len() <= 32 {
-                        arr[32 - abs_bytes.len()..].copy_from_slice(&abs_bytes);
-                    }
-                    let abs_u256 = U256::from_be_bytes(arr);
-                    // Two's complement: invert and add 1
-                    let inverted = !abs_u256;
-                    let neg_u256 = inverted + U256::from(1);
-                    I256::from_raw(neg_u256)
-                } else {
-                    let mut arr = [0u8; 32];
-                    arr[32 - bytes.len()..].copy_from_slice(&bytes);
-                    I256::from_raw(U256::from_be_bytes(arr))
-                };
-                Ok(DynSolValue::Int(i256, 256))
+                // I256 is already in the correct format
+                Ok(DynSolValue::Int(*n, 256))
             }
             Self::Array(values) => {
                 let alloy_values: Result<Vec<_>, _> = values.iter().map(Self::to_alloy).collect();
@@ -471,20 +435,8 @@ impl AbiValue {
         match value {
             DynSolValue::Address(addr) => Ok(Self::Address(addr.into())),
             DynSolValue::Bool(b) => Ok(Self::Bool(b)),
-            DynSolValue::Uint(u, _bits) => {
-                let bytes = u.to_be_bytes_vec();
-                Ok(Self::Uint(BigUint::from_bytes_be(&bytes)))
-            }
-            DynSolValue::Int(i, _bits) => {
-                let (sign, abs) = i.into_sign_and_abs();
-                let bytes = abs.to_be_bytes_vec();
-                let num_sign = match sign {
-                    alloy::primitives::Sign::Positive => num_bigint::Sign::Plus,
-                    alloy::primitives::Sign::Negative => num_bigint::Sign::Minus,
-                };
-                let big_int = BigInt::from_bytes_be(num_sign, &bytes);
-                Ok(Self::Int(big_int))
-            }
+            DynSolValue::Uint(u, _bits) => Ok(Self::Uint(u)),
+            DynSolValue::Int(i, _bits) => Ok(Self::Int(i)),
             DynSolValue::FixedBytes(fb, size) => Ok(Self::FixedBytes(fb[..size].to_vec())),
             DynSolValue::Bytes(b) => Ok(Self::Bytes(b)),
             DynSolValue::String(s) => Ok(Self::String(s)),
@@ -527,17 +479,19 @@ impl AbiValue {
                 Ok(Self::Bool(value))
             }
             AbiType::Uint(_) => {
-                let uint_val =
-                    parse_uint_with_hex_prefix(trimmed).map_err(|_| ContractError::InvalidAbi {
-                        message: format!("Invalid uint value: {arg}"),
-                    })?;
+                let uint_val = parse_uint256_with_hex_prefix(trimmed).map_err(|e| {
+                    ContractError::InvalidAbi {
+                        message: format!("Invalid uint value '{arg}': {e}"),
+                    }
+                })?;
                 Ok(Self::Uint(uint_val))
             }
             AbiType::Int(_) => {
-                let int_val =
-                    parse_int_with_hex_prefix(trimmed).map_err(|_| ContractError::InvalidAbi {
-                        message: format!("Invalid int value: {arg}"),
-                    })?;
+                let int_val = parse_int256_with_hex_prefix(trimmed).map_err(|e| {
+                    ContractError::InvalidAbi {
+                        message: format!("Invalid int value '{arg}': {e}"),
+                    }
+                })?;
                 Ok(Self::Int(int_val))
             }
             AbiType::FixedBytes(size) => {
@@ -611,25 +565,80 @@ impl AbiValue {
     }
 }
 
-/// Parse a uint value, handling optional hex prefix (0x or 0X).
-fn parse_uint_with_hex_prefix(s: &str) -> Result<BigUint, num_bigint::ParseBigIntError> {
+/// Parse a uint256 value from a string, handling hex prefix.
+fn parse_uint256_with_hex_prefix(s: &str) -> Result<U256, ParseU256Error> {
+    let s = s.trim();
     s.strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))
         .map_or_else(
-            || BigUint::from_str(s),
-            |hex_str| BigUint::from_str_radix(hex_str, 16),
+            || U256::from_str_radix(s, 10).map_err(|_| ParseU256Error::InvalidDecimal),
+            |hex_str| U256::from_str_radix(hex_str, 16).map_err(|_| ParseU256Error::InvalidHex),
         )
 }
 
-/// Parse an int value, handling optional hex prefix (0x or 0X).
-fn parse_int_with_hex_prefix(s: &str) -> Result<BigInt, num_bigint::ParseBigIntError> {
-    s.strip_prefix("0x")
-        .or_else(|| s.strip_prefix("0X"))
-        .map_or_else(
-            || BigInt::from_str(s),
-            |hex_str| BigInt::from_str_radix(hex_str, 16),
-        )
+/// Parse an int256 value from a string, handling hex prefix.
+fn parse_int256_with_hex_prefix(s: &str) -> Result<I256, ParseI256Error> {
+    let s = s.trim();
+    // Handle negative sign separately for hex
+    if let Some(abs_str) = s.strip_prefix('-') {
+        if let Some(hex_str) = abs_str.strip_prefix("0x").or_else(|| abs_str.strip_prefix("0X")) {
+            let abs_val = U256::from_str_radix(hex_str, 16)
+                .map_err(|_| ParseI256Error::InvalidHex)?;
+            let neg = I256::from_raw(abs_val).wrapping_neg();
+            Ok(neg)
+        } else {
+            // Parse as decimal using FromStr
+            I256::from_str(s).map_err(|_| ParseI256Error::InvalidDecimal)
+        }
+    } else if let Some(hex_str) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        // For positive hex values, parse as U256 and convert
+        let uval = U256::from_str_radix(hex_str, 16).map_err(|_| ParseI256Error::InvalidHex)?;
+        Ok(I256::from_raw(uval))
+    } else {
+        // Parse as decimal using FromStr
+        I256::from_str(s).map_err(|_| ParseI256Error::InvalidDecimal)
+    }
 }
+
+/// Error parsing U256 from string.
+#[derive(Debug, Clone)]
+pub enum ParseU256Error {
+    /// Invalid hex format
+    InvalidHex,
+    /// Invalid decimal format
+    InvalidDecimal,
+}
+
+impl fmt::Display for ParseU256Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidHex => write!(f, "invalid hex format"),
+            Self::InvalidDecimal => write!(f, "invalid decimal format"),
+        }
+    }
+}
+
+impl std::error::Error for ParseU256Error {}
+
+/// Error parsing I256 from string.
+#[derive(Debug, Clone)]
+pub enum ParseI256Error {
+    /// Invalid hex format
+    InvalidHex,
+    /// Invalid decimal format
+    InvalidDecimal,
+}
+
+impl fmt::Display for ParseI256Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidHex => write!(f, "invalid hex format"),
+            Self::InvalidDecimal => write!(f, "invalid decimal format"),
+        }
+    }
+}
+
+impl std::error::Error for ParseI256Error {}
 
 /// Parse a JSON array string into individual element strings.
 ///

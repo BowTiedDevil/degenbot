@@ -17,7 +17,6 @@ use alloy::primitives::{
     aliases::{I24, I256, U160, U256},
     uint,
 };
-use num_bigint::BigUint;
 use pyo3::{exceptions::PyTypeError, exceptions::PyValueError, prelude::*, types::PyAny};
 
 /// Extract a U160 from a Python object (accepts int or bytes).
@@ -37,16 +36,24 @@ fn extract_u160(obj: &Bound<'_, PyAny>) -> PyResult<U160> {
         });
     }
 
-    if let Ok(biguint) = obj.extract::<BigUint>() {
-        if biguint.bits() > 160 {
+    // Try to extract as i128 first (common case)
+    if let Ok(int_val) = obj.extract::<i128>() {
+        if int_val < 0 {
             return Err(PyErr::new::<PyValueError, _>(
-                "Sqrt price X96 is too large (exceeds 160 bits)",
+                "Sqrt price X96 cannot be negative",
             ));
         }
-        let digits = biguint.to_u64_digits();
-        let mut limbs = [0u64; 3];
-        limbs[..digits.len()].copy_from_slice(&digits);
-        return Ok(U160::from_limbs(limbs));
+        return Ok(U160::from(int_val.cast_unsigned()));
+    }
+
+    // For larger integers, convert via bytes
+    let int_type = obj.py().import("builtins")?.getattr("int")?;
+    if obj.is_instance(&int_type)? {
+        let bytes = obj.call_method1("to_bytes", (BYTES_PER_WORD, "big"))?;
+        let bytes: &[u8] = bytes.extract()?;
+        return U160::try_from_be_slice(bytes).ok_or_else(|| {
+            PyErr::new::<PyValueError, _>("Failed to parse sqrt_price_x96 from bytes")
+        });
     }
 
     Err(PyErr::new::<PyTypeError, _>(
@@ -118,9 +125,11 @@ const TICK_MASKS: [(U256, U256); 19] = uint!([
 /// println!("Tick 0 ratio: {}", ratio);
 /// ```
 #[pyfunction(signature = (tick))]
-pub fn get_sqrt_ratio_at_tick(py: Python<'_>, tick: i32) -> PyResult<BigUint> {
+pub fn get_sqrt_ratio_at_tick(py: Python<'_>, tick: i32) -> PyResult<Bound<'_, PyAny>> {
     let result = py.detach(|| get_sqrt_ratio_at_tick_internal(tick))?;
-    Ok(BigUint::from_bytes_be(&result.to_be_bytes::<20>()))
+    // U160 is at most 160 bits, so it fits in U256
+    let u256 = U256::from(result);
+    crate::alloy_py::u256_to_py(py, &u256)
 }
 
 /// Internal function to calculate sqrt ratio from tick.

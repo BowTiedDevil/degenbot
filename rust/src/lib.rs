@@ -31,6 +31,7 @@ pub mod contract_py;
 pub mod errors;
 pub mod provider;
 pub mod provider_py;
+pub mod py_cache;
 pub mod runtime;
 pub mod signature_parser;
 pub mod tick_math;

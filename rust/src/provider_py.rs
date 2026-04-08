@@ -386,7 +386,6 @@ impl PyAlloyProvider {
         block_number: Option<u64>,
     ) -> PyResult<Py<PyAny>> {
         use alloy::primitives::{Address, U256};
-        use num_bigint::BigUint;
         use std::str::FromStr;
 
         // Parse the address
@@ -394,18 +393,28 @@ impl PyAlloyProvider {
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
 
         // Extract position as U256 (supports large integers like mapping slots)
-        let pos = if let Ok(biguint) = position.extract::<BigUint>() {
-            let bytes = biguint.to_bytes_be();
-            U256::try_from_be_slice(&bytes).ok_or_else(|| {
-                PyValueError::new_err("Position value is too large (exceeds 256 bits)")
-            })?
-        } else if let Ok(bytes) = position.extract::<&[u8]>() {
-            U256::try_from_be_slice(bytes)
-                .ok_or_else(|| PyValueError::new_err("Failed to parse position from bytes"))?
+        let pos = if let Ok(int_val) = position.extract::<i128>() {
+            if int_val < 0 {
+                return Err(PyValueError::new_err("Position cannot be negative"));
+            }
+            U256::from(int_val.cast_unsigned())
         } else {
-            return Err(PyValueError::new_err(
-                "Position must be an integer or bytes",
-            ));
+            // For larger integers, convert via bytes
+            let int_type = position.py().import("builtins")?.getattr("int")?;
+            if position.is_instance(&int_type)? {
+                let bytes = position.call_method1("to_bytes", (32, "big"))?;
+                let bytes: &[u8] = bytes.extract()?;
+                U256::try_from_be_slice(bytes).ok_or_else(|| {
+                    PyValueError::new_err("Position value is too large (exceeds 256 bits)")
+                })?
+            } else if let Ok(bytes) = position.extract::<&[u8]>() {
+                U256::try_from_be_slice(bytes)
+                    .ok_or_else(|| PyValueError::new_err("Failed to parse position from bytes"))?
+            } else {
+                return Err(PyValueError::new_err(
+                    "Position must be an integer or bytes",
+                ));
+            }
         };
 
         let provider = Arc::clone(&self.provider);

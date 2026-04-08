@@ -231,6 +231,7 @@ impl Contract {
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use alloy::primitives::I256;
 
     #[test]
     fn test_abi_type_parse() {
@@ -406,7 +407,7 @@ mod tests {
         // Negative decimal should still work
         let encoded_neg = AbiValue::from_str_arg(&AbiType::Int(256), "-1").unwrap();
         match encoded_neg {
-            AbiValue::Int(n) => assert_eq!(n, num_bigint::BigInt::from(-1)),
+            AbiValue::Int(n) => assert_eq!(n, I256::MINUS_ONE),
             _ => panic!("Expected Int variant"),
         }
     }

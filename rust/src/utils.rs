@@ -12,9 +12,8 @@ use alloy::network::primitives::BlockTransactions;
 use alloy::primitives::{Address, TxKind, B256, U256};
 use alloy::rpc::types::eth::{Block, Header as RpcHeader, Transaction};
 use alloy::rpc::types::Log;
-use num_bigint::BigUint;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList};
+use pyo3::types::{PyDict, PyList};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -106,11 +105,10 @@ fn is_hex_string(s: &str) -> bool {
 ///
 /// Uses the `hexbytes` package's `HexBytes` class for compatibility with
 /// web3.py and `eth_abi` libraries.
+///
+/// This is a re-export of the cached version in `py_cache` for convenience.
 pub fn create_hexbytes<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyAny>> {
-    let hexbytes_module = py.import("hexbytes")?;
-    let hexbytes_class = hexbytes_module.getattr("HexBytes")?;
-    let py_bytes = PyBytes::new(py, data);
-    hexbytes_class.call1((py_bytes,))
+    crate::py_cache::create_hexbytes(py, data)
 }
 
 /// Convert an Alloy Address to a checksummed address string.
@@ -252,8 +250,16 @@ fn json_to_py_inner<'py>(
                 let bytes = alloy::hex::decode(&s[2..]).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Invalid hex number: {e}"))
                 })?;
-                let val = BigUint::from_bytes_be(&bytes);
-                return Ok(val.into_pyobject(py)?.into_any());
+                // For values up to 32 bytes, use U256 conversion
+                // For larger values, use Python's int.from_bytes
+                if bytes.len() <= 32 {
+                    let mut arr = [0u8; 32];
+                    arr[32 - bytes.len()..].copy_from_slice(&bytes);
+                    let u256 = U256::from_be_bytes(arr);
+                    return crate::alloy_py::u256_to_py(py, &u256);
+                }
+                // Fall back to Python's int.from_bytes for very large values
+                return crate::py_cache::bytes_to_int(py, &bytes).map(Bound::into_any);
             }
             Ok(s.into_pyobject(py)?.into_any())
         }
@@ -274,10 +280,13 @@ fn json_to_py_inner<'py>(
     }
 }
 
+/// Convert U256 to Python int.
+///
+/// # Errors
+///
+/// Returns an error if Python's `int.from_bytes` fails.
 fn u256_to_py<'py>(py: Python<'py>, val: &U256) -> PyResult<Bound<'py, PyAny>> {
-    let bytes: [u8; 32] = val.to_be_bytes();
-    let biguint = BigUint::from_bytes_be(&bytes);
-    Ok(biguint.into_pyobject(py)?.into_any())
+    crate::alloy_py::u256_to_py(py, val)
 }
 
 fn set_opt_u64(dict: &Bound<'_, PyDict>, key: &str, val: Option<u64>) -> PyResult<()> {
@@ -295,13 +304,13 @@ fn set_opt_u128(dict: &Bound<'_, PyDict>, key: &str, val: Option<u128>) -> PyRes
 }
 
 fn set_opt_u256(dict: &Bound<'_, PyDict>, key: &str, val: Option<&U256>) -> PyResult<()> {
-    match val {
-        Some(v) => {
+    val.map_or_else(
+        || dict.set_item(key, dict.py().None()),
+        |v| {
             let int_val = u256_to_py(dict.py(), v)?;
             dict.set_item(key, int_val)
-        }
-        None => dict.set_item(key, dict.py().None()),
-    }
+        },
+    )
 }
 
 fn set_opt_b256(dict: &Bound<'_, PyDict>, key: &str, val: Option<B256>) -> PyResult<()> {
