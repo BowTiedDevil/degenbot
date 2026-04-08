@@ -52,6 +52,8 @@ fn get_hexbytes_class(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
 
 /// Convert bytes to a Python `int` using cached `int.from_bytes`.
 ///
+/// Uses tuple arguments for vectorcall protocol (faster than kwargs dict).
+///
 /// # Errors
 ///
 /// Returns `PyErr` if the conversion fails.
@@ -59,14 +61,14 @@ pub fn bytes_to_int<'py>(py: Python<'py>, bytes: &[u8]) -> PyResult<Bound<'py, P
     let from_bytes = get_int_from_bytes(py)?;
     let py_bytes = PyBytes::new(py, bytes);
 
-    // Build kwargs dict for byteorder
-    let kwargs = pyo3::types::PyDict::new(py);
-    kwargs.set_item("byteorder", "big")?;
-
-    from_bytes.call((py_bytes,), Some(&kwargs))
+    // Use tuple arguments for vectorcall: (bytes, "big")
+    // This is faster than creating a kwargs dict
+    from_bytes.call1((py_bytes, "big"))
 }
 
 /// Convert bytes to a Python `int` (signed) using cached `int.from_bytes`.
+///
+/// Note: Uses kwargs because `signed` is a keyword-only parameter in Python.
 ///
 /// # Errors
 ///
@@ -75,6 +77,8 @@ pub fn bytes_to_int_signed<'py>(py: Python<'py>, bytes: &[u8]) -> PyResult<Bound
     let from_bytes = get_int_from_bytes(py)?;
     let py_bytes = PyBytes::new(py, bytes);
 
+    // `signed` is keyword-only, so we need kwargs
+    // int.from_bytes(bytes, byteorder, *, signed=False)
     let kwargs = pyo3::types::PyDict::new(py);
     kwargs.set_item("byteorder", "big")?;
     kwargs.set_item("signed", true)?;

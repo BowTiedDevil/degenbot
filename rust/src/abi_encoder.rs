@@ -217,7 +217,7 @@ pub fn encode_for_types(types: &[crate::abi_types::AbiType], values: &[AbiValue]
 // =============================================================================
 
 /// Create an `AbiValue` from a Python object.
-fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<AbiValue> {
+pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<AbiValue> {
     // Recursive helper that captures py from outer scope
     fn convert_item(item: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<AbiValue> {
         abi_value_from_python(py, item)

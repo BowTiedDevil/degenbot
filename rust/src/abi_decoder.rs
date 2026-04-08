@@ -14,17 +14,69 @@
 //!
 //! 2. **Thin `PyO3` wrapper**: `decode()` and `decode_single()` functions that convert
 //!    `AbiValue` results to Python objects in a single pass.
+//!
+//! # Caching
+//!
+//! Type parsing is cached internally for repeated calls with the same type signatures.
+//! This provides significant performance benefits when processing thousands of values
+//! (e.g., decoding Transfer events from historical blocks).
 
-use crate::abi_types::AbiValue;
+use crate::abi_types::{AbiValue, CachedAbiTypes};
 use crate::errors::AbiDecodeError;
-use alloy::dyn_abi::DynSolType;
 use alloy::hex;
 use alloy::primitives::Address;
+use parking_lot::RwLock;
 use pyo3::{
     exceptions::{PyNotImplementedError, PyValueError},
     prelude::*,
     types::{PyBool, PyBytes, PyList, PyString},
 };
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::LazyLock;
+
+// =============================================================================
+// Type parsing cache
+// =============================================================================
+
+/// Global cache for parsed ABI types.
+/// Key is a hash of the type strings, value is the pre-parsed types.
+static TYPE_CACHE: LazyLock<RwLock<HashMap<u64, CachedAbiTypes>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// Compute a hash for a slice of type strings.
+fn hash_types(types: &[&str]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    types.len().hash(&mut hasher);
+    for ty in types {
+        ty.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Get or create cached types for the given type strings.
+///
+/// This function checks the global cache first, and only parses
+/// if the types haven't been seen before.
+fn get_cached_types(types: &[&str]) -> Result<CachedAbiTypes, AbiDecodeError> {
+    let hash = hash_types(types);
+
+    // Fast path: read lock to check cache
+    {
+        let cache = TYPE_CACHE.read();
+        if let Some(cached) = cache.get(&hash) {
+            return Ok(cached.clone());
+        }
+    }
+
+    // Slow path: parse and cache
+    let cached = CachedAbiTypes::new(types)?;
+    {
+        let mut cache = TYPE_CACHE.write();
+        cache.insert(hash, cached.clone());
+    }
+    Ok(cached)
+}
 
 // =============================================================================
 // Pure Rust decoding functions
@@ -33,7 +85,7 @@ use pyo3::{
 /// Decode ABI-encoded data for multiple types (pure Rust).
 ///
 /// This is the core decoding function with no Python dependencies.
-/// Use this for testing, parallel processing, or non-Python contexts.
+/// Uses internal type parsing cache for performance.
 ///
 /// # Arguments
 ///
@@ -63,35 +115,15 @@ pub fn decode_rust(types: &[&str], data: &[u8]) -> Result<Vec<AbiValue>, AbiDeco
         return Err(AbiDecodeError::EmptyData);
     }
 
-    // Parse all types using DynSolType
-    let mut parsed_types = Vec::with_capacity(types.len());
-    for ty in types {
-        let parsed = DynSolType::parse(ty)
-            .map_err(|e| AbiDecodeError::UnsupportedType(format!("Invalid type '{ty}': {e}")))?;
-        parsed_types.push(parsed);
-    }
-
-    // Decode the data using abi_decode_params for proper parameter encoding
-    // This handles both single types and multiple types correctly
-    // For tuples, abi_decode_params uses sequence encoding (no extra offset)
-    let tuple_type = DynSolType::Tuple(parsed_types);
-    let decoded = tuple_type
-        .abi_decode_params(data)
-        .map_err(|e| AbiDecodeError::InvalidOffset(format!("Decoding failed: {e}")))?;
-
-    // Extract values from the tuple (or single value)
-    let values = match decoded {
-        alloy::dyn_abi::DynSolValue::Tuple(vals) => vals,
-        other => vec![other],
-    };
-
-    // Convert each DynSolValue to AbiValue
-    values.into_iter().map(AbiValue::from_alloy).collect()
+    // Use cached types for decoding
+    let cached = get_cached_types(types)?;
+    cached.decode(data)
 }
 
 /// Decode a single ABI value (pure Rust).
 ///
 /// Convenience function for decoding a single value without Python dependencies.
+/// Uses internal type parsing cache for performance.
 pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDecodeError> {
     if abi_type.contains("fixed") || abi_type.contains("ufixed") {
         return Err(AbiDecodeError::FixedPointNotImplemented);
@@ -101,14 +133,10 @@ pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDe
         return Err(AbiDecodeError::EmptyData);
     }
 
-    let parsed = DynSolType::parse(abi_type)
-        .map_err(|e| AbiDecodeError::UnsupportedType(format!("Invalid type '{abi_type}': {e}")))?;
-
-    let decoded = parsed
-        .abi_decode(data)
-        .map_err(|e| AbiDecodeError::InvalidOffset(format!("Decoding failed: {e}")))?;
-
-    AbiValue::from_alloy(decoded)
+    // Use cached types for decoding
+    let cached = get_cached_types(&[abi_type])?;
+    let mut values = cached.decode(data)?;
+    values.pop().ok_or(AbiDecodeError::EmptyData)
 }
 
 /// Decode ABI-encoded data using pre-parsed `AbiType` values.
@@ -149,29 +177,8 @@ pub fn decode_for_types(types: &[crate::abi_types::AbiType], data: &[u8]) -> Res
         return Err(AbiDecodeError::EmptyData);
     }
 
-    // Convert types to DynSolType without string parsing
-    let mut parsed_types = Vec::with_capacity(types.len());
-    for ty in types {
-        let alloy_type = ty.to_alloy_type()?;
-        parsed_types.push(alloy_type);
-    }
-
-    // Decode the data using abi_decode_params for proper parameter encoding
-    // This handles both single types and multiple types correctly
-    // For tuples, abi_decode_params uses sequence encoding (no extra offset)
-    let tuple_type = DynSolType::Tuple(parsed_types);
-    let decoded = tuple_type
-        .abi_decode_params(data)
-        .map_err(|e| AbiDecodeError::InvalidOffset(format!("Decoding failed: {e}")))?;
-
-    // Extract values from the tuple (or single value)
-    let values = match decoded {
-        alloy::dyn_abi::DynSolValue::Tuple(vals) => vals,
-        other => vec![other],
-    };
-
-    // Convert each DynSolValue to AbiValue
-    values.into_iter().map(AbiValue::from_alloy).collect()
+    let cached = CachedAbiTypes::from_abi_types(types)?;
+    cached.decode(data)
 }
 
 // =============================================================================
@@ -646,5 +653,49 @@ mod tests {
         let types: Vec<AbiType> = vec![];
         let decoded = decode_for_types(&types, &[]).expect("empty types should succeed");
         assert!(decoded.is_empty());
+    }
+
+    // =========================================================================
+    // Caching tests
+    // =========================================================================
+
+    #[test]
+    fn test_type_caching() {
+        // Ensure cache starts empty
+        TYPE_CACHE.write().clear();
+
+        // First call should populate cache
+        let data = vec![0u8; 32];
+        let _result1 = decode_single_rust("uint256", &data).unwrap();
+        assert_eq!(TYPE_CACHE.read().len(), 1);
+
+        // Second call should use cache (same hash)
+        let _result2 = decode_single_rust("uint256", &data).unwrap();
+        assert_eq!(TYPE_CACHE.read().len(), 1); // Still 1, not 2
+
+        // Different type should add to cache
+        let _result3 = decode_single_rust("address", &data).unwrap();
+        assert_eq!(TYPE_CACHE.read().len(), 2);
+    }
+
+    #[test]
+    fn test_type_caching_multiple_types() {
+        TYPE_CACHE.write().clear();
+
+        let mut data = Vec::new();
+        data.extend(vec![0u8; 32]); // uint256
+        data.extend(vec![0u8; 32]); // bool
+
+        // First call with these types
+        let _result1 = decode_rust(&["uint256", "bool"], &data).unwrap();
+        assert_eq!(TYPE_CACHE.read().len(), 1);
+
+        // Second call with same types should use cache
+        let _result2 = decode_rust(&["uint256", "bool"], &data).unwrap();
+        assert_eq!(TYPE_CACHE.read().len(), 1);
+
+        // Different order is a different cache entry
+        let _result3 = decode_rust(&["bool", "uint256"], &data).unwrap();
+        assert_eq!(TYPE_CACHE.read().len(), 2);
     }
 }
