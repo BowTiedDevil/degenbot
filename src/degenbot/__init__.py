@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from ._rs import (
     decode_return_data,
     encode_function_call,

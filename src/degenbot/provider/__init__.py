@@ -29,21 +29,17 @@ Example:
     ... )
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import Any, Self, cast
+
+from hexbytes import HexBytes
 
 from degenbot._rs import AlloyProvider as _AlloyProvider
 from degenbot.provider.interface import (
     EthereumProvider,
     ProviderAdapter,
 )
-
-if TYPE_CHECKING:
-    from hexbytes import HexBytes
-
-    from degenbot.types.aliases import BlockNumber
+from degenbot.types.aliases import BlockNumber
 
 
 @dataclass

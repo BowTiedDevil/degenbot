@@ -28,7 +28,7 @@ Example:
 """
 
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING
 
 from eth_typing import ChecksumAddress as Address
 
@@ -36,6 +36,9 @@ from degenbot._rs import Contract as _Contract
 from degenbot._rs import decode_return_data as _decode_return_data
 from degenbot._rs import encode_function_call as _encode_function_call
 from degenbot._rs import get_function_selector as _get_function_selector
+
+if TYPE_CHECKING:
+    from degenbot.provider.interface import ProviderAdapter
 
 
 class Contract:
@@ -78,7 +81,7 @@ class Contract:
     def __init__(
         self,
         address: Address,
-        provider: Any | None = None,
+        provider: "ProviderAdapter | None" = None,
         provider_url: str | None = None,
     ) -> None:
         """

@@ -7,25 +7,18 @@ This module centralizes the logic for handling complex liquidation patterns:
 - SEPARATE_BURNS: N liquidations with N separate burn events (Issue 0065)
 """
 
-from __future__ import annotations
-
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING
 
 import eth_abi.abi
+from eth_typing import ChecksumAddress
 
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.operation_types import OperationType
+from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
 from degenbot.cli.aave_utils import decode_address
 from degenbot.logging import logger
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from eth_typing import ChecksumAddress
-
-    from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
 
 
 class LiquidationPattern(Enum):
