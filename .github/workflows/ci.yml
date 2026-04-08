@@ -31,9 +31,11 @@ jobs:
             rust/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install just
+        uses: extractions/setup-just@v2
+
       - name: Run Clippy
-        working-directory: ./rust
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: just lint-rust
 
   rust-test:
     name: Rust Tests
@@ -53,9 +55,11 @@ jobs:
             rust/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install just
+        uses: extractions/setup-just@v4
+
       - name: Run Tests
-        working-directory: ./rust
-        run: cargo test --features auto-initialize -- --test-threads=1
+        run: just test-rust
 
   rust-build:
     name: Rust Build
@@ -75,9 +79,11 @@ jobs:
             rust/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install just
+        uses: extractions/setup-just@v4
+
       - name: Build
-        working-directory: ./rust
-        run: cargo build --release --features extension-module
+        run: just build-rust-extension
 
   python-test:
     name: Python Tests
@@ -112,5 +118,8 @@ jobs:
       - name: Sync dependencies
         run: uv sync --locked --dev --all-extras
 
+      - name: Install just
+        uses: extractions/setup-just@v4
+
       - name: Build and install Rust extension
-        run: uv run maturin develop --release
+        run: just dev
