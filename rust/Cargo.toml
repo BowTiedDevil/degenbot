@@ -47,14 +47,3 @@ proptest = "^1.10"
 lto = "thin"
 strip = true
 codegen-units = 1
-
-# Development profile with faster compile times
-[profile.dev]
-opt-level = 1  # Slight optimization for faster tests
-
-# Profile for fast development builds with some optimizations
-[profile.dev-release]
-inherits = "release"
-lto = false
-strip = false
-codegen-units = 256
