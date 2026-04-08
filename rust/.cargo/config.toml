@@ -1,0 +1,7 @@
+# Cargo configuration for degenbot-rs
+
+# WARNING: This optimization will abort the process if Py<T> is dropped
+# without being attached to Python. Only enable for pure extension modules.
+# See: https://pyo3.rs/main/features.html#pyo3_disable_reference_pool
+[build]
+rustflags = ["--cfg", "pyo3_disable_reference_pool"]
