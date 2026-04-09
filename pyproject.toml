@@ -202,7 +202,7 @@ dev = [
     "maturin",
     "mypy",
     "pytest-asyncio",
-    "pytest-benchmark>=5.2.3",
+    "pytest-benchmark",
     "pytest-cov",
     "pytest-random-order",
     "pytest-xdist",
