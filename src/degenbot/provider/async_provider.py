@@ -17,7 +17,7 @@ Example:
 
 from typing import Any, Self
 
-from degenbot._rs import AsyncAlloyProvider as _AsyncAlloyProvider
+from degenbot.degenbot_rs import AsyncAlloyProvider as _AsyncAlloyProvider
 
 
 class AsyncAlloyProvider:

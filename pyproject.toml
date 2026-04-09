@@ -223,7 +223,7 @@ cache-keys = [
 [tool.maturin]
 manifest-path = "rust/Cargo.toml"
 python-source = "src"
-module-name = "degenbot._rs"
+module-name = "degenbot.degenbot_rs"
 bindings = "pyo3"
 profile = "release"
 features = ["pyo3/extension-module"]

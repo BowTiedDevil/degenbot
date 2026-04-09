@@ -5,61 +5,10 @@ This module provides high-performance implementations of common operations
 used by the degenbot Python package.
 """
 
-from collections.abc import Coroutine, Iterator
+from collections.abc import Coroutine
 from typing import Any, Literal, overload
 
-class FastHexBytes:
-    """
-    High-performance hex/bytes type with pre-computed hex representation.
-
-    Stores both bytes and pre-computed "0x"-prefixed hex string for zero-cost
-    `hex()` calls. Implements Python buffer protocol for bytes compatibility.
-
-    Performance Tips:
-        - Use `memoryview(obj)` for zero-copy buffer access
-        - Use `obj.raw` property for direct bytes access without allocation
-        - Avoid `bytes(obj)` in hot paths - it creates a new Python object
-        - Slicing returns `FastHexBytes` with pre-computed hex for zero-cost `.hex()`
-
-    Accepts: hex string (with/without 0x), bytes, bytearray, memoryview,
-             int, bool, or another `FastHexBytes`.
-    """
-
-    def __init__(
-        self, value: str | bytes | bytearray | memoryview | int | bool | FastHexBytes
-    ) -> None: ...
-    def __len__(self) -> int: ...
-    def __iter__(self) -> Iterator[int]: ...
-    def __reversed__(self) -> Iterator[int]: ...
-    def __contains__(self, item: int) -> bool: ...
-    def __bytes__(self) -> bytes: ...
-    def __bool__(self) -> bool: ...
-    def __hash__(self) -> int: ...
-    def __eq__(self, other: object) -> bool: ...
-    def __ne__(self, other: object) -> bool: ...
-    def __add__(self, other: str | bytes | FastHexBytes) -> FastHexBytes: ...
-    def __radd__(self, other: bytes) -> FastHexBytes: ...
-    def __mul__(self, n: int) -> FastHexBytes: ...
-    def __rmul__(self, n: int) -> FastHexBytes: ...
-    @overload
-    def __getitem__(self, index: int) -> int: ...
-    @overload
-    def __getitem__(self, index: slice) -> FastHexBytes: ...
-    def hex(self) -> str:
-        """Return pre-computed hex string with 0x prefix (zero cost)."""
-
-    def to_0x_hex(self) -> str:
-        """Return hex string with 0x prefix (same as `hex()`)."""
-
-    @property
-    def hex_property(self) -> str:
-        """Getter for hex property (alias for hex())."""
-
-    @property
-    def raw(self) -> bytes:
-        """Getter for raw property (bytes content)."""
-
-    def __reduce__(self) -> tuple[type, tuple[bytes]]: ...
+from hexbytes import HexBytes
 
 def get_sqrt_ratio_at_tick(tick: int) -> int:
     """
@@ -355,12 +304,12 @@ class AlloyProvider:
         to: str,
         data: bytes,
         block_number: int | None = None,
-    ) -> FastHexBytes: ...
+    ) -> HexBytes: ...
     def get_code(
         self,
         address: str,
         block_number: int | None = None,
-    ) -> FastHexBytes: ...
+    ) -> HexBytes: ...
     def estimate_gas(
         self,
         to: str,
@@ -408,7 +357,7 @@ __all__ = [
     "AsyncAlloyProvider",
     "AsyncContract",
     "Contract",
-    "FastHexBytes",
+    "HexBytes",
     "LogFilter",
     "decode",
     "decode_return_data",

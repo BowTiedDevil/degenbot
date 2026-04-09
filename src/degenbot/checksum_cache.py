@@ -3,7 +3,7 @@ from typing import cast
 
 from eth_typing import ChecksumAddress, HexAddress
 
-from degenbot._rs import to_checksum_address
+from degenbot.degenbot_rs import to_checksum_address
 
 
 @functools.lru_cache(maxsize=512)

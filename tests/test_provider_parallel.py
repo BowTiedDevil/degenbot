@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
 
-from degenbot._rs import AlloyProvider
+from degenbot.degenbot_rs import AlloyProvider
 
 # Use HTTP RPC for meaningful latency measurements
 # IPC is too fast (~0.05ms) - thread overhead dominates

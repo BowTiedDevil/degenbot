@@ -1,11 +1,3 @@
-from ._rs import (
-    decode_return_data,
-    encode_function_call,
-    get_function_selector,
-    get_sqrt_ratio_at_tick,
-    get_tick_at_sqrt_ratio,
-    to_checksum_address,
-)
 from .abi_adapter import (
     AbiAdapter,
     AbiBackend,
@@ -27,6 +19,14 @@ from .connection import (
     get_web3,
     set_async_web3,
     set_web3,
+)
+from .degenbot_rs import (
+    decode_return_data,
+    encode_function_call,
+    get_function_selector,
+    get_sqrt_ratio_at_tick,
+    get_tick_at_sqrt_ratio,
+    to_checksum_address,
 )
 from .version import __version__
 

@@ -1,14 +1,5 @@
-from degenbot._rs import (
-    get_sqrt_ratio_at_tick,
-    get_tick_at_sqrt_ratio,
-)
-
-from degenbot.uniswap.v3_libraries import (
-    MAX_SQRT_RATIO,
-    MAX_TICK,
-    MIN_SQRT_RATIO,
-    MIN_TICK,
-)
+from degenbot.degenbot_rs import get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio
+from degenbot.uniswap.v3_libraries import MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK
 
 type Tick = int
 type Ratio = int

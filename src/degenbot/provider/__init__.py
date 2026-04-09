@@ -34,7 +34,7 @@ from typing import Any, Self, cast
 
 from hexbytes import HexBytes
 
-from degenbot._rs import AlloyProvider as _AlloyProvider
+from degenbot.degenbot_rs import AlloyProvider as _AlloyProvider
 from degenbot.provider.interface import (
     EthereumProvider,
     ProviderAdapter,

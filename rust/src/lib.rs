@@ -49,7 +49,7 @@ pub use tick_math::{
 use pyo3::prelude::*;
 
 #[pymodule]
-fn _rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Initialize logging bridge from Rust to Python
     pyo3_log::init();
 

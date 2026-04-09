@@ -13,8 +13,8 @@ Example:
 """
 
 # Rust implementations (faster, from private module)
-from degenbot._rs import get_sqrt_ratio_at_tick as get_sqrt_ratio_at_tick_rs
-from degenbot._rs import get_tick_at_sqrt_ratio as get_tick_at_sqrt_ratio_rs
+from degenbot.degenbot_rs import get_sqrt_ratio_at_tick as get_sqrt_ratio_at_tick_rs
+from degenbot.degenbot_rs import get_tick_at_sqrt_ratio as get_tick_at_sqrt_ratio_rs
 
 # Python implementations (kept for backward compatibility during CI/CD transition)
 from .tick_math import (
