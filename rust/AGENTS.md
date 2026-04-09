@@ -51,7 +51,6 @@ pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8]) -> PyResult<Py<Py
 - **Shared Multi-Threaded Runtime**: `runtime.rs` provides a singleton Tokio runtime using `Runtime::new()` (multi-threaded scheduler). This is intentional: with Python 3.13+ free-threading, multiple threads can call into Rust provider/contract methods simultaneously. A multi-threaded Tokio runtime enables true parallelism for concurrent I/O-bound RPC calls, while a current-thread runtime would serialize them. Thread count is tunable via `TOKIO_WORKER_THREADS`. The runtime is lazily initialized — pure Rust functions (`tick_math`, `abi_decoder`, `address_utils`) never trigger it.
 - **Arc Sharing**: Providers use `Arc<AlloyProvider>` for thread-safe sharing across Python objects
 - **Signature Caching**: `Contract` uses `parking_lot::RwLock<HashMap>` for parsed function signatures
-- **Pre-computed Hex**: `FastHexBytes` stores both bytes and hex string for zero-cost `.hex()` calls
 - **GIL Release**: Use `py.detach(|| ...)` for CPU-intensive work to allow Python parallelism
 
 ## Coding Standards

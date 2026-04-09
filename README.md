@@ -662,24 +662,6 @@ result = contract.call("balanceOf(address)", ["0x..."])
 provider.close()
 ```
 
-### FastHexBytes Type
-
-A high-performance bytes type with pre-computed hex representation:
-
-```python
-from degenbot._rs import FastHexBytes
-
-# Create from various inputs
-data = FastHexBytes("0xdeadbeef")
-data = FastHexBytes(b"\xde\xad\xbe\xef")
-
-# Zero-cost hex conversion (pre-computed)
-hex_str = data.hex()  # "0xdeadbeef"
-
-# Direct bytes access
-raw = data.raw  # b"\xde\xad\xbe\xef"
-```
-
 ### Performance Benefits
 
 | Operation | Pure Python | Rust Extension |
