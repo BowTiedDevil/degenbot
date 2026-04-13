@@ -71,6 +71,7 @@ impl PyAlloyProvider {
     ///
     /// Automatically detects connection type from URL:
     /// - HTTP/HTTPS URLs use HTTP transport with connection pooling
+    /// - WS/WSS URLs use WebSocket transport
     /// - File paths (Unix: /path, Windows: \\.\pipe\...) use IPC transport
     #[new]
     #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000))]
@@ -402,7 +403,9 @@ impl PyAlloyProvider {
             // For larger integers, convert via bytes
             let int_type = position.py().import("builtins")?.getattr("int")?;
             if position.is_instance(&int_type)? {
-                let bytes = position.call_method1("to_bytes", (32, "big"))?;
+                let kwargs = pyo3::types::PyDict::new(position.py());
+        kwargs.set_item("signed", false)?;
+        let bytes = position.call_method("to_bytes", (32, "big"), Some(&kwargs))?;
                 let bytes: &[u8] = bytes.extract()?;
                 U256::try_from_be_slice(bytes).ok_or_else(|| {
                     PyValueError::new_err("Position value is too large (exceeds 256 bits)")

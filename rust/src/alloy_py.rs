@@ -16,7 +16,7 @@ use pyo3::types::PyAny;
 
 /// Wrapper for Alloy `U256` that implements `IntoPyObject`.
 ///
-/// This enables zero-copy conversion to Python integers for 256-bit values.
+/// This enables conversion to Python integers without intermediate `num-bigint` allocations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyU256(pub U256);
 
@@ -46,7 +46,7 @@ impl<'py> IntoPyObject<'py> for PyI256 {
     }
 }
 
-/// Direct conversion from `U256` to Python int without allocation.
+/// Direct conversion from `U256` to Python int without intermediate `num-bigint` allocation.
 ///
 /// This is a convenience function that wraps `PyU256`.
 ///
@@ -57,7 +57,7 @@ pub fn u256_to_py<'py>(py: Python<'py>, val: &U256) -> PyResult<Bound<'py, PyAny
     PyU256(*val).into_pyobject(py)
 }
 
-/// Direct conversion from `I256` to Python int without allocation.
+/// Direct conversion from `I256` to Python int without intermediate `num-bigint` allocation.
 ///
 /// This is a convenience function that wraps `PyI256`.
 ///
@@ -127,7 +127,7 @@ mod tests {
             let val: i64 = py_neg.extract().unwrap();
             assert_eq!(val, -12345);
 
-            // Test I256 min (-2^255)
+            // Test I256 -1 (MINUS_ONE)
             let min = I256::MINUS_ONE;
             let py_min = i256_to_py(py, &min).unwrap();
             let val: i64 = py_min.extract().unwrap();

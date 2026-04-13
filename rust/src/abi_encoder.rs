@@ -15,16 +15,52 @@
 //! 2. **Thin `PyO3` wrapper**: `encode()` and `encode_single()` functions that convert
 //!    Python objects to `AbiValue` and encode them.
 
-use crate::abi_types::AbiValue;
+use crate::abi_types::{value_to_alloy_for_type, AbiType, AbiValue};
 use crate::errors::AbiDecodeError;
-use alloy::dyn_abi::{DynSolType, DynSolValue};
+use alloy::dyn_abi::DynSolType;
 use alloy::primitives::{I256, U256};
+use lru::LruCache;
+use parking_lot::Mutex;
 use pyo3::{
     exceptions::PyValueError,
     prelude::*,
     types::{PyBool, PyBytes, PyList, PyString},
 };
+use std::num::NonZeroUsize;
 use std::str::FromStr;
+use std::sync::LazyLock;
+
+// =============================================================================
+// Type conversion cache (AbiType -> DynSolType)
+// =============================================================================
+
+/// Maximum number of cached type conversions.
+const TYPE_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(10_000).expect("10_000 is non-zero");
+
+/// Global LRU cache for type conversions to avoid repeated string parsing.
+static TYPE_CACHE: LazyLock<Mutex<LruCache<String, DynSolType>>> =
+    LazyLock::new(|| Mutex::new(LruCache::new(TYPE_CACHE_CAPACITY)));
+
+/// Convert an `AbiType` to a `DynSolType` with caching.
+fn abi_type_to_alloy_cached(ty: &AbiType) -> Result<DynSolType, AbiDecodeError> {
+    let key = ty.to_string();
+    
+    // Fast path: check cache
+    {
+        let mut cache = TYPE_CACHE.lock();
+        if let Some(cached) = cache.get(&key) {
+            return Ok(cached.clone());
+        }
+    }
+    
+    // Slow path: convert and cache
+    let alloy_type = ty.to_alloy_type()?;
+    {
+        let mut cache = TYPE_CACHE.lock();
+        cache.put(key, alloy_type.clone());
+    }
+    Ok(alloy_type)
+}
 
 // =============================================================================
 // Pure Rust encoding functions
@@ -48,65 +84,10 @@ pub fn encode_single_rust(abi_type: &str, value: &AbiValue) -> Result<Vec<u8>, A
     let ty = DynSolType::parse(abi_type)
         .map_err(|e| AbiDecodeError::UnsupportedType(format!("{abi_type}: {e}")))?;
 
-    let alloy_value = abi_value_to_alloy_for_type(value, &ty)?;
+    let alloy_value = value_to_alloy_for_type(value, &ty)?;
 
     // Encode the value using abi_encode()
     Ok(alloy_value.abi_encode())
-}
-
-/// Convert an `AbiValue` to a `DynSolValue`, taking into account the expected type.
-///
-/// This handles special cases like:
-/// - `FixedBytes` types (converting from `AbiValue::Bytes` if needed)
-/// - `FixedArray` types (converting to `DynSolValue::FixedArray` instead of Array)
-fn abi_value_to_alloy_for_type(
-    value: &AbiValue,
-    ty: &DynSolType,
-) -> Result<DynSolValue, AbiDecodeError> {
-    match (ty, value) {
-        // Handle FixedBytes conversion from Bytes
-        (DynSolType::FixedBytes(size), AbiValue::Bytes(bytes)) => {
-            if bytes.len() != *size {
-                return Err(AbiDecodeError::UnsupportedType(format!(
-                    "bytes{size} requires exactly {size} bytes, got {}",
-                    bytes.len()
-                )));
-            }
-            let mut arr = [0u8; 32];
-            arr[..*size].copy_from_slice(bytes);
-            Ok(DynSolValue::FixedBytes(
-                alloy::primitives::FixedBytes::<32>::new(arr),
-                *size,
-            ))
-        }
-
-        // Handle FixedArray conversion - convert Array to FixedArray
-        (DynSolType::FixedArray(inner_ty, expected_size), AbiValue::Array(values)) => {
-            if values.len() != *expected_size {
-                return Err(AbiDecodeError::UnsupportedType(format!(
-                    "Fixed array of size {expected_size} requires exactly {expected_size} elements, got {}",
-                    values.len()
-                )));
-            }
-            let alloy_values: Result<Vec<_>, _> = values
-                .iter()
-                .map(|v| abi_value_to_alloy_for_type(v, inner_ty))
-                .collect();
-            Ok(DynSolValue::FixedArray(alloy_values?))
-        }
-
-        // For all other cases, use the standard conversion
-        _ => {
-            let alloy_value = value.to_alloy()?;
-            // Verify type compatibility
-            if !ty.matches(&alloy_value) {
-                return Err(AbiDecodeError::UnsupportedType(format!(
-                    "Type mismatch: {ty} does not match {value:?}"
-                )));
-            }
-            Ok(alloy_value)
-        }
-    }
 }
 
 /// Encode multiple ABI values (pure Rust).
@@ -141,7 +122,7 @@ pub fn encode_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>, AbiDe
     for (ty, value) in types.iter().zip(values.iter()) {
         let parsed_ty =
             DynSolType::parse(ty).map_err(|e| AbiDecodeError::UnsupportedType(format!("{ty}: {e}")))?;
-        let alloy_value = abi_value_to_alloy_for_type(value, &parsed_ty)?;
+        let alloy_value = value_to_alloy_for_type(value, &parsed_ty)?;
         alloy_values.push(alloy_value);
     }
 
@@ -173,8 +154,10 @@ pub fn encode_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>, AbiDe
 ///
 /// # Example
 ///
-/// ```ignore
-/// use crate::abi_types::{AbiType, AbiValue};
+/// ```
+/// use degenbot_rs::abi_types::{AbiType, AbiValue};
+/// use degenbot_rs::abi_encoder::encode_for_types;
+/// use alloy::primitives::U256;
 ///
 /// let types = vec![AbiType::Uint(256), AbiType::Bool];
 /// let values = vec![
@@ -183,8 +166,11 @@ pub fn encode_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>, AbiDe
 /// ];
 ///
 /// let encoded = encode_for_types(&types, &values)?;
+/// assert!(!encoded.is_empty());
+///
+/// Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn encode_for_types(types: &[crate::abi_types::AbiType], values: &[AbiValue]) -> Result<Vec<u8>, AbiDecodeError> {
+pub fn encode_for_types(types: &[AbiType], values: &[AbiValue]) -> Result<Vec<u8>, AbiDecodeError> {
     if types.len() != values.len() {
         return Err(AbiDecodeError::InvalidLength(format!(
             "Type count {} does not match value count {}",
@@ -197,11 +183,11 @@ pub fn encode_for_types(types: &[crate::abi_types::AbiType], values: &[AbiValue]
         return Ok(Vec::new());
     }
 
-    // Convert types and values directly without string parsing
+    // Convert types and values directly with caching
     let mut alloy_values = Vec::with_capacity(types.len());
     for (ty, value) in types.iter().zip(values.iter()) {
-        let parsed_ty = ty.to_alloy_type()?;
-        let alloy_value = abi_value_to_alloy_for_type(value, &parsed_ty)?;
+        let parsed_ty = abi_type_to_alloy_cached(ty)?;
+        let alloy_value = value_to_alloy_for_type(value, &parsed_ty)?;
         alloy_values.push(alloy_value);
     }
 
@@ -245,25 +231,23 @@ pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult
     let int_type = py.import("builtins")?.getattr("int")?;
     if obj.is_instance(&int_type)? {
         // Try to get the sign
-        let is_negative = obj.call_method0("__lt__")?.call1((0,))?.extract::<bool>()?;
+        let is_negative: bool = obj.call_method1("__lt__", (0,))?.extract()?;
 
         if is_negative {
-            // Negative integer - need to handle as I256
-            // Get absolute value and negate
-            let abs_val = obj.call_method0("__abs__")?;
-            let bytes = abs_val.call_method1("to_bytes", (32, "big", false))?;
+            // Negative integer - use signed to_bytes for correct I256::MIN handling
+            // signed=True handles two's complement encoding, including I256::MIN
+            let bytes = obj.call_method1("to_bytes", (32, "big", true))?;
             let bytes: &[u8] = bytes.extract()?;
             let u256 = U256::from_be_bytes(
                 <[u8; 32]>::try_from(bytes).map_err(|_| {
                     PyValueError::new_err("Integer value out of range for int256")
                 })?,
             );
-            // Negate for negative value
-            let i256 = I256::from_raw(u256).wrapping_neg();
-            return Ok(AbiValue::Int(i256));
+            // Directly interpret as I256 (two's complement encoding)
+            return Ok(AbiValue::Int(I256::from_raw(u256)));
         }
-        // Positive integer
-        let bytes = obj.call_method1("to_bytes", (32, "big"))?;
+        // Positive integer - use unsigned to_bytes
+        let bytes = obj.call_method1("to_bytes", (32, "big", false))?;
         let bytes: &[u8] = bytes.extract()?;
         let u256 = U256::from_be_bytes(
             <[u8; 32]>::try_from(bytes).map_err(|_| {
@@ -380,6 +364,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+    use crate::abi_decoder::decode_single_rust;
     use alloy::hex;
     use alloy::primitives::{Address, I256, U256};
     use std::str::FromStr;
@@ -585,6 +570,133 @@ mod tests {
         match decoded {
             AbiValue::String(decoded_s) => assert_eq!(decoded_s, s),
             _ => panic!("Expected String"),
+        }
+    }
+
+    // =========================================================================
+    // Boundary condition tests for Python integer conversion
+    // These test the abi_value_from_python function behavior
+    // =========================================================================
+
+    #[test]
+    fn test_u256_max_roundtrip() {
+        // U256::MAX should encode and decode correctly
+        let max = U256::MAX;
+        let value = AbiValue::Uint(max);
+        let encoded = encode_single_rust("uint256", &value).unwrap();
+        let decoded = decode_single_rust("uint256", &encoded).unwrap();
+        match decoded {
+            AbiValue::Uint(n) => assert_eq!(n, max),
+            _ => panic!("Expected Uint"),
+        }
+    }
+
+    #[test]
+    fn test_i256_max_roundtrip() {
+        // I256::MAX should encode and decode correctly
+        let max = I256::MAX;
+        let value = AbiValue::Int(max);
+        let encoded = encode_single_rust("int256", &value).unwrap();
+        let decoded = decode_single_rust("int256", &encoded).unwrap();
+        match decoded {
+            AbiValue::Int(n) => assert_eq!(n, max),
+            _ => panic!("Expected Int"),
+        }
+    }
+
+    #[test]
+    fn test_i256_min_roundtrip() {
+        // I256::MIN should encode and decode correctly
+        let min = I256::MIN;
+        let value = AbiValue::Int(min);
+        let encoded = encode_single_rust("int256", &value).unwrap();
+        let decoded = decode_single_rust("int256", &encoded).unwrap();
+        match decoded {
+            AbiValue::Int(n) => assert_eq!(n, min),
+            _ => panic!("Expected Int"),
+        }
+    }
+}
+
+// =============================================================================
+// Property-based tests for encoding/decoding
+// =============================================================================
+
+#[cfg(test)]
+mod proptests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    use crate::abi_decoder::decode_single_rust;
+    use alloy::primitives::Address;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn uint256_roundtrip(n in prop::array::uniform32(0u8..)) {
+            let value = AbiValue::Uint(U256::from_be_bytes(n));
+            let encoded = encode_single_rust("uint256", &value).unwrap();
+            let decoded = decode_single_rust("uint256", &encoded).unwrap();
+            prop_assert!(matches!(decoded, AbiValue::Uint(val) if val == U256::from_be_bytes(n)));
+        }
+
+        #[test]
+        fn address_roundtrip(bytes in prop::array::uniform20(0u8..)) {
+            let addr = Address::from_slice(&bytes);
+            let value = AbiValue::Address(addr.into());
+            let encoded = encode_single_rust("address", &value).unwrap();
+            let decoded = decode_single_rust("address", &encoded).unwrap();
+            prop_assert!(matches!(decoded, AbiValue::Address(val) if val == addr.0));
+        }
+
+        #[test]
+        fn bool_roundtrip(b in prop::bool::ANY) {
+            let value = AbiValue::Bool(b);
+            let encoded = encode_single_rust("bool", &value).unwrap();
+            let decoded = decode_single_rust("bool", &encoded).unwrap();
+            prop_assert!(matches!(decoded, AbiValue::Bool(val) if val == b));
+        }
+
+        #[test]
+        fn bytes32_roundtrip(data in prop::array::uniform32(0u8..)) {
+            let bytes = data.to_vec();
+            let value = AbiValue::FixedBytes(bytes.clone());
+            let encoded = encode_single_rust("bytes32", &value).unwrap();
+            let decoded = decode_single_rust("bytes32", &encoded).unwrap();
+            prop_assert!(matches!(decoded, AbiValue::FixedBytes(val) if val == bytes));
+        }
+
+        #[test]
+        fn uint256_array_roundtrip(
+            count in 1usize..20,
+            seed in 0u64..
+        ) {
+            let values: Vec<AbiValue> = (0..count)
+                .map(|i| AbiValue::Uint(U256::from(seed.wrapping_add(i as u64))))
+                .collect();
+            let value = AbiValue::Array(values.clone());
+            let encoded = encode_single_rust("uint256[]", &value).unwrap();
+            let decoded = decode_single_rust("uint256[]", &encoded).unwrap();
+
+            if let AbiValue::Array(decoded_values) = decoded {
+                prop_assert_eq!(decoded_values.len(), values.len());
+                for (expected, actual) in values.iter().zip(decoded_values.iter()) {
+                    prop_assert!(matches!((expected, actual), (AbiValue::Uint(e), AbiValue::Uint(a)) if e == a));
+                }
+            } else {
+                prop_assert!(false, "Expected Array variant");
+            }
+        }
+
+        #[test]
+        fn int256_roundtrip(n in prop::array::uniform32(0u8..)) {
+            // Use raw bytes to create potentially negative I256 values
+            let u256 = U256::from_be_bytes(n);
+            let i256 = I256::from_raw(u256);
+            let value = AbiValue::Int(i256);
+            let encoded = encode_single_rust("int256", &value).unwrap();
+            let decoded = decode_single_rust("int256", &encoded).unwrap();
+            prop_assert!(matches!(decoded, AbiValue::Int(val) if val == i256));
         }
     }
 }

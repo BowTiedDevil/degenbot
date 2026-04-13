@@ -5,16 +5,23 @@
 //!
 //! # Modules
 //!
+//! - [`abi_types`] - Unified ABI type/value representation (`AbiType`, `AbiValue`, `CachedAbiTypes`)
 //! - [`abi_decoder`] - High-performance ABI decoding
 //! - [`abi_encoder`] - High-performance ABI encoding
+//! - [`alloy_py`] - Zero-intermediate-allocation U256/I256 → Python int conversion
+//! - [`py_cache`] - Cached Python function/class references (`int.from_bytes`, `HexBytes`)
 //! - [`tick_math`] - Uniswap V3 tick-to-price calculations
-//! - [`address_utils`] - Ethereum address utilities
-//! - [`errors`] - Error types
-//! - [`provider`] - Ethereum RPC provider with Alloy
-//! - [`contract`] - Smart contract interface
-//! - [`async_provider`] - Async Ethereum provider
-//! - [`async_contract`] - Async contract interface
+//! - [`address_utils`] - Ethereum address utilities (EIP-55 checksumming)
+//! - [`errors`] - Centralized error types with `thiserror`
+//! - [`provider`] - Ethereum RPC provider with Alloy (HTTP, WS, IPC)
+//! - [`provider_py`] - `PyO3` bindings for sync provider
+//! - [`async_provider`] - Async Ethereum provider wrapper
+//! - [`contract`] - Smart contract interface with ABI encoding/decoding
+//! - [`contract_py`] - `PyO3` bindings for contract
+//! - [`async_contract`] - Async contract wrapper with batch calls
 //! - [`signature_parser`] - Robust function signature parsing
+//! - [`runtime`] - Shared Tokio runtime singleton
+//! - [`utils`] - JSON-to-Python conversion, block/tx/log dict builders
 //!
 //! See individual module documentation for usage examples.
 

@@ -16,7 +16,17 @@ pub enum TickMathError {
 
 impl From<TickMathError> for PyErr {
     fn from(err: TickMathError) -> Self {
-        Self::new::<PyValueError, _>(format!("Tick calculation error: {err}"))
+        // Preserve the specific error type and message
+        match err {
+            TickMathError::InvalidTick(tick) => {
+                Self::new::<PyValueError, _>(format!(
+                    "Invalid tick value: {tick}. Must be in range [-887272, 887272]"
+                ))
+            }
+            TickMathError::SqrtRatioOutOfBounds => {
+                Self::new::<PyValueError, _>("Sqrt ratio out of bounds")
+            }
+        }
     }
 }
 
@@ -62,7 +72,8 @@ pub enum AbiDecodeError {
 
 impl From<AbiDecodeError> for PyErr {
     fn from(err: AbiDecodeError) -> Self {
-        Self::new::<PyValueError, _>(format!("ABI decode error: {err}"))
+        // Preserve error context by forwarding the Display impl
+        Self::new::<PyValueError, _>(err.to_string())
     }
 }
 
@@ -80,7 +91,8 @@ pub enum AddressError {
 
 impl From<AddressError> for PyErr {
     fn from(err: AddressError) -> Self {
-        Self::new::<PyValueError, _>(format!("Address error: {err}"))
+        // Preserve original error message with full context
+        Self::new::<PyValueError, _>(err.to_string())
     }
 }
 

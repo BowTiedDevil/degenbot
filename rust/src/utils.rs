@@ -2,7 +2,6 @@
 //!
 //! Common utilities shared across modules.
 
-use crate::address_utils::to_checksum_address_bytes;
 use alloy::consensus::{
     Header as ConsensusHeader, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip7702,
     TxEnvelope, TxLegacy,
@@ -53,6 +52,59 @@ static HEXBYTES_FIELDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
 static ADDRESS_FIELDS: LazyLock<HashSet<&'static str>> =
     LazyLock::new(|| ["address", "miner", "from", "to"].iter().copied().collect());
 
+/// Decode a hex string (with optional "0x" prefix) to bytes.
+///
+/// Handles odd-length strings by padding with a leading zero.
+///
+/// # Arguments
+///
+/// * `hex_str` - Hex string, with or without "0x"/"0X" prefix
+///
+/// # Returns
+///
+/// The decoded bytes, or an error if the string is not valid hex.
+///
+/// # Errors
+///
+/// Returns an error string if the hex string is invalid.
+///
+/// # Examples
+///
+/// ```
+/// use degenbot_rs::utils::decode_hex;
+///
+/// let bytes = decode_hex("0xdeadbeef").unwrap();
+/// assert_eq!(bytes, vec![0xde, 0xad, 0xbe, 0xef]);
+///
+/// // Odd length is padded with a leading zero
+/// let bytes = decode_hex("0x123").unwrap();
+/// assert_eq!(bytes, vec![0x01, 0x23]);
+/// ```
+pub fn decode_hex(hex_str: &str) -> Result<Vec<u8>, String> {
+    let stripped = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    let stripped = stripped.strip_prefix("0X").unwrap_or(stripped);
+    let padded = if stripped.len() % 2 == 1 {
+        format!("0{stripped}")
+    } else {
+        stripped.to_string()
+    };
+    alloy::hex::decode(&padded).map_err(|e| e.to_string())
+}
+
+/// Encode bytes as a hex string with "0x" prefix.
+///
+/// # Arguments
+///
+/// * `bytes` - The bytes to encode
+///
+/// # Returns
+///
+/// A hex-encoded string with "0x" prefix.
+#[must_use]
+pub fn encode_hex(bytes: &[u8]) -> String {
+    format!("0x{}", alloy::hex::encode(bytes))
+}
+
 /// Field names that should be converted to integers.
 /// These are numeric fields that may be returned as hex strings by the JSON-RPC API.
 static NUMERIC_FIELDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
@@ -76,7 +128,8 @@ static NUMERIC_FIELDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "max_fee_per_blob_gas",
         "value",
         "gas",
-        // Note: nonce and transaction_index have different meanings in different contexts
+        // Note: nonce is intentionally excluded because it has different meanings
+        // in block vs transaction contexts and is handled by the typed converters
         // Receipt fields
         "cumulative_gas_used",
         "effective_gas_price",
@@ -111,34 +164,30 @@ pub fn create_hexbytes<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py,
     crate::py_cache::create_hexbytes(py, data)
 }
 
-/// Convert an Alloy Address to a checksummed address string.
-fn address_to_checksum_string(address: &Address) -> String {
-    address.to_checksum(None)
-}
+// Re-export the canonical address formatting function from address_utils.
+pub use crate::address_utils::address_to_checksum_string;
 
 /// Convert a hex string to a `HexBytes` object.
 fn hex_to_hexbytes<'py>(py: Python<'py>, hex_str: &str) -> PyResult<Bound<'py, PyAny>> {
-    // Decode hex string to bytes
-    let stripped = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-    let stripped = stripped.strip_prefix("0X").unwrap_or(stripped);
-    let padded = if stripped.len() % 2 == 1 {
-        format!("0{stripped}")
-    } else {
-        stripped.to_string()
-    };
-    let bytes = alloy::hex::decode(&padded)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid hex string: {e}")))?;
+    let bytes = decode_hex(hex_str).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("Invalid hex string: {e}"))
+    })?;
     create_hexbytes(py, &bytes)
 }
 
 /// Convert a hex string to a checksummed address string.
 fn hex_to_checksum_address(hex_str: &str) -> PyResult<String> {
-    to_checksum_address_bytes(
-        &alloy::hex::decode(hex_str.trim_start_matches("0x").trim_start_matches("0X")).map_err(
-            |e| pyo3::exceptions::PyValueError::new_err(format!("Invalid hex string: {e}")),
-        )?,
-    )
-    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    let bytes = decode_hex(hex_str).map_err(|msg| {
+        pyo3::exceptions::PyValueError::new_err(format!("Invalid hex string: {msg}"))
+    })?;
+    if bytes.len() != 20 {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Address must be exactly 20 bytes, got {} bytes",
+            bytes.len()
+        )));
+    }
+    let address = Address::from_slice(&bytes);
+    Ok(address_to_checksum_string(&address))
 }
 
 /// Convert a single Alloy `Log` to a Python dict.
@@ -204,7 +253,7 @@ pub fn log_to_py_dict<'py>(py: Python<'py>, log: &Log) -> PyResult<Bound<'py, Py
 ///
 /// # Errors
 ///
-/// Returns `PyRuntimeError` if conversion fails for any value type.
+/// Returns `PyValueError` if hex string conversion fails for a recognized field.
 pub fn json_to_py_with_hexbytes(
     py: Python<'_>,
     value: serde_json::Value,

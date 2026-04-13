@@ -1,7 +1,7 @@
 //! Ethereum RPC provider implementation using Alloy.
 //!
-//! Provides high-performance HTTP/HTTPS connections with connection pooling,
-//! retry logic, and batch request support. Also supports IPC endpoints for
+//! Provides high-performance HTTP/HTTPS/WS connections with connection pooling,
+//! retry logic, and chunked log fetching. Also supports IPC endpoints for
 //! local node connections.
 
 use crate::errors::{ProviderError, ProviderResult};
@@ -31,7 +31,7 @@ const MAX_JITTER_MS: u64 = 100; // Add up to 100ms of jitter
 /// Uses type-based matching on the Alloy error enum instead of string scraping:
 /// - `RpcError::Transport(TransportErrorKind::HttpError)` with 429 → `RateLimited`
 /// - `RpcError::Transport(TransportErrorKind::HttpError)` with 5xx → `ConnectionFailed`
-/// - `RpcError::Transport` with retryable transport errors → `ConnectionFailed`
+/// - `RpcError::Transport` with retryable transport errors → `Timeout`
 /// - `RpcError::ErrorResp` → `RpcError` with the JSON-RPC error code
 /// - `RpcError::LocalUsageError` → `Other`
 /// - Other → `RpcError` with code -1
@@ -621,7 +621,7 @@ impl AlloyProvider {
     }
 }
 
-/// Log fetcher with dynamic block sizing.
+/// Log fetcher with fixed chunk sizing.
 pub struct LogFetcher {
     provider: Arc<AlloyProvider>,
     max_blocks_per_request: u64,

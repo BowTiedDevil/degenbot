@@ -23,12 +23,13 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
-//! use crate::runtime::get_runtime;
+//! ```no_run
+//! use degenbot_rs::runtime::get_runtime;
 //!
 //! let runtime = get_runtime();
 //! let result = runtime.block_on(async {
 //!     // async code here
+//!     42
 //! });
 //! ```
 

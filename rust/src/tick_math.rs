@@ -47,9 +47,12 @@ fn extract_u160(obj: &Bound<'_, PyAny>) -> PyResult<U160> {
     }
 
     // For larger integers, convert via bytes
-    let int_type = obj.py().import("builtins")?.getattr("int")?;
+    let py = obj.py();
+    let int_type = py.import("builtins")?.getattr("int")?;
     if obj.is_instance(&int_type)? {
-        let bytes = obj.call_method1("to_bytes", (BYTES_PER_WORD, "big"))?;
+        let kwargs = pyo3::types::PyDict::new(py);
+        kwargs.set_item("signed", false)?;
+        let bytes = obj.call_method("to_bytes", (BYTES_PER_WORD, "big"), Some(&kwargs))?;
         let bytes: &[u8] = bytes.extract()?;
         return U160::try_from_be_slice(bytes).ok_or_else(|| {
             PyErr::new::<PyValueError, _>("Failed to parse sqrt_price_x96 from bytes")

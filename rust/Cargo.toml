@@ -25,6 +25,7 @@ crate-type = ["rlib", "cdylib"]
 alloy = { version = "^1.8", features = ["full"] }  # provides alloy::hex (const-hex v1.18+)
 futures = { version = "^0.3" }
 log = { version = "^0.4" }
+lru = { version = "^0.14" }
 parking_lot = { version = "^0.12" }
 pyo3 = { version = "^0.28", features = [ "abi3-py312", "serde"] }
 pyo3-async-runtimes = { version = "^0.28", features = ["tokio-runtime"] }
@@ -43,7 +44,15 @@ auto-initialize = ["pyo3/auto-initialize"]
 [dev-dependencies]
 proptest = "^1.10"
 
+[[test]]
+name = "python_integration"
+required-features = ["auto-initialize"]
+
 [profile.release]
 lto = "thin"
 strip = true
 codegen-units = 1
+
+[profile.bench]
+inherits = "release"
+debug = true

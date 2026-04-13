@@ -361,6 +361,36 @@ pub fn parse_signature(input: &str) -> Result<ParsedSignature, ParseError> {
     SignatureParser::new(input).parse()
 }
 
+impl ParsedSignature {
+    /// Reconstruct the canonical signature string (without the returns clause).
+    ///
+    /// The canonical form is `name(type1,type2,...)` using `AbiType::Display` for each type.
+    #[must_use]
+    pub fn to_signature_string(&self) -> String {
+        let input_types: Vec<String> = self.inputs.iter().map(ToString::to_string).collect();
+        format!("{}({})", self.name, input_types.join(","))
+    }
+
+    /// Reconstruct the full signature string including the returns clause.
+    ///
+    /// The canonical form is `name(type1,type2,...) returns (type1,type2,...)`.
+    #[must_use]
+    pub fn to_full_signature_string(&self) -> String {
+        let input_types: Vec<String> = self.inputs.iter().map(ToString::to_string).collect();
+        let output_types: Vec<String> = self.outputs.iter().map(ToString::to_string).collect();
+        if self.outputs.is_empty() {
+            format!("{}({})", self.name, input_types.join(","))
+        } else {
+            format!(
+                "{}({}) returns ({})",
+                self.name,
+                input_types.join(","),
+                output_types.join(",")
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -459,5 +489,166 @@ mod tests {
             matches!(err, ParseError::UnmatchedBracket { .. }),
             "Got unexpected error type: {err:?}",
         );
+    }
+}
+
+// =============================================================================
+// Property-based tests for signature parsing
+// =============================================================================
+
+#[cfg(test)]
+mod proptests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Generate a valid identifier (function name).
+    fn arb_identifier() -> impl Strategy<Value = String> {
+        (1..10usize).prop_flat_map(|len| {
+            proptest::string::string_regex(format!("[a-zA-Z_][a-zA-Z0-9_]{{{}}}", len - 1).as_str())
+                .unwrap()
+        })
+    }
+
+    /// Generate a valid ABI type string.
+    fn arb_abi_type_string() -> impl Strategy<Value = String> {
+        let leaf = prop_oneof![
+            Just("address".to_string()),
+            Just("bool".to_string()),
+            Just("string".to_string()),
+            Just("bytes".to_string()),
+            // Valid uint bit widths: 8, 16, 24, ..., 256
+            (1u8..=32).prop_map(|b| format!("uint{}", u16::from(b) * 8)),
+            (1u8..=32).prop_map(|b| format!("int{}", u16::from(b) * 8)),
+            (1u8..=32).prop_map(|n| format!("bytes{n}")),
+        ];
+
+        leaf.prop_recursive(3, 64, 2, |inner| {
+            prop_oneof![
+                inner.clone().prop_map(|t| format!("{t}[]")),
+                (inner, 1usize..5).prop_map(|(t, n)| format!("{t}[{n}]")),
+            ]
+        })
+    }
+
+    /// Generate a valid signature string.
+    fn arb_signature_string() -> impl Strategy<Value = String> {
+        let types = prop::collection::vec(arb_abi_type_string(), 0..5);
+        (arb_identifier(), types).prop_map(|(name, type_list)| {
+            let type_str = type_list.join(",");
+            format!("{name}({type_str})")
+        })
+    }
+
+    /// Generate a valid full signature with returns.
+    fn arb_full_signature_string() -> impl Strategy<Value = String> {
+        let input_types = prop::collection::vec(arb_abi_type_string(), 0..5);
+        let output_types = prop::collection::vec(arb_abi_type_string(), 0..5);
+        (arb_identifier(), input_types, output_types).prop_map(
+            |(name, inputs, outputs)| {
+                let input_str = inputs.join(",");
+                let output_str = outputs.join(",");
+                if outputs.is_empty() {
+                    format!("{name}({input_str})")
+                } else {
+                    format!("{name}({input_str}) returns ({output_str})")
+                }
+            },
+        )
+    }
+
+    proptest! {
+        /// Valid signatures should always parse successfully.
+        #[test]
+        fn valid_signatures_parse(sig in arb_signature_string()) {
+            let result = parse_signature(&sig);
+            prop_assert!(result.is_ok(), "Failed to parse '{}': {:?}", sig, result.err());
+        }
+
+        /// Full signatures (with returns) should always parse successfully.
+        #[test]
+        fn full_signatures_parse(sig in arb_full_signature_string()) {
+            let result = parse_signature(&sig);
+            prop_assert!(result.is_ok(), "Failed to parse '{}': {:?}", sig, result.err());
+        }
+
+        /// Parsing a signature and reconstructing it should roundtrip.
+        /// The canonical form (from to_signature_string) should parse to
+        /// the same name and input types.
+        #[test]
+        fn signature_roundtrip(sig in arb_signature_string()) {
+            let parsed = parse_signature(&sig)?;
+            let canonical = parsed.to_signature_string();
+            let reparsed = parse_signature(&canonical)?;
+
+            prop_assert_eq!(parsed.name, reparsed.name);
+            prop_assert_eq!(parsed.inputs, reparsed.inputs);
+        }
+
+        /// Full signature roundtrip (including outputs).
+        #[test]
+        fn full_signature_roundtrip(sig in arb_full_signature_string()) {
+            let parsed = parse_signature(&sig)?;
+            let canonical = parsed.to_full_signature_string();
+            let reparsed = parse_signature(&canonical)?;
+
+            prop_assert_eq!(parsed.name, reparsed.name);
+            prop_assert_eq!(parsed.inputs, reparsed.inputs);
+            prop_assert_eq!(parsed.outputs, reparsed.outputs);
+        }
+
+        /// Each parsed input/output should be a valid AbiType.
+        /// (This is guaranteed by the parser, but proptest verifies it
+        /// at scale for randomly generated signatures.)
+        #[test]
+        fn parsed_types_are_valid(sig in arb_full_signature_string()) {
+            let parsed = parse_signature(&sig)?;
+            // All input types should have a valid string representation
+            for ty in &parsed.inputs {
+                let type_str = ty.to_string();
+                let re_parsed = AbiType::parse(&type_str);
+                prop_assert!(re_parsed.is_ok(), "Type '{}' failed to re-parse: {:?}", type_str, re_parsed.err());
+                prop_assert_eq!(ty, &re_parsed.unwrap());
+            }
+            for ty in &parsed.outputs {
+                let type_str = ty.to_string();
+                let re_parsed = AbiType::parse(&type_str);
+                prop_assert!(re_parsed.is_ok(), "Type '{}' failed to re-parse: {:?}", type_str, re_parsed.err());
+                prop_assert_eq!(ty, &re_parsed.unwrap());
+            }
+        }
+
+        /// Whitespace around the signature should not affect parsing.
+        #[test]
+        fn whitespace_around_signature(sig in arb_signature_string()) {
+            let padded = format!("  {sig}  ");
+            let result = parse_signature(&padded);
+            prop_assert!(result.is_ok(), "Failed to parse padded '{}': {:?}", padded, result.err());
+        }
+
+        /// Case-insensitive 'returns' keyword.
+        #[test]
+        fn case_insensitive_returns_keyword(name in arb_identifier(), n_bits in 1u8..=32u8) {
+            // Generate a simple signature with returns, using valid bit widths
+            let bit_width = u16::from(n_bits) * 8;
+            let sig_lower = format!("{name}(uint256) returns (uint{bit_width})");
+            let sig_upper = format!("{name}(uint256) RETURNS (uint{bit_width})");
+            let sig_mixed = format!("{name}(uint256) Returns (uint{bit_width})");
+
+            let parsed_lower = parse_signature(&sig_lower)?;
+            let parsed_upper = parse_signature(&sig_upper)?;
+            let parsed_mixed = parse_signature(&sig_mixed)?;
+
+            prop_assert_eq!(parsed_lower.outputs.len(), 1);
+            prop_assert!(
+                parsed_upper.outputs.as_slice() == parsed_lower.outputs.as_slice(),
+                "Uppercase RETURNS should match lowercase"
+            );
+            prop_assert!(
+                parsed_mixed.outputs.as_slice() == parsed_lower.outputs.as_slice(),
+                "Mixed case Returns should match lowercase"
+            );
+        }
     }
 }

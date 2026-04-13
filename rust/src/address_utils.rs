@@ -1,6 +1,12 @@
 //! Address utility functions.
 //!
 //! Provides functions for Ethereum address manipulation.
+//!
+//! # Architecture
+//!
+//! This module is the single source of truth for address formatting.
+//! All address-to-string conversions should use `address_to_checksum_string()`
+//! or the higher-level `to_checksum_address_*` functions.
 
 use crate::errors::AddressError;
 use alloy::primitives::Address;
@@ -9,6 +15,23 @@ use pyo3::{
     prelude::*,
 };
 use std::str::FromStr;
+
+/// Convert an Alloy `Address` to a checksummed string.
+///
+/// This is the canonical implementation used throughout the codebase.
+/// All address-to-string conversions should use this function.
+///
+/// # Arguments
+///
+/// * `address` - The Alloy Address to format
+///
+/// # Returns
+///
+/// The EIP-55 checksummed address string.
+#[must_use]
+pub fn address_to_checksum_string(address: &Address) -> String {
+    address.to_checksum(None)
+}
 
 /// Internal implementation for checksumming a hex address string.
 ///
@@ -26,7 +49,7 @@ use std::str::FromStr;
 pub fn to_checksum_address_str(addr_str: &str) -> Result<String, AddressError> {
     let addr =
         Address::from_str(addr_str).map_err(|e| AddressError::InvalidAddress(e.to_string()))?;
-    Ok(addr.to_checksum(None))
+    Ok(address_to_checksum_string(&addr))
 }
 
 /// Internal implementation for checksumming address bytes.
@@ -47,7 +70,7 @@ pub fn to_checksum_address_bytes(bytes: &[u8]) -> Result<String, AddressError> {
         return Err(AddressError::InvalidByteLength(bytes.len()));
     }
     let address = Address::from_slice(bytes);
-    Ok(address.to_checksum(None))
+    Ok(address_to_checksum_string(&address))
 }
 
 /// Generates an EIP-55 checksummed address from the input.

@@ -25,46 +25,39 @@ use crate::abi_types::{AbiValue, CachedAbiTypes};
 use crate::errors::AbiDecodeError;
 use alloy::hex;
 use alloy::primitives::Address;
-use parking_lot::RwLock;
+use lru::LruCache;
+use parking_lot::Mutex;
 use pyo3::{
     exceptions::{PyNotImplementedError, PyValueError},
     prelude::*,
     types::{PyBool, PyBytes, PyList, PyString},
 };
-use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
+use std::num::NonZeroUsize;
 use std::sync::LazyLock;
 
 // =============================================================================
 // Type parsing cache
 // =============================================================================
 
-/// Global cache for parsed ABI types.
-/// Key is a hash of the type strings, value is the pre-parsed types.
-static TYPE_CACHE: LazyLock<RwLock<HashMap<u64, CachedAbiTypes>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+/// Maximum number of cached type sets.
+const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(10_000).expect("10_000 is non-zero");
 
-/// Compute a hash for a slice of type strings.
-fn hash_types(types: &[&str]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    types.len().hash(&mut hasher);
-    for ty in types {
-        ty.hash(&mut hasher);
-    }
-    hasher.finish()
-}
+/// Global LRU cache for parsed ABI types.
+/// Key is the actual type strings (not a hash) to avoid collision risk.
+static TYPE_CACHE: LazyLock<Mutex<LruCache<Vec<String>, CachedAbiTypes>>> =
+    LazyLock::new(|| Mutex::new(LruCache::new(CACHE_CAPACITY)));
 
 /// Get or create cached types for the given type strings.
 ///
 /// This function checks the global cache first, and only parses
-/// if the types haven't been seen before.
+/// if the types haven't been seen before. Uses LRU eviction when cache is full.
 fn get_cached_types(types: &[&str]) -> Result<CachedAbiTypes, AbiDecodeError> {
-    let hash = hash_types(types);
+    let key: Vec<String> = types.iter().map(std::string::ToString::to_string).collect();
 
-    // Fast path: read lock to check cache
+    // Fast path: check cache
     {
-        let cache = TYPE_CACHE.read();
-        if let Some(cached) = cache.get(&hash) {
+        let mut cache = TYPE_CACHE.lock();
+        if let Some(cached) = cache.get(&key) {
             return Ok(cached.clone());
         }
     }
@@ -72,8 +65,8 @@ fn get_cached_types(types: &[&str]) -> Result<CachedAbiTypes, AbiDecodeError> {
     // Slow path: parse and cache
     let cached = CachedAbiTypes::new(types)?;
     {
-        let mut cache = TYPE_CACHE.write();
-        cache.insert(hash, cached.clone());
+        let mut cache = TYPE_CACHE.lock();
+        cache.put(key, cached.clone());
     }
     Ok(cached)
 }
@@ -160,13 +153,22 @@ pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDe
 ///
 /// # Example
 ///
-/// ```ignore
-/// use crate::abi_types::{AbiType, AbiValue};
+/// ```
+/// use degenbot_rs::abi_types::{AbiType, AbiValue};
+/// use degenbot_rs::abi_decoder::decode_for_types;
+/// use alloy::primitives::U256;
 ///
 /// let types = vec![AbiType::Uint(256), AbiType::Bool];
-/// let encoded = ...; // ABI-encoded data
+///
+/// // Encode first, then decode
+/// use degenbot_rs::abi_encoder::encode_for_types;
+/// let values = vec![AbiValue::Uint(U256::from(42u64)), AbiValue::Bool(true)];
+/// let encoded = encode_for_types(&types, &values)?;
 ///
 /// let decoded = decode_for_types(&types, &encoded)?;
+/// assert_eq!(decoded.len(), 2);
+///
+/// Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn decode_for_types(types: &[crate::abi_types::AbiType], data: &[u8]) -> Result<Vec<AbiValue>, AbiDecodeError> {
     if types.is_empty() {
@@ -662,25 +664,25 @@ mod tests {
     #[test]
     fn test_type_caching() {
         // Ensure cache starts empty
-        TYPE_CACHE.write().clear();
+        TYPE_CACHE.lock().clear();
 
         // First call should populate cache
         let data = vec![0u8; 32];
         let _result1 = decode_single_rust("uint256", &data).unwrap();
-        assert_eq!(TYPE_CACHE.read().len(), 1);
+        assert_eq!(TYPE_CACHE.lock().len(), 1);
 
-        // Second call should use cache (same hash)
+        // Second call should use cache (same key)
         let _result2 = decode_single_rust("uint256", &data).unwrap();
-        assert_eq!(TYPE_CACHE.read().len(), 1); // Still 1, not 2
+        assert_eq!(TYPE_CACHE.lock().len(), 1); // Still 1, not 2
 
         // Different type should add to cache
         let _result3 = decode_single_rust("address", &data).unwrap();
-        assert_eq!(TYPE_CACHE.read().len(), 2);
+        assert_eq!(TYPE_CACHE.lock().len(), 2);
     }
 
     #[test]
     fn test_type_caching_multiple_types() {
-        TYPE_CACHE.write().clear();
+        TYPE_CACHE.lock().clear();
 
         let mut data = Vec::new();
         data.extend(vec![0u8; 32]); // uint256
@@ -688,14 +690,14 @@ mod tests {
 
         // First call with these types
         let _result1 = decode_rust(&["uint256", "bool"], &data).unwrap();
-        assert_eq!(TYPE_CACHE.read().len(), 1);
+        assert_eq!(TYPE_CACHE.lock().len(), 1);
 
         // Second call with same types should use cache
         let _result2 = decode_rust(&["uint256", "bool"], &data).unwrap();
-        assert_eq!(TYPE_CACHE.read().len(), 1);
+        assert_eq!(TYPE_CACHE.lock().len(), 1);
 
         // Different order is a different cache entry
         let _result3 = decode_rust(&["bool", "uint256"], &data).unwrap();
-        assert_eq!(TYPE_CACHE.read().len(), 2);
+        assert_eq!(TYPE_CACHE.lock().len(), 2);
     }
 }
