@@ -48,8 +48,27 @@ pub fn address_to_checksum_string(address: &Address) -> String {
 /// Returns `AddressError::InvalidAddress` if the string is not a valid hex address.
 pub fn to_checksum_address_str(addr_str: &str) -> Result<String, AddressError> {
     let addr =
-        Address::from_str(addr_str).map_err(|e| AddressError::InvalidAddress(e.to_string()))?;
+        parse_address(addr_str)?;
     Ok(address_to_checksum_string(&addr))
+}
+
+/// Parse an Ethereum address from a hex string.
+///
+/// This is the canonical address parsing function used throughout the codebase.
+///
+/// # Arguments
+///
+/// * `s` - A hex string representing an Ethereum address (e.g., "0x1234...")
+///
+/// # Returns
+///
+/// The parsed `Address`.
+///
+/// # Errors
+///
+/// Returns `AddressError::InvalidAddress` if the string is not a valid hex address.
+pub fn parse_address(s: &str) -> Result<Address, AddressError> {
+    Address::from_str(s).map_err(|e| AddressError::InvalidAddress(e.to_string()))
 }
 
 /// Internal implementation for checksumming address bytes.
@@ -170,5 +189,17 @@ mod tests {
         let bytes: [u8; 10] = [0x66; 10];
         let result = to_checksum_address_bytes(&bytes);
         assert!(matches!(result, Err(AddressError::InvalidByteLength(10))));
+    }
+
+    #[test]
+    fn test_parse_address_valid() {
+        let result = parse_address("0x66f9664f97f2b50f62d13ea064982f936de76657");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_address_invalid() {
+        let result = parse_address("not-an-address");
+        assert!(matches!(result, Err(AddressError::InvalidAddress(_))));
     }
 }

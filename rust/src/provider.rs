@@ -26,6 +26,9 @@ const MAX_RETRY_DELAY_MS: u64 = 30_000; // 30 seconds
 const BACKOFF_MULTIPLIER: u64 = 2;
 const MAX_JITTER_MS: u64 = 100; // Add up to 100ms of jitter
 
+/// Default maximum retry attempts for provider operations.
+pub const DEFAULT_MAX_RETRIES: u32 = 10;
+
 /// Convert an Alloy `RpcError` to a `ProviderError` with appropriate classification.
 ///
 /// Uses type-based matching on the Alloy error enum instead of string scraping:
@@ -145,7 +148,7 @@ impl LogFilter {
                 .addresses
                 .iter()
                 .map(|addr| {
-                    Address::from_str(addr).map_err(|e| ProviderError::InvalidAddress {
+                    crate::address_utils::parse_address(addr).map_err(|e| ProviderError::InvalidAddress {
                         address: addr.clone(),
                         reason: format!("{e}"),
                     })

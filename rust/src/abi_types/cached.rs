@@ -2,10 +2,60 @@
 //!
 //! Provides `CachedAbiTypes` for pre-parsed type sets and
 //! `value_to_alloy_for_type` for type-aware value conversion.
+//!
+//! This module also provides the global type cache (`get_cached_types`)
+//! which is the single caching point for both encoding and decoding.
 
 use crate::abi_types::type_::AbiType;
 use crate::abi_types::value::AbiValue;
 use crate::errors::AbiDecodeError;
+use lru::LruCache;
+use parking_lot::Mutex;
+use std::num::NonZeroUsize;
+use std::sync::LazyLock;
+
+// =============================================================================
+// Global type cache
+// =============================================================================
+
+/// Maximum number of cached type sets.
+const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(10_000).expect("10_000 is non-zero");
+
+/// Global LRU cache for parsed ABI types.
+/// Key is the actual type strings (not a hash) to avoid collision risk.
+pub(crate) static TYPE_CACHE: LazyLock<Mutex<LruCache<Vec<String>, CachedAbiTypes>>> =
+    LazyLock::new(|| Mutex::new(LruCache::new(CACHE_CAPACITY)));
+
+/// Get or create cached types for the given type strings.
+///
+/// This function checks the global cache first, and only parses
+/// if the types haven't been seen before. Uses LRU eviction when cache is full.
+///
+/// This is the single caching point for both encoding and decoding.
+/// The cache is keyed by the actual type strings (not a hash) to avoid collision risk.
+///
+/// # Errors
+///
+/// Returns `AbiDecodeError` if any type string is invalid.
+pub fn get_cached_types(types: &[&str]) -> Result<CachedAbiTypes, AbiDecodeError> {
+    let key: Vec<String> = types.iter().map(std::string::ToString::to_string).collect();
+
+    // Fast path: check cache
+    {
+        let mut cache = TYPE_CACHE.lock();
+        if let Some(cached) = cache.get(&key) {
+            return Ok(cached.clone());
+        }
+    }
+
+    // Slow path: parse and cache
+    let cached = CachedAbiTypes::new(types)?;
+    {
+        let mut cache = TYPE_CACHE.lock();
+        cache.put(key, cached.clone());
+    }
+    Ok(cached)
+}
 
 /// Pre-parsed ABI types for high-performance batch encoding/decoding.
 ///
@@ -42,6 +92,8 @@ use crate::errors::AbiDecodeError;
 pub struct CachedAbiTypes {
     /// The individual parsed types
     types: Vec<AbiType>,
+    /// The individual cached alloy types (parallel to `types`)
+    alloy_types: Vec<alloy::dyn_abi::DynSolType>,
     /// The tuple type for encoding/decoding multiple values
     tuple_type: alloy::dyn_abi::DynSolType,
     /// Cached type strings for debugging/display
@@ -89,10 +141,11 @@ impl CachedAbiTypes {
             type_strings.push(ty.to_string());
         }
 
-        let tuple_type = alloy::dyn_abi::DynSolType::Tuple(alloy_types);
+        let tuple_type = alloy::dyn_abi::DynSolType::Tuple(alloy_types.clone());
 
         Ok(Self {
             types: parsed_types,
+            alloy_types,
             tuple_type,
             type_strings,
         })
@@ -123,10 +176,11 @@ impl CachedAbiTypes {
             alloy_types.push(alloy_type);
         }
 
-        let tuple_type = alloy::dyn_abi::DynSolType::Tuple(alloy_types);
+        let tuple_type = alloy::dyn_abi::DynSolType::Tuple(alloy_types.clone());
 
         Ok(Self {
             types: types.to_vec(),
+            alloy_types,
             tuple_type,
             type_strings,
         })
@@ -221,10 +275,10 @@ impl CachedAbiTypes {
             )));
         }
 
+        // Use cached alloy types instead of re-deriving from AbiType on every call
         let mut alloy_values = Vec::with_capacity(self.types.len());
-        for (ty, value) in self.types.iter().zip(values.iter()) {
-            let alloy_type = ty.to_alloy_type()?;
-            let alloy_value = value_to_alloy_for_type(value, &alloy_type)?;
+        for (alloy_type, value) in self.alloy_types.iter().zip(values.iter()) {
+            let alloy_value = value_to_alloy_for_type(value, alloy_type)?;
             alloy_values.push(alloy_value);
         }
 

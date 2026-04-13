@@ -77,13 +77,11 @@ pub fn bytes_to_int_signed<'py>(py: Python<'py>, bytes: &[u8]) -> PyResult<Bound
     let from_bytes = get_int_from_bytes(py)?;
     let py_bytes = PyBytes::new(py, bytes);
 
-    // `signed` is keyword-only, so we need kwargs
-    // int.from_bytes(bytes, byteorder, *, signed=False)
+    // `byteorder` is positional, `signed` is keyword-only
     let kwargs = pyo3::types::PyDict::new(py);
-    kwargs.set_item("byteorder", "big")?;
     kwargs.set_item("signed", true)?;
 
-    from_bytes.call((py_bytes,), Some(&kwargs))
+    from_bytes.call((py_bytes, "big"), Some(&kwargs))
 }
 
 /// Create a `HexBytes` object from bytes using the cached class.

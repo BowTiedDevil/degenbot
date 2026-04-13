@@ -13,17 +13,24 @@ use std::str::FromStr;
 
 /// Decode a hex string (with optional "0x" prefix) to bytes.
 ///
-/// This is a thin wrapper around `alloy::hex::decode` that strips
-/// the optional "0x" or "0X" prefix first.
+/// Handles odd-length strings by padding with a leading zero,
+/// which is the canonical behavior for Ethereum hex strings.
 ///
 /// # Errors
 ///
-/// Returns `Err` if the string contains invalid hex characters or has an odd length
-/// (after stripping the prefix).
+/// Returns `Err` if the string contains invalid hex characters.
 pub(crate) fn decode_hex(hex_str: &str) -> Result<Vec<u8>, hex::FromHexError> {
     let stripped = hex_str.strip_prefix("0x").unwrap_or(hex_str);
     let stripped = stripped.strip_prefix("0X").unwrap_or(stripped);
-    alloy::hex::decode(stripped)
+    let padded = if stripped.len() % 2 == 1 {
+        let mut s = String::with_capacity(stripped.len() + 1);
+        s.push('0');
+        s.push_str(stripped);
+        s
+    } else {
+        stripped.to_string()
+    };
+    alloy::hex::decode(&padded)
 }
 
 /// Represents an ABI value for encoding/decoding.
@@ -224,13 +231,13 @@ impl AbiValue {
 }
 
 /// Parse a uint256 value from a string, handling hex prefix.
-pub(crate) fn parse_uint256_with_hex_prefix(s: &str) -> Result<U256, ParseU256Error> {
+pub(crate) fn parse_uint256_with_hex_prefix(s: &str) -> Result<U256, ParseIntError> {
     let s = s.trim();
     s.strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))
         .map_or_else(
-            || U256::from_str_radix(s, 10).map_err(|_| ParseU256Error::InvalidDecimal),
-            |hex_str| U256::from_str_radix(hex_str, 16).map_err(|_| ParseU256Error::InvalidHex),
+            || U256::from_str_radix(s, 10).map_err(|_| ParseIntError::InvalidDecimal),
+            |hex_str| U256::from_str_radix(hex_str, 16).map_err(|_| ParseIntError::InvalidHex),
         )
 }
 
@@ -238,7 +245,7 @@ pub(crate) fn parse_uint256_with_hex_prefix(s: &str) -> Result<U256, ParseU256Er
 ///
 /// Handles the tricky boundary cases around `I256::MAX` (2^255 - 1) and `I256::MIN` (-2^255).
 /// For positive hex values, any value >= 2^255 is rejected as out of range.
-pub(crate) fn parse_int256_with_hex_prefix(s: &str) -> Result<I256, ParseI256Error> {
+pub(crate) fn parse_int256_with_hex_prefix(s: &str) -> Result<I256, ParseIntError> {
     let s = s.trim();
 
     let max_positive = (U256::from(1u8) << 255) - U256::from(1u8);
@@ -246,7 +253,7 @@ pub(crate) fn parse_int256_with_hex_prefix(s: &str) -> Result<I256, ParseI256Err
     if let Some(abs_str) = s.strip_prefix('-') {
         if let Some(hex_str) = abs_str.strip_prefix("0x").or_else(|| abs_str.strip_prefix("0X")) {
             let abs_val = U256::from_str_radix(hex_str, 16)
-                .map_err(|_| ParseI256Error::InvalidHex)?;
+                .map_err(|_| ParseIntError::InvalidHex)?;
 
             let min_abs = U256::from(1u8) << 255;
             if abs_val == min_abs {
@@ -254,36 +261,36 @@ pub(crate) fn parse_int256_with_hex_prefix(s: &str) -> Result<I256, ParseI256Err
             }
 
             if abs_val > max_positive + U256::from(1u8) {
-                return Err(ParseI256Error::InvalidHex);
+                return Err(ParseIntError::InvalidHex);
             }
 
             Ok(I256::from_raw(abs_val).wrapping_neg())
         } else {
-            I256::from_str(s).map_err(|_| ParseI256Error::InvalidDecimal)
+            I256::from_str(s).map_err(|_| ParseIntError::InvalidDecimal)
         }
     } else if let Some(hex_str) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        let uval = U256::from_str_radix(hex_str, 16).map_err(|_| ParseI256Error::InvalidHex)?;
+        let uval = U256::from_str_radix(hex_str, 16).map_err(|_| ParseIntError::InvalidHex)?;
 
         if uval > max_positive {
-            return Err(ParseI256Error::InvalidHex);
+            return Err(ParseIntError::InvalidHex);
         }
 
         Ok(I256::from_raw(uval))
     } else {
-        I256::from_str(s).map_err(|_| ParseI256Error::InvalidDecimal)
+        I256::from_str(s).map_err(|_| ParseIntError::InvalidDecimal)
     }
 }
 
-/// Error parsing U256 from string.
+/// Error parsing an integer from string.
 #[derive(Debug, Clone)]
-pub enum ParseU256Error {
+pub enum ParseIntError {
     /// Invalid hex format
     InvalidHex,
     /// Invalid decimal format
     InvalidDecimal,
 }
 
-impl fmt::Display for ParseU256Error {
+impl fmt::Display for ParseIntError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidHex => write!(f, "invalid hex format"),
@@ -292,27 +299,15 @@ impl fmt::Display for ParseU256Error {
     }
 }
 
-impl std::error::Error for ParseU256Error {}
+impl std::error::Error for ParseIntError {}
 
-/// Error parsing I256 from string.
-#[derive(Debug, Clone)]
-pub enum ParseI256Error {
-    /// Invalid hex format
-    InvalidHex,
-    /// Invalid decimal format
-    InvalidDecimal,
-}
+/// Deprecated alias for `ParseIntError`.
+#[deprecated(note = "Use `ParseIntError` instead")]
+pub type ParseU256Error = ParseIntError;
 
-impl fmt::Display for ParseI256Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidHex => write!(f, "invalid hex format"),
-            Self::InvalidDecimal => write!(f, "invalid decimal format"),
-        }
-    }
-}
-
-impl std::error::Error for ParseI256Error {}
+/// Deprecated alias for `ParseIntError`.
+#[deprecated(note = "Use `ParseIntError` instead")]
+pub type ParseI256Error = ParseIntError;
 
 /// Parse a JSON array string into individual element strings.
 ///

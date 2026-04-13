@@ -16,6 +16,9 @@ use pyo3::types::{PyDict, PyList};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
+use crate::address_utils::address_to_checksum_string;
+use crate::py_cache::create_hexbytes;
+
 /// Field names that should be converted to `HexBytes`.
 /// These are commonly used field names for Ethereum hashes and data.
 /// Note: Address fields are converted to checksummed strings, not `HexBytes`.
@@ -81,14 +84,7 @@ static ADDRESS_FIELDS: LazyLock<HashSet<&'static str>> =
 /// assert_eq!(bytes, vec![0x01, 0x23]);
 /// ```
 pub fn decode_hex(hex_str: &str) -> Result<Vec<u8>, String> {
-    let stripped = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-    let stripped = stripped.strip_prefix("0X").unwrap_or(stripped);
-    let padded = if stripped.len() % 2 == 1 {
-        format!("0{stripped}")
-    } else {
-        stripped.to_string()
-    };
-    alloy::hex::decode(&padded).map_err(|e| e.to_string())
+    crate::abi_types::value::decode_hex(hex_str).map_err(|e| e.to_string())
 }
 
 /// Encode bytes as a hex string with "0x" prefix.
@@ -158,15 +154,6 @@ fn is_hex_string(s: &str) -> bool {
 ///
 /// Uses the `hexbytes` package's `HexBytes` class for compatibility with
 /// web3.py and `eth_abi` libraries.
-///
-/// This is a re-export of the cached version in `py_cache` for convenience.
-pub fn create_hexbytes<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyAny>> {
-    crate::py_cache::create_hexbytes(py, data)
-}
-
-// Re-export the canonical address formatting function from address_utils.
-pub use crate::address_utils::address_to_checksum_string;
-
 /// Convert a hex string to a `HexBytes` object.
 fn hex_to_hexbytes<'py>(py: Python<'py>, hex_str: &str) -> PyResult<Bound<'py, PyAny>> {
     let bytes = decode_hex(hex_str).map_err(|e| {
@@ -332,12 +319,6 @@ fn json_to_py_inner<'py>(
 /// Convert U256 to Python int.
 ///
 /// # Errors
-///
-/// Returns an error if Python's `int.from_bytes` fails.
-fn u256_to_py<'py>(py: Python<'py>, val: &U256) -> PyResult<Bound<'py, PyAny>> {
-    crate::alloy_py::u256_to_py(py, val)
-}
-
 fn set_opt_u64(dict: &Bound<'_, PyDict>, key: &str, val: Option<u64>) -> PyResult<()> {
     val.map_or_else(
         || dict.set_item(key, dict.py().None()),
@@ -356,7 +337,7 @@ fn set_opt_u256(dict: &Bound<'_, PyDict>, key: &str, val: Option<&U256>) -> PyRe
     val.map_or_else(
         || dict.set_item(key, dict.py().None()),
         |v| {
-            let int_val = u256_to_py(dict.py(), v)?;
+            let int_val = crate::alloy_py::u256_to_py(dict.py(), v)?;
             dict.set_item(key, int_val)
         },
     )
@@ -445,7 +426,7 @@ fn set_legacy_tx_fields(dict: &Bound<'_, PyDict>, tx: &TxLegacy) -> PyResult<()>
     dict.set_item("gas_price", tx.gas_price)?;
     dict.set_item("gas", tx.gas_limit)?;
     dict.set_item("to", tx_kind_to_py(py, &tx.to)?)?;
-    dict.set_item("value", u256_to_py(py, &tx.value)?)?;
+    dict.set_item("value", crate::alloy_py::u256_to_py(py, &tx.value)?)?;
     dict.set_item("input", create_hexbytes(py, &tx.input)?)?;
 
     Ok(())
@@ -459,7 +440,7 @@ fn set_eip2930_tx_fields(dict: &Bound<'_, PyDict>, tx: &TxEip2930) -> PyResult<(
     dict.set_item("gas_price", tx.gas_price)?;
     dict.set_item("gas", tx.gas_limit)?;
     dict.set_item("to", tx_kind_to_py(py, &tx.to)?)?;
-    dict.set_item("value", u256_to_py(py, &tx.value)?)?;
+    dict.set_item("value", crate::alloy_py::u256_to_py(py, &tx.value)?)?;
     dict.set_item("input", create_hexbytes(py, &tx.input)?)?;
     dict.set_item("access_list", access_list_to_py(py, &tx.access_list)?)?;
 
@@ -475,7 +456,7 @@ fn set_eip1559_tx_fields(dict: &Bound<'_, PyDict>, tx: &TxEip1559) -> PyResult<(
     dict.set_item("max_priority_fee_per_gas", tx.max_priority_fee_per_gas)?;
     dict.set_item("gas", tx.gas_limit)?;
     dict.set_item("to", tx_kind_to_py(py, &tx.to)?)?;
-    dict.set_item("value", u256_to_py(py, &tx.value)?)?;
+    dict.set_item("value", crate::alloy_py::u256_to_py(py, &tx.value)?)?;
     dict.set_item("input", create_hexbytes(py, &tx.input)?)?;
     dict.set_item("access_list", access_list_to_py(py, &tx.access_list)?)?;
 
@@ -491,7 +472,7 @@ fn set_eip4844_tx_fields(dict: &Bound<'_, PyDict>, tx: &TxEip4844) -> PyResult<(
     dict.set_item("max_priority_fee_per_gas", tx.max_priority_fee_per_gas)?;
     dict.set_item("gas", tx.gas_limit)?;
     dict.set_item("to", address_to_checksum_string(&tx.to))?;
-    dict.set_item("value", u256_to_py(py, &tx.value)?)?;
+    dict.set_item("value", crate::alloy_py::u256_to_py(py, &tx.value)?)?;
     dict.set_item("input", create_hexbytes(py, &tx.input)?)?;
     dict.set_item("access_list", access_list_to_py(py, &tx.access_list)?)?;
     dict.set_item("max_fee_per_blob_gas", tx.max_fee_per_blob_gas)?;
@@ -512,14 +493,14 @@ fn set_eip7702_tx_fields(dict: &Bound<'_, PyDict>, tx: &TxEip7702) -> PyResult<(
     dict.set_item("max_priority_fee_per_gas", tx.max_priority_fee_per_gas)?;
     dict.set_item("gas", tx.gas_limit)?;
     dict.set_item("to", address_to_checksum_string(&tx.to))?;
-    dict.set_item("value", u256_to_py(py, &tx.value)?)?;
+    dict.set_item("value", crate::alloy_py::u256_to_py(py, &tx.value)?)?;
     dict.set_item("input", create_hexbytes(py, &tx.input)?)?;
     dict.set_item("access_list", access_list_to_py(py, &tx.access_list)?)?;
 
     let auth_list = PyList::empty(py);
     for auth in &tx.authorization_list {
         let auth_dict = PyDict::new(py);
-        auth_dict.set_item("chain_id", u256_to_py(py, auth.chain_id())?)?;
+        auth_dict.set_item("chain_id", crate::alloy_py::u256_to_py(py, auth.chain_id())?)?;
         auth_dict.set_item("address", address_to_checksum_string(auth.address()))?;
         auth_dict.set_item("nonce", auth.nonce())?;
         let r_bytes: [u8; 32] = auth.r().to_be_bytes();
@@ -619,7 +600,7 @@ fn consensus_header_to_py_dict<'py>(
         "logs_bloom",
         create_hexbytes(py, header.logs_bloom.as_ref())?,
     )?;
-    dict.set_item("difficulty", u256_to_py(py, &header.difficulty)?)?;
+    dict.set_item("difficulty", crate::alloy_py::u256_to_py(py, &header.difficulty)?)?;
     dict.set_item("number", header.number)?;
     dict.set_item("gas_limit", header.gas_limit)?;
     dict.set_item("gas_used", header.gas_used)?;

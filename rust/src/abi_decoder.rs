@@ -21,55 +21,16 @@
 //! This provides significant performance benefits when processing thousands of values
 //! (e.g., decoding Transfer events from historical blocks).
 
-use crate::abi_types::{AbiValue, CachedAbiTypes};
+use crate::abi_types::AbiValue;
+use crate::abi_types::cached::get_cached_types;
 use crate::errors::AbiDecodeError;
 use alloy::hex;
 use alloy::primitives::Address;
-use lru::LruCache;
-use parking_lot::Mutex;
 use pyo3::{
     exceptions::{PyNotImplementedError, PyValueError},
     prelude::*,
     types::{PyBool, PyBytes, PyList, PyString},
 };
-use std::num::NonZeroUsize;
-use std::sync::LazyLock;
-
-// =============================================================================
-// Type parsing cache
-// =============================================================================
-
-/// Maximum number of cached type sets.
-const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(10_000).expect("10_000 is non-zero");
-
-/// Global LRU cache for parsed ABI types.
-/// Key is the actual type strings (not a hash) to avoid collision risk.
-static TYPE_CACHE: LazyLock<Mutex<LruCache<Vec<String>, CachedAbiTypes>>> =
-    LazyLock::new(|| Mutex::new(LruCache::new(CACHE_CAPACITY)));
-
-/// Get or create cached types for the given type strings.
-///
-/// This function checks the global cache first, and only parses
-/// if the types haven't been seen before. Uses LRU eviction when cache is full.
-fn get_cached_types(types: &[&str]) -> Result<CachedAbiTypes, AbiDecodeError> {
-    let key: Vec<String> = types.iter().map(std::string::ToString::to_string).collect();
-
-    // Fast path: check cache
-    {
-        let mut cache = TYPE_CACHE.lock();
-        if let Some(cached) = cache.get(&key) {
-            return Ok(cached.clone());
-        }
-    }
-
-    // Slow path: parse and cache
-    let cached = CachedAbiTypes::new(types)?;
-    {
-        let mut cache = TYPE_CACHE.lock();
-        cache.put(key, cached.clone());
-    }
-    Ok(cached)
-}
 
 // =============================================================================
 // Pure Rust decoding functions
@@ -179,7 +140,7 @@ pub fn decode_for_types(types: &[crate::abi_types::AbiType], data: &[u8]) -> Res
         return Err(AbiDecodeError::EmptyData);
     }
 
-    let cached = CachedAbiTypes::from_abi_types(types)?;
+    let cached = crate::abi_types::CachedAbiTypes::from_abi_types(types)?;
     cached.decode(data)
 }
 
@@ -658,11 +619,13 @@ mod tests {
     }
 
     // =========================================================================
-    // Caching tests
+    // Caching tests (verify the shared cache works for decoding)
     // =========================================================================
 
     #[test]
     fn test_type_caching() {
+        use crate::abi_types::cached::TYPE_CACHE;
+
         // Ensure cache starts empty
         TYPE_CACHE.lock().clear();
 
@@ -682,6 +645,8 @@ mod tests {
 
     #[test]
     fn test_type_caching_multiple_types() {
+        use crate::abi_types::cached::TYPE_CACHE;
+
         TYPE_CACHE.lock().clear();
 
         let mut data = Vec::new();

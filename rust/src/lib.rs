@@ -45,7 +45,7 @@ pub mod tick_math;
 pub mod utils;
 
 // Re-export commonly used items at the crate root
-pub use address_utils::{to_checksum_address, to_checksum_address_bytes, to_checksum_address_str};
+pub use address_utils::{parse_address, to_checksum_address, to_checksum_address_bytes, to_checksum_address_str};
 
 pub use errors::{AbiDecodeError, AddressError, ProviderError, TickMathError};
 pub use tick_math::{

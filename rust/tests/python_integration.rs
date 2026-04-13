@@ -16,7 +16,7 @@
 )]
 
 use alloy::primitives::{I256, U256};
-use degenbot_rs::abi_encoder::abi_value_from_python;
+use degenbot_rs::alloy_py::abi_value_from_python;
 use degenbot_rs::abi_types::AbiValue;
 use pyo3::prelude::*;
 

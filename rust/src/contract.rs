@@ -25,13 +25,12 @@
 //! directly, avoiding string parsing overhead.
 
 use crate::abi_types::{AbiType, AbiValue};
-use crate::errors::{ContractError, ContractResult, ProviderError, ProviderResult};
+use crate::errors::{ContractError, ContractResult, ProviderResult};
 use crate::provider::AlloyProvider;
 use crate::signature_parser;
 use alloy::primitives::{Address, Bytes};
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::Arc;
 
 /// Parsed function signature.
@@ -157,12 +156,9 @@ impl Contract {
     ///
     /// # Errors
     ///
-    /// Returns `ProviderError::InvalidAddress` if the address is invalid.
-    pub fn new(address: &str, provider: Arc<AlloyProvider>) -> ProviderResult<Self> {
-        let addr = Address::from_str(address).map_err(|_| ProviderError::InvalidAddress {
-            address: address.to_string(),
-            reason: "Invalid address format".to_string(),
-        })?;
+    /// Returns `AddressError` if the address is invalid.
+    pub fn new(address: &str, provider: Arc<AlloyProvider>) -> Result<Self, crate::errors::AddressError> {
+        let addr = crate::address_utils::parse_address(address)?;
 
         Ok(Self {
             address: addr,

@@ -133,7 +133,7 @@ impl AbiType {
 
 impl fmt::Display for AbiType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", type_to_string(self))
+        write!(f, "{}", self.type_str())
     }
 }
 
@@ -333,21 +333,6 @@ fn parse_int_bits(type_name: &str, n_str: &str) -> Result<AbiType, AbiTypeError>
             type_name: type_name.to_string(),
             bits: 0,
         }),
-    }
-}
-
-/// Convert an `AbiType` back to its canonical string representation.
-fn type_to_string(abi_type: &AbiType) -> String {
-    match abi_type {
-        AbiType::Address => "address".to_string(),
-        AbiType::Bool => "bool".to_string(),
-        AbiType::Uint(bits) => format!("uint{bits}"),
-        AbiType::Int(bits) => format!("int{bits}"),
-        AbiType::FixedBytes(size) => format!("bytes{size}"),
-        AbiType::Bytes => "bytes".to_string(),
-        AbiType::String => "string".to_string(),
-        AbiType::Array(inner) => format!("{}[]", type_to_string(inner)),
-        AbiType::FixedArray(inner, size) => format!("{}[{size}]", type_to_string(inner)),
     }
 }
 

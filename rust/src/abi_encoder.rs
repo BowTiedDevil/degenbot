@@ -15,58 +15,22 @@
 //! 2. **Thin `PyO3` wrapper**: `encode()` and `encode_single()` functions that convert
 //!    Python objects to `AbiValue` and encode them.
 
-use crate::abi_types::{value_to_alloy_for_type, AbiType, AbiValue};
+use crate::abi_types::{AbiType, AbiValue};
+use crate::abi_types::cached::get_cached_types;
 use crate::errors::AbiDecodeError;
-use alloy::dyn_abi::DynSolType;
-use alloy::primitives::{I256, U256};
-use lru::LruCache;
-use parking_lot::Mutex;
 use pyo3::{
     exceptions::PyValueError,
     prelude::*,
-    types::{PyBool, PyBytes, PyList, PyString},
+    types::{PyBytes, PyList},
 };
-use std::num::NonZeroUsize;
-use std::str::FromStr;
-use std::sync::LazyLock;
-
-// =============================================================================
-// Type conversion cache (AbiType -> DynSolType)
-// =============================================================================
-
-/// Maximum number of cached type conversions.
-const TYPE_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(10_000).expect("10_000 is non-zero");
-
-/// Global LRU cache for type conversions to avoid repeated string parsing.
-static TYPE_CACHE: LazyLock<Mutex<LruCache<String, DynSolType>>> =
-    LazyLock::new(|| Mutex::new(LruCache::new(TYPE_CACHE_CAPACITY)));
-
-/// Convert an `AbiType` to a `DynSolType` with caching.
-fn abi_type_to_alloy_cached(ty: &AbiType) -> Result<DynSolType, AbiDecodeError> {
-    let key = ty.to_string();
-    
-    // Fast path: check cache
-    {
-        let mut cache = TYPE_CACHE.lock();
-        if let Some(cached) = cache.get(&key) {
-            return Ok(cached.clone());
-        }
-    }
-    
-    // Slow path: convert and cache
-    let alloy_type = ty.to_alloy_type()?;
-    {
-        let mut cache = TYPE_CACHE.lock();
-        cache.put(key, alloy_type.clone());
-    }
-    Ok(alloy_type)
-}
 
 // =============================================================================
 // Pure Rust encoding functions
 // =============================================================================
 
 /// Encode a single ABI value (pure Rust).
+///
+/// Uses the shared `CachedAbiTypes` cache to avoid repeated type parsing.
 ///
 /// # Arguments
 ///
@@ -81,16 +45,15 @@ fn abi_type_to_alloy_cached(ty: &AbiType) -> Result<DynSolType, AbiDecodeError> 
 ///
 /// Returns `AbiDecodeError` if encoding fails.
 pub fn encode_single_rust(abi_type: &str, value: &AbiValue) -> Result<Vec<u8>, AbiDecodeError> {
-    let ty = DynSolType::parse(abi_type)
-        .map_err(|e| AbiDecodeError::UnsupportedType(format!("{abi_type}: {e}")))?;
-
-    let alloy_value = value_to_alloy_for_type(value, &ty)?;
-
-    // Encode the value using abi_encode()
-    Ok(alloy_value.abi_encode())
+    let cached = get_cached_types(&[abi_type])?;
+    let values = [value.clone()];
+    cached.encode(&values)
 }
 
 /// Encode multiple ABI values (pure Rust).
+///
+/// Delegates to `encode_for_types` after parsing type strings,
+/// which uses the shared `CachedAbiTypes` cache.
 ///
 /// # Arguments
 ///
@@ -117,24 +80,14 @@ pub fn encode_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>, AbiDe
         return Ok(Vec::new());
     }
 
-    // Parse types and convert values
-    let mut alloy_values = Vec::with_capacity(types.len());
-    for (ty, value) in types.iter().zip(values.iter()) {
-        let parsed_ty =
-            DynSolType::parse(ty).map_err(|e| AbiDecodeError::UnsupportedType(format!("{ty}: {e}")))?;
-        let alloy_value = value_to_alloy_for_type(value, &parsed_ty)?;
-        alloy_values.push(alloy_value);
-    }
-
-    // Encode the values using abi_encode_params for proper parameter encoding
-    // For tuples, abi_encode_params uses sequence encoding (no extra offset)
-    // For single values, it delegates to abi_encode()
-    let tuple_value = alloy::dyn_abi::DynSolValue::Tuple(alloy_values);
-    Ok(tuple_value.abi_encode_params())
+    // Delegate to the shared cache + encode_for_types path
+    let cached = get_cached_types(types)?;
+    cached.encode(values)
 }
 
 /// Encode multiple ABI values using pre-parsed `AbiType` values.
 ///
+/// Uses the shared `CachedAbiTypes` cache for `DynSolType` conversions.
 /// This is more efficient than `encode_rust()` because it avoids
 /// string parsing for each type. Use this when you already have
 /// `AbiType` instances (e.g., from `FunctionSignature::inputs`).
@@ -183,108 +136,9 @@ pub fn encode_for_types(types: &[AbiType], values: &[AbiValue]) -> Result<Vec<u8
         return Ok(Vec::new());
     }
 
-    // Convert types and values directly with caching
-    let mut alloy_values = Vec::with_capacity(types.len());
-    for (ty, value) in types.iter().zip(values.iter()) {
-        let parsed_ty = abi_type_to_alloy_cached(ty)?;
-        let alloy_value = value_to_alloy_for_type(value, &parsed_ty)?;
-        alloy_values.push(alloy_value);
-    }
-
-    // Encode the values using abi_encode_params for proper parameter encoding
-    // For tuples, abi_encode_params uses sequence encoding (no extra offset)
-    // For single values, it delegates to abi_encode()
-    let tuple_value = alloy::dyn_abi::DynSolValue::Tuple(alloy_values);
-    Ok(tuple_value.abi_encode_params())
-}
-
-// =============================================================================
-// Python conversion
-// =============================================================================
-
-/// Create an `AbiValue` from a Python object.
-pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<AbiValue> {
-    // Recursive helper that captures py from outer scope
-    fn convert_item(item: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<AbiValue> {
-        abi_value_from_python(py, item)
-    }
-
-    // Try bool first (before int, since bool is subclass of int in Python)
-    if let Ok(b) = obj.cast::<PyBool>() {
-        return Ok(AbiValue::Bool(b.is_true()));
-    }
-
-    // Try int - extract as i128 first to detect sign, then convert to U256/I256
-    // Python integers can be arbitrarily large, but we only support up to 256 bits
-    if let Ok(int_val) = obj.extract::<i128>() {
-        // Small integer fits in i128
-        if int_val >= 0 {
-            return Ok(AbiValue::Uint(U256::from(int_val.cast_unsigned())));
-        }
-        return Ok(AbiValue::Int(I256::try_from(int_val).map_err(|_| {
-            PyValueError::new_err("Integer conversion failed")
-        })?));
-    }
-
-    // For larger integers, try to extract via Python's to_bytes method
-    // Check if it's an integer type
-    let int_type = py.import("builtins")?.getattr("int")?;
-    if obj.is_instance(&int_type)? {
-        // Try to get the sign
-        let is_negative: bool = obj.call_method1("__lt__", (0,))?.extract()?;
-
-        if is_negative {
-            // Negative integer - use signed to_bytes for correct I256::MIN handling
-            // signed=True handles two's complement encoding, including I256::MIN
-            let bytes = obj.call_method1("to_bytes", (32, "big", true))?;
-            let bytes: &[u8] = bytes.extract()?;
-            let u256 = U256::from_be_bytes(
-                <[u8; 32]>::try_from(bytes).map_err(|_| {
-                    PyValueError::new_err("Integer value out of range for int256")
-                })?,
-            );
-            // Directly interpret as I256 (two's complement encoding)
-            return Ok(AbiValue::Int(I256::from_raw(u256)));
-        }
-        // Positive integer - use unsigned to_bytes
-        let bytes = obj.call_method1("to_bytes", (32, "big", false))?;
-        let bytes: &[u8] = bytes.extract()?;
-        let u256 = U256::from_be_bytes(
-            <[u8; 32]>::try_from(bytes).map_err(|_| {
-                PyValueError::new_err("Integer value out of range for uint256")
-            })?,
-        );
-        return Ok(AbiValue::Uint(u256));
-    }
-
-    // Try string (for addresses)
-    if let Ok(s) = obj.cast::<PyString>() {
-        let s = s.to_string();
-        // Check if it's an address
-        if s.starts_with("0x") && s.len() == 42 {
-            let addr = alloy::primitives::Address::from_str(&s)
-                .map_err(|e| PyValueError::new_err(format!("Invalid address '{s}': {e}")))?;
-            return Ok(AbiValue::Address(addr.into()));
-        }
-        return Ok(AbiValue::String(s));
-    }
-
-    // Try bytes
-    if let Ok(b) = obj.cast::<PyBytes>() {
-        return Ok(AbiValue::Bytes(b.as_bytes().to_vec()));
-    }
-
-    // Try list (for arrays)
-    if let Ok(list) = obj.cast::<PyList>() {
-        let values: Result<Vec<_>, _> =
-            list.iter().map(|item| convert_item(&item, py)).collect();
-        return Ok(AbiValue::Array(values?));
-    }
-
-    Err(PyValueError::new_err(format!(
-        "Cannot convert Python object to ABI value: {}",
-        obj.repr()?
-    )))
+    // Build CachedAbiTypes from pre-parsed AbiType values (uses cache internally)
+    let cached = crate::abi_types::CachedAbiTypes::from_abi_types(types)?;
+    cached.encode(values)
 }
 
 // =============================================================================
@@ -307,7 +161,7 @@ pub fn encode_single<'py>(
     abi_type: &str,
     value: &Bound<'_, PyAny>,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    let abi_value = abi_value_from_python(py, value)?;
+    let abi_value = crate::alloy_py::abi_value_from_python(py, value)?;
     let encoded = encode_single_rust(abi_type, &abi_value)
         .map_err(|e| PyValueError::new_err(format!("{e}")))?;
     Ok(PyBytes::new(py, &encoded))
@@ -340,7 +194,7 @@ pub fn encode<'py>(
 
     let abi_values: Result<Vec<AbiValue>, _> = values
         .iter()
-        .map(|v| abi_value_from_python(py, &v))
+        .map(|v| crate::alloy_py::abi_value_from_python(py, &v))
         .collect();
 
     // Extract type strings from Python list
@@ -526,14 +380,11 @@ mod tests {
         let value = AbiValue::Uint(original);
         let encoded = encode_single_rust("uint256", &value).unwrap();
 
-        // Decode using alloy
-        let ty = DynSolType::parse("uint256").unwrap();
-        let decoded = ty.abi_decode(&encoded).unwrap();
-
-        if let alloy::dyn_abi::DynSolValue::Uint(u, _) = decoded {
-            assert_eq!(u, original);
-        } else {
-            panic!("Expected Uint");
+        // Decode using the decoder module
+        let decoded = crate::abi_decoder::decode_single_rust("uint256", &encoded).unwrap();
+        match decoded {
+            AbiValue::Uint(n) => assert_eq!(n, original),
+            _ => panic!("Expected Uint"),
         }
     }
 
@@ -616,6 +467,48 @@ mod tests {
             _ => panic!("Expected Int"),
         }
     }
+
+    // =========================================================================
+    // Shared cache tests
+    // =========================================================================
+
+    #[test]
+    fn test_encoder_uses_shared_cache() {
+        use crate::abi_types::cached::TYPE_CACHE;
+
+        TYPE_CACHE.lock().clear();
+
+        // Encode should populate the shared cache
+        let value = AbiValue::Uint(U256::from(42u64));
+        let _encoded = encode_single_rust("uint256", &value).unwrap();
+        assert_eq!(TYPE_CACHE.lock().len(), 1);
+
+        // Same type should use cache (no new entry)
+        let value2 = AbiValue::Uint(U256::from(99u64));
+        let _encoded2 = encode_single_rust("uint256", &value2).unwrap();
+        assert_eq!(TYPE_CACHE.lock().len(), 1);
+
+        // Different type adds new entry
+        let value3 = AbiValue::Bool(true);
+        let _encoded3 = encode_single_rust("bool", &value3).unwrap();
+        assert_eq!(TYPE_CACHE.lock().len(), 2);
+    }
+
+    #[test]
+    fn test_encode_rust_delegates_to_shared_cache() {
+        use crate::abi_types::cached::TYPE_CACHE;
+
+        TYPE_CACHE.lock().clear();
+
+        let values = vec![AbiValue::Uint(U256::from(42u64)), AbiValue::Bool(true)];
+        let _encoded = encode_rust(&["uint256", "bool"], &values).unwrap();
+        assert_eq!(TYPE_CACHE.lock().len(), 1);
+
+        // Second call with same types uses cache
+        let values2 = vec![AbiValue::Uint(U256::from(1u64)), AbiValue::Bool(false)];
+        let _encoded2 = encode_rust(&["uint256", "bool"], &values2).unwrap();
+        assert_eq!(TYPE_CACHE.lock().len(), 1);
+    }
 }
 
 // =============================================================================
@@ -628,7 +521,7 @@ mod proptests {
 
     use super::*;
     use crate::abi_decoder::decode_single_rust;
-    use alloy::primitives::Address;
+    use alloy::primitives::{Address, I256, U256};
     use proptest::prelude::*;
 
     proptest! {

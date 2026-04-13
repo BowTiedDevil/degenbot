@@ -1,8 +1,15 @@
 //! `PyO3` bindings for the provider module.
+//!
+//! Error mapping convention:
+//! - `ProviderError` → Python exception via `From<ProviderError> for PyErr` (preserves
+//!   specific types like `TimeoutError`, `ConnectionError`, `RuntimeError`)
+//! - Input validation errors (invalid address, invalid position) → `PyValueError`
+//! - Serialization/conversion errors during Python object creation → `PyValueError`
 
 use crate::provider::{AlloyProvider, LogFetcher, LogFilter};
 use crate::runtime::get_runtime;
-use crate::utils::{block_to_py_dict, create_hexbytes, json_to_py_with_hexbytes, log_to_py_dict};
+use crate::utils::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
+use crate::py_cache::create_hexbytes;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
@@ -26,13 +33,10 @@ impl PyLogFilter {
         addresses: Option<Vec<String>>,
         topics: Option<Vec<Vec<String>>>,
     ) -> PyResult<Self> {
-        if from_block > to_block {
-            return Err(PyValueError::new_err("from_block must be <= to_block"));
-        }
-
+        // Delegate all validation to LogFilter::new, convert error to PyErr
         Ok(Self {
             inner: LogFilter::new(from_block, to_block, addresses, topics)
-                .map_err(|e| PyValueError::new_err(format!("Failed to create LogFilter: {e}")))?,
+                .map_err(Into::<PyErr>::into)?,
         })
     }
 
@@ -62,7 +66,7 @@ impl PyLogFilter {
 #[pyclass(name = "AlloyProvider")]
 pub struct PyAlloyProvider {
     pub provider: Arc<AlloyProvider>,
-    max_blocks_per_request: u64,
+    pub max_blocks_per_request: u64,
 }
 
 #[pymethods]
@@ -89,7 +93,7 @@ impl PyAlloyProvider {
             .detach(|| {
                 get_runtime().block_on(async { AlloyProvider::new(&rpc_url, max_retries).await })
             })
-            .map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
+            .map_err(Into::<PyErr>::into)?;
 
         Ok(Self {
             provider: Arc::new(provider),
@@ -122,7 +126,7 @@ impl PyAlloyProvider {
                         .await
                 })
             })
-            .map_err(|e| PyValueError::new_err(format!("Failed to fetch logs: {e}")))?;
+            .map_err(Into::<PyErr>::into)?;
 
         // Convert logs to Python list of dicts with HexBytes for appropriate fields
         let py_logs = PyList::empty(py);
@@ -143,11 +147,9 @@ impl PyAlloyProvider {
         data: &Bound<'_, PyBytes>,
         block_number: Option<u64>,
     ) -> PyResult<Py<PyAny>> {
-        use alloy::primitives::Address;
-        use std::str::FromStr;
 
-        // Parse the address
-        let to_address = Address::from_str(to)
+        // Parse the address (input validation → ValueError)
+        let to_address = crate::address_utils::parse_address(to)
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
 
         // Get the data bytes (copy before releasing GIL)
@@ -163,7 +165,7 @@ impl PyAlloyProvider {
                         .await
                 })
             })
-            .map_err(|e| PyValueError::new_err(format!("eth_call failed: {e}")))?;
+            .map_err(Into::<PyErr>::into)?;
 
         // Create HexBytes from result
         let result_hb = create_hexbytes(py, &result)?;
@@ -179,11 +181,9 @@ impl PyAlloyProvider {
         address: &str,
         block_number: Option<u64>,
     ) -> PyResult<Py<PyAny>> {
-        use alloy::primitives::Address;
-        use std::str::FromStr;
 
-        // Parse the address
-        let addr = Address::from_str(address)
+        // Parse the address (input validation → ValueError)
+        let addr = crate::address_utils::parse_address(address)
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
 
         let provider = Arc::clone(&self.provider);
@@ -193,7 +193,7 @@ impl PyAlloyProvider {
             .detach(|| {
                 get_runtime().block_on(async { provider.get_code(&addr, block_number).await })
             })
-            .map_err(|e| PyValueError::new_err(format!("Failed to get code: {e}")))?;
+            .map_err(Into::<PyErr>::into)?;
 
         // Create HexBytes from result
         let result_hb = create_hexbytes(py, &result)?;
@@ -208,7 +208,7 @@ impl PyAlloyProvider {
         // Release GIL during RPC call
         let block_number = py
             .detach(|| get_runtime().block_on(async { provider.get_block_number().await }))
-            .map_err(|e| PyValueError::new_err(format!("Failed to get block number: {e}")))?;
+            .map_err(Into::<PyErr>::into)?;
 
         Ok(block_number)
     }
@@ -220,7 +220,7 @@ impl PyAlloyProvider {
         // Release GIL during RPC call
         let chain_id = py
             .detach(|| get_runtime().block_on(async { provider.get_chain_id().await }))
-            .map_err(|e| PyValueError::new_err(format!("Failed to get chain ID: {e}")))?;
+            .map_err(Into::<PyErr>::into)?;
 
         Ok(chain_id)
     }
@@ -239,7 +239,7 @@ impl PyAlloyProvider {
         // Release GIL during RPC call
         let block = py
             .detach(|| get_runtime().block_on(async { provider.get_block(block_number).await }))
-            .map_err(|e| PyValueError::new_err(format!("Failed to get block: {e}")))?;
+            .map_err(Into::<PyErr>::into)?;
 
         match block {
             Some(block) => {
@@ -269,7 +269,7 @@ impl PyAlloyProvider {
         // Release GIL during RPC call
         let gas_price = py
             .detach(|| get_runtime().block_on(async { provider.get_gas_price().await }))
-            .map_err(|e| PyValueError::new_err(format!("Failed to get gas price: {e}")))?;
+            .map_err(Into::<PyErr>::into)?;
 
         Ok(gas_price.to_string())
     }
@@ -285,15 +285,13 @@ impl PyAlloyProvider {
         value: Option<u128>,
         block_number: Option<u64>,
     ) -> PyResult<u64> {
-        use alloy::primitives::Address;
-        use std::str::FromStr;
 
-        // Parse addresses
-        let to_address = Address::from_str(to)
+        // Parse addresses (input validation → ValueError)
+        let to_address = crate::address_utils::parse_address(to)
             .map_err(|e| PyValueError::new_err(format!("Invalid 'to' address: {e}")))?;
 
         let from_address = from
-            .map(Address::from_str)
+            .map(crate::address_utils::parse_address)
             .transpose()
             .map_err(|e| PyValueError::new_err(format!("Invalid 'from' address: {e}")))?;
 
@@ -316,7 +314,7 @@ impl PyAlloyProvider {
                         .await
                 })
             })
-            .map_err(|e| PyValueError::new_err(format!("Failed to estimate gas: {e}")))?;
+            .map_err(Into::<PyErr>::into)?;
 
         Ok(gas)
     }
@@ -333,7 +331,7 @@ impl PyAlloyProvider {
         // Release GIL during RPC call
         let tx = py
             .detach(|| get_runtime().block_on(async { provider.get_transaction(&tx_hash).await }))
-            .map_err(|e| PyValueError::new_err(format!("Failed to get transaction: {e}")))?;
+            .map_err(Into::<PyErr>::into)?;
 
         match tx {
             Some(tx_json) => {
@@ -361,9 +359,7 @@ impl PyAlloyProvider {
             .detach(|| {
                 get_runtime().block_on(async { provider.get_transaction_receipt(&tx_hash).await })
             })
-            .map_err(|e| {
-                PyValueError::new_err(format!("Failed to get transaction receipt: {e}"))
-            })?;
+            .map_err(Into::<PyErr>::into)?;
 
         match receipt {
             Some(receipt_json) => {
@@ -386,39 +382,12 @@ impl PyAlloyProvider {
         position: &Bound<'_, PyAny>,
         block_number: Option<u64>,
     ) -> PyResult<Py<PyAny>> {
-        use alloy::primitives::{Address, U256};
-        use std::str::FromStr;
-
-        // Parse the address
-        let addr = Address::from_str(address)
+        // Parse the address (input validation → ValueError)
+        let addr = crate::address_utils::parse_address(address)
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
 
         // Extract position as U256 (supports large integers like mapping slots)
-        let pos = if let Ok(int_val) = position.extract::<i128>() {
-            if int_val < 0 {
-                return Err(PyValueError::new_err("Position cannot be negative"));
-            }
-            U256::from(int_val.cast_unsigned())
-        } else {
-            // For larger integers, convert via bytes
-            let int_type = position.py().import("builtins")?.getattr("int")?;
-            if position.is_instance(&int_type)? {
-                let kwargs = pyo3::types::PyDict::new(position.py());
-        kwargs.set_item("signed", false)?;
-        let bytes = position.call_method("to_bytes", (32, "big"), Some(&kwargs))?;
-                let bytes: &[u8] = bytes.extract()?;
-                U256::try_from_be_slice(bytes).ok_or_else(|| {
-                    PyValueError::new_err("Position value is too large (exceeds 256 bits)")
-                })?
-            } else if let Ok(bytes) = position.extract::<&[u8]>() {
-                U256::try_from_be_slice(bytes)
-                    .ok_or_else(|| PyValueError::new_err("Failed to parse position from bytes"))?
-            } else {
-                return Err(PyValueError::new_err(
-                    "Position must be an integer or bytes",
-                ));
-            }
-        };
+        let pos = crate::alloy_py::extract_python_u256(position)?;
 
         let provider = Arc::clone(&self.provider);
 
@@ -428,7 +397,7 @@ impl PyAlloyProvider {
                 get_runtime()
                     .block_on(async { provider.get_storage_at(&addr, pos, block_number).await })
             })
-            .map_err(|e| PyValueError::new_err(format!("Failed to get storage: {e}")))?;
+            .map_err(Into::<PyErr>::into)?;
 
         // Create HexBytes from result (32-byte storage slot)
         let result_hb = create_hexbytes(py, result.as_slice())?;

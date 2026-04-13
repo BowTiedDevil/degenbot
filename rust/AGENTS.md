@@ -31,10 +31,10 @@ pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8]) -> PyResult<Py<Py
 |------|---------|
 | `lib.rs` | Python module entry point, re-exports, `pyo3_log::init()` |
 | `errors.rs` | Centralized error types with `thiserror` + `From<->PyErr` conversions |
-| `abi_types.rs` | Unified ABI type/value representation (`AbiType`, `AbiValue`, `CachedAbiTypes`). Shared canonical type system used by decoder, encoder, and contract modules |
+| `abi_types/` | Unified ABI type/value representation. Directory module with three submodules: `type_` (`AbiType`, `AbiTypeError`, type parsing), `value` (`AbiValue`, integer parsing, string-to-value conversion), `cached` (`CachedAbiTypes`, `value_to_alloy_for_type`, shared `TYPE_CACHE`). Shared canonical type system used by decoder, encoder, and contract modules |
 | `abi_decoder.rs` | ABI decoding with pure Rust core + LRU type cache |
 | `abi_encoder.rs` | ABI encoding with pure Rust core + LRU type cache |
-| `alloy_py.rs` | Newtype wrappers (`PyU256`, `PyI256`) for zero-copy U256/I256 → Python int conversion via `int.from_bytes` |
+| `alloy_py.rs` | Newtype wrappers (`PyU256`, `PyI256`) for zero-copy U256/I256 → Python int conversion via `int.from_bytes`; `extract_python_u256` for Python int/bytes → U256 extraction; `abi_value_from_python` for converting arbitrary Python objects into `AbiValue` enums for ABI encoding |
 | `py_cache.rs` | Cached Python function/class references (`int.from_bytes`, `HexBytes`) via `PyOnceLock` |
 | `tick_math.rs` | Uniswap V3 tick math calculations |
 | `address_utils.rs` | EIP-55 checksummed addresses |
@@ -188,7 +188,7 @@ The codebase uses three caching patterns. Use this decision framework for new ca
 
 | Pattern | When to use | Example |
 |---------|-------------|---------|
-| `LazyLock<parking_lot::Mutex<LruCache<K, V>>>` | Bounded cache of Rust data, accessed from multiple threads without GIL | `abi_decoder::TYPE_CACHE`, `abi_encoder::TYPE_CACHE` |
+| `LazyLock<parking_lot::Mutex<LruCache<K, V>>>` | Bounded cache of Rust data, accessed from multiple threads without GIL | `abi_types::cached::TYPE_CACHE` (shared by decoder and encoder) |
 | `PyOnceLock<Py<PyAny>>` | Python object references (require GIL to create, then cached) | `py_cache::INT_FROM_BYTES`, `py_cache::HEXBYTES_CLASS` |
 | `OnceLock<T>` | One-time initialization, never evicted, never resized | `runtime::RUNTIME` |
 | `LazyLock<HashSet<&'static str>>` | Immutable constant sets built once | `utils::HEXBYTES_FIELDS`, `utils::ADDRESS_FIELDS` |
@@ -227,7 +227,7 @@ The rule is simple: **release the GIL for any I/O-bound work or long CPU work; h
 Use `PyU256`/`PyI256` from `alloy_py.rs` or the convenience functions `u256_to_py()` / `i256_to_py()`. These use `int.from_bytes` via `py_cache` for zero-copy conversion without `num-bigint` intermediate allocations.
 
 #### Python int → U256/I256
-Use `abi_value_from_python()` in `abi_encoder.rs` which handles:
+Use `abi_value_from_python()` in `alloy_py.rs` which handles:
 - Small integers via `i128` extraction
 - Large integers via Python's `to_bytes()` method
 - Bool before int (since `bool` subclasses `int` in Python)

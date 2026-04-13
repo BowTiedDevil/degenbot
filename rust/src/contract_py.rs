@@ -4,7 +4,6 @@ use crate::contract::{encode_arguments, Contract, FunctionSignature};
 use crate::provider::AlloyProvider;
 use crate::runtime::get_runtime;
 use alloy::hex;
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
 use std::sync::Arc;
@@ -31,11 +30,11 @@ impl PyContract {
 
         // Release GIL during provider creation
         let provider = py
-            .detach(|| get_runtime().block_on(async { AlloyProvider::new(&url, 10).await }))
-            .map_err(|e| PyValueError::new_err(format!("Failed to create provider: {e}")))?;
+            .detach(|| get_runtime().block_on(async { AlloyProvider::new(&url, crate::provider::DEFAULT_MAX_RETRIES).await }))
+            .map_err(Into::<PyErr>::into)?;
 
         let contract = Contract::new(&address, Arc::new(provider))
-            .map_err(|e| PyValueError::new_err(format!("{e}")))?;
+            .map_err(Into::<PyErr>::into)?;
 
         Ok(Self { contract })
     }
@@ -74,7 +73,7 @@ impl PyContract {
                         .await
                 })
             })
-            .map_err(|e| PyValueError::new_err(format!("Contract call failed: {e}")))?;
+            .map_err(Into::<PyErr>::into)?;
 
         // Convert results to Python list
         let py_list = PyList::empty(py);
@@ -106,20 +105,23 @@ fn encode_function_call<'py>(
     function_signature: &str,
     args: &Bound<'_, PyList>,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    let func = FunctionSignature::parse(function_signature)?;
-
-    // Extract args from Python list
+    // Extract args from Python list (copy before releasing GIL)
     let args: Vec<String> = args
         .iter()
         .map(|a| a.extract::<String>())
         .collect::<Result<_, _>>()?;
+    let function_signature = function_signature.to_string();
 
-    let encoded_args = encode_arguments(&func.inputs, &args)?;
+    // Release GIL during pure Rust encoding work
+    let calldata = py.detach(|| -> Result<Vec<u8>, crate::errors::ContractError> {
+        let func = FunctionSignature::parse(&function_signature)?;
+        let encoded_args = encode_arguments(&func.inputs, &args)?;
 
-    // Build calldata: selector + encoded_args
-    let mut calldata = Vec::with_capacity(4 + encoded_args.len());
-    calldata.extend_from_slice(&func.selector);
-    calldata.extend_from_slice(&encoded_args);
+        let mut calldata = Vec::with_capacity(4 + encoded_args.len());
+        calldata.extend_from_slice(&func.selector);
+        calldata.extend_from_slice(&encoded_args);
+        Ok(calldata)
+    })?;
 
     Ok(PyBytes::new(py, &calldata))
 }
@@ -133,11 +135,15 @@ fn encode_function_call<'py>(
 /// Returns:
 ///     List of decoded values as strings
 #[pyfunction]
-fn decode_return_data(data: &[u8], output_types: &Bound<'_, PyList>) -> PyResult<Vec<String>> {
+fn decode_return_data(
+    py: Python<'_>,
+    data: &[u8],
+    output_types: &Bound<'_, PyList>,
+) -> PyResult<Vec<String>> {
     use crate::abi_types::AbiType;
     use crate::contract::decode_return_data as decode_impl;
 
-    // Extract types from Python list
+    // Extract types from Python list (copy before releasing GIL)
     let output_types: Vec<String> = output_types
         .iter()
         .map(|t| t.extract::<String>())
@@ -145,10 +151,16 @@ fn decode_return_data(data: &[u8], output_types: &Bound<'_, PyList>) -> PyResult
 
     let types: Vec<AbiType> = output_types
         .iter()
-        .map(|t| AbiType::parse(t).map_err(|e| PyValueError::new_err(format!("{e}"))))
-        .collect::<PyResult<Vec<_>>>()?;
+        .map(|t| AbiType::parse(t).map_err(|e| crate::errors::ContractError::InvalidAbi { message: format!("{e}") }))
+        .collect::<Result<Vec<_>, _>>()?;
 
-    decode_impl(data, &types).map_err(Into::into)
+    // Copy data before releasing GIL
+    let data = data.to_vec();
+
+    // Release GIL during pure Rust decoding work
+    let result = py.detach(|| decode_impl(&data, &types))?;
+
+    Ok(result)
 }
 
 /// Parse a function signature and return its selector.

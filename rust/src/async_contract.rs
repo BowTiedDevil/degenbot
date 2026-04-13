@@ -24,17 +24,23 @@ impl PyAsyncContract {
     ///     address: Contract address (hex string)
     ///     `provider_url`: RPC provider URL (HTTP/HTTPS or IPC path)
     #[staticmethod]
-    #[pyo3(signature = (address, provider_url))]
-    fn create(py: Python<'_>, address: String, provider_url: String) -> PyResult<Bound<'_, PyAny>> {
+    #[pyo3(signature = (address, provider_url, max_retries=None))]
+    fn create(
+        py: Python<'_>,
+        address: String,
+        provider_url: String,
+        max_retries: Option<u32>,
+    ) -> PyResult<Bound<'_, PyAny>> {
+        let retries = max_retries.unwrap_or(crate::provider::DEFAULT_MAX_RETRIES);
         future_into_py(py, async move {
-            let provider = AlloyProvider::new(&provider_url, 10)
+            let provider = AlloyProvider::new(&provider_url, retries)
                 .await
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
+                .map_err(Into::<PyErr>::into)?;
 
             let provider = Arc::new(provider);
 
             let contract = Contract::new(&address, provider)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
+                .map_err(Into::<PyErr>::into)?;
 
             Ok(Self {
                 contract: Arc::new(contract),
@@ -65,9 +71,7 @@ impl PyAsyncContract {
             contract
                 .call(&function_signature, &args, block_number)
                 .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Contract call failed: {e}"))
-                })
+                .map_err(Into::<PyErr>::into)
         })
     }
 
@@ -97,11 +101,7 @@ impl PyAsyncContract {
                         contract
                             .call(&func_sig, &args, block_number)
                             .await
-                            .map_err(|e| {
-                                pyo3::exceptions::PyValueError::new_err(format!(
-                                    "Contract call failed: {e}"
-                                ))
-                            })
+                            .map_err(Into::<PyErr>::into)
                     }
                 })
                 .collect();
