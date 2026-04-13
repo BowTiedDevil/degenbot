@@ -11,6 +11,10 @@ default:
 test-rust:
     cargo test --features auto-initialize --manifest-path rust/Cargo.toml -- --test-threads=1
 
+# Run wrapped Rust Python tests
+test-rust-python:
+    uv run pytest tests/rust -x -q --no-header
+
 # Run Rust linter (clippy)
 lint-rust:
     cargo clippy --all-targets --all-features --manifest-path rust/Cargo.toml -- -D warnings
