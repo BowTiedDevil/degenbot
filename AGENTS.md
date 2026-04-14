@@ -52,7 +52,7 @@ class SomeClass:
 - Catch specific exceptions (`except TimeoutError:`), avoid broad catches
 
 ### Logging
-- Use `degenbot.logger`
+- Use `from degenbot.logging import logger`
 
 ### Testing
 - Add docstring to complex tests describing "what" and "why"

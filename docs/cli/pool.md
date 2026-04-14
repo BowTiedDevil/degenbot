@@ -264,10 +264,10 @@ The command uses Web3 connections from degenbot config file. Each active chain m
 
 ### Required Config
 
-```yaml
-rpc:
-  1: https://mainnet.example.com  # Ethereum mainnet
-  8453: https://base.example.com    # Base mainnet
+```toml
+[rpc]
+1 = "https://mainnet.example.com"  # Ethereum mainnet
+8453 = "https://base.example.com"    # Base mainnet
 ```
 
 ## Dependencies

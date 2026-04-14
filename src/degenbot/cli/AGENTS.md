@@ -99,16 +99,22 @@ The enrichment layer handles both systems independently:
 }
 ```
 
-**TokenMath mapping (by token revision):**
+**TokenMath mapping (by pool version):**
 ```python
 # TokenMathFactory._TOKEN_MATH
 {
-    1: HalfUpRoundingMath,
+    1: HalfUpRoundingMath,   # Pool revs 1-3
     2: HalfUpRoundingMath,
     3: HalfUpRoundingMath,
-    4: ExplicitRoundingMath,
+    4: ExplicitRoundingMath, # Pool revs 4-10
     5: ExplicitRoundingMath,
+    6: ExplicitRoundingMath,
+    7: ExplicitRoundingMath,
+    8: ExplicitRoundingMath,
+    9: ExplicitRoundingMath,
+    10: ExplicitRoundingMath,
 }
+# Use get_token_math_for_token_revision(revision) to map token revision → pool version
 ```
 
 **Key Point:** Token revision determines both the processor and rounding math. Pool and token revisions typically move together but are technically independent. Use `TokenProcessorFactory` to get the correct processor and `TokenMathFactory` for math operations.
@@ -246,14 +252,35 @@ user_index = result.new_index
 - `aave_event_filtering.py` - Event filtering and transaction context building
 - `aave_types.py` - Type definitions for CLI operations
 - `aave_utils.py` - Utility functions for CLI operations
+- `database.py` - CLI database operations
+- `exchange.py` - Exchange-related CLI commands
+- `pool.py` - Pool-related CLI commands
+- `utils.py` - General CLI utilities
+- `aave/` - Aave-specific CLI subpackage
+  - `commands.py` - Aave CLI command definitions
+  - `constants.py` - Aave-specific constants
+  - `db_assets.py`, `db_market.py`, `db_positions.py`, `db_users.py`, `db_verification.py` - Database models/queries
+  - `event_fetchers.py`, `event_handlers.py` - Event fetching and handling
+  - `extraction.py` - Aave amount extraction
+  - `liquidation_processor.py` - Liquidation-specific processing
+  - `token_processor.py` - Token-level processing
+  - `transaction_processor.py` - Transaction-level processing
+  - `transfers.py` - Transfer event handling
+  - `verification.py` - Balance verification
+  - `stkaave.py` - stkAAVE processing
+  - `types.py`, `utils.py`, `erc20_utils.py` - Supporting types and utilities
 
 **Aave Module** (`src/degenbot/aave/`):
 - `enrichment.py` - Amount calculation and validation
 - `extraction.py` - Raw amount extraction from pool events
 - `calculator.py` - ScaledAmountCalculator using TokenMath
 - `models.py` - Enriched event type definitions
-- `events.py` - Event type enums and constants
+- `events.py` - Event type enums and constants (ScaledTokenEventType, AaveV3PoolEvent, ERC20Event)
 - `operation_types.py` - Operation type enum definitions
+- `deployments.py` - Aave deployment configuration
+- `liquidation_patterns.py` - Liquidation event pattern recognition
+- `pattern_types.py` - Pattern type definitions
+- `position_analysis.py` - Position analysis logic
 
 **Math Libraries** (`src/degenbot/aave/libraries/`):
 - `token_math.py` - TokenMath classes and TokenMathFactory
@@ -271,6 +298,11 @@ user_index = result.new_index
 
 **Contract References**:
 - `contract_reference/aave/` - Contract source code for different revisions
+  - `Pool/` - Pool contract revisions 1-10
+  - `AToken/` - AToken contract revisions 1-5
+  - `VariableDebtToken/` - VariableDebtToken revisions 1, 3-5
+  - `GhoVariableDebtToken/` - GHO VariableDebtToken revisions 1-6
+  - `AaveOracle/`, `GhoDiscountRateStrategy/`, `RewardsController/`, `stkAAVE/` - Supporting contracts
 
 ---
 
@@ -432,18 +464,35 @@ class GhoScaledTokenMintResult:
 
 **Event Type Mapping:**
 ```python
-# In aave_transaction_operations.py
-class ScaledTokenEventType(StrEnum):
+# In aave/events.py (ScaledTokenEventType enum)
+class ScaledTokenEventType(Enum):
+    # Balance modifying event types
+    COLLATERAL_BURN = auto()
+    COLLATERAL_MINT = auto()
     COLLATERAL_TRANSFER = auto()  # AToken BalanceTransfer (has index)
-    ERC20_COLLATERAL_TRANSFER = auto()  # Standard ERC20 Transfer (no index)
+    DEBT_BURN = auto()
+    DEBT_MINT = auto()
     DEBT_TRANSFER = auto()  # vToken BalanceTransfer (has index)
+    DISCOUNT_TRANSFER = auto()
+    GHO_DEBT_BURN = auto()
+    GHO_DEBT_MINT = auto()
+    GHO_DEBT_TRANSFER = auto()
+    # ERC20 transfer events
+    ERC20_COLLATERAL_TRANSFER = auto()  # Standard ERC20 Transfer (no index)
     ERC20_DEBT_TRANSFER = auto()  # Standard ERC20 Transfer (no index)
+    # Interest accrual event types (derived during enrichment)
+    COLLATERAL_INTEREST_BURN = auto()
+    COLLATERAL_INTEREST_MINT = auto()
+    DEBT_INTEREST_BURN = auto()
+    DEBT_INTEREST_MINT = auto()
+    GHO_DEBT_INTEREST_BURN = auto()
+    GHO_DEBT_INTEREST_MINT = auto()
 ```
 
 **Enrichment Handling:**
 ```python
 # In enrichment.py - ERC20 transfers don't need index-based calculation
-if scaled_event.event_type.value == "erc20_collateral_transfer":
+elif scaled_event.event_type == ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER:
     raw_amount = scaled_event.amount
     scaled_amount = scaled_event.amount  # 1:1 mapping
 else:
@@ -452,8 +501,8 @@ else:
 ```
 
 **Key Differences:**
-- **BalanceTransfer**: Has index, amount is in scaled units, emitted by AToken contract
-- **ERC20 Transfer**: No index, amount is in underlying units, emitted by ERC20 standard
+- **BalanceTransfer**: Has index, emitted by AToken/vToken contract (internal transfer)
+- **ERC20 Transfer**: No index, standard ERC20 Transfer event (e.g., liquidator receiving collateral)
 
 **When to use each:**
 - Use BalanceTransfer for actual balance movements with interest accrual
@@ -609,5 +658,5 @@ This total matches the Withdraw event's amount exactly. A single-character error
 
 ---
 
-*Last updated: 2026-04-09*
+*Last updated: 2026-04-13*
 *Contributors: Issue #0004, #0007, #0029 investigation teams*

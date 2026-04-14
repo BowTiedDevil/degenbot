@@ -5,16 +5,27 @@ tags:
   - state-management
   - liquidity
 related_files:
-  - ../../src/degenbot/cli/aave.py
+  - ../../src/degenbot/cli/aave/__init__.py
+  - ../../src/degenbot/cli/aave/commands.py
+  - ../../src/degenbot/cli/aave/event_handlers.py
+  - ../../src/degenbot/cli/aave/event_fetchers.py
+  - ../../src/degenbot/cli/aave/token_processor.py
+  - ../../src/degenbot/cli/aave/transaction_processor.py
+  - ../../src/degenbot/cli/aave/transfers.py
+  - ../../src/degenbot/cli/aave/verification.py
+  - ../../src/degenbot/cli/aave/db_assets.py
+  - ../../src/degenbot/cli/aave/db_users.py
+  - ../../src/degenbot/cli/aave/db_positions.py
+  - ../../src/degenbot/cli/aave/db_verification.py
+  - ../../src/degenbot/cli/aave/db_market.py
+  - ../../src/degenbot/cli/aave/constants.py
+  - ../../src/degenbot/cli/aave/types.py
+  - ../../src/degenbot/cli/aave/utils.py
+  - ../../src/degenbot/cli/aave/erc20_utils.py
+  - ../../src/degenbot/cli/aave/liquidation_processor.py
+  - ../../src/degenbot/cli/aave/stkaave.py
   - ../../src/degenbot/database/models/aave.py
-  - ../../src/degenbot/aave/libraries/v3_1/wad_ray_math.py
-  - ../../src/degenbot/aave/libraries/v3_2/wad_ray_math.py
-  - ../../src/degenbot/aave/libraries/v3_3/wad_ray_math.py
-  - ../../src/degenbot/aave/libraries/v3_4/wad_ray_math.py
-  - ../../src/degenbot/aave/libraries/v3_5/wad_ray_math.py
-  - ../../src/degenbot/aave/libraries/v3_5/types.py
-  - ../../src/degenbot/aave/libraries/v3_5/rounding.py
-  - ../../src/degenbot/aave/processors/debt/gho/v4.py
+  - ../../src/degenbot/aave/libraries/wad_ray_math.py
 complexity: complex
 ---
 
@@ -104,7 +115,7 @@ The `aave_update` command is designed to rebuild a complete database of collater
 
 ## Commands
 
-All CLI commands are implemented in [`src/degenbot/cli/aave.py`](../../src/degenbot/cli/aave.py).
+All CLI commands are implemented in [`src/degenbot/cli/aave/commands.py`](../../src/degenbot/cli/aave/commands.py).
 
 ### `degenbot aave update`
 
@@ -150,6 +161,34 @@ degenbot aave update --chunk 5000
 
 # Update to a specific block for historical analysis
 degenbot aave update --to-block "18900000"
+```
+
+### `degenbot aave position show`
+
+Show a user's position in a specific Aave market.
+
+```bash
+degenbot aave position show <ADDRESS> [--market MARKET] [--chain-id CHAIN_ID]
+```
+
+Displays collateral and debt positions for the given address.
+
+### `degenbot aave position risk`
+
+Show risk parameters for a user's position.
+
+```bash
+degenbot aave position risk <ADDRESS> [--market MARKET] [--chain-id CHAIN_ID]
+```
+
+Displays health factor, liquidation threshold, and LTV information.
+
+### `degenbot aave market show`
+
+Show market state and configuration.
+
+```bash
+degenbot aave market show [--chain-id CHAIN_ID] [--name NAME]
 ```
 
 ### `degenbot aave activate`
@@ -344,41 +383,35 @@ This ensures chronological processing within each block.
 
 ## Token Revision Libraries
 
-The code supports multiple Aave V3 token revisions through the `SCALED_TOKEN_REVISION_LIBRARIES` dictionary. Each revision provides specific math libraries for calculating scaled balances:
+The code supports multiple Aave V3 token revisions. The `WadRayMathLibrary` protocol (in [`src/degenbot/cli/aave/constants.py`](../../src/degenbot/cli/aave/constants.py)) defines the interface for math operations, and `wad_ray_math.py` (in [`src/degenbot/aave/libraries/`](../../src/degenbot/aave/libraries/)) provides a unified implementation with `Rounding` enum support:
 
-| Revision | Library Path | WadRayMath Features |
-|----------|--------------|---------------------|
-| 1 | `v3_1/wad_ray_math.py` | Standard half-up rounding |
-| 2 | `v3_2/wad_ray_math.py` | Standard half-up rounding |
-| 3 | `v3_3/wad_ray_math.py` | Standard half-up rounding |
-| 4 | `v3_4/wad_ray_math.py` | Explicit floor/ceil functions added |
-| 5 | `v3_5/wad_ray_math.py` | Rounding enum support |
+| Rounding Mode | Usage |
+|--------------|-------|
+| Default (no arg) | Half-up rounding (revisions 1-3) |
+| `Rounding.FLOOR` | Round down (aToken mint rev 4+, vToken burn rev 4+) |
+| `Rounding.CEIL` | Round up (aToken burn rev 4+, vToken mint rev 4+) |
 
 ### Rounding Functions by Revision
 
-**Revisions 1-3**: Only `ray_div()` with half-up rounding
+**All revisions**: Use `ray_div(a, b, rounding=...)` with the `Rounding` enum from [`src/degenbot/aave/libraries/wad_ray_math.py`](../../src/degenbot/aave/libraries/wad_ray_math.py).
 
-**Revisions 4+**: Added explicit rounding functions:
-- `ray_div_floor(a, b)` - Round down
-- `ray_div_ceil(a, b)` - Round up
-
-**V5 only**: Supports rounding enum via `ray_div(a, b, rounding=...)`
+- `Rounding.FLOOR` - Round down
+- `Rounding.CEIL` - Round up
+- Default (no rounding arg) - half-up rounding
 
 ### Rounding by Token Type and Operation
 
 | Token Type | Revision | Mint (Supply/Borrow) | Burn (Withdraw/Repay) |
 |------------|----------|---------------------|---------------------|
 | aToken | 1-3 | `ray_div` (half-up) | `ray_div` (half-up) |
-| aToken | 4+ | `ray_div_floor` | `ray_div_ceil` |
+| aToken | 4+ | `ray_div` (FLOOR) | `ray_div` (CEIL) |
 | vToken | 1-3 | `ray_div` (half-up) | `ray_div` (half-up) |
-| vToken | 4+ | `ray_div_ceil` | `ray_div_floor` |
-| GHO vToken | 4+ | `ray_div_floor` ⚠️ | `ray_div_floor` |
+| vToken | 4+ | `ray_div` (CEIL) | `ray_div` (FLOOR) |
+| GHO vToken | 4+ | `ray_div` (FLOOR) ⚠️ | `ray_div` (FLOOR) |
 
 ⚠️ **Important**: GHO V4+ uses `ray_div_floor` for BORROW (mint), unlike standard vTokens V4+ which use `ray_div_ceil`.
 
-Revision-specific functions:
-- `_get_math_libraries(token_revision)` - Returns WadRayMath and PercentageMath libraries for a given revision
-- Used in `_process_scaled_token_operation()`, `_accrue_debt_on_action()`, and GHO-specific functions
+The `WadRayMathLibrary` protocol (defined in [`src/degenbot/cli/aave/constants.py`](../../src/degenbot/cli/aave/constants.py)) defines the interface for math operations, implemented via `token_processor.py`.
 
 ## Related Functions
 
@@ -386,42 +419,68 @@ Revision-specific functions:
 
 Core update logic for a single market. Fetches and processes all events in the block range.
 
-**Location**: [`src/degenbot/cli/aave.py:2090`](../../src/degenbot/cli/aave.py#L2090)
+**Location**: [`src/degenbot/cli/aave/commands.py`](../../src/degenbot/cli/aave/commands.py)
 
 ### Event Processors
 
-All event processors are located in [`src/degenbot/cli/aave.py`](../../src/degenbot/cli/aave.py):
+Event processors are distributed across the Aave CLI package:
 
+**[`src/degenbot/cli/aave/event_handlers.py`](../../src/degenbot/cli/aave/event_handlers.py)**:
 - `_process_asset_initialization_event()` - New reserve assets
 - `_process_reserve_data_update_event()` - Rate/index updates
 - `_process_user_e_mode_set_event()` - User E-Mode changes
-- `_process_scaled_token_mint_event()` - Collateral supply/borrow, interest accrual, or transfer (detects source)
-- `_process_scaled_token_burn_event()` - Collateral withdraw or debt repay
-- `_process_scaled_token_balance_transfer_event()` - Collateral transfers
 - `_process_scaled_token_upgrade_event()` - Token implementation changes
 - `_process_discount_token_updated_event()` - GHO discount token updates
 - `_process_discount_rate_strategy_updated_event()` - GHO discount rate strategy updates
+- `_process_collateral_configuration_changed_event()` - Collateral config changes
+- `_process_e_mode_category_added_event()` - E-Mode category additions
+- `_process_emode_asset_category_changed_event()` - E-Mode asset category changes
+- `_process_reserve_used_as_collateral_enabled_event()` - Collateral usage enable
+- `_process_reserve_used_as_collateral_disabled_event()` - Collateral usage disable
+- `_process_proxy_creation_event()` - Proxy creation
+- `_process_pool_data_provider_updated_event()` - Data provider updates
+- `_process_price_oracle_updated_event()` - Oracle updates
+- `_process_asset_source_updated_event()` - Asset source updates
+- `_process_discount_percent_updated_event()` - Discount percent updates
+
+**[`src/degenbot/cli/aave/token_processor.py`](../../src/degenbot/cli/aave/token_processor.py)**:
+- `_process_scaled_token_operation()` - Determine balance delta and user operation for scaled token events
+- `_process_collateral_mint_with_match()` - Collateral mint with operation matching
+- `_process_collateral_burn_with_match()` - Collateral burn with operation matching
+- `_process_debt_mint_with_match()` - Debt mint with operation matching
+- `_process_debt_burn_with_match()` - Debt burn with operation matching
+- `_process_deficit_coverage_operation()` - Umbrella deficit coverage
+- `_process_deficit_coverage_burn()` - Deficit coverage burn
+- `calculate_gho_discount_rate()` - GHO discount rate calculation
+
+**[`src/degenbot/cli/aave/transfers.py`](../../src/degenbot/cli/aave/transfers.py)**:
+- `_process_collateral_transfer()` - Collateral transfer operations
+
+**[`src/degenbot/cli/aave/liquidation_processor.py`](../../src/degenbot/cli/aave/liquidation_processor.py)**:
+- `_process_deferred_debt_burns()` - Deferred debt burn processing for liquidations
 
 ### GHO-Specific Functions
 
-- `_process_gho_debt_mint()` - GHO debt mint events (borrow/repay with discount)
-- `_process_gho_debt_burn()` - GHO debt burn events (repay with discount)
-- `_accrue_debt_on_action()` - Calculate balance increase and discount for GHO debt
-- `_get_discount_rate()` - Retrieve discount percentage from strategy contract
-- `_verify_gho_discount_amounts()` - Verify GHO discount values match contract
+- `calculate_gho_discount_rate()` - Calculate GHO discount rate (in [`token_processor.py`](../../src/degenbot/cli/aave/token_processor.py))
+- `_refresh_discount_rate()` - Refresh discount rate from on-chain strategy (in [`token_processor.py`](../../src/degenbot/cli/aave/token_processor.py))
+- `get_gho_vtoken_revision()` - Get GHO vToken revision from DB (in [`db_users.py`](../../src/degenbot/cli/aave/db_users.py))
+- `is_discount_supported()` - Check if discount is supported for revision (in [`db_users.py`](../../src/degenbot/cli/aave/db_users.py))
 
 ### Helper Functions
 
-- `_get_contract_update_events()` - Fetch contract configuration events
-- `_get_reserve_initialized_events()` - Fetch new asset events
-- `_get_all_scaled_token_addresses()` - Get all aToken and vToken addresses for a chain
-- `_get_scaled_token_asset_by_address()` - Get collateral and debt assets by token address
-- `_update_contract_revision()` - Update contract revision in database
-- `_get_or_create_user()` - Get existing user or create new one
-- `_get_or_create_erc20_token()` - Get existing ERC20 token or create new one
-- `_get_or_create_collateral_position()` - Get existing collateral position or create new one
-- `_get_or_create_debt_position()` - Get existing debt position or create new one
-- `_process_scaled_token_operation()` - Determine balance delta and user operation for scaled token events
+- `_get_all_scaled_token_addresses()` - Get all aToken and vToken addresses for a chain (in [`utils.py`](../../src/degenbot/cli/aave/utils.py))
+- `_update_contract_revision()` - Update contract revision in database (in [`event_handlers.py`](../../src/degenbot/cli/aave/event_handlers.py))
+- `_get_or_create_erc20_token()` - Get existing ERC20 token or create new one (in [`erc20_utils.py`](../../src/degenbot/cli/aave/erc20_utils.py))
+- `get_or_create_user()` - Get existing user or create new one (in [`db_users.py`](../../src/degenbot/cli/aave/db_users.py))
+- `get_or_create_collateral_position()` - Get existing collateral position or create new one (in [`db_positions.py`](../../src/degenbot/cli/aave/db_positions.py))
+- `get_or_create_debt_position()` - Get existing debt position or create new one (in [`db_positions.py`](../../src/degenbot/cli/aave/db_positions.py))
+
+### Verification Functions
+
+- `verify_positions_for_users()` - Verify positions for specific users (in [`verification.py`](../../src/degenbot/cli/aave/verification.py))
+- `verify_scaled_token_positions()` - Verify scaled token positions against on-chain state (in [`verification.py`](../../src/degenbot/cli/aave/verification.py))
+- `verify_all_positions()` - Verify all positions (in [`verification.py`](../../src/degenbot/cli/aave/verification.py))
+- `get_current_borrow_index_from_pool()` - Get current borrow index from Pool contract (in [`verification.py`](../../src/degenbot/cli/aave/verification.py))
 
 ## Configuration
 
@@ -429,29 +488,27 @@ The command uses Web3 connections from the degenbot config file. Each active cha
 
 ### Required Config
 
-```yaml
-rpc:
-  1: https://mainnet.example.com  # Ethereum mainnet
-  # ... other chain IDs
+```toml
+[rpc]
+1 = "https://mainnet.example.com"  # Ethereum mainnet
+# ... other chain IDs
 ```
 
 ## Environment Variables
 
-### Aave Verbose Logging
-
-The Aave CLI also supports selective verbose logging:
+### General
 
 | Variable | Values | Description |
 |----------|--------|-------------|
-| `DEGENBOT_VERBOSE_ALL` | `1`, `true`, `yes` | Enable all verbose logging for Aave events |
-| `DEGENBOT_VERBOSE_USERS` | Comma-separated addresses | Enable verbose logging for specific user addresses |
-| `DEGENBOT_VERBOSE_TX` | Comma-separated hashes | Enable verbose logging for specific transaction hashes |
+| `DEGENBOT_DEBUG` | `1`, `true`, `yes` | Enable debug-level logging output |
+| `DEGENBOT_DEBUG_FUNCTION_CALLS` | `1`, `true`, `yes` | Enable function call trace logging |
+| `DEGENBOT_COVERAGE` | `1` | Enable CLI code coverage tracking (dev use) |
 
 ## Dependencies
 
 - **Database**: SQLAlchemy ORM (see [`src/degenbot/database/models/aave.py`](../../src/degenbot/database/models/aave.py))
 - **Blockchain**: Web3.py for RPC calls
-- **Math**: Aave WadRayMath libraries for scaled balance calculations (v3_1 through v3_4)
+- **Math**: Aave WadRayMath library for scaled balance calculations with rounding enum support
 - **Logging**: Click for CLI output, tqdm for progress bars
 - **Token Revisions**: Protocol-based library selection for different Aave V3 token implementations
 
@@ -476,7 +533,7 @@ Events are notifications only. Actual storage changes happen in `_mint()` and `_
 
 Solidity uses half-up rounding: `(a * b + HALF_RAY) / RAY`
 
-The Python port in `v3_1/wad_ray_math.py` must match this exactly for correct balance synchronization.
+The Python port in [`src/degenbot/aave/libraries/wad_ray_math.py`](../../src/degenbot/aave/libraries/wad_ray_math.py) must match this exactly for correct balance synchronization. The library supports `Rounding.FLOOR`, `Rounding.CEIL`, and default half-up rounding.
 
 ### Event Structure
 

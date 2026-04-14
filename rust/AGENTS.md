@@ -178,7 +178,6 @@ Function docs with structured sections:
 | Crate | Purpose |
 |-------|---------|
 | `proptest` | Property-based testing |
-| `criterion` | Benchmarking (`html_reports` feature) |
 
 **Removed:** `num-bigint` was previously used for U256/I256 → Python int conversion. It has been replaced by `PyU256`/`PyI256` newtype wrappers in `alloy_py.rs` that use `int.from_bytes` for zero-copy conversion.
 

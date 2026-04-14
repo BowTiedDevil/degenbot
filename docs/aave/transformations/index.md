@@ -432,7 +432,7 @@ uint256 scaledAmount = amount.rayDiv(index);
 _mintScaled(address(this), scaledAmount, index);
 ```
 
-**Used in flows:** All flows (via updateState), [Admin Operations](../flows/admin.md)
+**Used in flows:** All flows (via updateState)
 
 ---
 
@@ -738,7 +738,7 @@ vars.healthFactor = totalDebtInBaseCurrency > 0
     : type(uint256).max;
 ```
 
-**Used in flows:** All flows (health factor validation), [E-Mode Management](../flows/e_mode.md)
+**Used in flows:** All flows (health factor validation), [E-Mode Management](../flows/emode_management.md)
 
 ---
 

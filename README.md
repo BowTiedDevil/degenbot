@@ -90,9 +90,10 @@ print(f"Output: {amount_out}")
 | PancakeSwap | V2, V3 | Ethereum, Base |
 | SushiSwap | V2, V3 | Ethereum, Base |
 | Curve | V1 | Ethereum |
-| Solidly | V2 | Ethereum, Base |
-| Balancer | V2 | Ethereum |
+| Solidly | V2 | Ethereum, Base | *(utility functions only, no pool class)*
+| Balancer | V2 | Ethereum | *(internal, not in public API)* |
 | Camelot | V2 | Arbitrum |
+| SwapBased | V2 | Base |
 
 ### Lending Protocols
 
@@ -536,6 +537,15 @@ degenbot aave activate ethereum_aave_v3
 
 # Deactivate an Aave market
 degenbot aave deactivate ethereum_aave_v3
+
+# Show a user's position in a market
+degenbot aave position show <ADDRESS> [--market MARKET] [--chain-id CHAIN_ID]
+
+# Show risk parameters for a user's position
+degenbot aave position risk <ADDRESS> [--market MARKET] [--chain-id CHAIN_ID]
+
+# Show market state
+degenbot aave market show [--chain-id CHAIN_ID] [--name NAME]
 ```
 
 ### Block Identifiers
@@ -556,6 +566,8 @@ Commands accepting `--to-block` support the following formats:
 | Variable | Values | Description |
 |----------|--------|-------------|
 | `DEGENBOT_DEBUG` | `1`, `true`, `yes` | Enable debug-level logging output |
+| `DEGENBOT_DEBUG_FUNCTION_CALLS` | `1`, `true`, `yes` | Enable function call trace logging |
+| `DEGENBOT_COVERAGE` | `1` | Enable CLI code coverage tracking (dev use) |
 
 ```bash
 DEGENBOT_DEBUG=1 python my_script.py
@@ -578,9 +590,7 @@ path = "/path/to/degenbot.db"
 
 ## Rust Extension
 
-> **Experimental**: The Rust extension is not activated by default. To enable it in a future release, set the environment variable `DEGENBOT_EXPERIMENTAL_RUST=1`. The Python API documented below is subject to change.
-
-Degenbot includes a high-performance Rust extension module (`_rs`) that provides optimized implementations of performance-critical operations. The extension is built automatically during installation using [maturin](https://www.maturin.rs/).
+Degenbot includes a high-performance Rust extension module (`degenbot_rs`) that provides optimized implementations of performance-critical operations. The extension is built automatically during installation using [maturin](https://www.maturin.rs/).
 
 ### Key Dependencies
 
@@ -590,8 +600,9 @@ Degenbot includes a high-performance Rust extension module (`_rs`) that provides
 | [pyo3](https://pyo3.rs) | Python bindings with `abi3-py312` for Python 3.12+ support |
 | [tokio](https://tokio.rs) | Multi-threaded async runtime for concurrent RPC calls |
 | [parking_lot](https://github.com/Amanieu/parking_lot) | High-performance RwLock for thread-safe caching |
-| [num-bigint](https://github.com/rust-num/num-bigint) | Arbitrary precision integers for Python `int` interop |
 | [thiserror](https://github.com/dtolnay/thiserror) | Derivative error types |
+| [serde](https://serde.rs) | Serialization/deserialization |
+| [lru](https://github.com/jaemk/lru) | LRU cache implementation |
 
 ### Available Functions
 
@@ -600,7 +611,7 @@ Degenbot includes a high-performance Rust extension module (`_rs`) that provides
 Uniswap V3 tick-to-price conversions:
 
 ```python
-from degenbot._rs import get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio
+from degenbot import get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio
 
 # Convert tick to sqrt price (X96 format)
 sqrt_price = get_sqrt_ratio_at_tick(253320)  # Returns: 56736275128821120...
@@ -614,7 +625,7 @@ tick = get_tick_at_sqrt_ratio(56736275128821120)  # Returns: 253320
 High-performance ABI decoding for contract data:
 
 ```python
-from degenbot._rs import decode, decode_single
+from degenbot import decode, decode_single
 
 # Decode multiple values
 types = ["address", "uint256", "uint256"]
@@ -630,10 +641,28 @@ address = decode_single("address", bytes.fromhex("..."))
 EIP-55 checksummed address conversion:
 
 ```python
-from degenbot._rs import to_checksum_address
+from degenbot import to_checksum_address
 
 checksummed = to_checksum_address("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
 # Returns: "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF"
+```
+
+#### ABI Encoding & Selectors
+
+Encode function calls and compute selectors:
+
+```python
+from degenbot import encode_function_call, get_function_selector, decode_return_data
+
+# Get a 4-byte function selector
+selector = get_function_selector("transfer(address,uint256)")
+# Returns: "0xa9059cbb"
+
+# Encode a function call (selector + encoded args)
+calldata = encode_function_call("transfer(address,uint256)", ["0x...", "100"])
+
+# Decode return data from a contract call
+values = decode_return_data(bytes.fromhex("..."), ["uint256", "address"])
 ```
 
 ### Provider Classes
@@ -641,13 +670,15 @@ checksummed = to_checksum_address("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
 The extension includes synchronous and async Ethereum RPC providers:
 
 ```python
-from degenbot._rs import AlloyProvider, Contract
+from degenbot.degenbot_rs import AlloyProvider, Contract
 
 # Create provider with connection pooling
 provider = AlloyProvider(
     rpc_url="https://eth-mainnet.example.com",
     max_connections=10,
     timeout=30.0,
+    max_retries=10,
+    max_blocks_per_request=5000,
 )
 
 # Query blockchain
@@ -660,6 +691,44 @@ contract = Contract("0x...", provider_url="https://...")
 result = contract.call("balanceOf(address)", ["0x..."])
 
 provider.close()
+```
+
+#### Async Provider
+
+The extension also includes async wrappers for use with `asyncio`:
+
+```python
+from degenbot.degenbot_rs import AsyncAlloyProvider, AsyncContract
+
+# Create an async provider
+async_provider = await AsyncAlloyProvider.create(
+    rpc_url="https://eth-mainnet.example.com",
+    max_connections=10,
+    timeout=30.0,
+)
+
+# Async contract interaction
+async_contract = AsyncContract("0x...", provider_url="https://...")
+result = await async_contract.call("balanceOf(address)", ["0x..."])
+
+# Batch multiple contract calls
+results = await async_contract.batch_call(
+    [("balanceOf(address)", ["0x..."]), ("totalSupply()", [])],
+)
+```
+
+#### Log Filtering
+
+```python
+from degenbot.degenbot_rs import LogFilter
+
+# Build a log filter
+log_filter = LogFilter(
+    from_block=1000000,
+    to_block=1000100,
+    addresses=["0x..."],
+    topics=[["0x..."]],
+)
 ```
 
 ### Performance Benefits

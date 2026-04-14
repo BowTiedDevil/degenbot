@@ -7,10 +7,12 @@
 1. **Identify the operation** (supply, borrow, liquidation, etc.)
 2. **Load the flow file** from `flows/` directory (e.g., `flows/liquidation.md`)
 3. **Follow the Mermaid diagram** - look for color coding:
-   - **Red borders**: Validation checks (can revert)
-   - **Green borders**: Math transformations
-   - **Blue borders**: Storage updates
-   - **Yellow borders**: Event emissions
+   - **Red**: Validation checks (can revert)
+   - **Green**: Math transformations
+   - **Blue**: Storage updates
+   - **Yellow**: Event emissions
+   - **Magenta**: Bridge paths
+   - **Red fill / Black stroke**: Error nodes
 4. **Check transformations** by referring to `transformations/index.md`
 5. **Review Solidity code** snippets for exact implementation details
 
@@ -21,11 +23,26 @@ docs/aave/
 ├── README.md                    # Navigation hub and quick reference
 ├── AGENTS.md                    # This file - agent instructions
 ├── flows/                       # Individual operation flows
-│   ├── supply.md               # Deposit flow with enhanced diagram
+│   ├── supply.md               # Deposit flow
+│   ├── supply_with_permit.md   # Supply with permit
 │   ├── withdraw.md             # Withdrawal flow with HF validation
 │   ├── borrow.md               # Borrowing flow (variable + stable)
-│   ├── repay.md                # Repayment flow
-│   └── liquidation.md          # Liquidation flow
+│   ├── repay.md               # Repayment flow
+│   ├── repay_with_atokens.md   # Repay with aTokens
+│   ├── repay_with_permit.md    # Repay with permit
+│   ├── liquidation.md          # Liquidation flow
+│   ├── flash_loan.md           # Flash loan flow
+│   ├── flash_loan_simple.md    # Simple flash loan
+│   ├── collateral_management.md # Collateral enable/disable
+│   ├── emode_management.md    # E-mode category management
+│   ├── position_manager.md    # Position manager operations
+│   ├── eliminate_deficit.md   # Deficit elimination
+│   ├── gho_borrowing.md       # GHO borrowing flow
+│   ├── gho_discount.md        # GHO discount mechanism
+│   ├── rewards_claiming.md   # Rewards claiming
+│   ├── stk_aave_staking.md   # StkAave staking
+│   ├── stk_aave_unstaking.md # StkAave unstaking
+│   └── stk_aave_slashing.md  # StkAave slashing
 └── transformations/             # Amount transformation reference
     └── index.md                # All math operations with Solidity
 ```
@@ -40,8 +57,10 @@ docs/aave/
   - Enhanced Mermaid diagram with color-coded nodes
   - Step-by-step Solidity code
   - Amount transformation details
+  - Event details
   - Error conditions table
   - Related flows
+  - Source file locations
 
 ### For Amount/Math Questions
 - Check [transformations/index.md](./transformations/index.md)
@@ -50,6 +69,7 @@ docs/aave/
   - Collateral Token Transformations
   - Debt Token Transformations (variable + stable)
   - Interest Accrual (index updates)
+  - Treasury Accrual
   - Liquidation Calculations
   - Flash Loan Premiums
   - E-Mode Calculations
@@ -179,7 +199,7 @@ npx -y @probelabs/maid <file>
 
 ### CI Integration
 
-Mermaid diagrams are automatically validated in CI. See `.github/workflows/ci.yml` for the mermaid-lint job.
+Mermaid diagrams should be validated locally before committing. A CI mermaid-lint job is not currently configured.
 
 ### Resources
 

@@ -91,10 +91,25 @@ docs/aave/
 ├── AGENTS.md                          # Instructions for automated agents
 ├── flows/                             # Individual operation flows
 │   ├── supply.md                      # Supply execution flow
+│   ├── supply_with_permit.md           # Supply with permit
 │   ├── withdraw.md                    # Withdraw execution flow
 │   ├── borrow.md                      # Borrow execution flow
 │   ├── repay.md                       # Repay execution flow
-│   └── liquidation.md                 # Liquidation execution flow
+│   ├── repay_with_atokens.md          # Repay with aTokens
+│   ├── repay_with_permit.md           # Repay with permit
+│   ├── liquidation.md                 # Liquidation execution flow
+│   ├── collateral_management.md       # Collateral enable/disable
+│   ├── emode_management.md            # E-Mode category management
+│   ├── flash_loan.md                  # Flash loan (with callback)
+│   ├── flash_loan_simple.md           # Simple flash loan
+│   ├── gho_borrowing.md               # GHO borrowing
+│   ├── gho_discount.md                # GHO discount mechanism
+│   ├── rewards_claiming.md            # Rewards claiming
+│   ├── position_manager.md            # Position manager operations
+│   ├── eliminate_deficit.md           # Umbrella deficit elimination
+│   ├── stk_aave_staking.md           # stkAAVE staking
+│   ├── stk_aave_unstaking.md          # stkAAVE unstaking
+│   └── stk_aave_slashing.md           # stkAAVE slashing
 └── transformations/                   # Amount transformation reference
     └── index.md                       # All math operations
 ```

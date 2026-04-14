@@ -330,7 +330,7 @@ for other_ev in events:
 - **Issue 0029**: Multi-Asset Liquidation Missing Secondary Debt Burns Fix
 - **Issue 0028**: Multi-Asset Debt Liquidation Missing Secondary Debt Burns
 - **Contract**: `Pool.rev_7.sol:executeLiquidationCall()`
-- **File**: `src/degenbot/cli/aave_transaction_operations.py`
+- **File**: `src/degenbot/cli/aave/transaction_processor.py`
 
 ## Related Patterns
 
