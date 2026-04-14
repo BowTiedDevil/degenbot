@@ -6,7 +6,7 @@
 use crate::provider::{AlloyProvider, LogFetcher};
 use crate::provider_py::PyAlloyProvider;
 use crate::py_cache::create_hexbytes;
-use crate::utils::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
+use crate::py_converters::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyList;

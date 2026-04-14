@@ -21,7 +21,8 @@
 //! - [`async_contract`] - Async contract wrapper with batch calls
 //! - [`signature_parser`] - Robust function signature parsing
 //! - [`runtime`] - Shared Tokio runtime singleton
-//! - [`utils`] - JSON-to-Python conversion, block/tx/log dict builders
+//! - [`hex_utils`] - Pure-Rust hex encoding/decoding (no `PyO3` dependency)
+//! - [`py_converters`] - Python object converters for RPC types (block/tx/log dicts, JSON-to-Python with `HexBytes`)
 //!
 //! See individual module documentation for usage examples.
 
@@ -36,22 +37,25 @@ pub mod async_provider;
 pub mod contract;
 pub mod contract_py;
 pub mod errors;
+pub mod hex_utils;
 pub mod provider;
 pub mod provider_py;
 pub mod py_cache;
+pub mod py_converters;
 pub mod runtime;
 pub mod signature_parser;
 pub mod tick_math;
-pub mod utils;
+pub mod tick_math_py;
 
 // Re-export commonly used items at the crate root
 pub use address_utils::{parse_address, to_checksum_address, to_checksum_address_bytes, to_checksum_address_str};
+pub use hex_utils::{decode_hex, encode_hex};
 
 pub use errors::{AbiDecodeError, AddressError, ProviderError, TickMathError};
 pub use tick_math::{
-    get_sqrt_ratio_at_tick, get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio,
-    get_tick_at_sqrt_ratio_internal,
+    get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal,
 };
+pub use tick_math_py::{get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio};
 
 use pyo3::prelude::*;
 
@@ -61,8 +65,8 @@ fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pyo3_log::init();
 
     // Tick math functions
-    m.add_function(wrap_pyfunction!(tick_math::get_sqrt_ratio_at_tick, m)?)?;
-    m.add_function(wrap_pyfunction!(tick_math::get_tick_at_sqrt_ratio, m)?)?;
+    m.add_function(wrap_pyfunction!(tick_math_py::get_sqrt_ratio_at_tick, m)?)?;
+    m.add_function(wrap_pyfunction!(tick_math_py::get_tick_at_sqrt_ratio, m)?)?;
 
     // Address utilities
     m.add_function(wrap_pyfunction!(address_utils::to_checksum_address, m)?)?;

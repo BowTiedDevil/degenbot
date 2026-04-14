@@ -8,7 +8,7 @@
 
 use crate::provider::{AlloyProvider, LogFetcher, LogFilter};
 use crate::runtime::get_runtime;
-use crate::utils::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
+use crate::py_converters::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
 use crate::py_cache::create_hexbytes;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;

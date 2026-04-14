@@ -2,15 +2,37 @@
 
 ## Architecture
 
-### Two-Layer Pattern
-The codebase uses a clean separation between pure Rust logic and Python bindings:
+### Three-Layer Pattern
 
-1. **Pure Rust core** - Functions with `_internal` suffix or `pub fn name_rust()` that have zero Python dependencies. These enable:
+Every Rust-accelerated feature follows three layers with strict separation of concerns:
+
+```
+┌─────────────────────────────────────┐
+│  Python Module (degenbot/foo.py)    │
+│  - Public API, docstrings, types    │
+│  - Imports from degenbot_rs         │
+│  - Python-level convenience methods │
+├─────────────────────────────────────┤
+│  PyO3 Bindings (foo_py.rs)          │
+│  - #[pyclass], #[pyfunction] only   │
+│  - Arg extraction → GIL release     │
+│  - Result wrapping → Python objects │
+├─────────────────────────────────────┤
+│  Rust Core (foo.rs)                 │
+│  - Zero PyO3 imports                │
+│  - Idiomatic Rust, Result<T, E>     │
+│  - Independently testable           │
+└─────────────────────────────────────┘
+```
+
+1. **Python convenience layer** - The user-facing API. Imports from `degenbot_rs` and adds Python-idiomatic methods (rich `__repr__`, `Fraction`-based prices, database lookups, publisher/subscriber). This layer knows nothing about Rust internals.
+
+2. **Thin PyO3 wrappers** - Functions in `*_py.rs` files and `#[pyfunction]` entry points that convert between Rust and Python types. These contain **no business logic** — only argument extraction, GIL release, core function calls, and result wrapping.
+
+3. **Pure Rust core** - Functions with `_internal` suffix or `pub fn name_rust()` that have zero Python dependencies. These are in files without `_py` suffix. They enable:
    - Unit testing without Python
    - Parallel processing without GIL
    - Reuse in non-Python Rust code
-
-2. **Thin PyO3 wrappers** - Functions in `*_py.rs` files and `#[pyfunction]` entry points that convert between Rust and Python types
 
 Example from `abi_decoder.rs`:
 ```rust
@@ -36,16 +58,18 @@ pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8]) -> PyResult<Py<Py
 | `abi_encoder.rs` | ABI encoding with pure Rust core + LRU type cache |
 | `alloy_py.rs` | Newtype wrappers (`PyU256`, `PyI256`) for zero-copy U256/I256 → Python int conversion via `int.from_bytes`; `extract_python_u256` for Python int/bytes → U256 extraction; `abi_value_from_python` for converting arbitrary Python objects into `AbiValue` enums for ABI encoding |
 | `py_cache.rs` | Cached Python function/class references (`int.from_bytes`, `HexBytes`) via `PyOnceLock` |
-| `tick_math.rs` | Uniswap V3 tick math calculations |
+| `tick_math.rs` | Uniswap V3 tick math — pure Rust core (no `pyo3` imports) |
+| `tick_math_py.rs` | `PyO3` wrappers for tick math (`get_sqrt_ratio_at_tick`, `get_tick_at_sqrt_ratio`, `extract_u160`) |
+| `hex_utils.rs` | Pure-Rust hex encoding/decoding (`decode_hex`, `encode_hex`) — no `PyO3` dependency |
+| `py_converters.rs` | Python object converters for RPC types: `log_to_py_dict`, `block_to_py_dict`, `json_to_py_with_hexbytes`; field-aware `HexBytes`/address/int detection; block/transaction/log dict builders. All functions require the GIL (documented as accepted cost) |
 | `address_utils.rs` | EIP-55 checksummed addresses |
 | `provider.rs` | Ethereum RPC provider (sync, Alloy-based), retry logic, `LogFetcher` |
 | `async_provider.rs` | Async provider wrapper for Python via `pyo3-async-runtimes` |
 | `contract.rs` | Smart contract interface with `FunctionSignature` parsing |
 | `async_contract.rs` | Async contract wrapper with `batch_call` via `join_all` |
-| `provider_py.rs` | PyO3 bindings for provider (`PyAlloyProvider`, `PyLogFilter`) |
-| `contract_py.rs` | PyO3 bindings for contract (`PyContract`, `encode_function_call`, `decode_return_data`, `get_function_selector`) |
+| `provider_py.rs` | `PyO3` bindings for provider (`PyAlloyProvider`, `PyLogFilter`) |
+| `contract_py.rs` | `PyO3` bindings for contract (`PyContract`, `encode_function_call`, `decode_return_data`, `get_function_selector`) |
 | `signature_parser.rs` | Robust recursive-descent function signature parser |
-| `utils.rs` | JSON-to-Python conversion with field-aware `HexBytes`/address/int detection; block/transaction/log dict builders |
 | `runtime.rs` | Shared Tokio runtime singleton |
 
 ### Key Design Patterns
@@ -54,6 +78,139 @@ pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8]) -> PyResult<Py<Py
 - **Arc Sharing**: Providers use `Arc<AlloyProvider>` for thread-safe sharing across Python objects. `Contract::clone()` shares the `Arc<RwLock<HashMap>>` signature cache across all clones.
 - **Signature Caching**: `Contract` uses `Arc<RwLock<HashMap<String, Arc<FunctionSignature>>>>` for parsed function signatures. The `Arc<FunctionSignature>` value allows cheap returns from the cache without copying the parsed data.
 - **GIL Release**: See [GIL Release Protocol](#gil-release-protocol) below.
+
+### Module Naming Convention
+
+Files follow a strict naming convention that signals their `PyO3` dependency:
+
+| Pattern | Meaning | Example |
+|---------|---------|--------|
+| `foo.rs` | Pure Rust core — zero `pyo3` imports | `tick_math.rs`, `hex_utils.rs`, `provider.rs` |
+| `foo_py.rs` | `PyO3` wrappers only — `#[pyfunction]`, `#[pyclass]`, type conversion | `tick_math_py.rs`, `provider_py.rs`, `contract_py.rs` |
+| `foo_py.rs` (conversion) | `PyO3`-dependent converters (no `#[pyfunction]`, but creates Python objects) | `py_converters.rs`, `alloy_py.rs`, `py_cache.rs` |
+
+**Rule**: If `pyo3` appears in a file that isn't named `*_py.rs` or isn't a `PyO3`-only conversion module, it's a code smell. Consider splitting the pure Rust logic into a separate file.
+
+**Exception**: `alloy_py.rs` is named with `_py` suffix because its entire purpose is `PyO3` type conversion, even though it doesn't contain `#[pyfunction]` entries.
+
+### ABI Types: String Interface Decision
+
+`AbiType` and `AbiValue` are pure Rust enums that are **not** exposed as `#[pyclass]` types to Python. Python users interact with ABI encoding/decoding through string-based function signatures (e.g., `"transfer(address,uint256)"`) and string result values. This is intentional:
+- The string interface matches web3.py convention — Python users expect to pass ABI types as strings
+- Exposing `AbiType` as a `#[pyclass]` would add API surface without clear benefit
+- Invalid type strings (e.g., `"uint56"`) surface errors at encoding/decoding time, which is the expected behavior
+
+If type-safe ABI construction becomes valuable later, add it as a separate `abi_types_py.rs` module.
+
+## Design Principles for New Rust Modules
+
+These principles distill lessons from Polars, Pydantic, and this codebase's own evolution. Apply them when designing any new Rust-accelerated feature.
+
+### The Nine Rules
+
+1. **Write nice Python** — The Python-facing API should feel native, not like a Rust wrapper
+2. **Write nice Rust** — The Rust core should be idiomatic Rust, not Python-accommodating
+3. **Thin translator** — The PyO3 layer extracts args → calls Rust → wraps result. Nothing else.
+4. **No Python in Rust core** — If `pyo3` appears in a file that isn't `*_py.rs`, it's a code smell
+5. **Release the GIL** — Every non-trivial operation should release the GIL
+6. **Own your data at the boundary** — Data crossing the boundary must be owned (copied) or Arc-shared, never borrowed
+7. **Map errors at the boundary** — Rust errors become Python exceptions in the PyO3 layer, not the core
+8. **Cache Python references** — Use `PyOnceLock` for frequently-used Python types/functions
+9. **Profile the boundary** — The conversion layer is where overhead lives; optimize it
+
+### The Boundary Mental Model
+
+The PyO3 boundary is not an afterthought — it **is** the architecture. Two fundamentally different memory models meet here:
+
+| Aspect | Python (CPython) | Rust |
+|--------|-----------------|------|
+| Memory management | Reference counting + GC | Ownership + borrow checker |
+| Thread safety | GIL serializes all object access | Send/Sync traits, no global lock |
+| Object lifecycle | Live until refcount = 0 | Compile-time determined |
+| FFI boundary | Must hold GIL to access Py objects | Frees the GIL for parallelism |
+
+**The key insight**: Every Rust function called from Python enters with the GIL held. The GIL is both a constraint (Python objects can only be touched with it) and an opportunity (releasing it allows true parallelism).
+
+### Bound vs Py — When to Use Each
+
+| Type | GIL Required? | Ownership | When to Use |
+|------|--------------|-----------|-------------|
+| `Bound<'py, T>` | Yes (lifetime tied to `'py`) | Borrowed reference | Inside GIL-held code, function arguments |
+| `Py<T>` | No (independent of GIL) | Owned reference (increments refcount) | Storing across GIL release, struct fields |
+
+**Critical rule**: If you release the GIL (`py.detach()`, `py.allow_threads()`), any `Bound<'py, _>` references become invalid. Extract owned data first:
+
+```rust
+// CORRECT: Extract owned data before releasing GIL
+fn call(&self, py: Python<'_>, address: &str) -> PyResult<String> {
+    let address = address.to_string();  // Copy to owned String
+    let provider = Arc::clone(&self.provider);
+    let result = py.detach(|| {
+        // No Python objects here — only Rust types
+        get_runtime().block_on(async { provider.eth_call(&address).await })
+    })?;
+    Ok(result)
+}
+
+// WRONG: Using Bound<'py, _> after detach
+fn bad_call(&self, py: Python<'_>, data: &Bound<'_, PyBytes>) -> PyResult<()> {
+    let result = py.detach(|| {
+        let bytes = data.as_bytes();  // UNDEFINED BEHAVIOR! GIL is released!
+    });
+}
+```
+
+### Own Your Data at the Boundary
+
+Every byte that crosses from Python to Rust must be copied into an owned Rust type. Every Rust result that goes to Python must be constructed into a Python object. This copying is the cost of safety. The specific conversion patterns for each type are documented in [Python↔Rust Type Conversion Protocol](#pythonrust-type-conversion-protocol).
+
+The general rule: **before releasing the GIL, extract all borrowed Python data into owned Rust types. The detached closure must not reference any `Bound<'_, PyAny>`.**
+
+### Arc Sharing Patterns
+
+`Arc<T>` is the sharing mechanism between Python and Rust for long-lived state. Different patterns apply to different use cases:
+
+| Pattern | When to Use | Example | Reference |
+|---------|-------------|---------|-----------|
+| `Arc<T>` (simple shared handle) | Immutable state shared across PyO3 wrappers — cheap clone, thread-safe | `Arc<AlloyProvider>` in `PyAlloyProvider` | degenbot, Pydantic `Arc<CombinedValidator>` |
+| `Arc<RwLock<T>>` (interior mutability) | State that must be updated from Rust without Python (caches, state updates) | `Arc<RwLock<HashMap<String, Arc<FunctionSignature>>>>` in `Contract` | Polars `RwLock<DataFrame>` |
+| `Weak<OnceLock<T>>` (recursive references) | Recursive structures where strong references would create cycles | Not yet used — applicable if recursive ABI struct trees are built | Pydantic `DefinitionRef<T>` |
+| `ForeignOwner` (Python-owned memory) | Zero-copy access to Python-managed memory (advanced) | Not yet used — applicable if sharing large byte arrays without copy | Polars `SharedStorage::ForeignOwner` |
+
+**degenbot's current `Arc<AlloyProvider>` pattern is exactly right** — it matches Pydantic's `Arc<CombinedValidator>`: shared, immutable, thread-safe, cheap to clone. No need for `RwLock` on providers since they aren't mutated. No cycles, so no need for `Weak`.
+
+### Reference Project Lessons
+
+**Polars** — Zero-copy Arrow bridge:
+- Arrow arrays live in Rust-managed memory; Python gets views via the C Data Interface, not copies
+- `RwLock<DataFrame>` at the wrapper level allows mutation from Rust methods while `frozen` pyclass prevents Python mutation
+- The Rust core crate (`polars-core`) has zero PyO3 imports — all Python interop isolated in `polars-python`
+- `SharedStorage` (custom Arc) wraps raw buffers so that cloning/slicing is O(1) and foreign-owned memory (from Python) is kept alive by holding a `Py<PyAny>` reference inside the Rust storage
+- **Lesson for degenbot**: If you ever need to share large memory regions without copy (e.g., raw transaction data), Polars' `ForeignOwner` pattern is the blueprint
+
+**Pydantic** — Schema-as-contract + build/run separation:
+- Schema compilation (Python → Rust) happens once; validation (Rust → Python) happens many times. Build phase can be slower; run phase must be as fast as possible
+- `Arc<CombinedValidator>` shares compiled validator trees; `Weak<OnceLock<T>>` breaks reference cycles for recursive schemas
+- `enum_dispatch` provides zero-cost abstraction — the `CombinedValidator` enum dispatches without virtual method overhead
+- `CoreSchema` dict as the interface contract avoids tight coupling between Python schema changes and Rust type definitions
+- **Lesson for degenbot**: The `Contract` signature cache (`parse once, use many times`) already follows this pattern. Apply the same build/run separation to any new module where setup is expensive but execution is hot-path (e.g., pool state initialization vs. swap calculation)
+
+### Porting Decision Framework
+
+Not everything should be in Rust. Use this framework:
+
+| Criterion | Keep in Python | Port to Rust |
+|-----------|---------------|-------------|
+| **Hot path?** | Called infrequently | Called in tight loops, per-block, per-tx |
+| **GIL bottleneck?** | Already releases GIL via I/O | CPU-bound, holds GIL during computation |
+| **Type complexity?** | Heavy Python object manipulation | Pure numeric / byte manipulation |
+| **Async?** | Needs deep Python async integration | Network I/O with simple result types |
+| **Testability?** | Complex mock setup | Clear input → output functions |
+| **Python ecosystem coupling?** | Tightly coupled to SQLAlchemy, web3.py, WeakSet | Standalone logic, no Python object identity |
+
+**What stays in Python**: Database lookups (SQLAlchemy), token identity objects (`Erc20Token`), publisher/subscriber (`WeakSet[Subscriber]`), `Fraction`-based price calculations, registry lookups, Python protocol implementations.
+
+**What ports to Rust**: Pure arithmetic (constant product math, tick math), ABI encoding/decoding, address checksumming, keccak256 operations, RPC I/O with simple result types, byte manipulation.
 
 ## Coding Standards
 
@@ -190,7 +347,7 @@ The codebase uses three caching patterns. Use this decision framework for new ca
 | `LazyLock<parking_lot::Mutex<LruCache<K, V>>>` | Bounded cache of Rust data, accessed from multiple threads without GIL | `abi_types::cached::TYPE_CACHE` (shared by decoder and encoder) |
 | `PyOnceLock<Py<PyAny>>` | Python object references (require GIL to create, then cached) | `py_cache::INT_FROM_BYTES`, `py_cache::HEXBYTES_CLASS` |
 | `OnceLock<T>` | One-time initialization, never evicted, never resized | `runtime::RUNTIME` |
-| `LazyLock<HashSet<&'static str>>` | Immutable constant sets built once | `utils::HEXBYTES_FIELDS`, `utils::ADDRESS_FIELDS` |
+| `LazyLock<HashSet<&'static str>>` | Immutable constant sets built once | `py_converters::HEXBYTES_FIELDS`, `py_converters::ADDRESS_FIELDS` |
 
 **Capacity policy:** LRU caches use 10,000 entries as the standard capacity (`const XXX_CAPACITY: NonZeroUsize`). New caches should follow this unless there's a measured reason to differ.
 
@@ -208,9 +365,21 @@ The rule is simple: **release the GIL for any I/O-bound work or long CPU work; h
 | Provider RPC calls (sync) | Released | `py.detach(\|\| get_runtime().block_on(async { ... }))` |
 | ABI encode/decode (pure Rust) | Released | `py.detach(\|\| decode_rust(...))` |
 | Python object creation (PyList, PyDict, HexBytes) | Held | Direct PyO3 API calls |
+| RPC type conversion (block/tx/log dicts) | Held | `py_converters` module (inherently requires GIL) |
 | Async operations | Released | `future_into_py(py, async { ... })` |
+| Post-async Python object construction | Re-acquired | `Python::attach(\|py\| ...)` inside async futures |
 
 **Important:** Copy any borrowed Python data (strings, bytes) into owned Rust types *before* releasing the GIL. The detached closure must not reference any `Bound<'_, PyAny>`.
+
+#### `Python::attach()` Risk
+
+`Python::attach()` is used in async futures (e.g., `async_provider.rs`) to re-acquire the GIL after an `.await` completes, so that Python objects can be constructed from the result. This is the standard pattern for `pyo3-async-runtimes`, but carries a **deadlock risk**: if the Python event loop is in a state that prevents GIL acquisition, the call will hang. Mitigate this by:
+- Ensuring the Tokio runtime is sized appropriately via `TOKIO_WORKER_THREADS`
+- Never calling sync provider methods from within an async Python context
+
+#### `py_converters` GIL Holding
+
+The `py_converters` module (`log_to_py_dict`, `block_to_py_dict`, `json_to_py_with_hexbytes`) creates Python objects and therefore must hold the GIL. For large blocks with many transactions, this holds the GIL for the duration of object construction. This is an **accepted cost** — Python objects cannot be constructed without the GIL. The actual RPC I/O that precedes these calls already releases the GIL via `py.detach()` in the provider layer.
 
 ### PyO3 API Design Conventions
 
@@ -235,7 +404,7 @@ Use `abi_value_from_python()` in `alloy_py.rs` which handles:
 Use `py_cache::create_hexbytes()` which caches the `HexBytes` class reference. This ensures compatibility with web3.py and eth_abi.
 
 #### JSON → Python dict
-Use `utils::json_to_py_with_hexbytes()` for RPC responses. This does field-aware conversion:
+Use `py_converters::json_to_py_with_hexbytes()` for RPC responses. This does field-aware conversion:
 - `HEXBYTES_FIELDS` (hash, input, data, topics, etc.) → `HexBytes` objects
 - `ADDRESS_FIELDS` (address, miner, from, to) → EIP-55 checksummed strings
 - `NUMERIC_FIELDS` (gas, value, nonce, etc.) → Python `int` via `u256_to_py`

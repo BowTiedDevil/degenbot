@@ -1,6 +1,20 @@
-//! Utility functions for degenbot Rust extensions.
+//! Python object converters for Ethereum RPC types.
 //!
-//! Common utilities shared across modules.
+//! Converts Alloy RPC response types (blocks, transactions, logs) and JSON-RPC
+//! responses into Python dicts with field-aware `HexBytes`, checksummed addresses,
+//! and integer conversion.
+//!
+//! # GIL Requirement
+//!
+//! All public functions in this module require the GIL because they create Python
+//! objects. This is inherently necessary — Python objects cannot be constructed
+//! without holding the GIL. The actual RPC I/O that precedes these calls already
+//! releases the GIL (via `py.detach()` in the provider layer).
+//!
+//! For large blocks with many transactions, these converters will hold the GIL
+//! for the duration of Python object construction. This is a known and accepted
+//! cost. An alternative would be lazy field-by-field access via `__getattr__`,
+//! but the eager-conversion approach is simpler and matches the web3.py convention.
 
 use alloy::consensus::{
     Header as ConsensusHeader, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip7702,
@@ -17,6 +31,7 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use crate::address_utils::address_to_checksum_string;
+use crate::hex_utils::decode_hex;
 use crate::py_cache::create_hexbytes;
 
 /// Field names that should be converted to `HexBytes`.
@@ -54,52 +69,6 @@ static HEXBYTES_FIELDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
 /// Field names that should be converted to checksummed address strings.
 static ADDRESS_FIELDS: LazyLock<HashSet<&'static str>> =
     LazyLock::new(|| ["address", "miner", "from", "to"].iter().copied().collect());
-
-/// Decode a hex string (with optional "0x" prefix) to bytes.
-///
-/// Handles odd-length strings by padding with a leading zero.
-///
-/// # Arguments
-///
-/// * `hex_str` - Hex string, with or without "0x"/"0X" prefix
-///
-/// # Returns
-///
-/// The decoded bytes, or an error if the string is not valid hex.
-///
-/// # Errors
-///
-/// Returns an error string if the hex string is invalid.
-///
-/// # Examples
-///
-/// ```
-/// use degenbot_rs::utils::decode_hex;
-///
-/// let bytes = decode_hex("0xdeadbeef").unwrap();
-/// assert_eq!(bytes, vec![0xde, 0xad, 0xbe, 0xef]);
-///
-/// // Odd length is padded with a leading zero
-/// let bytes = decode_hex("0x123").unwrap();
-/// assert_eq!(bytes, vec![0x01, 0x23]);
-/// ```
-pub fn decode_hex(hex_str: &str) -> Result<Vec<u8>, String> {
-    crate::abi_types::value::decode_hex(hex_str).map_err(|e| e.to_string())
-}
-
-/// Encode bytes as a hex string with "0x" prefix.
-///
-/// # Arguments
-///
-/// * `bytes` - The bytes to encode
-///
-/// # Returns
-///
-/// A hex-encoded string with "0x" prefix.
-#[must_use]
-pub fn encode_hex(bytes: &[u8]) -> String {
-    format!("0x{}", alloy::hex::encode(bytes))
-}
 
 /// Field names that should be converted to integers.
 /// These are numeric fields that may be returned as hex strings by the JSON-RPC API.
@@ -150,10 +119,6 @@ fn is_hex_string(s: &str) -> bool {
     s.starts_with("0x") && s[2..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
-/// Create a `HexBytes` object from bytes.
-///
-/// Uses the `hexbytes` package's `HexBytes` class for compatibility with
-/// web3.py and `eth_abi` libraries.
 /// Convert a hex string to a `HexBytes` object.
 fn hex_to_hexbytes<'py>(py: Python<'py>, hex_str: &str) -> PyResult<Bound<'py, PyAny>> {
     let bytes = decode_hex(hex_str).map_err(|e| {
