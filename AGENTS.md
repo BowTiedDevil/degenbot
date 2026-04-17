@@ -6,26 +6,30 @@ Use Red/Green TDD while refactoring and implementing new features.
 
 ## Commands
 
-Uses `just` (see justfile). Key commands:
+Uses `just` (see justfile) and `uv` as the package runner. Key commands:
 
 ### Python
-- `just test-python` - Run Python tests
+- `just test-python` - Run Python tests (includes `compile-test-contracts` via Forge)
 - `just test-python-cov` - Run Python tests with coverage
-- `just lint` - Run all linters (Rust + Python)
+- `just test-rust-python` - Run Rust-wrapped Python tests
 
 ### Rust
 - `just test-rust` - Run Rust tests
 - `just lint-rust` - Run Rust linter (clippy)
-- `just build-rust-extension` - Build Python extension
+- `just build-rust-extension` - Build Python extension (extension-module feature)
+- `just build-rust-debug` - Build Rust release linked to Python (for testing only)
 
 ### Combined
 - `just test-all` - Run all tests (Rust + Python)
 - `just dev` - Build and install Python extension in development mode
+- `just lint` - Run clippy, ruff, and mypy
+- `just format` - Run `cargo fmt` and `ruff format`
+- `just compile-test-contracts` - Compile Solidity test contracts with Forge (required by `test-python`; run automatically)
 
 ## Database
-- SQLite database path configured in `~/.config/degenbot/config.toml`
+- Config file at `~/.config/degenbot/config.toml`; database path defaults to `~/.config/degenbot/degenbot.db` (overridable via `database.path` setting)
 - SQLAlchemy ORM models in `src/degenbot/database/models/`
-- Use scoped session from `degenbot.database.db_session()`
+- Use the scoped session context manager: `with db_session() as session:` from `degenbot.database.db_session`
 
 ## Python Design
 
@@ -42,8 +46,6 @@ class SomeClass:
     
     [additional detail as needed]
     """
-
-    pass
 ```
 
 ### Error Handling
@@ -60,7 +62,7 @@ class SomeClass:
 
 ## Refactoring
 
-- Unless directed otherwise, design standalone features without a backwards compatibility layer. Use a feature flag during development and testing to enable hard cutover.
+- Unless directed otherwise, design standalone features without a backwards compatibility layer. Use a feature flag during development and testing to enable hard cutover. Feature flags are typically implemented as a module-level boolean constant (e.g. `USE_NEW_PATH = bool(os.environ.get("DEGENBOT_NEW_FEATURE", ""))`) that gates the new code path.
 
 ## Solidity
 
