@@ -5,23 +5,17 @@ This module handles liquidation event processing including multi-liquidation pat
 like COMBINED_BURN and SEPARATE_BURNS.
 """
 
-import eth_abi.abi
-from eth_typing import ChecksumAddress
-from web3.types import LogReceipt
+from typing import assert_never
 
-from degenbot.aave.enrichment import ScaledEventEnricher
+from eth_typing import ChecksumAddress
+
 from degenbot.aave.events import AaveV3ScaledTokenEvent
-from degenbot.aave.models import EnrichedScaledTokenEvent
+from degenbot.aave.liquidation_patterns import detect_liquidation_patterns
 from degenbot.cli.aave.db_assets import get_asset_by_token_type
 from degenbot.cli.aave.types import TokenType, TransactionContext
 from degenbot.cli.aave.utils import _get_v_token_for_underlying
-from degenbot.cli.aave_transaction_operations import (
-    Operation,
-    ScaledTokenEvent,
-    ScaledTokenEventType,
-)
+from degenbot.cli.aave_transaction_operations import Operation
 from degenbot.cli.aave_utils import decode_address
-from degenbot.logging import logger
 
 
 def _preprocess_liquidation_aggregates(
@@ -36,7 +30,6 @@ def _preprocess_liquidation_aggregates(
 
     See debug/aave/0056 and debug/aave/0065 for pattern details.
     """
-    from degenbot.aave.liquidation_patterns import detect_liquidation_patterns
 
     tx_context.liquidation_patterns = detect_liquidation_patterns(
         operations=operations,
@@ -73,7 +66,6 @@ def _process_deferred_debt_burns(
 
     See debug/aave/0060 for detailed analysis.
     """
-    from degenbot.cli.aave.token_processor import _process_debt_burn_with_match
 
     if not liquidation_operations:
         return
@@ -84,70 +76,10 @@ def _process_deferred_debt_burns(
             continue
 
         topic = event["topics"][0]
-        event_address = event["address"]
-
-        # Check if this is a debt burn event
         if topic != AaveV3ScaledTokenEvent.BURN.value:
             continue
 
-        # Decode burn event to get user and amount
-        from_addr = decode_address(event["topics"][1])
-        target = decode_address(event["topics"][2])
-        amount, balance_increase, index = eth_abi.abi.decode(
-            types=["uint256", "uint256", "uint256"],
-            data=event["data"],
-        )
-
-        # Find matching liquidation operation
-        matching_operation = _find_matching_liquidation_for_burn(
-            user_address=from_addr,
-            burn_token_address=event_address,
-            liquidation_operations=liquidation_operations,
-            tx_context=tx_context,
-        )
-
-        if matching_operation is None:
-            continue
-
-        # Create scaled event from the burn
-        scaled_event = ScaledTokenEvent(
-            event=event,
-            event_type=ScaledTokenEventType.DEBT_BURN,
-            user_address=from_addr,
-            caller_address=None,
-            from_address=from_addr,
-            target_address=target,
-            amount=amount,
-            balance_increase=balance_increase,
-            index=index,
-        )
-
-        # Enrich and process the burn
-        enricher = ScaledEventEnricher(
-            pool_revision=tx_context.pool_revision,
-            token_revisions={},
-            session=tx_context.session,
-        )
-        enriched_event = enricher.enrich(scaled_event, matching_operation)
-
-        pool_log_idx = (
-            matching_operation.pool_event["logIndex"] if matching_operation.pool_event else "N/A"
-        )
-        logger.debug(
-            f"Processing deferred debt burn at logIndex {event['logIndex']} "
-            f"for liquidation at logIndex {pool_log_idx}"
-        )
-
-        _process_debt_burn_with_match(
-            event=event,
-            tx_context=tx_context,
-            operation=matching_operation,
-            scaled_event=scaled_event,
-            enriched_event=enriched_event,
-        )
-
-        # Mark as assigned
-        assigned_log_indices.add(event["logIndex"])
+        assert_never()
 
 
 def _find_matching_liquidation_for_burn(

@@ -1,8 +1,7 @@
 """
 ERC20 token utilities for Aave CLI.
 
-Provides functions to fetch ERC20 token metadata from the blockchain
-and create database records for new tokens.
+Provides functions to fetch ERC20 token metadata.
 """
 
 import contextlib
@@ -11,16 +10,10 @@ from typing import TYPE_CHECKING
 import eth_abi.abi
 import eth_abi.exceptions
 from eth_typing import ChecksumAddress
-from sqlalchemy import select
 
-from degenbot.database.models.erc20 import Erc20TokenTable
-from degenbot.functions import encode_function_calldata
-from degenbot.functions import raw_call
-from degenbot.logging import logger
+from degenbot.functions import encode_function_calldata, raw_call
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
-
     from degenbot.provider.interface import ProviderAdapter
 
 
@@ -124,51 +117,3 @@ def _fetch_erc20_token_metadata(
     )
 
     return name, symbol, decimals
-
-
-def _get_or_create_erc20_token(
-    provider: "ProviderAdapter",
-    session: "Session",
-    chain_id: int,
-    token_address: ChecksumAddress,
-) -> Erc20TokenTable:
-    """
-    Get existing ERC20 token or create new one.
-
-    When creating a new token, attempts to fetch name, symbol, and decimals
-    from the blockchain and populate the database record.
-    """
-
-    if (
-        token := session.scalar(
-            select(Erc20TokenTable).where(
-                Erc20TokenTable.chain == chain_id,
-                Erc20TokenTable.address == token_address,
-            )
-        )
-    ) is None:
-        token = Erc20TokenTable(chain=chain_id, address=token_address)
-
-        # Attempt to fetch metadata from blockchain
-        name, symbol, decimals = _fetch_erc20_token_metadata(
-            provider=provider,
-            token_address=token_address,
-        )
-
-        if name is not None:
-            token.name = name
-        if symbol is not None:
-            token.symbol = symbol
-        if decimals is not None:
-            token.decimals = decimals
-
-        session.add(token)
-        session.flush()
-
-        if name is not None or symbol is not None or decimals is not None:
-            logger.debug(
-                f"Created ERC20 token {token_address} with metadata: "
-                f"name='{name}', symbol='{symbol}', decimals={decimals}"
-            )
-
-    return token

@@ -13,18 +13,10 @@ from eth_typing import ChecksumAddress
 from web3.types import LogReceipt
 
 from degenbot.cli.aave.db_assets import get_asset_by_token_type
-from degenbot.cli.aave.db_positions import (
-    get_or_create_collateral_position,
-    get_or_create_debt_position,
-)
+from degenbot.cli.aave.db_positions import get_or_create_collateral_position
 from degenbot.cli.aave.db_users import get_or_create_user
 from degenbot.cli.aave.types import TokenType, TransactionContext
-from degenbot.cli.aave_transaction_operations import (
-    Operation,
-    OperationType,
-    ScaledTokenEvent,
-    ScaledTokenEventType,
-)
+from degenbot.cli.aave_transaction_operations import Operation, OperationType, ScaledTokenEvent
 from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
 
@@ -245,104 +237,4 @@ def _process_collateral_transfer(
         recipient_position.balance += scaled_amount
 
         if transfer_index is not None and transfer_index > 0:
-            recipient_position.last_index = transfer_index
-
-
-def _process_debt_transfer(
-    *,
-    event: LogReceipt,
-    tx_context: TransactionContext,
-    operation: Operation,
-    scaled_event: ScaledTokenEvent,
-) -> None:
-    """
-    Process debt (vToken) transfer between users.
-    """
-    from degenbot.logging import logger
-
-    logger.debug(f"Processing _process_debt_transfer at block {event['blockNumber']}")
-
-    assert scaled_event.from_address is not None
-    assert scaled_event.target_address is not None
-
-    # Skip transfers to zero address (burns) - these are handled by Burn events
-    # Processing both Transfer(to=0) and Burn would result in double-counting
-    if scaled_event.target_address == ZERO_ADDRESS:
-        return
-
-    # Skip transfers from zero address (mints) - these are handled by Mint events
-    # Processing both Transfer(from=0) and Mint would result in double-counting
-    # This occurs during _burnScaled when interest > repayment amount
-    if scaled_event.from_address == ZERO_ADDRESS:
-        return
-
-    # Get sender
-    sender = get_or_create_user(
-        tx_context=tx_context,
-        user_address=scaled_event.from_address,
-        block_number=scaled_event.event["blockNumber"],
-    )
-
-    # Get debt asset
-    token_address = scaled_event.event["address"]
-    debt_asset = get_asset_by_token_type(
-        session=tx_context.session,
-        market=tx_context.market,
-        token_address=token_address,
-        token_type=TokenType.V_TOKEN,
-    )
-
-    assert debt_asset
-
-    # Get sender's position
-    sender_position = get_or_create_debt_position(
-        tx_context=tx_context,
-        user=sender,
-        asset_id=debt_asset.id,
-    )
-
-    # Determine the scaled amount and index for this transfer
-    # For paired events, use BalanceTransfer data (scaled balance)
-    # For standalone events, use the event data directly
-    _, transfer_amount, transfer_index = _match_paired_balance_transfer(
-        scaled_event=scaled_event,
-        operation=operation,
-        token_address=token_address,
-    )
-
-    if transfer_amount is None:
-        # No paired BalanceTransfer found - use event data directly
-        if scaled_event.index is not None and scaled_event.index > 0:
-            # Standalone BalanceTransfer - already in scaled units
-            transfer_amount = scaled_event.amount
-            transfer_index = scaled_event.index
-        else:
-            # Standalone ERC20 Transfer - use current borrow index
-            transfer_amount = scaled_event.amount
-            transfer_index = debt_asset.borrow_index
-
-    assert transfer_index is not None
-
-    # Update sender's balance
-    sender_position.balance -= transfer_amount
-
-    if transfer_index > 0:
-        sender_position.last_index = transfer_index
-
-    # Handle recipient
-    if scaled_event.target_address != ZERO_ADDRESS:
-        recipient = get_or_create_user(
-            tx_context=tx_context,
-            user_address=scaled_event.target_address,
-            block_number=scaled_event.event["blockNumber"],
-        )
-
-        recipient_position = get_or_create_debt_position(
-            tx_context=tx_context,
-            user=recipient,
-            asset_id=debt_asset.id,
-        )
-        recipient_position.balance += transfer_amount
-
-        if transfer_index > 0:
             recipient_position.last_index = transfer_index

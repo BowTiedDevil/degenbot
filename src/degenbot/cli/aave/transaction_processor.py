@@ -12,9 +12,9 @@ This module contains the main transaction processing orchestrator that handles:
 """
 
 from operator import itemgetter
+from typing import assert_never
 
 import eth_abi.abi
-import web3.exceptions
 from sqlalchemy import select
 
 from degenbot.aave.enrichment import ScaledEventEnricher
@@ -56,17 +56,15 @@ from degenbot.cli.aave.token_processor import (
     _process_debt_mint_with_match,
     _process_deficit_coverage_operation,
 )
-from degenbot.cli.aave.transfers import _process_collateral_transfer, _process_debt_transfer
+from degenbot.cli.aave.transfers import _process_collateral_transfer
 from degenbot.cli.aave.types import TransactionContext
 from degenbot.cli.aave_transaction_operations import (
     Operation,
     OperationType,
     ScaledTokenEventType,
     TransactionOperationsParser,
-    TransactionValidationError,
 )
 from degenbot.cli.aave_utils import decode_address
-from degenbot.constants import MAX_UINT256
 from degenbot.database.models.aave import AaveV3User
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
@@ -185,25 +183,17 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                     tx_context.user_discounts[user_address] = 0
                     continue
 
-                try:
-                    (discount_percent,) = raw_call(
-                        w3=tx_context.provider,
-                        address=gho_vtoken_address,
-                        calldata=encode_function_calldata(
-                            function_prototype="getDiscountPercent(address)",
-                            function_arguments=[user_address],
-                        ),
-                        return_types=["uint256"],
-                        block_identifier=tx_context.block_number,
-                    )
-                    tx_context.user_discounts[user_address] = discount_percent
-                except (
-                    RuntimeError,
-                    eth_abi.exceptions.DecodingError,
-                    web3.exceptions.ContractLogicError,
-                ):
-                    # Function may not exist (revision 4+), default to 0
-                    tx_context.user_discounts[user_address] = 0
+                (discount_percent,) = raw_call(
+                    w3=tx_context.provider,
+                    address=gho_vtoken_address,
+                    calldata=encode_function_calldata(
+                        function_prototype="getDiscountPercent(address)",
+                        function_arguments=[user_address],
+                    ),
+                    return_types=["uint256"],
+                    block_identifier=tx_context.block_number,
+                )
+                tx_context.user_discounts[user_address] = discount_percent
 
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing transaction at block "
@@ -229,11 +219,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
     )
 
     # Strict validation - fail immediately on any issue
-    try:
-        tx_operations.validate(tx_context.events)
-    except TransactionValidationError as e:
-        logger.error(f"Transaction validation failed: {e}")
-        raise
+    tx_operations.validate(tx_context.events)
 
     logger.debug(f"\n=== OPERATIONS FOR TX {tx_context.tx_hash.to_0x_hex()} ===")
     for op in tx_operations.operations:
@@ -290,10 +276,10 @@ def _process_transaction(tx_context: TransactionContext) -> None:
             decoded = eth_abi.abi.decode(["uint256"], operation.pool_event["data"])
             tx_context.last_withdraw_amount = decoded[0]
             # Store the token and user addresses for matching with INTEREST_ACCRUAL burns
-            if operation.scaled_token_events:
-                first_event = operation.scaled_token_events[0]
-                tx_context.last_withdraw_token_address = first_event.event["address"]
-                tx_context.last_withdraw_user_address = first_event.user_address
+            assert operation.scaled_token_events
+            first_event = operation.scaled_token_events[0]
+            tx_context.last_withdraw_token_address = first_event.event["address"]
+            tx_context.last_withdraw_user_address = first_event.user_address
             logger.debug(
                 f"Pre-processed WITHDRAW amount: {tx_context.last_withdraw_amount} "
                 f"for operation {operation.operation_id}"
@@ -309,11 +295,10 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         if op.pool_event is not None:
             # Use pool event log index for operations with pool events
             return op.pool_event["logIndex"]
-        if op.scaled_token_events:
-            # Use minimum scaled event log index for operations without pool events
-            return min(ev.event["logIndex"] for ev in op.scaled_token_events)
-        # Fallback for operations with no events (place at the end)
-        return MAX_UINT256
+
+        # Use minimum scaled event log index for operations without pool events
+        assert op.scaled_token_events
+        return min(ev.event["logIndex"] for ev in op.scaled_token_events)
 
     sorted_operations = sorted(tx_operations.operations, key=_get_operation_sort_key)
     for operation in sorted_operations:
@@ -590,22 +575,5 @@ def _process_operation(
                 operation=operation,
                 scaled_event=scaled_event,
             )
-        elif scaled_event.event_type in {
-            ScaledTokenEventType.DEBT_TRANSFER,
-            ScaledTokenEventType.GHO_DEBT_TRANSFER,
-            ScaledTokenEventType.ERC20_DEBT_TRANSFER,
-        }:
-            _process_debt_transfer(
-                event=event,
-                tx_context=tx_context,
-                operation=operation,
-                scaled_event=scaled_event,
-            )
-        elif scaled_event.event_type == ScaledTokenEventType.DISCOUNT_TRANSFER:
-            # stkAAVE transfers are processed separately to update user balances
-            # before GHO debt operations calculate discount rates. They don't
-            # affect Aave market positions directly.
-            pass
         else:
-            msg = f"Unknown event type: {scaled_event.event_type}"
-            raise ValueError(msg)
+            assert_never(scaled_event.event_type)

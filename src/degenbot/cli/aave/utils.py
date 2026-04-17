@@ -5,7 +5,9 @@ This module contains helper functions that are used across multiple
 Aave CLI modules.
 """
 
-import eth_abi.abi
+import operator
+from typing import assert_never
+
 import eth_abi.exceptions
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
@@ -14,15 +16,8 @@ from sqlalchemy.orm import Session
 from web3.exceptions import ContractLogicError
 from web3.types import LogReceipt
 
-from degenbot.aave.events import (
-    AaveV3GhoDebtTokenEvent,
-    AaveV3OracleEvent,
-    AaveV3PoolConfigEvent,
-    AaveV3PoolEvent,
-    AaveV3ScaledTokenEvent,
-    AaveV3StkAaveEvent,
-    ERC20Event,
-)
+from degenbot.aave.events import ERC20Event
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli.aave.constants import AAVE_EVENT_TOPIC_TO_CATEGORY
 from degenbot.cli.aave.db_assets import get_asset_by_token_type
 from degenbot.cli.aave.types import TokenType, TransactionContext
@@ -38,7 +33,6 @@ from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
 from degenbot.provider.interface import ProviderAdapter
-from degenbot.checksum_cache import get_checksum_address
 
 
 def _get_v_token_for_underlying(
@@ -53,38 +47,9 @@ def _get_v_token_for_underlying(
             AaveV3Asset.underlying_token.has(address=underlying_address),
         )
     )
-    if asset is None or asset.v_token is None:
-        return None
+    assert asset is not None
+    assert asset.v_token is not None
     return asset.v_token.address
-
-
-def _get_scaled_token_asset_by_address(
-    session: Session,
-    market: AaveV3Market,
-    token_address: ChecksumAddress,
-) -> tuple[AaveV3Asset | None, AaveV3Asset | None]:
-    """
-    Get collateral and debt assets by token address.
-    """
-
-    collateral_asset = get_asset_by_token_type(
-        session=session,
-        market=market,
-        token_address=token_address,
-        token_type=TokenType.A_TOKEN,
-    )
-
-    debt_asset = get_asset_by_token_type(
-        session=session,
-        market=market,
-        token_address=token_address,
-        token_type=TokenType.V_TOKEN,
-    )
-
-    if collateral_asset is not None and debt_asset is not None:
-        assert collateral_asset.id != debt_asset.id
-
-    return collateral_asset, debt_asset
 
 
 def _get_all_scaled_token_addresses(
@@ -142,9 +107,7 @@ def _log_event_categorization(
         else:
             category = "ERC20_TRANSFER"
     else:
-        msg = f"Could not identify topic: {topic.to_0x_hex()}"
-        logger.error(f"_build_transaction_contexts: {msg}")
-        raise ValueError(msg)
+        assert_never(topic)
 
     logger.debug(f"_build_transaction_contexts: categorized as {category} event")
 
@@ -166,7 +129,7 @@ def _build_transaction_contexts(
 
     contexts: dict[HexBytes, TransactionContext] = {}
 
-    for event in sorted(events, key=lambda e: (e["blockNumber"], e["logIndex"])):
+    for event in sorted(events, key=operator.itemgetter("blockNumber", "logIndex")):
         tx_hash = event["transactionHash"]
         block_num = event["blockNumber"]
         topic = event["topics"][0]
@@ -255,39 +218,3 @@ def _fetch_discount_token_from_contract(
     ):
         # Function may not exist in older revisions or other errors
         return None
-
-
-def _decode_reserve_configuration_bitmap(config_bitmap: int) -> dict[str, int | bool | None]:
-    """
-    Decode a ReserveConfigurationMap bitmap from the Pool contract.
-
-    Based on Aave V3 ReserveConfiguration library bit positions:
-    - bits 0-15: LTV
-    - bits 16-31: Liquidation threshold
-    - bits 32-47: Liquidation bonus
-    - bits 56: Active
-    - bits 57: Frozen
-    - bits 58: Borrowing enabled
-    - bits 60: Paused
-    - bits 61: Borrowable in isolation (can this asset be borrowed against isolated collateral)
-    - bits 63: Flashloan enabled
-    - bits 168-175: eMode category (deprecated in v3.4+, but kept for compatibility)
-    - bits 212-251: Debt ceiling (isolation mode debt ceiling)
-
-    Note: isolation_mode is determined by debt_ceiling > 0, not by a flag bit.
-    An asset is in isolation mode if it has a debt ceiling set.
-    """
-
-    e_mode_category = (config_bitmap >> 168) & 0xFF
-    debt_ceiling = (config_bitmap >> 212) & 0xFFFFFFFFFF
-    return {
-        "ltv": config_bitmap & 0xFFFF,
-        "liquidation_threshold": (config_bitmap >> 16) & 0xFFFF,
-        "liquidation_bonus": (config_bitmap >> 32) & 0xFFFF,
-        "borrowing_enabled": bool((config_bitmap >> 58) & 1),
-        "flash_loan_enabled": bool((config_bitmap >> 63) & 1),
-        "borrowable_in_isolation": bool((config_bitmap >> 61) & 1),
-        "isolation_mode": debt_ceiling > 0,
-        "debt_ceiling": debt_ceiling,
-        "e_mode_category_id": e_mode_category if e_mode_category > 0 else None,
-    }

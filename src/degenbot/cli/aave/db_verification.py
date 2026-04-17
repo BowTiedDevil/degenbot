@@ -4,12 +4,10 @@ Verification database operations for Aave V3.
 Functions for verifying on-chain state against database state.
 """
 
-import eth_abi.exceptions
 import tqdm
 from eth_typing import ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from web3.exceptions import ContractLogicError
 
 from degenbot.cli.aave.constants import GHO_DISCOUNT_DEPRECATION_REVISION
 from degenbot.cli.aave.db_users import get_gho_vtoken_revision
@@ -51,15 +49,12 @@ def verify_gho_discount_amounts(
         )
         return
 
-    if gho_asset.v_gho_discount_token is None:
-        return
+    assert gho_asset.v_gho_discount_token is not None
 
     if user_addresses is not None and len(user_addresses) == 0:
         return
 
-    # Skip verification if GHO vToken is not deployed
-    if gho_asset.v_token is None:
-        return
+    assert gho_asset.v_token is not None
 
     gho_vtoken_address = gho_asset.v_token.address
 
@@ -85,22 +80,16 @@ def verify_gho_discount_amounts(
         leave=False,
         disable=not show_progress,
     ):
-        try:
-            (discount_percent,) = raw_call(
-                w3=provider,
-                address=gho_vtoken_address,
-                calldata=encode_function_calldata(
-                    function_prototype="getDiscountPercent(address)",
-                    function_arguments=[user.address],
-                ),
-                return_types=["uint256"],
-                block_identifier=block_number,
-            )
-        except (RuntimeError, eth_abi.exceptions.DecodingError, ContractLogicError):
-            # Function may not exist (revision 4+ after upgrade in same block)
-            # Verify that our tracked discount is 0 (the new default)
-            discount_percent = 0
-
+        (discount_percent,) = raw_call(
+            w3=provider,
+            address=gho_vtoken_address,
+            calldata=encode_function_calldata(
+                function_prototype="getDiscountPercent(address)",
+                function_arguments=[user.address],
+            ),
+            return_types=["uint256"],
+            block_identifier=block_number,
+        )
         assert user.gho_discount == discount_percent, (
             f"User {user.address}: GHO discount {user.gho_discount} "
             f"does not match GHO vDebtToken contract ({discount_percent}) "

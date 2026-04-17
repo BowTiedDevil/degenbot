@@ -15,8 +15,7 @@ from degenbot.aave.position_analysis import UserPositionSummary, analyze_positio
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
 from degenbot.cli.aave.constants import POSITION_RISK_DISPLAY_LIMIT
-from degenbot.cli.aave.db_assets import get_contract, get_gho_asset
-from degenbot.cli.aave.erc20_utils import _get_or_create_erc20_token
+from degenbot.cli.aave.db_assets import get_contract, get_gho_asset, get_or_create_erc20_token
 from degenbot.cli.aave.event_fetchers import (
     fetch_address_provider_events,
     fetch_discount_config_events,
@@ -155,7 +154,7 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
 
             # GHO tokens are chain-unique, so create a single entry that all markets on this chain
             # will share.
-            gho_asset_token = _get_or_create_erc20_token(
+            gho_asset_token = get_or_create_erc20_token(
                 provider=provider,
                 session=session,
                 chain_id=market.chain_id,

@@ -33,10 +33,6 @@ def get_or_init_stk_aave_balance(
 
     discount_token = tx_context.gho_asset.v_gho_discount_token
 
-    # If discount_token is None (revision 4+), return 0
-    if discount_token is None:
-        return 0
-
     if user.stk_aave_balance is None:
         balance: int
         (balance,) = raw_call(
@@ -62,6 +58,10 @@ def get_or_init_stk_aave_balance(
             log_index=log_index,
             discount_token=discount_token,
         )
+
+        assert (
+            pending_delta == 0
+        )  # TODO: remove `get_pending_stk_aave_delta_at_log_index` if this runs without error
         return user.stk_aave_balance + pending_delta
 
     return user.stk_aave_balance
@@ -90,10 +90,6 @@ def process_stk_aave_transfer_event(
     """
 
     logger.debug(f"Processing stkAAVE transfer event at block {event['blockNumber']}")
-
-    if tx_context.gho_asset.v_gho_discount_token is None:
-        # Ignore stkAAVE transfers until the discount token has been set
-        return
 
     assert contract_address == tx_context.gho_asset.v_gho_discount_token
 

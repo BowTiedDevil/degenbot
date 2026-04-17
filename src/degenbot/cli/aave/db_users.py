@@ -12,13 +12,7 @@ from web3.exceptions import ContractLogicError
 
 from degenbot.cli.aave.constants import GHO_DISCOUNT_DEPRECATION_REVISION
 from degenbot.cli.aave.types import TransactionContext
-from degenbot.database.models.aave import (
-    AaveGhoToken,
-    AaveV3Asset,
-    AaveV3DebtPosition,
-    AaveV3Market,
-    AaveV3User,
-)
+from degenbot.database.models.aave import AaveGhoToken, AaveV3Asset, AaveV3Market, AaveV3User
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
@@ -166,85 +160,3 @@ def get_or_create_user(
     tx_context.session.flush()
 
     return user
-
-
-def prefetch_users_for_transaction(
-    session: Session,
-    market: AaveV3Market,
-    user_addresses: set[ChecksumAddress],
-) -> dict[ChecksumAddress, AaveV3User]:
-    """
-    Prefetch users for a set of addresses to avoid N+1 queries.
-
-    Returns a mapping of address to user (or None if user doesn't exist).
-    """
-
-    if not user_addresses:
-        return {}
-
-    users = session.scalars(
-        select(AaveV3User).where(
-            AaveV3User.market_id == market.id,
-            AaveV3User.address.in_(user_addresses),
-        )
-    ).all()
-
-    return {user.address: user for user in users}
-
-
-def get_users_with_debt_asset(
-    session: Session,
-    market: AaveV3Market,
-    v_token_id: int,
-) -> list[AaveV3User]:
-    """
-    Get all users who have a debt position in the specified asset.
-
-    Used for verification and batch operations.
-    """
-
-    return list(
-        session.scalars(
-            select(AaveV3User)
-            .join(AaveV3DebtPosition)
-            .join(AaveV3Asset)
-            .where(
-                AaveV3User.market_id == market.id,
-                AaveV3Asset.v_token_id == v_token_id,
-            )
-            .distinct()
-        ).all()
-    )
-
-
-def update_user_stk_aave_balance(
-    user: AaveV3User,
-    new_balance: int,
-) -> None:
-    """
-    Update a user's stkAAVE balance.
-    """
-
-    user.stk_aave_balance = new_balance
-
-
-def update_user_e_mode(
-    user: AaveV3User,
-    e_mode: int,
-) -> None:
-    """
-    Update a user's eMode category.
-    """
-
-    user.e_mode = e_mode
-
-
-def update_user_gho_discount(
-    user: AaveV3User,
-    discount_percent: int,
-) -> None:
-    """
-    Update a user's GHO discount percentage.
-    """
-
-    user.gho_discount = discount_percent

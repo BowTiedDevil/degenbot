@@ -1,12 +1,11 @@
 """Position verification module for on-chain validation of Aave positions."""
 
-from typing import cast
+from typing import assert_never, cast
 
 import tqdm
 from eth_typing import ChecksumAddress
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, joinedload
-from web3.exceptions import ContractLogicError
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli.aave.db_assets import get_contract, get_gho_asset
@@ -48,22 +47,18 @@ def get_current_borrow_index_from_pool(
         The current borrow index, or None if the call fails
     """
 
-    try:
-        borrow_index: int
-        (borrow_index,) = raw_call(
-            w3=provider,
-            address=pool_address,
-            calldata=encode_function_calldata(
-                function_prototype="getReserveNormalizedVariableDebt(address)",
-                function_arguments=[underlying_asset_address],
-            ),
-            return_types=["uint256"],
-            block_identifier=block_number,
-        )
-    except (ValueError, RuntimeError, ContractLogicError):
-        return None
-    else:
-        return borrow_index
+    borrow_index: int
+    (borrow_index,) = raw_call(
+        w3=provider,
+        address=pool_address,
+        calldata=encode_function_calldata(
+            function_prototype="getReserveNormalizedVariableDebt(address)",
+            function_arguments=[underlying_asset_address],
+        ),
+        return_types=["uint256"],
+        block_identifier=block_number,
+    )
+    return borrow_index
 
 
 def update_debt_position_index(
@@ -242,7 +237,7 @@ def verify_scaled_token_positions(
     position_table: type[AaveV3CollateralPosition | AaveV3DebtPosition],
     block_number: int,
     show_progress: bool,
-    user_addresses: set[ChecksumAddress] | None = None,
+    user_addresses: set[ChecksumAddress],
 ) -> None:
     """
     Verify that database position balances match the contract.
@@ -250,9 +245,6 @@ def verify_scaled_token_positions(
     If user_addresses is provided, only verifies positions for those specific users.
     Otherwise, verifies all users in the market.
     """
-
-    if user_addresses is not None and len(user_addresses) == 0:
-        return
 
     stmt = (
         select(position_table)
@@ -290,8 +282,7 @@ def verify_scaled_token_positions(
         elif position_table is AaveV3DebtPosition:
             token_address = get_checksum_address(position.asset.v_token.address)
         else:
-            msg = f"Unknown position table type: {position_table}"
-            raise ValueError(msg)
+            assert_never(position_table)
 
         (actual_scaled_balance,) = raw_call(
             w3=provider,

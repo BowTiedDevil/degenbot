@@ -1,5 +1,7 @@
 """Event processing handlers for Aave V3 configuration and contract updates."""
 
+from typing import assert_never
+
 import eth_abi.abi
 from eth_typing import ChecksumAddress
 from sqlalchemy import select
@@ -18,6 +20,7 @@ from degenbot.cli.aave.db_users import get_or_create_user
 from degenbot.cli.aave.types import TokenType, TransactionContext
 from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ERC_1967_IMPLEMENTATION_SLOT, ZERO_ADDRESS
+from degenbot.database.models import Erc20TokenTable
 from degenbot.database.models.aave import (
     AaveGhoToken,
     AaveV3Asset,
@@ -65,12 +68,7 @@ def _process_collateral_configuration_changed_event(
             AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address))
         )
     )
-
-    if asset is None:
-        logger.warning(
-            f"Received CollateralConfigurationChanged for unknown asset: {asset_address}"
-        )
-        return None
+    assert asset is not None
 
     # Get the Pool contract address
     pool_contract = get_contract(
@@ -78,12 +76,7 @@ def _process_collateral_configuration_changed_event(
         market=market,
         contract_name="POOL",
     )
-
-    if pool_contract is None:
-        logger.warning(
-            f"Pool contract not found for market {market.id}, cannot fetch full configuration"
-        )
-        return None
+    assert pool_contract is not None
 
     # Fetch full configuration from Pool contract
     (config_bitmap,) = raw_call(
@@ -377,10 +370,7 @@ def _process_asset_collateral_in_emode_changed_event(
             AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
         )
     )
-
-    if asset is None:
-        logger.warning(f"AssetCollateralInEModeChanged for unknown asset: {asset_address}")
-        return None
+    assert asset is not None
 
     # Get or create the asset config
     config = session.scalar(select(AaveV3AssetConfig).where(AaveV3AssetConfig.asset_id == asset.id))
@@ -445,10 +435,7 @@ def _process_reserve_used_as_collateral_enabled_event(
             AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
         )
     )
-
-    if asset is None:
-        logger.warning(f"ReserveUsedAsCollateralEnabled for unknown asset: {asset_address}")
-        return None
+    assert asset is not None
 
     # Find or create the user
     user = session.scalar(
@@ -457,17 +444,7 @@ def _process_reserve_used_as_collateral_enabled_event(
             AaveV3User.address == get_checksum_address(user_address),
         )
     )
-
-    if user is None:
-        user = AaveV3User(
-            market_id=market_id,
-            address=get_checksum_address(user_address),
-            e_mode=0,
-            gho_discount=0,
-        )
-        session.add(user)
-        session.flush([user])
-        logger.debug(f"Created AaveV3User: {user_address}")
+    assert user is not None
 
     # Get or create the collateral config
     config = session.scalar(
@@ -519,10 +496,7 @@ def _process_reserve_used_as_collateral_disabled_event(
             AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
         )
     )
-
-    if asset is None:
-        logger.warning(f"ReserveUsedAsCollateralDisabled for unknown asset: {asset_address}")
-        return None
+    assert asset is not None
 
     # Find the user
     user = session.scalar(
@@ -531,10 +505,7 @@ def _process_reserve_used_as_collateral_disabled_event(
             AaveV3User.address == get_checksum_address(user_address),
         )
     )
-
-    if user is None:
-        logger.warning(f"ReserveUsedAsCollateralDisabled for unknown user: {user_address}")
-        return None
+    assert user is not None
 
     # Get the collateral config
     config = session.scalar(
@@ -685,9 +656,8 @@ def _process_asset_initialization_event(
         return_types=["address"],
         block_identifier=event["blockNumber"],
     )
-    if price_source != ZERO_ADDRESS:
-        asset.price_source = get_checksum_address(price_source)
-        logger.info(f"Set initial price source for {asset_address} to {price_source}")
+    asset.price_source = get_checksum_address(price_source)
+    logger.info(f"Set initial price source for {asset_address} to {price_source}")
 
     # If this is the GHO asset, update the GHO token entry with the vToken reference
     gho_asset = get_gho_asset(session, market)
@@ -695,9 +665,9 @@ def _process_asset_initialization_event(
         gho_token_entry = session.scalar(
             select(AaveGhoToken).where(AaveGhoToken.token_id == erc20_token_in_db.id)
         )
-        if gho_token_entry is not None and gho_token_entry.v_token_id is None:
-            gho_token_entry.v_token_id = v_token.id
-            logger.info(f"Updated AaveGhoToken v_token_id to {v_token.id} ({v_token_address})")
+        assert gho_token_entry is not None
+        gho_token_entry.v_token_id = v_token.id
+        logger.info(f"Updated AaveGhoToken v_token_id to {v_token.id} ({v_token_address})")
 
 
 def _process_user_e_mode_set_event(
@@ -957,12 +927,7 @@ def _process_scaled_token_upgrade_event(
             )
 
     else:
-        token_address = event["address"]
-        msg = f"Unknown token type for address {token_address}. Expected aToken or vToken."
-        raise ValueError(msg)
-
-
-# Contract Update Handlers
+        assert_never()
 
 
 def _update_contract_revision(
@@ -1024,12 +989,6 @@ def _process_proxy_creation_event(
 
     proxy_address = decode_address(event["topics"][2])
     implementation_address = decode_address(event["topics"][3])
-
-    if (
-        session.scalar(select(AaveV3Contract).where(AaveV3Contract.address == proxy_address))
-        is not None
-    ):
-        return
 
     (revision,) = raw_call(
         w3=provider,
@@ -1104,26 +1063,17 @@ def _process_address_set_event(
     contract_name = contract_id_bytes.decode("ascii").strip("\x00")
 
     old_address = decode_address(event["topics"][2])
-    new_address = decode_address(event["topics"][3])
+    assert old_address == ZERO_ADDRESS
 
-    if old_address == ZERO_ADDRESS:
-        # New contract registration
-        session.add(
-            AaveV3Contract(
-                market_id=market.id,
-                name=contract_name,
-                address=new_address,
-            )
+    new_address = decode_address(event["topics"][3])
+    session.add(
+        AaveV3Contract(
+            market_id=market.id,
+            name=contract_name,
+            address=new_address,
         )
-        logger.info(f"Registered contract {contract_name}: @ {new_address}")
-    else:
-        # Contract address update
-        contract = session.scalar(
-            select(AaveV3Contract).where(AaveV3Contract.address == old_address)
-        )
-        assert contract is not None
-        contract.address = new_address
-        logger.info(f"Updated contract {contract_name}: {old_address} -> {new_address}")
+    )
+    logger.info(f"Registered contract {contract_name}: @ {new_address}")
 
 
 def _process_price_oracle_updated_event(
@@ -1164,20 +1114,16 @@ def _process_price_oracle_updated_event(
             AaveV3Contract.name == "PRICE_ORACLE",
         )
     )
+    assert existing_oracle is None
 
-    if existing_oracle is None:
-        session.add(
-            AaveV3Contract(
-                market_id=market.id,
-                name="PRICE_ORACLE",
-                address=new_address,
-            )
+    session.add(
+        AaveV3Contract(
+            market_id=market.id,
+            name="PRICE_ORACLE",
+            address=new_address,
         )
-        logger.info(f"Registered PRICE_ORACLE at {new_address} from PriceOracleUpdated event")
-    elif existing_oracle.address != new_address:
-        # Update to the new oracle address
-        existing_oracle.address = new_address
-        logger.info(f"Updated PRICE_ORACLE: {existing_oracle.address} -> {new_address}")
+    )
+    logger.info(f"Registered PRICE_ORACLE at {new_address} from PriceOracleUpdated event")
 
 
 def _process_asset_source_updated_event(
@@ -1212,13 +1158,7 @@ def _process_asset_source_updated_event(
             AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
         )
     )
-
-    if asset is None:
-        logger.warning(
-            f"AssetSourceUpdated for unknown asset: {asset_address}, "
-            f"source={source_address} (block {event['blockNumber']})"
-        )
-        return
+    assert asset is not None
 
     asset.price_source = get_checksum_address(source_address)
     logger.info(
@@ -1272,7 +1212,3 @@ def _process_discount_percent_updated_event(
         f"(user.id={user.id})"
     )
     user.gho_discount = new_discount_percent
-
-
-# Import Erc20TokenTable for _process_reserve_data_update_event
-from degenbot.database.models import Erc20TokenTable

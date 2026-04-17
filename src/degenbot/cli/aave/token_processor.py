@@ -6,13 +6,12 @@ updating user positions. It delegates to revision-specific processors for
 handling different token contract versions.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 import eth_abi.abi
 from web3.types import LogReceipt
 
-from degenbot.aave.enrichment import ScaledEventEnricher
-from degenbot.aave.events import AaveV3PoolEvent, AaveV3ScaledTokenEvent
+from degenbot.aave.events import AaveV3PoolEvent
 from degenbot.aave.libraries.gho_math import GhoMath
 from degenbot.aave.libraries.pool_math import PoolMath
 from degenbot.aave.libraries.token_math import TokenMathFactory
@@ -26,13 +25,14 @@ from degenbot.aave.processors import (
     TokenProcessorFactory,
 )
 from degenbot.cli.aave.constants import UserOperation, WadRayMathLibrary
-from degenbot.cli.aave.db_assets import get_asset_identifier
+from degenbot.cli.aave.db_assets import get_asset_by_token_type, get_asset_identifier
 from degenbot.cli.aave.db_positions import (
     get_or_create_collateral_position,
     get_or_create_debt_position,
 )
 from degenbot.cli.aave.db_users import get_or_create_user
 from degenbot.cli.aave.stkaave import get_or_init_stk_aave_balance
+from degenbot.cli.aave.transfers import _process_collateral_transfer
 from degenbot.cli.aave.types import TokenType, TransactionContext
 from degenbot.cli.aave.verification import update_debt_position_index
 from degenbot.cli.aave_transaction_operations import (
@@ -41,20 +41,13 @@ from degenbot.cli.aave_transaction_operations import (
     ScaledTokenEvent,
     ScaledTokenEventType,
 )
+from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.database.models.aave import AaveV3CollateralPosition, AaveV3DebtPosition
+from degenbot.database.models.aave import AaveV3CollateralPosition, AaveV3DebtPosition, AaveV3User
 from degenbot.logging import logger
 
 if TYPE_CHECKING:
-    from degenbot.aave.processors.base import (
-        ScaledTokenBurnResult,
-        ScaledTokenMintResult,
-    )
-    from degenbot.database.models.aave import (
-        AaveV3Asset,
-        AaveV3CollateralPosition,
-        AaveV3DebtPosition,
-    )
+    from degenbot.aave.processors.base import ScaledTokenBurnResult, ScaledTokenMintResult
 
 
 def _process_scaled_token_operation(
@@ -161,6 +154,9 @@ def _process_scaled_token_operation(
                 position.last_index = debt_burn_result.new_index
             return UserOperation.REPAY
 
+        case _:
+            assert_never(event)
+
 
 def calculate_gho_discount_rate(
     debt_balance: int,
@@ -183,8 +179,7 @@ def calculate_gho_discount_rate(
 
 def _refresh_discount_rate(
     *,
-    user: "AaveV3User",
-    has_discount_rate_strategy: bool,
+    user: AaveV3User,
     discount_token_balance: int,
     scaled_debt_balance: int,
     debt_index: int,
@@ -197,10 +192,6 @@ def _refresh_discount_rate(
     computes the discount rate locally using the same logic as the GhoDiscountRateStrategy
     contract.
     """
-
-    # Skip if discount mechanism is not supported (revision 4+)
-    if not has_discount_rate_strategy:
-        return
 
     debt_token_balance = wad_ray_math.ray_mul(
         a=scaled_debt_balance,
@@ -233,15 +224,8 @@ def _calculate_mint_to_treasury_scaled_amount(
 
     # Get the underlying amount to mint
     # Use MintedToTreasury event if available, otherwise calculate from Mint event
-    if operation.minted_to_treasury_amount is not None:
-        minted_amount = operation.minted_to_treasury_amount
-    else:
-        # Mint event value = actual_amount + balance_increase (interest on existing balance)
-        minted_amount = scaled_event.amount - scaled_event.balance_increase
-
-    # When minted_amount is 0, only interest accrued (no new tokens minted)
-    if minted_amount == 0:
-        return 0
+    assert operation.minted_to_treasury_amount is not None
+    minted_amount = operation.minted_to_treasury_amount
 
     # Use PoolMath for revision-aware calculation
     return PoolMath.underlying_to_scaled_collateral(
@@ -280,8 +264,6 @@ def _process_deficit_coverage_operation(
             ScaledTokenEventType.COLLATERAL_TRANSFER,
             ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
         }:
-            from degenbot.cli.aave.transfers import _process_collateral_transfer
-
             _process_collateral_transfer(
                 tx_context=tx_context,
                 operation=operation,
@@ -312,7 +294,6 @@ def _process_deficit_coverage_burn(
     because the amount includes interest that was accrued between the transfer
     and the burn within the same transaction.
     """
-    from degenbot.cli.aave.db_assets import get_asset_by_token_type
 
     # Skip if user address is missing
     if scaled_event.user_address is None:
@@ -367,11 +348,6 @@ def _process_deficit_coverage_burn(
         position=collateral_position,
     )
 
-    # Update last_index if the new index is greater
-    current_index = collateral_position.last_index or 0
-    if scaled_event.index > current_index:
-        collateral_position.last_index = scaled_event.index
-
 
 def _process_collateral_mint_with_match(
     *,
@@ -384,7 +360,6 @@ def _process_collateral_mint_with_match(
     """
     Process collateral (aToken) mint with operation match.
     """
-    from degenbot.cli.aave.db_assets import get_asset_by_token_type
 
     token_address = scaled_event.event["address"]
     collateral_asset = get_asset_by_token_type(
@@ -442,11 +417,6 @@ def _process_collateral_mint_with_match(
         position=collateral_position,
     )
 
-    # Update last_index
-    current_index = collateral_position.last_index or 0
-    if scaled_event.index > 0 and scaled_event.index > current_index:
-        collateral_position.last_index = scaled_event.index
-
 
 def _process_collateral_burn_with_match(
     *,
@@ -458,11 +428,6 @@ def _process_collateral_burn_with_match(
     """
     Process collateral (aToken) burn with operation match.
     """
-    from degenbot.cli.aave.db_assets import get_asset_by_token_type
-
-    # Skip if user address is missing
-    if scaled_event.user_address is None:
-        return
 
     # Get collateral asset first for logging
     token_address = scaled_event.event["address"]
@@ -528,13 +493,6 @@ def _process_collateral_burn_with_match(
         f"After burn position id={id(collateral_position)}, balance={collateral_position.balance}"
     )
 
-    # Only update last_index if the new index is greater than current
-    # This prevents earlier events (in log index order) from overwriting
-    # later events' indices when operations are processed out of order
-    current_index = collateral_position.last_index or 0
-    if scaled_event.index > current_index:
-        collateral_position.last_index = scaled_event.index
-
 
 def _process_debt_mint_with_match(
     *,
@@ -553,7 +511,6 @@ def _process_debt_mint_with_match(
     2. Debt repayment (burning scaled tokens)
     The actual scaled burn amount = balance_increase - amount.
     """
-    from degenbot.cli.aave.db_assets import get_asset_by_token_type
 
     # Get debt asset first for logging
     token_address = scaled_event.event["address"]
@@ -587,20 +544,6 @@ def _process_debt_mint_with_match(
 
     # Check if this is a GHO token first (needed for INTEREST_ACCRUAL handling)
     is_gho = tx_context.is_gho_vtoken(token_address)
-
-    # INTEREST_ACCRUAL operations: For non-GHO tokens, Mint events are tracking-only
-    # For GHO tokens, we still need to process through the GHO processor to apply discounts
-    if operation.operation_type == OperationType.INTEREST_ACCRUAL and not is_gho:
-        logger.debug(
-            "_process_debt_mint_with_match: INTEREST_ACCRUAL - skipping balance change, "
-            "updating index"
-        )
-        if scaled_event.index is not None:
-            current_index = debt_position.last_index or 0
-            if scaled_event.index > current_index:
-                debt_position.last_index = scaled_event.index
-                logger.debug(f"Updated last_index for INTEREST_ACCRUAL: {debt_position.last_index}")
-        return
 
     # Use enriched event data for scaled amount
     scaled_amount: int | None = enriched_event.scaled_amount
@@ -668,8 +611,6 @@ def _process_debt_mint_with_match(
             assert debt_position.last_index is not None
             _refresh_discount_rate(
                 user=user,
-                has_discount_rate_strategy=tx_context.gho_asset.v_gho_discount_rate_strategy
-                is not None,
                 discount_token_balance=discount_token_balance,
                 scaled_debt_balance=debt_position.balance,
                 debt_index=debt_position.last_index,
@@ -738,8 +679,7 @@ def _process_debt_mint_with_match(
                     data=operation.pool_event["data"],
                 )
             else:
-                msg = f"Unhandled operation type {operation.operation_type}"
-                raise ValueError(msg)
+                assert_never(operation.operation_type)
 
             # Use token revision (not pool revision) to get correct TokenMath
             token_math = TokenMathFactory.get_token_math_for_token_revision(
@@ -802,7 +742,6 @@ def _is_bad_debt_liquidation(user: "AaveV3User", tx_context: TransactionContext)
             uint256 amountCreated
         );
     """
-    from degenbot.cli.aave_utils import decode_address
 
     for evt in tx_context.events:
         if evt["topics"][0] == AaveV3PoolEvent.DEFICIT_CREATED.value:
@@ -824,7 +763,6 @@ def _process_debt_burn_with_match(
     """
     Process debt (vToken) burn with operation match.
     """
-    from degenbot.cli.aave.db_assets import get_asset_by_token_type
 
     # Get debt asset first for logging
     token_address = scaled_event.event["address"]
@@ -875,12 +813,12 @@ def _process_debt_burn_with_match(
             f"_process_debt_burn_with_match: BAD DEBT LIQUIDATION - setting balance to 0 "
             f"(was {old_balance})"
         )
-        # Skip the normal processing since we've already set the balance
+
         # Only update last_index if the new index is greater than current
-        if scaled_event.index is not None:
-            current_index = debt_position.last_index or 0
-            if scaled_event.index > current_index:
-                debt_position.last_index = scaled_event.index
+        current_index = debt_position.last_index or 0
+        if scaled_event.index > current_index:
+            debt_position.last_index = scaled_event.index
+
         return
 
     # Check if this is a GHO token and use GHO-specific processing
@@ -930,8 +868,6 @@ def _process_debt_burn_with_match(
             current_index = debt_position.last_index
             _refresh_discount_rate(
                 user=user,
-                has_discount_rate_strategy=tx_context.gho_asset.v_gho_discount_rate_strategy
-                is not None,
                 discount_token_balance=discount_token_balance,
                 scaled_debt_balance=debt_position.balance,
                 debt_index=current_index,
@@ -953,18 +889,9 @@ def _process_debt_burn_with_match(
             OperationType.LIQUIDATION,
             OperationType.GHO_LIQUIDATION,
         }:
-            liquidation_key = (user.address, token_address)
             pattern = tx_context.liquidation_patterns.get_pattern(user.address, token_address)
 
-            if pattern is None:
-                # Not in a liquidation group - shouldn't happen, but handle gracefully
-                logger.warning(
-                    f"_process_debt_burn_with_match: Burn event in liquidation "
-                    f"but no pattern detected for {liquidation_key}"
-                )
-                burn_value = scaled_event.amount
-
-            elif pattern == LiquidationPattern.SINGLE:
+            if pattern == LiquidationPattern.SINGLE:
                 # Standard single liquidation - use operation's debt_to_cover
                 assert operation.debt_to_cover is not None
                 debt_to_cover = operation.debt_to_cover
@@ -983,15 +910,6 @@ def _process_debt_burn_with_match(
                 )
 
             elif pattern == LiquidationPattern.COMBINED_BURN:
-                # Issue 0056: Multiple liquidations share one burn event
-                # Process once with aggregated amount
-                if tx_context.liquidation_patterns.is_processed(user.address, token_address):
-                    logger.debug(
-                        f"_process_debt_burn_with_match: COMBINED_BURN already processed "
-                        f"for {liquidation_key} - skipping"
-                    )
-                    return
-
                 tx_context.liquidation_patterns.mark_processed(user.address, token_address)
 
                 # Get aggregated amount from group
@@ -1030,12 +948,8 @@ def _process_debt_burn_with_match(
                 )
 
             else:
-                # Unknown pattern - fallback to event amount
-                logger.error(
-                    f"_process_debt_burn_with_match: Unknown pattern {pattern} "
-                    f"for {liquidation_key}"
-                )
-                burn_value = scaled_event.amount
+                assert_never(pattern)
+
         else:
             # Standard REPAY: use Burn event value
             burn_value = scaled_event.amount
