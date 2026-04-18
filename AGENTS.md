@@ -19,6 +19,8 @@ Uses `just` (see justfile) and `uv` as the package runner. Key commands:
 - `just build-rust-extension` - Build Python extension (extension-module feature)
 - `just build-rust-debug` - Build Rust release linked to Python (for testing only)
 
+**Important**: The Rust extension is automatically rebuilt on import by maturin. Do NOT manually rebuild and reinstall (`uv pip install -e .`) after Rust changes — just run the tests and the import will trigger a rebuild. Only use `just dev` or `uv pip install -e .` when you need to install for the first time or when changing `pyproject.toml` dependencies.
+
 ### Combined
 - `just test-all` - Run all tests (Rust + Python)
 - `just dev` - Build and install Python extension in development mode
