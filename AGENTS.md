@@ -16,15 +16,13 @@ Uses `just` (see justfile) and `uv` as the package runner. Key commands:
 ### Rust
 - `just test-rust` - Run Rust tests
 - `just lint-rust` - Run Rust linter (clippy)
-- `just build-rust-extension` - Build Python extension (extension-module feature)
-- `just build-rust-debug` - Build Rust release linked to Python (for testing only)
+
+**Important**: The Rust extension is automatically rebuilt on import by maturin. Do NOT manually rebuild the extension, recreate the virtual environment, or reinstall the package after making Rust code changes — just run the tests and the import will trigger a rebuild.
 
 ### Combined
 - `just test-all` - Run all tests (Rust + Python)
-- `just dev` - Build and install Python extension in development mode
 - `just lint` - Run clippy, ruff, and mypy
 - `just format` - Run `cargo fmt` and `ruff format`
-- `just compile-test-contracts` - Compile Solidity test contracts with Forge (required by `test-python`; run automatically)
 
 ## Database
 - Config file at `~/.config/degenbot/config.toml`; database path defaults to `~/.config/degenbot/degenbot.db` (overridable via `database.path` setting)
