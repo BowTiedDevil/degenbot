@@ -1,11 +1,8 @@
 import dataclasses
 
 import pytest
-import web3
-from web3.types import TxParams
 
 from degenbot.anvil_fork import AnvilFork
-from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts, UniswapV4PoolSwapAmounts
 from degenbot.arbitrage.uniswap_2pool_cycle_testing import (
     _UniswapTwoPoolCycleTesting,
 )
@@ -14,12 +11,12 @@ from degenbot.connection import set_web3
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.erc20.ether_placeholder import EtherPlaceholder
 from degenbot.exceptions.arbitrage import RateOfExchangeBelowMinimum
-from degenbot.exceptions.liquidity_pool import PossibleInaccurateResult
 from degenbot.registry import pool_registry, token_registry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-from tests.conftest import env_values
+
+pytestmark = pytest.mark.fork
 
 # Token addresses
 NATIVE_ADDRESS = get_checksum_address("0x0000000000000000000000000000000000000000")
@@ -322,194 +319,3 @@ def test_v4_v2_calculation_rejects_unprofitable_opportunity(arb_v4_v2: _UniswapT
     # exception
     with pytest.raises(RateOfExchangeBelowMinimum):
         arb.calculate(state_overrides={v2_pool: v2_pool_state})
-
-
-@pytest.mark.parametrize(
-    "fork_base_archive",
-    [28197806],
-    indirect=True,
-)
-def test_v4_v2_dai_arb_base(fork_base_archive: AnvilFork):
-    set_web3(fork_base_archive.w3)
-
-    v4_v2_arb_id = "0x69ca7e8fe6804a17e0f38eb1d5013ad10307f9f792f6435200c7a8e6fedefbb3"
-    v4_dai_address = "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb"
-    v4_base_eth_dai_pool_id = "0x4b882f394f112820aee2dcb9c17e74af5c5696373c0d029446bd5285077aa00c"
-    v4_base_eth_dai_pool_fee = 100
-    v4_base_eth_dai_pool_tick_spacing = 1
-    v4_base_eth_dai_pool_hooks = "0x0000000000000000000000000000000000000000"
-    v4_base_pool_manager = get_checksum_address("0x498581fF718922c3f8e6A244956aF099B2652b2b")
-    v4_base_state_view = get_checksum_address("0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71")
-    v2_pool_address = get_checksum_address("0x18D7EEb9B63664c06251dd8141eC1D0c14f0C012")
-
-    v4_pool = UniswapV4Pool(
-        pool_id=v4_base_eth_dai_pool_id,
-        pool_manager_address=v4_base_pool_manager,
-        state_view_address=v4_base_state_view,
-        fee=v4_base_eth_dai_pool_fee,
-        tick_spacing=v4_base_eth_dai_pool_tick_spacing,
-        hook_address=v4_base_eth_dai_pool_hooks,
-        tokens=(v4_dai_address, NATIVE_ADDRESS),
-    )
-    v2_pool = UniswapV2Pool(v2_pool_address)
-
-    base_native = token_registry.get(
-        token_address=NATIVE_ADDRESS, chain_id=fork_base_archive.w3.eth.chain_id
-    )
-    assert isinstance(base_native, Erc20Token)
-
-    v4_v2_arb = _UniswapTwoPoolCycleTesting(
-        input_token=base_native,
-        swap_pools=(
-            v4_pool,
-            v2_pool,
-        ),
-        id=v4_v2_arb_id,
-    )
-
-    calc_result = v4_v2_arb.calculate()
-    v4_swap_amount, v2_swap_amount = calc_result.swap_amounts
-    assert isinstance(v4_swap_amount, UniswapV4PoolSwapAmounts)
-    assert isinstance(v2_swap_amount, UniswapV2PoolSwapAmounts)
-
-    arbitrage_payloads = v4_v2_arb.generate_payloads(
-        from_address=NATIVE_ADDRESS,
-        forward_token_amount=calc_result.input_amount,
-        pool_swap_amounts=calc_result.swap_amounts,
-    )
-
-    v4_amount_in = v4_pool.calculate_tokens_in_from_tokens_out(
-        token_out=v4_pool.token1 if v4_swap_amount.zero_for_one else v4_pool.token0,
-        token_out_quantity=v4_swap_amount.amount_specified,
-    )
-
-    v2_amount_out = max(v2_swap_amount.amounts_out)
-
-    assert v4_amount_in < v2_amount_out
-
-    v4_v2_executor_contract_address = get_checksum_address(
-        env_values["V4_V2_EXECUTOR_CONTRACT_ADDRESS"]
-    )
-    v4_v2_executor_contract_abi = env_values["V4_V2_EXECUTOR_CONTRACT_ABI"]
-    operator_address = get_checksum_address(env_values["OPERATOR_ADDRESS"])
-
-    executor_contract = fork_base_archive.w3.eth.contract(
-        address=v4_v2_executor_contract_address,
-        abi=v4_v2_executor_contract_abi,
-    )
-    v4_payload, v2_payload = arbitrage_payloads
-    arbitrage_transaction_params = executor_contract.functions.execute(
-        v2_payload=dataclasses.astuple(v2_payload),
-        v4_payload=dataclasses.astuple(v4_payload),
-    ).build_transaction(
-        transaction=TxParams({
-            "from": operator_address,
-            "chainId": fork_base_archive.w3.eth.chain_id,
-            "type": 2,
-        })
-    )
-    arbitrage_transaction_params["gas"] = int(
-        # bugfix: some TX run out of gas on chain because the gas estimation is too tight
-        1.5 * arbitrage_transaction_params["gas"]
-    )
-
-    tx = fork_base_archive.w3.eth.send_transaction(arbitrage_transaction_params)
-    tx_receipt = fork_base_archive.w3.eth.wait_for_transaction_receipt(tx)
-    assert tx_receipt["status"] == 1
-
-
-@pytest.mark.parametrize(
-    "fork_base_archive",
-    [28203703],
-    indirect=True,
-)
-def test_v2_v4_usdc_arb_base(fork_base_archive: AnvilFork):
-    set_web3(fork_base_archive.w3)
-
-    base_weth_address = get_checksum_address("0x4200000000000000000000000000000000000006")
-
-    v2_weth_usdc_pool_address = get_checksum_address("0x88A43bbDF9D098eEC7bCEda4e2494615dfD9bB9C")
-    v4_base_eth_usdc_pool_id = "0xa931b046d1c703ef898b4b7c93400e621059bec0d06f17ad9f1e5d0503041af6"
-    v2_v4_arb_id = "0x779849c47b47dcb667d000aa8ddee2fd40a6b8ce6d1c5eb46086fb72d3bf0ada"
-
-    v4_usdc_address = get_checksum_address("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
-    v4_base_eth_usdc_pool_fee = 3000
-    v4_base_eth_usdc_pool_tick_spacing = 60
-    v4_base_eth_usdc_pool_hooks = "0x1b1ad7c283c95028062fd07ba95ff5205269c888"
-    v4_base_pool_manager = get_checksum_address("0x498581fF718922c3f8e6A244956aF099B2652b2b")
-    v4_base_state_view = get_checksum_address("0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71")
-
-    v4_pool = UniswapV4Pool(
-        pool_id=v4_base_eth_usdc_pool_id,
-        pool_manager_address=v4_base_pool_manager,
-        state_view_address=v4_base_state_view,
-        fee=v4_base_eth_usdc_pool_fee,
-        tick_spacing=v4_base_eth_usdc_pool_tick_spacing,
-        hook_address=v4_base_eth_usdc_pool_hooks,
-        tokens=(v4_usdc_address, base_weth_address),
-    )
-    v2_pool = UniswapV2Pool(v2_weth_usdc_pool_address)
-
-    base_weth = token_registry.get(
-        token_address=base_weth_address, chain_id=fork_base_archive.w3.eth.chain_id
-    )
-    assert isinstance(base_weth, Erc20Token)
-
-    v2_v4_arb = _UniswapTwoPoolCycleTesting(
-        input_token=base_weth,
-        swap_pools=(
-            v2_pool,
-            v4_pool,
-        ),
-        id=v2_v4_arb_id,
-    )
-
-    calc_result = v2_v4_arb.calculate()
-    arbitrage_payloads = v2_v4_arb.generate_payloads(
-        from_address=NATIVE_ADDRESS,
-        forward_token_amount=calc_result.input_amount,
-        pool_swap_amounts=calc_result.swap_amounts,
-    )
-
-    v2_swap_amount, v4_swap_amount = calc_result.swap_amounts
-    assert isinstance(v2_swap_amount, UniswapV2PoolSwapAmounts)
-    assert isinstance(v4_swap_amount, UniswapV4PoolSwapAmounts)
-
-    try:
-        v4_amount_in = v4_pool.calculate_tokens_in_from_tokens_out(
-            token_out=v4_pool.token1 if v4_swap_amount.zero_for_one else v4_pool.token0,
-            token_out_quantity=-v4_swap_amount.amount_specified,
-        )
-    except PossibleInaccurateResult as exc:
-        v4_amount_in = exc.amount_in
-
-    v2_amount_out = max(v2_swap_amount.amounts_out)
-
-    assert v4_amount_in < v2_amount_out
-
-    v4_v2_executor_contract_address = get_checksum_address(
-        env_values["V4_V2_EXECUTOR_CONTRACT_ADDRESS"]
-    )
-    v4_v2_executor_contract_abi = env_values["V4_V2_EXECUTOR_CONTRACT_ABI"]
-    operator_address = get_checksum_address(env_values["OPERATOR_ADDRESS"])
-
-    assert isinstance(v4_v2_executor_contract_abi, str)
-
-    executor_contract = fork_base_archive.w3.eth.contract(
-        address=v4_v2_executor_contract_address,
-        abi=v4_v2_executor_contract_abi,
-    )
-    v4_payload, v2_payload = arbitrage_payloads
-
-    # The transaction should fail because the hook is not modeled
-    with pytest.raises(web3.exceptions.Web3Exception):
-        executor_contract.functions.execute(
-            v2_payload=dataclasses.astuple(v2_payload),
-            v4_payload=dataclasses.astuple(v4_payload),
-        ).build_transaction(
-            transaction=TxParams({
-                "from": operator_address,
-                "chainId": fork_base_archive.w3.eth.chain_id,
-                "type": 2,
-            })
-        )

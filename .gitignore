@@ -177,6 +177,7 @@ research
 .opencode/plans
 .opencode/skills
 .opencode/tmp
+.opencode/*
 .ignore
 
 # SQLite

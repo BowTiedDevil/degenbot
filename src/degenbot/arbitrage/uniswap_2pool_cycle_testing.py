@@ -20,6 +20,12 @@ from scipy.optimize import OptimizeResult, minimize_scalar
 
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from degenbot.aerodrome.types import AerodromeV2PoolState
+from degenbot.arbitrage.optimizers.solver import (
+    ArbSolver as _ArbSolver,
+    HopType as _HopType,
+    SolveInput as _SolveInput,
+    pool_state_to_hop as _pool_state_to_hop,
+)
 from degenbot.arbitrage.types import (
     ArbitrageCalculationResult,
     UniswapV2PoolSwapAmounts,
@@ -59,6 +65,7 @@ XATOL = 1.0
 
 DEBUG_VERIFY_CACHED_PROBLEM = False
 DEBUG_SLOW_CALCS = False
+USE_SOLVER_FAST_PATH = True  # Feature flag: set False to disable solver fast-path
 
 
 @dataclass(slots=True, frozen=True)
@@ -219,6 +226,113 @@ type PoolId = bytes | HexStr
 
 class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
     convex_problem: ClassVar[Problem] = _build_convex_problem(num_pools=2)
+    _arb_solver: ClassVar[_ArbSolver | None] = None
+
+    @classmethod
+    def _get_arb_solver(cls) -> _ArbSolver:
+        """Lazy-init shared ArbSolver instance."""
+        if cls._arb_solver is None:
+            cls._arb_solver = _ArbSolver()
+        return cls._arb_solver
+
+    @staticmethod
+    def _solver_fast_path(
+        pools: Sequence[Pool],
+        input_token: Erc20Token,
+        state_overrides: Mapping[Pool, PoolState] | None = None,
+        max_input: int | None = None,
+    ) -> int | None:
+        """
+        Try the ArbSolver fast-path for an arbitrage cycle of arbitrary length.
+
+        Builds Hops from pool objects (V2, V3, V4, Aerodrome) using
+        `pool_state_to_hop`, runs the ArbSolver (Mobius→Newton→Brent),
+        and converts the result back to forward_token space.
+
+        Supports:
+        - All pool types: V2, V3, V4, AerodromeV2, AerodromeV3
+        - Arbitrary path length (2+ pools)
+        - State overrides for any pool
+
+        Returns the optimal forward_token_amount if the solver succeeds,
+        or None to fall back to the existing optimization path.
+        """
+        if not USE_SOLVER_FAST_PATH or len(pools) < 2:
+            return None
+
+        try:
+            hops: list[_HopType] = []
+            current_token = input_token
+
+            for pool in pools:
+                state_override = None
+                if state_overrides is not None:
+                    state_override = state_overrides.get(pool)
+
+                hop = _pool_state_to_hop(
+                    pool=pool,
+                    input_token=current_token,
+                    state_override=state_override,
+                )
+                hops.append(hop)
+
+                # Advance to the next token in the path
+                if current_token == pool.token0:
+                    current_token = pool.token1
+                else:
+                    current_token = pool.token0
+
+            solve_input = _SolveInput(hops=tuple(hops), max_input=max_input)
+            solver = _UniswapTwoPoolCycleTesting._get_arb_solver()
+            result = solver.solve(solve_input)
+
+            if result.success and result.profit > 0:
+                # The solver returns optimal_input in input_token units.
+                # Convert to forward_token_amount by simulating the first
+                # pool (buy pool) to find how much forward token the optimal
+                # input produces.
+                weth_in = result.optimal_input
+                hop_buy = hops[0]
+
+                # For V3/V4 buy pools, use actual pool calculation to handle
+                # tick crossings correctly. The constant-product approximation
+                # with virtual reserves is only valid for single-range swaps.
+                buy_pool = pools[0]
+                buy_state_override = state_overrides.get(buy_pool) if state_overrides else None
+
+                if isinstance(buy_pool, (UniswapV3Pool, UniswapV4Pool)):
+                    # V3/V4 buy pool: use actual pool calculation for accuracy
+                    try:
+                        forward_token = (
+                            buy_pool.token1 if input_token == buy_pool.token0 else buy_pool.token0
+                        )
+                        # Type cast: buy_state_override matches the pool type via isinstance check
+                        forward_token_amount = buy_pool.calculate_tokens_out_from_tokens_in(
+                            token_in=input_token,
+                            token_in_quantity=weth_in,
+                            override_state=buy_state_override,  # type: ignore[arg-type]
+                        )
+                        if forward_token_amount <= 0:
+                            return None
+                        return forward_token_amount
+                    except Exception:
+                        # Tick crossing or other issue - fall back to Brent
+                        return None
+                else:
+                    # V2 buy pool: constant-product formula is exact
+                    r_in = float(hop_buy.reserve_in)
+                    r_out = float(hop_buy.reserve_out)
+                    gamma = hop_buy.gamma
+                    denom = r_in + weth_in * gamma
+                    if denom <= 0:
+                        return None
+                    forward_token_amount = int(weth_in * gamma * r_out / denom)
+                    if forward_token_amount > 0:
+                        return forward_token_amount
+        except Exception:
+            pass  # Fall through to existing optimization
+
+        return None
 
     def _calculate(
         self,
@@ -758,30 +872,45 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
-            opt: OptimizeResult = minimize_scalar(
-                fun=lambda x: (
-                    -_arb_profit_v4_v4(
-                        pool_hi=v4_pool_hi,
-                        pool_lo=v4_pool_lo,
-                        pool_hi_state_override=v4_pool_hi_state_override,
-                        pool_lo_state_override=v4_pool_lo_state_override,
-                        forward_token=forward_token,
-                        forward_token_amount=x,
-                    )
-                ),
-                method="bounded",
-                bounds=forward_token_bounds,
-                options={
-                    "xatol": XATOL,
-                },
-            )
-
-            if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
-                logger.debug(
-                    f"V4/V4 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+            # --- Solver fast-path: try ArbSolver before Brent ---
+            forward_token_amount: int | None = None
+            if USE_SOLVER_FAST_PATH and int(forward_token_bounds[1]) > 1:
+                forward_token_amount = self._solver_fast_path(
+                    pools=[v4_pool_lo, v4_pool_hi],
+                    input_token=self.input_token,
+                    state_overrides={
+                        k: v for k, v in [
+                            (v4_pool_lo, v4_pool_lo_state_override),
+                            (v4_pool_hi, v4_pool_hi_state_override),
+                        ] if v is not None
+                    },
                 )
 
-            forward_token_amount = int(opt.x)
+            if forward_token_amount is None:
+                opt: OptimizeResult = minimize_scalar(
+                    fun=lambda x: (
+                        -_arb_profit_v4_v4(
+                            pool_hi=v4_pool_hi,
+                            pool_lo=v4_pool_lo,
+                            pool_hi_state_override=v4_pool_hi_state_override,
+                            pool_lo_state_override=v4_pool_lo_state_override,
+                            forward_token=forward_token,
+                            forward_token_amount=x,
+                        )
+                    ),
+                    method="bounded",
+                    bounds=forward_token_bounds,
+                    options={
+                        "xatol": XATOL,
+                    },
+                )
+
+                if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
+                    logger.debug(
+                        f"V4/V4 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+                    )
+
+                forward_token_amount = int(opt.x)
             if forward_token_amount == 0:
                 raise ArbitrageError(message="Zero amount optimum")
 
@@ -914,34 +1043,49 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
-            if int(forward_token_bounds[1]) == 1:
-                forward_token_amount = 1
-            else:
-                opt: OptimizeResult = minimize_scalar(
-                    fun=lambda x: (
-                        -_arb_profit_high_roe_v4_low_roe_v3(
-                            v4_pool=v4_pool,
-                            v3_pool=v3_pool,
-                            v4_pool_state_override=v4_pool_state_override,
-                            v3_pool_state_override=v3_pool_state_override,
-                            forward_token=forward_token,
-                            forward_token_amount=x,
-                        )
-                    ),
-                    method="bounded",
-                    bounds=forward_token_bounds,
-                    options={
-                        "xatol": XATOL,
+            # --- Solver fast-path: try ArbSolver before Brent ---
+            forward_token_amount: int | None = None
+            if USE_SOLVER_FAST_PATH and int(forward_token_bounds[1]) > 1:
+                forward_token_amount = self._solver_fast_path(
+                    pools=[v3_pool, v4_pool],
+                    input_token=self.input_token,
+                    state_overrides={
+                        k: v for k, v in [
+                            (v3_pool, v3_pool_state_override),
+                            (v4_pool, v4_pool_state_override),
+                        ] if v is not None
                     },
                 )
-                forward_token_amount = int(opt.x)
-                if forward_token_amount == 0:
-                    raise ArbitrageError(message="Zero amount optimum")
 
-                if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
-                    logger.debug(
-                        f"V4/V3 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+            if forward_token_amount is None:
+                if int(forward_token_bounds[1]) == 1:
+                    forward_token_amount = 1
+                else:
+                    opt: OptimizeResult = minimize_scalar(
+                        fun=lambda x: (
+                            -_arb_profit_high_roe_v4_low_roe_v3(
+                                v4_pool=v4_pool,
+                                v3_pool=v3_pool,
+                                v4_pool_state_override=v4_pool_state_override,
+                                v3_pool_state_override=v3_pool_state_override,
+                                forward_token=forward_token,
+                                forward_token_amount=x,
+                            )
+                        ),
+                        method="bounded",
+                        bounds=forward_token_bounds,
+                        options={
+                            "xatol": XATOL,
+                        },
                     )
+                    forward_token_amount = int(opt.x)
+                    if forward_token_amount == 0:
+                        raise ArbitrageError(message="Zero amount optimum")
+
+                    if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
+                        logger.debug(
+                            f"V4/V3 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+                        )
 
             assert forward_token_amount >= 1
 
@@ -1077,25 +1221,40 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
-            if int(forward_token_bounds[1]) == 1:
-                forward_token_amount = 1
-            else:
-                opt: OptimizeResult = minimize_scalar(
-                    fun=lambda x: (
-                        -_arb_profit_high_roe_v2_low_roe_v4(
-                            v4_pool=v4_pool,
-                            v2_pool=v2_pool,
-                            v4_pool_state_override=v4_pool_state_override,
-                            v2_pool_state_override=v2_pool_state_override,
-                            forward_token=forward_token,
-                            forward_token_amount=x,
-                        )
-                    ),
-                    method="bounded",
-                    bounds=forward_token_bounds,
-                    options={
-                        "xatol": XATOL,
+            # --- Solver fast-path: try ArbSolver before Brent ---
+            forward_token_amount: int | None = None
+            if USE_SOLVER_FAST_PATH and int(forward_token_bounds[1]) > 1:
+                forward_token_amount = self._solver_fast_path(
+                    pools=[v4_pool, v2_pool],
+                    input_token=self.input_token,
+                    state_overrides={
+                        k: v for k, v in [
+                            (v4_pool, v4_pool_state_override),
+                            (v2_pool, v2_pool_state_override),
+                        ] if v is not None
                     },
+                )
+
+            if forward_token_amount is None:
+                if int(forward_token_bounds[1]) == 1:
+                    forward_token_amount = 1
+                else:
+                    opt: OptimizeResult = minimize_scalar(
+                        fun=lambda x: (
+                            -_arb_profit_high_roe_v2_low_roe_v4(
+                                v4_pool=v4_pool,
+                                v2_pool=v2_pool,
+                                v4_pool_state_override=v4_pool_state_override,
+                                v2_pool_state_override=v2_pool_state_override,
+                                forward_token=forward_token,
+                                forward_token_amount=x,
+                            )
+                        ),
+                        method="bounded",
+                        bounds=forward_token_bounds,
+                        options={
+                            "xatol": XATOL,
+                        },
                 )
                 forward_token_amount = int(opt.x)
                 if forward_token_amount == 0:
@@ -1252,34 +1411,49 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
-            if int(forward_token_bounds[1]) == 1:
-                forward_token_amount = 1
-            else:
-                opt: OptimizeResult = minimize_scalar(
-                    fun=lambda x: (
-                        -_arb_profit_high_roe_v3_low_roe_v4(
-                            v4_pool=v4_pool,
-                            v3_pool=v3_pool,
-                            v4_pool_state_override=v4_pool_state_override,
-                            v3_pool_state_override=v3_pool_state_override,
-                            forward_token=forward_token,
-                            forward_token_amount=x,
-                        )
-                    ),
-                    method="bounded",
-                    bounds=forward_token_bounds,
-                    options={
-                        "xatol": XATOL,
+            # --- Solver fast-path: try ArbSolver before Brent ---
+            forward_token_amount: int | None = None
+            if USE_SOLVER_FAST_PATH and int(forward_token_bounds[1]) > 1:
+                forward_token_amount = self._solver_fast_path(
+                    pools=[v4_pool, v3_pool],
+                    input_token=self.input_token,
+                    state_overrides={
+                        k: v for k, v in [
+                            (v4_pool, v4_pool_state_override),
+                            (v3_pool, v3_pool_state_override),
+                        ] if v is not None
                     },
                 )
-                forward_token_amount = int(opt.x)
-                if forward_token_amount == 0:
-                    raise ArbitrageError(message="Zero amount optimum")
 
-                if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
-                    logger.debug(
-                        f"V4/V3 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+            if forward_token_amount is None:
+                if int(forward_token_bounds[1]) == 1:
+                    forward_token_amount = 1
+                else:
+                    opt: OptimizeResult = minimize_scalar(
+                        fun=lambda x: (
+                            -_arb_profit_high_roe_v3_low_roe_v4(
+                                v4_pool=v4_pool,
+                                v3_pool=v3_pool,
+                                v4_pool_state_override=v4_pool_state_override,
+                                v3_pool_state_override=v3_pool_state_override,
+                                forward_token=forward_token,
+                                forward_token_amount=x,
+                            )
+                        ),
+                        method="bounded",
+                        bounds=forward_token_bounds,
+                        options={
+                            "xatol": XATOL,
+                        },
                     )
+                    forward_token_amount = int(opt.x)
+                    if forward_token_amount == 0:
+                        raise ArbitrageError(message="Zero amount optimum")
+
+                    if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
+                        logger.debug(
+                            f"V4/V3 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+                        )
 
             assert forward_token_amount >= 1
 
@@ -1420,28 +1594,43 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
-            opt: OptimizeResult = minimize_scalar(
-                fun=lambda x: _arb_profit_v3_v3(
-                    pool_hi=v3_pool_hi,
-                    pool_lo=v3_pool_lo,
-                    forward_token=forward_token,
-                    forward_token_amount=x,
-                    pool_hi_state_override=v3_pool_hi_state_override,
-                    pool_lo_state_override=v3_pool_lo_state_override,
-                ),
-                method="bounded",
-                bounds=forward_token_bounds,
-                options={
-                    "xatol": XATOL,
-                },
-            )
-
-            if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
-                logger.debug(
-                    f"V3/V3 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+            # --- Solver fast-path: try ArbSolver before Brent ---
+            forward_token_amount: int | None = None
+            if USE_SOLVER_FAST_PATH and int(forward_token_bounds[1]) > 1:
+                forward_token_amount = self._solver_fast_path(
+                    pools=[v3_pool_lo, v3_pool_hi],
+                    input_token=self.input_token,
+                    state_overrides={
+                        k: v for k, v in [
+                            (v3_pool_lo, v3_pool_lo_state_override),
+                            (v3_pool_hi, v3_pool_hi_state_override),
+                        ] if v is not None
+                    },
                 )
 
-            forward_token_amount = int(opt.x)
+            if forward_token_amount is None:
+                opt: OptimizeResult = minimize_scalar(
+                    fun=lambda x: _arb_profit_v3_v3(
+                        pool_hi=v3_pool_hi,
+                        pool_lo=v3_pool_lo,
+                        forward_token=forward_token,
+                        forward_token_amount=x,
+                        pool_hi_state_override=v3_pool_hi_state_override,
+                        pool_lo_state_override=v3_pool_lo_state_override,
+                    ),
+                    method="bounded",
+                    bounds=forward_token_bounds,
+                    options={
+                        "xatol": XATOL,
+                    },
+                )
+
+                if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
+                    logger.debug(
+                        f"V3/V3 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+                    )
+
+                forward_token_amount = int(opt.x)
             if forward_token_amount == 0:
                 raise ArbitrageError(message="Zero amount optimum")
 
@@ -1557,34 +1746,49 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
-            if int(forward_token_bounds[1]) == 1:
-                forward_token_amount = 1
-            else:
-                opt: OptimizeResult = minimize_scalar(
-                    fun=lambda x: (
-                        -_arb_profit_high_roe_v3_low_roe_v2(
-                            v3_pool=v3_pool,
-                            v2_pool=v2_pool,
-                            forward_token=forward_token,
-                            forward_token_amount=x,
-                            v3_pool_state_override=v3_pool_state_override,
-                            v2_pool_state_override=v2_pool_state_override,
-                        )
-                    ),
-                    method="bounded",
-                    bounds=forward_token_bounds,
-                    options={
-                        "xatol": XATOL,
+            # --- Solver fast-path: try ArbSolver before Brent ---
+            forward_token_amount: int | None = None
+            if USE_SOLVER_FAST_PATH and int(forward_token_bounds[1]) > 1:
+                forward_token_amount = self._solver_fast_path(
+                    pools=[v2_pool, v3_pool],
+                    input_token=self.input_token,
+                    state_overrides={
+                        k: v for k, v in [
+                            (v2_pool, v2_pool_state_override),
+                            (v3_pool, v3_pool_state_override),
+                        ] if v is not None
                     },
                 )
-                forward_token_amount = int(opt.x)
-                if forward_token_amount == 0:
-                    raise ArbitrageError(message="Zero amount optimum")
 
-                if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
-                    logger.debug(
-                        f"V3/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+            if forward_token_amount is None:
+                if int(forward_token_bounds[1]) == 1:
+                    forward_token_amount = 1
+                else:
+                    opt: OptimizeResult = minimize_scalar(
+                        fun=lambda x: (
+                            -_arb_profit_high_roe_v3_low_roe_v2(
+                                v3_pool=v3_pool,
+                                v2_pool=v2_pool,
+                                forward_token=forward_token,
+                                forward_token_amount=x,
+                                v3_pool_state_override=v3_pool_state_override,
+                                v2_pool_state_override=v2_pool_state_override,
+                            )
+                        ),
+                        method="bounded",
+                        bounds=forward_token_bounds,
+                        options={
+                            "xatol": XATOL,
+                        },
                     )
+                    forward_token_amount = int(opt.x)
+                    if forward_token_amount == 0:
+                        raise ArbitrageError(message="Zero amount optimum")
+
+                    if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
+                        logger.debug(
+                            f"V3/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+                        )
 
             v2_pool_zero_for_one = v3_pool.token1 == forward_token
             v3_pool_zero_for_one = v3_pool.token0 == forward_token
@@ -1720,34 +1924,49 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             )
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
-            if int(forward_token_bounds[1]) == 1:
-                forward_token_amount = 1
-            else:
-                opt: OptimizeResult = minimize_scalar(
-                    fun=lambda x: (
-                        -_arb_profit_high_roe_v4_low_roe_v2(
-                            v4_pool=v4_pool,
-                            v2_pool=v2_pool,
-                            forward_token=forward_token,
-                            forward_token_amount=x,
-                            v4_pool_state_override=v4_pool_state_override,
-                            v2_pool_state_override=v2_pool_state_override,
-                        )
-                    ),
-                    method="bounded",
-                    bounds=forward_token_bounds,
-                    options={
-                        "xatol": XATOL,
+            # --- Solver fast-path: try ArbSolver before Brent ---
+            forward_token_amount: int | None = None
+            if USE_SOLVER_FAST_PATH and int(forward_token_bounds[1]) > 1:
+                forward_token_amount = self._solver_fast_path(
+                    pools=[v2_pool, v4_pool],
+                    input_token=self.input_token,
+                    state_overrides={
+                        k: v for k, v in [
+                            (v2_pool, v2_pool_state_override),
+                            (v4_pool, v4_pool_state_override),
+                        ] if v is not None
                     },
                 )
-                forward_token_amount = int(opt.x)
-                if forward_token_amount == 0:
-                    raise ArbitrageError(message="Zero amount optimum")
 
-                if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
-                    logger.debug(
-                        f"V4/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+            if forward_token_amount is None:
+                if int(forward_token_bounds[1]) == 1:
+                    forward_token_amount = 1
+                else:
+                    opt: OptimizeResult = minimize_scalar(
+                        fun=lambda x: (
+                            -_arb_profit_high_roe_v4_low_roe_v2(
+                                v4_pool=v4_pool,
+                                v2_pool=v2_pool,
+                                forward_token=forward_token,
+                                forward_token_amount=x,
+                                v4_pool_state_override=v4_pool_state_override,
+                                v2_pool_state_override=v2_pool_state_override,
+                            )
+                        ),
+                        method="bounded",
+                        bounds=forward_token_bounds,
+                        options={
+                            "xatol": XATOL,
+                        },
                     )
+                    forward_token_amount = int(opt.x)
+                    if forward_token_amount == 0:
+                        raise ArbitrageError(message="Zero amount optimum")
+
+                    if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
+                        logger.debug(
+                            f"V4/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+                        )
 
             assert forward_token_amount >= 1
 
@@ -1882,13 +2101,28 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
 
             assert forward_token_bounds[0] <= forward_token_bounds[1]
 
-            opt: OptimizeResult = minimize_scalar(
-                fun=lambda x: (
-                    -_arb_profit_high_roe_v2_low_roe_v3(
-                        v3_pool=v3_pool,
-                        v2_pool=v2_pool,
-                        v3_pool_state_override=v3_pool_state_override,
-                        v2_pool_state_override=v2_pool_state_override,
+            # --- Solver fast-path: try ArbSolver before Brent ---
+            forward_token_amount: int | None = None
+            if USE_SOLVER_FAST_PATH and int(forward_token_bounds[1]) > 1:
+                forward_token_amount = self._solver_fast_path(
+                    pools=[v3_pool, v2_pool],
+                    input_token=self.input_token,
+                    state_overrides={
+                        k: v for k, v in [
+                            (v3_pool, v3_pool_state_override),
+                            (v2_pool, v2_pool_state_override),
+                        ] if v is not None
+                    },
+                )
+
+            if forward_token_amount is None:
+                opt: OptimizeResult = minimize_scalar(
+                    fun=lambda x: (
+                        -_arb_profit_high_roe_v2_low_roe_v3(
+                            v3_pool=v3_pool,
+                            v2_pool=v2_pool,
+                            v3_pool_state_override=v3_pool_state_override,
+                            v2_pool_state_override=v2_pool_state_override,
                         forward_token=forward_token,
                         forward_token_amount=x,
                     )
@@ -1900,14 +2134,14 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 },
             )
 
-            if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
-                logger.debug(
-                    f"V3/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
-                )
+                if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
+                    logger.debug(
+                        f"V3/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+                    )
 
-            forward_token_amount = int(opt.x)
-            if forward_token_amount == 0:
-                raise ArbitrageError(message="Zero amount optimum")
+                forward_token_amount = int(opt.x)
+                if forward_token_amount == 0:
+                    raise ArbitrageError(message="Zero amount optimum")
 
             try:
                 # Transfer X token from V3 -> V2, profit is difference of WETH_out from V2 and
@@ -2707,6 +2941,112 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 # pool states are profitable in this direction
                 if rate_of_exchange_b < rate_of_exchange_a:
                     raise ArbitrageError(message="No arbitrage possible.")
+
+                # --- Solver fast-path: try ArbSolver for V2-V2 before CVXPY ---
+                if USE_SOLVER_FAST_PATH:
+                    try:
+                        forward_token_amt = self._solver_fast_path(
+                            pools=[v2_pool_a, v2_pool_b],
+                            input_token=self.input_token,
+                            state_overrides={
+                                k: v for k, v in [
+                                    (v2_pool_a, v2_pool_a_state),
+                                    (v2_pool_b, v2_pool_b_state),
+                                ] if v is not None
+                            },
+                        )
+                        if forward_token_amt is not None and forward_token_amt > 0:
+                            # Validate with pool swap methods
+                            pool_hi_zero_for_one = v2_pool_b.token1 == forward_token
+                            pool_lo_zero_for_one = v2_pool_a.token1 == forward_token
+                            assert pool_hi_zero_for_one != pool_lo_zero_for_one
+
+                            match v2_pool_b, v2_pool_b_state:
+                                case UniswapV2Pool(), UniswapV2PoolState() | None:
+                                    weth_out = v2_pool_b.calculate_tokens_out_from_tokens_in(
+                                        token_in=forward_token,
+                                        token_in_quantity=forward_token_amt,
+                                        override_state=v2_pool_b_state,
+                                    )
+                                case AerodromeV2Pool(), AerodromeV2PoolState() | None:
+                                    weth_out = v2_pool_b.calculate_tokens_out_from_tokens_in(
+                                        token_in=forward_token,
+                                        token_in_quantity=forward_token_amt,
+                                        override_state=v2_pool_b_state,
+                                    )
+                                case _:
+                                    raise TypeError
+
+                            if weth_out == 0:
+                                raise ArbitrageError(message="Zero amount swap")
+
+                            match v2_pool_a, v2_pool_a_state:
+                                case UniswapV2Pool(), UniswapV2PoolState() | None:
+                                    weth_in = v2_pool_a.calculate_tokens_in_from_tokens_out(
+                                        token_out=forward_token,
+                                        token_out_quantity=forward_token_amt,
+                                        override_state=v2_pool_a_state,
+                                    )
+                                case AerodromeV2Pool(), AerodromeV2PoolState() | None:
+                                    weth_in = v2_pool_a.calculate_tokens_in_from_tokens_out(
+                                        token_out=forward_token,
+                                        token_out_quantity=forward_token_amt,
+                                        override_state=v2_pool_a_state,
+                                    )
+                                case _:
+                                    raise TypeError
+
+                            if weth_in == 0:
+                                raise ArbitrageError(message="Zero amount swap")
+
+                            if (best_profit := weth_out - weth_in) <= 0:
+                                raise Unprofitable
+
+                            amounts = (
+                                UniswapV2PoolSwapAmounts(
+                                    pool=v2_pool_a.address,
+                                    amounts_in=(weth_in, 0)
+                                    if pool_lo_zero_for_one
+                                    else (0, weth_in),
+                                    amounts_out=(0, forward_token_amt)
+                                    if pool_lo_zero_for_one
+                                    else (forward_token_amt, 0),
+                                ),
+                                UniswapV2PoolSwapAmounts(
+                                    pool=v2_pool_b.address,
+                                    amounts_in=(forward_token_amt, 0)
+                                    if pool_hi_zero_for_one
+                                    else (0, forward_token_amt),
+                                    amounts_out=(0, weth_out)
+                                    if pool_hi_zero_for_one
+                                    else (weth_out, 0),
+                                ),
+                            )
+
+                            newest_state_block = None
+                            if not state_overrides:
+                                pool_state_blocks = tuple(
+                                    block
+                                    for pool in self.swap_pools
+                                    if (block := pool.state.block)
+                                    is not None
+                                )
+                                if len(pool_state_blocks) == len(self.swap_pools):
+                                    newest_state_block = max(pool_state_blocks)
+
+                            return ArbitrageCalculationResult(
+                                id=self.id,
+                                input_token=self.input_token,
+                                profit_token=self.input_token,
+                                input_amount=forward_token_amt,
+                                profit_amount=best_profit,
+                                swap_amounts=amounts,
+                                state_block=newest_state_block,
+                            )
+                    except (Unprofitable, ArbitrageError, InvalidForwardAmount):
+                        raise  # Re-raise known errors
+                    except Exception:
+                        pass  # Fall through to CVXPY
 
                 return _calculate_v2_v2(
                     v2_pool_hi=v2_pool_b,

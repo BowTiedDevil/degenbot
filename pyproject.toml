@@ -87,6 +87,26 @@ module=[
 ]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disable_error_code = [
+    "arg-type",        # ChecksumAddress str literals, mock→production mismatches
+    "assignment",      # Mock type assignments (OfflineErc20Token→Erc20Token, etc.)
+    "attr-defined",    # Rust extension module stubs (_rs.mobius), pytest internals
+    "call-overload",   # Dict access with union-typed keys in mock plumbing
+    "misc",            # @override on mock classes without a typed base
+    "no-any-return",   # Any returns from dynamic mock/patch code
+    "override",        # Incompatible mock method signatures
+    "type-arg",        # Missing type params on generic containers in test fixtures
+    "union-attr",      # Union-typed attribute access in test helpers
+]
+
+[[tool.mypy.overrides]]
+module = ["tests.*.archive.*", "tests.*.*.archive.*"]
+ignore_errors = true
+
 [tool.ruff]
 line-length = 100
 indent-width = 4
@@ -163,14 +183,41 @@ allow-star-arg-any = true
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
     "ANN",      # type annotations for tests are low priority
+    "ARG001",   # mock/test overrides must match the interface they stub
+    "ARG002",   # pytest fixtures may be unused but must stay for injection
+    "ARG004",   # static method signatures match the protocol they implement
     "C90",      # high complexity tests are acceptable
+    "N806",     # mathematical notation (L, R0, R1, K, M, N) is conventional
+    "PLC0415",  # lazy imports avoid circular deps and optional dependency issues
     "PLC2701",  # tests may need to import private modules
+    "PLC2801",  # monkeypatching uses dunder __enter__ calls
     "PLR0904",  # don't restrict the number of methods for class-based patterns
+    "PLR0917",  # test helper constructors accept many positional args for readability
     "PLR2004",  # many tests compare results against arbitrary values — transforming to named constants is not worthwhile
     "PLR6301",  # allow tests using class-based patterns 
+    "RUF002",   # Greek letters (α, β, γ) in docstrings are standard math notation
+    "RUF003",   # Greek letters (α, β, γ) in comments are standard math notation
+    "RUF069",   # tests intentionally compare exact float values
     "S",        # asserts are expected for testing
     "SLF",      # tests may need to access private attributes to test implementation
     "T20",      # many tests use print
+]
+"tests/**/archive/*" = [
+    "B903",     # archived research code should not be refactored
+    "E402",     # archived code may have non-standard import placement
+    "E501",     # archived code formatting should not be touched
+    "ERA001",   # archived code comments should be preserved as-is
+    "N803",     # archived math notation (R0_buy, R1_sell, etc.)
+]
+"benchmarks/*" = [
+    "ANN",      # type annotations for benchmarks are low priority
+    "C90",      # high complexity benchmarks are acceptable
+    "INP001",   # benchmarks is a standalone script directory
+    "PLC0415",  # lazy imports help benchmark startup time
+    "PLC2701",  # benchmarks may need to import private modules
+    "PLR2004",  # benchmarks compare against arbitrary threshold values
+    "PLR0917",  # many positional args are acceptable for benchmark helpers
+    "T20",      # benchmarks print results
 ]
 
 [tool.pytest.ini_options]

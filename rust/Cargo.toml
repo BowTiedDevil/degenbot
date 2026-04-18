@@ -28,6 +28,9 @@ log = { version = "^0.4" }
 lru = { version = "^0.14" }
 parking_lot = { version = "^0.12" }
 pyo3 = { version = "^0.28", features = [ "abi3-py312", "serde"] }
+num-bigint = { version = "^0.4" }
+parking_lot = { version = "^0.12" }
+pyo3 = { version = "^0.28", features = [ "abi3-py312", "serde", "num-bigint"] }
 pyo3-async-runtimes = { version = "^0.28", features = ["tokio-runtime"] }
 pyo3-log = { version = "^0.13" }
 rand = { version = "^0.10" }

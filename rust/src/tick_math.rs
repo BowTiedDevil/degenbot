@@ -19,6 +19,44 @@ use alloy::primitives::{
     aliases::{I24, I256, U160, U256},
     uint,
 };
+use num_bigint::BigUint;
+use pyo3::{
+    exceptions::PyTypeError, exceptions::PyValueError, prelude::*, types::PyAny, types::PyInt,
+};
+
+/// Extract a U160 from a Python object (accepts int or bytes).
+#[inline]
+fn extract_u160(obj: &Bound<'_, PyAny>) -> PyResult<U160> {
+    /// Number of bytes in a 160-bit word (U160).
+    const BYTES_PER_WORD: usize = 20;
+
+    if let Ok(bytes) = obj.extract::<&[u8]>() {
+        if bytes.len() > BYTES_PER_WORD {
+            return Err(PyErr::new::<PyValueError, _>(
+                "Sqrt price X96 is too large (exceeds 20 bytes)",
+            ));
+        }
+        return U160::try_from_be_slice(bytes).ok_or_else(|| {
+            PyErr::new::<PyValueError, _>("Failed to parse sqrt_price_x96 from bytes")
+        });
+    }
+
+    if let Ok(biguint) = obj.extract::<BigUint>() {
+        if biguint.bits() > 160 {
+            return Err(PyErr::new::<PyValueError, _>(
+                "Sqrt price X96 is too large (exceeds 160 bits)",
+            ));
+        }
+        let digits = biguint.to_u64_digits();
+        let mut limbs = [0u64; 3];
+        limbs[..digits.len()].copy_from_slice(&digits);
+        return Ok(U160::from_limbs(limbs));
+    }
+
+    Err(PyErr::new::<PyTypeError, _>(
+        "sqrt_price_x96 must be int or bytes",
+    ))
+}
 
 /// Sqrt ratio constants and utilities for Uniswap V3 tick math.
 pub struct SqrtRatio;
@@ -63,6 +101,24 @@ const TICK_MASKS: [(U256, U256); 19] = uint!([
 /// # Errors
 ///
 /// Returns `TickMathError::InvalidTick` if the tick is outside [-887272, 887272].
+/// Returns `PyValueError` if the tick value is invalid
+///
+/// # Example
+///
+/// ```
+/// use degenbot_rs::tick_math::get_sqrt_ratio_at_tick_internal;
+///
+/// let ratio = get_sqrt_ratio_at_tick_internal(0).expect("Valid tick");
+/// println!("Tick 0 ratio: {}", ratio);
+/// ```
+#[pyfunction(signature = (tick))]
+pub fn get_sqrt_ratio_at_tick(py: Python<'_>, tick: i32) -> Result<Bound<'_, PyInt>, PyErr> {
+    let result = py.detach(|| get_sqrt_ratio_at_tick_internal(tick))?;
+    let biguint = BigUint::from_bytes_be(&result.to_be_bytes::<20>());
+    biguint.into_pyobject(py)
+}
+
+/// Internal function to calculate sqrt ratio from tick.
 #[inline]
 pub fn get_sqrt_ratio_at_tick_internal(tick: i32) -> Result<U160, TickMathError> {
     const INTERMEDIATE_SHIFT: u32 = 128;

@@ -437,7 +437,7 @@ class PoolStateGenerator:
             reserves_token1=reserve1_b,
         )
 
-    def generate_profitable_v2_pair(  # noqa: PLR0917
+    def generate_profitable_v2_pair(
         self,
         pool_a_address: ChecksumAddress,
         pool_b_address: ChecksumAddress,
@@ -551,7 +551,7 @@ class PoolStateGenerator:
 
         return pool_a_state, pool_b_state
 
-    def generate_profitable_v4_pair(  # noqa: PLR0917
+    def generate_profitable_v4_pair(
         self,
         pool_a_address: ChecksumAddress,
         pool_b_address: ChecksumAddress,
@@ -629,7 +629,7 @@ class PoolStateGenerator:
 
         return pool_a_state, pool_b_state
 
-    def generate_profitable_mixed_pair(  # noqa: PLR0917
+    def generate_profitable_mixed_pair(
         self,
         v2_pool_address: ChecksumAddress,
         v3_pool_address: ChecksumAddress,
