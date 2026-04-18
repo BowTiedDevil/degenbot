@@ -37,7 +37,6 @@ pub mod async_provider;
 pub mod contract;
 pub mod contract_py;
 pub mod errors;
-pub mod fast_hexbytes;
 pub mod hex_utils;
 pub mod optimizers;
 pub mod provider;
@@ -86,9 +85,6 @@ fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Contract module
     contract_py::add_contract_module(m)?;
-
-    // FastHexBytes type (high-performance bytes with pre-computed hex)
-    m.add_class::<fast_hexbytes::FastHexBytes>()?;
 
     // Möbius optimizer module
     optimizers::mobius_py::add_mobius_module(m)?;

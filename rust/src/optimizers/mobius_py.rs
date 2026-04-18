@@ -33,7 +33,7 @@ use crate::optimizers::mobius_v3::{
 use crate::optimizers::mobius_v3_v3::solve_v3_v3;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyInt, PyList};
+use pyo3::types::PyList;
 
 /// Reserve and fee state for a single pool hop.
 #[pyclass(name = "RustHopState", skip_from_py_object)]
@@ -818,8 +818,9 @@ fn py_estimate_v3_final_sqrt_price(amount_in: f64, v3_hop: &PyV3TickRangeHop) ->
 // ==========================================================================
 
 use crate::optimizers::mobius_int::{IntHopState, int_mobius_solve, int_simulate_path};
+use crate::alloy_py::{extract_python_u256, PyU256};
 use alloy::primitives::U256;
-use num_bigint::BigUint;
+use pyo3::types::PyAny;
 
 /// Integer hop state for EVM-exact arbitrage optimization.
 #[pyclass(name = "RustIntHopState", skip_from_py_object)]
@@ -833,21 +834,21 @@ impl PyIntHopState {
     #[new]
     #[pyo3(signature = (reserve_in, reserve_out, fee_numer, fee_denom))]
     fn new(reserve_in: &Bound<'_, PyAny>, reserve_out: &Bound<'_, PyAny>, fee_numer: u64, fee_denom: u64) -> PyResult<Self> {
-        let r_in = extract_u256(reserve_in)?;
-        let r_out = extract_u256(reserve_out)?;
+        let r_in = extract_python_u256(reserve_in)?;
+        let r_out = extract_python_u256(reserve_out)?;
         Ok(Self {
             inner: IntHopState::new(r_in, r_out, fee_numer, fee_denom),
         })
     }
 
     #[getter]
-    fn reserve_in(&self) -> BigUint {
-        u256_to_biguint(self.inner.reserve_in)
+    fn reserve_in<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        PyU256(self.inner.reserve_in).into_pyobject(py)
     }
 
     #[getter]
-    fn reserve_out(&self) -> BigUint {
-        u256_to_biguint(self.inner.reserve_out)
+    fn reserve_out<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        PyU256(self.inner.reserve_out).into_pyobject(py)
     }
 
     #[getter]
@@ -862,9 +863,9 @@ impl PyIntHopState {
 
     fn __repr__(&self) -> String {
         format!(
-            "RustIntHopState(reserve_in={}, reserve_out={}, fee={}/{})",
-            u256_to_biguint(self.inner.reserve_in),
-            u256_to_biguint(self.inner.reserve_out),
+            "RustIntHopState(reserve_in={:?}, reserve_out={:?}, fee={}/{})",
+            self.inner.reserve_in,
+            self.inner.reserve_out,
             self.inner.fee_numer, self.inner.fee_denom
         )
     }
@@ -873,8 +874,8 @@ impl PyIntHopState {
 /// Result from integer Möbius solver (EVM-exact).
 #[pyclass(name = "RustIntMobiusResult")]
 pub struct PyIntMobiusResult {
-    pub optimal_input: BigUint,
-    pub profit: BigUint,
+    pub optimal_input: U256,
+    pub profit: U256,
     pub success: bool,
     pub iterations: u32,
 }
@@ -882,13 +883,13 @@ pub struct PyIntMobiusResult {
 #[pymethods]
 impl PyIntMobiusResult {
     #[getter]
-    fn optimal_input(&self) -> BigUint {
-        self.optimal_input.clone()
+    fn optimal_input<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        PyU256(self.optimal_input).into_pyobject(py)
     }
 
     #[getter]
-    fn profit(&self) -> BigUint {
-        self.profit.clone()
+    fn profit<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        PyU256(self.profit).into_pyobject(py)
     }
 
     #[getter]
@@ -903,7 +904,7 @@ impl PyIntMobiusResult {
 
     fn __repr__(&self) -> String {
         format!(
-            "RustIntMobiusResult(optimal_input={}, profit={}, success={}, iterations={})",
+            "RustIntMobiusResult(optimal_input={:?}, profit={:?}, success={}, iterations={})",
             self.optimal_input, self.profit, self.success, self.iterations
         )
     }
@@ -932,13 +933,9 @@ fn py_int_mobius_solve(hops: &Bound<'_, PyList>) -> PyResult<PyIntMobiusResult> 
         pyo3::exceptions::PyValueError::new_err(format!("{e}"))
     })?;
 
-    // Convert U256 to BigUint for Python
-    let opt_input_biguint = u256_to_biguint(result.optimal_input);
-    let profit_biguint = u256_to_biguint(result.profit);
-
     Ok(PyIntMobiusResult {
-        optimal_input: opt_input_biguint,
-        profit: profit_biguint,
+        optimal_input: result.optimal_input,
+        profit: result.profit,
         success: result.success,
         iterations: result.iterations,
     })
@@ -958,8 +955,8 @@ fn py_int_mobius_solve(hops: &Bound<'_, PyList>) -> PyResult<PyIntMobiusResult> 
 /// int
 #[pyfunction]
 #[pyo3(signature = (x, hops))]
-fn py_int_simulate_path<'py>(py: Python<'py>, x: &Bound<'_, PyAny>, hops: &Bound<'_, PyList>) -> Result<Bound<'py, PyInt>, PyErr> {
-    let x_u256 = extract_u256(x)?;
+fn py_int_simulate_path<'py>(py: Python<'py>, x: &Bound<'_, PyAny>, hops: &Bound<'_, PyList>) -> PyResult<Bound<'py, PyAny>> {
+    let x_u256 = extract_python_u256(x)?;
     let mut int_hops = Vec::new();
     for item in hops.iter() {
         let py_hop = item.extract::<PyRef<PyIntHopState>>()?;
@@ -967,42 +964,5 @@ fn py_int_simulate_path<'py>(py: Python<'py>, x: &Bound<'_, PyAny>, hops: &Bound
     }
 
     let output = int_simulate_path(x_u256, &int_hops);
-    u256_to_biguint(output).into_pyobject(py)
-}
-
-/// Convert U256 to BigUint for Python interop.
-fn u256_to_biguint(v: U256) -> BigUint {
-    BigUint::from_bytes_be(&v.to_be_bytes::<32>())
-}
-
-/// Extract U256 from a Python int or bytes.
-fn extract_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {
-    // Try int first (most common)
-    if let Ok(bigint) = obj.extract::<BigUint>() {
-        if bigint.bits() > 256 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Value exceeds 256 bits"
-            ));
-        }
-        let bytes = bigint.to_bytes_be();
-        // Pad to 32 bytes
-        let mut padded = [0u8; 32];
-        padded[32 - bytes.len()..].copy_from_slice(&bytes);
-        return Ok(U256::from_be_bytes(padded));
-    }
-    // Try bytes
-    if let Ok(bytes) = obj.extract::<&[u8]>() {
-        if bytes.len() > 32 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Bytes exceed 32 bytes"
-            ));
-        }
-        let mut padded = [0u8; 32];
-        padded[32 - bytes.len()..].copy_from_slice(bytes);
-        return Ok(U256::from_be_bytes(padded));
-    }
-
-    Err(pyo3::exceptions::PyTypeError::new_err(
-        "Expected int or bytes"
-    ))
+    PyU256(output).into_pyobject(py)
 }
