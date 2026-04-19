@@ -188,7 +188,7 @@ def deactivate() -> None:
 @deactivate.command("ethereum_aave_v3")
 def deactivate_mainnet_aave_v3(
     chain_id: ChainId = ChainId.ETH,
-    market_name: str = "aave_v3",
+    market_name: str = "Aave Ethereum Market",
 ) -> None:
     """
     Deactivate the Aave V3 Ethereum mainnet market.
