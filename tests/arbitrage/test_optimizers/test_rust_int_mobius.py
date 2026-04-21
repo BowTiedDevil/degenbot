@@ -8,8 +8,45 @@ class TestRustIntHopState:
         hop = rs_mobius.RustIntHopState(1_000_000, 5_000_000, 997, 1000)
         assert int(hop.reserve_in) == 1_000_000
         assert int(hop.reserve_out) == 5_000_000
-        assert hop.fee_numer == 997
+        assert hop.gamma_numer == 997
         assert hop.fee_denom == 1000
+
+    def test_fee_numer_is_actual_fee_not_gamma(self):
+        """fee_numer is the actual fee taken (fee_denom - gamma_numer), not gamma_numer.
+
+        This is an important invariant: fee_numer + gamma_numer == fee_denom.
+        Gamma is the retained fraction; fee is the taken fraction.
+        """
+        # Standard 0.3% fee: gamma=997/1000 (retained), fee=3/1000 (taken)
+        hop = rs_mobius.RustIntHopState(1_000_000, 5_000_000, 997, 1000)
+        assert hop.gamma_numer == 997  # Retained fraction
+        assert hop.fee_numer == 3      # Actual fee taken (1000 - 997)
+        assert hop.fee_denom == 1000
+        # Invariant: gamma + fee == denom
+        assert hop.gamma_numer + hop.fee_numer == hop.fee_denom
+
+        # 0.05% fee: gamma=9995/10000 (retained), fee=5/10000 (taken)
+        hop_low = rs_mobius.RustIntHopState(1_000_000, 5_000_000, 9995, 10000)
+        assert hop_low.gamma_numer == 9995
+        assert hop_low.fee_numer == 5  # Actual fee taken (10000 - 9995)
+        assert hop_low.fee_denom == 10000
+        assert hop_low.gamma_numer + hop_low.fee_numer == hop_low.fee_denom
+
+    def test_fee_numer_gamma_invariant_for_all_common_fees(self):
+        """Verify the fee/gamma invariant for common fee tiers."""
+        test_cases = [
+            (997, 1000),    # 0.3% (Uniswap V2)
+            (9995, 10000),  # 0.05% (Uniswap V3)
+            (9900, 10000),  # 1%
+            (9950, 10000),  # 0.5%
+            (100 - 30, 100),  # 30% (high fee test)
+        ]
+        for gamma_numer, fee_denom in test_cases:
+            hop = rs_mobius.RustIntHopState(1_000_000, 5_000_000, gamma_numer, fee_denom)
+            assert hop.gamma_numer == gamma_numer
+            assert hop.fee_numer == fee_denom - gamma_numer
+            assert hop.fee_denom == fee_denom
+            assert hop.gamma_numer + hop.fee_numer == hop.fee_denom
 
     def test_creation_bigint(self):
         """Accept arbitrary Python ints for uint256-scale reserves."""

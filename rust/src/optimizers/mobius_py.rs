@@ -1400,6 +1400,13 @@ impl PyIntHopState {
         self.inner.gamma_numer
     }
 
+    /// Fee numerator (the actual fee taken, not the retained fraction).
+    /// Computed as fee_denom - gamma_numer.
+    #[getter]
+    fn fee_numer(&self) -> u64 {
+        self.inner.fee_denom - self.inner.gamma_numer
+    }
+
     #[getter]
     fn fee_denom(&self) -> u64 {
         self.inner.fee_denom
