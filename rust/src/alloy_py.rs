@@ -170,7 +170,9 @@ pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult
         if is_negative {
             // Negative integer - use signed to_bytes for correct I256::MIN handling
             // signed=True handles two's complement encoding, including I256::MIN
-            let bytes = obj.call_method1("to_bytes", (32, "big", true))?;
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("signed", true)?;
+            let bytes = obj.call_method("to_bytes", (32, "big"), Some(&kwargs))?;
             let bytes: &[u8] = bytes.extract()?;
             let u256 = U256::from_be_bytes(
                 <[u8; 32]>::try_from(bytes).map_err(|_| {
@@ -181,7 +183,9 @@ pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult
             return Ok(AbiValue::Int(I256::from_raw(u256)));
         }
         // Positive integer - use unsigned to_bytes
-        let bytes = obj.call_method1("to_bytes", (32, "big", false))?;
+        let kwargs = PyDict::new(py);
+        kwargs.set_item("signed", false)?;
+        let bytes = obj.call_method("to_bytes", (32, "big"), Some(&kwargs))?;
         let bytes: &[u8] = bytes.extract()?;
         let u256 = U256::from_be_bytes(
             <[u8; 32]>::try_from(bytes).map_err(|_| {

@@ -138,54 +138,22 @@ impl fmt::Display for AbiType {
 }
 
 /// Errors that can occur when parsing an ABI type string.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum AbiTypeError {
     /// Unknown or unsupported ABI type.
+    #[error("Unknown ABI type: {0}")]
     UnknownType(String),
     /// Invalid array size specification.
+    #[error("Invalid array size: {0}")]
     InvalidArraySize(String),
     /// Invalid bit width for integer type.
+    #[error("Invalid bit width for {type_name}: {}", if *bits == 0 { "expected number after 'int'/'uint'".to_string() } else { format!("{bits} (must be 8-256, multiple of 8)") })]
     InvalidBitWidth { type_name: String, bits: usize },
     /// Invalid byte size for fixed bytes type.
+    #[error("Invalid byte size for {type_name}: {}", if *size == 0 { "expected number after 'bytes'".to_string() } else { format!("{size} (must be 1-32)") })]
     InvalidByteSize { type_name: String, size: usize },
 }
-
-impl fmt::Display for AbiTypeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::UnknownType(t) => write!(f, "Unknown ABI type: {t}"),
-            Self::InvalidArraySize(s) => write!(f, "Invalid array size: {s}"),
-            Self::InvalidBitWidth { type_name, bits } => {
-                if *bits == 0 {
-                    write!(
-                        f,
-                        "Invalid bit width for {type_name}: expected number after 'int'/'uint'"
-                    )
-                } else {
-                    write!(
-                        f,
-                        "Invalid bit width for {type_name}: {bits} (must be 8-256, multiple of 8)"
-                    )
-                }
-            }
-            Self::InvalidByteSize { type_name, size } => {
-                if *size == 0 {
-                    write!(
-                        f,
-                        "Invalid byte size for {type_name}: expected number after 'bytes'"
-                    )
-                } else {
-                    write!(
-                        f,
-                        "Invalid byte size for {type_name}: {size} (must be 1-32)"
-                    )
-                }
-            }
-        }
-    }
-}
-
-impl std::error::Error for AbiTypeError {}
 
 // =============================================================================
 // Internal parsing implementation

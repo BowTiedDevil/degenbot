@@ -162,7 +162,8 @@ pub fn encode_single<'py>(
     value: &Bound<'_, PyAny>,
 ) -> PyResult<Bound<'py, PyBytes>> {
     let abi_value = crate::alloy_py::abi_value_from_python(py, value)?;
-    let encoded = encode_single_rust(abi_type, &abi_value)
+    let abi_type_owned = abi_type.to_string();
+    let encoded = py.detach(|| encode_single_rust(&abi_type_owned, &abi_value))
         .map_err(|e| PyValueError::new_err(format!("{e}")))?;
     Ok(PyBytes::new(py, &encoded))
 }
@@ -197,14 +198,15 @@ pub fn encode<'py>(
         .map(|v| crate::alloy_py::abi_value_from_python(py, &v))
         .collect();
 
-    // Extract type strings from Python list
     let type_strings: Vec<String> = types
         .iter()
         .map(|t| t.extract::<String>())
         .collect::<Result<_, _>>()?;
+
     let type_refs: Vec<&str> = type_strings.iter().map(String::as_str).collect();
 
-    let encoded = encode_rust(&type_refs, &abi_values?)
+    let abi_values = abi_values?;
+    let encoded = py.detach(|| encode_rust(&type_refs, &abi_values))
         .map_err(|e| PyValueError::new_err(format!("{e}")))?;
     Ok(PyBytes::new(py, &encoded))
 }

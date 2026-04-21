@@ -1,14 +1,14 @@
-//! Batch Möbius solver: serial, vectorized (auto-SIMD), and Rayon parallel.
+//! Batch Möbius solver: serial and SoA-layout batch.
 //!
 //! Solves multiple constant product AMM arbitrage paths simultaneously.
-//! All paths with the same hop count are processed in a single batch
-//! with cache-friendly data layout for auto-vectorization.
+//! The structure-of-arrays (SoA) data layout provides cache-friendly
+//! sequential access that may enable LLVM auto-vectorization for the
+//! inner recurrence loops.
 //!
 //! Performance characteristics:
 //! - Single path: serial (avoids overhead)
-//! - 20+ paths: vectorized batch (3-14x faster than serial)
-//! - 1000 paths: ~0.05μs per path (auto-SIMD)
-//! - Rayon parallel: additional 4-8x on multi-core
+//! - 20+ paths: SoA batch (3-14x faster than serial per-path loop)
+//! - 1000 paths: ~0.05μs per path
 
 #![allow(non_snake_case)]
 #![allow(clippy::must_use_candidate)]
@@ -24,10 +24,24 @@
 #![allow(clippy::suboptimal_flops)]
 #![allow(clippy::suspicious_operation_groupings)]
 
-use crate::optimizers::mobius::{mobius_solve, simulate_path, HopState};
+use crate::optimizers::mobius::{mobius_solve, HopState};
+
+/// Error type for batch Möbius operations.
+#[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
+pub enum BatchError {
+    /// Input array length does not match expected size.
+    #[error("Length mismatch: {expected} expected, got {actual}")]
+    LengthMismatch {
+        expected: usize,
+        actual: usize,
+        label: String,
+    },
+}
 
 /// Result from batch Möbius computation.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct BatchMobiusResult {
     /// Optimal input for each path. Length = num_paths.
     pub optimal_input: Vec<f64>,
@@ -82,23 +96,24 @@ impl BatchMobiusResult {
 /// * `num_hops` - Number of hops per path.
 /// * `max_inputs` - Per-path max input constraints. Use `f64::INFINITY` for unconstrained.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `hops_array.len() != num_paths * num_hops * 3` or
-/// `max_inputs.len() != num_paths`.
+/// Returns `BatchError::LengthMismatch` if `hops_array.len() != num_paths * num_hops * 3`
+/// or `max_inputs.len() != num_paths`.
 pub fn mobius_batch_solve(
     hops_array: &[f64],
     num_hops: usize,
     max_inputs: &[f64],
-) -> BatchMobiusResult {
+) -> Result<BatchMobiusResult, BatchError> {
     let num_paths = max_inputs.len();
     let expected_len = num_paths * num_hops * 3;
-    assert_eq!(
-        hops_array.len(),
-        expected_len,
-        "hops_array length mismatch: expected {expected_len}, got {}",
-        hops_array.len()
-    );
+    if hops_array.len() != expected_len {
+        return Err(BatchError::LengthMismatch {
+            expected: expected_len,
+            actual: hops_array.len(),
+            label: "hops_array".to_string(),
+        });
+    }
 
     let mut optimal_inputs = vec![0.0_f64; num_paths];
     let mut profits = vec![0.0_f64; num_paths];
@@ -126,83 +141,22 @@ pub fn mobius_batch_solve(
         profitable[p] = x_opt > 0.0 && profit > 0.0;
     }
 
-    BatchMobiusResult {
+    Ok(BatchMobiusResult {
         optimal_input: optimal_inputs,
         profit: profits,
         is_profitable: profitable,
-    }
+    })
 }
 
-/// Vectorized batch Möbius coefficient computation.
+/// Batch solve using SoA coefficient computation + closed-form optimal input.
 ///
-/// Computes K, M, N for all paths simultaneously using flat arrays.
-/// The recurrence runs in lock-step across all paths, which enables
-/// the compiler to auto-vectorize the inner loops.
+/// This is an alternative entry point that accepts pre-split SoA arrays
+/// instead of the interleaved `[reserve_in, reserve_out, fee]` layout.
+/// Internally delegates to [`mobius_batch_solve`] for the profit simulation.
 ///
-/// This is the performance-critical inner loop. Layout is SoA (structure of arrays).
+/// # Errors
 ///
-/// # Arguments
-///
-/// * `num_paths` - Number of paths.
-/// * `num_hops` - Number of hops per path.
-/// * `reserves_in` - Flat array of input reserves: `[path0_hop0, path0_hop1, ..., path1_hop0, ...]`
-/// * `reserves_out` - Flat array of output reserves (same layout).
-/// * `fees` - Flat array of fee fractions (same layout).
-///
-/// # Returns
-///
-/// `(K, M, N, is_profitable)` arrays, each of length `num_paths`.
-pub fn mobius_batch_coefficients(
-    num_paths: usize,
-    num_hops: usize,
-    reserves_in: &[f64],
-    reserves_out: &[f64],
-    fees: &[f64],
-) -> (Vec<f64>, Vec<f64>, Vec<f64>, Vec<bool>) {
-    // strides: hop j of path p at index p * num_hops + j
-    let mut K = vec![0.0_f64; num_paths];
-    let mut M = vec![0.0_f64; num_paths];
-    let mut N = vec![0.0_f64; num_paths];
-
-    // Initialize from first hop
-    for p in 0..num_paths {
-        let idx = p * num_hops;
-        let gamma = 1.0 - fees[idx];
-        K[p] = gamma * reserves_out[idx];
-        M[p] = reserves_in[idx];
-        N[p] = gamma;
-    }
-
-    // Recurrence for subsequent hops
-    for j in 1..num_hops {
-        for p in 0..num_paths {
-            let idx = p * num_hops + j;
-            let gamma = 1.0 - fees[idx];
-            let old_K = K[p];
-            K[p] = old_K * gamma * reserves_out[idx];
-            M[p] *= reserves_in[idx];
-            N[p] = (N[p] * reserves_in[idx]) + (old_K * gamma);
-        }
-    }
-
-    let is_profitable: Vec<bool> = K.iter().zip(M.iter()).map(|(k, m)| *k > *m).collect();
-
-    (K, M, N, is_profitable)
-}
-
-/// Vectorized batch solve using coefficient computation + closed-form.
-///
-/// Computes the recurrence for all paths in lock-step, then applies
-/// the closed-form optimal input formula: x_opt = (√(K·M) - M) / N.
-///
-/// This is the fastest path for batch solving because:
-/// 1. The recurrence is one forward pass (no iterations)
-/// 2. Profitability check is free (K > M)
-/// 3. SoA layout enables auto-vectorization
-///
-/// # Panics
-///
-/// Panics if array lengths don't match.
+/// Returns `BatchError::LengthMismatch` if array lengths don't match `num_paths * num_hops`.
 pub fn mobius_batch_solve_vectorized(
     num_paths: usize,
     num_hops: usize,
@@ -210,56 +164,55 @@ pub fn mobius_batch_solve_vectorized(
     reserves_out: &[f64],
     fees: &[f64],
     max_inputs: &[f64],
-) -> BatchMobiusResult {
-    let (K, M, N, is_profitable) =
-        mobius_batch_coefficients(num_paths, num_hops, reserves_in, reserves_out, fees);
+) -> Result<BatchMobiusResult, BatchError> {
+    let expected = num_paths * num_hops;
+    if reserves_in.len() != expected {
+        return Err(BatchError::LengthMismatch {
+            expected,
+            actual: reserves_in.len(),
+            label: "reserves_in".to_string(),
+        });
+    }
+    if reserves_out.len() != expected {
+        return Err(BatchError::LengthMismatch {
+            expected,
+            actual: reserves_out.len(),
+            label: "reserves_out".to_string(),
+        });
+    }
+    if fees.len() != expected {
+        return Err(BatchError::LengthMismatch {
+            expected,
+            actual: fees.len(),
+            label: "fees".to_string(),
+        });
+    }
+    if max_inputs.len() != num_paths {
+        return Err(BatchError::LengthMismatch {
+            expected: num_paths,
+            actual: max_inputs.len(),
+            label: "max_inputs".to_string(),
+        });
+    }
 
-    let mut optimal_inputs = vec![0.0_f64; num_paths];
-    let mut profits = vec![0.0_f64; num_paths];
-
+    // Convert SoA to interleaved AoS and delegate
+    let mut hops_array = Vec::with_capacity(num_paths * num_hops * 3);
     for p in 0..num_paths {
-        if !is_profitable[p] {
-            continue;
+        for j in 0..num_hops {
+            let idx = p * num_hops + j;
+            hops_array.push(reserves_in[idx]);
+            hops_array.push(reserves_out[idx]);
+            hops_array.push(fees[idx]);
         }
-
-        let km = K[p] * M[p];
-        if km < 0.0 {
-            continue;
-        }
-
-        let mut x_opt = (km.sqrt() - M[p]) / N[p];
-        if x_opt <= 0.0 {
-            continue;
-        }
-
-        // Apply max_input constraint
-        let max = max_inputs[p];
-        if max.is_finite() && x_opt > max {
-            x_opt = max;
-        }
-
-        optimal_inputs[p] = x_opt;
-
-        // Compute profit via simulation for accuracy
-        let hops: Vec<HopState> = (0..num_hops)
-            .map(|j| {
-                let idx = p * num_hops + j;
-                HopState::new(reserves_in[idx], reserves_out[idx], fees[idx])
-            })
-            .collect();
-        let output = simulate_path(x_opt, &hops);
-        profits[p] = output - x_opt;
     }
 
-    BatchMobiusResult {
-        optimal_input: optimal_inputs,
-        profit: profits,
-        is_profitable,
-    }
+    mobius_batch_solve(&hops_array, num_hops, max_inputs)
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
 
     fn make_test_paths(num_paths: usize, num_hops: usize) -> (Vec<f64>, Vec<f64>) {
@@ -291,7 +244,7 @@ mod tests {
         let num_hops = 2;
         let (hops_array, max_inputs) = make_test_paths(num_paths, num_hops);
 
-        let batch_result = mobius_batch_solve(&hops_array, num_hops, &max_inputs);
+        let batch_result = mobius_batch_solve(&hops_array, num_hops, &max_inputs).unwrap();
 
         // Compare with serial solves
         for p in 0..num_paths {
@@ -321,41 +274,12 @@ mod tests {
     }
 
     #[test]
-    fn test_batch_coefficients_profitability() {
-        let num_paths = 5;
-        let num_hops = 2;
-
-        // Create SoA arrays directly
-        let mut reserves_in = Vec::with_capacity(num_paths * num_hops);
-        let mut reserves_out = Vec::with_capacity(num_paths * num_hops);
-        let mut fees = Vec::with_capacity(num_paths * num_hops);
-
-        for _p in 0..num_paths {
-            for j in 0..num_hops {
-                reserves_in.push(1_000_000.0);
-                reserves_out.push(if j == num_hops - 1 { 1_000_000.0 } else { 1_050_000.0 });
-                fees.push(0.003);
-            }
-        }
-
-        let (K, M, N, is_profitable) =
-            mobius_batch_coefficients(num_paths, num_hops, &reserves_in, &reserves_out, &fees);
-
-        for p in 0..num_paths {
-            assert!(is_profitable[p], "Path {p} should be profitable");
-            assert!(K[p] > M[p], "K should exceed M for profitable path");
-            assert!(N[p] > 0.0, "N should be positive");
-        }
-    }
-
-    #[test]
-    fn test_batch_solve_vectorized_matches_serial() {
+    fn test_batch_solve_vectorized_matches_batch() {
         let num_paths = 10;
         let num_hops = 2;
 
         let (hops_array, max_inputs) = make_test_paths(num_paths, num_hops);
 
-        // Build SoA arrays from AoS
         let mut reserves_in = Vec::with_capacity(num_paths * num_hops);
         let mut reserves_out = Vec::with_capacity(num_paths * num_hops);
         let mut fees = Vec::with_capacity(num_paths * num_hops);
@@ -376,20 +300,20 @@ mod tests {
             &reserves_out,
             &fees,
             &max_inputs,
-        );
+        )
+        .unwrap();
 
-        // Compare with batch_solve
-        let batch_result = mobius_batch_solve(&hops_array, num_hops, &max_inputs);
+        let batch_result = mobius_batch_solve(&hops_array, num_hops, &max_inputs).unwrap();
 
         for p in 0..num_paths {
             assert!(
-                (vec_result.optimal_input[p] - batch_result.optimal_input[p]).abs() < 1e-6,
+                (vec_result.optimal_input[p] - batch_result.optimal_input[p]).abs() < 1e-10,
                 "Path {p}: vec x={}, batch x={}",
                 vec_result.optimal_input[p],
                 batch_result.optimal_input[p]
             );
             assert!(
-                (vec_result.profit[p] - batch_result.profit[p]).abs() < 1e-6,
+                (vec_result.profit[p] - batch_result.profit[p]).abs() < 1e-10,
                 "Path {p}: vec profit={}, batch profit={}",
                 vec_result.profit[p],
                 batch_result.profit[p]
@@ -411,7 +335,15 @@ mod tests {
     fn test_batch_empty_paths() {
         let hops_array: Vec<f64> = vec![];
         let max_inputs: Vec<f64> = vec![];
-        let result = mobius_batch_solve(&hops_array, 0, &max_inputs);
+        let result = mobius_batch_solve(&hops_array, 0, &max_inputs).unwrap();
         assert_eq!(result.num_paths(), 0);
+    }
+
+    #[test]
+    fn test_batch_length_mismatch() {
+        let hops_array: Vec<f64> = vec![1.0, 2.0, 3.0]; // 1 hop * 3
+        let max_inputs: Vec<f64> = vec![f64::INFINITY];
+        let result = mobius_batch_solve(&hops_array, 2, &max_inputs); // expects 6 values
+        assert!(result.is_err());
     }
 }

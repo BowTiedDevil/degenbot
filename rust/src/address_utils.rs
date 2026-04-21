@@ -10,10 +10,6 @@
 
 use crate::errors::AddressError;
 use alloy::primitives::Address;
-use pyo3::{
-    exceptions::{PyTypeError, PyValueError},
-    prelude::*,
-};
 use std::str::FromStr;
 
 /// Convert an Alloy `Address` to a checksummed string.
@@ -92,67 +88,6 @@ pub fn to_checksum_address_bytes(bytes: &[u8]) -> Result<String, AddressError> {
     Ok(address_to_checksum_string(&address))
 }
 
-/// Generates an EIP-55 checksummed address from the input.
-///
-/// Accepts either a hex string or a 20-byte sequence and returns
-/// a checksummed Ethereum address.
-///
-/// # Arguments
-///
-/// * `address` - A Python `str` (hex) or `bytes` (20 bytes) representing an address
-///
-/// # Returns
-///
-/// A checksummed address string with uppercase/lowercase letters
-///
-/// # Errors
-///
-/// Returns `PyValueError` if:
-/// - The string is not a valid hex address
-/// - The bytes are not exactly 20 bytes long
-///
-/// Returns `PyTypeError` if the input is not a string or bytes
-///
-/// # Architecture
-///
-/// This PyO3-exposed function is a thin wrapper around the internal implementations
-/// `to_checksum_address_str` and `to_checksum_address_bytes`. This separation enables:
-/// - Unit testing without `PyO3` dependencies
-/// - Reuse in non-Python Rust code
-/// - Cleaner error types (`AddressError` vs `PyErr`)
-///
-/// # Example
-///
-/// ```
-/// use degenbot_rs::address_utils::to_checksum_address_str;
-///
-/// let result = to_checksum_address_str("0x66f9664f97f2b50f62d13ea064982f936de76657");
-/// match result {
-///     Ok(checksummed) => println!("Checksummed: {}", checksummed),
-///     Err(e) => eprintln!("Error: {}", e),
-/// }
-/// ```
-#[pyfunction(signature = (address))]
-pub fn to_checksum_address(address: &Bound<'_, PyAny>) -> PyResult<String> {
-    // GIL detachment is of minor benefit here: the checksum computation is
-    // trivial (Address::from_str + EIP-55 hashing, microseconds), so the
-    // overhead of releasing and reacquiring the GIL would exceed the cost
-    // of simply computing the result while holding it.
-    if let Ok(s) = address.extract::<&str>() {
-        return to_checksum_address_str(s)
-            .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()));
-    }
-
-    if let Ok(bytes) = address.extract::<&[u8]>() {
-        return to_checksum_address_bytes(bytes)
-            .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()));
-    }
-
-    Err(PyErr::new::<PyTypeError, _>(
-        "Address must be string or bytes",
-    ))
-}
-
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
@@ -163,7 +98,6 @@ mod tests {
         let result = to_checksum_address_str("0x66f9664f97f2b50f62d13ea064982f936de76657");
         assert!(result.is_ok());
         let checksummed = result.expect("valid address should checksum successfully");
-        // Verify it's properly checksummed (has mixed case)
         assert!(checksummed.contains(|c: char| c.is_ascii_uppercase()));
         assert!(checksummed.contains(|c: char| c.is_ascii_lowercase()));
     }

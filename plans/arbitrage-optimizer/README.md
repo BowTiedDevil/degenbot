@@ -22,33 +22,65 @@ if result.success:
 
 | Arbitrage Type | Recommended Method | Time | Speedup |
 |----------------|-------------------|------|---------|
-| V2-V2 single | Rust Möbius | 0.19μs | **1021x** |
+| V2-V2 single | Rust Möbius (via ArbSolver) | 0.19μs | **1021x** |
 | V2-V2 batch 1000 | Rust Batch Möbius | 0.09μs/path | **2155x** |
-| V2 multi-hop | Python Möbius | 1.5μs | **129x** |
+| V2 multi-hop | Rust Möbius (via ArbSolver) | ~1.5μs | **129x** |
 | V3 single-range | Möbius closed-form | ~0.86μs | **453x** |
 | V3 multi-range (1 V3 hop) | Piecewise-Möbius (Rust) | **~9μs** | **43x** |
-| V3 multi-range (1 V3 hop) | Piecewise-Möbius (Python) | ~50μs | **8x** |
-| V3-V3 multi-range (2 V3 hops) | Rust V3-V3 solver | **~1-6μs** | **15-390x** |
+| V3-V3 both single-range | V3-V3 Rust solver | **~0.19μs** | **2053x** |
+| V3-V3 multi-range | V3-V3 Rust solver | **~10-50μs** | **8-39x** |
 | V3-V3 complex (fallback) | Brent | ~390μs | baseline |
 | Balancer N=3 | Eq.9 closed-form | ~576μs | — |
 
+### ArbSolver Architecture
+
+`ArbSolver.solve()` is a thin wrapper that defers to Rust for all supported path types:
+
+```
+ArbSolver.solve()
+    ├── RustArbSolver.solve_raw()  ← flat int array (default, V2/single-range V3)
+    │     └── Möbius + U256 integer refinement (~3.9μs end-to-end)
+    ├── RustArbSolver.solve()      ← object-based (V3 multi-range, V3-V3)
+    │     ├── V3 multi-range (1 hop) → solve_v3_sequence (~9μs)
+    │     └── V3-V3 (2 hops) → solve_v3_v3 (~0.19μs single, ~10-50μs multi)
+    ├── PiecewiseMobiusSolver (Python fallback for V3 scale mismatches)
+    ├── SolidlyStableSolver (~15-25μs)
+    ├── BalancerMultiTokenSolver (~576μs)
+    └── BrentSolver (~223μs, ultimate fallback)
+
+ArbSolver.solve_cached([id0, id1])  ← Fastest path (no Python objects)
+    └── RustPoolCache.solve()      ← HashMap lookup → Möbius + U256
+            ~2.5μs end-to-end (V2-V2, EVM-exact)
+```
+
+**Key insight**: The Rust dispatch + merged U256 integer refinement + pool cache eliminates Python object overhead on the solve path. End-to-end V2-V2 via `solve_cached()` is ~2.5μs (Rust-only ~0.73μs), and profits are truly EVM-exact.
+
 ### Rust vs Python Performance
 
-**Key Finding**: Moving piecewise-Möbius to Rust achieved **5-10x speedup**, but Python-Rust data marshalling is now the bottleneck.
+**Key Finding**: Merging integer refinement into RustArbSolver.solve() eliminated the second Python→Rust conversion. The RustPoolCache (Item #20) eliminated all Python object construction on the solve path by storing state in Rust at registration time. The remaining ~1.77μs overhead in `solve_cached()` is Python method dispatch + SolveResult construction.
 
 | Component | Python Only | With Rust | Speedup |
 |-----------|-------------|-----------|---------|
 | Raw computation | ~100μs | **~1μs** | **100x** |
-| End-to-end solve | ~50μs | **~9μs** (profitable) | **5.5x** |
-| End-to-end solve | ~500μs | **~140μs** (rejected) | **3.5x** |
+| Integer refinement (merged) | ~3.7μs (float) | **~0.6μs** (U256) | **6x** |
+| End-to-end V2-V2 (solve) | ~6.1μs | **~3.9μs** | **1.6x** |
+| End-to-end V2-V2 (solve_cached) | — | **~2.5μs** | **2.4x** |
+| Rust-only cache.solve() | — | **~0.73μs** | **8.2x** |
 
-**Breakdown of ~9μs solve:**
-- Hop conversion: ~1.0μs
-- Sequence building: ~1.9μs
-- Rust solve: ~0.6μs
-- Python dispatch overhead: ~5.5μs
+**Breakdown of ~2.5μs V2-V2 `solve_cached` (pool cache, fastest path):**
+- Rust HashMap lookup: ~0.03μs
+- Rust float Möbius solve: ~0.2μs
+- Rust U256 integer refinement: ~0.4μs
+- ArbSolver method dispatch + SolveResult: ~1.87μs
 
-**Lesson**: Raw Rust is 100x faster, but Python overhead limits end-to-end gain to 5-10x.
+**Breakdown of ~3.9μs V2-V2 `solve` (standard path):**
+- Rust float solve: ~0.2μs
+- Rust U256 integer refinement: ~0.4μs
+- Flat list construction: ~0.1μs
+- Per-item PyO3 extraction (8 items): ~0.8μs
+- Other Python dispatch overhead: ~2.4μs
+
+**Lesson**: The pool cache (`solve_cached`) is the fastest path because it passes only integer IDs to Rust — no list construction, no per-item extraction. The remaining bottleneck is Python method dispatch + SolveResult construction (~1.87μs). To go below ~1μs, the Rust cache would need to be called more directly, bypassing ArbSolver's Python wrapper.
 
 ## Documentation
 
@@ -71,26 +103,19 @@ Historical documents are preserved in [`archive/`](archive/):
 1. **Möbius Transformation** — Zero-iteration closed-form solution for V2 multi-hop paths
 2. **Piecewise-Möbius for V3** — Multi-range V3 support with 10 optimizations (~3.75x speedup)
 3. **V3-V3 Rust Solver** — Two-V3-hop paths with simultaneous tick crossings via golden section search
-4. **Unified `ArbSolver`** — Single dispatcher selects optimal method (Mobius → Piecewise → V3-V3 → Solidly → Newton → Brent)
+4. **Unified `ArbSolver`** — Thin Rust wrapper dispatches all supported types in a single call; Python fallback for Solidly/Balancer/Brent
 5. **Rust Acceleration** — Sub-microsecond solves with EVM-exact integer arithmetic
-6. **Full AMM Coverage** — V2, V3, V4, Aerodrome, Balancer weighted, Solidly stable
-7. **V3-V3 Validated** — 34 tests (28 Python + 6 Rust) with three-layer validation against Brent and V3 integer math. Range bounds bug found and fixed.
+6. **Merged Integer Refinement** — `RustArbSolver.solve()` does float solve + U256 integer refinement in one call, eliminating second Python→Rust conversion
+7. **Raw Array Marshalling** — `RustArbSolver.solve_raw()` accepts flat int list, eliminating Python object construction
+8. **Pool State Cache** — `RustPoolCache` + `ArbSolver.solve_cached()` — pool states registered in Rust, solved by ID reference (~2.5μs, no Python objects on solve path)
+9. **Full AMM Coverage** — V2, V3, V4, Aerodrome, Balancer weighted, Solidly stable
+10. **V3-V3 Validated** — 34 tests (28 Python + 6 Rust) with three-layer validation against Brent and V3 integer math. Range bounds bug found and fixed.
 
 ## Test Status
 
-**474 optimizer tests passing, 9 skipped** (as of 2026-04-16)
+**694 tests passing, 9 skipped** (as of 2026-04-18)
 
-Includes 28 V3-V3 accuracy tests, 6 Rust unit tests for range bounds validation, and 161 Rust unit tests (all passing).
-
-### Rust Test Fixes (2026-04-16)
-
-7 Rust unit tests were failing due to three root causes:
-
-1. **Symmetric two-hop reserves are always unprofitable** — Mirrored reserves (r₂=s₁, s₂=r₁) give K/M = γ² < 1, meaning fees always exceed any marginal rate advantage. Tests `test_two_hop_profitable`, `test_simulate_path_matches_mobius_output`, and `test_profitability_check_free` used such reserves. Fixed with asymmetric reserves where pools disagree on price.
-
-2. **V3 range capacity exceeded** — Test inputs (1e15, 1e10) far exceeded V3 tick range capacity (~1.1e14), pushing estimated final sqrt price out of range. Fixed by reducing inputs to stay within capacity.
-
-3. **Float64 boundary precision** — `compute_range_constrained_max_input` lacked the `(1 - 1e-12)` shrink factor, and range validation used strict `contains_sqrt_price()` without tolerance. At boundary, float64 rounding pushed the final sqrt price barely outside range. Fixed by adding shrink factor and tolerance-based validation (`eps = 1e-12 * sqrt_price_current`), consistent with `solve_v3_candidates`. Also improved golden section convergence by scaling `abs_tol` to initial interval width.
+Includes 17 raw array marshalling tests, 18 pool cache tests, 14 merged integer refinement tests, 15 Rust integer refinement tests, 28 V3-V3 accuracy tests, 6 Rust unit tests for range bounds validation, 49 total Rust Möbius optimizer tests, and 209 total Rust unit tests (all passing).
 
 ## Citation
 

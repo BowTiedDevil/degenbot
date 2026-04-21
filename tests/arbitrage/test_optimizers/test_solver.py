@@ -19,31 +19,15 @@ from degenbot.arbitrage.optimizers.solver import (
     _simulate_path,
 )
 
-from .conftest import FEE_0_3_PCT, FEE_0_5_PCT, USDC_1_5M, USDC_2M, WETH_800, WETH_1000
-
-
-def make_2hop_v2_input(
-    reserve_in_buy=USDC_1_5M,
-    reserve_out_buy=WETH_800,
-    reserve_in_sell=WETH_1000,
-    reserve_out_sell=USDC_2M,
-    fee=FEE_0_3_PCT,
-) -> SolveInput:
-    """Create a standard 2-hop V2-V2 arbitrage input.
-
-    Pool 1 (buy): buy WETH where it's cheap (lower USDC/WETH price)
-    Pool 2 (sell): sell WETH where it's expensive (higher USDC/WETH price)
-
-    Default: Pool 1 = 1.5M USDC / 800 WETH ($1875/WETH)
-             Pool 2 = 2M USDC / 1000 WETH ($2000/WETH)
-    """
-    return SolveInput(
-        hops=(
-            Hop(reserve_in=reserve_in_buy, reserve_out=reserve_out_buy, fee=fee),
-            Hop(reserve_in=reserve_in_sell, reserve_out=reserve_out_sell, fee=fee),
-        )
-    )
-
+from .conftest import (
+    FEE_0_3_PCT,
+    FEE_0_5_PCT,
+    USDC_1_5M,
+    USDC_2M,
+    WETH_800,
+    WETH_1000,
+    make_2hop_v2_input,
+)
 
 # ---------------------------------------------------------------------------
 # Test Core Types

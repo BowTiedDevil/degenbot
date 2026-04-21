@@ -26,14 +26,7 @@ from .conftest import (
     USDC_2M,
     WETH_800,
     WETH_1000,
-)
-
-# For the solver path: input_token(USDC) → forward(WETH) → input_token(USDC)
-# Hop 0 (pool_lo, buy WETH cheap): 1.5M USDC → 800 WETH
-# Hop 1 (pool_hi, sell WETH expensive): 1000 WETH → 2M USDC
-V2_V2_HOPS_PROFITABLE = (
-    Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
-    Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
+    make_2hop_v2_input,
 )
 
 
@@ -47,7 +40,7 @@ class TestSolverFastPathV2V2:
     @pytest.fixture
     def v2_v2_hops(self):
         """Buy WETH cheap at pool_lo, sell WETH expensive at pool_hi."""
-        return V2_V2_HOPS_PROFITABLE
+        return make_2hop_v2_input().hops
 
     def test_mobius_finds_profitable(self, solver, v2_v2_hops):
         """Möbius should find this path profitable (K/M > 1)."""
@@ -212,7 +205,7 @@ class TestSolverTimingComparison:
 
     @pytest.fixture
     def v2_v2_input(self):
-        return SolveInput(hops=V2_V2_HOPS_PROFITABLE)
+        return make_2hop_v2_input()
 
     def _benchmark(self, fn, *args, **kwargs) -> list[int]:
         """Run fn multiple times, return per-call nanoseconds."""

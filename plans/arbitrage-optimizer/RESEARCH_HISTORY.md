@@ -8,13 +8,14 @@ Complete record of the arbitrage optimization research effort, from initial benc
 
 **Original Problem**: Brent optimization (scipy) at ~200μs was too slow for MEV-scale arbitrage.
 
-**Final Result**: Rust Möbius at 0.19μs — **1021x faster**, with zero iterations and closed-form exact solutions.
+**Final Result**: Rust Möbius at 0.19μs — **1021x faster**, with zero iterations and closed-form exact solutions. Pool cache `solve_cached()` at ~2.5μs end-to-end (~0.73μs Rust-only), eliminating all Python object construction on the solve path.
 
 **Key Innovations**:
 1. **Möbius Transformations** — Constant-product AMM paths reduce to single rational function
-2. **Unified ArbSolver** — Automatic method selection (Mobius → Newton → Brent)
+2. **Unified ArbSolver** — Thin Rust wrapper dispatches all supported types; Python fallback for Solidly/Balancer/Brent
 3. **Rust Acceleration** — Sub-microsecond solves with EVM-exact integer validation
-4. **Full AMM Coverage** — V2, V3, V4, Aerodrome, Balancer weighted, Solidly stable
+4. **Pool State Cache** — RustPoolCache stores state at registration time, solves by ID reference only (~0.73μs Rust-only)
+5. **Full AMM Coverage** — V2, V3, V4, Aerodrome, Balancer weighted, Solidly stable
 
 ---
 
@@ -33,6 +34,10 @@ Complete record of the arbitrage optimization research effort, from initial benc
 | 2026-04-15 | MobiusSolver dispatch fix: rejects multi-range V3 hops |
 | 2026-04-16 | V3-V3 test suite: 28 Python + 6 Rust tests, range bounds bug fix |
 | 2026-04-16 | Rust test suite fixes: 7 tests, 3 root causes, convergence + tolerance improvements |
+| 2026-04-17 | ArbSolver Rust dispatch: thin wrapper replaces Python 6-solver chain |
+| 2026-04-17 | Raw array marshalling: solve_raw() eliminates RustIntHopState objects (1.13x) |
+| 2026-04-17 | Pool state cache: RustPoolCache + solve_cached() (~2.5μs, 1.5x faster) |
+| 2026-04-18 | V3-V3 range validation tolerance fix: asymmetric multi-range 56% mismatch resolved |
 
 ---
 
@@ -132,6 +137,18 @@ uint256 arithmetic at 0.88μs, byte-perfect match with contract simulation. Not-
 ### 6. Feature Flags Enable Safe Rollout
 
 `USE_SOLVER_FAST_PATH` allows instant rollback to Brent if issues found.
+
+### 7. ArbSolver Rust Dispatch Eliminates Python Overhead
+
+Replacing the 6-step Python dispatch chain (MobiusSolver → PiecewiseMobiusSolver → ... → BrentSolver) with a single `RustArbSolver.solve()` call eliminates method-selection overhead. The Rust solver returns `supported=False` for hop types it can't handle, triggering Python fallback seamlessly.
+
+**Remaining bottleneck**: Integer refinement (3× `_simulate_path` = 3.7μs) dominates the V2-V2 path. Moving this to Rust would bring end-to-end from ~5.8μs to ~1μs.
+
+### 8. Pool Cache Pattern: Register Once, Solve by ID
+
+The pool cache (`RustPoolCache`) is the natural endpoint for eliminating FFI marshalling overhead. Pool states are registered in Rust at update time (once per block, ~0.34μs/pool), then solved by passing only integer IDs. This eliminates all Python object construction, per-item extraction, and list construction on the solve path.
+
+**Performance**: `solve_cached()` at ~2.5μs (Rust-only ~0.73μs). The ~1.87μs remaining overhead is Python method dispatch + SolveResult construction — an FFI marshalling problem becomes a Python dispatch problem.
 
 ---
 
@@ -320,6 +337,40 @@ When the constrained max input equals the exact range capacity, float64 arithmet
 
 A fixed `MIN_ABS_INTERVAL = 1e-6` is impractical for large search intervals. When x_min=0 and x_max=1e14, convergence requires ~96 iterations. Fix: `abs_tol = max(1e-6, initial_interval * 1e-10)`.
 
+**35. Return Floats From Rust to Avoid i64 Overflow**
+
+Rust `RustArbResult` returns `optimal_input` and `profit` as `f64`, not `i64`. V2 reserves in wei (1e21+) exceed `i64::MAX` (~9.2e18). Integer refinement is done in Python using arbitrary-precision ints. Attempting `x_opt.floor() as i64` in Rust silently wraps for large values.
+
+**37. Pool Cache Eliminates Python Object Overhead Entirely**
+
+The performance bottleneck moved through four stages:
+1. Python dispatch overhead (6 solver chain) → eliminated by Rust dispatch
+2. Python→Rust conversion (RustIntHopState objects) → eliminated by raw array marshalling
+3. Per-item PyO3 list extraction → eliminated by pool cache (state stored in Rust at registration time)
+4. Python method dispatch + SolveResult construction (~1.87μs) → remaining bottleneck
+
+The pool cache pattern (register once, solve by ID) is the natural endpoint for eliminating FFI marshalling overhead. The remaining overhead is Python-side, not FFI-side.
+
+**38. Raw Array Marshalling vs Pool Cache: Different Bottlenecks**
+
+`solve_raw()` (flat int list) and `solve_cached()` (pool IDs) target different layers:
+- `solve_raw()` eliminates Python object construction but still has per-item PyO3 extraction
+- `solve_cached()` eliminates both by storing state in Rust; the solve call passes only integer IDs
+- For the standard `solve()` path, `solve_raw()` is still valuable (used when pool cache isn't set up)
+- Item #19 (binary buffer) was superseded by #20 because the pool cache solves the same problem more completely
+
+**36. BoundedProductHop Reserves Use Q96 Scaling**
+
+Python `_v3_virtual_reserves()` scales virtual reserves by Q96 (2^96) to match V2 wei-scale magnitudes. Rust `V3TickRangeHop.to_hop_state()` uses unsealed `L/√P` and `L·√P`. This scale mismatch means the Rust V3 sequence solver can't directly use `BoundedProductHop` reserves as base hops — `solve_piecewise` replaces the hop at `v3_hop_index` internally. When the replacement causes a scale mismatch with other hops, the Python `PiecewiseMobiusSolver` fallback handles it correctly.
+
+**39. Range Validation Tolerance Must Account for Multi-Step Float64 Accumulation**
+
+The range validation tolerance in `compute_v3_v3_profit` was `1e-12 * sqrt_price_current`, matching the tolerance used in the single-range fast path. But the golden section search for multi-range paths converges to the boundary where `estimate_v3_final_sqrt_price()` accumulates rounding from multiple arithmetic operations (`sqrt_p + amount_in * gamma / liquidity` for ofz, or `sqrt_p * liquidity / (liquidity + amount_in * gamma * sqrt_p)` for zfo). At the boundary, the accumulated error (~1.06e-12 relative) can exceed `1e-12`.
+
+**Lesson**: Tolerance values for float64 boundary checks should account for the *number of arithmetic operations* in the estimation function, not just the magnitude of the boundary. A single multiplication has ~0.5 ULP error, but a chain of 3-4 operations can accumulate ~1-2 ULPs. Use `1e-10` for multi-step estimators, `1e-12` for single-step.
+
+**Debugging approach**: When a numerical optimizer silently returns wrong results, add logging to the *validation function* (not the optimizer itself). The golden section search was working correctly — it was the validation inside `compute_v3_v3_profit` that was rejecting valid points. The `log::debug!` instrumentation on the rejection paths immediately revealed the ULP overshoot.
+
 ### Balancer-Specific
 
 **29. Trade Signatures Enumerate All Deposit/Withdraw Patterns**
@@ -368,6 +419,15 @@ Dimensional analysis applies to financial calculations — quantity must be in t
 | Newton | 4.5μs | **49x** |
 | Brent | 223μs | baseline |
 | CVXPY | 1.3ms | 7x slower |
+
+### V2-V2 ArbSolver End-to-End
+
+| Method | Time | vs Standard solve() |
+|--------|------|---------------------|
+| solve_cached (pool cache) | **~2.5μs** | **1.5x faster** |
+| solve (raw array, default) | ~3.9μs | baseline |
+| solve (object hops) | ~4.4μs | 0.89x |
+| Rust cache.solve() (no Python) | **~0.73μs** | **5.3x faster** |
 
 ### Batch 1000 Paths (2-hop)
 
@@ -426,7 +486,9 @@ Original documents preserved in [`archive/`](archive/):
 
 ## Test Status
 
-**586 tests passing, 9 skipped** (as of 2026-04-15)
+**694 tests passing, 9 skipped** (as of 2026-04-18)
+
+Includes 17 raw array marshalling tests, 18 pool cache tests, 14 merged integer refinement tests, 15 Rust integer refinement tests, 28 V3-V3 accuracy tests, 6 Rust range bounds unit tests, 49 Rust Möbius optimizer tests, and 209 total Rust unit tests.
 
 ```bash
 uv run pytest tests/arbitrage/test_optimizers/ -x -q

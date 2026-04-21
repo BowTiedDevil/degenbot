@@ -3,7 +3,7 @@
 
 from itertools import starmap
 
-from degenbot._rs import mobius as rs_mobius
+from degenbot.degenbot_rs import mobius as rs_mobius
 
 # Reserve pairs that are profitable after fees.
 # For 2-hop arbitrage: K = γ²·s₁·s₂, M = r₁·r₂. Need K > M.

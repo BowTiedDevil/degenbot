@@ -500,6 +500,7 @@ fn transaction_to_py_dict<'py>(
     set_opt_b256(&dict, "block_hash", tx.block_hash)?;
     set_opt_u64(&dict, "transaction_index", tx.transaction_index)?;
     set_opt_u128(&dict, "effective_gas_price", tx.effective_gas_price)?;
+    set_opt_u64(&dict, "block_timestamp", tx.block_timestamp)?;
 
     match envelope {
         TxEnvelope::Legacy(signed_tx) => {
@@ -529,6 +530,8 @@ fn transaction_to_py_dict<'py>(
             set_eip7702_tx_fields(&dict, signed_tx.tx())?;
             set_signature_fields(&dict, signed_tx.signature(), 4)?;
         }
+        // NOTE: When alloy adds new TxEnvelope variants, add match arms here.
+        // The compiler will error on exhaustive match to alert you.
     }
 
     Ok(dict)
@@ -584,6 +587,12 @@ fn consensus_header_to_py_dict<'py>(
         header.parent_beacon_block_root,
     )?;
     set_opt_b256(&dict, "requests_hash", header.requests_hash)?;
+    set_opt_b256(
+        &dict,
+        "block_access_list_hash",
+        header.block_access_list_hash,
+    )?;
+    set_opt_u64(&dict, "slot_number", header.slot_number)?;
 
     Ok(dict)
 }

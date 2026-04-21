@@ -41,11 +41,11 @@ const ENV_VAR: &str = "TOKIO_WORKER_THREADS";
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
 fn build_runtime() -> Result<Runtime, std::io::Error> {
-    let env_worker_count = std::env::var(ENV_VAR)
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok());
+    let env_raw = std::env::var(ENV_VAR).ok();
+    let env_worker_count = env_raw.as_deref().and_then(|v| v.parse::<usize>().ok());
 
-    if env_worker_count.is_none() {
+    let removed_invalid = env_raw.is_some() && env_worker_count.is_none();
+    if removed_invalid {
         std::env::remove_var(ENV_VAR);
     }
 
@@ -55,7 +55,15 @@ fn build_runtime() -> Result<Runtime, std::io::Error> {
         builder.worker_threads(n);
     }
 
-    builder.enable_all().build()
+    let result = builder.enable_all().build();
+
+    if removed_invalid {
+        if let Some(val) = env_raw {
+            std::env::set_var(ENV_VAR, val);
+        }
+    }
+
+    result
 }
 
 /// Get the shared Tokio runtime instance.

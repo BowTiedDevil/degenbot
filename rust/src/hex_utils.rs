@@ -3,6 +3,15 @@
 //! These functions have no `PyO3` dependency and can be used from the Rust core
 //! without pulling in Python bindings.
 
+/// Error type for hex decoding failures.
+#[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
+pub enum HexError {
+    /// Invalid hex string.
+    #[error("Invalid hex string: {0}")]
+    InvalidHex(String),
+}
+
 /// Decode a hex string (with optional "0x" prefix) to bytes.
 ///
 /// Handles odd-length strings by padding with a leading zero.
@@ -17,7 +26,7 @@
 ///
 /// # Errors
 ///
-/// Returns an error string if the hex string is invalid.
+/// Returns `HexError::InvalidHex` if the hex string is invalid.
 ///
 /// # Examples
 ///
@@ -31,8 +40,18 @@
 /// let bytes = decode_hex("0x123").unwrap();
 /// assert_eq!(bytes, vec![0x01, 0x23]);
 /// ```
-pub fn decode_hex(hex_str: &str) -> Result<Vec<u8>, String> {
-    crate::abi_types::value::decode_hex(hex_str).map_err(|e| e.to_string())
+pub fn decode_hex(hex_str: &str) -> Result<Vec<u8>, HexError> {
+    let stripped = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    let stripped = stripped.strip_prefix("0X").unwrap_or(stripped);
+    let padded = if stripped.len() % 2 == 1 {
+        let mut s = String::with_capacity(stripped.len() + 1);
+        s.push('0');
+        s.push_str(stripped);
+        s
+    } else {
+        stripped.to_string()
+    };
+    alloy::hex::decode(&padded).map_err(|e| HexError::InvalidHex(e.to_string()))
 }
 
 /// Encode bytes as a hex string with "0x" prefix.
@@ -46,5 +65,9 @@ pub fn decode_hex(hex_str: &str) -> Result<Vec<u8>, String> {
 /// A hex-encoded string with "0x" prefix.
 #[must_use]
 pub fn encode_hex(bytes: &[u8]) -> String {
-    format!("0x{}", alloy::hex::encode(bytes))
+    let hex = alloy::hex::encode(bytes);
+    let mut result = String::with_capacity(2 + hex.len());
+    result.push_str("0x");
+    result.push_str(&hex);
+    result
 }

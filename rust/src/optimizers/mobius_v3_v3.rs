@@ -21,7 +21,10 @@
 #![allow(clippy::suboptimal_flops)]
 #![allow(clippy::items_after_statements)]
 
-use crate::optimizers::mobius::{compute_mobius_coefficients, mobius_solve, simulate_path, HopState};
+use crate::optimizers::mobius::{
+    golden_section_search_max, invert_hop_output, mobius_solve,
+    simulate_path, HopState, INVALID_RANGE_PENALTY, RANGE_CAPACITY_MARGIN, SQRT_PRICE_REL_TOL,
+};
 use crate::optimizers::mobius_v3::{estimate_v3_final_sqrt_price, TickRangeCrossing, V3TickRangeHop, V3TickRangeSequence};
 
 /// Compute the effective max_input constrained by V3 tick range capacities.
@@ -48,28 +51,44 @@ fn compute_range_constrained_max_input(
     }
 
     // Slightly under-estimate to avoid float64 boundary precision issues
-    let max1 = max1 * (1.0 - 1e-12);
-    let max2 = max2 * (1.0 - 1e-12);
+    let max1 = max1 * (1.0 - RANGE_CAPACITY_MARGIN);
+    let max2 = max2 * (1.0 - RANGE_CAPACITY_MARGIN);
 
     let hop1 = v3_hop1.to_hop_state();
-    let gamma1 = hop1.gamma();
 
-    // Find x such that simulate_path(x, &[hop1]) = max2
-    // x = max2 * r1 / (γ1 * (s1 - max2))
-    let max_x_for_hop2 = if hop1.reserve_out > max2 {
-        let denom = gamma1 * (hop1.reserve_out - max2);
-        if denom > 0.0 {
-            max2 * hop1.reserve_in / denom
-        } else {
-            f64::INFINITY // hop2 can't be the bottleneck
-        }
-    } else {
-        f64::INFINITY // hop2 can't be the bottleneck (max2 ≥ s1)
-    };
+    let max_x_for_hop2 = invert_hop_output(max2, &hop1).unwrap_or(f64::INFINITY);
 
     let constrained = max1.min(max_x_for_hop2);
 
     user_max_input.map_or(constrained, |m| constrained.min(m))
+}
+
+/// Solve a 2-hop V3-V3 path with range-constrained max_input and validate
+/// that both hops stay within their tick range bounds.
+///
+/// Returns `(x, profit, iters)` if profitable and in-range, otherwise `(0.0, 0.0, iters)`.
+fn solve_v3_v3_validated(
+    v3_hop1: &V3TickRangeHop,
+    v3_hop2: &V3TickRangeHop,
+    max_input: Option<f64>,
+) -> (f64, f64, u32) {
+    let hop1 = v3_hop1.to_hop_state();
+    let hop2 = v3_hop2.to_hop_state();
+    let constrained_max = compute_range_constrained_max_input(v3_hop1, v3_hop2, max_input);
+    let (x, profit, iters) = mobius_solve(&[hop1.clone(), hop2], Some(constrained_max));
+
+    if profit > 0.0 {
+        let final_p1 = estimate_v3_final_sqrt_price(x, v3_hop1);
+        let output1 = simulate_path(x, std::slice::from_ref(&hop1));
+        let final_p2 = estimate_v3_final_sqrt_price(output1, v3_hop2);
+        if v3_hop1.contains_sqrt_price_tol(final_p1, SQRT_PRICE_REL_TOL)
+            && v3_hop2.contains_sqrt_price_tol(final_p2, SQRT_PRICE_REL_TOL)
+        {
+            return (x, profit, iters);
+        }
+    }
+
+    (0.0, 0.0, iters)
 }
 
 /// Solve V3-V3 arbitrage with full crossing support.
@@ -92,33 +111,7 @@ pub fn solve_v3_v3(
     // Fast path: both single-range → standard 2-hop Möbius
     // with range-constrained max_input
     if seq1.ranges.len() == 1 && seq2.ranges.len() == 1 {
-        let hop1 = seq1.ranges[0].to_hop_state();
-        let hop2 = seq2.ranges[0].to_hop_state();
-        let constrained_max = compute_range_constrained_max_input(
-            &seq1.ranges[0],
-            &seq2.ranges[0],
-            max_input,
-        );
-        let (x, profit, iters) = mobius_solve(&[hop1.clone(), hop2], Some(constrained_max));
-
-        // Validate the result stays within both ranges
-        if profit > 0.0 {
-            let final_p1 = estimate_v3_final_sqrt_price(x, &seq1.ranges[0]);
-            let output1 = simulate_path(x, std::slice::from_ref(&hop1));
-            let final_p2 = estimate_v3_final_sqrt_price(output1, &seq2.ranges[0]);
-            let eps1 = 1e-12 * seq1.ranges[0].sqrt_price_current;
-            let eps2 = 1e-12 * seq2.ranges[0].sqrt_price_current;
-            let in_range1 = final_p1 >= seq1.ranges[0].sqrt_price_lower - eps1
-                && final_p1 <= seq1.ranges[0].sqrt_price_upper + eps1;
-            let in_range2 = final_p2 >= seq2.ranges[0].sqrt_price_lower - eps2
-                && final_p2 <= seq2.ranges[0].sqrt_price_upper + eps2;
-            if in_range1 && in_range2 {
-                return (x, profit, iters);
-            }
-        }
-
-        // Constrained result not profitable — no arbitrage
-        return (0.0, 0.0, iters);
+        return solve_v3_v3_validated(&seq1.ranges[0], &seq2.ranges[0], max_input);
     }
 
     // General case: iterate over ending range combinations
@@ -130,33 +123,12 @@ pub fn solve_v3_v3(
     let mut best_iters: u32 = 0;
 
     // Get single-range solution as baseline (k1=0, k2=0)
-    // with range-constrained max_input
-    let hop1_current = seq1.ranges[0].to_hop_state();
-    let hop2_current = seq2.ranges[0].to_hop_state();
-    let constrained_max = compute_range_constrained_max_input(
-        &seq1.ranges[0],
-        &seq2.ranges[0],
-        max_input,
-    );
     let (x_base, profit_base, iters_base) =
-        mobius_solve(&[hop1_current.clone(), hop2_current.clone()], Some(constrained_max));
-    // Validate baseline stays in range
+        solve_v3_v3_validated(&seq1.ranges[0], &seq2.ranges[0], max_input);
     if profit_base > 0.0 {
-        let final_p1 = estimate_v3_final_sqrt_price(x_base, &seq1.ranges[0]);
-        let output1 = simulate_path(x_base, std::slice::from_ref(&hop1_current));
-        let final_p2 = estimate_v3_final_sqrt_price(output1, &seq2.ranges[0]);
-        let eps1 = 1e-12 * seq1.ranges[0].sqrt_price_current;
-        let eps2 = 1e-12 * seq2.ranges[0].sqrt_price_current;
-        let valid_range = (final_p1 >= seq1.ranges[0].sqrt_price_lower - eps1
-            && final_p1 <= seq1.ranges[0].sqrt_price_upper + eps1)
-            && (final_p2 >= seq2.ranges[0].sqrt_price_lower - eps2
-                && final_p2 <= seq2.ranges[0].sqrt_price_upper + eps2);
-        if valid_range && profit_base > best_profit
-        {
-            best_x = x_base;
-            best_profit = profit_base;
-            best_iters = iters_base;
-        }
+        best_x = x_base;
+        best_profit = profit_base;
+        best_iters = iters_base;
     }
 
     // Case 1: Hop 1 crosses into range k1, Hop 2 stays in current range
@@ -165,7 +137,7 @@ pub fn solve_v3_v3(
             continue;
         };
 
-        let hops = [crossing1.ending_range.to_hop_state(), hop2_current.clone()];
+        let hops = [crossing1.ending_range.to_hop_state(), seq2.ranges[0].to_hop_state()];
         let (x, profit, iters) = solve_v3_v3_piecewise(
             Some(&crossing1),
             None,
@@ -188,7 +160,7 @@ pub fn solve_v3_v3(
             continue;
         };
 
-        let hops = [hop1_current.clone(), crossing2.ending_range.to_hop_state()];
+        let hops = [seq1.ranges[0].to_hop_state(), crossing2.ending_range.to_hop_state()];
         let (x, profit, iters) = solve_v3_v3_piecewise(
             None,
             Some(&crossing2),
@@ -265,35 +237,23 @@ fn compute_piecewise_range_max(
     // Hop 1 constraint
     if let Some(c1) = crossing1 {
         // x must be ≤ crossing_gross_input + ending_range capacity
-        let ending_capacity = c1.ending_range.max_gross_input_in_range();
+        let ending_capacity = c1.ending_range.max_gross_input_in_range() * (1.0 - RANGE_CAPACITY_MARGIN);
         constraints.push(c1.crossing_gross_input + ending_capacity);
     } else if let Some(v3) = v3_hop1 {
         // x must be ≤ range capacity
-        constraints.push(v3.max_gross_input_in_range());
+        constraints.push(v3.max_gross_input_in_range() * (1.0 - RANGE_CAPACITY_MARGIN));
     }
 
     // Hop 2 constraint (output of hop 1 must be ≤ range capacity)
-    // output1 = simulate_path(x, &[hops[0]]) ≤ max2
-    // Invert: x = max2 * r / (γ * (s - max2))
     if let Some(c2) = crossing2 {
-        let max_output_for_hop2 = c2.crossing_gross_input + c2.ending_range.max_gross_input_in_range();
-        let first_hop = &hops[0];
-        let gamma_first = first_hop.gamma();
-        if first_hop.reserve_out > max_output_for_hop2 {
-            let denom = gamma_first * (first_hop.reserve_out - max_output_for_hop2);
-            if denom > 0.0 {
-                constraints.push(max_output_for_hop2 * first_hop.reserve_in / denom);
-            }
+        let max_output_for_hop2 = c2.crossing_gross_input + c2.ending_range.max_gross_input_in_range() * (1.0 - RANGE_CAPACITY_MARGIN);
+        if let Some(x) = invert_hop_output(max_output_for_hop2, &hops[0]) {
+            constraints.push(x);
         }
     } else if let Some(v3) = v3_hop2 {
-        let max2 = v3.max_gross_input_in_range();
-        let first_hop = &hops[0];
-        let gamma_first = first_hop.gamma();
-        if first_hop.reserve_out > max2 {
-            let denom = gamma_first * (first_hop.reserve_out - max2);
-            if denom > 0.0 {
-                constraints.push(max2 * first_hop.reserve_in / denom);
-            }
+        let max2 = v3.max_gross_input_in_range() * (1.0 - RANGE_CAPACITY_MARGIN);
+        if let Some(x) = invert_hop_output(max2, &hops[0]) {
+            constraints.push(x);
         }
     }
 
@@ -316,8 +276,7 @@ fn solve_v3_v3_piecewise(
     v3_hop1: Option<&V3TickRangeHop>,
     v3_hop2: Option<&V3TickRangeHop>,
 ) -> (f64, f64, u32) {
-    // Get the Möbius coefficients for the 2-hop path (using ending ranges)
-    if compute_mobius_coefficients(hops).is_err() {
+    if hops.is_empty() {
         return (0.0, 0.0, 0);
     }
 
@@ -350,54 +309,11 @@ fn solve_v3_v3_piecewise(
         return (0.0, 0.0, 0);
     }
 
-    // Golden section search on profit(x)
-    // Each iteration contracts the interval by φ ≈ 0.618, so the loop is
-    // guaranteed to terminate. We exit early once the interval is small
-    // relative to the current position (or absolute size if near zero).
-    const MIN_REL_INTERVAL: f64 = 1e-10;
-    const MIN_ABS_INTERVAL: f64 = 1e-6;
-
-    #[allow(clippy::manual_midpoint)]
-    let phi = (1.0 + 5_f64.sqrt()) / 2.0;
-    let resphi = 2.0 - phi;
-
-    let mut a = x_min;
-    let mut b = x_max;
-    let initial_interval = b - a;
-    let abs_tol = MIN_ABS_INTERVAL.max(initial_interval * 1e-10);
-    let mut iters: u32 = 0;
-
-    let mut x1 = a + resphi * (b - a);
-    let mut x2 = b - resphi * (b - a);
-    let mut f1 = compute_v3_v3_profit(x1, crossing1, crossing2, hops, v3_hop1, v3_hop2);
-    let mut f2 = compute_v3_v3_profit(x2, crossing1, crossing2, hops, v3_hop1, v3_hop2);
-
-    loop {
-        let interval = b - a;
-        if a > 0.0 {
-            if interval / a < MIN_REL_INTERVAL {
-                break;
-            }
-        } else if interval < abs_tol {
-            break;
-        }
-        iters += 1;
-        if f1 > f2 {
-            b = x2;
-            x2 = x1;
-            f2 = f1;
-            x1 = a + resphi * (b - a);
-            f1 = compute_v3_v3_profit(x1, crossing1, crossing2, hops, v3_hop1, v3_hop2);
-        } else {
-            a = x1;
-            x1 = x2;
-            f1 = f2;
-            x2 = b - resphi * (b - a);
-            f2 = compute_v3_v3_profit(x2, crossing1, crossing2, hops, v3_hop1, v3_hop2);
-        }
-    }
-
-    let x_best = f64::midpoint(a, b);
+    let (x_best, iters) = golden_section_search_max(
+        |x| compute_v3_v3_profit(x, crossing1, crossing2, hops, v3_hop1, v3_hop2),
+        x_min,
+        x_max,
+    );
     let profit_best = compute_v3_v3_profit(x_best, crossing1, crossing2, hops, v3_hop1, v3_hop2);
 
     if profit_best > 0.0 {
@@ -416,7 +332,7 @@ fn solve_v3_v3_piecewise(
 /// - With crossing: output = crossing_output + mobius(remaining, ending_range)
 ///
 /// Validates that the input stays within each hop's tick range bounds.
-/// Returns -1e30 if the input would push the price out of range.
+/// Returns [`INVALID_RANGE_PENALTY`] if the input would push the price out of range.
 fn compute_v3_v3_profit(
     x: f64,
     crossing1: Option<&TickRangeCrossing>,
@@ -428,16 +344,12 @@ fn compute_v3_v3_profit(
     // Hop 1 output
     let output1 = if let Some(c1) = crossing1 {
         if x < c1.crossing_gross_input {
-            return -1e30; // Invalid: can't cover crossing cost
+            return INVALID_RANGE_PENALTY; // Invalid: can't cover crossing cost
         }
         let remaining = x - c1.crossing_gross_input;
-        // Validate remaining input stays in ending range
         let final_sqrt_price = estimate_v3_final_sqrt_price(remaining, &c1.ending_range);
-        let eps = 1e-12 * c1.ending_range.sqrt_price_current;
-        if final_sqrt_price < c1.ending_range.sqrt_price_lower - eps
-            || final_sqrt_price > c1.ending_range.sqrt_price_upper + eps
-        {
-            return -1e30; // Input pushes past ending range boundary
+        if !c1.ending_range.contains_sqrt_price_tol(final_sqrt_price, SQRT_PRICE_REL_TOL) {
+            return INVALID_RANGE_PENALTY; // Input pushes past ending range boundary
         }
         let ending_hop = c1.ending_range.to_hop_state();
         c1.crossing_output + simulate_path(remaining, &[ending_hop])
@@ -445,11 +357,8 @@ fn compute_v3_v3_profit(
         // No crossing — validate input stays in current range
         if let Some(v3) = v3_hop1 {
             let final_sqrt_price = estimate_v3_final_sqrt_price(x, v3);
-            let eps = 1e-12 * v3.sqrt_price_current;
-            if final_sqrt_price < v3.sqrt_price_lower - eps
-                || final_sqrt_price > v3.sqrt_price_upper + eps
-            {
-                return -1e30; // Input pushes past range boundary
+            if !v3.contains_sqrt_price_tol(final_sqrt_price, SQRT_PRICE_REL_TOL) {
+                return INVALID_RANGE_PENALTY; // Input pushes past range boundary
             }
         }
         simulate_path(x, &[hops[0].clone()])
@@ -458,16 +367,12 @@ fn compute_v3_v3_profit(
     // Hop 2 output (using output1 as input to hop 2)
     let output2 = if let Some(c2) = crossing2 {
         if output1 < c2.crossing_gross_input {
-            return -1e30; // Invalid: can't cover crossing cost
+            return INVALID_RANGE_PENALTY; // Invalid: can't cover crossing cost
         }
         let remaining = output1 - c2.crossing_gross_input;
-        // Validate remaining input stays in ending range
         let final_sqrt_price = estimate_v3_final_sqrt_price(remaining, &c2.ending_range);
-        let eps = 1e-12 * c2.ending_range.sqrt_price_current;
-        if final_sqrt_price < c2.ending_range.sqrt_price_lower - eps
-            || final_sqrt_price > c2.ending_range.sqrt_price_upper + eps
-        {
-            return -1e30; // Input pushes past ending range boundary
+        if !c2.ending_range.contains_sqrt_price_tol(final_sqrt_price, SQRT_PRICE_REL_TOL) {
+            return INVALID_RANGE_PENALTY; // Input pushes past ending range boundary
         }
         let ending_hop = c2.ending_range.to_hop_state();
         c2.crossing_output + simulate_path(remaining, &[ending_hop])
@@ -475,11 +380,8 @@ fn compute_v3_v3_profit(
         // No crossing — validate input stays in current range
         if let Some(v3) = v3_hop2 {
             let final_sqrt_price = estimate_v3_final_sqrt_price(output1, v3);
-            let eps = 1e-12 * v3.sqrt_price_current;
-            if final_sqrt_price < v3.sqrt_price_lower - eps
-                || final_sqrt_price > v3.sqrt_price_upper + eps
-            {
-                return -1e30; // Input pushes past range boundary
+            if !v3.contains_sqrt_price_tol(final_sqrt_price, SQRT_PRICE_REL_TOL) {
+                return INVALID_RANGE_PENALTY; // Input pushes past range boundary
             }
         }
         simulate_path(output1, &[hops[1].clone()])
@@ -620,7 +522,7 @@ mod tests {
 
     #[test]
     fn test_compute_v3_v3_profit_rejects_out_of_range() {
-        // Verify that compute_v3_v3_profit returns -1e30 when input
+        // Verify that compute_v3_v3_profit returns INVALID_RANGE_PENALTY when input
         // pushes past a range boundary (no crossing case)
         let hop = make_v3_hop(1e18, 1000.0, 900.0, 1100.0, 0.003, true);
         let hop_state = hop.to_hop_state();
@@ -633,8 +535,8 @@ mod tests {
             &[hop_state.clone(), hop_state],
             Some(&hop), Some(&hop),
         );
-        // Not -1e30
-        assert!(small_profit > -1e29, "Small input should be valid, got {small_profit}");
+        // Not INVALID_RANGE_PENALTY
+        assert!(small_profit > INVALID_RANGE_PENALTY / 10.0, "Small input should be valid, got {small_profit}");
 
         // Huge input (out of range) → rejected
         let hop_state2 = hop.to_hop_state();
@@ -644,6 +546,6 @@ mod tests {
             &[hop_state2.clone(), hop_state2],
             Some(&hop), Some(&hop),
         );
-        assert_eq!(huge_profit, -1e30, "Huge input should be rejected as out of range");
+        assert_eq!(huge_profit, INVALID_RANGE_PENALTY, "Huge input should be rejected as out of range");
     }
 }

@@ -1,21 +1,24 @@
 //! Ethereum RPC provider implementation using Alloy.
 //!
 //! Provides high-performance HTTP/HTTPS/WS connections with connection pooling,
-//! retry logic, and chunked log fetching. Also supports IPC endpoints for
-//! local node connections.
+//! retry logic, response caching, optional transport-level rate limiting, and
+//! chunked log fetching. Also supports IPC endpoints for local node connections.
 
 use crate::errors::{ProviderError, ProviderResult};
 use alloy::consensus::{Header as ConsensusHeader, TxEnvelope};
 use alloy::network::Ethereum;
 use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
+use alloy::rpc::client::ClientBuilder;
 use alloy::rpc::types::eth::{Block, Header as RpcHeader, Transaction};
 use alloy::rpc::types::{Filter, Log};
 use alloy::transports::ipc::IpcConnect;
+use alloy::transports::layers::ThrottleLayer;
 use alloy::transports::ws::WsConnect;
 use alloy::transports::{RpcError, TransportErrorKind};
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroU32;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,7 +29,7 @@ const MAX_RETRY_DELAY_MS: u64 = 30_000; // 30 seconds
 const BACKOFF_MULTIPLIER: u64 = 2;
 const MAX_JITTER_MS: u64 = 100; // Add up to 100ms of jitter
 
-/// Default maximum retry attempts for provider operations.
+/// Default maximum total attempts for provider operations (1 initial + 9 retries).
 pub const DEFAULT_MAX_RETRIES: u32 = 10;
 
 /// Convert an Alloy `RpcError` to a `ProviderError` with appropriate classification.
@@ -62,10 +65,7 @@ fn alloy_error_to_provider_error(e: &RpcError<TransportErrorKind>, context: &str
 
         // Use Alloy's built-in retry heuristic for other transport errors
         if transport_err.is_retry_err() {
-            return ProviderError::Timeout {
-                timeout: 30,
-                message,
-            };
+            return ProviderError::Timeout { message };
         }
 
         // Other transport errors → RPC error
@@ -192,11 +192,17 @@ impl LogFilter {
     }
 }
 
+/// Default requests per second for transport-level rate limiting.
+const DEFAULT_RPS: u32 = 50;
+
+/// Default burst size for transport-level rate limiting.
+const DEFAULT_BURST: NonZeroU32 = NonZeroU32::new(10).unwrap();
+
 /// High-performance Ethereum RPC provider.
 pub struct AlloyProvider {
     inner: Arc<dyn Provider<Ethereum>>,
     rpc_url: String,
-    max_retries: u32,
+    max_attempts: u32,
 }
 
 impl Clone for AlloyProvider {
@@ -204,7 +210,7 @@ impl Clone for AlloyProvider {
         Self {
             inner: Arc::clone(&self.inner),
             rpc_url: self.rpc_url.clone(),
-            max_retries: self.max_retries,
+            max_attempts: self.max_attempts,
         }
     }
 }
@@ -213,51 +219,85 @@ impl AlloyProvider {
     /// Create a new provider with the given RPC URL.
     ///
     /// Automatically detects the connection type based on the URL:
-    /// - HTTP/HTTPS URLs use HTTP transport with connection pooling
-    /// - File paths (starting with / or \) use IPC transport
+    /// - HTTP/HTTPS URLs use HTTP transport with connection pooling and rate limiting
+    /// - WS/WSS URLs use WebSocket transport
+    /// - File paths (starting with / or \\) use IPC transport
+    ///
+    /// All connections use `ProviderBuilder::default()` (no fillers) with response
+    /// caching enabled (100 entries). HTTP connections additionally use
+    /// `ThrottleLayer` for transport-level rate limiting.
     ///
     /// # Errors
     ///
     /// Returns `ProviderError::ConnectionFailed` if the HTTP client cannot be created
-    /// or IPC connection fails.
+    /// or IPC/WS connection fails.
     pub async fn new(rpc_url: &str, max_retries: u32) -> ProviderResult<Self> {
+        Self::with_rate_limit(rpc_url, max_retries, DEFAULT_RPS, DEFAULT_BURST).await
+    }
+
+    /// Create a new provider with custom rate limiting parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `rpc_url` - The RPC endpoint URL
+    /// * `max_retries` - Maximum retry attempts
+    /// * `requests_per_second` - Rate limit for HTTP connections (ignored for WS/IPC)
+    /// * `burst` - Burst size for rate limiting
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::ConnectionFailed` if the connection cannot be established.
+    pub async fn with_rate_limit(
+        rpc_url: &str,
+        max_retries: u32,
+        requests_per_second: u32,
+        burst: NonZeroU32,
+    ) -> ProviderResult<Self> {
         let provider: Arc<dyn Provider<Ethereum>> =
             if rpc_url.starts_with("http://") || rpc_url.starts_with("https://") {
-                // HTTP endpoint - use Alloy's built-in HTTP transport
                 let url = rpc_url
                     .parse()
                     .map_err(|e| ProviderError::ConnectionFailed {
                         message: format!("Invalid RPC URL: {e}"),
                     })?;
 
-                let provider = ProviderBuilder::<_, _, Ethereum>::new().connect_http(url);
+                // Build HTTP client with throttle layer at the transport level
+                let throttle = ThrottleLayer::new_with_burst(requests_per_second, burst);
+                let client = ClientBuilder::default().layer(throttle).http(url);
+
+                let provider = ProviderBuilder::default()
+                    .with_default_caching()
+                    .connect_client(client)
+                    .erased();
                 Arc::new(provider)
             } else if rpc_url.starts_with("ws://") || rpc_url.starts_with("wss://") {
-                // WebSocket connection
                 let ws_connect = WsConnect::new(rpc_url.to_string());
-                let provider = ProviderBuilder::<_, _, Ethereum>::new()
+                let provider = ProviderBuilder::default()
+                    .with_default_caching()
                     .connect_ws(ws_connect)
                     .await
                     .map_err(|e| ProviderError::ConnectionFailed {
                         message: format!("Failed to connect to WebSocket endpoint: {e}"),
-                    })?;
+                    })?
+                    .erased();
                 Arc::new(provider)
             } else {
-                // IPC connection via Unix domain socket or Windows named pipe
                 let ipc_connect: IpcConnect<String> = IpcConnect::new(rpc_url.to_string());
-                let provider = ProviderBuilder::<_, _, Ethereum>::new()
+                let provider = ProviderBuilder::default()
+                    .with_default_caching()
                     .connect_ipc(ipc_connect)
                     .await
                     .map_err(|e| ProviderError::ConnectionFailed {
                         message: format!("Failed to connect to IPC endpoint: {e}"),
-                    })?;
+                    })?
+                    .erased();
                 Arc::new(provider)
             };
 
         Ok(Self {
             inner: provider,
             rpc_url: rpc_url.to_string(),
-            max_retries,
+            max_attempts: max_retries.saturating_add(1),
         })
     }
 
@@ -385,7 +425,7 @@ impl AlloyProvider {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     attempt += 1;
-                    if attempt >= self.max_retries {
+                    if attempt >= self.max_attempts {
                         return Err(e);
                     }
 
@@ -656,6 +696,12 @@ impl LogFetcher {
             return Err(ProviderError::InvalidBlockRange {
                 from: from_block,
                 to: to_block,
+            });
+        }
+
+        if self.max_blocks_per_request == 0 {
+            return Err(ProviderError::InvalidParams {
+                message: "max_blocks_per_request must be greater than 0".to_string(),
             });
         }
 

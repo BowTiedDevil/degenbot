@@ -34,7 +34,8 @@
 #![allow(clippy::needless_range_loop)]
 
 use crate::optimizers::mobius::{
-    compute_mobius_coefficients, mobius_solve, simulate_path, HopState, MobiusError,
+    compute_mobius_coefficients, golden_section_search_max, invert_path_output,
+    mobius_solve, simulate_path, HopState, MobiusError, RANGE_CAPACITY_MARGIN,
 };
 
 /// V3/V4 tick range data needed to build a Möbius `HopState`.
@@ -43,6 +44,7 @@ use crate::optimizers::mobius::{
 /// along with the current pool state, so that we can construct effective
 /// reserves and validate that a solution stays in range.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct V3TickRangeHop {
     /// Liquidity in this tick range.
     pub liquidity: f64,
@@ -138,6 +140,28 @@ impl V3TickRangeHop {
     pub fn contains_sqrt_price(&self, sqrt_price: f64) -> bool {
         sqrt_price >= self.sqrt_price_lower && sqrt_price <= self.sqrt_price_upper
     }
+
+    /// Check if a sqrt price is within this tick range, with a relative
+    /// tolerance band around the bounds.
+    ///
+    /// The tolerance is `rel_tol * sqrt_price_current`, applied symmetrically
+    /// outside each bound. This accounts for f64 rounding near tick boundaries.
+    #[inline]
+    #[must_use]
+    pub fn contains_sqrt_price_tol(&self, sqrt_price: f64, rel_tol: f64) -> bool {
+        let eps = rel_tol * self.sqrt_price_current;
+        sqrt_price >= self.sqrt_price_lower - eps && sqrt_price <= self.sqrt_price_upper + eps
+    }
+
+    /// Check whether swapping `amount_in` through this range keeps the
+    /// final sqrt price within bounds, using a relative tolerance.
+    #[inline]
+    #[must_use]
+    pub fn is_swap_in_range(&self, amount_in: f64, rel_tol: f64) -> bool {
+        let final_sp = estimate_v3_final_sqrt_price(amount_in, self);
+        let eps = rel_tol * self.sqrt_price_current;
+        final_sp >= self.sqrt_price_lower - eps && final_sp <= self.sqrt_price_upper + eps
+    }
 }
 
 /// Pre-computed crossing data for a V3 swap that crosses tick boundaries.
@@ -146,6 +170,7 @@ impl V3TickRangeHop {
 /// - `total_output = crossing_output + mobius(remaining_input, range_K)`
 /// - `remaining_input = gross_input - crossing_gross_input`
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct TickRangeCrossing {
     /// Total gross input (including fees) consumed by crossed ranges.
     pub crossing_gross_input: f64,
@@ -160,6 +185,7 @@ pub struct TickRangeCrossing {
 /// `ranges[0]` contains the current price. `ranges[1]`, `ranges[2]`, ...
 /// are adjacent ranges in the swap direction.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct V3TickRangeSequence {
     /// Ordered tick ranges in the swap direction.
     pub ranges: Vec<V3TickRangeHop>,
@@ -180,10 +206,14 @@ impl V3TickRangeSequence {
         let zfo = ranges[0].zero_for_one;
         for r in &ranges {
             if (r.fee - fee).abs() > f64::EPSILON {
-                return Err(MobiusError::NoProfit); // Reuse error; shouldn't happen in practice
+                return Err(MobiusError::InconsistentSequence {
+                    message: "All ranges must have the same fee".to_string(),
+                });
             }
             if r.zero_for_one != zfo {
-                return Err(MobiusError::NoProfit);
+                return Err(MobiusError::InconsistentSequence {
+                    message: "All ranges must have the same swap direction".to_string(),
+                });
             }
         }
 
@@ -218,7 +248,7 @@ impl V3TickRangeSequence {
     /// Returns an error if `k` is out of bounds.
     pub fn compute_crossing(&self, k: usize) -> Result<TickRangeCrossing, MobiusError> {
         if k >= self.ranges.len() {
-            return Err(MobiusError::NoValidV3Candidate);
+            return Err(MobiusError::EmptyHops);
         }
 
         if k == 0 {
@@ -422,31 +452,9 @@ fn compute_piecewise_v3_range_max(
     // Convert V3 capacity to a constraint on x (path input)
     let hops_before = &hops[..v3_hop_index];
     if hops_before.is_empty() {
-        // x = v3_capacity directly
         constraints.push(v3_capacity);
-    } else {
-        // Invert: find x such that simulate_path(x, hops_before) = v3_capacity
-        // For a single hop: x = v3_capacity * r / (γ * (s - v3_capacity))
-        // For multi-hop before, use the same inversion per hop
-        let mut cap = v3_capacity;
-        for h in hops_before.iter().rev() {
-            let gamma = h.gamma();
-            if h.reserve_out > cap {
-                let denom = gamma * (h.reserve_out - cap);
-                if denom > 0.0 {
-                    cap = cap * h.reserve_in / denom;
-                } else {
-                    cap = f64::INFINITY;
-                    break;
-                }
-            } else {
-                cap = f64::INFINITY;
-                break;
-            }
-        }
-        if cap.is_finite() {
-            constraints.push(cap);
-        }
+    } else if let Some(cap) = invert_path_output(v3_capacity, hops_before) {
+        constraints.push(cap);
     }
 
     // Hops after V3: V3 output must not exceed what they can absorb
@@ -577,48 +585,7 @@ pub fn solve_piecewise(
             continue;
         }
 
-        // Golden section search with early exit on convergence
-        // Use absolute interval width when a≈0, relative otherwise.
-        // Scale absolute tolerance by initial interval to handle large search ranges.
-        const MIN_REL_INTERVAL: f64 = 1e-10;
-        const MIN_ABS_INTERVAL: f64 = 1e-6;
-        let phi = (5_f64.sqrt() - 1.0) / 2.0; // ~0.618
-        let mut a = x_low;
-        let mut b = x_high;
-        let initial_interval = b - a;
-        let abs_tol = MIN_ABS_INTERVAL.max(initial_interval * 1e-10);
-        let mut x1 = b - phi * (b - a);
-        let mut x2 = a + phi * (b - a);
-        let mut f1 = eval_profit(x1);
-        let mut f2 = eval_profit(x2);
-        let mut iters: u32 = 0;
-
-        loop {
-            let interval = b - a;
-            if a > 0.0 {
-                if interval / a < MIN_REL_INTERVAL {
-                    break;
-                }
-            } else if interval < abs_tol {
-                break;
-            }
-            iters += 1;
-            if f1 < f2 {
-                a = x1;
-                x1 = x2;
-                f1 = f2;
-                x2 = a + phi * (b - a);
-                f2 = eval_profit(x2);
-            } else {
-                b = x2;
-                x2 = x1;
-                f2 = f1;
-                x1 = b - phi * (b - a);
-                f1 = eval_profit(x1);
-            }
-        }
-
-        let x_opt = (a + b) / 2.0;
+        let (x_opt, iters) = golden_section_search_max(eval_profit, x_low, x_high);
         let profit = eval_profit(x_opt);
 
         if profit <= 0.0 {
@@ -673,36 +640,15 @@ pub fn solve_v3_candidates(
             continue;
         }
 
-        // Validate V3 range — compute amount entering the V3 hop
-        // Use a small tolerance for float64 precision at the boundary
-        let mut amt = x_opt;
-        let mut valid = true;
-        for j in 0..=v3_hop_index {
-            if j == v3_hop_index {
-                let final_sqrt_price = estimate_v3_final_sqrt_price(amt, v3_candidate);
-                // Allow tiny float64 rounding at the boundary
-                let eps = 1e-12 * v3_candidate.sqrt_price_current;
-                if final_sqrt_price < v3_candidate.sqrt_price_lower - eps
-                    || final_sqrt_price > v3_candidate.sqrt_price_upper + eps
-                {
-                    valid = false;
-                    break;
-                }
-            } else {
-                let h = &full_hops[j];
-                if amt <= 0.0 {
-                    valid = false;
-                    break;
-                }
-                let gamma = h.gamma();
-                let denom = h.reserve_in + amt * gamma;
-                if denom <= 0.0 {
-                    valid = false;
-                    break;
-                }
-                amt = amt * gamma * h.reserve_out / denom;
-            }
-        }
+        // Validate V3 range — simulate through hops before V3 to get
+        // amount entering the V3 hop, then check it stays in range.
+        let hops_before = &full_hops[..v3_hop_index];
+        let amt_v3 = if hops_before.is_empty() {
+            x_opt
+        } else {
+            simulate_path(x_opt, hops_before)
+        };
+        let valid = v3_candidate.is_swap_in_range(amt_v3, RANGE_CAPACITY_MARGIN);
 
         if valid && profit > best_profit {
             best_x = x_opt;
@@ -739,32 +685,14 @@ fn compute_v3_candidates_range_max(
         return Some(0.0); // Range is exhausted
     }
     // Slightly under-estimate to avoid float64 boundary issues
-    let max_v3_input = max_v3_input * (1.0 - 1e-12);
+    let max_v3_input = max_v3_input * (1.0 - RANGE_CAPACITY_MARGIN);
 
     let hops_before = &full_hops[..v3_hop_index];
 
     let constrained = if hops_before.is_empty() {
-        // x = max_v3_input directly
         max_v3_input
     } else {
-        // Invert: find x such that simulate_path(x, hops_before) = max_v3_input
-        let mut cap = max_v3_input;
-        for h in hops_before.iter().rev() {
-            let gamma = h.gamma();
-            if h.reserve_out > cap {
-                let denom = gamma * (h.reserve_out - cap);
-                if denom > 0.0 {
-                    cap = cap * h.reserve_in / denom;
-                } else {
-                    cap = f64::INFINITY;
-                    break;
-                }
-            } else {
-                cap = f64::INFINITY;
-                break;
-            }
-        }
-        cap
+        invert_path_output(max_v3_input, hops_before).unwrap_or(f64::INFINITY)
     };
 
     match user_max_input {

@@ -19,6 +19,7 @@ use std::sync::LazyLock;
 // =============================================================================
 
 /// Maximum number of cached type sets.
+#[allow(clippy::expect_used)]
 const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(10_000).expect("10_000 is non-zero");
 
 /// Global LRU cache for parsed ABI types.
@@ -346,6 +347,16 @@ pub fn value_to_alloy_for_type(
                 alloy::primitives::FixedBytes::<32>::new(arr),
                 *size,
             ))
+        }
+
+        // Handle Uint with correct bit width (to_alloy() hardcodes 256)
+        (DynSolType::Uint(bits), AbiValue::Uint(n)) => {
+            Ok(alloy::dyn_abi::DynSolValue::Uint(*n, *bits))
+        }
+
+        // Handle Int with correct bit width (to_alloy() hardcodes 256)
+        (DynSolType::Int(bits), AbiValue::Int(n)) => {
+            Ok(alloy::dyn_abi::DynSolValue::Int(*n, *bits))
         }
 
         // Handle FixedArray conversion

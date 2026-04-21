@@ -25,40 +25,7 @@ from degenbot.arbitrage.optimizers.mobius import (
 )
 from degenbot.arbitrage.optimizers.v3_tick_predictor import tick_to_sqrt_price
 
-from .conftest import brent_solve_hops
-
-# ==============================================================================
-# Helpers
-# ==============================================================================
-
-
-def make_v3_tick_range(
-    liquidity: float,
-    current_tick: int,
-    tick_spacing: int = 60,
-    fee: float = 0.003,
-    *,
-    zero_for_one: bool = True,
-) -> V3TickRangeHop:
-    """
-    Create a V3TickRangeHop centered at current_tick with given tick_spacing.
-    """
-    tick_lower = (current_tick // tick_spacing) * tick_spacing
-    tick_upper = tick_lower + tick_spacing
-
-    sqrt_price_current = tick_to_sqrt_price(current_tick)
-    sqrt_price_lower = tick_to_sqrt_price(tick_lower)
-    sqrt_price_upper = tick_to_sqrt_price(tick_upper)
-
-    return V3TickRangeHop(
-        liquidity=liquidity,
-        sqrt_price_current=sqrt_price_current,
-        sqrt_price_lower=sqrt_price_lower,
-        sqrt_price_upper=sqrt_price_upper,
-        fee=fee,
-        zero_for_one=zero_for_one,
-    )
-
+from .conftest import brent_solve_hops, make_v3_tick_range
 
 # ==============================================================================
 # Unit Tests: V3TickRangeHop

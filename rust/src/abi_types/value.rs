@@ -6,31 +6,18 @@
 use crate::errors::{AbiDecodeError, ContractError};
 use crate::abi_types::type_::AbiType;
 use alloy::dyn_abi::DynSolValue;
-use alloy::hex;
 use alloy::primitives::{Address, I256, U256};
-use std::fmt;
 use std::str::FromStr;
 
 /// Decode a hex string (with optional "0x" prefix) to bytes.
 ///
-/// Handles odd-length strings by padding with a leading zero,
-/// which is the canonical behavior for Ethereum hex strings.
+/// Delegates to [`crate::hex_utils::decode_hex`].
 ///
 /// # Errors
 ///
 /// Returns `Err` if the string contains invalid hex characters.
-pub(crate) fn decode_hex(hex_str: &str) -> Result<Vec<u8>, hex::FromHexError> {
-    let stripped = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-    let stripped = stripped.strip_prefix("0X").unwrap_or(stripped);
-    let padded = if stripped.len() % 2 == 1 {
-        let mut s = String::with_capacity(stripped.len() + 1);
-        s.push('0');
-        s.push_str(stripped);
-        s
-    } else {
-        stripped.to_string()
-    };
-    alloy::hex::decode(&padded)
+pub(crate) fn decode_hex(hex_str: &str) -> Result<Vec<u8>, crate::hex_utils::HexError> {
+    crate::hex_utils::decode_hex(hex_str)
 }
 
 /// Represents an ABI value for encoding/decoding.
@@ -216,9 +203,9 @@ impl AbiValue {
     #[must_use]
     pub fn to_contract_string(&self) -> String {
         match self {
-            Self::Address(addr) => format!("0x{}", hex::encode(addr)),
+            Self::Address(addr) => format!("0x{}", alloy::hex::encode(addr)),
             Self::Bool(b) => b.to_string(),
-            Self::FixedBytes(bytes) | Self::Bytes(bytes) => format!("0x{}", hex::encode(bytes)),
+            Self::FixedBytes(bytes) | Self::Bytes(bytes) => format!("0x{}", alloy::hex::encode(bytes)),
             Self::Uint(n) => n.to_string(),
             Self::Int(n) => n.to_string(),
             Self::String(s) => s.clone(),
@@ -282,24 +269,16 @@ pub(crate) fn parse_int256_with_hex_prefix(s: &str) -> Result<I256, ParseIntErro
 }
 
 /// Error parsing an integer from string.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
 pub enum ParseIntError {
     /// Invalid hex format
+    #[error("invalid hex format")]
     InvalidHex,
     /// Invalid decimal format
+    #[error("invalid decimal format")]
     InvalidDecimal,
 }
-
-impl fmt::Display for ParseIntError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidHex => write!(f, "invalid hex format"),
-            Self::InvalidDecimal => write!(f, "invalid decimal format"),
-        }
-    }
-}
-
-impl std::error::Error for ParseIntError {}
 
 /// Deprecated alias for `ParseIntError`.
 #[deprecated(note = "Use `ParseIntError` instead")]

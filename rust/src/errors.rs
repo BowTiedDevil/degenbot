@@ -101,8 +101,8 @@ impl From<AddressError> for PyErr {
 #[non_exhaustive]
 pub enum ProviderError {
     /// Request timeout.
-    #[error("Request timeout after {timeout}s: {message}")]
-    Timeout { timeout: u64, message: String },
+    #[error("Request timeout: {message}")]
+    Timeout { message: String },
 
     /// Rate limit exceeded.
     #[error("Rate limited: {message}")]
@@ -213,8 +213,14 @@ pub enum ContractError {
 
 impl From<ContractError> for ProviderError {
     fn from(err: ContractError) -> Self {
-        Self::Other {
-            message: err.to_string(),
+        match err {
+            ContractError::InvalidAbi { message } => Self::InvalidAbi { message },
+            ContractError::InvalidAddress { address, reason } => {
+                Self::InvalidAddress { address, reason }
+            }
+            ContractError::EncodingError { message } | ContractError::DecodingError { message } => {
+                Self::DecodingError { message }
+            }
         }
     }
 }

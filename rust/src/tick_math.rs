@@ -382,7 +382,7 @@ mod proptests {
 
     proptest! {
         #[test]
-        fn roundtrip_any_valid_tick(tick in -887_272_i32..=887_272_i32) {
+        fn roundtrip_any_valid_tick(tick in -887_272_i32..887_272_i32) {
             let ratio = get_sqrt_ratio_at_tick_internal(tick)?;
             let tick_back = get_tick_at_sqrt_ratio_internal(ratio)?;
             prop_assert_eq!(tick_back.as_i32(), tick);

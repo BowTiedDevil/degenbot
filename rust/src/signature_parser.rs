@@ -7,59 +7,32 @@ use std::iter::Peekable;
 use std::str::Chars;
 
 /// Errors that can occur during signature parsing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum ParseError {
     /// Unexpected character at position.
+    #[error("at position {pos}: expected {expected}, found '{found}'")]
     UnexpectedChar {
         pos: usize,
         expected: String,
         found: char,
     },
     /// Unexpected end of input.
+    #[error("at position {pos}: unexpected end of input, expected {expected}")]
     UnexpectedEnd { pos: usize, expected: String },
     /// Invalid identifier.
+    #[error("at position {pos}: {msg}")]
     InvalidIdentifier { pos: usize, msg: String },
     /// Invalid ABI type.
+    #[error("at position {pos}: invalid type - {err}")]
     InvalidType { pos: usize, err: AbiTypeError },
     /// Empty function name.
+    #[error("function name cannot be empty")]
     EmptyFunctionName,
     /// Unmatched bracket in type string.
+    #[error("at position {pos}: unmatched '[' in type string")]
     UnmatchedBracket { pos: usize },
 }
-
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnexpectedChar {
-                pos,
-                expected,
-                found,
-            } => {
-                write!(f, "at position {pos}: expected {expected}, found '{found}'")
-            }
-            Self::UnexpectedEnd { pos, expected } => {
-                write!(
-                    f,
-                    "at position {pos}: unexpected end of input, expected {expected}"
-                )
-            }
-            Self::InvalidIdentifier { pos, msg } => {
-                write!(f, "at position {pos}: {msg}")
-            }
-            Self::InvalidType { pos, err } => {
-                write!(f, "at position {pos}: invalid type - {err}")
-            }
-            Self::EmptyFunctionName => {
-                write!(f, "function name cannot be empty")
-            }
-            Self::UnmatchedBracket { pos } => {
-                write!(f, "at position {pos}: unmatched '[' in type string")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ParseError {}
 
 /// Parser state for function signatures.
 struct SignatureParser<'a> {

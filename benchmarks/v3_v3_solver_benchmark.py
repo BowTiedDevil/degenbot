@@ -17,7 +17,7 @@ ranges) and scenarios that surface this limitation (narrow ranges).
 import time
 from dataclasses import dataclass
 
-from degenbot._rs import mobius as rs_mobius
+from degenbot.degenbot_rs import mobius as rs_mobius
 from degenbot.uniswap.v3_libraries.swap_math import compute_swap_step
 
 # ==============================================================================

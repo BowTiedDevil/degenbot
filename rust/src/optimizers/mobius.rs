@@ -36,12 +36,27 @@
 #![allow(clippy::suboptimal_flops)]
 #![allow(clippy::implied_bounds_in_impls)]
 
+/// Relative tolerance for V3 sqrt price boundary comparisons.
+/// Accounts for f64 rounding near tick boundaries.
+pub const SQRT_PRICE_REL_TOL: f64 = 1e-10;
+
+/// Margin factor to under-estimate V3 range capacity, avoiding
+/// float64 boundary precision issues. Multiply max capacity by
+/// `1.0 - RANGE_CAPACITY_MARGIN` to stay safely inside bounds.
+pub const RANGE_CAPACITY_MARGIN: f64 = 1e-12;
+
+/// Sentinel penalty returned by profit functions when input pushes
+/// price out of V3 tick range. Must be large enough negative to
+/// dominate any valid profit.
+pub const INVALID_RANGE_PENALTY: f64 = -1e30;
+
 /// Reserve and fee state for a single pool hop.
 ///
 /// For V2 pools, `reserve_in` and `reserve_out` are the raw reserves.
 /// For V3 tick ranges, they are the effective/virtual reserves:
 /// `R0 + α = L/√P` and `R1 + β = L·√P`.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct HopState {
     /// Reserve of the token being deposited (input reserve).
     pub reserve_in: f64,
@@ -74,6 +89,7 @@ impl HopState {
 /// path as a single Möbius transformation `l(x) = K·x / (M + N·x)`.
 #[derive(Clone, Debug)]
 #[allow(non_snake_case)]
+#[non_exhaustive]
 pub struct MobiusCoefficients {
     /// Numerator scaling coefficient.
     pub K: f64,
@@ -184,6 +200,41 @@ pub fn simulate_path(x: f64, hops: &[HopState]) -> f64 {
     amount
 }
 
+/// Invert the single-hop constant product formula to find the input `x`
+/// that produces `target_output`.
+///
+/// Given `y = γ·s·x / (r + γ·x) = target`, solve for x:
+/// `x = target·r / (γ·(s - target))`
+///
+/// Returns `None` if `target >= reserve_out` (output exceeds reserve)
+/// or the denominator is non-positive.
+#[inline]
+#[must_use]
+pub fn invert_hop_output(target: f64, hop: &HopState) -> Option<f64> {
+    let gamma = hop.gamma();
+    if hop.reserve_out > target {
+        let denom = gamma * (hop.reserve_out - target);
+        if denom > 0.0 {
+            return Some(target * hop.reserve_in / denom);
+        }
+    }
+    None
+}
+
+/// Invert a multi-hop path to find input `x` that produces `target_output`
+/// from the final hop.
+///
+/// Works by inverting through hops in reverse order.
+/// Returns `None` if any inversion step fails.
+#[must_use]
+pub fn invert_path_output(target: f64, hops: &[HopState]) -> Option<f64> {
+    let mut cap = target;
+    for h in hops.iter().rev() {
+        cap = invert_hop_output(cap, h)?;
+    }
+    Some(cap)
+}
+
 /// Solve for optimal arbitrage input using the Möbius transformation approach.
 ///
 /// Returns `(optimal_input, profit, iterations)` where iterations is always 0
@@ -217,19 +268,28 @@ pub fn mobius_solve(hops: &[HopState], max_input: Option<f64>) -> (f64, f64, u32
     (x_opt, profit, 0)
 }
 
+/// Relative tolerance for golden section convergence.
+pub const GSS_REL_TOL: f64 = 1e-10;
+/// Absolute tolerance for golden section convergence (used when a ≈ 0).
+pub const GSS_ABS_TOL: f64 = 1e-6;
+/// Golden section ratio φ ≈ 0.618.
+const GOLDEN_SECTION: f64 = 0.618_033_988_749_894_9;
+
 /// Golden section search for the maximum of a unimodal function.
 ///
-/// Finds the maximum of `f` in the interval `[a, b]` using the golden
-/// section method with `n_iterations` steps.
+/// Converges when the interval width falls below [`GSS_REL_TOL`] × a
+/// (relative) or [`GSS_ABS_TOL`] (absolute near zero).
 ///
-/// # Panics
-///
-/// Panics if `a >= b` or `n_iterations` is 0.
-pub fn golden_section_max(f: impl Fn(f64) -> f64, a: f64, b: f64, n_iterations: usize) -> f64 {
-    assert!(a < b, "Search interval must be non-empty");
-    assert!(n_iterations > 0, "Must have at least one iteration");
-
-    let phi = (5_f64.sqrt() - 1.0) / 2.0; // ~0.618
+/// Returns `(argmax, iterations)`.
+pub fn golden_section_search_max(
+    f: impl Fn(f64) -> f64,
+    a: f64,
+    b: f64,
+) -> (f64, u32) {
+    debug_assert!(a < b, "Search interval must be non-empty");
+    let initial_interval = b - a;
+    let abs_tol = GSS_ABS_TOL.max(initial_interval * GSS_REL_TOL);
+    let phi = GOLDEN_SECTION;
 
     let mut lo = a;
     let mut hi = b;
@@ -237,8 +297,18 @@ pub fn golden_section_max(f: impl Fn(f64) -> f64, a: f64, b: f64, n_iterations: 
     let mut x2 = lo + phi * (hi - lo);
     let mut f1 = f(x1);
     let mut f2 = f(x2);
+    let mut iters: u32 = 0;
 
-    for _ in 0..n_iterations {
+    loop {
+        let interval = hi - lo;
+        if lo > 0.0 {
+            if interval / lo < GSS_REL_TOL {
+                break;
+            }
+        } else if interval < abs_tol {
+            break;
+        }
+        iters += 1;
         if f1 < f2 {
             lo = x1;
             x1 = x2;
@@ -254,7 +324,7 @@ pub fn golden_section_max(f: impl Fn(f64) -> f64, a: f64, b: f64, n_iterations: 
         }
     }
 
-    f64::midpoint(lo, hi)
+    (f64::midpoint(lo, hi), iters)
 }
 
 /// Errors that can occur during Möbius optimization.
@@ -264,31 +334,9 @@ pub enum MobiusError {
     /// Empty hops list provided.
     #[error("At least one hop is required")]
     EmptyHops,
-    /// V3 tick range validation failed (swap crosses boundary).
-    #[error("V3 swap crosses tick boundary: sqrt_price={sqrt_price:.6} outside [{lower:.6}, {upper:.6}]")]
-    TickBoundaryViolation {
-        /// Computed final sqrt price.
-        sqrt_price: f64,
-        /// Lower bound of the tick range.
-        lower: f64,
-        /// Upper bound of the tick range.
-        upper: f64,
-    },
-    /// No profitable arbitrage found.
-    #[error("No profitable arbitrage")]
-    NoProfit,
-    /// No valid V3 candidate range found.
-    #[error("No valid V3 candidate range found")]
-    NoValidV3Candidate,
-    /// No valid piecewise-Möbius solution found.
-    #[error("No valid piecewise-Möbius solution found")]
-    NoPiecewiseSolution,
-}
-
-impl From<MobiusError> for pyo3::PyErr {
-    fn from(err: MobiusError) -> Self {
-        pyo3::exceptions::PyValueError::new_err(format!("Möbius error: {err}"))
-    }
+    /// V3 tick range sequence has inconsistent fees or swap directions.
+    #[error("Inconsistent V3 tick range sequence: {message}")]
+    InconsistentSequence { message: String },
 }
 
 #[cfg(test)]
@@ -394,8 +442,9 @@ mod tests {
     fn test_golden_section_finds_maximum() {
         // f(x) = -x^2 + 4x, maximum at x=2
         let f = |x: f64| -x * x + 4.0 * x;
-        let x_max = golden_section_max(f, 0.0, 4.0, 50);
+        let (x_max, iters) = golden_section_search_max(f, 0.0, 4.0);
         assert!((x_max - 2.0).abs() < 0.01, "Should find max at x=2, got {x_max}");
+        assert!(iters > 0, "Should take at least one iteration");
     }
 
     #[test]

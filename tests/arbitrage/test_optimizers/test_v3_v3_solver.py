@@ -4,7 +4,7 @@ Tests for the Rust V3-V3 arbitrage solver (solve_v3_v3).
 
 import math
 
-from degenbot._rs import mobius
+from degenbot.degenbot_rs import mobius
 
 from .conftest import make_rust_v3_hop as make_v3_hop
 
