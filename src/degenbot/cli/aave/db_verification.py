@@ -50,10 +50,6 @@ def verify_gho_discount_amounts(
         return
 
     assert gho_asset.v_gho_discount_token is not None
-
-    if user_addresses is not None and len(user_addresses) == 0:
-        return
-
     assert gho_asset.v_token is not None
 
     gho_vtoken_address = gho_asset.v_token.address
@@ -115,9 +111,6 @@ def verify_stk_aave_balances(
     """
 
     if gho_asset.v_gho_discount_token is None:
-        return
-
-    if user_addresses is not None and len(user_addresses) == 0:
         return
 
     discount_token = gho_asset.v_gho_discount_token

@@ -44,10 +44,7 @@ from degenbot.cli.aave.event_handlers import (
     _process_user_e_mode_set_event,
     _update_contract_revision,
 )
-from degenbot.cli.aave.liquidation_processor import (
-    _preprocess_liquidation_aggregates,
-    _process_deferred_debt_burns,
-)
+from degenbot.cli.aave.liquidation_processor import _preprocess_liquidation_aggregates
 from degenbot.cli.aave.stkaave import process_stk_aave_transfer_event
 from degenbot.cli.aave.token_processor import (
     _process_collateral_burn_with_match,
@@ -328,14 +325,6 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         # Track liquidation operations for deferred burn matching
         if op.operation_type in LIQUIDATION_OPERATION_TYPES:
             liquidation_operations.append(op)
-
-    # Process deferred debt burns that couldn't be matched during initial parsing
-    # This handles the case where Burn events are emitted before LiquidationCall events
-    _process_deferred_debt_burns(
-        tx_context=tx_context,
-        liquidation_operations=liquidation_operations,
-        assigned_log_indices=assigned_log_indices,
-    )
 
     for event in tx_context.events:
         if event["logIndex"] in assigned_log_indices:

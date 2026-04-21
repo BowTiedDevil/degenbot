@@ -399,10 +399,6 @@ def _process_asset_collateral_in_emode_changed_event(
     elif is_collateral and category_id > 0:
         config.e_mode_category_id = int(category_id)
         logger.info(f"Set eMode category for {asset_address} to {category_id} (collateral enabled)")
-    elif not is_collateral and config.e_mode_category_id == category_id:
-        # Only clear if removing from the current category
-        config.e_mode_category_id = None
-        logger.info(f"Cleared eMode category for {asset_address} (collateral disabled)")
 
     return config
 

@@ -36,11 +36,7 @@ from degenbot.cli.aave.event_handlers import (
 )
 from degenbot.cli.aave.extraction import extract_user_addresses_from_transaction
 from degenbot.cli.aave.transaction_processor import _process_transaction
-from degenbot.cli.aave.utils import (
-    _build_transaction_contexts,
-    _fetch_discount_token_from_contract,
-    _get_all_scaled_token_addresses,
-)
+from degenbot.cli.aave.utils import _build_transaction_contexts, _get_all_scaled_token_addresses
 from degenbot.cli.aave.verification import (
     cleanup_zero_balance_positions,
     verify_all_positions,
@@ -1084,47 +1080,24 @@ def update_aave_market(
     all_events.extend(discount_config_events)
 
     gho_asset = get_gho_asset(session=session, market=market)
+    assert gho_asset is not None
 
-    # ---
-    # TODO: check and refactor this whole block, may not be necessary
-    # ---
-    # Process discount config events BEFORE fetching stkAAVE events
-    # This ensures gho_asset.v_gho_discount_token is set correctly
-    if gho_asset is not None:
-        for event in discount_config_events:
-            topic = event["topics"][0]
-            if topic == AaveV3GhoDebtTokenEvent.DISCOUNT_TOKEN_UPDATED.value:
-                _process_discount_token_updated_event(
-                    event=event,
-                    gho_asset=gho_asset,
-                )
-
-        # If v_gho_discount_token is still None, try to fetch it from the contract
-        # This handles the case where we're processing blocks before any
-        # DISCOUNT_TOKEN_UPDATED event or when the database hasn't been initialized
-        if gho_asset.v_gho_discount_token is None:
-            try:
-                discount_token_from_contract = _fetch_discount_token_from_contract(
-                    provider=provider,
-                    gho_asset=gho_asset,
-                    block_number=start_block,
-                )
-                if discount_token_from_contract:
-                    gho_asset.v_gho_discount_token = discount_token_from_contract
-                    logger.info(
-                        f"Fetched discount token from contract: {discount_token_from_contract}"
-                    )
-            except Exception as e:  # noqa:BLE001
-                logger.debug(f"Could not fetch discount token from contract: {e}")
-
-        all_events.extend(
-            fetch_stk_aave_events(
-                provider=provider,
-                discount_token=gho_asset.v_gho_discount_token,
-                start_block=start_block,
-                end_block=end_block,
+    for event in discount_config_events:
+        topic = event["topics"][0]
+        if topic == AaveV3GhoDebtTokenEvent.DISCOUNT_TOKEN_UPDATED.value:
+            _process_discount_token_updated_event(
+                event=event,
+                gho_asset=gho_asset,
             )
+
+    all_events.extend(
+        fetch_stk_aave_events(
+            provider=provider,
+            discount_token=gho_asset.v_gho_discount_token,
+            start_block=start_block,
+            end_block=end_block,
         )
+    )
 
     # Group the events into transaction bundles with a shared context
     tx_contexts = _build_transaction_contexts(

@@ -4,6 +4,8 @@ Asset and token database operations for Aave V3.
 Functions for managing ERC20 tokens, Aave assets, contracts, and related lookups.
 """
 
+from typing import assert_never
+
 from eth_typing import ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
@@ -77,13 +79,7 @@ def get_gho_asset(
         .join(AaveGhoToken.token)
         .where(Erc20TokenTable.chain == market.chain_id)
     )
-    if gho_asset is None:
-        msg = (
-            f"GHO token not found for chain {market.chain_id}. "
-            "Ensure that market has been activated."
-        )
-        raise ValueError(msg)
-
+    assert gho_asset is not None
     return gho_asset
 
 
@@ -135,76 +131,8 @@ def get_asset_by_token_type(
                 )
                 .options(joinedload(AaveV3Asset.v_token))
             )
-        case _:
-            msg = f"Invalid token type: {token_type}"
-            raise ValueError(msg)
-
-
-def get_asset_by_underlying_address(
-    session: Session,
-    market: AaveV3Market,
-    underlying_address: ChecksumAddress,
-) -> AaveV3Asset | None:
-    """
-    Get AaveV3 asset by underlying token address.
-    """
-
-    return session.scalar(
-        select(AaveV3Asset).where(
-            AaveV3Asset.market_id == market.id,
-            AaveV3Asset.underlying_token.has(address=underlying_address),
-        )
-    )
-
-
-def get_asset_by_id(
-    session: Session,
-    asset_id: int,
-) -> AaveV3Asset | None:
-    """
-    Get AaveV3 asset by ID.
-    """
-
-    return session.get(AaveV3Asset, asset_id)
-
-
-def get_all_assets_for_market(
-    session: Session,
-    market: AaveV3Market,
-) -> list[AaveV3Asset]:
-    """
-    Get all assets for a market.
-    """
-
-    return list(
-        session.scalars(
-            select(AaveV3Asset).where(
-                AaveV3Asset.market_id == market.id,
-            )
-        ).all()
-    )
-
-
-def get_v_token_for_underlying(
-    session: Session,
-    market: AaveV3Market,
-    underlying_token_address: ChecksumAddress,
-) -> Erc20TokenTable | None:
-    """
-    Get the vToken for an underlying asset address.
-    """
-
-    asset = session.scalar(
-        select(AaveV3Asset).where(
-            AaveV3Asset.market_id == market.id,
-            AaveV3Asset.underlying_token.has(address=underlying_token_address),
-        )
-    )
-
-    if asset is None:
-        return None
-
-    return asset.v_token
+        case _ as unreachable:
+            assert_never(unreachable)
 
 
 def get_asset_identifier(asset: AaveV3Asset) -> str:

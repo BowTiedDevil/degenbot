@@ -133,20 +133,23 @@ class Operation:
             events.append(self.pool_event)
             seen_log_indices.add(self.pool_event["logIndex"])
 
-        for scaled_token_event in self.scaled_token_events:
-            if scaled_token_event.event["logIndex"] not in seen_log_indices:
-                events.append(scaled_token_event.event)
-                seen_log_indices.add(scaled_token_event.event["logIndex"])
+        for scaled_token_event in [
+            ev for ev in self.scaled_token_events if ev.event["logIndex"] not in seen_log_indices
+        ]:
+            events.append(scaled_token_event.event)
+            seen_log_indices.add(scaled_token_event.event["logIndex"])
 
-        for ev in self.transfer_events:
-            if ev["logIndex"] not in seen_log_indices:
-                events.append(ev)
-                seen_log_indices.add(ev["logIndex"])
+        for transfer_event in [
+            ev for ev in self.transfer_events if ev["logIndex"] not in seen_log_indices
+        ]:
+            events.append(transfer_event)
+            seen_log_indices.add(transfer_event["logIndex"])
 
-        for ev in self.balance_transfer_events:
-            if ev["logIndex"] not in seen_log_indices:
-                events.append(ev)
-                seen_log_indices.add(ev["logIndex"])
+        for balance_transfer_event in [
+            ev for ev in self.balance_transfer_events if ev["logIndex"] not in seen_log_indices
+        ]:
+            events.append(balance_transfer_event)
+            seen_log_indices.add(balance_transfer_event["logIndex"])
 
         return events
 
@@ -416,19 +419,14 @@ class TransactionOperationsParser:
 
     def _get_default_treasury_address(self) -> ChecksumAddress:
         """Get default treasury address for known markets."""
-        # Known treasury addresses for major Aave markets
+
+        # TODO: add to deployments or store in DB
         known_treasuries: dict[int, ChecksumAddress] = {
             1: get_checksum_address("0x464C71f6c2F760DdA6093dCB91C24c39e5d6e18c"),  # Ethereum
         }
 
-        if self.market.chain_id in known_treasuries:
-            return known_treasuries[self.market.chain_id]
-
-        msg = (
-            f"Unknown treasury address for chain {self.market.chain_id}. "
-            f"Please provide treasury_address parameter to TransactionOperationsParser."
-        )
-        raise ValueError(msg)
+        assert self.market.chain_id in known_treasuries
+        return known_treasuries[self.market.chain_id]
 
     def _get_gho_asset(self) -> AaveGhoToken:
         """Get GHO token asset for the current market."""
@@ -562,20 +560,6 @@ class TransactionOperationsParser:
         assert pool_contract is not None
         assert pool_contract.revision is not None
         return pool_contract.revision
-
-    def _get_a_token_asset_by_reserve(self, reserve_address: ChecksumAddress) -> AaveV3Asset | None:
-        """
-        Get the aToken asset for a given reserve address.
-        """
-
-        return self.session.scalar(
-            select(AaveV3Asset)
-            .join(AaveV3Asset.underlying_token)
-            .where(
-                AaveV3Asset.market_id == self.market.id,
-                Erc20TokenTable.address == reserve_address,
-            )
-        )
 
     def _get_asset_by_token(
         self,
@@ -761,7 +745,6 @@ class TransactionOperationsParser:
             scaled_events=scaled_events,
             assigned_indices=assigned_log_indices,
             starting_operation_id=len(operations),
-            all_events=events,
             pool_revision=pool_revision,
         )
         operations.extend(interest_accrual_ops)
@@ -778,7 +761,6 @@ class TransactionOperationsParser:
             scaled_events=scaled_events,
             assigned_indices=assigned_log_indices,
             starting_operation_id=len(operations),
-            existing_operations=operations,
             pool_revision=pool_revision,
         )
         operations.extend(transfer_ops)
@@ -1051,9 +1033,7 @@ class TransactionOperationsParser:
             return self._create_deficit_operation(
                 operation_id=operation_id,
                 deficit_event=pool_event,
-                scaled_events=scaled_events,
                 all_events=all_events,
-                assigned_indices=assigned_indices,
                 pool_revision=pool_revision,
             )
 
@@ -1112,10 +1092,6 @@ class TransactionOperationsParser:
                 continue
             if ev.user_address != on_behalf_of:
                 continue
-            if ev.balance_increase is None:
-                continue
-            if ev.index is None:
-                continue
 
             # Calculate expected mint principal
             # Pool revision 9 began pre-scaling the amount with flooring ray division.
@@ -1152,8 +1128,6 @@ class TransactionOperationsParser:
             }:
                 continue
             if ev.amount is None or ev.amount != collateral_mint.amount:
-                continue
-            if ev.event["address"] != collateral_mint.event["address"]:
                 continue
 
             transfer_events.append(ev.event)
@@ -1218,10 +1192,6 @@ class TransactionOperationsParser:
                 continue
             if ev.user_address != user:
                 continue
-            if ev.index is None:
-                continue
-            if ev.balance_increase is None:
-                continue
 
             # Calculate expected burn amount
             # Pool revision 9 began pre-scaling the amount with flooring ray division.
@@ -1252,25 +1222,11 @@ class TransactionOperationsParser:
                 # Verify event is from the correct aToken contract
                 if ev.event["address"] != expected_a_token:
                     continue
-                if ev.user_address != user:
-                    continue
-                if ev.index is None:
-                    continue
-                if ev.balance_increase is None:
-                    continue
 
                 interest_mint = ev
                 break
 
-        # Every WITHDRAW must have either a collateral burn or interest mint
-        if not collateral_burn and not interest_mint:
-            msg = (
-                f"WITHDRAW at logIndex={withdraw_event['logIndex']} for user={user} "
-                f"with amount={withdraw_amount} has no matching burn or mint event. "
-                "Every WITHDRAW must have a collateral burn (or mint when "
-                "interest exceeds withdrawal)."
-            )
-            raise AssertionError(msg)
+        assert collateral_burn or interest_mint
 
         # Find matching Transfer event
         # A Mint corresponds to a Transfer from ZERO_ADDRESS
@@ -1288,8 +1244,6 @@ class TransactionOperationsParser:
                     continue
                 # Verify event is from the correct aToken contract
                 if ev.event["address"] != expected_a_token:
-                    continue
-                if ev.from_address != ZERO_ADDRESS:
                     continue
 
                 transfer_event = ev.event
@@ -1380,13 +1334,9 @@ class TransactionOperationsParser:
                 continue
             if not is_gho and ev.event_type != ScaledTokenEventType.DEBT_MINT:
                 continue
-            if ev.balance_increase is None:
-                continue
 
             reserve_asset = self._get_reserve_for_debt_token(ev.event["address"])
-
-            if reserve_asset is None or reserve_asset != reserve:
-                continue
+            assert reserve_asset is not None
 
             # Match borrow amount to debt mint principal
             calculated_borrow = ev.amount - ev.balance_increase
@@ -1396,12 +1346,7 @@ class TransactionOperationsParser:
             debt_mint = ev
             break
 
-        if debt_mint is None:
-            msg = (
-                f"Could not create BORROW operation for event {borrow_event}, looked for match of "
-                f"value {borrow_amount}"
-            )
-            raise ValueError(msg)
+        assert debt_mint is not None
 
         op_type = OperationType.GHO_BORROW if is_gho else OperationType.BORROW
 
@@ -1417,14 +1362,12 @@ class TransactionOperationsParser:
                 continue
             if ev.amount != debt_mint.amount:
                 continue
-            if ev.event_type not in {
+
+            assert ev.event_type in {
                 ScaledTokenEventType.DEBT_TRANSFER,
                 ScaledTokenEventType.ERC20_DEBT_TRANSFER,
                 ScaledTokenEventType.GHO_DEBT_TRANSFER,
-            }:
-                continue
-            if ev.event["address"] != debt_mint.event["address"]:
-                continue
+            }
 
             transfer_events.append(ev.event)
             break  # Only match one transfer per mint
@@ -1470,7 +1413,6 @@ class TransactionOperationsParser:
         )
 
         is_gho = reserve == self.gho_token_address
-        repay_log_index = repay_event["logIndex"]
 
         if use_a_tokens:
             assert not is_gho
@@ -1480,7 +1422,6 @@ class TransactionOperationsParser:
                 reserve=reserve,
                 user=user,
                 repay_amount=repay_amount,
-                repay_log_index=repay_log_index,
                 scaled_events=scaled_events,
                 assigned_indices=assigned_indices,
                 pool_revision=pool_revision,
@@ -1489,11 +1430,9 @@ class TransactionOperationsParser:
         return self._create_standard_repay_operation(
             operation_id=operation_id,
             repay_event=repay_event,
-            reserve=reserve,
             user=user,
             repay_amount=repay_amount,
             is_gho=is_gho,
-            repay_log_index=repay_log_index,
             scaled_events=scaled_events,
             assigned_indices=assigned_indices,
             pool_revision=pool_revision,
@@ -1504,11 +1443,9 @@ class TransactionOperationsParser:
         *,
         operation_id: int,
         repay_event: LogReceipt,
-        reserve: ChecksumAddress,
         user: ChecksumAddress,
         repay_amount: int,
         is_gho: bool,
-        repay_log_index: int,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         pool_revision: int,
@@ -1526,8 +1463,6 @@ class TransactionOperationsParser:
 
         # Find principal debt event (Burn or Mint)
         principal_repay_event = self._find_principal_repay_event(
-            user=user,
-            reserve=reserve,
             repay_amount=repay_amount,
             is_gho=is_gho,
             scaled_events=scaled_events,
@@ -1566,7 +1501,6 @@ class TransactionOperationsParser:
         reserve: ChecksumAddress,
         user: ChecksumAddress,
         repay_amount: int,
-        repay_log_index: int,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         pool_revision: int,
@@ -1577,8 +1511,6 @@ class TransactionOperationsParser:
         balance_transfer_events: list[LogReceipt] = []
 
         principal_repay_event = self._find_principal_repay_event(
-            user=user,
-            reserve=reserve,
             repay_amount=repay_amount,
             is_gho=False,
             scaled_events=scaled_events,
@@ -1612,14 +1544,12 @@ class TransactionOperationsParser:
     def _find_principal_repay_event(
         self,
         *,
-        user: ChecksumAddress,
-        reserve: ChecksumAddress,
         repay_amount: int,
         is_gho: bool,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         pool_revision: int,
-    ) -> ScaledTokenEvent | None:
+    ) -> ScaledTokenEvent:
         """Find the principal debt event (Burn or Mint) associated with a REPAY operation.
 
         For REPAY operations, the VariableDebtToken emits either:
@@ -1651,52 +1581,36 @@ class TransactionOperationsParser:
             if ev.event_type not in valid_event_types:
                 continue
 
-            if ev.user_address != user:
-                continue
-
             reserve_asset = self._get_reserve_for_debt_token(ev.event["address"])
+            assert reserve_asset is not None
 
-            if reserve_asset != reserve:
-                continue
+            assert ev.balance_increase is not None
 
-            if ev.balance_increase is not None:
-                # For DEBT_BURN: amount represents principal burned
-                #   (calculated_amount = amount + balance_increase)
-                # For DEBT_MINT: amount represents net increase (interest - repayment)
-                #   (calculated_amount = balance_increase - amount)
-                if ev.event_type in {
-                    ScaledTokenEventType.DEBT_BURN,
-                    ScaledTokenEventType.GHO_DEBT_BURN,
-                }:
-                    calculated_amount = ev.amount + ev.balance_increase
-                else:  # DEBT_MINT or GHO_DEBT_MINT
-                    calculated_amount = ev.balance_increase - ev.amount
+            # For DEBT_BURN: amount represents principal burned
+            #   (calculated_amount = amount + balance_increase)
+            # For DEBT_MINT: amount represents net increase (interest - repayment)
+            #   (calculated_amount = balance_increase - amount)
+            if ev.event_type in {
+                ScaledTokenEventType.DEBT_BURN,
+                ScaledTokenEventType.GHO_DEBT_BURN,
+            }:
+                calculated_amount = ev.amount + ev.balance_increase
+            else:  # DEBT_MINT or GHO_DEBT_MINT
+                calculated_amount = ev.balance_increase - ev.amount
 
-                # Pool revision 9 began pre-scaling the amount with flooring ray division.
-                # Calculating it exactly requires injecting extra details about the position,
-                # so this check will allow up to a TOKEN_AMOUNT_MATCH_TOLERANCE wei deviation
-                # on pool revisions 9+
-                if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
-                    if abs(calculated_amount - repay_amount) > TOKEN_AMOUNT_MATCH_TOLERANCE:
-                        continue
-                elif calculated_amount != repay_amount:
+            # Pool revision 9 began pre-scaling the amount with flooring ray division.
+            # Calculating it exactly requires injecting extra details about the position,
+            # so this check will allow up to a TOKEN_AMOUNT_MATCH_TOLERANCE wei deviation
+            # on pool revisions 9+
+            if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
+                if abs(calculated_amount - repay_amount) > TOKEN_AMOUNT_MATCH_TOLERANCE:
                     continue
-
-            # For Burn events: target_address should be ZERO_ADDRESS
-            # For Mint events: target_address is None (no target in mints)
-            if (
-                ev.event_type
-                in {
-                    ScaledTokenEventType.DEBT_BURN,
-                    ScaledTokenEventType.GHO_DEBT_BURN,
-                }
-                and ev.target_address != ZERO_ADDRESS
-            ):
+            elif calculated_amount != repay_amount:
                 continue
 
             return ev
 
-        return None
+        assert_never()
 
     def _find_collateral_adjustment_event(
         self,
@@ -1737,14 +1651,7 @@ class TransactionOperationsParser:
                 ScaledTokenEventType.COLLATERAL_MINT,
             }:
                 continue
-            # Verify event is from the correct aToken contract
-            if ev.event["address"] != expected_a_token:
-                continue
             if ev.user_address != user:
-                continue
-            if ev.index is None:
-                continue
-            if ev.balance_increase is None:
                 continue
 
             # Calculate the net collateral adjustment amount
@@ -1792,44 +1699,12 @@ class TransactionOperationsParser:
                 continue
             if ev.from_address != user:
                 continue
-            if ev.target_address != ZERO_ADDRESS:
-                continue
             if ev.amount != amount:
                 continue
 
             return [ev.event]
 
         return []
-
-    def _find_balance_transfer_for_repay(
-        self,
-        *,
-        user: ChecksumAddress,
-        reserve: ChecksumAddress,
-        scaled_events: list[ScaledTokenEvent],
-        assigned_indices: set[int],
-    ) -> LogReceipt | None:
-        """Find BalanceTransfer event for aTokens used in repayment."""
-
-        asset = self._get_a_token_asset_by_reserve(reserve)
-        assert asset is not None
-        atoken_address = asset.a_token.address
-
-        for ev in scaled_events:
-            if ev.event["logIndex"] in assigned_indices:
-                continue
-            if ev.event_type != ScaledTokenEventType.COLLATERAL_TRANSFER:
-                continue
-            if ev.index is None:
-                continue
-            if ev.from_address != user:
-                continue
-            if ev.event["address"] != atoken_address:
-                continue
-
-            return ev.event
-
-        return None
 
     def _analyze_liquidation_scenarios(
         self,
@@ -1964,6 +1839,7 @@ class TransactionOperationsParser:
             total_burn_count = len(all_burns_for_asset)
 
             if is_multi_liquidation and len(candidate_burns) > 0:
+                assert liquidation_count_for_asset >= total_burn_count
                 if liquidation_count_for_asset == total_burn_count:
                     # SEPARATE_BURNS pattern: Each liquidation gets exactly one burn
                     # Get burn at position liquidation_position from ALL burns (not just unassigned)
@@ -1975,24 +1851,15 @@ class TransactionOperationsParser:
                             assigned_indices.add(target_burn.event["logIndex"])
                             if target_burn.index is not None and target_burn.index > 0:
                                 assigned_indices.add(target_burn.index)
-                elif liquidation_count_for_asset > total_burn_count:
-                    # COMBINED_BURN pattern: More liquidations than burns
-                    # All burns go to the first liquidation
-                    if liquidation_position == 0:
-                        for ev in candidate_burns:
-                            burns.append(ev)
-                            assigned_indices.add(ev.event["logIndex"])
-                            if ev.index is not None and ev.index > 0:
-                                assigned_indices.add(ev.index)
-                # liquidation_count < burn_count: More burns than liquidations
-                # This shouldn't happen normally, but assign burns round-robin
-                elif liquidation_position < total_burn_count:
-                    target_burn = all_burns_for_asset[liquidation_position]
-                    if target_burn.event["logIndex"] not in assigned_indices:
-                        burns.append(target_burn)
-                        assigned_indices.add(target_burn.event["logIndex"])
-                        if target_burn.index is not None and target_burn.index > 0:
-                            assigned_indices.add(target_burn.index)
+                # COMBINED_BURN pattern: More liquidations than burns
+                # All burns go to the first liquidation
+                elif liquidation_position == 0:
+                    for ev in candidate_burns:
+                        burns.append(ev)
+                        assigned_indices.add(ev.event["logIndex"])
+                        if ev.index is not None and ev.index > 0:
+                            assigned_indices.add(ev.index)
+
             else:
                 # Single liquidation or no burns: collect all available burns
                 for ev in candidate_burns:
@@ -2097,6 +1964,8 @@ class TransactionOperationsParser:
         collateral_a_token_address = self._get_a_token_for_asset(collateral_asset)
         debt_v_token_address = self._get_v_token_for_asset(debt_asset)
 
+        assert debt_v_token_address is not None
+
         # Pre-analyze liquidations to detect multi-liquidation scenarios
         # This allows proper disambiguation without the primary/secondary split
         # See debug/aave/0051 for architectural details
@@ -2168,15 +2037,16 @@ class TransactionOperationsParser:
 
             # Match debt mint events only if they belong to this liquidation's debt asset
             event_token_address = scaled_event.event["address"]
-            if (
-                debt_v_token_address is not None
-                and event_token_address == debt_v_token_address
-                and scaled_event.balance_increase is not None
-                and scaled_event.balance_increase > scaled_event.amount
-            ):
-                # This Mint event represents net debt increase during liquidation
-                debt_mint = scaled_event
-                break
+            if event_token_address != debt_v_token_address:
+                continue
+            if scaled_event.balance_increase is None:
+                continue
+            if scaled_event.balance_increase <= scaled_event.amount:
+                continue
+
+            # This Mint event represents net debt increase during liquidation
+            debt_mint = scaled_event
+            break
 
         scaled_token_events: list[ScaledTokenEvent] = []
         balance_transfer_events: list[LogReceipt] = []
@@ -2222,9 +2092,7 @@ class TransactionOperationsParser:
         *,
         operation_id: int,
         deficit_event: LogReceipt,
-        scaled_events: list[ScaledTokenEvent],
         all_events: list[LogReceipt],
-        assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation:
         """
@@ -2373,11 +2241,6 @@ class TransactionOperationsParser:
                         continue
                     if other_ev.from_address != bt_ev.from_address:
                         continue
-                    if other_ev.target_address != bt_ev.target_address:
-                        continue
-                    other_token_address = other_ev.event["address"]
-                    if other_token_address != bt_token_address:
-                        continue
 
                     # Found matching BalanceTransfer - include it
                     paired_events.insert(1, other_ev)  # Insert between transfer and burn
@@ -2417,7 +2280,6 @@ class TransactionOperationsParser:
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         starting_operation_id: int,
-        all_events: list[LogReceipt],
         pool_revision: int,
     ) -> list[Operation]:
         """Create INTEREST_ACCRUAL operations for unassigned interest events.
@@ -2619,7 +2481,6 @@ class TransactionOperationsParser:
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         starting_operation_id: int,
-        existing_operations: list[Operation],
         pool_revision: int,
     ) -> list[Operation]:
         """Create TRANSFER operations for unassigned transfer events.
@@ -2652,23 +2513,10 @@ class TransactionOperationsParser:
             scaled_events=scaled_events,
             assigned_indices=assigned_indices,
             local_assigned=local_assigned,
-            existing_operations=existing_operations,
             starting_operation_id=operation_id,
             pool_revision=pool_revision,
         )
         operations.extend(transfer_operations)
-
-        # Phase 2: Process standalone BalanceTransfer events (no paired ERC20 Transfer)
-        standalone_operations, operation_id = (
-            TransactionOperationsParser._process_standalone_balance_transfers(
-                scaled_events=scaled_events,
-                assigned_indices=assigned_indices,
-                local_assigned=local_assigned,
-                starting_operation_id=operation_id,
-                pool_revision=pool_revision,
-            )
-        )
-        operations.extend(standalone_operations)
 
         # Update the assigned_indices set with locally assigned events
         assigned_indices.update(local_assigned)
@@ -2733,7 +2581,6 @@ class TransactionOperationsParser:
         all_scaled_token_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         local_assigned: set[int],
-        existing_operations: list[Operation],
     ) -> ScaledTokenEvent | None:
         """
         Find a matching BalanceTransfer event for an ERC20 Transfer.
@@ -2762,11 +2609,10 @@ class TransactionOperationsParser:
         return None
 
     @staticmethod
-    def _process_erc20_transfers(  # noqa:PLR0917
+    def _process_erc20_transfers(
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         local_assigned: set[int],
-        existing_operations: list[Operation],
         starting_operation_id: int,
         pool_revision: int,
     ) -> tuple[list[Operation], int]:
@@ -2788,9 +2634,8 @@ class TransactionOperationsParser:
             }:
                 continue
 
-            # Only process ERC20 Transfer events (index=None means no index from event)
-            if ev.index is not None:
-                continue
+            # Only ERC20 Transfer events should make it here (index=None means no index from event)
+            assert ev.index is None
 
             # Skip transfers to/from zero address that are part of mints/burns
             if ev.target_address == ZERO_ADDRESS and TransactionOperationsParser._is_part_of_burn(
@@ -2810,7 +2655,6 @@ class TransactionOperationsParser:
                 all_scaled_token_events=scaled_events,
                 assigned_indices=assigned_indices,
                 local_assigned=local_assigned,
-                existing_operations=existing_operations,
             )
             if balance_transfer_event:
                 balance_transfer_events.append(balance_transfer_event.event)
@@ -2833,30 +2677,6 @@ class TransactionOperationsParser:
                 )
             )
             operation_id += 1
-
-        return operations, operation_id
-
-    @staticmethod
-    def _process_standalone_balance_transfers(
-        scaled_events: list[ScaledTokenEvent],
-        assigned_indices: set[int],
-        local_assigned: set[int],
-        starting_operation_id: int,
-        pool_revision: int,
-    ) -> tuple[list[Operation], int]:
-        """Create operations for standalone BalanceTransfer events (no paired ERC20 Transfer)."""
-        operations: list[Operation] = []
-        operation_id = starting_operation_id
-
-        # TODO: remove method, likely dead code
-
-        for ev in scaled_events:
-            if ev.event["logIndex"] in assigned_indices or ev.event["logIndex"] in local_assigned:
-                continue
-
-            # Only process BalanceTransfer events (index > 0 indicates BalanceTransfer)
-            if ev.index is None or ev.index == 0:
-                continue
 
         return operations, operation_id
 
@@ -2952,20 +2772,8 @@ class TransactionOperationsParser:
 
         assert op.pool_event is not None, "Missing REPAY pool event"
 
-        # Can have 0, 1, or 2 debt burns:
-        # 0 = interest-only repayment
-        # 1 = principal repayment only
-        # 2 = principal repayment + interest accrual during transaction
         debt_burns = [e for e in op.scaled_token_events if e.is_debt]
-        match len(debt_burns):
-            case 0:
-                pass
-            case 1:
-                pass
-            case 2:
-                pass
-            case _:
-                assert_never()
+        assert len(debt_burns) == 1
 
         return errors
 
@@ -2984,22 +2792,10 @@ class TransactionOperationsParser:
         # repayment is handled via flash loan / adapter contract
         # See TX 0x1a7d205b9831cc63c545ba5ddf21c2fc29c00973ac680fc6371e3aa999f60f19
         debt_events = [e for e in op.scaled_token_events if e.is_debt]
-        match len(debt_events):
-            case 0:
-                pass
-            case 1:
-                pass
-            case _:
-                assert_never()
+        assert len(debt_events) == 1
 
         collateral_burns = [e for e in op.scaled_token_events if e.is_collateral and e.is_burn]
-        match len(collateral_burns):
-            case 0:
-                pass
-            case 1:
-                pass
-            case _:
-                assert_never()
+        assert len(collateral_burns) <= 1
 
         return errors
 
@@ -3013,10 +2809,12 @@ class TransactionOperationsParser:
             e
             for e in op.scaled_token_events
             if e.event_type
-            in {ScaledTokenEventType.GHO_DEBT_BURN, ScaledTokenEventType.GHO_DEBT_MINT}
+            in {
+                ScaledTokenEventType.GHO_DEBT_BURN,
+                ScaledTokenEventType.GHO_DEBT_MINT,
+            }
         ]
-        if len(gho_events) > 1:
-            errors.append(f"Expected 0 or 1 GHO debt event for GHO_REPAY, got {len(gho_events)}")
+        assert len(gho_events) == 1
 
         return errors
 
@@ -3027,34 +2825,14 @@ class TransactionOperationsParser:
 
         assert op.pool_event is not None, "Missing LIQUIDATION_CALL pool event"
 
-        # Should have 1 collateral event (burn or transfer) and 0 or more debt burns
+        # Should have 1 collateral event (burn or transfer) and any number of debt burns
         # Flash loan liquidations have 0 debt burns (debt repaid via flash loan)
         # Standard liquidations have 1 debt burn (primary debt asset)
         # Multi-asset liquidations may have multiple debt burns (primary + secondary debts)
         # Collateral may be burned OR transferred to treasury (BalanceTransfer)
-        debt_burns = [e for e in op.scaled_token_events if e.is_burn and e.is_debt]
-        match len(debt_burns):
-            case 0:
-                pass
-            case 1:
-                pass
-            case 2:
-                pass
-            case 3:
-                pass
-            case _:
-                assert_never(len(debt_burns))
 
         collateral_events = [e for e in op.scaled_token_events if e.is_collateral]
-        match len(collateral_events):
-            case 0:
-                assert_never()
-            case 1:
-                pass
-            case 2:
-                pass
-            case _:
-                pass
+        assert len(collateral_events) > 0
 
         return errors
 
@@ -3128,14 +2906,6 @@ class TransactionOperationsParser:
         errors = []
 
         assert op.pool_event is None, "DEFICIT_COVERAGE should not have a pool event"
-
-        match len(op.scaled_token_events):
-            case 2:
-                pass
-            case 3:
-                pass
-            case _:
-                assert_never()
 
         # Validate the events are transfer(s) and burn for the same user/asset
         # First event should be a transfer

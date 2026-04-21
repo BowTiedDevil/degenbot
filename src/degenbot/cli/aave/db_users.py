@@ -61,23 +61,6 @@ def is_discount_supported(
     return revision is not None and revision < GHO_DISCOUNT_DEPRECATION_REVISION
 
 
-def get_user_by_address(
-    session: Session,
-    market: AaveV3Market,
-    user_address: ChecksumAddress,
-) -> AaveV3User | None:
-    """
-    Get existing user by address.
-    """
-
-    return session.scalar(
-        select(AaveV3User).where(
-            AaveV3User.address == user_address,
-            AaveV3User.market_id == market.id,
-        )
-    )
-
-
 def get_or_create_user(
     *,
     tx_context: TransactionContext,

@@ -154,8 +154,8 @@ def _process_scaled_token_operation(
                 position.last_index = debt_burn_result.new_index
             return UserOperation.REPAY
 
-        case _:
-            assert_never(event)
+        case _ as unreachable:
+            assert_never(unreachable)
 
 
 def calculate_gho_discount_rate(
@@ -294,10 +294,6 @@ def _process_deficit_coverage_burn(
     because the amount includes interest that was accrued between the transfer
     and the burn within the same transaction.
     """
-
-    # Skip if user address is missing
-    if scaled_event.user_address is None:
-        return
 
     # Get collateral asset
     token_address = scaled_event.event["address"]
@@ -625,11 +621,11 @@ def _process_debt_mint_with_match(
         # In REPAY/LIQUIDATION, Mint is emitted when interest > repayment, but the net effect
         # is still a burn of scaled tokens
         if operation.operation_type in {
-            OperationType.GHO_REPAY,
-            OperationType.REPAY,
-            OperationType.REPAY_WITH_ATOKENS,
-            OperationType.LIQUIDATION,
             OperationType.GHO_LIQUIDATION,
+            OperationType.GHO_REPAY,
+            OperationType.LIQUIDATION,
+            OperationType.REPAY_WITH_ATOKENS,
+            OperationType.REPAY,
         }:
             # For liquidations, check pattern to determine if Mint events should be skipped.
             # COMBINED_BURN (Issue 0056): Multiple liquidations share one burn event.
