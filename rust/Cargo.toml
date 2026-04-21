@@ -22,7 +22,7 @@ name = "degenbot_rs"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-alloy = { version = "^1.8", features = ["full"] }  # provides alloy::hex (const-hex v1.18+)
+alloy = { version = "^2.0", features = ["full"] }
 futures = { version = "^0.3" }
 log = { version = "^0.4" }
 lru = { version = "^0.14" }
