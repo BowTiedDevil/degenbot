@@ -114,7 +114,7 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
     provider = get_web3_from_config(chain_id=chain_id)
 
     (market_name,) = raw_call(
-        w3=provider,
+        provider,
         address=pool_address_provider,
         calldata=encode_function_calldata(
             function_prototype="getMarketId()",
@@ -402,11 +402,13 @@ def aave_update(
                     raise ValueError(msg)
 
                 last_block = (
-                    get_number_for_block_identifier(identifier=block_tag, w3=provider)
+                    get_number_for_block_identifier(identifier=block_tag, provider=provider)
                     + block_offset
                 )
 
-            current_block_number = get_number_for_block_identifier(identifier="latest", w3=provider)
+            current_block_number = get_number_for_block_identifier(
+                identifier="latest", provider=provider
+            )
             if last_block > current_block_number:
                 msg = f"{to_block} is ahead of the current chain tip."
                 raise ValueError(msg)
@@ -939,7 +941,6 @@ def update_aave_market(
         if topic == AaveV3PoolConfigEvent.PROXY_CREATED.value:
             _process_proxy_creation_event(
                 provider=provider,
-                session=session,
                 market=market,
                 event=event,
                 proxy_name="POOL",
@@ -948,7 +949,6 @@ def update_aave_market(
             )
             _process_proxy_creation_event(
                 provider=provider,
-                session=session,
                 market=market,
                 event=event,
                 proxy_name="POOL_CONFIGURATOR",

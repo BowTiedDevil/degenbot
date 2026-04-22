@@ -1,5 +1,5 @@
 """
-Type stubs for the degenbot Rust extension module (_rs).
+Type stubs for the degenbot Rust extension module (degenbot_rs).
 
 This module provides high-performance implementations of common operations
 used by the degenbot Python package.
@@ -9,6 +9,9 @@ from collections.abc import Coroutine
 from typing import Any, Literal, overload
 
 from hexbytes import HexBytes
+
+# Re-export mobius submodule
+from . import mobius as mobius
 
 def get_sqrt_ratio_at_tick(tick: int) -> int:
     """
@@ -267,12 +270,12 @@ class LogFilter:
     def topics(self) -> list[list[str]]: ...
 
 class AlloyProvider:
-    """
+    r"""
     Synchronous Ethereum RPC provider.
 
     Automatically detects connection type from URL:
     - HTTP/HTTPS URLs use HTTP transport with connection pooling
-    - File paths (Unix: /path, Windows: \\\\.\\pipe\\...) use IPC transport
+    - File paths (Unix: /path, Windows: \\.\pipe\...) use IPC transport
     """
 
     def __init__(
@@ -366,5 +369,6 @@ __all__ = [
     "get_function_selector",
     "get_sqrt_ratio_at_tick",
     "get_tick_at_sqrt_ratio",
+    "mobius",
     "to_checksum_address",
 ]

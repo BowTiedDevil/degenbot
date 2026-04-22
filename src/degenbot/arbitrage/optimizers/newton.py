@@ -93,13 +93,10 @@ def v2_profit_gradient_and_hessian(
     profit = z - x
 
     # First derivatives (marginal rates)
-    # dy/dx = gamma_buy * R1_buy * R0_buy / (R0_buy + x * gamma_buy)²
     dy_dx = gamma_buy * R1_buy * R0_buy / (denom_buy**2)
-
-    # dz/dy = gamma_sell * R0_sell * R1_sell / (R1_sell + y * gamma_sell)²
     dz_dy = gamma_sell * R0_sell * R1_sell / (denom_sell**2)
 
-    # Gradient: dP/dx = dz/dy * dy/dx - 1
+    # Gradient: dP/dx = dz/dy * dy/dx - 1 # noqa: ERA001
     gradient = dz_dy * dy_dx - 1
 
     # Second derivatives for Newton's method

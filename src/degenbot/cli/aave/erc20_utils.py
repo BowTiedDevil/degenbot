@@ -66,7 +66,7 @@ def _try_fetch_token_uint256(
         with contextlib.suppress(Exception):
             result: int
             (result,) = raw_call(
-                w3=provider,
+                provider=provider,
                 address=token_address,
                 calldata=encode_function_calldata(
                     function_prototype=func_prototype,

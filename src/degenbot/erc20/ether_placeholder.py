@@ -52,21 +52,23 @@ class EtherPlaceholder(Erc20Token):
     ) -> int:
         address = get_checksum_address(address)
 
+        provider = connection_manager.get_provider(self.chain_id)
+
         block_number = (
             block_identifier
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
-                self.w3,
+                provider,
             )
         )
 
         with contextlib.suppress(KeyError):
             return self._cached_balance[address][block_number]
 
-        balance = self.w3.eth.get_balance(
+        balance = provider.get_balance(
             address,
-            block_identifier=block_number,
+            block=block_number,
         )
 
         balance_cache_at_address: BoundedCache[BlockNumber, int]

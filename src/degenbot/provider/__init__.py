@@ -35,7 +35,9 @@ from typing import Any, Self, cast
 from hexbytes import HexBytes
 
 from degenbot.degenbot_rs import AlloyProvider as _AlloyProvider
+from degenbot.provider.async_provider import AsyncAlloyProvider
 from degenbot.provider.interface import (
+    AsyncProviderAdapter,
     EthereumProvider,
     ProviderAdapter,
 )
@@ -343,6 +345,8 @@ class AlloyProvider:
 
 __all__ = [
     "AlloyProvider",
+    "AsyncAlloyProvider",
+    "AsyncProviderAdapter",
     "EthereumProvider",
     "LogFilter",
     "ProviderAdapter",

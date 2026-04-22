@@ -36,7 +36,7 @@ def get_or_init_stk_aave_balance(
     if user.stk_aave_balance is None:
         balance: int
         (balance,) = raw_call(
-            w3=tx_context.provider,
+            provider=tx_context.provider,
             address=discount_token,
             calldata=encode_function_calldata(
                 function_prototype="balanceOf(address)",

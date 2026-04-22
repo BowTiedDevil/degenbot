@@ -199,7 +199,7 @@ def _fetch_discount_token_from_contract(
         # GHO vToken has a getDiscountToken() function
         discount_token: str
         (discount_token,) = raw_call(
-            w3=provider,
+            provider=provider,
             address=gho_asset.v_token.address,
             calldata=encode_function_calldata(
                 function_prototype="getDiscountToken()",

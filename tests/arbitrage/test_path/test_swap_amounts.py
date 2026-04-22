@@ -61,12 +61,11 @@ class TestBuildSwapAmountsV2V2:
             t1, t0, reserve0=1_500_000, reserve1=800_000_000, address="0xpool1"
         )
         solver = MobiusSolver()
-        path = ArbitragePath(
+        return ArbitragePath(
             pools=[pool0, pool1],
             input_token=t0,
             solver=solver,
         )
-        return path
 
     def test_build_swap_amounts_returns_result(self):
         path = self._make_path()

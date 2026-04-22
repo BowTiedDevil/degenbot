@@ -300,7 +300,7 @@ class UniswapV4LiquiditySnapshot:
         logger.info(f"Updating Uniswap V4 snapshot from block {self.newest_block} to {to_block}")
 
         event_logs = fetch_logs_retrying(
-            w3=connection_manager.get_web3(self.chain_id),
+            provider=connection_manager.get_provider(self.chain_id),
             start_block=self.newest_block + 1,
             end_block=to_block,
             max_blocks_per_request=blocks_per_request,

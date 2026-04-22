@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, scoped_session
 from web3 import Web3
 from web3.exceptions import ContractLogicError
-from web3.types import BlockIdentifier, TxParams
+from web3.types import BlockIdentifier
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
@@ -43,6 +43,7 @@ from degenbot.exceptions.liquidity_pool import (
 )
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
+from degenbot.provider import ProviderAdapter
 from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractArbitrage, AbstractConcentratedLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
@@ -266,8 +267,8 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         self._chain_id: Final[int] = (
             chain_id if chain_id is not None else connection_manager.default_chain_id
         )
-        w3 = connection_manager.get_web3(self.chain_id)
-        state_block = state_block if state_block is not None else w3.eth.block_number
+        provider = connection_manager.get_provider(self.chain_id)
+        state_block = state_block if state_block is not None else provider.get_block_number()
         self._initial_state_block = state_block
 
         self._pool_manager_address = get_checksum_address(pool_manager_address)
@@ -342,7 +343,7 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
 
         try:
             working_slot0, working_liquidity = self._get_state_values(
-                w3=w3, state_block=state_block
+                provider=provider, state_block=state_block
             )
             working_sqrt_price_x96 = working_slot0.sqrt_price_x96
             working_tick = working_slot0.tick
@@ -499,21 +500,21 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         position. A word is divided into 256 ticks, spaced at a fixed interval.
         """
 
-        w3 = connection_manager.get_web3(self.chain_id)
+        provider = connection_manager.get_provider(self.chain_id)
 
         if block_number is None:
-            block_number = w3.eth.get_block_number()
+            block_number = provider.get_block_number()
 
         working_tick_bitmap = 0
         working_tick_data: list[tuple[Tick, LiquidityGross, LiquidityNet]] = []
         working_tick_bitmap = self.get_tick_bitmap_at_word(
-            w3=w3,
+            provider=provider,
             word_position=word_position,
             block_identifier=block_number,
         )
         if working_tick_bitmap != 0:
             working_tick_data = self.get_populated_ticks_in_word(
-                w3=w3,
+                provider=provider,
                 word_position=word_position,
                 block_identifier=block_number,
             )
@@ -531,41 +532,28 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
 
     def _get_state_values(
         self,
-        w3: Web3,
+        provider: ProviderAdapter,
         state_block: BlockNumber,
     ) -> tuple[Slot0, Liquidity]:
-        with w3.batch_requests() as batch:
-            batch.add(
-                # This call uses a specific block so the mutable state values are consistent
-                w3.eth.call(
-                    transaction=TxParams(
-                        to=self._state_view_address,
-                        data=encode_function_calldata(
-                            function_prototype="getSlot0(bytes32)",
-                            function_arguments=[self.pool_id],
-                        ),
-                    ),
-                    block_identifier=state_block,
-                )
-            )
-            batch.add(
-                # This call uses a specific block so the mutable state values are consistent
-                w3.eth.call(
-                    transaction=TxParams(
-                        to=self._state_view_address,
-                        data=encode_function_calldata(
-                            function_prototype="getLiquidity(bytes32)",
-                            function_arguments=[self.pool_id],
-                        ),
-                    ),
-                    block_identifier=state_block,
-                )
-            )
+        slot0_calldata = encode_function_calldata(
+            function_prototype="getSlot0(bytes32)",
+            function_arguments=[self.pool_id],
+        )
+        liquidity_calldata = encode_function_calldata(
+            function_prototype="getLiquidity(bytes32)",
+            function_arguments=[self.pool_id],
+        )
 
-            slot0_result, liquidity_result = cast(
-                "tuple[HexBytes, ...]",
-                batch.execute(),
-            )
+        slot0_result = provider.call(
+            to=self._state_view_address,
+            data=slot0_calldata,
+            block=state_block,
+        )
+        liquidity_result = provider.call(
+            to=self._state_view_address,
+            data=liquidity_calldata,
+            block=state_block,
+        )
 
         price, tick, protocol_fee, lp_fee = cast(
             "tuple[int, ...]",
@@ -961,12 +949,12 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         return swap_delta.amount_out
 
     def get_tick_bitmap_at_word(
-        self, w3: Web3, word_position: int, block_identifier: BlockIdentifier
+        self, provider: ProviderAdapter, word_position: int, block_identifier: BlockIdentifier
     ) -> int:
         (bitmap_at_word,) = cast(
             "tuple[int]",
             raw_call(
-                w3=w3,
+                provider=provider,
                 address=self._state_view_address,
                 calldata=encode_function_calldata(
                     function_prototype="getTickBitmap(bytes32,int16)",
@@ -980,12 +968,14 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
 
     def get_populated_ticks_in_word(
         self,
-        w3: Web3,
+        provider: ProviderAdapter,
         word_position: int,
         block_identifier: BlockIdentifier,
     ) -> list[tuple[Tick, LiquidityGross, LiquidityNet]]:
         bitmap_at_word = self.get_tick_bitmap_at_word(
-            w3=w3, word_position=word_position, block_identifier=block_identifier
+            provider=provider,
+            word_position=word_position,
+            block_identifier=block_identifier,
         )
 
         active_ticks = [
@@ -994,24 +984,18 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
             if bitmap_at_word & (1 << i) > 0
         ]
 
-        with w3.batch_requests() as batch:
-            for tick in active_ticks:
-                batch.add(
-                    w3.eth.call(
-                        transaction=TxParams(
-                            to=self._state_view_address,
-                            data=encode_function_calldata(
-                                function_prototype="getTickLiquidity(bytes32,int24)",
-                                function_arguments=[self.pool_id, tick],
-                            ),
-                        ),
-                        block_identifier=block_identifier,
-                    )
-                )
-            results = cast(
-                "list[HexBytes]",
-                batch.execute(),
+        results: list[HexBytes] = []
+        block = block_identifier if isinstance(block_identifier, int) else None
+        for tick in active_ticks:
+            result = provider.call(
+                to=self._state_view_address,
+                data=encode_function_calldata(
+                    function_prototype="getTickLiquidity(bytes32,int24)",
+                    function_arguments=[self.pool_id, tick],
+                ),
+                block=block,
             )
+            results.append(result)
 
         populated_ticks: list[tuple[Tick, LiquidityGross, LiquidityNet]] = []
         for tick, result in zip(active_ticks, results, strict=True):
@@ -1138,10 +1122,12 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
             if block_number is not None and block_number < self.update_block:
                 raise LateUpdateError
 
-            w3 = connection_manager.get_web3(self.chain_id)
-            block_number = block_number if block_number is not None else w3.eth.get_block_number()
+            provider = connection_manager.get_provider(self.chain_id)
+            block_number = block_number if block_number is not None else provider.get_block_number()
 
-            new_slot0, new_liquidity = self._get_state_values(w3=w3, state_block=block_number)
+            new_slot0, new_liquidity = self._get_state_values(
+                provider=provider, state_block=block_number
+            )
             new_sqrt_price_x96 = new_slot0.sqrt_price_x96
             new_tick = new_slot0.tick
             self.lp_fee = new_slot0.lp_fee

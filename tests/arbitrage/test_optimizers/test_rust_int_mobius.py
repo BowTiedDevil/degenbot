@@ -20,9 +20,9 @@ class TestRustIntHopState:
         # Standard 0.3% fee: gamma=997/1000 (retained), fee=3/1000 (taken)
         hop = rs_mobius.RustIntHopState(1_000_000, 5_000_000, 997, 1000)
         assert hop.gamma_numer == 997  # Retained fraction
-        assert hop.fee_numer == 3      # Actual fee taken (1000 - 997)
+        assert hop.fee_numer == 3  # Actual fee taken (1000 - 997)
         assert hop.fee_denom == 1000
-        # Invariant: gamma + fee == denom
+        # Invariant: gamma + fee == denom # noqa: ERA001
         assert hop.gamma_numer + hop.fee_numer == hop.fee_denom
 
         # 0.05% fee: gamma=9995/10000 (retained), fee=5/10000 (taken)
@@ -35,7 +35,7 @@ class TestRustIntHopState:
     def test_fee_numer_gamma_invariant_for_all_common_fees(self):
         """Verify the fee/gamma invariant for common fee tiers."""
         test_cases = [
-            (997, 1000),    # 0.3% (Uniswap V2)
+            (997, 1000),  # 0.3% (Uniswap V2)
             (9995, 10000),  # 0.05% (Uniswap V3)
             (9900, 10000),  # 1%
             (9950, 10000),  # 0.5%
@@ -89,10 +89,10 @@ class TestIntMobiusSolve:
 
     def test_full_scale_reserves(self):
         """Full uint256-scale reserves (USDC 6-dec, WETH 18-dec)."""
-        r0_a = 100_000_000 * 10**6   # 100M USDC
-        r1_a = 60_000 * 10**18       # 60K WETH
-        r1_b = 40_000 * 10**18       # 40K WETH
-        r0_b = 80_000_000 * 10**6    # 80M USDC
+        r0_a = 100_000_000 * 10**6  # 100M USDC
+        r1_a = 60_000 * 10**18  # 60K WETH
+        r1_b = 40_000 * 10**18  # 40K WETH
+        r0_b = 80_000_000 * 10**6  # 80M USDC
 
         hops = [
             rs_mobius.RustIntHopState(r0_a, r1_a, 997, 1000),

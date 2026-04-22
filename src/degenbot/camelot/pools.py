@@ -32,13 +32,13 @@ class CamelotLiquidityPool(UniswapV2Pool):
         if chain_id is None:  # pragma: no branch
             chain_id = connection_manager.default_chain_id
 
-        w3 = connection_manager.get_web3(chain_id)
-        state_block = w3.eth.get_block_number()
+        provider = connection_manager.get_provider(chain_id)
+        state_block = provider.get_block_number()
 
         fee_token0: int
         fee_token1: int
         _, _, fee_token0, fee_token1 = raw_call(
-            w3=w3,
+            provider,
             address=address,
             calldata=encode_function_calldata(
                 function_prototype="getReserves()",
@@ -49,7 +49,7 @@ class CamelotLiquidityPool(UniswapV2Pool):
 
         self.fee_denominator: int
         (self.fee_denominator,) = raw_call(
-            w3=w3,
+            provider,
             address=address,
             calldata=encode_function_calldata(
                 function_prototype="FEE_DENOMINATOR()",
@@ -72,7 +72,7 @@ class CamelotLiquidityPool(UniswapV2Pool):
 
         self.stable_swap: bool
         (self.stable_swap,) = raw_call(
-            w3=w3,
+            provider,
             address=address,
             calldata=encode_function_calldata(
                 function_prototype="stableSwap()",

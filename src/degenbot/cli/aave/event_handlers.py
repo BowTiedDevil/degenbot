@@ -80,7 +80,7 @@ def _process_collateral_configuration_changed_event(
 
     # Fetch full configuration from Pool contract
     (config_bitmap,) = raw_call(
-        w3=provider,
+        provider=provider,
         address=pool_contract.address,
         calldata=encode_function_calldata(
             function_prototype="getConfiguration(address)",
@@ -604,7 +604,7 @@ def _process_asset_initialization_event(
     vtoken_implementation_address = get_checksum_address(vtoken_implementation_address)
 
     (atoken_revision,) = raw_call(
-        w3=provider,
+        provider=provider,
         address=atoken_implementation_address,
         calldata=encode_function_calldata(
             function_prototype="ATOKEN_REVISION()",
@@ -613,7 +613,7 @@ def _process_asset_initialization_event(
         return_types=["uint256"],
     )
     (vtoken_revision,) = raw_call(
-        w3=provider,
+        provider=provider,
         address=vtoken_implementation_address,
         calldata=encode_function_calldata(
             function_prototype="DEBT_TOKEN_REVISION()",
@@ -647,7 +647,7 @@ def _process_asset_initialization_event(
     assert oracle_contract is not None
 
     (price_source,) = raw_call(
-        w3=provider,
+        provider=provider,
         address=oracle_contract.address,
         calldata=encode_function_calldata(
             function_prototype="getSourceOfAsset(address)",
@@ -866,7 +866,7 @@ def _process_scaled_token_upgrade_event(
         )
     ) is not None:
         (atoken_revision,) = raw_call(
-            w3=tx_context.provider,
+            provider=tx_context.provider,
             address=new_implementation_address,
             calldata=encode_function_calldata(
                 function_prototype="ATOKEN_REVISION()",
@@ -887,7 +887,7 @@ def _process_scaled_token_upgrade_event(
         )
     ) is not None:
         (vtoken_revision,) = raw_call(
-            w3=tx_context.provider,
+            provider=tx_context.provider,
             address=new_implementation_address,
             calldata=encode_function_calldata(
                 function_prototype="DEBT_TOKEN_REVISION()",
@@ -945,7 +945,7 @@ def _update_contract_revision(
 
     revision: int
     (revision,) = raw_call(
-        w3=provider,
+        provider=provider,
         address=new_address,
         calldata=encode_function_calldata(
             function_prototype=f"{revision_function_prototype}()",
@@ -969,7 +969,6 @@ def _update_contract_revision(
 def _process_proxy_creation_event(
     *,
     provider: ProviderAdapter,
-    session: Session,
     market: AaveV3Market,
     event: LogReceipt,
     proxy_name: str,
@@ -991,7 +990,7 @@ def _process_proxy_creation_event(
     implementation_address = decode_address(event["topics"][3])
 
     (revision,) = raw_call(
-        w3=provider,
+        provider=provider,
         address=implementation_address,
         calldata=encode_function_calldata(
             function_prototype=f"{revision_function_prototype}()",

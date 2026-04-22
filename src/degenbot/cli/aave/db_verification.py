@@ -81,7 +81,7 @@ def verify_gho_discount_amounts(
         disable=not show_progress,
     ):
         (discount_percent,) = raw_call(
-            w3=provider,
+            provider=provider,
             address=gho_vtoken_address,
             calldata=encode_function_calldata(
                 function_prototype="getDiscountPercent(address)",
@@ -140,7 +140,7 @@ def verify_stk_aave_balances(
         assert user.stk_aave_balance is not None
 
         (actual_balance,) = raw_call(
-            w3=provider,
+            provider=provider,
             address=discount_token,
             calldata=encode_function_calldata(
                 function_prototype="balanceOf(address)",

@@ -761,7 +761,6 @@ class TransactionOperationsParser:
             scaled_events=scaled_events,
             assigned_indices=assigned_log_indices,
             starting_operation_id=len(operations),
-            all_events=events,
             pool_revision=pool_revision,
         )
         operations.extend(interest_accrual_ops)
@@ -778,7 +777,6 @@ class TransactionOperationsParser:
             scaled_events=scaled_events,
             assigned_indices=assigned_log_indices,
             starting_operation_id=len(operations),
-            existing_operations=operations,
             pool_revision=pool_revision,
         )
         operations.extend(transfer_ops)
@@ -1051,9 +1049,7 @@ class TransactionOperationsParser:
             return self._create_deficit_operation(
                 operation_id=operation_id,
                 deficit_event=pool_event,
-                scaled_events=scaled_events,
                 all_events=all_events,
-                assigned_indices=assigned_indices,
                 pool_revision=pool_revision,
             )
 
@@ -1470,7 +1466,6 @@ class TransactionOperationsParser:
         )
 
         is_gho = reserve == self.gho_token_address
-        repay_log_index = repay_event["logIndex"]
 
         if use_a_tokens:
             assert not is_gho
@@ -1480,7 +1475,6 @@ class TransactionOperationsParser:
                 reserve=reserve,
                 user=user,
                 repay_amount=repay_amount,
-                repay_log_index=repay_log_index,
                 scaled_events=scaled_events,
                 assigned_indices=assigned_indices,
                 pool_revision=pool_revision,
@@ -1493,7 +1487,6 @@ class TransactionOperationsParser:
             user=user,
             repay_amount=repay_amount,
             is_gho=is_gho,
-            repay_log_index=repay_log_index,
             scaled_events=scaled_events,
             assigned_indices=assigned_indices,
             pool_revision=pool_revision,
@@ -1508,7 +1501,6 @@ class TransactionOperationsParser:
         user: ChecksumAddress,
         repay_amount: int,
         is_gho: bool,
-        repay_log_index: int,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         pool_revision: int,
@@ -1566,7 +1558,6 @@ class TransactionOperationsParser:
         reserve: ChecksumAddress,
         user: ChecksumAddress,
         repay_amount: int,
-        repay_log_index: int,
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         pool_revision: int,
@@ -2222,9 +2213,7 @@ class TransactionOperationsParser:
         *,
         operation_id: int,
         deficit_event: LogReceipt,
-        scaled_events: list[ScaledTokenEvent],
         all_events: list[LogReceipt],
-        assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation:
         """
@@ -2417,7 +2406,6 @@ class TransactionOperationsParser:
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         starting_operation_id: int,
-        all_events: list[LogReceipt],
         pool_revision: int,
     ) -> list[Operation]:
         """Create INTEREST_ACCRUAL operations for unassigned interest events.
@@ -2619,7 +2607,6 @@ class TransactionOperationsParser:
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         starting_operation_id: int,
-        existing_operations: list[Operation],
         pool_revision: int,
     ) -> list[Operation]:
         """Create TRANSFER operations for unassigned transfer events.
@@ -2652,7 +2639,6 @@ class TransactionOperationsParser:
             scaled_events=scaled_events,
             assigned_indices=assigned_indices,
             local_assigned=local_assigned,
-            existing_operations=existing_operations,
             starting_operation_id=operation_id,
             pool_revision=pool_revision,
         )
@@ -2665,7 +2651,6 @@ class TransactionOperationsParser:
                 assigned_indices=assigned_indices,
                 local_assigned=local_assigned,
                 starting_operation_id=operation_id,
-                pool_revision=pool_revision,
             )
         )
         operations.extend(standalone_operations)
@@ -2733,7 +2718,6 @@ class TransactionOperationsParser:
         all_scaled_token_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         local_assigned: set[int],
-        existing_operations: list[Operation],
     ) -> ScaledTokenEvent | None:
         """
         Find a matching BalanceTransfer event for an ERC20 Transfer.
@@ -2762,11 +2746,10 @@ class TransactionOperationsParser:
         return None
 
     @staticmethod
-    def _process_erc20_transfers(  # noqa:PLR0917
+    def _process_erc20_transfers(
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
         local_assigned: set[int],
-        existing_operations: list[Operation],
         starting_operation_id: int,
         pool_revision: int,
     ) -> tuple[list[Operation], int]:
@@ -2810,7 +2793,6 @@ class TransactionOperationsParser:
                 all_scaled_token_events=scaled_events,
                 assigned_indices=assigned_indices,
                 local_assigned=local_assigned,
-                existing_operations=existing_operations,
             )
             if balance_transfer_event:
                 balance_transfer_events.append(balance_transfer_event.event)
@@ -2842,7 +2824,6 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         local_assigned: set[int],
         starting_operation_id: int,
-        pool_revision: int,
     ) -> tuple[list[Operation], int]:
         """Create operations for standalone BalanceTransfer events (no paired ERC20 Transfer)."""
         operations: list[Operation] = []

@@ -274,7 +274,7 @@ def fetch_asset_prices(
     for asset_address in asset_addresses:
         try:
             (price,) = raw_call(
-                w3=provider,
+                provider=provider,
                 address=oracle_address,
                 calldata=encode_function_calldata(
                     function_prototype="getAssetPrice(address)",

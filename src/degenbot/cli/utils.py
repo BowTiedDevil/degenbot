@@ -7,8 +7,7 @@ from web3 import HTTPProvider, IPCProvider, JSONBaseProvider, LegacyWebSocketPro
 
 from degenbot.config import CONFIG_FILE, settings
 from degenbot.connection.connection_manager import _fast_decode_rpc_response
-from degenbot.provider import AlloyProvider
-from degenbot.provider.interface import ProviderAdapter
+from degenbot.provider import AlloyProvider, ProviderAdapter
 
 
 def _get_use_alloy_from_env() -> bool:
@@ -16,7 +15,7 @@ def _get_use_alloy_from_env() -> bool:
     return env_value in {"true", "1", "yes", "on"}
 
 
-def get_web3_from_config(
+def get_provider_from_config(
     *, chain_id: int, optimize: bool = True, use_alloy: bool | None = None
 ) -> ProviderAdapter:
     """Get a ProviderAdapter for the given chain ID.
@@ -66,3 +65,21 @@ def get_web3_from_config(
         w3.provider.decode_rpc_response = _fast_decode_rpc_response  # type:ignore[method-assign]
 
     return ProviderAdapter.from_web3(w3)
+
+
+def get_web3_from_config(
+    *, chain_id: int, optimize: bool = True, use_alloy: bool | None = None
+) -> ProviderAdapter:
+    """Get a ProviderAdapter for the given chain ID (legacy alias for get_provider_from_config).
+
+    Args:
+        chain_id: The chain ID to get a provider for
+        optimize: Whether to optimize Web3 (removes middleware, uses fast JSON decoding)
+        use_alloy: Force use of AlloyProvider (default: from env var DEGENBOT_USE_ALLOY_PROVIDER)
+
+    Returns:
+        A ProviderAdapter wrapping either Web3 or AlloyProvider
+    """
+    return get_provider_from_config(
+        chain_id=chain_id, optimize=optimize, use_alloy=use_alloy
+    )

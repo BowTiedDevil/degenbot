@@ -277,8 +277,8 @@ def extract_v3_pool_state(pool: "UniswapV3Pool") -> V3PoolState:
     tick_spacing = pool.tick_spacing
 
     # Virtual reserves from liquidity and sqrt_price
-    # R0 = L / sqrt_price
-    # R1 = L * sqrt_price
+    # R0 = L / sqrt_price # noqa: ERA001
+    # R1 = L * sqrt_price # noqa: ERA001
     virtual_reserve0 = liquidity / sqrt_price
     virtual_reserve1 = liquidity * sqrt_price
 
@@ -586,7 +586,8 @@ def predict_v2_v3_optimal_range(
     # Fallback: return current range
     current_range = TickRange(
         tick_lower=(v3_pool_state.tick // v3_pool_state.tick_spacing) * v3_pool_state.tick_spacing,
-        tick_upper=(v3_pool_state.tick // v3_pool_state.tick_spacing + 1) * v3_pool_state.tick_spacing,
+        tick_upper=(v3_pool_state.tick // v3_pool_state.tick_spacing + 1)
+        * v3_pool_state.tick_spacing,
         liquidity=v3_pool_state.liquidity,
         sqrt_price_lower=tick_to_sqrt_price(
             (v3_pool_state.tick // v3_pool_state.tick_spacing) * v3_pool_state.tick_spacing

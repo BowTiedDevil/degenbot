@@ -4,6 +4,13 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any
 
+from degenbot.arbitrage.optimizers.solver import (
+    ArbSolver,
+    BoundedProductHop,
+    ConstantProductHop,
+    SolveInput,
+    V3TickRangeInfo,
+)
 from degenbot.arbitrage.solver.protocol import SolverProtocol
 from degenbot.arbitrage.solver.types import (
     ConcentratedLiquidityHopState,
@@ -12,28 +19,35 @@ from degenbot.arbitrage.solver.types import (
     MobiusSolveResult,
     SolverMethod,
 )
+from degenbot.degenbot_rs import mobius
+
+# Constants for path constraints
+MIN_HOPS_FOR_ARBITRAGE: int = 2
+MAX_SEARCH_RADIUS: int = 5
+SMALL_HOP_THRESHOLD: int = 2
+Q96_CONSTANT: int = 2**96  # Uniswap V3 Q96 sqrt price scaling factor
 
 
 @dataclass(frozen=True, slots=True)
 class _MobiusCoefficients:
-    K: float
-    M: float
-    N: float
+    k: float
+    m: float
+    n: float
 
     @property
     def is_profitable(self) -> bool:
-        return self.K > self.M
+        return self.k > self.m
 
     def optimal_input(self) -> float:
         if not self.is_profitable:
             return 0.0
-        return (math.sqrt(self.K * self.M) - self.M) / self.N
+        return (math.sqrt(self.k * self.m) - self.m) / self.n
 
     def path_output(self, x: float) -> float:
-        denom = self.M + self.N * x
+        denom = self.m + self.n * x
         if denom <= 0:
             return 0.0
-        return self.K * x / denom
+        return self.k * x / denom
 
     def profit_at(self, x: float) -> float:
         return self.path_output(x) - x
@@ -47,21 +61,21 @@ def _compute_mobius_coefficients(
     hops: Sequence[MobiusHopState],
 ) -> _MobiusCoefficients:
     if not hops:
-        return _MobiusCoefficients(K=0.0, M=1.0, N=0.0)
+        return _MobiusCoefficients(k=0.0, m=1.0, n=0.0)
 
     r0, s0, g0 = _hop_to_float_state(hops[0])
-    K = g0 * s0
-    M = r0
-    N = g0
+    k = g0 * s0
+    m = r0
+    n = g0
 
     for hop in hops[1:]:
         r_i, s_i, g_i = _hop_to_float_state(hop)
-        old_K = K
-        K = old_K * g_i * s_i
-        M *= r_i
-        N = N * r_i + old_K * g_i
+        old_k = k
+        k = old_k * g_i * s_i
+        m *= r_i
+        n = n * r_i + old_k * g_i
 
-    return _MobiusCoefficients(K=K, M=M, N=N)
+    return _MobiusCoefficients(k=k, m=m, n=n)
 
 
 def _simulate_path(x: float, hops: Sequence[MobiusHopState]) -> float:
@@ -83,7 +97,7 @@ def _integer_refinement(
     max_input: int | None,
 ) -> tuple[int, int]:
     num_hops = len(hops)
-    search_radius = 1 if num_hops <= 2 else min(num_hops, 5)
+    search_radius = 1 if num_hops <= SMALL_HOP_THRESHOLD else min(num_hops, MAX_SEARCH_RADIUS)
 
     x_floor = int(x_opt)
     best_input = x_floor
@@ -132,23 +146,21 @@ class MobiusSolver(SolverProtocol):
     """
 
     def __init__(self) -> None:
-        self._rust_solver: Any = None
-        self._pool_cache: Any = None
-        self._piecewise_solver: Any = _SENTINEL
+        self._rust_solver: mobius.RustArbSolver | None = None
+        self._pool_cache: mobius.RustPoolCache | None = None
+        self._piecewise_solver: ArbSolver | object = _SENTINEL
         self._try_load_rust()
 
     def _try_load_rust(self) -> None:
         try:
-            from degenbot.degenbot_rs import mobius
-
             self._rust_solver = mobius.RustArbSolver()
             self._pool_cache = mobius.RustPoolCache()
         except ImportError:
             self._rust_solver = None
             self._pool_cache = None
 
-    def supports(self, hops: Sequence[HopState]) -> bool:
-        return len(hops) >= 2
+    def supports(self, hops: Sequence[HopState]) -> bool:  # noqa: PLR6301
+        return len(hops) >= MIN_HOPS_FOR_ARBITRAGE
 
     def solve(
         self,
@@ -177,10 +189,10 @@ class MobiusSolver(SolverProtocol):
             if result is not None:
                 return result
 
-        return self._solve_mobius_python(hops, max_input)
+        return MobiusSolver._solve_mobius_python(hops, max_input)
 
+    @staticmethod
     def _solve_mobius_python(
-        self,
         hops: Sequence[HopState],
         max_input: int | None = None,
     ) -> MobiusSolveResult:
@@ -188,7 +200,7 @@ class MobiusSolver(SolverProtocol):
 
         coeffs = _compute_mobius_coefficients(mobius_hops)
         if not coeffs.is_profitable:
-            return _unprofitable_result(error="K/M <= 1")
+            return _unprofitable_result(error="k/m <= 1")
 
         x_opt = coeffs.optimal_input()
         if x_opt <= 0:
@@ -214,13 +226,12 @@ class MobiusSolver(SolverProtocol):
         hops: Sequence[HopState],
         max_input: int | None = None,
     ) -> MobiusSolveResult | None:
-        from degenbot.degenbot_rs import mobius
 
         max_input_float = float(max_input) if max_input is not None else None
 
         all_simple = all(isinstance(h, MobiusHopState) for h in hops)
         if all_simple:
-            return self._try_rust_solve_raw(hops, max_input_float, mobius)
+            return self._try_rust_solve_raw(hops, max_input_float)
 
         return None
 
@@ -228,8 +239,10 @@ class MobiusSolver(SolverProtocol):
         self,
         hops: Sequence[HopState],
         max_input_float: float | None,
-        mobius: Any,
     ) -> MobiusSolveResult | None:
+        if self._rust_solver is None:
+            return None
+
         int_hops_flat: list[int] = []
         for hop in hops:
             assert isinstance(hop, MobiusHopState)
@@ -279,16 +292,17 @@ class MobiusSolver(SolverProtocol):
         hops: Sequence[HopState],
         max_input: int | None = None,
     ) -> MobiusSolveResult | None:
-        from degenbot.degenbot_rs import mobius
+        if self._rust_solver is None:
+            return None
 
         max_input_float = float(max_input) if max_input is not None else None
         rust_hops: list[Any] = []
-        v3_sequences: list[tuple[int, Any]] = []
+        v3_sequences: list[tuple[int, mobius.RustV3TickRangeSequence]] = []
 
         for i, hop in enumerate(hops):
             if isinstance(hop, ConcentratedLiquidityHopState):
                 if hop.has_multi_range:
-                    seq = self._build_rust_v3_sequence(hop, mobius)
+                    seq = MobiusSolver._build_rust_v3_sequence(hop)
                     if seq is None:
                         return None
                     v3_sequences.append((i, seq))
@@ -358,58 +372,49 @@ class MobiusSolver(SolverProtocol):
             error="Not profitable",
         )
 
-    def _build_rust_v3_sequence(self, v3_hop: ConcentratedLiquidityHopState, mobius: Any) -> Any:
+    @staticmethod
+    def _build_rust_v3_sequence(
+        v3_hop: ConcentratedLiquidityHopState,
+    ) -> mobius.RustV3TickRangeSequence | None:
         assert v3_hop.tick_ranges is not None
-        Q96 = 2**96
+        q96 = Q96_CONSTANT
         zero_for_one = v3_hop.reserve_in > v3_hop.reserve_out
 
         try:
             rust_ranges = []
             for i, range_info in enumerate(v3_hop.tick_ranges):
                 if i == v3_hop.current_range_index:
-                    sqrt_p_current = float(v3_hop.sqrt_price) / Q96
+                    sqrt_p_current = float(v3_hop.sqrt_price) / q96
                 elif i < v3_hop.current_range_index:
-                    sqrt_p_current = float(range_info.sqrt_price_upper) / Q96
+                    sqrt_p_current = float(range_info.sqrt_price_upper) / q96
                 else:
-                    sqrt_p_current = float(range_info.sqrt_price_lower) / Q96
+                    sqrt_p_current = float(range_info.sqrt_price_lower) / q96
 
                 rust_ranges.append(
                     mobius.RustV3TickRangeHop(
                         liquidity=float(range_info.liquidity),
                         sqrt_price_current=sqrt_p_current,
-                        sqrt_price_lower=float(range_info.sqrt_price_lower) / Q96,
-                        sqrt_price_upper=float(range_info.sqrt_price_upper) / Q96,
+                        sqrt_price_lower=float(range_info.sqrt_price_lower) / q96,
+                        sqrt_price_upper=float(range_info.sqrt_price_upper) / q96,
                         fee=float(v3_hop.fee),
                         zero_for_one=zero_for_one,
                     )
                 )
 
             return mobius.RustV3TickRangeSequence(rust_ranges)
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             return None
 
-    def _get_piecewise_solver(self) -> Any:
+    def _get_piecewise_solver(self) -> ArbSolver:
         if self._piecewise_solver is _SENTINEL:
-            from degenbot.arbitrage.optimizers.solver import ArbSolver
-
             self._piecewise_solver = ArbSolver()
-        return self._piecewise_solver
+        return self._piecewise_solver  # type: ignore[return-value]
 
     def _solve_piecewise_python(
         self,
         hops: Sequence[HopState],
         max_input: int | None = None,
     ) -> MobiusSolveResult:
-        from degenbot.arbitrage.optimizers.solver import (
-            BoundedProductHop as _BoundedProductHop,
-        )
-        from degenbot.arbitrage.optimizers.solver import (
-            ConstantProductHop as _ConstantProductHop,
-        )
-        from degenbot.arbitrage.optimizers.solver import SolveInput as _SolveInput
-        from degenbot.arbitrage.optimizers.solver import (
-            V3TickRangeInfo as _V3TickRangeInfo,
-        )
 
         old_hops: list[Any] = []
         for hop in hops:
@@ -417,7 +422,7 @@ class MobiusSolver(SolverProtocol):
                 old_ranges = None
                 if hop.tick_ranges is not None:
                     old_ranges = tuple(
-                        _V3TickRangeInfo(
+                        V3TickRangeInfo(
                             tick_lower=tr.tick_lower,
                             tick_upper=tr.tick_upper,
                             liquidity=tr.liquidity,
@@ -427,7 +432,7 @@ class MobiusSolver(SolverProtocol):
                         for tr in hop.tick_ranges
                     )
                 old_hops.append(
-                    _BoundedProductHop(
+                    BoundedProductHop(
                         reserve_in=hop.reserve_in,
                         reserve_out=hop.reserve_out,
                         fee=hop.fee,
@@ -441,7 +446,7 @@ class MobiusSolver(SolverProtocol):
                 )
             elif isinstance(hop, MobiusHopState):
                 old_hops.append(
-                    _ConstantProductHop(
+                    ConstantProductHop(
                         reserve_in=hop.reserve_in,
                         reserve_out=hop.reserve_out,
                         fee=hop.fee,
@@ -454,7 +459,7 @@ class MobiusSolver(SolverProtocol):
                 )
 
         old_result = self._get_piecewise_solver().solve(
-            _SolveInput(hops=tuple(old_hops), max_input=max_input)
+            SolveInput(hops=tuple(old_hops), max_input=max_input)
         )
 
         if not old_result.success:
@@ -501,7 +506,7 @@ class MobiusSolver(SolverProtocol):
 
     def remove_pool(self, pool_id: int) -> bool:
         cache = self.get_pool_cache()
-        return cache.remove(pool_id)
+        return bool(cache.remove(pool_id))
 
     def solve_cached(
         self,
@@ -536,7 +541,7 @@ class MobiusSolver(SolverProtocol):
 
         return _unprofitable_result(error="Not profitable")
 
-    def get_pool_cache(self) -> Any:
+    def get_pool_cache(self) -> mobius.RustPoolCache:
         if self._pool_cache is None:
             msg = "Pool cache requires the Rust extension (degenbot_rs)"
             raise RuntimeError(msg)

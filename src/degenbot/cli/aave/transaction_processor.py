@@ -12,7 +12,7 @@ This module contains the main transaction processing orchestrator that handles:
 """
 
 from operator import itemgetter
-from typing import assert_never
+from typing import TYPE_CHECKING, assert_never
 
 import eth_abi.abi
 from sqlalchemy import select
@@ -69,6 +69,9 @@ from degenbot.database.models.aave import AaveV3User
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
 
+if TYPE_CHECKING:
+    from eth_typing import ChecksumAddress
+
 
 def _process_transaction(tx_context: TransactionContext) -> None:
     """
@@ -97,7 +100,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         tx_context.discount_updates_by_log_index[user_address].sort(key=itemgetter(0))
 
     # Pre-fetch all users from GHO mint/burn events to avoid N+1 queries
-    gho_user_addresses: set = set()
+    gho_user_addresses: set[ChecksumAddress] = set()
     for event in tx_context.events:
         topic = event["topics"][0]
         event_address = event["address"]
@@ -184,7 +187,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                     continue
 
                 (discount_percent,) = raw_call(
-                    w3=tx_context.provider,
+                    provider=tx_context.provider,
                     address=gho_vtoken_address,
                     calldata=encode_function_calldata(
                         function_prototype="getDiscountPercent(address)",

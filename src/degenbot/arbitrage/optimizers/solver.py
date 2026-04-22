@@ -926,14 +926,14 @@ class NewtonSolver(Solver):
         iterations = 0
         for i in range(self.MAX_ITERATIONS):
             # Hop 0: input x → forward amount y
-            # y = x * gamma * reserve_out / (reserve_in + x * gamma)
+            # y = x * gamma * reserve_out / (reserve_in + x * gamma) # noqa: ERA001
             denom_buy = r0_buy + x * g0_buy
             if denom_buy <= 0:
                 break
             y = x * g0_buy * s0_buy / denom_buy
 
             # Hop 1: forward y → output z
-            # z = y * gamma * reserve_out / (reserve_in + y * gamma)
+            # z = y * gamma * reserve_out / (reserve_in + y * gamma) # noqa: ERA001
             denom_sell = r0_sell + y * g0_sell
             if denom_sell <= 0:
                 break
@@ -1151,7 +1151,7 @@ class PiecewiseMobiusSolver(Solver):
         # Cache for Rust objects to avoid recreation
         # Key: hash of (reserve_in, reserve_out, fee) tuple
         self._rust_hop_cache: dict[int, list] = {}
-        # Key: (range_ids_tuple, current_range_index, zero_for_one)
+        # Key: (range_ids_tuple, current_range_index, zero_for_one) # noqa: ERA001
         self._rust_sequence_cache: dict[tuple[tuple[int, ...], int, bool], Any] = {}
         self._try_load_rust()
 
@@ -2119,7 +2119,7 @@ class PiecewiseMobiusSolver(Solver):
             return ending_range.sqrt_price_current
 
         # For constant product, price moves as: 1/sqrt_p_new = 1/sqrt_p + amount/L
-        # So: sqrt_p_new = 1 / (1/sqrt_p + amount/L)
+        # So: sqrt_p_new = 1 / (1/sqrt_p + amount/L) # noqa: ERA001
         L = ending_range.liquidity
         sqrt_p = ending_range.sqrt_price_current
         gamma = 1.0 - ending_range.fee
@@ -2427,7 +2427,7 @@ class SolidlyStableSolver(Solver):
         """Golden section search using integer path evaluation."""
         hops = solve_input.hops
 
-        # Bracket: [1, max_reserve]
+        # Bracket: [1, max_reserve] # noqa: ERA001
         x_low = 1
         max_reserve = max(h.reserve_in for h in hops)
         x_high = max_reserve

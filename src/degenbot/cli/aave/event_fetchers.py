@@ -27,7 +27,7 @@ def fetch_pool_events(
     """
 
     return fetch_logs_retrying(
-        w3=provider,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=[pool_address],
@@ -60,7 +60,7 @@ def fetch_reserve_initialization_events(
     """
 
     return fetch_logs_retrying(
-        w3=provider,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=[configurator_address],
@@ -90,7 +90,7 @@ def fetch_scaled_token_events(
         return []
 
     return fetch_logs_retrying(
-        w3=provider,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=token_addresses,
@@ -121,7 +121,7 @@ def fetch_stk_aave_events(
     if not discount_token:
         return []
     return fetch_logs_retrying(
-        w3=provider,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=[discount_token],
@@ -146,7 +146,7 @@ def fetch_address_provider_events(
     """
 
     return fetch_logs_retrying(
-        w3=provider,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=[provider_address],
@@ -173,7 +173,7 @@ def fetch_discount_config_events(
     """
 
     return fetch_logs_retrying(
-        w3=provider,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         topic_signature=[
@@ -198,7 +198,7 @@ def fetch_oracle_events(
     """
 
     return fetch_logs_retrying(
-        w3=provider,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=[oracle_address] if oracle_address is not None else None,

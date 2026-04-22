@@ -388,7 +388,285 @@ class ProviderAdapter:
         return f"ProviderAdapter(type={self._provider_type})"
 
 
+class AsyncProviderAdapter:
+    """
+    Async adapter that wraps either AsyncWeb3 or AsyncAlloyProvider.
+
+    Provides a uniform async interface for Ethereum RPC operations,
+    allowing existing code to work with either backend.
+
+    Use factory methods to create:
+        - AsyncProviderAdapter.from_web3(async_w3)
+        - AsyncProviderAdapter.from_alloy(async_alloy_provider)
+    """
+
+    def __init__(
+        self,
+        provider: Any,  # noqa: ANN401
+        *,
+        provider_type: Literal["web3", "alloy"],
+    ) -> None:
+        """Initialize the async adapter.
+
+        Args:
+            provider: The underlying async provider (AsyncWeb3 or AsyncAlloyProvider)
+            provider_type: "web3" or "alloy" to indicate the backend type
+        """
+        self._provider = provider
+        self._provider_type = provider_type
+
+    @classmethod
+    def from_web3(cls, async_w3: Any) -> Self:  # noqa: ANN401
+        """Create an adapter wrapping an AsyncWeb3 instance.
+
+        Args:
+            async_w3: A web3.py AsyncWeb3 instance
+
+        Returns:
+            An AsyncProviderAdapter wrapping the AsyncWeb3 instance
+        """
+        return cls(provider=async_w3, provider_type="web3")
+
+    @classmethod
+    def from_alloy(cls, async_alloy: Any) -> Self:  # noqa: ANN401
+        """Create an adapter wrapping an AsyncAlloyProvider instance.
+
+        Args:
+            async_alloy: An AsyncAlloyProvider instance
+
+        Returns:
+            An AsyncProviderAdapter wrapping the AsyncAlloyProvider instance
+        """
+        return cls(provider=async_alloy, provider_type="alloy")
+
+    @property
+    def provider_type(self) -> Literal["web3", "alloy"]:
+        """Get the type of the underlying provider."""
+        return self._provider_type
+
+    @property
+    def underlying(self) -> Any:  # noqa: ANN401
+        """Get the underlying provider instance."""
+        return self._provider
+
+    # =========================================================================
+    # Properties
+    # =========================================================================
+
+    @property
+    def chain_id(self) -> int:
+        """Get the chain ID."""
+        raise NotImplementedError("Use await get_chain_id() for async provider")
+
+    @property
+    def block_number(self) -> int:
+        """Get the current block number."""
+        raise NotImplementedError("Use await get_block_number() for async provider")
+
+    # =========================================================================
+    # Async Methods
+    # =========================================================================
+
+    async def get_block_number(self) -> int:
+        """Get the current block number."""
+        if self._provider_type == "web3":
+            return await self._provider.eth.get_block_number()
+        return await self._provider.get_block_number()
+
+    async def get_chain_id(self) -> int:
+        """Get the chain ID."""
+        if self._provider_type == "web3":
+            return await self._provider.eth.get_chain_id()
+        return await self._provider.get_chain_id()
+
+    async def get_block(
+        self,
+        block_identifier: int | str,
+    ) -> dict[str, Any] | None:
+        """Get a block by number or identifier.
+
+        Args:
+            block_identifier: Block number or "latest", "earliest", "pending"
+
+        Returns:
+            Block data dict, or None if not found
+        """
+        if self._provider_type == "web3":
+            return await self._provider.eth.get_block(block_identifier)
+        # AsyncAlloyProvider only supports integer block numbers
+        if isinstance(block_identifier, str):
+            if block_identifier == "latest":
+                block_identifier = await self._provider.get_block_number()
+            elif block_identifier == "earliest":
+                block_identifier = 0
+            elif block_identifier == "pending":
+                block_identifier = await self._provider.get_block_number() + 1
+        return await self._provider.get_block(block_identifier)
+
+    async def get_logs(
+        self,
+        from_block: int,
+        to_block: int,
+        addresses: list[str] | None = None,
+        topics: list[list[str]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch event logs matching the filter.
+
+        Args:
+            from_block: Starting block number (inclusive)
+            to_block: Ending block number (inclusive)
+            addresses: Contract addresses to filter (optional)
+            topics: Event topic signatures (optional)
+
+        Returns:
+            List of log dictionaries
+        """
+        if self._provider_type == "web3":
+            filter_param: dict[str, Any] = {
+                "fromBlock": from_block,
+                "toBlock": to_block,
+            }
+            if addresses:
+                filter_param["address"] = addresses
+            if topics:
+                filter_param["topics"] = topics
+            return await self._provider.eth.get_logs(filter_param)
+
+        return await self._provider.get_logs(
+            from_block=from_block,
+            to_block=to_block,
+            addresses=addresses,
+            topics=topics,
+        )
+
+    async def call(
+        self,
+        to: str,
+        data: bytes,
+        block: int | None = None,
+    ) -> HexBytes:
+        """Execute an eth_call.
+
+        Args:
+            to: Contract address to call
+            data: Calldata bytes
+            block: Block number (default: latest)
+
+        Returns:
+            Raw return data from the contract call
+        """
+        if self._provider_type == "web3":
+            tx: dict[str, Any] = {"to": to, "data": data}
+            if block is not None:
+                return await self._provider.eth.call(tx, block)
+            return await self._provider.eth.call(tx)
+        return await self._provider.call(to, data, block)
+
+    async def get_code(
+        self,
+        address: str,
+        block: int | None = None,
+    ) -> HexBytes:
+        """Get contract bytecode at an address.
+
+        Args:
+            address: Contract address
+            block: Block number (default: latest)
+
+        Returns:
+            Contract bytecode
+        """
+        if self._provider_type == "web3":
+            if block is not None:
+                return await self._provider.eth.get_code(address, block)
+            return await self._provider.eth.get_code(address)
+        return await self._provider.get_code(address, block)
+
+    async def get_balance(
+        self,
+        address: str,
+        block: int | None = None,
+    ) -> int:
+        """Get the balance of an address in wei.
+
+        Args:
+            address: Ethereum address
+            block: Block number (default: latest)
+
+        Returns:
+            Balance in wei
+        """
+        if self._provider_type == "web3":
+            if block is not None:
+                return await self._provider.eth.get_balance(address, block)
+            return await self._provider.eth.get_balance(address)
+        # AsyncAlloyProvider doesn't have get_balance yet
+        msg = "get_balance not implemented for AsyncAlloyProvider"
+        raise NotImplementedError(msg)
+
+    async def get_storage_at(
+        self,
+        address: str,
+        position: int,
+        block: int | None = None,
+    ) -> HexBytes:
+        """Get storage at a given position.
+
+        Args:
+            address: Contract address
+            position: Storage slot position
+            block: Block number (default: latest)
+
+        Returns:
+            Storage value at the position
+        """
+        if self._provider_type == "web3":
+            if block is not None:
+                return await self._provider.eth.get_storage_at(address, position, block)
+            return await self._provider.eth.get_storage_at(address, position)
+        return await self._provider.get_storage_at(address, position, block)
+
+    async def get_transaction_count(
+        self,
+        address: str,
+        block: int | None = None,
+    ) -> int:
+        """Get the transaction count (nonce) for an address.
+
+        Args:
+            address: Ethereum address
+            block: Block number (default: latest)
+
+        Returns:
+            Transaction count
+        """
+        if self._provider_type == "web3":
+            if block is not None:
+                return await self._provider.eth.get_transaction_count(address, block)
+            return await self._provider.eth.get_transaction_count(address)
+        # AsyncAlloyProvider doesn't have get_transaction_count yet
+        msg = "get_transaction_count not implemented for AsyncAlloyProvider"
+        raise NotImplementedError(msg)
+
+    def is_connected(self) -> bool:
+        """Check if the provider is connected."""
+        if self._provider_type == "web3":
+            # AsyncWeb3 doesn't have is_connected, assume connected
+            return True
+        # AsyncAlloyProvider doesn't have is_connected - assume connected if created
+        return True
+
+    def close(self) -> None:
+        """Close the provider connection (AsyncAlloyProvider only)."""
+        if self._provider_type == "alloy" and hasattr(self._provider, "close"):
+            self._provider.close()
+
+    def __repr__(self) -> str:
+        return f"AsyncProviderAdapter(type={self._provider_type})"
+
+
 __all__ = [
+    "AsyncProviderAdapter",
     "EthereumProvider",
     "ProviderAdapter",
 ]

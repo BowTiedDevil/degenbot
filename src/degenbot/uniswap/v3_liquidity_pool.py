@@ -14,9 +14,8 @@ from eth_abi.exceptions import DecodingError
 from eth_typing import ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session, scoped_session
-from web3 import Web3
 from web3.exceptions import ContractLogicError
-from web3.types import BlockIdentifier, TxParams
+from web3.types import BlockIdentifier
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
@@ -36,6 +35,7 @@ from degenbot.exceptions.liquidity_pool import (
 )
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
+from degenbot.provider import ProviderAdapter
 from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractArbitrage, AbstractConcentratedLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
@@ -248,8 +248,8 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
     ) -> None:
         self.address = get_checksum_address(address)
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        w3 = connection_manager.get_web3(self.chain_id)
-        state_block = state_block if state_block is not None else w3.eth.block_number
+        provider = connection_manager.get_provider(self.chain_id)
+        state_block = state_block if state_block is not None else provider.get_block_number()
         self._initial_state_block = state_block
 
         pool_from_db = get_pool_from_database(address=self.address, chain_id=self.chain_id)
@@ -272,7 +272,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         else:
             try:
                 factory_address, (token0_address, token1_address), self.fee, self.tick_spacing = (
-                    self.get_immutable_pool_values(w3=w3)
+                    self.get_immutable_pool_values(provider)
                 )
 
             except (ContractLogicError, DecodingError) as exc:
@@ -282,7 +282,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
 
         try:
             sqrt_price_x96, tick, liquidity = self.get_mutable_pool_values(
-                w3=w3, state_block=state_block
+                provider, state_block=state_block
             )
         except (ContractLogicError, DecodingError) as exc:
             # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch this
@@ -657,12 +657,12 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
 
     def get_tick_bitmap_at_word(
         self,
-        w3: Web3,
+        provider: ProviderAdapter,
         word_position: int,
         block_identifier: BlockIdentifier,
     ) -> int:
         (bitmap_at_word,) = raw_call(
-            w3=w3,
+            provider,
             address=self.address,
             calldata=encode_function_calldata(
                 function_prototype="tickBitmap(int16)",
@@ -675,12 +675,12 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
 
     def get_populated_ticks_in_word(
         self,
-        w3: Web3,
+        provider: ProviderAdapter,
         word_position: int,
         block_identifier: BlockIdentifier,
     ) -> list[tuple[int, int, int]]:
         bitmap_at_word = self.get_tick_bitmap_at_word(
-            w3=w3,
+            provider,
             word_position=word_position,
             block_identifier=block_identifier,
         )
@@ -691,27 +691,24 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
             if bitmap_at_word & (1 << i) > 0
         ]
 
-        with w3.batch_requests() as batch:
-            for tick in active_ticks:
-                batch.add(
-                    w3.eth.call(
-                        transaction=TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="ticks(int24)",
-                                function_arguments=[tick],
-                            ),
-                        ),
-                        block_identifier=block_identifier,
-                    )
-                )
-            results = batch.execute()
+        results: list[HexBytes] = []
+        block = block_identifier if isinstance(block_identifier, int) else None
+        for tick in active_ticks:
+            result = provider.call(
+                to=self.address,
+                data=encode_function_calldata(
+                    function_prototype="ticks(int24)",
+                    function_arguments=[tick],
+                ),
+                block=block,
+            )
+            results.append(result)
 
         populated_ticks = []
         for tick, result in zip(active_ticks, results, strict=True):
             liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
                 types=self.TICK_STRUCT_TYPES,
-                data=cast("HexBytes", result),
+                data=result,
             )
             populated_ticks.append((tick, liquidity_gross, liquidity_net))
 
@@ -730,20 +727,20 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         position. A word is divided into 256 ticks, spaced at a fixed interval.
         """
 
-        w3 = connection_manager.get_web3(self.chain_id)
+        provider = connection_manager.get_provider(self.chain_id)
 
         if block_number is None:
-            block_number = w3.eth.get_block_number()
+            block_number = provider.get_block_number()
 
         working_tick_data: list[tuple[Tick, LiquidityGross, LiquidityNet]] = []
         working_tick_bitmap = self.get_tick_bitmap_at_word(
-            w3=w3,
+            provider,
             word_position=word_position,
             block_identifier=block_number,
         )
         if working_tick_bitmap != 0:
             working_tick_data = self.get_populated_ticks_in_word(
-                w3=w3,
+                provider,
                 word_position=word_position,
                 block_identifier=block_number,
             )
@@ -827,7 +824,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
 
     def get_immutable_pool_values(
         self,
-        w3: Web3,
+        provider: ProviderAdapter,
     ) -> tuple[
         str,  # factory
         tuple[str, str],  # tokens
@@ -835,55 +832,48 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         int,  # tick spacing
     ]:
         try:
-            with w3.batch_requests() as batch:
-                batch.add_mapping({
-                    w3.eth.call: [
-                        TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="factory()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="token0()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="token1()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="fee()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="tickSpacing()",
-                                function_arguments=None,
-                            ),
-                        ),
-                    ],
-                })
+            factory_result = provider.call(
+                to=self.address,
+                data=encode_function_calldata(
+                    function_prototype="factory()",
+                    function_arguments=None,
+                ),
+            )
+            token0_result = provider.call(
+                to=self.address,
+                data=encode_function_calldata(
+                    function_prototype="token0()",
+                    function_arguments=None,
+                ),
+            )
+            token1_result = provider.call(
+                to=self.address,
+                data=encode_function_calldata(
+                    function_prototype="token1()",
+                    function_arguments=None,
+                ),
+            )
+            fee_result = provider.call(
+                to=self.address,
+                data=encode_function_calldata(
+                    function_prototype="fee()",
+                    function_arguments=None,
+                ),
+            )
+            tick_spacing_result = provider.call(
+                to=self.address,
+                data=encode_function_calldata(
+                    function_prototype="tickSpacing()",
+                    function_arguments=None,
+                ),
+            )
 
-                factory, token0, token1, fee, tick_spacing = batch.execute()
-
-            (factory,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", factory))
-            (token0,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token0))
-            (token1,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token1))
-            (fee,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", fee))
+            (factory,) = eth_abi.abi.decode(types=["address"], data=factory_result)
+            (token0,) = eth_abi.abi.decode(types=["address"], data=token0_result)
+            (token1,) = eth_abi.abi.decode(types=["address"], data=token1_result)
+            (fee,) = eth_abi.abi.decode(types=["uint256"], data=fee_result)
             (tick_spacing,) = eth_abi.abi.decode(
-                types=["uint256"], data=cast("HexBytes", tick_spacing)
+                types=["uint256"], data=tick_spacing_result
             )
 
         except (ContractLogicError, DecodingError) as exc:
@@ -901,43 +891,31 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
 
     def get_mutable_pool_values(
         self,
-        w3: Web3,
+        provider: ProviderAdapter,
         state_block: BlockNumber,
     ) -> tuple[SqrtPriceX96, Tick, Liquidity]:
         try:
-            with w3.batch_requests() as batch:
-                # This calls use a specific block so the mutable state values are consistent
-                batch.add(
-                    w3.eth.call(
-                        transaction=TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="slot0()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        block_identifier=state_block,
-                    )
-                )
-                batch.add(
-                    w3.eth.call(
-                        transaction=TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="liquidity()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        block_identifier=state_block,
-                    )
-                )
-
-                slot0, liquidity = batch.execute()
+            slot0_result = provider.call(
+                to=self.address,
+                data=encode_function_calldata(
+                    function_prototype="slot0()",
+                    function_arguments=None,
+                ),
+                block=state_block,
+            )
+            liquidity_result = provider.call(
+                to=self.address,
+                data=encode_function_calldata(
+                    function_prototype="liquidity()",
+                    function_arguments=None,
+                ),
+                block=state_block,
+            )
 
             price, tick, *_ = eth_abi.abi.decode(
-                types=self.SLOT0_STRUCT_TYPES, data=cast("HexBytes", slot0)
+                types=self.SLOT0_STRUCT_TYPES, data=slot0_result
             )
-            (liquidity,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", liquidity))
+            (liquidity,) = eth_abi.abi.decode(types=["uint256"], data=liquidity_result)
 
         except (ContractLogicError, DecodingError) as exc:
             # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch this
@@ -1047,48 +1025,35 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
             if block_number is not None and block_number < self.update_block:
                 raise LateUpdateError
 
-            w3 = connection_manager.get_web3(self.chain_id)
-            block_number = block_number if block_number is not None else w3.eth.get_block_number()
+            provider = connection_manager.get_provider(self.chain_id)
+            block_number = block_number if block_number is not None else provider.get_block_number()
 
-            with w3.batch_requests() as batch:
-                batch.add(
-                    # This call uses a specific block so the mutable state values are consistent
-                    w3.eth.call(
-                        transaction=TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="slot0()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        block_identifier=block_number,
-                    )
-                )
-                batch.add(
-                    # This call uses a specific block so the mutable state values are consistent
-                    w3.eth.call(
-                        transaction=TxParams(
-                            to=self.address,
-                            data=encode_function_calldata(
-                                function_prototype="liquidity()",
-                                function_arguments=None,
-                            ),
-                        ),
-                        block_identifier=block_number,
-                    )
-                )
-
-                slot0_result, liquidity_result = batch.execute()
+            slot0_result = provider.call(
+                to=self.address,
+                data=encode_function_calldata(
+                    function_prototype="slot0()",
+                    function_arguments=None,
+                ),
+                block=block_number,
+            )
+            liquidity_result = provider.call(
+                to=self.address,
+                data=encode_function_calldata(
+                    function_prototype="liquidity()",
+                    function_arguments=None,
+                ),
+                block=block_number,
+            )
 
             sqrt_price_x96: int
             tick: int
             liquidity: int
 
             sqrt_price_x96, tick, *_ = eth_abi.abi.decode(
-                types=self.SLOT0_STRUCT_TYPES, data=cast("HexBytes", slot0_result)
+                types=self.SLOT0_STRUCT_TYPES, data=slot0_result
             )
             (liquidity,) = eth_abi.abi.decode(
-                types=["uint256"], data=cast("HexBytes", liquidity_result)
+                types=["uint256"], data=liquidity_result
             )
 
             if (

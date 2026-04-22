@@ -66,6 +66,7 @@ def _get_tick_ranges(
 
 def _compute_tick_ranges(
     pool: CLPool,
+    *,
     zero_for_one: bool,
     max_ranges: int = 3,
 ) -> tuple[tuple[TickRangeState, ...], int] | None:

@@ -114,7 +114,7 @@ class TestOptimizerMethodComparison:
                 token_in_quantity=token1_received,
             )
 
-            # Profit in token0 (USDC)
+            # token0 profit (USDC)
             profit = float(token0_received - input_amount_int)
 
             # Return negative for minimization (minimize -profit = maximize profit)
@@ -322,10 +322,12 @@ class TestOptimizerMethodComparison:
         print("-" * 55)
         print(f"{'Brent':<10} {result_brent.x:>15.2f} {brent_profit:>15.2f} {result_brent.nfev:>8}")
         print(
-            f"{'Golden':<10} {result_golden.x:>15.2f} {golden_profit:>15.2f} {result_golden.nfev:>8}"
+            f"{'Golden':<10} {result_golden.x:>15.2f} {golden_profit:>15.2f} "
+            f"{result_golden.nfev:>8}"
         )
         print(
-            f"{'Bounded':<10} {result_bounded.x:>15.2f} {bounded_profit:>15.2f} {result_bounded.nfev:>8}"
+            f"{'Bounded':<10} {result_bounded.x:>15.2f} {bounded_profit:>15.2f} "
+            f"{result_bounded.nfev:>8}"
         )
 
         # All profits should be very close (within 0.01% relative tolerance)

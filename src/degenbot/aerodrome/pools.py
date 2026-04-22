@@ -37,6 +37,7 @@ from degenbot.exceptions.liquidity_pool import (
 )
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
+from degenbot.provider import ProviderAdapter
 from degenbot.registry import pool_registry
 from degenbot.solidly.solidly_functions import general_calc_exact_in_volatile
 from degenbot.types.abstract import AbstractAerodromeV2Pool
@@ -184,8 +185,8 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
         return self.state.block
 
     @property
-    def w3(self) -> Web3:
-        return connection_manager.get_web3(self.chain_id)
+    def w3(self) -> ProviderAdapter:
+        return connection_manager.get_provider(self.chain_id)
 
     @staticmethod
     def swap_is_viable(
@@ -213,9 +214,11 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
             if block_number is not None and block_number < self.update_block:
                 raise LateUpdateError
 
-            w3 = self.w3
-            block_number = block_number if block_number is not None else w3.eth.get_block_number()
-            reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=block_number)
+            provider = self.w3
+            block_number = block_number if block_number is not None else provider.get_block_number()
+            reserves0, reserves1 = self.get_reserves(
+                provider=provider, block_identifier=block_number
+            )
 
             if (
                 self.reserves_token0,
@@ -518,7 +521,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
         (fee,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
-                transaction=TxParams(
+                TxParams(
                     to=get_checksum_address(cast("str", factory)),
                     data=encode_function_calldata(
                         function_prototype="getFee(address,bool)",
@@ -537,10 +540,10 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
         )
 
     def get_reserves(
-        self, w3: Web3, block_identifier: BlockIdentifier | None = None
+        self, provider: ProviderAdapter, block_identifier: BlockIdentifier | None = None
     ) -> tuple[int, int]:
         reserves_token0, reserves_token1 = raw_call(
-            w3=w3,
+            provider,
             address=self.address,
             block_identifier=block_identifier,
             calldata=encode_function_calldata(

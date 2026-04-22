@@ -14,13 +14,12 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
 from sqlalchemy.orm import Session
 from tqdm.contrib.logging import logging_redirect_tqdm
-from web3 import Web3
 from web3.types import LogReceipt
 
 from degenbot import abi_decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
-from degenbot.cli.utils import get_web3_from_config
+from degenbot.cli.utils import get_provider_from_config
 from degenbot.constants import MAX_UINT256
 from degenbot.database import db_session
 from degenbot.database.models.base import ExchangeTable
@@ -52,6 +51,7 @@ from degenbot.functions import (
     raw_call,
 )
 from degenbot.logging import logger
+from degenbot.provider import ProviderAdapter
 from degenbot.types.aliases import ChainId, Tick, Word
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
@@ -195,7 +195,7 @@ UNISWAP_V4_MODIFYLIQUIDITY_EVENT_HASH = HexBytes(
 
 
 def apply_v3_liquidity_updates(
-    w3: Web3,
+    provider: ProviderAdapter,
     pool_address: ChecksumAddress,
     liquidity_events: list[LogReceipt],
     exchanges_in_scope: set[ExchangeTable],
@@ -219,7 +219,7 @@ def apply_v3_liquidity_updates(
     pool_in_db = session.scalar(
         select(LiquidityPoolTable).where(
             LiquidityPoolTable.address == pool_address,
-            LiquidityPoolTable.chain == w3.eth.chain_id,
+            LiquidityPoolTable.chain == provider.chain_id,
         )
     )
 
@@ -625,7 +625,7 @@ def _get_or_create_token(
 
 
 def base_aerodrome_v2_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -639,7 +639,7 @@ def base_aerodrome_v2_pool_updater(
     database_type = AerodromeV2PoolTable
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -669,7 +669,7 @@ def base_aerodrome_v2_pool_updater(
             )
 
             (fee,) = raw_call(
-                w3=w3,
+                provider=provider,
                 address=get_checksum_address(exchange.factory),
                 calldata=encode_function_calldata(
                     function_prototype="getFee(address,bool)",
@@ -682,7 +682,7 @@ def base_aerodrome_v2_pool_updater(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
-                    chain=w3.eth.chain_id,
+                    chain=provider.chain_id,
                     stable=stable,
                     token0_id=token0_in_db.id,
                     token1_id=token1_in_db.id,
@@ -694,7 +694,7 @@ def base_aerodrome_v2_pool_updater(
 
 
 def base_aerodrome_v3_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -708,7 +708,7 @@ def base_aerodrome_v3_pool_updater(
     database_type = AerodromeV3PoolTable
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -736,7 +736,7 @@ def base_aerodrome_v3_pool_updater(
             token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
 
             (fee,) = raw_call(
-                w3=w3,
+                provider=provider,
                 address=get_checksum_address(exchange.factory),
                 calldata=encode_function_calldata(
                     function_prototype="getSwapFee(address)",
@@ -749,7 +749,7 @@ def base_aerodrome_v3_pool_updater(
                 database_type(
                     exchange_id=exchange.id,
                     address=pool_address,
-                    chain=w3.eth.chain_id,
+                    chain=provider.chain_id,
                     token0_id=token0_in_db.id,
                     token1_id=token1_in_db.id,
                     fee_token0=fee,
@@ -761,7 +761,7 @@ def base_aerodrome_v3_pool_updater(
 
 
 def base_pancakeswap_v2_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -775,7 +775,7 @@ def base_pancakeswap_v2_pool_updater(
     database_type = PancakeswapV2PoolTable
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -806,7 +806,7 @@ def base_pancakeswap_v2_pool_updater(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
-                    chain=w3.eth.chain_id,
+                    chain=provider.chain_id,
                     token0_id=token0_in_db.id,
                     token1_id=token1_in_db.id,
                     fee_token0=25,
@@ -817,7 +817,7 @@ def base_pancakeswap_v2_pool_updater(
 
 
 def base_pancakeswap_v3_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -831,7 +831,7 @@ def base_pancakeswap_v3_pool_updater(
     database_type = PancakeswapV3PoolTable
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -876,7 +876,7 @@ def base_pancakeswap_v3_pool_updater(
 
 
 def base_sushiswap_v2_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -890,7 +890,7 @@ def base_sushiswap_v2_pool_updater(
     database_type = SushiswapV2PoolTable
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -921,7 +921,7 @@ def base_sushiswap_v2_pool_updater(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
-                    chain=w3.eth.chain_id,
+                    chain=provider.chain_id,
                     token0_id=token0_in_db.id,
                     token1_id=token1_in_db.id,
                     fee_token0=3,
@@ -932,7 +932,7 @@ def base_sushiswap_v2_pool_updater(
 
 
 def base_sushiswap_v3_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -946,7 +946,7 @@ def base_sushiswap_v3_pool_updater(
     database_type = SushiswapV3PoolTable
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -991,7 +991,7 @@ def base_sushiswap_v3_pool_updater(
 
 
 def base_swapbased_v2_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -1005,7 +1005,7 @@ def base_swapbased_v2_pool_updater(
     database_type = SwapbasedV2PoolTable
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -1036,7 +1036,7 @@ def base_swapbased_v2_pool_updater(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
-                    chain=w3.eth.chain_id,
+                    chain=provider.chain_id,
                     token0_id=token0_in_db.id,
                     token1_id=token1_in_db.id,
                     fee_token0=3,
@@ -1047,7 +1047,7 @@ def base_swapbased_v2_pool_updater(
 
 
 def base_uniswap_v2_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -1060,7 +1060,7 @@ def base_uniswap_v2_pool_updater(
     database_type = UniswapV2PoolTable
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -1091,7 +1091,7 @@ def base_uniswap_v2_pool_updater(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
-                    chain=w3.eth.chain_id,
+                    chain=provider.chain_id,
                     token0_id=token0_in_db.id,
                     token1_id=token1_in_db.id,
                     fee_token0=3,
@@ -1102,7 +1102,7 @@ def base_uniswap_v2_pool_updater(
 
 
 def base_uniswap_v3_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -1116,7 +1116,7 @@ def base_uniswap_v3_pool_updater(
     database_type = UniswapV3PoolTable
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -1161,7 +1161,7 @@ def base_uniswap_v3_pool_updater(
 
 
 def base_uniswap_v4_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -1180,7 +1180,7 @@ def base_uniswap_v4_pool_updater(
     assert manager_in_db is not None
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -1227,7 +1227,7 @@ def base_uniswap_v4_pool_updater(
 
 
 def ethereum_pancakeswap_v2_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -1241,7 +1241,7 @@ def ethereum_pancakeswap_v2_pool_updater(
     database_type = PancakeswapV2PoolTable
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -1272,7 +1272,7 @@ def ethereum_pancakeswap_v2_pool_updater(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
-                    chain=w3.eth.chain_id,
+                    chain=provider.chain_id,
                     token0_id=token0_in_db.id,
                     token1_id=token1_in_db.id,
                     fee_token0=25,
@@ -1283,7 +1283,7 @@ def ethereum_pancakeswap_v2_pool_updater(
 
 
 def ethereum_pancakeswap_v3_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -1297,7 +1297,7 @@ def ethereum_pancakeswap_v3_pool_updater(
     database_type = PancakeswapV3PoolTable
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -1342,7 +1342,7 @@ def ethereum_pancakeswap_v3_pool_updater(
 
 
 def ethereum_sushiswap_v2_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -1356,7 +1356,7 @@ def ethereum_sushiswap_v2_pool_updater(
     database_type = SushiswapV2PoolTable
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -1387,7 +1387,7 @@ def ethereum_sushiswap_v2_pool_updater(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
-                    chain=w3.eth.chain_id,
+                    chain=provider.chain_id,
                     token0_id=token0_in_db.id,
                     token1_id=token1_in_db.id,
                     fee_token0=3,
@@ -1398,7 +1398,7 @@ def ethereum_sushiswap_v2_pool_updater(
 
 
 def ethereum_sushiswap_v3_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -1412,7 +1412,7 @@ def ethereum_sushiswap_v3_pool_updater(
     database_type = SushiswapV3PoolTable
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -1457,7 +1457,7 @@ def ethereum_sushiswap_v3_pool_updater(
 
 
 def ethereum_uniswap_v2_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -1471,7 +1471,7 @@ def ethereum_uniswap_v2_pool_updater(
     database_type = UniswapV2PoolTable
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -1502,7 +1502,7 @@ def ethereum_uniswap_v2_pool_updater(
                 database_type(
                     exchange_id=exchange.id,
                     address=get_checksum_address(pool_address),
-                    chain=w3.eth.chain_id,
+                    chain=provider.chain_id,
                     token0_id=token0_in_db.id,
                     token1_id=token1_in_db.id,
                     fee_token0=3,
@@ -1513,7 +1513,7 @@ def ethereum_uniswap_v2_pool_updater(
 
 
 def ethereum_uniswap_v3_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -1527,7 +1527,7 @@ def ethereum_uniswap_v3_pool_updater(
     database_type = UniswapV3PoolTable
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -1572,7 +1572,7 @@ def ethereum_uniswap_v3_pool_updater(
 
 
 def ethereum_uniswap_v4_pool_updater(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
@@ -1591,7 +1591,7 @@ def ethereum_uniswap_v4_pool_updater(
     assert manager_in_db is not None
 
     new_pool_events = get_events_from_contract(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=get_checksum_address(exchange.factory),
@@ -1675,7 +1675,7 @@ def pool_update(chunk_size: int, to_block: str) -> None:
         )
 
         for chain_id in active_chains:
-            w3 = get_web3_from_config(chain_id=chain_id)
+            provider = get_provider_from_config(chain_id=chain_id)
 
             active_exchanges = session.scalars(
                 select(ExchangeTable).where(
@@ -1705,10 +1705,11 @@ def pool_update(chunk_size: int, to_block: str) -> None:
                     raise ValueError(msg)
 
                 last_block = (
-                    get_number_for_block_identifier(identifier=block_tag, w3=w3) + block_offset
+                    get_number_for_block_identifier(identifier=block_tag, provider=provider)
+                    + block_offset
                 )
 
-            if last_block > w3.eth.get_block("latest")["number"]:
+            if last_block > provider.get_block("latest")["number"]:
                 msg = f"{to_block} is ahead of the current chain tip."
                 raise ValueError(msg)
 
@@ -1756,13 +1757,15 @@ def pool_update(chunk_size: int, to_block: str) -> None:
 
                 for exchange in exchanges_to_update:
                     pool_updater = POOL_UPDATER[chain_id, exchange.name]
-                    pool_updater(w3, working_start_block, working_end_block, exchange, session)
+                    pool_updater(
+                        provider, working_start_block, working_end_block, exchange, session
+                    )
 
                 # Fetch and process V3 liquidity events
                 if any("_v3" in exchange.name for exchange in exchanges_to_update):
                     for pool_address, liquidity_events in tqdm.tqdm(
                         get_v3_liquidity_events(
-                            w3=w3,
+                            provider=provider,
                             start_block=working_start_block,
                             end_block=working_end_block,
                         ).items(),
@@ -1778,7 +1781,7 @@ def pool_update(chunk_size: int, to_block: str) -> None:
                         # backfills, so the updater function looks up the exchange for each pool,
                         # checks if it is included in the in-scope set, and returns early if not.
                         apply_v3_liquidity_updates(
-                            w3=w3,
+                            provider=provider,
                             pool_address=pool_address,
                             liquidity_events=liquidity_events,
                             exchanges_in_scope=exchanges_to_update,
@@ -1800,7 +1803,7 @@ def pool_update(chunk_size: int, to_block: str) -> None:
 
                     for pool_id, liquidity_events in tqdm.tqdm(
                         get_v4_liquidity_events(
-                            w3=w3,
+                            provider=provider,
                             start_block=working_start_block,
                             end_block=working_end_block,
                             address=pool_manager_address,
@@ -1834,14 +1837,14 @@ def pool_update(chunk_size: int, to_block: str) -> None:
 
 
 def get_events_from_contract(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     address: ChecksumAddress,
     event_hash: HexBytes,
 ) -> list[LogReceipt]:
     return fetch_logs_retrying(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=[address],
@@ -1850,7 +1853,7 @@ def get_events_from_contract(
 
 
 def get_v3_liquidity_events(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     address: ChecksumAddress | None = None,
@@ -1862,7 +1865,7 @@ def get_v3_liquidity_events(
     pool_updates: dict[ChecksumAddress, list[LogReceipt]] = defaultdict(list)
 
     for liquidity_event in fetch_logs_retrying(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=None if address is None else [address],
@@ -1879,7 +1882,7 @@ def get_v3_liquidity_events(
 
 
 def get_v4_liquidity_events(
-    w3: Web3,
+    provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     address: ChecksumAddress | None = None,
@@ -1891,7 +1894,7 @@ def get_v4_liquidity_events(
     pool_updates: dict[HexBytes, list[LogReceipt]] = defaultdict(list)
 
     for liquidity_event in fetch_logs_retrying(
-        w3=w3,
+        provider=provider,
         start_block=start_block,
         end_block=end_block,
         address=None if address is None else [address],
@@ -1908,7 +1911,7 @@ def get_v4_liquidity_events(
 
 
 POOL_UPDATER: dict[
-    tuple[ChainId, str], Callable[[Web3, int, int, ExchangeTable, Session], None]
+    tuple[ChainId, str], Callable[[ProviderAdapter, int, int, ExchangeTable, Session], None]
 ] = {
     (eth_typing.ChainId.BASE, "aerodrome_v2"): base_aerodrome_v2_pool_updater,
     (eth_typing.ChainId.BASE, "aerodrome_v3"): base_aerodrome_v3_pool_updater,

@@ -15,9 +15,7 @@ from eth_abi.exceptions import DecodingError
 from eth_typing import BlockIdentifier, ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session, scoped_session
-from web3 import Web3
 from web3.exceptions import ContractLogicError
-from web3.types import TxParams
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
@@ -39,6 +37,7 @@ from degenbot.exceptions.liquidity_pool import (
 )
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
+from degenbot.provider import ProviderAdapter
 from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractArbitrage, AbstractUniswapV2Pool
 from degenbot.types.aliases import BlockNumber, ChainId
@@ -56,9 +55,6 @@ from degenbot.uniswap.v2_types import (
     UniswapV2PoolState,
     UniswapV2PoolStateUpdated,
 )
-
-if TYPE_CHECKING:
-    from hexbytes import HexBytes
 
 
 def get_pool_from_database(
@@ -159,8 +155,8 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
 
         self.address = get_checksum_address(address)
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        w3 = connection_manager.get_web3(self.chain_id)
-        state_block = state_block if state_block is not None else w3.eth.block_number
+        provider = connection_manager.get_provider(self.chain_id)
+        state_block = state_block if state_block is not None else provider.get_block_number()
 
         self.init_hash = (
             init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
@@ -180,7 +176,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
                 token1_address = pool_from_db.token1.address
             else:
                 try:
-                    _, (token0_address, token1_address) = self.get_immutable_pool_values(w3=w3)
+                    _, (token0_address, token1_address) = self.get_immutable_pool_values(provider)
                 except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
                     # Contracts differ slightly across Uniswap V2 forks, so decoding may fail.
                     # Catch this here and raise as a pool-specific exception
@@ -196,7 +192,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
                 )
             else:
                 try:
-                    factory, _ = self.get_immutable_pool_values(w3=w3)
+                    factory, _ = self.get_immutable_pool_values(provider)
                     self.factory = get_checksum_address(factory)
                 except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
                     # Contracts differ slightly across Uniswap V2 forks, so decoding may fail.
@@ -256,7 +252,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
         )
         self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, {fee_string}%)"
 
-        reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=state_block)
+        reserves0, reserves1 = self.get_reserves(provider, block_identifier=state_block)
 
         initial_state = self.PoolState.__value__(
             address=self.address,
@@ -308,45 +304,36 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
 
     def get_immutable_pool_values(
         self,
-        w3: Web3,
+        provider: ProviderAdapter,
     ) -> tuple[
         str,  # factory
         tuple[str, str],  # tokens
     ]:
-        with w3.batch_requests() as batch:
-            batch.add_mapping({
-                # These calls default to use 'latest' for block number, which is OK since the
-                # values are immutable
-                w3.eth.call: [
-                    TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="factory()",
-                            function_arguments=None,
-                        ),
-                    ),
-                    TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="token0()",
-                            function_arguments=None,
-                        ),
-                    ),
-                    TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="token1()",
-                            function_arguments=None,
-                        ),
-                    ),
-                ],
-            })
+        factory_result = provider.call(
+            to=self.address,
+            data=encode_function_calldata(
+                function_prototype="factory()",
+                function_arguments=None,
+            ),
+        )
+        token0_result = provider.call(
+            to=self.address,
+            data=encode_function_calldata(
+                function_prototype="token0()",
+                function_arguments=None,
+            ),
+        )
+        token1_result = provider.call(
+            to=self.address,
+            data=encode_function_calldata(
+                function_prototype="token1()",
+                function_arguments=None,
+            ),
+        )
 
-            factory, token0, token1 = batch.execute()
-
-        (factory,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", factory))
-        (token0,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token0))
-        (token1,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token1))
+        (factory,) = eth_abi.abi.decode(types=["address"], data=factory_result)
+        (token0,) = eth_abi.abi.decode(types=["address"], data=token0_result)
+        (token1,) = eth_abi.abi.decode(types=["address"], data=token1_result)
 
         return (
             cast("str", factory),
@@ -376,8 +363,8 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
         return self.token0, self.token1
 
     @property
-    def w3(self) -> Web3:
-        return connection_manager.get_web3(self.chain_id)
+    def w3(self) -> ProviderAdapter:
+        return connection_manager.get_provider(self.chain_id)
 
     @staticmethod
     def swap_is_viable(
@@ -406,9 +393,9 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
             if block_number is not None and block_number < self.update_block:
                 raise LateUpdateError
 
-            w3 = self.w3
-            block_number = block_number if block_number is not None else w3.eth.get_block_number()
-            reserves0, reserves1 = self.get_reserves(w3=w3, block_identifier=block_number)
+            provider = self.w3
+            block_number = block_number if block_number is not None else provider.get_block_number()
+            reserves0, reserves1 = self.get_reserves(provider, block_identifier=block_number)
 
             if (
                 self.reserves_token0,
@@ -687,9 +674,11 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
             else Fraction(10**self.token0.decimals, 10**self.token1.decimals)
         )
 
-    def get_reserves(self, w3: Web3, block_identifier: BlockIdentifier) -> tuple[int, int]:
+    def get_reserves(
+        self, provider: ProviderAdapter, block_identifier: BlockIdentifier
+    ) -> tuple[int, int]:
         reserves_token0, reserves_token1 = raw_call(
-            w3=w3,
+            provider,
             address=self.address,
             calldata=encode_function_calldata(
                 function_prototype="getReserves()",

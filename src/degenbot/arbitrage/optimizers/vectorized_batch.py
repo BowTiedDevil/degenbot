@@ -211,7 +211,7 @@ class VectorizedNewtonSolver:
             dy_dx = gamma_buy * buy_R1 * buy_R0 / denominator_buy**2
             dz_dy = gamma_sell * sell_R0 * sell_R1 / denominator_sell**2
 
-            # Gradient: dP/dx = dz_dy * dy_dx - 1
+            # Gradient: dP/dx = dz_dy * dy_dx - 1 # noqa: ERA001
             dprofit_dx = dz_dy * dy_dx - 1
 
             # Second derivatives
