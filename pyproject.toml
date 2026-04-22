@@ -68,9 +68,7 @@ omit = [
 
 [tool.mypy]
 plugins = ["pydantic.mypy"]
-files=[
-    "src/degenbot",
-]
+files=["src/degenbot"]
 python_version = "3.12"
 python_executable = ".venv/bin/python"
 untyped_calls_exclude = "cvxpy"
@@ -87,26 +85,6 @@ module=[
 ]
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-module = ["tests.*"]
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-disable_error_code = [
-    "arg-type",        # ChecksumAddress str literals, mock→production mismatches
-    "assignment",      # Mock type assignments (OfflineErc20Token→Erc20Token, etc.)
-    "attr-defined",    # Rust extension module stubs (_rs.mobius), pytest internals
-    "call-overload",   # Dict access with union-typed keys in mock plumbing
-    "misc",            # @override on mock classes without a typed base
-    "no-any-return",   # Any returns from dynamic mock/patch code
-    "override",        # Incompatible mock method signatures
-    "type-arg",        # Missing type params on generic containers in test fixtures
-    "union-attr",      # Union-typed attribute access in test helpers
-]
-
-[[tool.mypy.overrides]]
-module = ["tests.*.archive.*", "tests.*.*.archive.*"]
-ignore_errors = true
-
 [tool.ruff]
 line-length = 100
 indent-width = 4
@@ -117,7 +95,7 @@ preview = true
 select = [
 #    "DOC",      # pydoclint
 #    "D",        # pydocstyle
-    "ERA",      # eradicate
+#    "ERA",      # eradicate
     "ANN",      # flake8-annotations
     "ASYNC",    # flake8-async
     "S",        # flake8-bandit
@@ -201,23 +179,6 @@ allow-star-arg-any = true
     "S",        # asserts are expected for testing
     "SLF",      # tests may need to access private attributes to test implementation
     "T20",      # many tests use print
-]
-"tests/**/archive/*" = [
-    "B903",     # archived research code should not be refactored
-    "E402",     # archived code may have non-standard import placement
-    "E501",     # archived code formatting should not be touched
-    "ERA001",   # archived code comments should be preserved as-is
-    "N803",     # archived math notation (R0_buy, R1_sell, etc.)
-]
-"benchmarks/*" = [
-    "ANN",      # type annotations for benchmarks are low priority
-    "C90",      # high complexity benchmarks are acceptable
-    "INP001",   # benchmarks is a standalone script directory
-    "PLC0415",  # lazy imports help benchmark startup time
-    "PLC2701",  # benchmarks may need to import private modules
-    "PLR2004",  # benchmarks compare against arbitrary threshold values
-    "PLR0917",  # many positional args are acceptable for benchmark helpers
-    "T20",      # benchmarks print results
 ]
 
 [tool.pytest.ini_options]
