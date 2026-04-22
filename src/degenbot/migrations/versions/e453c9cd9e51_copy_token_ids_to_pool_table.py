@@ -14,8 +14,6 @@ from alembic import op
 from sqlalchemy.orm import Session
 
 from degenbot.database.models.pools import (
-    AbstractUniswapV2Pool,
-    AbstractUniswapV3Pool,
     AerodromeV2PoolTable,
     AerodromeV3PoolTable,
     CamelotV2PoolTable,
@@ -26,7 +24,9 @@ from degenbot.database.models.pools import (
     SushiswapV3PoolTable,
     SwapbasedV2PoolTable,
     UniswapV2PoolTable,
+    UniswapV2PoolTableBase,
     UniswapV3PoolTable,
+    UniswapV3PoolTableBase,
 )
 
 # revision identifiers, used by Alembic.
@@ -57,7 +57,7 @@ def upgrade() -> None:
         if TYPE_CHECKING:
             assert isinstance(
                 table,
-                (AbstractUniswapV2Pool, AbstractUniswapV3Pool),
+                (UniswapV2PoolTableBase, UniswapV3PoolTableBase),
             )
 
         for pool in session.scalars(sa.select(table)).all():
@@ -65,7 +65,7 @@ def upgrade() -> None:
                 sa.select(LiquidityPoolTable).where(LiquidityPoolTable.id == pool.pool_id)
             )
 
-            assert isinstance(pool, (AbstractUniswapV2Pool, AbstractUniswapV3Pool))
+            assert isinstance(pool, (UniswapV2PoolTableBase, UniswapV3PoolTableBase))
             assert isinstance(base_pool, LiquidityPoolTable)
 
             base_pool.token0_id_ = pool.token0_id

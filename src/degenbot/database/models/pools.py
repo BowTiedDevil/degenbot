@@ -100,7 +100,7 @@ class UniswapFeeMixin:
     fee_denominator: Mapped[int]
 
 
-class AbstractUniswapV2Pool(LiquidityPoolTable, UniswapFeeMixin):
+class UniswapV2PoolTableBase(LiquidityPoolTable, UniswapFeeMixin):
     """
     This abstract class represents a common parent for all Uniswap V2 variants. It may be used to
     identify concrete subclasses at runtime, but otherwise is not useful for performing database
@@ -110,7 +110,7 @@ class AbstractUniswapV2Pool(LiquidityPoolTable, UniswapFeeMixin):
     __abstract__ = True
 
 
-class AerodromeV2PoolTable(AbstractUniswapV2Pool):
+class AerodromeV2PoolTable(UniswapV2PoolTableBase):
     __tablename__ = "aerodrome_v2_pools"
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "aerodrome_v2",
@@ -120,7 +120,7 @@ class AerodromeV2PoolTable(AbstractUniswapV2Pool):
     pool_id: Mapped[PrimaryForeignKeyPoolId]
 
 
-class CamelotV2PoolTable(AbstractUniswapV2Pool):
+class CamelotV2PoolTable(UniswapV2PoolTableBase):
     __tablename__ = "camelot_v2_pools"
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "camelot_v2",
@@ -129,7 +129,7 @@ class CamelotV2PoolTable(AbstractUniswapV2Pool):
     pool_id: Mapped[PrimaryForeignKeyPoolId]
 
 
-class PancakeswapV2PoolTable(AbstractUniswapV2Pool):
+class PancakeswapV2PoolTable(UniswapV2PoolTableBase):
     __tablename__ = "pancakeswap_v2_pools"
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "pancakeswap_v2",
@@ -138,7 +138,7 @@ class PancakeswapV2PoolTable(AbstractUniswapV2Pool):
     pool_id: Mapped[PrimaryForeignKeyPoolId]
 
 
-class SushiswapV2PoolTable(AbstractUniswapV2Pool):
+class SushiswapV2PoolTable(UniswapV2PoolTableBase):
     __tablename__ = "sushiswap_v2_pools"
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "sushiswap_v2",
@@ -147,7 +147,7 @@ class SushiswapV2PoolTable(AbstractUniswapV2Pool):
     pool_id: Mapped[PrimaryForeignKeyPoolId]
 
 
-class SwapbasedV2PoolTable(AbstractUniswapV2Pool):
+class SwapbasedV2PoolTable(UniswapV2PoolTableBase):
     __tablename__ = "swapbased_v2_pools"
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "swapbased_v2",
@@ -156,7 +156,7 @@ class SwapbasedV2PoolTable(AbstractUniswapV2Pool):
     pool_id: Mapped[PrimaryForeignKeyPoolId]
 
 
-class UniswapV2PoolTable(AbstractUniswapV2Pool):
+class UniswapV2PoolTable(UniswapV2PoolTableBase):
     __tablename__ = "uniswap_v2_pools"
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "uniswap_v2",
@@ -165,7 +165,7 @@ class UniswapV2PoolTable(AbstractUniswapV2Pool):
     pool_id: Mapped[PrimaryForeignKeyPoolId]
 
 
-class AbstractUniswapV3Pool(LiquidityPoolTable, UniswapFeeMixin):
+class UniswapV3PoolTableBase(LiquidityPoolTable, UniswapFeeMixin):
     """
     This abstract class represents a parent for all Uniswap V3 variants. It may be used to identify
     concrete subclasses at runtime.
@@ -195,7 +195,7 @@ class AbstractUniswapV3Pool(LiquidityPoolTable, UniswapFeeMixin):
         )
 
 
-class AerodromeV3PoolTable(AbstractUniswapV3Pool):
+class AerodromeV3PoolTable(UniswapV3PoolTableBase):
     __tablename__ = "aerodrome_v3_pools"
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "aerodrome_v3",
@@ -204,7 +204,7 @@ class AerodromeV3PoolTable(AbstractUniswapV3Pool):
     pool_id: Mapped[PrimaryForeignKeyPoolId]
 
 
-class UniswapV3PoolTable(AbstractUniswapV3Pool):
+class UniswapV3PoolTable(UniswapV3PoolTableBase):
     __tablename__ = "uniswap_v3_pools"
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "uniswap_v3",
@@ -213,7 +213,7 @@ class UniswapV3PoolTable(AbstractUniswapV3Pool):
     pool_id: Mapped[PrimaryForeignKeyPoolId]
 
 
-class PancakeswapV3PoolTable(AbstractUniswapV3Pool):
+class PancakeswapV3PoolTable(UniswapV3PoolTableBase):
     __tablename__ = "pancakeswap_v3_pools"
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "pancakeswap_v3",
@@ -222,7 +222,7 @@ class PancakeswapV3PoolTable(AbstractUniswapV3Pool):
     pool_id: Mapped[PrimaryForeignKeyPoolId]
 
 
-class SushiswapV3PoolTable(AbstractUniswapV3Pool):
+class SushiswapV3PoolTable(UniswapV3PoolTableBase):
     __tablename__ = "sushiswap_v3_pools"
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_identity": "sushiswap_v3",
@@ -305,7 +305,7 @@ class ManagedLiquidityPoolTable(Base):
     manager: Mapped[PoolManagerTable] = relationship("PoolManagerTable")
 
 
-class AbstractUniswapV4Pool(ManagedLiquidityPoolTable):
+class UniswapV4PoolTableBase(ManagedLiquidityPoolTable):
     """
     This abstract class represents a parent for all Uniswap V4 variants. It should not be
     instantiated directly, but may be used to query and select child classes.
@@ -360,7 +360,7 @@ class AbstractUniswapV4Pool(ManagedLiquidityPoolTable):
         )
 
 
-class UniswapV4PoolTable(AbstractUniswapV4Pool):
+class UniswapV4PoolTable(UniswapV4PoolTableBase):
     __tablename__ = "uniswap_v4_pools"
     __mapper_args__ = {  # noqa: RUF012
         "polymorphic_on": "kind",

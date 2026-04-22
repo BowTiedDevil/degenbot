@@ -25,9 +25,9 @@ from degenbot.connection import connection_manager
 from degenbot.constants import MAX_INT256, MIN_INT256, ZERO_ADDRESS
 from degenbot.database import db_session
 from degenbot.database.models.pools import (
-    AbstractUniswapV4Pool,
     PoolManagerTable,
     UniswapV4PoolTable,
+    UniswapV4PoolTableBase,
 )
 from degenbot.erc20 import Erc20Token, Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
@@ -191,7 +191,7 @@ def get_pool_from_database(
     pool_manager_address: ChecksumAddress,
     chain_id: int,
     session: Session | scoped_session[Session] = db_session,
-) -> AbstractUniswapV4Pool | None:
+) -> UniswapV4PoolTableBase | None:
     pool_manager_in_db = session.scalar(
         select(PoolManagerTable).where(
             PoolManagerTable.address == pool_manager_address,

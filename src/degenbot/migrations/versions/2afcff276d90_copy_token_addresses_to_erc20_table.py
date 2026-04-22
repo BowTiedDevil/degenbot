@@ -15,8 +15,6 @@ from sqlalchemy.orm import Session
 
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.pools import (
-    AbstractUniswapV2Pool,
-    AbstractUniswapV3Pool,
     AerodromeV2PoolTable,
     AerodromeV3PoolTable,
     CamelotV2PoolTable,
@@ -27,7 +25,9 @@ from degenbot.database.models.pools import (
     SushiswapV3PoolTable,
     SwapbasedV2PoolTable,
     UniswapV2PoolTable,
+    UniswapV2PoolTableBase,
     UniswapV3PoolTable,
+    UniswapV3PoolTableBase,
     UniswapV4PoolTable,
 )
 
@@ -65,7 +65,7 @@ def upgrade() -> None:
         UniswapV3PoolTable,
     ]:
         if TYPE_CHECKING:
-            assert isinstance(table, (AbstractUniswapV2Pool, AbstractUniswapV3Pool))
+            assert isinstance(table, (UniswapV2PoolTableBase, UniswapV3PoolTableBase))
 
         for chain_id, token0_address, token1_address in session.query(
             table.chain,

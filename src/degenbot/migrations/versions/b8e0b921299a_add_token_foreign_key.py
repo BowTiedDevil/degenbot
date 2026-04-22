@@ -15,13 +15,13 @@ from sqlalchemy.orm import Session
 
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.pools import (
-    AbstractUniswapV2Pool,
     AerodromeV2PoolTable,
     CamelotV2PoolTable,
     PancakeswapV2PoolTable,
     SushiswapV2PoolTable,
     SwapbasedV2PoolTable,
     UniswapV2PoolTable,
+    UniswapV2PoolTableBase,
 )
 
 # revision identifiers, used by Alembic.
@@ -49,7 +49,7 @@ def upgrade() -> None:
         UniswapV2PoolTable,
     ]:
         if TYPE_CHECKING:
-            assert isinstance(table, AbstractUniswapV2Pool)
+            assert isinstance(table, UniswapV2PoolTableBase)
 
         tokens.update(session.query(table.chain, table.token0).all())
         tokens.update(session.query(table.chain, table.token1).all())

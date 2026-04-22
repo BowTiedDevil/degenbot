@@ -26,8 +26,6 @@ from degenbot.database import db_session
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.pools import (
-    AbstractUniswapV3Pool,
-    AbstractUniswapV4Pool,
     AerodromeV2PoolTable,
     AerodromeV3PoolTable,
     InitializationMapTable,
@@ -43,7 +41,9 @@ from degenbot.database.models.pools import (
     SwapbasedV2PoolTable,
     UniswapV2PoolTable,
     UniswapV3PoolTable,
+    UniswapV3PoolTableBase,
     UniswapV4PoolTable,
+    UniswapV4PoolTableBase,
 )
 from degenbot.functions import (
     encode_function_calldata,
@@ -226,7 +226,7 @@ def apply_v3_liquidity_updates(
     if (pool_in_db is None) or (pool_in_db.exchange not in exchanges_in_scope):
         return
 
-    assert isinstance(pool_in_db, AbstractUniswapV3Pool)
+    assert isinstance(pool_in_db, UniswapV3PoolTableBase)
 
     pool_liquidity_map = PoolLiquidityMap.model_construct(
         tick_bitmap={
@@ -422,7 +422,7 @@ def apply_v4_liquidity_updates(
         )
     )
 
-    assert isinstance(pool_in_db, AbstractUniswapV4Pool)
+    assert isinstance(pool_in_db, UniswapV4PoolTableBase)
 
     pool_liquidity_map = PoolLiquidityMap.model_construct(
         tick_bitmap={

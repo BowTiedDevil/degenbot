@@ -23,9 +23,9 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
 from degenbot.database import db_session
 from degenbot.database.models.pools import (
-    AbstractUniswapV2Pool,
     LiquidityPoolTable,
     UniswapV2PoolTable,
+    UniswapV2PoolTableBase,
 )
 from degenbot.erc20 import Erc20Token, Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
@@ -40,12 +40,7 @@ from degenbot.exceptions.liquidity_pool import (
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
 from degenbot.registry import pool_registry
-from degenbot.types.abstract import (
-    AbstractArbitrage,
-)
-from degenbot.types.abstract import (
-    AbstractUniswapV2Pool as AbstractConstantProductPool,
-)
+from degenbot.types.abstract import AbstractArbitrage, AbstractUniswapV2Pool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import AbstractPublisherMessage, Publisher, PublisherMixin, Subscriber
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
@@ -70,7 +65,7 @@ def get_pool_from_database(
     address: ChecksumAddress,
     chain_id: int,
     session: Session | scoped_session[Session] = db_session,
-) -> AbstractUniswapV2Pool | None:
+) -> UniswapV2PoolTableBase | None:
     return session.scalar(
         select(LiquidityPoolTable).where(
             LiquidityPoolTable.address == address,
@@ -79,7 +74,7 @@ def get_pool_from_database(
     )  # type: ignore[return-value]
 
 
-class UniswapV2Pool(PublisherMixin, AbstractConstantProductPool):
+class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
     """
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
@@ -172,7 +167,7 @@ class UniswapV2Pool(PublisherMixin, AbstractConstantProductPool):
         )
 
         with db_session() as session:
-            pool_from_db: AbstractUniswapV2Pool = session.scalar(
+            pool_from_db: UniswapV2PoolTableBase = session.scalar(
                 select(LiquidityPoolTable).where(
                     LiquidityPoolTable.address == self.address,
                     LiquidityPoolTable.chain == self._chain_id,

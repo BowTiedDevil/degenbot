@@ -21,7 +21,7 @@ from web3.types import BlockIdentifier, TxParams
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
 from degenbot.database import db_session
-from degenbot.database.models.pools import AbstractUniswapV3Pool, LiquidityPoolTable
+from degenbot.database.models.pools import LiquidityPoolTable, UniswapV3PoolTableBase
 from degenbot.erc20 import Erc20Token, Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.evm import EVMRevertError
@@ -128,7 +128,7 @@ def get_pool_from_database(
     address: ChecksumAddress,
     chain_id: int,
     session: Session | scoped_session[Session] = db_session,
-) -> AbstractUniswapV3Pool | None:
+) -> UniswapV3PoolTableBase | None:
     return session.scalar(
         select(LiquidityPoolTable).where(
             LiquidityPoolTable.address == address,
