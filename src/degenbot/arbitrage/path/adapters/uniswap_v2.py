@@ -1,28 +1,26 @@
 from fractions import Fraction
-from typing import Any
 
 from degenbot.arbitrage.path.pool_adapter import register_pool_adapter
-from degenbot.arbitrage.path.types import PoolCompatibility, SwapVector
+from degenbot.arbitrage.path.types import SwapVector
 from degenbot.arbitrage.solver.types import HopState, MobiusHopState
 from degenbot.arbitrage.types import AbstractSwapAmounts, UniswapV2PoolSwapAmounts
+from degenbot.types.abstract import AbstractUniswapV2Pool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 
 class UniswapV2PoolAdapter:
-    def is_compatible(self, pool: Any) -> PoolCompatibility:
-        return PoolCompatibility.COMPATIBLE
-
-    def extract_fee(self, pool: Any, *, zero_for_one: bool) -> Fraction:
+    def extract_fee(self, pool: UniswapV2Pool, *, zero_for_one: bool) -> Fraction:
         if zero_for_one:
             return pool.fee_token0
         return pool.fee_token1
 
     def to_hop_state(
         self,
-        pool: Any,
+        pool: UniswapV2Pool,
         *,
         zero_for_one: bool,
-        state_override: Any = None,
+        state_override: UniswapV2PoolState | None = None,
     ) -> HopState:
         state = state_override or pool.state
         fee = self.extract_fee(pool, zero_for_one=zero_for_one)
@@ -40,7 +38,7 @@ class UniswapV2PoolAdapter:
 
     def build_swap_amount(
         self,
-        pool: Any,
+        pool: UniswapV2Pool,
         swap_vector: SwapVector,
         amount_in: int,
         amount_out: int,
@@ -53,4 +51,4 @@ class UniswapV2PoolAdapter:
         )
 
 
-register_pool_adapter(UniswapV2Pool, UniswapV2PoolAdapter())
+register_pool_adapter(AbstractUniswapV2Pool, UniswapV2PoolAdapter())

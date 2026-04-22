@@ -1,27 +1,37 @@
 from fractions import Fraction
-from typing import Any
 
 from degenbot.arbitrage.path.pool_adapter import register_pool_adapter
-from degenbot.arbitrage.path.types import PoolCompatibility, SwapVector
-from degenbot.arbitrage.solver.types import (
-    ConcentratedLiquidityHopState,
-    HopState,
-    TickRangeState,
-)
+from degenbot.arbitrage.path.types import SwapVector
+from degenbot.arbitrage.solver.types import ConcentratedLiquidityHopState, HopState, TickRangeState
 from degenbot.arbitrage.types import (
     AbstractSwapAmounts,
     UniswapV3PoolSwapAmounts,
     UniswapV4PoolSwapAmounts,
 )
+from degenbot.types.abstract import AbstractConcentratedLiquidityPool
+from degenbot.uniswap.v3_libraries.tick_bitmap import gen_ticks
+from degenbot.uniswap.v3_libraries.tick_math import (
+    MAX_SQRT_RATIO,
+    MAX_TICK,
+    MIN_SQRT_RATIO,
+    MIN_TICK,
+    get_sqrt_ratio_at_tick,
+)
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.v3_types import UniswapV3PoolState
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from degenbot.uniswap.v4_types import UniswapV4PoolState
 
 Q96 = 2**96
+
+CLPool = UniswapV3Pool | UniswapV4Pool
+CLPoolState = UniswapV3PoolState | UniswapV4PoolState
 
 
 def _v3_virtual_reserves(
     liquidity: int,
     sqrt_price_x96: int,
+    *,
     zero_for_one: bool,
 ) -> tuple[int, int]:
     x_virtual = liquidity * Q96 * Q96 // sqrt_price_x96
@@ -36,7 +46,7 @@ _MAX_TICK_RANGE_CACHE_SIZE = 128
 
 
 def _get_tick_ranges(
-    pool: Any,
+    pool: CLPool,
     zero_for_one: bool,
     max_ranges: int = 3,
 ) -> tuple[tuple[TickRangeState, ...], int] | None:
@@ -55,16 +65,10 @@ def _get_tick_ranges(
 
 
 def _compute_tick_ranges(
-    pool: Any,
+    pool: CLPool,
     zero_for_one: bool,
     max_ranges: int = 3,
 ) -> tuple[tuple[TickRangeState, ...], int] | None:
-    from degenbot.uniswap.v3_libraries.tick_bitmap import gen_ticks
-    from degenbot.uniswap.v3_libraries.tick_math import (
-        MAX_TICK,
-        MIN_TICK,
-        get_sqrt_ratio_at_tick,
-    )
 
     if getattr(pool, "sparse_liquidity_map", True):
         return None
@@ -142,18 +146,20 @@ def _compute_tick_ranges(
 
 
 class ConcentratedLiquidityAdapter:
-    def is_compatible(self, pool: Any) -> PoolCompatibility:
-        return PoolCompatibility.COMPATIBLE
-
-    def extract_fee(self, pool: Any, *, zero_for_one: bool) -> Fraction:
+    def extract_fee(
+        self,
+        pool: CLPool,
+        *,
+        zero_for_one: bool,
+    ) -> Fraction:
         return Fraction(pool.fee, pool.FEE_DENOMINATOR)
 
     def to_hop_state(
         self,
-        pool: Any,
+        pool: CLPool,
         *,
         zero_for_one: bool,
-        state_override: Any = None,
+        state_override: CLPoolState | None = None,
     ) -> HopState:
         state = state_override or pool.state
         fee = self.extract_fee(pool, zero_for_one=zero_for_one)
@@ -190,17 +196,13 @@ class ConcentratedLiquidityAdapter:
             tick_upper=state.tick,
         )
 
+    @staticmethod
     def build_swap_amount(
-        self,
-        pool: Any,
+        pool: CLPool,
         swap_vector: SwapVector,
         amount_in: int,
         amount_out: int,
     ) -> AbstractSwapAmounts:
-        from degenbot.uniswap.v3_libraries.tick_math import (
-            MAX_SQRT_RATIO,
-            MIN_SQRT_RATIO,
-        )
 
         zfo = swap_vector.zero_for_one
         limit = MIN_SQRT_RATIO + 1 if zfo else MAX_SQRT_RATIO - 1
@@ -227,5 +229,4 @@ class ConcentratedLiquidityAdapter:
 
 
 _ADAPTER = ConcentratedLiquidityAdapter()
-register_pool_adapter(UniswapV3Pool, _ADAPTER)
-register_pool_adapter(UniswapV4Pool, _ADAPTER)
+register_pool_adapter(AbstractConcentratedLiquidityPool, _ADAPTER)

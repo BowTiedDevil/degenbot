@@ -39,7 +39,7 @@ from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
 from degenbot.registry import pool_registry
 from degenbot.solidly.solidly_functions import general_calc_exact_in_volatile
-from degenbot.types.abstract import AbstractLiquidityPool
+from degenbot.types.abstract import AbstractAerodromeV2Pool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import AbstractPublisherMessage, Publisher, PublisherMixin, Subscriber
 from degenbot.uniswap.types import UniswapPoolSwapVector
@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from hexbytes import HexBytes
 
 
-class AerodromeV2Pool(PublisherMixin, AbstractLiquidityPool):
+class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
     type PoolState = AerodromeV2PoolState
 
     _state: PoolState

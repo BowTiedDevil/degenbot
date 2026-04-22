@@ -1,28 +1,24 @@
 from fractions import Fraction
-from typing import Any
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
+from degenbot.aerodrome.types import AerodromeV2PoolState
 from degenbot.arbitrage.path.pool_adapter import register_pool_adapter
 from degenbot.arbitrage.path.types import PoolCompatibility, SwapVector
 from degenbot.arbitrage.solver.types import HopState, MobiusHopState
 from degenbot.arbitrage.types import AbstractSwapAmounts
+from degenbot.types.abstract import AbstractAerodromeV2Pool
 
 
 class AerodromeV2PoolAdapter:
-    def is_compatible(self, pool: Any) -> PoolCompatibility:
-        if getattr(pool, "stable", False):
-            return PoolCompatibility.INCOMPATIBLE_INVARIANT
-        return PoolCompatibility.COMPATIBLE
-
-    def extract_fee(self, pool: Any, *, zero_for_one: bool) -> Fraction:
+    def extract_fee(self, pool: AerodromeV2Pool, *, zero_for_one: bool) -> Fraction:
         return pool.fee
 
     def to_hop_state(
         self,
-        pool: Any,
+        pool: AerodromeV2Pool,
         *,
         zero_for_one: bool,
-        state_override: Any = None,
+        state_override: AerodromeV2PoolState | None = None,
     ) -> HopState:
         state = state_override or pool.state
         fee = self.extract_fee(pool, zero_for_one=zero_for_one)
@@ -40,7 +36,7 @@ class AerodromeV2PoolAdapter:
 
     def build_swap_amount(
         self,
-        pool: Any,
+        pool: AerodromeV2Pool,
         swap_vector: SwapVector,
         amount_in: int,
         amount_out: int,
@@ -49,4 +45,12 @@ class AerodromeV2PoolAdapter:
         raise NotImplementedError(msg)
 
 
-register_pool_adapter(AerodromeV2Pool, AerodromeV2PoolAdapter())
+register_pool_adapter(
+    AbstractAerodromeV2Pool,
+    AerodromeV2PoolAdapter(),
+    is_compatible=lambda pool: (
+        PoolCompatibility.INCOMPATIBLE_INVARIANT
+        if getattr(pool, "stable", False)
+        else PoolCompatibility.COMPATIBLE
+    ),
+)

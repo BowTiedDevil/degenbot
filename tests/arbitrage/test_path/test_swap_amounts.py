@@ -6,7 +6,6 @@ swap amounts for V2 pools.
 """
 
 from fractions import Fraction
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -15,7 +14,7 @@ from degenbot.arbitrage.solver import MobiusSolver
 from degenbot.arbitrage.solver.types import MobiusSolveResult, SolverMethod
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
 
-from .conftest import FakeToken, _make_v2_pool
+from .conftest import FakeToken, FakeUniswapV2Pool, _make_v2_pool
 
 FEE_03 = Fraction(3, 1000)
 
@@ -38,7 +37,7 @@ def _make_pool_with_swap(
     reserve1: int,
     fee: Fraction = FEE_03,
     address: str = "0xpool",
-) -> MagicMock:
+) -> FakeUniswapV2Pool:
     pool = _make_v2_pool(token0, token1, reserve0=reserve0, reserve1=reserve1, fee=fee)
     pool.address = address
 

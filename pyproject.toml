@@ -80,8 +80,7 @@ strict = true
 [[tool.mypy.overrides]]
 module=[
     "scipy.*",
-    "tqdm.*",
-    "networkx.*",
+    "tqdm.*",    
 ]
 ignore_missing_imports = true
 
@@ -95,7 +94,7 @@ preview = true
 select = [
 #    "DOC",      # pydoclint
 #    "D",        # pydocstyle
-#    "ERA",      # eradicate
+    "ERA",      # eradicate
     "ANN",      # flake8-annotations
     "ASYNC",    # flake8-async
     "S",        # flake8-bandit

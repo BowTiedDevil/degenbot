@@ -3,21 +3,20 @@ from fractions import Fraction
 from typing import Any
 from weakref import WeakSet
 
-from degenbot.arbitrage.path import adapters as _adapters  # noqa: F401 trigger registration
-from degenbot.arbitrage.path.adapters.concentrated_liquidity import (
-    _v3_virtual_reserves,  # noqa: F401 re-export for tests
+from degenbot.arbitrage.path import adapters  # noqa: F401 trigger registration
+from degenbot.arbitrage.path.adapters.concentrated_liquidity import (  # noqa: F401 re-export for tests
+    _v3_virtual_reserves,
 )
-from degenbot.arbitrage.path.pool_adapter import get_adapter
-from degenbot.arbitrage.path.types import (
-    PathValidationError,
-    PoolCompatibility,
-    SwapVector,
-)
+from degenbot.arbitrage.path.pool_adapter import check_pool_compatibility, get_adapter
+from degenbot.arbitrage.path.types import PathValidationError, PoolCompatibility, SwapVector
 from degenbot.arbitrage.solver.protocol import SolverProtocol
 from degenbot.arbitrage.solver.types import HopState, MobiusSolveResult
 from degenbot.arbitrage.types import (
     AbstractSwapAmounts,
     ArbitrageCalculationResult,
+    UniswapV2PoolSwapAmounts,
+    UniswapV3PoolSwapAmounts,
+    UniswapV4PoolSwapAmounts,
 )
 from degenbot.erc20 import Erc20Token
 from degenbot.types.concrete import (
@@ -30,10 +29,7 @@ from degenbot.types.concrete import (
 
 
 def _check_pool_compatibility(pool: Any) -> PoolCompatibility:
-    adapter = get_adapter(pool)
-    if adapter is None:
-        return PoolCompatibility.INCOMPATIBLE_INVARIANT
-    return adapter.is_compatible(pool)
+    return check_pool_compatibility(pool)
 
 
 def _extract_fee(pool: Any, zero_for_one: bool) -> Fraction:
@@ -75,9 +71,9 @@ class ArbitragePath(PublisherMixin):
     """
     Event-driven arbitrage path helper.
 
-    Wraps a sequence of Mobius-compatible pools, validates token flow,
-    pre-computes directional data, subscribes to state updates, and
-    delegates solving to a swappable SolverProtocol implementation.
+    Wraps a sequence of Mobius-compatible pools, validates token flow, pre-computes directional
+    data, subscribes to state updates, and delegates solving to a swappable SolverProtocol
+    implementation.
     """
 
     def __init__(
@@ -86,7 +82,7 @@ class ArbitragePath(PublisherMixin):
         input_token: Erc20Token,
         solver: SolverProtocol,
         max_input: int | None = None,
-        id: str | None = None,
+        id: str | None = None,  # noqa:A002
     ) -> None:
         if len(pools) < 2:
             msg = "Arbitrage path requires at least 2 pools"
@@ -312,11 +308,6 @@ class ArbitragePath(PublisherMixin):
 
 
 def _extract_amount_in(swap: AbstractSwapAmounts) -> int:
-    from degenbot.arbitrage.types import (
-        UniswapV2PoolSwapAmounts,
-        UniswapV3PoolSwapAmounts,
-        UniswapV4PoolSwapAmounts,
-    )
 
     match swap:
         case UniswapV2PoolSwapAmounts():
@@ -330,11 +321,6 @@ def _extract_amount_in(swap: AbstractSwapAmounts) -> int:
 
 
 def _extract_amount_out(swap: AbstractSwapAmounts) -> int:
-    from degenbot.arbitrage.types import (
-        UniswapV2PoolSwapAmounts,
-        UniswapV3PoolSwapAmounts,
-        UniswapV4PoolSwapAmounts,
-    )
 
     match swap:
         case UniswapV2PoolSwapAmounts():

@@ -5,11 +5,9 @@ Uses lightweight fake pool objects to avoid blockchain dependencies.
 """
 
 from fractions import Fraction
-from unittest.mock import MagicMock
 
 import pytest
 
-from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.arbitrage.path import ArbitragePath, PathValidationError, SwapVector
 from degenbot.arbitrage.path.arbitrage_path import (
     PoolCompatibility,
@@ -24,11 +22,17 @@ from degenbot.arbitrage.solver.types import (
     MobiusHopState,
     MobiusSolveResult,
 )
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
-from .conftest import _make_token, _make_v2_pool, _make_v3_pool
+from .conftest import (
+    FakeAerodromeV2Pool,
+    FakeConcentratedLiquidityPool,
+    FakeSubscriber,
+    FakeUniswapV2Pool,
+    FakeV2PoolState,
+    _make_token,
+    _make_v2_pool,
+    _make_v3_pool,
+)
 
 FEE_03 = Fraction(3, 1000)
 
@@ -60,52 +64,67 @@ class TestSwapVector:
 
 class TestPoolCompatibility:
     def test_v2_compatible(self):
-        pool = MagicMock(spec=UniswapV2Pool)
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeUniswapV2Pool(t0, t1)
         assert _check_pool_compatibility(pool) == PoolCompatibility.COMPATIBLE
 
     def test_v3_compatible(self):
-        pool = MagicMock(spec=UniswapV3Pool)
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeConcentratedLiquidityPool(t0, t1)
         assert _check_pool_compatibility(pool) == PoolCompatibility.COMPATIBLE
 
     def test_v4_compatible(self):
-        pool = MagicMock(spec=UniswapV4Pool)
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeConcentratedLiquidityPool(t0, t1)
         assert _check_pool_compatibility(pool) == PoolCompatibility.COMPATIBLE
 
     def test_aerodrome_volatile_compatible(self):
-        pool = MagicMock(spec=AerodromeV2Pool)
-        pool.stable = False
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeAerodromeV2Pool(t0, t1, stable=False)
         assert _check_pool_compatibility(pool) == PoolCompatibility.COMPATIBLE
 
     def test_aerodrome_stable_incompatible(self):
-        pool = MagicMock(spec=AerodromeV2Pool)
-        pool.stable = True
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeAerodromeV2Pool(t0, t1, stable=True)
         assert _check_pool_compatibility(pool) == PoolCompatibility.INCOMPATIBLE_INVARIANT
 
     def test_unknown_incompatible(self):
-        pool = MagicMock()
-        assert _check_pool_compatibility(pool) == PoolCompatibility.INCOMPATIBLE_INVARIANT
+
+        class _UnknownPool:
+            pass
+
+        assert _check_pool_compatibility(_UnknownPool()) == PoolCompatibility.INCOMPATIBLE_INVARIANT
 
 
 class TestFeeExtraction:
     def test_v3_fee(self):
-        pool = MagicMock(spec=UniswapV3Pool)
-        pool.fee = 3000
-        pool.FEE_DENOMINATOR = 1_000_000
-        fee = _extract_fee(pool, True)
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeConcentratedLiquidityPool(t0, t1, fee=3000)
+        fee = _extract_fee(pool, zero_for_one=True)
         assert fee == Fraction(3000, 1_000_000)
 
     def test_v2_fee_zero_for_one(self):
-        pool = MagicMock(spec=UniswapV2Pool)
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeUniswapV2Pool(t0, t1)
         pool.fee_token0 = Fraction(3, 1000)
         pool.fee_token1 = Fraction(5, 1000)
-        fee = _extract_fee(pool, True)
+        fee = _extract_fee(pool, zero_for_one=True)
         assert fee == Fraction(3, 1000)
 
     def test_v2_fee_one_for_zero(self):
-        pool = MagicMock(spec=UniswapV2Pool)
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeUniswapV2Pool(t0, t1)
         pool.fee_token0 = Fraction(3, 1000)
         pool.fee_token1 = Fraction(5, 1000)
-        fee = _extract_fee(pool, False)
+        fee = _extract_fee(pool, zero_for_one=False)
         assert fee == Fraction(5, 1000)
 
 
@@ -114,7 +133,7 @@ class TestPoolToHopState:
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         pool = _make_v2_pool(t0, t1)
-        hop = _pool_to_hop_state(pool, True)
+        hop = _pool_to_hop_state(pool, zero_for_one=True)
         assert isinstance(hop, MobiusHopState)
         assert hop.reserve_in == 10**18
         assert hop.reserve_out == 2 * 10**18
@@ -124,18 +143,18 @@ class TestPoolToHopState:
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         pool = _make_v3_pool(t0, t1)
-        hop = _pool_to_hop_state(pool, True)
+        hop = _pool_to_hop_state(pool, zero_for_one=True)
         assert isinstance(hop, ConcentratedLiquidityHopState)
 
     def test_v2_direction(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         pool = _make_v2_pool(t0, t1, reserve0=1000, reserve1=2000)
-        hop_forward = _pool_to_hop_state(pool, True)
+        hop_forward = _pool_to_hop_state(pool, zero_for_one=True)
         assert hop_forward.reserve_in == 1000
         assert hop_forward.reserve_out == 2000
 
-        hop_reverse = _pool_to_hop_state(pool, False)
+        hop_reverse = _pool_to_hop_state(pool, zero_for_one=False)
         assert hop_reverse.reserve_in == 2000
         assert hop_reverse.reserve_out == 1000
 
@@ -175,8 +194,8 @@ class TestArbitragePathConstruction:
             input_token=t0,
             solver=solver,
         )
-        pool0.subscribe.assert_called_once_with(path)
-        pool1.subscribe.assert_called_once_with(path)
+        assert path in pool0._subscribers
+        assert path in pool1._subscribers
 
     def test_hop_states_extracted(self):
         t0, _t1, pool0, pool1 = self._make_cyclic_v2_pools()
@@ -292,11 +311,14 @@ class TestArbitragePathValidation:
         t1 = _make_token("0xt1")
         pool0 = _make_v2_pool(t0, t1)
         pool0.address = "0xpool0"
-        pool1 = MagicMock()
-        pool1.token0 = t1
-        pool1.token1 = t0
-        pool1.address = "0xpool1"
-        pool1.subscribe = MagicMock()
+
+        class _IncompatiblePool:
+            def __init__(self, token0, token1, address):
+                self.token0 = token0
+                self.token1 = token1
+                self.address = address
+
+        pool1 = _IncompatiblePool(t1, t0, "0xpool1")
         solver = MobiusSolver()
         with pytest.raises(PathValidationError, match="not Mobius-compatible"):
             ArbitragePath(
@@ -356,9 +378,7 @@ class TestArbitragePathCalculate:
 
         original_result = path.calculate()
 
-        override_state = MagicMock()
-        override_state.reserves_token0 = 5_000_000
-        override_state.reserves_token1 = 2_000_000_000
+        override_state = FakeV2PoolState(5_000_000, 2_000_000_000)
 
         override_result = path.calculate_with_state_override({pool0: override_state})
 
@@ -434,9 +454,6 @@ class TestArbitragePathClose:
         pool1 = _make_v2_pool(t1, t0, reserve0=1_500_000, reserve1=800_000_000)
         pool1.address = "0xpool1"
 
-        pool0.unsubscribe = MagicMock()
-        pool1.unsubscribe = MagicMock()
-
         solver = MobiusSolver()
         path = ArbitragePath(
             pools=[pool0, pool1],
@@ -444,13 +461,13 @@ class TestArbitragePathClose:
             solver=solver,
         )
 
-        subscriber = MagicMock()
+        subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
         path.close()
 
-        pool0.unsubscribe.assert_called_once_with(path)
-        pool1.unsubscribe.assert_called_once_with(path)
+        assert path not in pool0._subscribers
+        assert path not in pool1._subscribers
 
     def test_close_clears_subscribers(self):
         t0 = _make_token("0xtokenA")
@@ -459,8 +476,6 @@ class TestArbitragePathClose:
         pool0.address = "0xpool0"
         pool1 = _make_v2_pool(t1, t0)
         pool1.address = "0xpool1"
-        pool0.unsubscribe = MagicMock()
-        pool1.unsubscribe = MagicMock()
 
         solver = MobiusSolver()
         path = ArbitragePath(
@@ -469,7 +484,7 @@ class TestArbitragePathClose:
             solver=solver,
         )
 
-        subscriber = MagicMock()
+        subscriber = FakeSubscriber()
         path.subscribe(subscriber)
         assert len(path._subscribers) == 1
 

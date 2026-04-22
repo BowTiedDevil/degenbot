@@ -44,7 +44,7 @@ from degenbot.exceptions.liquidity_pool import (
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
 from degenbot.registry import pool_registry
-from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
+from degenbot.types.abstract import AbstractArbitrage, AbstractConcentratedLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import (
     AbstractPublisherMessage,
@@ -230,7 +230,7 @@ class StepComputations:
     fee_growth_global_x128: int | None = None  # unused
 
 
-class UniswapV4Pool(PublisherMixin, AbstractLiquidityPool):
+class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
     _state_cache: deque[UniswapV4PoolState]
 
     SLOT0_STRUCT_TYPES = (

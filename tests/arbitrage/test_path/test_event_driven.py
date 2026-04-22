@@ -7,7 +7,6 @@ don't affect subscribed state.
 """
 
 from fractions import Fraction
-from unittest.mock import MagicMock
 
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.arbitrage.path.arbitrage_path import (
@@ -18,20 +17,13 @@ from degenbot.arbitrage.solver import MobiusSolver
 from degenbot.arbitrage.solver.types import MobiusSolveResult
 from degenbot.types.concrete import PoolStateMessage
 
-from .conftest import FakeToken, _make_v2_pool
+from .conftest import FakeSubscriber, FakeToken, FakeV2PoolState, _make_v2_pool
 
 FEE_03 = Fraction(3, 1000)
 
 
-def _make_state(reserve0: int, reserve1: int) -> MagicMock:
-    state = MagicMock()
-    state.reserves_token0 = reserve0
-    state.reserves_token1 = reserve1
-    return state
-
-
-def _make_v2_message(state: MagicMock) -> PoolStateMessage:
-    msg = MagicMock(spec=PoolStateMessage)
+def _make_v2_message(state: FakeV2PoolState) -> PoolStateMessage:
+    msg = PoolStateMessage()
     msg.state = state
     return msg
 
@@ -52,21 +44,13 @@ def _make_cyclic_path():
     return path, pool0, pool1, t0, t1
 
 
-class FakeSubscriber:
-    def __init__(self) -> None:
-        self.notifications: list[tuple] = []
-
-    def notify(self, publisher, message) -> None:
-        self.notifications.append((publisher, message))
-
-
 class TestEventDrivenAutoSolve:
     def test_pool_update_triggers_resolve(self):
         path, pool0, _pool1, _t0, _t1 = _make_cyclic_path()
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
-        new_state = _make_state(3_000_000, 900_000_000)
+        new_state = FakeV2PoolState(3_000_000, 900_000_000)
         message = _make_v2_message(new_state)
         path.notify(publisher=pool0, message=message)
 
@@ -77,7 +61,7 @@ class TestEventDrivenAutoSolve:
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
-        new_state = _make_state(3_000_000, 900_000_000)
+        new_state = FakeV2PoolState(3_000_000, 900_000_000)
         message = _make_v2_message(new_state)
         path.notify(publisher=pool0, message=message)
 
@@ -90,7 +74,7 @@ class TestEventDrivenAutoSolve:
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
-        symmetric_state = _make_state(1_000_000, 1_000_000)
+        symmetric_state = FakeV2PoolState(1_000_000, 1_000_000)
         pool0.state.reserves_token0 = 1_000_000
         pool0.state.reserves_token1 = 1_000_000
 
@@ -111,7 +95,7 @@ class TestEventDrivenAutoSolve:
 
         original_hop_0 = path.hop_states[0]
 
-        override_state = _make_state(5_000_000, 2_000_000_000)
+        override_state = FakeV2PoolState(5_000_000, 2_000_000_000)
         path.calculate_with_state_override({pool0: override_state})
 
         assert path.hop_states[0].reserve_in == original_hop_0.reserve_in
@@ -121,10 +105,10 @@ class TestEventDrivenAutoSolve:
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
-        new_state_0 = _make_state(3_000_000, 900_000_000)
+        new_state_0 = FakeV2PoolState(3_000_000, 900_000_000)
         path.notify(publisher=pool0, message=_make_v2_message(new_state_0))
 
-        new_state_1 = _make_state(1_200_000, 600_000_000)
+        new_state_1 = FakeV2PoolState(1_200_000, 600_000_000)
         path.notify(publisher=pool1, message=_make_v2_message(new_state_1))
 
         assert len(subscriber.notifications) >= 2
@@ -136,7 +120,7 @@ class TestEventDrivenAutoSolve:
 
         unknown_pool = _make_v2_pool(t0, t1)
         unknown_pool.address = "0xunknown"
-        new_state = _make_state(3_000_000, 900_000_000)
+        new_state = FakeV2PoolState(3_000_000, 900_000_000)
         path.notify(
             publisher=unknown_pool,
             message=_make_v2_message(new_state),
@@ -160,7 +144,7 @@ class TestEventDrivenAutoSolve:
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
-        profitable_state = _make_state(3_000_000, 1_500_000_000)
+        profitable_state = FakeV2PoolState(3_000_000, 1_500_000_000)
         pool0.state.reserves_token0 = 3_000_000
         pool0.state.reserves_token1 = 1_500_000_000
 

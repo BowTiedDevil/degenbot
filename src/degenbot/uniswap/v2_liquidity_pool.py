@@ -40,7 +40,12 @@ from degenbot.exceptions.liquidity_pool import (
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
 from degenbot.registry import pool_registry
-from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
+from degenbot.types.abstract import (
+    AbstractArbitrage,
+)
+from degenbot.types.abstract import (
+    AbstractUniswapV2Pool as AbstractConstantProductPool,
+)
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import AbstractPublisherMessage, Publisher, PublisherMixin, Subscriber
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
@@ -74,7 +79,7 @@ def get_pool_from_database(
     )  # type: ignore[return-value]
 
 
-class UniswapV2Pool(PublisherMixin, AbstractLiquidityPool):
+class UniswapV2Pool(PublisherMixin, AbstractConstantProductPool):
     """
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """

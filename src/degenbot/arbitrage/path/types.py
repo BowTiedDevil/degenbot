@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, auto
 
 from degenbot.erc20 import Erc20Token
 
@@ -12,9 +12,9 @@ class SwapVector:
 
 
 class PoolCompatibility(Enum):
-    COMPATIBLE = "compatible"
-    INCOMPATIBLE_INVARIANT = "incompatible_invariant"
-    INCOMPATIBLE_TOKENS = "incompatible_tokens"
+    COMPATIBLE = auto()
+    INCOMPATIBLE_INVARIANT = auto()
+    INCOMPATIBLE_TOKENS = auto()
 
 
 class PathValidationError(Exception): ...
