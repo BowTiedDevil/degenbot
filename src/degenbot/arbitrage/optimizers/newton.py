@@ -38,10 +38,10 @@ from degenbot.arbitrage.optimizers.base import (
     OptimizerResult,
     OptimizerType,
 )
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
-    from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 
 def v2_profit_gradient_and_hessian(
@@ -267,9 +267,6 @@ class NewtonV2Optimizer(ArbitrageOptimizer):
             )
 
         pool_a, pool_b = pools
-
-        # Import here to avoid circular imports
-        from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
         # Accept both real V2 pools and mock pools for testing
         def is_v2_pool(p):

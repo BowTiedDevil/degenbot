@@ -25,10 +25,10 @@ from degenbot.arbitrage.optimizers.base import (
     OptimizerResult,
     OptimizerType,
 )
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
-    from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 
 @dataclass(frozen=True)
@@ -213,9 +213,6 @@ class BoundedProductOptimizer:
             )
 
         pool = pools[0]
-
-        # Import here to avoid circular imports
-        from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
         if not isinstance(pool, UniswapV3Pool):
             elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000

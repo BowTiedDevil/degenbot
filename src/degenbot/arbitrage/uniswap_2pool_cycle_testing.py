@@ -22,8 +22,14 @@ from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from degenbot.aerodrome.types import AerodromeV2PoolState
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver as _ArbSolver,
+)
+from degenbot.arbitrage.optimizers.solver import (
     HopType as _HopType,
+)
+from degenbot.arbitrage.optimizers.solver import (
     SolveInput as _SolveInput,
+)
+from degenbot.arbitrage.optimizers.solver import (
     pool_state_to_hop as _pool_state_to_hop,
 )
 from degenbot.arbitrage.types import (

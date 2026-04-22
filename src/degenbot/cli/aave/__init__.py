@@ -1,7 +1,12 @@
 """Aave V3 CLI subpackage for market management and position tracking."""
 
 # Re-export types
-from degenbot.cli.aave.types import TokenType, TransactionContext
+# Import commands module to register CLI commands
+# This must happen after other imports to avoid circular dependencies
+from degenbot.cli.aave import commands
+
+# Re-export the aave CLI group
+from degenbot.cli.aave.commands import aave
 
 # Re-export constants
 from degenbot.cli.aave.constants import (
@@ -23,13 +28,7 @@ from degenbot.cli.aave.event_fetchers import (
     fetch_scaled_token_events,
     fetch_stk_aave_events,
 )
-
-# Import commands module to register CLI commands
-# This must happen after other imports to avoid circular dependencies
-from degenbot.cli.aave import commands
-
-# Re-export the aave CLI group
-from degenbot.cli.aave.commands import aave
+from degenbot.cli.aave.types import TokenType, TransactionContext
 
 __all__ = [
     # CLI
@@ -51,5 +50,5 @@ __all__ = [
     "fetch_pool_events",
     "fetch_reserve_initialization_events",
     "fetch_scaled_token_events",
-    "fetch_stk_aave_events",
+    "fetch_stk_aave_events", "commands",
 ]

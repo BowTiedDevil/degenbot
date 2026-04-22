@@ -265,8 +265,7 @@ class DualDecompositionSolver:
 
         if self.use_lbfgs:
             return self._solve_lbfgs(markets, n_tokens, nu)
-        else:
-            return self._solve_gradient_descent(markets, n_tokens, nu)
+        return self._solve_gradient_descent(markets, n_tokens, nu)
 
     def _initialize_prices(
         self,

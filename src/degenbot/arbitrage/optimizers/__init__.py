@@ -45,6 +45,14 @@ from degenbot.arbitrage.optimizers.base import (
     OptimizerResult,
     OptimizerType,
 )
+from degenbot.arbitrage.optimizers.batch_mobius import (
+    BatchMobiusOptimizer,
+    BatchMobiusPathInput,
+    SerialMobiusSolver,
+    VectorizedMobiusResult,
+    VectorizedMobiusSolver,
+    generate_batch_paths,
+)
 from degenbot.arbitrage.optimizers.bounded_product import (
     BoundedProductCFMM,
     BoundedProductOptimizer,
@@ -80,6 +88,37 @@ from degenbot.arbitrage.optimizers.newton import (
     v2_optimal_arbitrage_newton,
     v2_profit_gradient_and_hessian,
 )
+from degenbot.arbitrage.optimizers.solver import (
+    ArbSolver,
+    BalancerMultiTokenHop,
+    BalancerMultiTokenSolver,
+    BalancerWeightedHop,
+    BoundedProductHop,
+    ConstantProductHop,
+    CurveStableswapHop,
+    Hop,
+    HopType,
+    PiecewiseMobiusSolver,
+    PoolInvariant,
+    SolidlyStableHop,
+    SolidlyStableSolver,
+    SolveInput,
+    SolveResult,
+    SolverMethod,
+    V3TickRangeInfo,
+    pool_state_to_hop,
+    pool_to_hop,
+    pools_to_solve_input,
+)
+from degenbot.arbitrage.optimizers.solver import (
+    BrentSolver as BrentSolverUnified,
+)
+from degenbot.arbitrage.optimizers.solver import (
+    MobiusSolver as MobiusSolverUnified,
+)
+from degenbot.arbitrage.optimizers.solver import (
+    NewtonSolver as NewtonSolverUnified,
+)
 
 # V2-V3 optimizer
 from degenbot.arbitrage.optimizers.v2_v3_optimizer import (
@@ -107,39 +146,6 @@ from degenbot.arbitrage.optimizers.v3_tick_predictor import (
     sqrt_price_to_tick,
     tick_range_to_bounded_product,
     tick_to_sqrt_price,
-)
-from degenbot.arbitrage.optimizers.batch_mobius import (
-    BatchMobiusOptimizer,
-    BatchMobiusPathInput,
-    VectorizedMobiusResult,
-    VectorizedMobiusSolver,
-    SerialMobiusSolver,
-    generate_batch_paths,
-)
-from degenbot.arbitrage.optimizers.solver import (
-    ArbSolver,
-    BoundedProductHop,
-    BrentSolver as BrentSolverUnified,
-    ConstantProductHop,
-    CurveStableswapHop,
-    Hop,
-    HopType,
-    MobiusSolver as MobiusSolverUnified,
-    NewtonSolver as NewtonSolverUnified,
-    PiecewiseMobiusSolver,
-    V3TickRangeInfo,
-    PoolInvariant,
-    SolidlyStableHop,
-    SolidlyStableSolver,
-    BalancerWeightedHop,
-    BalancerMultiTokenHop,
-    BalancerMultiTokenSolver,
-    SolveInput,
-    SolveResult,
-    SolverMethod,
-    pool_to_hop,
-    pool_state_to_hop,
-    pools_to_solve_input,
 )
 from degenbot.arbitrage.optimizers.vectorized_batch import (
     BatchNewtonOptimizer,
@@ -265,5 +271,5 @@ __all__ = [
     "v2_optimal_arbitrage_newton",
     "v2_profit_gradient_and_hessian",
     "generate_batch_paths",
-    "v3_tick_range_to_bounded_product",
+    "v3_tick_range_to_bounded_product", "TickRangeCrossing", "V3TickRangeSequence", "SerialMobiusSolver", "V3TickRangeInfo",
 ]

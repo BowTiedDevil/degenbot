@@ -24,7 +24,6 @@ from degenbot.arbitrage.optimizers.base import (
 
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
-    from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 
 @dataclass
@@ -134,8 +133,7 @@ def multi_pool_newton_solve(
 
         # Finite difference Hessian (more stable for multi-pool)
         eps = x * 1e-6
-        if eps < 1.0:
-            eps = 1.0
+        eps = max(eps, 1.0)
 
         _, gradient_plus = compute_path_gradient(x + eps, pool_states)
         _, gradient_minus = compute_path_gradient(x - eps, pool_states)
@@ -224,9 +222,6 @@ class ChainRuleNewtonOptimizer:
                 optimizer_type=self.optimizer_type,
                 error_message="Chain rule optimizer requires 2+ pools",
             )
-
-        # Import here to avoid circular imports
-        from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
         # Validate pools and build pool states
         pool_states = []

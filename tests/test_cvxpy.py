@@ -17,7 +17,7 @@ from cvxpy.atoms.geo_mean import geo_mean
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage.uniswap_multipool_cycle_testing import (
-    _UniswapMultiPoolCycleTesting,  # noqa: PLC2701
+    _UniswapMultiPoolCycleTesting,
 )
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import set_web3

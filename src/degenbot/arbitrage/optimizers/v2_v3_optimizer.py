@@ -14,10 +14,9 @@ allowing us to predict which V3 tick range will be active after arbitrage.
 import math
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from degenbot.arbitrage.optimizers.base import (
-    OptimizerResult,
     OptimizerType,
 )
 from degenbot.arbitrage.optimizers.v3_tick_predictor import (
@@ -25,7 +24,6 @@ from degenbot.arbitrage.optimizers.v3_tick_predictor import (
     TickRange,
     V3PoolState,
     estimate_price_impact,
-    sqrt_price_to_tick,
     tick_range_to_bounded_product,
     tick_to_sqrt_price,
 )
@@ -276,10 +274,9 @@ def sort_ranges_by_equilibrium_distance(
         """Compute distance from sqrt price to range center."""
         if tick_range.sqrt_price_lower <= equilibrium_sqrt_price <= tick_range.sqrt_price_upper:
             return 0.0  # Inside range
-        elif equilibrium_sqrt_price < tick_range.sqrt_price_lower:
+        if equilibrium_sqrt_price < tick_range.sqrt_price_lower:
             return tick_range.sqrt_price_lower - equilibrium_sqrt_price
-        else:
-            return equilibrium_sqrt_price - tick_range.sqrt_price_upper
+        return equilibrium_sqrt_price - tick_range.sqrt_price_upper
 
     return sorted(tick_ranges, key=distance_to_range)
 
@@ -382,8 +379,7 @@ def solve_v2_v3_single_range(
 
         # Simple gradient estimation (finite difference)
         eps = x * 1e-6
-        if eps < 1.0:
-            eps = 1.0
+        eps = max(eps, 1.0)
 
         # Recompute with x + eps
         x_plus = x + eps

@@ -39,6 +39,39 @@ from enum import Enum
 from fractions import Fraction
 from typing import Any
 
+from degenbot.aerodrome.pools import AerodromeV2Pool
+from degenbot.arbitrage.optimizers.balancer_weighted import (
+    BalancerMultiTokenState as _BalancerMultiTokenState,
+)
+from degenbot.arbitrage.optimizers.balancer_weighted import (
+    BalancerWeightedPoolSolver as _BalancerWeightedPoolSolver,
+)
+from degenbot.arbitrage.optimizers.mobius import (
+    HopState as _MobiusHopState,
+)
+from degenbot.arbitrage.optimizers.mobius import (
+    V3TickRangeHop as _V3TickRangeHop,
+)
+from degenbot.arbitrage.optimizers.mobius import (
+    V3TickRangeSequence as _V3TickRangeSequence,
+)
+from degenbot.arbitrage.optimizers.mobius import (
+    compute_mobius_coefficients as _compute_mobius_coefficients,
+)
+from degenbot.arbitrage.optimizers.mobius import (
+    mobius_solve as _mobius_solve,
+)
+from degenbot.arbitrage.optimizers.mobius import (
+    simulate_path as _mobius_simulate_path,
+)
+from degenbot.camelot.pools import CamelotLiquidityPool
+from degenbot.erc20.erc20 import Erc20Token
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v3_libraries.tick_bitmap import gen_ticks
+from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK, get_sqrt_ratio_at_tick
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+
 # Feature flag: when True, RustArbSolver.solve() receives RustIntHopState objects
 # and does float solve + U256 integer refinement in a single Rust call.
 # When False, falls back to the old two-step approach (float tuples then
@@ -51,29 +84,11 @@ USE_MERGED_INT_REFINEMENT = bool(os.environ.get("DEGENBOT_MERGED_INT_REFINEMENT"
 # When False, falls back to RustIntHopState objects.
 USE_RAW_ARRAY_MARSHALLING = bool(os.environ.get("DEGENBOT_RAW_ARRAY_MARSHALLING", "1"))
 
-from degenbot.aerodrome.pools import AerodromeV2Pool
-from degenbot.camelot.pools import CamelotLiquidityPool
-from degenbot.erc20.erc20 import Erc20Token
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v3_libraries.tick_bitmap import gen_ticks
-from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK
-from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+# Feature flag: when True, ArbSolver.solve() delegates to the generalized
+# MobiusSolver from degenbot.arbitrage.solver. When False, uses the existing
+# inline dispatch code.
+USE_GENERALIZED_SOLVER = bool(os.environ.get("DEGENBOT_GENERALIZED_SOLVER", ""))
 
-# V3 types for piecewise-Möbius (imported at runtime to avoid circular imports)
-V3TickRangeHop = None
-V3TickRangeSequence = None
-
-
-def _import_v3_types() -> tuple[type, type]:
-    """Import V3 types at runtime to avoid circular imports."""
-    global V3TickRangeHop, V3TickRangeSequence
-    if V3TickRangeHop is None:
-        from degenbot.arbitrage.optimizers.mobius import V3TickRangeHop as _V3TickRangeHop
-        from degenbot.arbitrage.optimizers.mobius import V3TickRangeSequence as _V3TickRangeSequence
-        V3TickRangeHop = _V3TickRangeHop
-        V3TickRangeSequence = _V3TickRangeSequence
-    return V3TickRangeHop, V3TickRangeSequence
 
 # ---------------------------------------------------------------------------
 # Core Types
@@ -1498,34 +1513,21 @@ class PiecewiseMobiusSolver(Solver):
                 return rust_result
             # If Rust fails, fall through to Python implementation
 
-        from degenbot.arbitrage.optimizers.mobius import (
-            HopState,
-            TickRangeCrossing,
-            V3TickRangeHop,
-            V3TickRangeSequence,
-            compute_mobius_coefficients,
-            mobius_solve,
-            simulate_path,
-        )
-
-        # Convert V3TickRangeInfo to V3TickRangeHop
+        # Convert V3TickRangeInfo to _V3TickRangeHop
         # Determine swap direction from hop reserves
         zero_for_one = v3_hop.reserve_in > v3_hop.reserve_out
 
-        v3_ranges: list[V3TickRangeHop] = []
+        v3_ranges: list[_V3TickRangeHop] = []
         for i, range_info in enumerate(v3_hop.tick_ranges):
-            # For current range, use actual sqrt_price; for others use lower bound
             if i == v3_hop.current_range_index:
                 sqrt_price_current = float(v3_hop.sqrt_price) / Q96
             elif i < v3_hop.current_range_index:
-                # Range "above" current (higher price for zero_for_one)
                 sqrt_price_current = float(range_info.sqrt_price_upper) / Q96
             else:
-                # Range "below" current (lower price for zero_for_one)
                 sqrt_price_current = float(range_info.sqrt_price_lower) / Q96
 
             v3_ranges.append(
-                V3TickRangeHop(
+                _V3TickRangeHop(
                     liquidity=float(range_info.liquidity),
                     sqrt_price_current=sqrt_price_current,
                     sqrt_price_lower=float(range_info.sqrt_price_lower) / Q96,
@@ -1535,7 +1537,7 @@ class PiecewiseMobiusSolver(Solver):
                 )
             )
 
-        sequence = V3TickRangeSequence(tuple(v3_ranges))
+        sequence = _V3TickRangeSequence(tuple(v3_ranges))
 
         # Compute crossing data for this candidate
         try:
@@ -1551,42 +1553,26 @@ class PiecewiseMobiusSolver(Solver):
                 solve_time_ns=0,
             )
 
-        # Build HopState lists for before/after V3
-        hops_before: list[HopState] = []
-        hops_after: list[HopState] = []
+        # Build _MobiusHopState lists for before/after V3
+        hops_before: list[_MobiusHopState] = []
+        hops_after: list[_MobiusHopState] = []
 
-        # Convert hops before V3 to HopState
+        # Convert hops before V3 to _MobiusHopState
         for i, hop in enumerate(solve_input.hops[:v3_hop_index]):
-            if isinstance(hop, ConstantProductHop):
+            if isinstance(hop, ConstantProductHop) or isinstance(hop, BoundedProductHop):
                 hops_before.append(
-                    HopState(
-                        reserve_in=float(hop.reserve_in),
-                        reserve_out=float(hop.reserve_out),
-                        fee=float(hop.fee),
-                    )
-                )
-            elif isinstance(hop, BoundedProductHop):
-                hops_before.append(
-                    HopState(
+                    _MobiusHopState(
                         reserve_in=float(hop.reserve_in),
                         reserve_out=float(hop.reserve_out),
                         fee=float(hop.fee),
                     )
                 )
 
-        # Convert hops after V3 to HopState
+        # Convert hops after V3 to _MobiusHopState
         for i, hop in enumerate(solve_input.hops[v3_hop_index + 1 :]):
-            if isinstance(hop, ConstantProductHop):
+            if isinstance(hop, ConstantProductHop) or isinstance(hop, BoundedProductHop):
                 hops_after.append(
-                    HopState(
-                        reserve_in=float(hop.reserve_in),
-                        reserve_out=float(hop.reserve_out),
-                        fee=float(hop.fee),
-                    )
-                )
-            elif isinstance(hop, BoundedProductHop):
-                hops_after.append(
-                    HopState(
+                    _MobiusHopState(
                         reserve_in=float(hop.reserve_in),
                         reserve_out=float(hop.reserve_out),
                         fee=float(hop.fee),
@@ -1594,8 +1580,8 @@ class PiecewiseMobiusSolver(Solver):
                 )
 
         # Pre-compute Möbius coefficients
-        coeffs_before = compute_mobius_coefficients(hops_before) if hops_before else None
-        coeffs_after = compute_mobius_coefficients(hops_after) if hops_after else None
+        coeffs_before = _compute_mobius_coefficients(hops_before) if hops_before else None
+        coeffs_after = _compute_mobius_coefficients(hops_after) if hops_after else None
 
         # Get ending range's HopState
         ending_hop_state = crossing.ending_range.to_hop_state()
@@ -1626,7 +1612,7 @@ class PiecewiseMobiusSolver(Solver):
         )
 
         try:
-            x_mobius, _, _ = mobius_solve(full_hops, max_input=max_input_float)
+            x_mobius, _, _ = _mobius_solve(full_hops, max_input=max_input_float)
         except (ZeroDivisionError, ValueError):
             x_mobius = x_min + 1.0
 
@@ -1669,7 +1655,7 @@ class PiecewiseMobiusSolver(Solver):
                 return -x  # Can't cover crossing
 
             remaining = amt_v3 - crossing.crossing_gross_input
-            variable_out = simulate_path(remaining, [ending_hop_state])
+            variable_out = _mobius_simulate_path(remaining, [ending_hop_state])
             v3_out = crossing.crossing_output + variable_out
 
             # Validate ending range
@@ -1859,15 +1845,7 @@ class PiecewiseMobiusSolver(Solver):
             # Convert Python hops to Rust hops
             rust_hops = []
             for hop in solve_input.hops:
-                if isinstance(hop, ConstantProductHop):
-                    rust_hops.append(
-                        mobius.RustHopState(
-                            float(hop.reserve_in),
-                            float(hop.reserve_out),
-                            float(hop.fee),
-                        )
-                    )
-                elif isinstance(hop, BoundedProductHop):
+                if isinstance(hop, ConstantProductHop) or isinstance(hop, BoundedProductHop):
                     rust_hops.append(
                         mobius.RustHopState(
                             float(hop.reserve_in),
@@ -2042,9 +2020,8 @@ class PiecewiseMobiusSolver(Solver):
             # Check both hops are V3 with tick range data
             v3_hops: list[BoundedProductHop] = []
             for hop in solve_input.hops:
-                if (
-                    hop.invariant == PoolInvariant.BOUNDED_PRODUCT
-                    and isinstance(hop, BoundedProductHop)
+                if hop.invariant == PoolInvariant.BOUNDED_PRODUCT and isinstance(
+                    hop, BoundedProductHop
                 ):
                     v3_hops.append(hop)
                 else:
@@ -2135,7 +2112,7 @@ class PiecewiseMobiusSolver(Solver):
     def _estimate_final_sqrt_price(
         self,
         amount_in: float,
-        ending_range: V3TickRangeHop,
+        ending_range: _V3TickRangeHop,
     ) -> float:
         """Estimate the final sqrt price after swapping within ending range."""
         if amount_in <= 0:
@@ -2439,8 +2416,7 @@ class SolidlyStableSolver(Solver):
 
         if has_swap_fn:
             return self._solve_golden_section(solve_input, mobius_coeffs, start_ns)
-        else:
-            return self._solve_newton(solve_input, mobius_coeffs, start_ns)
+        return self._solve_newton(solve_input, mobius_coeffs, start_ns)
 
     def _solve_golden_section(
         self,
@@ -2693,10 +2669,6 @@ class BalancerMultiTokenSolver(Solver):
         max_signatures
             Maximum signatures to evaluate before forcing pruning.
         """
-        from degenbot.arbitrage.optimizers.balancer_weighted import (
-            BalancerWeightedPoolSolver as _BalancerWeightedPoolSolver,
-        )
-
         self._solver = _BalancerWeightedPoolSolver(
             use_heuristic_pruning=use_heuristic_pruning,
             max_signatures=max_signatures,
@@ -2722,10 +2694,6 @@ class BalancerMultiTokenSolver(Solver):
                 error="BalancerMultiTokenSolver requires single BalancerMultiTokenHop",
                 solve_time_ns=time.perf_counter_ns() - start_ns,
             )
-
-        from degenbot.arbitrage.optimizers.balancer_weighted import (
-            BalancerMultiTokenState as _BalancerMultiTokenState,
-        )
 
         hop = solve_input.hops[0]
         assert isinstance(hop, BalancerMultiTokenHop)
@@ -2825,8 +2793,8 @@ class ArbSolver(Solver):
         self._solidly = SolidlyStableSolver()
         self._balancer_multi = BalancerMultiTokenSolver()
         self._brent = BrentSolver()
-        # Cache for V3 tick range sequences to avoid repeated construction
         self._v3_sequence_cache: dict[tuple, Any] = {}
+        self._generalized_solver: Any = None
         self._try_load_rust()
 
     def _try_load_rust(self) -> None:
@@ -2848,9 +2816,7 @@ class ArbSolver(Solver):
         construction on the solve path.
         """
         if self._pool_cache is None:
-            raise RuntimeError(
-                "Pool cache requires the Rust extension (degenbot_rs)"
-            )
+            raise RuntimeError("Pool cache requires the Rust extension (degenbot_rs)")
         return self._pool_cache
 
     def register_pool(
@@ -3007,6 +2973,11 @@ class ArbSolver(Solver):
         """
         start_ns = time.perf_counter_ns()
 
+        if USE_GENERALIZED_SOLVER:
+            result = self._try_generalized_solve(solve_input, start_ns)
+            if result is not None:
+                return result
+
         # Try Rust fast path (handles V2, V3 single-range, V3 multi-range, V3-V3)
         if self._rust_solver is not None:
             result = self._try_rust_solve(solve_input, start_ns)
@@ -3049,9 +3020,7 @@ class ArbSolver(Solver):
             solve_time_ns=time.perf_counter_ns() - start_ns,
         )
 
-    def _try_rust_solve(
-        self, solve_input: SolveInput, start_ns: int
-    ) -> SolveResult | None:
+    def _try_rust_solve(self, solve_input: SolveInput, start_ns: int) -> SolveResult | None:
         """
         Convert hops to Rust format and call RustArbSolver.
 
@@ -3102,9 +3071,11 @@ class ArbSolver(Solver):
                         )
                     )
                 else:
-                    rust_hops.append(
-                        (float(hop.reserve_in), float(hop.reserve_out), float(hop.fee))
-                    )
+                    rust_hops.append((
+                        float(hop.reserve_in),
+                        float(hop.reserve_out),
+                        float(hop.fee),
+                    ))
             elif isinstance(hop, BoundedProductHop):
                 if hop.has_multi_range:
                     # Multi-range V3: use float tuple
@@ -3112,9 +3083,11 @@ class ArbSolver(Solver):
                     if seq is None:
                         return None  # Can't build sequence, fall back
                     v3_sequences.append((i, seq))
-                    rust_hops.append(
-                        (float(hop.reserve_in), float(hop.reserve_out), float(hop.fee))
-                    )
+                    rust_hops.append((
+                        float(hop.reserve_in),
+                        float(hop.reserve_out),
+                        float(hop.fee),
+                    ))
                 elif USE_MERGED_INT_REFINEMENT:
                     # Single-range V3: use int hops
                     fee_numer = hop.fee.numerator
@@ -3126,16 +3099,18 @@ class ArbSolver(Solver):
                         )
                     )
                 else:
-                    rust_hops.append(
-                        (float(hop.reserve_in), float(hop.reserve_out), float(hop.fee))
-                    )
+                    rust_hops.append((
+                        float(hop.reserve_in),
+                        float(hop.reserve_out),
+                        float(hop.fee),
+                    ))
             else:
                 # Unsupported hop type for Rust (Solidly, Balancer, Curve)
                 return None
 
         result = self._rust_solver.solve(
             rust_hops,
-            v3_sequences if v3_sequences else None,
+            v3_sequences or None,
             max_input_float,
             10,
         )
@@ -3200,16 +3175,15 @@ class ArbSolver(Solver):
                     method=method,
                     solve_time_ns=elapsed_ns,
                 )
-            else:
-                return SolveResult(
-                    optimal_input=0,
-                    profit=0,
-                    success=False,
-                    iterations=result.iterations,
-                    method=method,
-                    error="Not profitable (integer verification failed)",
-                    solve_time_ns=elapsed_ns,
-                )
+            return SolveResult(
+                optimal_input=0,
+                profit=0,
+                success=False,
+                iterations=result.iterations,
+                method=method,
+                error="Not profitable (integer verification failed)",
+                solve_time_ns=elapsed_ns,
+            )
 
         # Fallback: no merged integer refinement (float tuples only)
         x_opt = result.optimal_input
@@ -3226,16 +3200,15 @@ class ArbSolver(Solver):
                     method=method,
                     solve_time_ns=elapsed_ns,
                 )
-            else:
-                return SolveResult(
-                    optimal_input=0,
-                    profit=0,
-                    success=False,
-                    iterations=result.iterations,
-                    method=method,
-                    error="Not profitable (integer verification failed)",
-                    solve_time_ns=elapsed_ns,
-                )
+            return SolveResult(
+                optimal_input=0,
+                profit=0,
+                success=False,
+                iterations=result.iterations,
+                method=method,
+                error="Not profitable (integer verification failed)",
+                solve_time_ns=elapsed_ns,
+            )
 
         # For non-Möbius methods (V3 multi-range, V3-V3), use int() conversion
         x_opt = result.optimal_input
@@ -3248,6 +3221,98 @@ class ArbSolver(Solver):
             success=True,
             iterations=result.iterations,
             method=method,
+            solve_time_ns=elapsed_ns,
+        )
+
+    def _try_generalized_solve(self, solve_input: SolveInput, start_ns: int) -> SolveResult | None:
+        """
+        Delegate to the generalized MobiusSolver from degenbot.arbitrage.solver.
+
+        Converts SolveInput hops to MobiusHopState/ConcentratedLiquidityHopState,
+        calls MobiusSolver.solve(), and converts the result back to SolveResult.
+        Returns None if the generalized solver doesn't support the path (e.g.
+        Solidly, Balancer, Curve), signaling the caller to fall back.
+        """
+        # Deferred import: genuine circular dependency with
+        # arbitrage/solver/mobius_solver.py (which imports from this module).
+        from degenbot.arbitrage.solver.mobius_solver import MobiusSolver
+        from degenbot.arbitrage.solver.types import (
+            ConcentratedLiquidityHopState,
+            MobiusHopState,
+            TickRangeState,
+        )
+        from degenbot.arbitrage.solver.types import (
+            SolverMethod as _GenSolverMethod,
+        )
+
+        if self._generalized_solver is None:
+            self._generalized_solver = MobiusSolver()
+
+        new_hops: list[MobiusHopState | ConcentratedLiquidityHopState] = []
+        for hop in solve_input.hops:
+            if isinstance(hop, ConstantProductHop):
+                new_hops.append(
+                    MobiusHopState(
+                        reserve_in=hop.reserve_in,
+                        reserve_out=hop.reserve_out,
+                        fee=hop.fee,
+                    )
+                )
+            elif isinstance(hop, BoundedProductHop):
+                tick_ranges = None
+                if hop.tick_ranges is not None:
+                    tick_ranges = tuple(
+                        TickRangeState(
+                            tick_lower=tr.tick_lower,
+                            tick_upper=tr.tick_upper,
+                            liquidity=tr.liquidity,
+                            sqrt_price_lower=tr.sqrt_price_lower,
+                            sqrt_price_upper=tr.sqrt_price_upper,
+                        )
+                        for tr in hop.tick_ranges
+                    )
+                new_hops.append(
+                    ConcentratedLiquidityHopState(
+                        reserve_in=hop.reserve_in,
+                        reserve_out=hop.reserve_out,
+                        fee=hop.fee,
+                        liquidity=hop.liquidity,
+                        sqrt_price=hop.sqrt_price,
+                        tick_lower=hop.tick_lower,
+                        tick_upper=hop.tick_upper,
+                        tick_ranges=tick_ranges,
+                        current_range_index=hop.current_range_index,
+                    )
+                )
+            else:
+                return None
+
+        gen_result = self._generalized_solver.solve(new_hops, max_input=solve_input.max_input)
+
+        method_map = {
+            _GenSolverMethod.MOBIUS: SolverMethod.MOBIUS,
+            _GenSolverMethod.PIECEWISE_MOBIUS: SolverMethod.PIECEWISE_MOBIUS,
+        }
+
+        elapsed_ns = time.perf_counter_ns() - start_ns
+
+        if not gen_result.is_profitable:
+            return SolveResult(
+                optimal_input=0,
+                profit=0,
+                success=False,
+                iterations=gen_result.iterations,
+                method=method_map.get(gen_result.method, SolverMethod.MOBIUS),
+                error=gen_result.error or "Not profitable",
+                solve_time_ns=elapsed_ns,
+            )
+
+        return SolveResult(
+            optimal_input=gen_result.optimal_input,
+            profit=gen_result.profit,
+            success=True,
+            iterations=gen_result.iterations,
+            method=method_map.get(gen_result.method, SolverMethod.MOBIUS),
             solve_time_ns=elapsed_ns,
         )
 
@@ -3270,9 +3335,7 @@ class ArbSolver(Solver):
         best_input = x_floor
         best_profit = -1
 
-        for candidate in range(
-            max(1, x_floor - search_radius), x_floor + search_radius + 2
-        ):
+        for candidate in range(max(1, x_floor - search_radius), x_floor + search_radius + 2):
             if max_input is not None and candidate > max_input:
                 continue
             output = _simulate_path(float(candidate), hops)
@@ -3317,9 +3380,7 @@ class ArbSolver(Solver):
             gamma_numer = fee_denom - fee_numer
             gamma_denom = fee_denom
             rust_int_hops.append(
-                mobius.RustIntHopState(
-                    hop.reserve_in, hop.reserve_out, gamma_numer, gamma_denom
-                )
+                mobius.RustIntHopState(hop.reserve_in, hop.reserve_out, gamma_numer, gamma_denom)
             )
 
         max_input_float = float(max_input) if max_input is not None else None
@@ -3327,8 +3388,7 @@ class ArbSolver(Solver):
 
         if result.success:
             return int(result.optimal_input), int(result.profit)
-        else:
-            return 0, 0
+        return 0, 0
 
     def _build_rust_v3_sequence(self, v3_hop: BoundedProductHop):
         """
@@ -3552,8 +3612,6 @@ def _v3_get_adjacent_tick_ranges(
         return None
 
     # Build V3TickRangeInfo for each range
-    from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
-
     ranges: list[V3TickRangeInfo] = []
     current_idx = 0
 
@@ -3586,9 +3644,8 @@ def _v3_get_adjacent_tick_ranges(
         if zero_for_one:
             if tick_lower <= current_tick < tick_upper:
                 current_idx = i
-        else:
-            if tick_lower <= current_tick < tick_upper:
-                current_idx = i
+        elif tick_lower <= current_tick < tick_upper:
+            current_idx = i
 
     if len(ranges) < 1:
         return None
@@ -3621,16 +3678,11 @@ def pool_to_hop(
     Hop
         A Hop with reserves oriented for the swap direction.
     """
-    from degenbot.aerodrome.pools import AerodromeV2Pool
-    from degenbot.camelot.pools import CamelotLiquidityPool
-    from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-    from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-
     zero_for_one = input_token == pool.token0
 
     # Camelot stable pool — Solidly invariant
     if isinstance(pool, CamelotLiquidityPool) and getattr(pool, "stable_swap", False):
-        from degenbot.camelot.functions import k_camelot, get_y_camelot
+        from degenbot.camelot.functions import get_y_camelot, k_camelot
 
         if zero_for_one:
             reserve_in = pool.state.reserves_token0
@@ -3861,10 +3913,6 @@ def pool_state_to_hop(
     Hop
         A Hop with reserves oriented for the swap direction.
     """
-    from degenbot.aerodrome.pools import AerodromeV2Pool
-    from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-    from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-
     state = state_override or pool.state
     zero_for_one = input_token == pool.token0
 

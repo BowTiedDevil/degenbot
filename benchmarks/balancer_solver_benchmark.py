@@ -27,7 +27,7 @@ def make_pool(n_tokens: int, fee_bps: int = 30) -> BalancerMultiTokenState:
             fee=Fraction(fee_bps, 10000),
             decimals=(18, 6, 6),
         )
-    elif n_tokens == 4:
+    if n_tokens == 4:
         return BalancerMultiTokenState(
             reserves=(
                 500_000_000_000_000_000_000,
@@ -44,7 +44,7 @@ def make_pool(n_tokens: int, fee_bps: int = 30) -> BalancerMultiTokenState:
             fee=Fraction(fee_bps, 10000),
             decimals=(18, 6, 6, 6),
         )
-    elif n_tokens == 5:
+    if n_tokens == 5:
         return BalancerMultiTokenState(
             reserves=(
                 300_000_000_000_000_000_000,
@@ -137,11 +137,11 @@ def main():
         print(f"\n{'=' * 60}")
         print(f"N={n_tokens} tokens, {n_sigs} signatures")
         print(f"{'=' * 60}")
-        print(f"  Single signature (Equation 9):")
+        print("  Single signature (Equation 9):")
         print(f"    Mean: {np.mean(single_times) / 1e3:.1f} μs")
         print(f"    Median: {np.median(single_times) / 1e3:.1f} μs")
         print(f"    P99: {np.percentile(single_times, 99) / 1e3:.1f} μs")
-        print(f"  Full solver (all signatures + validation + refinement):")
+        print("  Full solver (all signatures + validation + refinement):")
         print(f"    Mean: {np.mean(solver_times) / 1e3:.1f} μs")
         print(f"    Median: {np.median(solver_times) / 1e3:.1f} μs")
         print(f"    P99: {np.percentile(solver_times, 99) / 1e3:.1f} μs")
