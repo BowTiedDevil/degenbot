@@ -6,9 +6,7 @@ from web3.types import TxParams
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts, UniswapV4PoolSwapAmounts
-from degenbot.arbitrage.uniswap_2pool_cycle_testing import (
-    _UniswapTwoPoolCycleTesting,  # noqa: PLC2701
-)
+from degenbot.arbitrage.uniswap_2pool_cycle_testing import _UniswapTwoPoolCycleTesting
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import set_web3
 from degenbot.erc20.erc20 import Erc20Token

@@ -1779,7 +1779,7 @@ class TransactionOperationsParser:
         """
         burns: list[ScaledTokenEvent] = []
 
-        if user_liquidation_count == 1:  # noqa:PLR1702
+        if user_liquidation_count == 1:
             candidate_burns = sorted(
                 [
                     ev

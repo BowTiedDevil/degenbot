@@ -5,13 +5,14 @@ This module handles liquidation event processing including multi-liquidation pat
 like COMBINED_BURN and SEPARATE_BURNS.
 """
 
-from typing import assert_never
+from typing import TYPE_CHECKING
 
-from degenbot.aave.events import AaveV3ScaledTokenEvent
 from degenbot.aave.liquidation_patterns import detect_liquidation_patterns
 from degenbot.cli.aave.types import TransactionContext
 from degenbot.cli.aave.utils import _get_v_token_for_underlying
-from degenbot.cli.aave_transaction_operations import Operation
+
+if TYPE_CHECKING:
+    from degenbot.cli.aave_transaction_operations import Operation
 
 
 def _preprocess_liquidation_aggregates(

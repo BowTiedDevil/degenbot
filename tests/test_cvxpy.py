@@ -16,9 +16,7 @@ from cvxpy.atoms.affine.sum import sum as cvxpy_sum
 from cvxpy.atoms.geo_mean import geo_mean
 
 from degenbot.anvil_fork import AnvilFork
-from degenbot.arbitrage.uniswap_multipool_cycle_testing import (
-    _UniswapMultiPoolCycleTesting,  # noqa: PLC2701
-)
+from degenbot.arbitrage.uniswap_multipool_cycle_testing import _UniswapMultiPoolCycleTesting
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import set_web3
 from degenbot.constants import ZERO_ADDRESS
