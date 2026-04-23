@@ -38,8 +38,8 @@ class HessianResult:
         return abs(self.hessian)
 
     @property
-    def would_trigger_threshold(self, threshold: float = 1e-30) -> bool:
-        return self.hessian_magnitude < threshold
+    def would_trigger_threshold(self) -> bool:
+        return self.hessian_magnitude < 1e-30
 
 
 class TestHessianMagnitudeExploration:

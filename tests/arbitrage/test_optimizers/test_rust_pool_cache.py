@@ -17,6 +17,7 @@ Architecture:
 from fractions import Fraction
 
 import pytest
+from degenbot.degenbot_rs import mobius as rs_mobius
 
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
@@ -24,7 +25,6 @@ from degenbot.arbitrage.optimizers.solver import (
     SolveInput,
     SolverMethod,
 )
-from degenbot.degenbot_rs import mobius as rs_mobius
 
 from .conftest import (
     FEE_0_05_PCT,
@@ -107,8 +107,16 @@ class TestRustPoolCache:
 
         cache_result = cache.solve([0, 1])
 
-        flat = [1_000_000, 5_000_000, gamma_numer, fee_denom,
-                1_500_000, 3_000_000, gamma_numer, fee_denom]
+        flat = [
+            1_000_000,
+            5_000_000,
+            gamma_numer,
+            fee_denom,
+            1_500_000,
+            3_000_000,
+            gamma_numer,
+            fee_denom,
+        ]
         raw_result = solver.solve_raw(flat)
 
         assert cache_result.success == raw_result.success
@@ -256,6 +264,8 @@ class TestRustPoolCache:
 
         result_after = cache.solve([0, 1])
 
+        assert result_before != result_after
+
     def test_remove_pool(self):
         """Removing a pool should make it unavailable for solve."""
         cache = rs_mobius.RustPoolCache()
@@ -358,12 +368,14 @@ class TestArbSolverPoolCache:
 
         cached_result = solver.solve_cached([0, 1])
 
-        standard_result = solver.solve(SolveInput(
-            hops=(
-                ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
-                ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
+        standard_result = solver.solve(
+            SolveInput(
+                hops=(
+                    ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
+                    ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
+                )
             )
-        ))
+        )
 
         assert cached_result.optimal_input == standard_result.optimal_input
         assert cached_result.profit == standard_result.profit

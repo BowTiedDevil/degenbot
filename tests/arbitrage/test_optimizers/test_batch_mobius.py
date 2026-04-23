@@ -11,6 +11,7 @@ import time
 import numpy as np
 import pytest
 
+from degenbot.arbitrage.optimizers.base import OptimizerType
 from degenbot.arbitrage.optimizers.batch_mobius import (
     BatchMobiusOptimizer,
     BatchMobiusPathInput,
@@ -266,9 +267,7 @@ class TestVectorizedVsSerial:
     @pytest.mark.parametrize("num_hops", [2, 3, 5, 10])
     def test_matches_serial_2pool(self, num_hops):
         """Vectorized and serial should produce identical results."""
-        hops_array, max_inputs = generate_batch_paths(
-            num_paths=50, num_hops=num_hops, seed=42
-        )
+        hops_array, max_inputs = generate_batch_paths(num_paths=50, num_hops=num_hops, seed=42)
 
         vec_solver = VectorizedMobiusSolver()
         ser_solver = SerialMobiusSolver()
@@ -306,9 +305,7 @@ class TestVectorizedVsSerial:
     @pytest.mark.parametrize("batch_size", [1, 10, 50, 100, 500])
     def test_accuracy_across_batch_sizes(self, batch_size):
         """Accuracy should hold regardless of batch size."""
-        hops_array, max_inputs = generate_batch_paths(
-            num_paths=batch_size, num_hops=3, seed=123
-        )
+        hops_array, max_inputs = generate_batch_paths(num_paths=batch_size, num_hops=3, seed=123)
 
         vec_solver = VectorizedMobiusSolver()
         ser_solver = SerialMobiusSolver()
@@ -336,9 +333,7 @@ class TestVectorizedVsScalar:
     @pytest.mark.parametrize("num_hops", [2, 3, 5])
     def test_matches_scalar_mobius_solve(self, num_hops):
         """Vectorized should match scalar mobius_solve for each path."""
-        hops_array, max_inputs = generate_batch_paths(
-            num_paths=20, num_hops=num_hops, seed=42
-        )
+        hops_array, max_inputs = generate_batch_paths(num_paths=20, num_hops=num_hops, seed=42)
 
         vec_solver = VectorizedMobiusSolver()
         vec_result = vec_solver.solve(hops_array, max_inputs)
@@ -355,12 +350,12 @@ class TestVectorizedVsScalar:
             x_scalar, profit_scalar, _ = mobius_solve(hops)
 
             if x_scalar > 0:
-                assert vec_result.optimal_input[i] == pytest.approx(
-                    x_scalar, rel=1e-8
-                ), f"Path {i} input mismatch"
-                assert vec_result.profit[i] == pytest.approx(
-                    profit_scalar, rel=1e-6
-                ), f"Path {i} profit mismatch"
+                assert vec_result.optimal_input[i] == pytest.approx(x_scalar, rel=1e-8), (
+                    f"Path {i} input mismatch"
+                )
+                assert vec_result.profit[i] == pytest.approx(profit_scalar, rel=1e-6), (
+                    f"Path {i} profit mismatch"
+                )
             elif vec_result.optimal_input[i] <= 0:
                 # Both agree: unprofitable
                 pass
@@ -399,7 +394,7 @@ class TestBatchMobiusOptimizer:
         assert len(results) == 1
         assert results[0].profit > 0
         assert results[0].iterations == 0
-        assert results[0].optimizer_type.value == "mobius"
+        assert results[0].optimizer_type == OptimizerType.MOBIUS
 
     def test_mixed_hop_counts(self):
         """Paths with different hop counts should be grouped separately."""
@@ -530,9 +525,7 @@ class TestNumericalAccuracy:
 
     def test_profit_formula_consistency(self):
         """Verify that l(x) = K*x / (M + N*x) matches simulate_path."""
-        hops_array, max_inputs = generate_batch_paths(
-            num_paths=20, num_hops=3, seed=42
-        )
+        hops_array, max_inputs = generate_batch_paths(num_paths=20, num_hops=3, seed=42)
 
         vec_solver = VectorizedMobiusSolver()
         result = vec_solver.solve(hops_array, max_inputs)
@@ -557,9 +550,7 @@ class TestNumericalAccuracy:
 
             # Both should match
             assert sim_output == pytest.approx(mobius_output, rel=1e-10)
-            assert result.profit[i] == pytest.approx(
-                mobius_output - x, rel=1e-6
-            )
+            assert result.profit[i] == pytest.approx(mobius_output - x, rel=1e-6)
 
 
 # ==============================================================================
@@ -572,9 +563,7 @@ class TestProfitabilityCheck:
 
     def test_profitable_flag_matches_coefficients(self):
         """The is_profitable flag should match K > M from coefficients."""
-        hops_array, max_inputs = generate_batch_paths(
-            num_paths=50, num_hops=3, seed=42
-        )
+        hops_array, max_inputs = generate_batch_paths(num_paths=50, num_hops=3, seed=42)
 
         vec_solver = VectorizedMobiusSolver()
         result = vec_solver.solve(hops_array, max_inputs)
@@ -603,9 +592,7 @@ class TestProfitabilityCheck:
 
     def test_profitable_paths_have_positive_profit(self):
         """All paths marked profitable should have positive optimal input."""
-        hops_array, max_inputs = generate_batch_paths(
-            num_paths=100, num_hops=2, seed=42
-        )
+        hops_array, max_inputs = generate_batch_paths(num_paths=100, num_hops=2, seed=42)
 
         vec_solver = VectorizedMobiusSolver()
         result = vec_solver.solve(hops_array, max_inputs)
@@ -626,9 +613,7 @@ class TestGenerateBatchPaths:
 
     def test_correct_shape(self):
         """Generated paths should have the correct array shape."""
-        hops_array, max_inputs = generate_batch_paths(
-            num_paths=50, num_hops=3, seed=42
-        )
+        hops_array, max_inputs = generate_batch_paths(num_paths=50, num_hops=3, seed=42)
         assert hops_array.shape == (50, 3, 3)
         assert max_inputs.shape == (50,)
 
@@ -713,12 +698,8 @@ class TestBatchMobiusBenchmarks:
                 num_paths=num_paths, num_hops=num_hops, seed=42
             )
 
-            ser_time = self._benchmark_solve(
-                hops_array, max_inputs, ser_solver.solve
-            )
-            vec_time = self._benchmark_solve(
-                hops_array, max_inputs, vec_solver.solve
-            )
+            ser_time = self._benchmark_solve(hops_array, max_inputs, ser_solver.solve)
+            vec_time = self._benchmark_solve(hops_array, max_inputs, vec_solver.solve)
 
             speedup = ser_time / vec_time if vec_time > 0 else float("inf")
             per_path_vec = vec_time / num_paths * 1_000_000
@@ -752,9 +733,7 @@ class TestBatchMobiusBenchmarks:
 
         for num_paths in [10, 50, 100, 500, 1000]:
             # Generate Möbius paths
-            hops_array, max_inputs = generate_batch_paths(
-                num_paths=num_paths, num_hops=2, seed=42
-            )
+            hops_array, max_inputs = generate_batch_paths(num_paths=num_paths, num_hops=2, seed=42)
 
             # Generate equivalent Newton paths
             # For 2-pool: buy pool is hops[:, 0], sell pool is hops[:, 1]
@@ -774,12 +753,8 @@ class TestBatchMobiusBenchmarks:
             def newton_wrapper(paths, _):
                 return vec_newton.solve(paths)
 
-            mobius_time = self._benchmark_solve(
-                hops_array, max_inputs, vec_mobius.solve
-            )
-            newton_time = self._benchmark_solve(
-                newton_paths, max_inputs, newton_wrapper
-            )
+            mobius_time = self._benchmark_solve(hops_array, max_inputs, vec_mobius.solve)
+            newton_time = self._benchmark_solve(newton_paths, max_inputs, newton_wrapper)
 
             speedup = newton_time / mobius_time if mobius_time > 0 else float("inf")
             per_path = mobius_time / num_paths * 1_000_000
@@ -803,9 +778,7 @@ class TestInputImmutability:
 
     def test_hops_array_not_mutated(self):
         """VectorizedMobiusSolver.solve must not modify the input hops_array."""
-        hops_array, max_inputs = generate_batch_paths(
-            num_paths=50, num_hops=3, seed=42
-        )
+        hops_array, max_inputs = generate_batch_paths(num_paths=50, num_hops=3, seed=42)
         original = hops_array.copy()
 
         vec_solver = VectorizedMobiusSolver()
@@ -819,9 +792,7 @@ class TestInputImmutability:
 
     def test_serial_hops_array_not_mutated(self):
         """SerialMobiusSolver.solve must not modify the input hops_array."""
-        hops_array, max_inputs = generate_batch_paths(
-            num_paths=10, num_hops=3, seed=42
-        )
+        hops_array, max_inputs = generate_batch_paths(num_paths=10, num_hops=3, seed=42)
         original = hops_array.copy()
 
         ser_solver = SerialMobiusSolver()
@@ -905,9 +876,7 @@ class TestEdgeCases:
 
     def test_long_path_20_hops(self):
         """20-hop paths should compute correctly."""
-        hops_array, max_inputs = generate_batch_paths(
-            num_paths=10, num_hops=20, seed=42
-        )
+        hops_array, max_inputs = generate_batch_paths(num_paths=10, num_hops=20, seed=42)
 
         vec_solver = VectorizedMobiusSolver()
         result = vec_solver.solve(hops_array, max_inputs)
@@ -992,9 +961,7 @@ class TestOverflowHandling:
 
     def test_no_overflow_normal_reserves(self):
         """Normal reserves (1e6) should never overflow even for 20 hops."""
-        hops_array, max_inputs = generate_batch_paths(
-            num_paths=20, num_hops=20, seed=42
-        )
+        hops_array, max_inputs = generate_batch_paths(num_paths=20, num_hops=20, seed=42)
         vec_solver = VectorizedMobiusSolver()
         result = vec_solver.solve(hops_array, max_inputs)
 

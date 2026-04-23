@@ -25,6 +25,7 @@ from degenbot.arbitrage.optimizers.mobius import (
     simulate_path,
 )
 from degenbot.arbitrage.optimizers.v3_tick_predictor import tick_to_sqrt_price
+from degenbot.exceptions.arbitrage import OptimizationError
 from degenbot.uniswap.v3_libraries.swap_math import compute_swap_step
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 
@@ -360,20 +361,12 @@ class TestMobiusArbitrageVsV3Integer:
             # for some parameter configurations. The MobiusOptimizer.solve()
             # method has validation that catches this. Verify that works.
             optimizer = MobiusOptimizer()
-            try:
-                result = optimizer.solve_v3_candidates(
+            with pytest.raises(OptimizationError):
+                optimizer.solve_v3_candidates(
                     base_hops=[v2_hop],
                     v3_hop_index=1,
                     v3_candidates=[v3_hop],
                 )
-            except Exception:
-                pass
-            # The optimizer should handle this (either find a smaller valid
-            # solution or raise an exception)
-            pytest.skip(
-                f"Möbius optimum ({x_mobius:.0f} USDC) crosses V3 boundary. "
-                f"Validation correctly handles this."
-            )
 
         # --- Möbius solution stays in range: compare with brute-force ---
         # Binary search for the optimal input using V3 integer math

@@ -215,7 +215,7 @@ class TestMobiusSolver:
             )
         )
         with pytest.raises(OptimizationError):
-            result = solver.solve(inp)
+            solver.solve(inp)
 
     def test_max_input_constraint(self):
         solver = MobiusSolver()
@@ -247,7 +247,7 @@ class TestMobiusSolver:
                 Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
             )
         )
-        result = solver.solve(inp)
+        solver.solve(inp)
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +351,7 @@ class TestArbSolver:
             )
         )
         with pytest.raises(OptimizationError):
-            result = solver.solve(inp)
+            solver.solve(inp)
 
     def test_max_input_respected(self):
         solver = ArbSolver()

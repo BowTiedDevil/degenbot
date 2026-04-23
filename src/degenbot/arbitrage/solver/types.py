@@ -1,11 +1,11 @@
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, auto
 from fractions import Fraction
 
 
 class SolverMethod(Enum):
-    MOBIUS = "mobius"
-    PIECEWISE_MOBIUS = "piecewise_mobius"
+    MOBIUS = auto()
+    PIECEWISE_MOBIUS = auto()
 
 
 @dataclass(frozen=True, slots=True)

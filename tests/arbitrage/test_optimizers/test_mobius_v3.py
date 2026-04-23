@@ -13,6 +13,7 @@ Verifies that:
 
 import pytest
 
+from degenbot.arbitrage.optimizers.base import OptimizerType
 from degenbot.arbitrage.optimizers.mobius import (
     HopState,
     MobiusOptimizer,
@@ -24,6 +25,7 @@ from degenbot.arbitrage.optimizers.mobius import (
     simulate_path,
 )
 from degenbot.arbitrage.optimizers.v3_tick_predictor import tick_to_sqrt_price
+from degenbot.exceptions.arbitrage import OptimizationError
 
 from .conftest import brent_solve_hops, make_v3_tick_range
 
@@ -373,36 +375,57 @@ class TestV3RangeValidation:
 class TestSolveV3Candidates:
     """Tests for the multi-range V3 candidate solver."""
 
-    def test_correct_range_selected(self):
+    def test_mobius_unprofitable_raises(self):
         """
-        When checking multiple tick ranges, the solver should find
-        the best valid solution.
+        When V2 and V3 pools agree on price, Möbius coefficients yield K <= M
+        and solve_v3_candidates skips every candidate (x_opt <= 0, profit <= 0).
         """
         optimizer = MobiusOptimizer()
 
-        # V2 pool
-        v2_hop = HopState(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003)
-
-        # Create several V3 candidate ranges
-        # Range near current price
-        v3_candidate_1 = make_v3_tick_range(liquidity=2_000_000.0, current_tick=0, tick_spacing=60)
-
-        # Range slightly above
-        v3_candidate_2 = make_v3_tick_range(liquidity=1_500_000.0, current_tick=60, tick_spacing=60)
-
-        # Range slightly below
-        v3_candidate_3 = make_v3_tick_range(
-            liquidity=1_800_000.0, current_tick=-60, tick_spacing=60
+        v3_candidate = make_v3_tick_range(
+            liquidity=1_000_000.0,
+            current_tick=0,
+            tick_spacing=60,
         )
 
-        try:
-            result = optimizer.solve_v3_candidates(
+        v2_hop = HopState(
+            reserve_in=v3_candidate.to_hop_state().reserve_in,
+            reserve_out=v3_candidate.to_hop_state().reserve_out,
+            fee=0.003,
+        )
+
+        with pytest.raises(OptimizationError, match="No valid V3 candidate range found"):
+            optimizer.solve_v3_candidates(
                 base_hops=[v2_hop],
                 v3_hop_index=1,
-                v3_candidates=[v3_candidate_1, v3_candidate_2, v3_candidate_3],
+                v3_candidates=[v3_candidate],
             )
-        except Exception:
-            pass
+
+    def test_range_validation_failure_raises(self):
+        """
+        When Möbius finds a profitable input but the swap pushes the V3 sqrt
+        price outside the tick range, contains_sqrt_price rejects the solution.
+        """
+        optimizer = MobiusOptimizer()
+
+        v2_hop = HopState(
+            reserve_in=5_000_000.0,
+            reserve_out=10_000_000.0,
+            fee=0.003,
+        )
+
+        v3_candidate = make_v3_tick_range(
+            liquidity=100.0,
+            current_tick=0,
+            tick_spacing=60,
+        )
+
+        with pytest.raises(OptimizationError, match="No valid V3 candidate range found"):
+            optimizer.solve_v3_candidates(
+                base_hops=[v2_hop],
+                v3_hop_index=1,
+                v3_candidates=[v3_candidate],
+            )
 
     def test_empty_candidates_returns_failure(self):
         """No candidates should return failure."""
@@ -514,7 +537,7 @@ class TestBackwardCompatibility:
     def test_mobius_v2_optimizer_instantiation(self):
         """Can create a MobiusV2Optimizer and use it."""
         optimizer = MobiusV2Optimizer()
-        assert optimizer.optimizer_type.value == "mobius"
+        assert optimizer.optimizer_type == OptimizerType.MOBIUS
 
 
 # ==============================================================================

@@ -4,19 +4,19 @@ Base classes and types for arbitrage optimizers.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, auto
 from typing import Any
 
 
 class OptimizerType(Enum):
     """Optimizer algorithm type."""
 
-    NEWTON = "newton"
-    GRADIENT_DESCENT = "gradient_descent"
-    BRENT = "brent"
-    CVXPY = "cvxpy"
-    HYBRID = "hybrid"
-    MOBIUS = "mobius"
+    NEWTON = auto()
+    GRADIENT_DESCENT = auto()
+    BRENT = auto()
+    CVXPY = auto()
+    HYBRID = auto()
+    MOBIUS = auto()
 
 
 @dataclass(slots=True, frozen=True)

@@ -66,12 +66,18 @@ from degenbot.arbitrage.optimizers.mobius import (
 from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import OptimizationError
+from degenbot.solidly.solidly_functions import general_calc_exact_in_stable
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_libraries.constants import Q96
 from degenbot.uniswap.v3_libraries.tick_bitmap import gen_ticks
 from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK, get_sqrt_ratio_at_tick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+
+try:
+    from degenbot.degenbot_rs import mobius as _rs_mobius
+except ImportError:
+    _rs_mobius = None
 
 # Feature flag: when True, RustArbSolver.solve() receives RustIntHopState objects
 # and does float solve + U256 integer refinement in a single Rust call.
@@ -1073,23 +1079,12 @@ class PiecewiseMobiusSolver(Solver):
     PHI = (math.sqrt(5) - 1) / 2  # ~0.618
 
     def __init__(self) -> None:
-        self._rust_optimizer = None
+        self._rust_optimizer: Any = None
         self._mobius_solver = None
-        # Cache for Rust objects to avoid recreation
-        # Key: hash of (reserve_in, reserve_out, fee) tuple
         self._rust_hop_cache: dict[int, list] = {}
-        # Key: (range_ids_tuple, current_range_index, zero_for_one) # noqa: ERA001
         self._rust_sequence_cache: dict[tuple[tuple[int, ...], int, bool], Any] = {}
-        self._try_load_rust()
-
-    def _try_load_rust(self) -> None:
-        """Try to load the Rust Möbius optimizer for faster solving."""
-        try:
-            from degenbot.degenbot_rs import mobius
-
-            self._rust_optimizer = mobius.RustMobiusOptimizer()
-        except ImportError:
-            self._rust_optimizer = None
+        if _rs_mobius is not None:
+            self._rust_optimizer = _rs_mobius.RustMobiusOptimizer()
 
     def supports(self, solve_input: SolveInput) -> bool:
         if solve_input.num_hops < 2:
@@ -1746,28 +1741,22 @@ class PiecewiseMobiusSolver(Solver):
                 method=SolverMethod.PIECEWISE_MOBIUS.value,
             )
 
-        from degenbot.degenbot_rs import mobius
-
-        # Convert Python hops to Rust hops
         rust_hops = []
         for hop in solve_input.hops:
             if isinstance(hop, ConstantProductHop) or isinstance(hop, BoundedProductHop):
                 rust_hops.append(
-                    mobius.RustHopState(
+                    _rs_mobius.RustHopState(
                         float(hop.reserve_in),
                         float(hop.reserve_out),
                         float(hop.fee),
                     )
                 )
 
-        # Build V3 tick range crossing data
         assert v3_hop.tick_ranges is not None
 
-        # Build the ending range for this candidate
         ending_range_info = v3_hop.tick_ranges[end_idx]
         zero_for_one = v3_hop.reserve_in > v3_hop.reserve_out
 
-        # Compute entry sqrt price (boundary with previous range)
         if end_idx > 0 and v3_hop.tick_ranges:
             prev_range = v3_hop.tick_ranges[end_idx - 1]
             entry_sqrt_price = (
@@ -1778,8 +1767,7 @@ class PiecewiseMobiusSolver(Solver):
         else:
             entry_sqrt_price = float(ending_range_info.sqrt_price_lower) / Q96
 
-        # Build the ending V3TickRangeHop
-        rust_ending_range = mobius.RustV3TickRangeHop(
+        rust_ending_range = _rs_mobius.RustV3TickRangeHop(
             liquidity=float(ending_range_info.liquidity),
             sqrt_price_current=entry_sqrt_price,
             sqrt_price_lower=float(ending_range_info.sqrt_price_lower) / Q96,
@@ -1811,7 +1799,7 @@ class PiecewiseMobiusSolver(Solver):
             crossing_output += output
 
         # Build TickRangeCrossing for Rust
-        rust_crossing = mobius.RustTickRangeCrossing(
+        rust_crossing = _rs_mobius.RustTickRangeCrossing(
             crossing_gross_input=crossing_input,
             crossing_output=crossing_output,
             ending_range=rust_ending_range,
@@ -1844,10 +1832,6 @@ class PiecewiseMobiusSolver(Solver):
         )
 
     def _get_cached_rust_hops(self, solve_input: SolveInput) -> list:
-        """Get or create cached Rust hop states."""
-        from degenbot.degenbot_rs import mobius
-
-        # Create cache key from hop data
         cache_key = hash(
             tuple((hop.reserve_in, hop.reserve_out, float(hop.fee)) for hop in solve_input.hops)
         )
@@ -1857,7 +1841,7 @@ class PiecewiseMobiusSolver(Solver):
             for hop in solve_input.hops:
                 if isinstance(hop, (ConstantProductHop, BoundedProductHop)):
                     rust_hops.append(
-                        mobius.RustHopState(
+                        _rs_mobius.RustHopState(
                             float(hop.reserve_in),
                             float(hop.reserve_out),
                             float(hop.fee),
@@ -1871,9 +1855,6 @@ class PiecewiseMobiusSolver(Solver):
         self,
         v3_hop: BoundedProductHop,
     ):
-        """Get or create cached Rust V3 tick range sequence."""
-        from degenbot.degenbot_rs import mobius
-
         assert v3_hop.tick_ranges is not None
         zero_for_one = v3_hop.reserve_in > v3_hop.reserve_out
 
@@ -1894,7 +1875,7 @@ class PiecewiseMobiusSolver(Solver):
                     sqrt_p_current = float(range_info.sqrt_price_lower) / Q96
 
                 rust_ranges.append(
-                    mobius.RustV3TickRangeHop(
+                    _rs_mobius.RustV3TickRangeHop(
                         liquidity=float(range_info.liquidity),
                         sqrt_price_current=sqrt_p_current,
                         sqrt_price_lower=float(range_info.sqrt_price_lower) / Q96,
@@ -1904,7 +1885,7 @@ class PiecewiseMobiusSolver(Solver):
                     )
                 )
 
-            self._rust_sequence_cache[cache_key] = mobius.RustV3TickRangeSequence(rust_ranges)
+            self._rust_sequence_cache[cache_key] = _rs_mobius.RustV3TickRangeSequence(rust_ranges)
 
         return self._rust_sequence_cache[cache_key]
 
@@ -2667,25 +2648,16 @@ class ArbSolver(Solver):
         self._rust_solver: Any = None
         self._pool_cache: Any = None
         self._next_pool_id: int = 1
-        self._pool_id_map: dict[int, int] = {}  # id(pool) -> pool_id
+        self._pool_id_map: dict[int, int] = {}
         self._piecewise = PiecewiseMobiusSolver()
         self._solidly = SolidlyStableSolver()
         self._balancer_multi = BalancerMultiTokenSolver()
         self._brent = BrentSolver()
         self._v3_sequence_cache: dict[tuple, Any] = {}
         self._generalized_solver: Any = None
-        self._try_load_rust()
-
-    def _try_load_rust(self) -> None:
-        """Try to load the Rust unified solver and pool cache."""
-        try:
-            from degenbot.degenbot_rs import mobius
-
-            self._rust_solver = mobius.RustArbSolver()
-            self._pool_cache = mobius.RustPoolCache()
-        except ImportError:
-            self._rust_solver = None
-            self._pool_cache = None
+        if _rs_mobius is not None:
+            self._rust_solver = _rs_mobius.RustArbSolver()
+            self._pool_cache = _rs_mobius.RustPoolCache()
 
     def get_pool_cache(self) -> Any:
         """Return the Rust-side pool state cache.
@@ -2900,8 +2872,6 @@ class ArbSolver(Solver):
         find a profitable solution. The caller catches the exception and
         falls through to the next solver.
         """
-        from degenbot.degenbot_rs import mobius
-
         max_input_float = (
             float(solve_input.max_input) if solve_input.max_input is not None else None
         )
@@ -2918,7 +2888,7 @@ class ArbSolver(Solver):
                 all_möbius_int = False
 
         if all_möbius_int:
-            return self._try_rust_solve_raw(solve_input, start_ns, max_input_float, mobius)
+            return self._try_rust_solve_raw(solve_input, start_ns, max_input_float)
 
         # Build hop list for the object-based solve() path
         rust_hops: list[Any] = []
@@ -2932,7 +2902,7 @@ class ArbSolver(Solver):
                     fee_denom = hop.fee.denominator
                     gamma_numer = fee_denom - fee_numer
                     rust_hops.append(
-                        mobius.RustIntHopState(
+                        _rs_mobius.RustIntHopState(
                             hop.reserve_in, hop.reserve_out, gamma_numer, fee_denom
                         )
                     )
@@ -2964,7 +2934,7 @@ class ArbSolver(Solver):
                     fee_denom = hop.fee.denominator
                     gamma_numer = fee_denom - fee_numer
                     rust_hops.append(
-                        mobius.RustIntHopState(
+                        _rs_mobius.RustIntHopState(
                             hop.reserve_in, hop.reserve_out, gamma_numer, fee_denom
                         )
                     )
@@ -2992,7 +2962,7 @@ class ArbSolver(Solver):
         return self._process_rust_result(result, start_ns, solve_input)
 
     def _try_rust_solve_raw(
-        self, solve_input: SolveInput, start_ns: int, max_input_float: float | None, mobius: Any
+        self, solve_input: SolveInput, start_ns: int, max_input_float: float | None
     ) -> SolveResult:
         """Build flat int array and call RustArbSolver.solve_raw().
 
@@ -3222,42 +3192,29 @@ class ArbSolver(Solver):
         3-5 Python float-arithmetic _simulate_path calls (~3.7μs) in favor
         of a single Rust U256 call (~0.2μs).
         """
-        try:
-            from degenbot.degenbot_rs import mobius
-        except ImportError:
-            # Rust extension not available, fall back to Python
+        if _rs_mobius is None:
             return ArbSolver._integer_refinement(x_opt, hops, max_input)
 
-        # Convert hops to RustIntHopState
         rust_int_hops: list[Any] = []
         for hop in hops:
-            # Convert fee to gamma = 1 - fee for EVM-exact arithmetic
-            # fee is a Fraction (e.g. 3/1000), gamma is (fee_denom - fee_numer) / fee_denom
-            # EVM swap: y = gamma_numer * reserve_out * x / (gamma_denom * reserve_in + gamma_numer * x)
             fee_numer = hop.fee.numerator
             fee_denom = hop.fee.denominator
             gamma_numer = fee_denom - fee_numer
             gamma_denom = fee_denom
             rust_int_hops.append(
-                mobius.RustIntHopState(hop.reserve_in, hop.reserve_out, gamma_numer, gamma_denom)
+                _rs_mobius.RustIntHopState(
+                    hop.reserve_in, hop.reserve_out, gamma_numer, gamma_denom
+                )
             )
 
         max_input_float = float(max_input) if max_input is not None else None
-        result = mobius.py_mobius_refine_int(x_opt, rust_int_hops, max_input_float)
+        result = _rs_mobius.py_mobius_refine_int(x_opt, rust_int_hops, max_input_float)
 
         if result.success:
             return int(result.optimal_input), int(result.profit)
         return 0, 0
 
     def _build_rust_v3_sequence(self, v3_hop: BoundedProductHop):
-        """
-        Build a RustV3TickRangeSequence from a BoundedProductHop.
-
-        Uses a cache keyed by tick range object identity to avoid
-        repeated construction.
-        """
-        from degenbot.degenbot_rs import mobius
-
         assert v3_hop.tick_ranges is not None
         zero_for_one = v3_hop.reserve_in > v3_hop.reserve_out
 
@@ -3280,7 +3237,7 @@ class ArbSolver(Solver):
                     sqrt_p_current = float(range_info.sqrt_price_lower) / Q96
 
                 rust_ranges.append(
-                    mobius.RustV3TickRangeHop(
+                    _rs_mobius.RustV3TickRangeHop(
                         liquidity=float(range_info.liquidity),
                         sqrt_price_current=sqrt_p_current,
                         sqrt_price_lower=float(range_info.sqrt_price_lower) / Q96,
@@ -3290,7 +3247,7 @@ class ArbSolver(Solver):
                     )
                 )
 
-            sequence = mobius.RustV3TickRangeSequence(rust_ranges)
+            sequence = _rs_mobius.RustV3TickRangeSequence(rust_ranges)
             self._v3_sequence_cache[cache_key] = sequence
             return sequence
         except Exception:
@@ -3556,10 +3513,8 @@ def pool_to_hop(
         _reserves1 = pool.state.reserves_token1
         _decimals0 = 10**pool.token0.decimals
         _decimals1 = 10**pool.token1.decimals
-        _fee = pool.fee  # type: ignore[union-attr]
+        _fee = pool.fee
         _token_in = 0 if zero_for_one else 1
-
-        from degenbot.solidly.solidly_functions import general_calc_exact_in_stable
 
         def _camelot_stable_swap_fn(
             amount_in: int,
@@ -3585,7 +3540,7 @@ def pool_to_hop(
         return SolidlyStableHop(
             reserve_in=reserve_in,
             reserve_out=reserve_out,
-            fee=pool.fee,  # type: ignore[union-attr]
+            fee=pool.fee,
             decimals_in=decimals_in,
             decimals_out=decimals_out,
             swap_fn=_camelot_stable_swap_fn,
@@ -3595,7 +3550,7 @@ def pool_to_hop(
     if isinstance(pool, CamelotLiquidityPool):
         # Camelot stores fee as tuple: (Fraction(fee_token0, denom), Fraction(fee_token1, denom))
         # pool.fee is the tuple from super().__init__
-        fee_tuple = pool.fee  # type: ignore[union-attr]
+        fee_tuple = pool.fee
         if zero_for_one:
             reserve_in = pool.state.reserves_token0
             reserve_out = pool.state.reserves_token1

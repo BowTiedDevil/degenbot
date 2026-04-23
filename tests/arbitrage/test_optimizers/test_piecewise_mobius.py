@@ -194,59 +194,60 @@ def test_piecewise_mobius_solver_multi_range_detection():
     assert solver._find_v3_hop_index(input_data) == (0, multi_range_hop)
 
 
-def test_piecewise_mobius_solver_multi_range_solve():
-    """Test PiecewiseMobiusSolver with multi-range hop (simplified).
+def test_piecewise_mobius_solver_multi_range_routing():
+    """Test that PiecewiseMobiusSolver detects multi-range hops and routes correctly.
 
-    Note: This test uses placeholder tick range data. The simplified
-    multi-range implementation may not find a profitable solution with
-    arbitrary test data. The important thing is that the solver correctly
-    detects multi-range hops and attempts piecewise solving.
+    Verifies the routing logic (detection, hop identification) without
+    depending on the profitability of the test data.
     """
-    solver = PiecewiseMobiusSolver()
-
-    # Multi-range hop with ranges that create a profitable arbitrage
-    # Using more realistic reserve magnitudes for profitable path
     ranges = (
         V3TickRangeInfo(
             tick_lower=0,
             tick_upper=100,
-            liquidity=10_000_000_000_000_000,  # Higher liquidity
-            sqrt_price_lower=79228162514264337593543950336,  # ~1.0 price
-            sqrt_price_upper=112045541949572279837463876454,  # ~2.0 price
+            liquidity=10_000_000_000_000_000,
+            sqrt_price_lower=79228162514264337593543950336,
+            sqrt_price_upper=112045541949572279837463876454,
         ),
         V3TickRangeInfo(
             tick_lower=100,
             tick_upper=200,
             liquidity=20_000_000_000_000_000,
             sqrt_price_lower=112045541949572279837463876454,
-            sqrt_price_upper=158456325028528675187087900672,  # ~4.0 price
+            sqrt_price_upper=158456325028528675187087900672,
         ),
     )
     multi_range_hop = BoundedProductHop(
-        reserve_in=15_000_000_000_000,  # token0 reserves
-        reserve_out=7_500_000_000_000_000_000,  # token1 reserves (lower price = cheaper token1)
+        reserve_in=15_000_000_000_000,
+        reserve_out=7_500_000_000_000_000_000,
         fee=Fraction(3, 1000),
         liquidity=10_000_000_000_000_000,
-        sqrt_price=100000000000000000000000000000,  # Current price in range 0
+        sqrt_price=100000000000000000000000000000,
         tick_lower=0,
         tick_upper=100,
         tick_ranges=ranges,
         current_range_index=0,
     )
-
-    # Sell pool with higher price (profitable arbitrage)
     v2_hop = ConstantProductHop(
-        reserve_in=10_000_000_000_000_000_000,  # token1 reserves
-        reserve_out=30_000_000_000_000,  # token0 reserves (higher price)
+        reserve_in=10_000_000_000_000_000_000,
+        reserve_out=30_000_000_000_000,
         fee=Fraction(3, 1000),
     )
     input_data = SolveInput(hops=(multi_range_hop, v2_hop))
 
-    try:
-        result = solver.solve(input_data)
-        assert result.method == SolverMethod.PIECEWISE_MOBIUS
-    except Exception:
-        pass
+    assert multi_range_hop.has_multi_range is True
+    assert multi_range_hop.is_v3 is True
+    assert v2_hop.is_v3 is False
+    assert input_data.has_v3 is True
+    assert input_data.num_hops == 2
+
+    solver = PiecewiseMobiusSolver()
+    assert solver._has_multi_range(input_data) is True
+
+    v3_result = solver._find_v3_hop_index(input_data)
+    assert v3_result is not None
+    v3_idx, v3_hop = v3_result
+    assert v3_idx == 0
+    assert v3_hop is multi_range_hop
 
 
 def test_piecewise_mobius_crossing_math():
@@ -482,13 +483,6 @@ def test_piecewise_lazy_candidate_filtering():
     )
     # Should return a boolean (True if candidate is plausible, False otherwise)
     assert isinstance(is_plausible_result, bool)
-
-    # Full solve should still work
-    try:
-        result = solver.solve(input_data)
-        assert result.method == SolverMethod.PIECEWISE_MOBIUS
-    except Exception:
-        pass
 
 
 def test_tick_range_caching():

@@ -669,8 +669,7 @@ class MobiusOptimizer:
             pool_type = type(pool).__name__
             if pool_type not in v2_pool_types:
                 raise OptimizationError(
-                    f"Unsupported pool type: {pool_type}. "
-                    "Use V2 pools or V3TickRangeHop objects.",
+                    f"Unsupported pool type: {pool_type}. Use V2 pools or V3TickRangeHop objects.",
                     iterations=0,
                     method="mobius",
                 )
@@ -864,7 +863,7 @@ class MobiusOptimizer:
 
         elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
         raise OptimizationError(
-            "No valid V3 candidate range found",
+            message="No valid V3 candidate range found",
             iterations=0,
             method="mobius",
         )
@@ -930,9 +929,7 @@ class MobiusOptimizer:
                 target = crossing.crossing_gross_input
                 if target >= coeffs_before.K / coeffs_before.N:
                     continue  # Crossing requires more than the path can deliver
-                x_min = target * coeffs_before.M / (
-                    coeffs_before.K - target * coeffs_before.N
-                )
+                x_min = target * coeffs_before.M / (coeffs_before.K - target * coeffs_before.N)
             elif crossing.crossing_gross_input > 0:
                 x_min = crossing.crossing_gross_input
             else:
@@ -958,9 +955,7 @@ class MobiusOptimizer:
                 v3_out, valid = piecewise_v3_swap(amt_v3, _crossing)
                 if not valid:
                     return -x
-                final_out = (
-                    simulate_path(v3_out, _hops_after) if _hops_after else v3_out
-                )
+                final_out = simulate_path(v3_out, _hops_after) if _hops_after else v3_out
                 return final_out - x
 
             # Bracket the search
@@ -1015,14 +1010,10 @@ class MobiusOptimizer:
             v3_out, valid = piecewise_v3_swap(amt_v3, crossing)
             if not valid:
                 continue
-            final_out = (
-                simulate_path(v3_out, hops_after) if hops_after else v3_out
-            )
+            final_out = simulate_path(v3_out, hops_after) if hops_after else v3_out
             actual_profit = int(final_out) - optimal_input
 
-            if actual_profit > 0 and (
-                best_result is None or actual_profit > best_result.profit
-            ):
+            if actual_profit > 0 and (best_result is None or actual_profit > best_result.profit):
                 elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
                 best_result = OptimizerResult(
                     optimal_input=optimal_input,
