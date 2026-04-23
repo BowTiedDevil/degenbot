@@ -61,6 +61,10 @@ class SomeClass:
 ## Refactoring
 - Unless directed otherwise, design standalone features without a backwards compatibility layer.
 
+## Ubiquitous Language
+
+Each module has a `UBIQUITOUS_LANGUAGE.md` defining domain terms, aliases to avoid, and resolved ambiguities. The root [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md) indexes all modules and holds cross-cutting content (relationships, ambiguity rulings). Read the relevant module glossary before naming variables, classes, or docstrings in that area.
+
 ## Solidity
 
 ### Arithmetic wrapping behavior
