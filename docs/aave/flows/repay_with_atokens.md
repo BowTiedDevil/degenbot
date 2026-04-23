@@ -1,6 +1,6 @@
 # Repay With aTokens Flow
 
-End-to-end execution flow for repaying debt using aTokens instead of underlying assets in Aave V3.
+End-to-end execution flow for repaying debt using aTokens instead of underlying Tokens in Aave V3.
 
 ## Quick Reference
 

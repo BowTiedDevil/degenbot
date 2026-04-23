@@ -203,7 +203,7 @@ def calculate_actual_collateral_balance(
 
     Args:
         scaled_balance: The scaled balance from the position record
-        liquidity_index: Current liquidity index for the asset
+        liquidity_index: Current liquidity index for the Asset
 
     Returns:
         Actual collateral balance in underlying token units
@@ -223,7 +223,7 @@ def calculate_actual_debt_balance(
 
     Args:
         scaled_balance: The scaled balance from the position record
-        borrow_index: Current borrow index for the asset
+        borrow_index: Current borrow index for the Asset
 
     Returns:
         Actual debt balance in underlying token units
@@ -264,10 +264,10 @@ def fetch_asset_prices(
     Args:
         provider: ProviderAdapter instance
         oracle_address: Price oracle contract address
-        asset_addresses: Set of asset addresses to fetch prices for
+        asset_addresses: Set of Asset addresses to fetch prices for
 
     Returns:
-        Dict mapping asset address to price (8 decimals)
+        Dict mapping Asset address to price (8 decimals)
     """
     prices: dict[ChecksumAddress, int] = {}
 
@@ -298,24 +298,24 @@ def get_liquidation_threshold_for_position(
     user_emode: int,
 ) -> int:
     """
-    Get the effective liquidation threshold for an asset position.
+    Get the effective liquidation threshold for an Asset position.
 
-    If the user is in eMode and the asset is in the same eMode category,
+    If the user is in eMode and the Asset is in the same eMode category,
     use the eMode liquidation threshold. Otherwise use the standard threshold.
 
     Args:
-        asset: The Aave V3 asset record
-        emode_category_id: The asset's eMode category (or None)
+        asset: The Aave V3 Asset record
+        emode_category_id: The Asset's eMode category (or None)
         user_emode: The user's active eMode category (0 = no eMode)
 
     Returns:
         Liquidation threshold in basis points
     """
-    # Check if user is in eMode and asset belongs to that category
+    # Check if user is in eMode and Asset belongs to that category
     if user_emode > 0 and emode_category_id == user_emode and asset.e_mode_category is not None:
         return asset.e_mode_category.liquidation_threshold
 
-    # Use standard asset config threshold
+    # Use standard Asset config threshold
     return asset.asset_config.liquidation_threshold if asset.asset_config else 0
 
 
@@ -325,14 +325,14 @@ def get_ltv_for_position(
     user_emode: int,
 ) -> int:
     """
-    Get the effective LTV for an asset position.
+    Get the effective LTV for an Asset position.
 
-    If the user is in eMode and the asset is in the same eMode category,
+    If the user is in eMode and the Asset is in the same eMode category,
     use the eMode LTV. Otherwise use the standard LTV.
 
     Args:
-        asset: The Aave V3 asset record
-        emode_category_id: The asset's eMode category (or None)
+        asset: The Aave V3 Asset record
+        emode_category_id: The Asset's eMode category (or None)
         user_emode: The user's active eMode category (0 = no eMode)
 
     Returns:
@@ -357,15 +357,15 @@ def build_collateral_position_data(
     Args:
         position: The collateral position database record
         user_emode: The user's active eMode category
-        collateral_enabled: Whether user has enabled this asset as collateral
-        price: Oracle price for the asset (8 decimals), None if unavailable
+        collateral_enabled: Whether user has enabled this Asset as collateral
+        price: Oracle price for the Asset (8 decimals), None if unavailable
 
     Returns:
         CollateralPositionData with calculated values
     """
     asset = position.asset
 
-    # Get asset addresses - use ZERO_ADDRESS as fallback if no underlying token
+    # Get Asset addresses - use ZERO_ADDRESS as fallback if no underlying token
     # This should never happen in production data but provides type safety
     underlying_address = asset.underlying_token.address if asset.underlying_token else ZERO_ADDRESS
 
@@ -375,7 +375,7 @@ def build_collateral_position_data(
         liquidity_index=asset.liquidity_index,
     )
 
-    # Get eMode category ID for this asset
+    # Get eMode category ID for this Asset
     emode_cat_id = asset.e_mode_category_id or None
 
     # Determine liquidation threshold and LTV
@@ -419,14 +419,14 @@ def build_debt_position_data(
     Args:
         position: The debt position database record
         user_emode: The user's active eMode category
-        price: Oracle price for the asset (8 decimals), None if unavailable
+        price: Oracle price for the Asset (8 decimals), None if unavailable
 
     Returns:
         DebtPositionData with calculated values
     """
     asset = position.asset
 
-    # Get asset addresses - use ZERO_ADDRESS as fallback if no underlying token
+    # Get Asset addresses - use ZERO_ADDRESS as fallback if no underlying token
     # This should never happen in production data but provides type safety
     underlying_address = asset.underlying_token.address if asset.underlying_token else ZERO_ADDRESS
 
@@ -436,7 +436,7 @@ def build_debt_position_data(
         borrow_index=asset.borrow_index,
     )
 
-    # Get eMode category ID for this asset
+    # Get eMode category ID for this Asset
     emode_cat_id = asset.e_mode_category_id or None
 
     # Check if this position is in eMode
@@ -472,7 +472,7 @@ def calculate_health_factor(
         collateral_positions: Tuple of collateral position data
         debt_positions: Tuple of debt position data
         isolation_mode_debt: User's isolation mode debt (if applicable)
-        isolation_debt_ceiling: Debt ceiling for isolation mode asset
+        isolation_debt_ceiling: Debt ceiling for isolation mode Asset
 
     Returns:
         Health factor, or None if no debt
@@ -522,7 +522,7 @@ def analyze_user_position(
         collateral_positions: List of collateral position records
         debt_positions: List of debt position records
         collateral_config_map: Map of asset_id -> enabled status
-        price_map: Map of asset address -> oracle price (8 decimals), optional
+        price_map: Map of Asset address -> oracle price (8 decimals), optional
 
     Returns:
         UserPositionSummary with risk metrics
@@ -602,7 +602,7 @@ def _get_price_for_position(
     asset: AaveV3Asset,
     price_map: dict[ChecksumAddress, int],
 ) -> int | None:
-    """Get price for an asset from the price map."""
+    """Get price for an Asset from the price map."""
     if asset.underlying_token is None:
         return None
     return price_map.get(asset.underlying_token.address)
@@ -623,7 +623,7 @@ def analyze_positions_for_market(
 
     If provider is provided, prices are fetched from the Aave oracle for
     accurate health factor calculations. Otherwise, positions are
-    analyzed without price adjustments (useful for single-asset analysis).
+    analyzed without price adjustments (useful for single-Asset analysis).
 
     Args:
         session: SQLAlchemy session
@@ -644,7 +644,7 @@ def analyze_positions_for_market(
         if oracle_address is None:
             logger.warning("Price oracle not found for market, prices will not be applied")
         else:
-            # Collect all unique asset addresses first
+            # Collect all unique Asset addresses first
             asset_addresses = _collect_asset_addresses(session, market_id)
             if asset_addresses:
                 logger.info(f"Fetching prices for {len(asset_addresses)} assets from oracle...")
@@ -685,7 +685,7 @@ def analyze_positions_for_market(
             )
         ).all()
 
-        # Fetch debt positions with full asset info
+        # Fetch debt positions with full Asset info
         debt_positions = session.scalars(
             select(AaveV3DebtPosition)
             .where(AaveV3DebtPosition.user_id == user.id)
@@ -734,14 +734,14 @@ def analyze_positions_for_market(
 
 def _collect_asset_addresses(session: Session, market_id: int) -> set[ChecksumAddress]:
     """
-    Collect all unique asset addresses for a market.
+    Collect all unique Asset addresses for a market.
 
     Args:
         session: SQLAlchemy session
         market_id: Market ID to query
 
     Returns:
-        Set of underlying asset addresses
+        Set of underlying Asset addresses
     """
     assets = (
         session

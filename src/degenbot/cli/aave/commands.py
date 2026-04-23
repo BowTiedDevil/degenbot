@@ -881,10 +881,10 @@ def market_show(chain_id: int | None, name: str | None) -> None:
             asset_count = len(market_obj.assets) if market_obj.assets else 0
 
             click.echo(f"  Users: {user_count}")
-            click.echo(f"  Assets: {asset_count}")
+            click.echo(f"  Reserves: {asset_count}")
 
             if market_obj.assets:
-                click.echo("  Asset List:")
+                click.echo("  Reserve List:")
                 for asset in market_obj.assets:
                     token_symbol = (
                         asset.underlying_token.symbol if asset.underlying_token else "Unknown"
@@ -907,9 +907,9 @@ def update_aave_market(
     Update the Aave V3 market.
 
     Processes events in three phases:
-    1. Bootstrap: Fetch and process proxy creation events to discover Pool and PoolConfigurator
+    1. Bootstrap: Fetch and process proxy creation events to discover Pool contract and PoolConfigurator
        contracts.
-    2. Asset Discovery: Fetch all targeted events and build transaction contexts
+    2. Reserve Discovery: Fetch all targeted events and build transaction contexts
     3. User Event Processing: Process transactions with assertions that classifying events exist
     """
 
@@ -1032,8 +1032,8 @@ def update_aave_market(
         contract_name="POOL",
     )
     if pool is None:
-        # Pool not initialized yet, skip to next chunk
-        logger.warning(f"Pool not initialized for market {market.id}, skipping")
+        # Pool contract not initialized yet, skip to next chunk
+        logger.warning(f"Pool contract not initialized for market {market.id}, skipping")
         return
 
     pool_events = fetch_pool_events(

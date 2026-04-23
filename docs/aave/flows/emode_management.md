@@ -235,7 +235,7 @@ function validateSetUserEMode(
             (unsafe_cachedUserConfig, isBorrowed, isEnabledAsCollateral) = UserConfiguration
                 .getNextFlags(unsafe_cachedUserConfig);
 
-            // Ensure borrowed assets can be borrowed in target category
+            // Ensure borrowed Reserves can be borrowed in target category
             if (isBorrowed) {
                 require(
                     categoryId != 0
@@ -352,7 +352,7 @@ Category Configuration (set by PoolConfigurator):
     borrowableBitmap: 0b1100      // Which reserves can be borrowed
     ltvzeroBitmap: 0b0000         // Which collaterals have 0 LTV
 
-Standard Reserve LTV (outside eMode):
+Standard Asset LTV (outside eMode):
     ltv: 82_50                    // 82.5% typical for volatile assets
     liquidationThreshold: 86_00   // 86% typical threshold
 ```
@@ -409,7 +409,7 @@ event UserEModeSet(
 | Error | Condition | File |
 |-------|-----------|------|
 | `InconsistentEModeCategory` | `categoryId != 0` AND `eModeCategory.liquidationThreshold == 0` | ValidationLogic.sol |
-| `InvalidDebtInEmode` | User has borrowed asset not in target category's `borrowableBitmap` | ValidationLogic.sol |
+| `InvalidDebtInEmode` | User has borrowed from an Asset not in target category's `borrowableBitmap` | ValidationLogic.sol |
 | `InvalidCollateralInEmode` | User has collateral with zero LTV in target category | ValidationLogic.sol |
 | `HealthFactorLowerThanLiquidationThreshold` | HF < 1 after switching categories | ValidationLogic.sol |
 | `CallerNotPositionManager` | Caller is not approved position manager for `onBehalfOf` | Pool.sol |
@@ -467,7 +467,7 @@ struct EModeCategory {
 
 | Category | Label | Typical LTV | Typical LT | Assets |
 |----------|-------|-------------|------------|--------|
-| 0 | None | Reserve-specific | Reserve-specific | All (no efficiency) |
+| 0 | None | Asset-specific | Asset-specific | All (no efficiency) |
 | 1 | ETH Correlated | 97% | 98% | ETH, stETH, rETH, cbETH |
 | 2 | Stablecoins | 97% | 98% | USDC, USDT, DAI, LUSD |
 | 3 | LSTs | 95% | 96% | stETH, rETH only |

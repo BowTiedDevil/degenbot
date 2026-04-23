@@ -1,6 +1,6 @@
-# Eliminate Reserve Deficit Flow
+# Eliminate Asset Deficit Flow
 
-End-to-end execution flow for covering a reserve's deficit by burning aToken positions.
+End-to-end execution flow for covering an Asset's deficit by burning aToken positions.
 
 ## Quick Reference
 
@@ -247,9 +247,9 @@ function executeEliminateDeficit(
 }
 ```
 
-### 3. What is a Reserve Deficit?
+### 3. What is an Asset Deficit?
 
-A reserve deficit occurs when the protocol has bad debt that cannot be fully liquidated. This typically happens during liquidation when:
+An Asset deficit occurs when the protocol has bad debt that cannot be fully liquidated. This typically happens during liquidation when:
 
 1. A borrower's position is undercollateralized (Health Factor < 1)
 2. The liquidator seizes all available collateral
@@ -324,13 +324,13 @@ Emitted when deficit coverage is successfully executed.
 event DeficitCovered(
     address indexed reserve,      // Asset address whose deficit is covered
     address indexed caller,       // User who provided coverage (burned aTokens)
-    uint256 amountCovered         // Amount of deficit covered (in underlying asset)
+    uint256 amountCovered         // Amount of deficit covered (in underlying Token)
 );
 ```
 
 ### ReserveUsedAsCollateralDisabled Event
 
-Emitted conditionally when the user burns their entire aToken balance for a collateral asset.
+Emitted conditionally when the user burns their entire aToken balance for a collateral Asset.
 
 ```solidity
 event ReserveUsedAsCollateralDisabled(

@@ -299,16 +299,16 @@ def _process_deficit_coverage_burn(
     if scaled_event.user_address is None:
         return
 
-    # Get collateral asset
+    # Get collateral Asset
     token_address = scaled_event.event["address"]
-    collateral_asset = get_asset_by_token_type(
+    collateral_reserve = get_asset_by_token_type(
         session=tx_context.session,
         market=tx_context.market,
         token_address=token_address,
         token_type=TokenType.A_TOKEN,
     )
 
-    assert collateral_asset
+    assert collateral_reserve
 
     # Get user
     user = get_or_create_user(
@@ -321,14 +321,14 @@ def _process_deficit_coverage_burn(
     collateral_position = get_or_create_collateral_position(
         tx_context=tx_context,
         user=user,
-        asset_id=collateral_asset.id,
+        asset_id=collateral_reserve.id,
     )
 
     # Calculate scaled amount directly without enrichment validation
     # The raw amount needs to be converted to scaled amount
     assert scaled_event.index is not None
     token_math = TokenMathFactory.get_token_math_for_token_revision(
-        collateral_asset.a_token_revision
+        collateral_reserve.a_token_revision
     )
     scaled_amount = token_math.get_collateral_burn_scaled_amount(
         amount=scaled_event.amount,
@@ -344,7 +344,7 @@ def _process_deficit_coverage_burn(
             index=scaled_event.index,
             scaled_amount=scaled_amount,
         ),
-        scaled_token_revision=collateral_asset.a_token_revision,
+        scaled_token_revision=collateral_reserve.a_token_revision,
         position=collateral_position,
     )
 
@@ -362,16 +362,16 @@ def _process_collateral_mint_with_match(
     """
 
     token_address = scaled_event.event["address"]
-    collateral_asset = get_asset_by_token_type(
+    collateral_reserve = get_asset_by_token_type(
         session=tx_context.session,
         market=tx_context.market,
         token_address=token_address,
         token_type=TokenType.A_TOKEN,
     )
 
-    assert collateral_asset
+    assert collateral_reserve
 
-    asset_identifier = get_asset_identifier(collateral_asset)
+    asset_identifier = get_asset_identifier(collateral_reserve)
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing {asset_identifier} collateral mint "
         f"at block {event['blockNumber']}"
@@ -387,7 +387,7 @@ def _process_collateral_mint_with_match(
     collateral_position = get_or_create_collateral_position(
         tx_context=tx_context,
         user=user,
-        asset_id=collateral_asset.id,
+        asset_id=collateral_reserve.id,
     )
 
     # Use enriched event data for scaled amount, or calculate for MINT_TO_TREASURY
@@ -413,7 +413,7 @@ def _process_collateral_mint_with_match(
             index=scaled_event.index,
             scaled_amount=scaled_amount,
         ),
-        scaled_token_revision=collateral_asset.a_token_revision,
+        scaled_token_revision=collateral_reserve.a_token_revision,
         position=collateral_position,
     )
 
@@ -429,18 +429,18 @@ def _process_collateral_burn_with_match(
     Process collateral (aToken) burn with operation match.
     """
 
-    # Get collateral asset first for logging
+    # Get collateral Asset first for logging
     token_address = scaled_event.event["address"]
-    collateral_asset = get_asset_by_token_type(
+    collateral_reserve = get_asset_by_token_type(
         session=tx_context.session,
         market=tx_context.market,
         token_address=token_address,
         token_type=TokenType.A_TOKEN,
     )
 
-    assert collateral_asset
+    assert collateral_reserve
 
-    asset_identifier = get_asset_identifier(collateral_asset)
+    asset_identifier = get_asset_identifier(collateral_reserve)
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing {asset_identifier} collateral burn "
         f"at block {event['blockNumber']}"
@@ -457,7 +457,7 @@ def _process_collateral_burn_with_match(
     collateral_position = get_or_create_collateral_position(
         tx_context=tx_context,
         user=user,
-        asset_id=collateral_asset.id,
+        asset_id=collateral_reserve.id,
     )
 
     # Use enriched event data for scaled amount
@@ -469,7 +469,7 @@ def _process_collateral_burn_with_match(
     # This should not happen for normal burns, but provides a safety net
     if scaled_amount is None and raw_amount is not None:
         token_math = TokenMathFactory.get_token_math_for_token_revision(
-            collateral_asset.a_token_revision
+            collateral_reserve.a_token_revision
         )
         assert scaled_event.index is not None
         scaled_amount = token_math.get_collateral_burn_scaled_amount(
@@ -486,7 +486,7 @@ def _process_collateral_burn_with_match(
             index=scaled_event.index,
             scaled_amount=scaled_amount,
         ),
-        scaled_token_revision=collateral_asset.a_token_revision,
+        scaled_token_revision=collateral_reserve.a_token_revision,
         position=collateral_position,
     )
     logger.debug(
@@ -512,18 +512,18 @@ def _process_debt_mint_with_match(
     The actual scaled burn amount = balance_increase - amount.
     """
 
-    # Get debt asset first for logging
+    # Get debt Asset first for logging
     token_address = scaled_event.event["address"]
-    debt_asset = get_asset_by_token_type(
+    debt_reserve = get_asset_by_token_type(
         session=tx_context.session,
         market=tx_context.market,
         token_address=token_address,
         token_type=TokenType.V_TOKEN,
     )
 
-    assert debt_asset
+    assert debt_reserve
 
-    asset_identifier = get_asset_identifier(debt_asset)
+    asset_identifier = get_asset_identifier(debt_reserve)
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing {asset_identifier} debt mint "
         f"at block {event['blockNumber']}"
@@ -539,7 +539,7 @@ def _process_debt_mint_with_match(
     debt_position = get_or_create_debt_position(
         tx_context=tx_context,
         user=user,
-        asset_id=debt_asset.id,
+        asset_id=debt_reserve.id,
     )
 
     # Check if this is a GHO token first (needed for INTEREST_ACCRUAL handling)
@@ -554,7 +554,7 @@ def _process_debt_mint_with_match(
         effective_discount = tx_context.user_discounts.get(user.address, user.gho_discount)
 
         # Process using GHO-specific processor
-        gho_processor = TokenProcessorFactory.get_gho_debt_processor(debt_asset.v_token_revision)
+        gho_processor = TokenProcessorFactory.get_gho_debt_processor(debt_reserve.v_token_revision)
         assert scaled_event.balance_increase is not None
         assert scaled_event.index is not None
 
@@ -592,7 +592,7 @@ def _process_debt_mint_with_match(
         debt_position.balance += gho_result.balance_delta
         update_debt_position_index(
             tx_context=tx_context,
-            debt_asset=debt_asset,
+            debt_reserve=debt_reserve,
             debt_position=debt_position,
             event_index=scaled_event.index,
             event_block_number=scaled_event.event["blockNumber"],
@@ -683,7 +683,7 @@ def _process_debt_mint_with_match(
 
             # Use token revision (not pool revision) to get correct TokenMath
             token_math = TokenMathFactory.get_token_math_for_token_revision(
-                debt_asset.v_token_revision
+                debt_reserve.v_token_revision
             )
             actual_scaled_burn = token_math.get_debt_burn_scaled_amount(
                 repay_amount, scaled_event.index
@@ -701,7 +701,7 @@ def _process_debt_mint_with_match(
                     index=scaled_event.index,
                     scaled_amount=actual_scaled_burn,  # Pass the correctly calculated scaled burn
                 ),
-                scaled_token_revision=debt_asset.v_token_revision,
+                scaled_token_revision=debt_reserve.v_token_revision,
                 position=debt_position,
             )
         else:
@@ -715,13 +715,13 @@ def _process_debt_mint_with_match(
                     index=scaled_event.index,
                     scaled_amount=scaled_amount,
                 ),
-                scaled_token_revision=debt_asset.v_token_revision,
+                scaled_token_revision=debt_reserve.v_token_revision,
                 position=debt_position,
             )
 
         update_debt_position_index(
             tx_context=tx_context,
-            debt_asset=debt_asset,
+            debt_reserve=debt_reserve,
             debt_position=debt_position,
             event_index=scaled_event.index,
             event_block_number=scaled_event.event["blockNumber"],
@@ -764,18 +764,18 @@ def _process_debt_burn_with_match(
     Process debt (vToken) burn with operation match.
     """
 
-    # Get debt asset first for logging
+    # Get debt Asset first for logging
     token_address = scaled_event.event["address"]
-    debt_asset = get_asset_by_token_type(
+    debt_reserve = get_asset_by_token_type(
         session=tx_context.session,
         market=tx_context.market,
         token_address=token_address,
         token_type=TokenType.V_TOKEN,
     )
 
-    assert debt_asset is not None
+    assert debt_reserve is not None
 
-    asset_identifier = get_asset_identifier(debt_asset)
+    asset_identifier = get_asset_identifier(debt_reserve)
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing {asset_identifier} debt burn "
         f"at block {event['blockNumber']}"
@@ -791,7 +791,7 @@ def _process_debt_burn_with_match(
     debt_position = get_or_create_debt_position(
         tx_context=tx_context,
         user=user,
-        asset_id=debt_asset.id,
+        asset_id=debt_reserve.id,
     )
 
     # Use enriched event data for scaled amount
@@ -827,7 +827,7 @@ def _process_debt_burn_with_match(
         effective_discount = tx_context.user_discounts.get(user.address, user.gho_discount)
 
         # Process using GHO-specific processor
-        gho_processor = TokenProcessorFactory.get_gho_debt_processor(debt_asset.v_token_revision)
+        gho_processor = TokenProcessorFactory.get_gho_debt_processor(debt_reserve.v_token_revision)
         assert scaled_event.balance_increase is not None
         assert scaled_event.index is not None
         gho_result = gho_processor.process_burn_event(
@@ -848,7 +848,7 @@ def _process_debt_burn_with_match(
         debt_position.balance += gho_result.balance_delta
         update_debt_position_index(
             tx_context=tx_context,
-            debt_asset=debt_asset,
+            debt_reserve=debt_reserve,
             debt_position=debt_position,
             event_index=scaled_event.index,
             event_block_number=scaled_event.event["blockNumber"],
@@ -897,7 +897,7 @@ def _process_debt_burn_with_match(
                 debt_to_cover = operation.debt_to_cover
 
                 token_math = TokenMathFactory.get_token_math_for_token_revision(
-                    debt_asset.v_token_revision
+                    debt_reserve.v_token_revision
                 )
                 burn_value = token_math.get_debt_burn_scaled_amount(
                     debt_to_cover, scaled_event.index
@@ -918,7 +918,7 @@ def _process_debt_burn_with_match(
                 total_debt = group.total_debt_to_cover
 
                 token_math = TokenMathFactory.get_token_math_for_token_revision(
-                    debt_asset.v_token_revision
+                    debt_reserve.v_token_revision
                 )
                 burn_value = token_math.get_debt_burn_scaled_amount(total_debt, scaled_event.index)
                 scaled_amount = burn_value
@@ -935,7 +935,7 @@ def _process_debt_burn_with_match(
                 debt_to_cover = operation.debt_to_cover
 
                 token_math = TokenMathFactory.get_token_math_for_token_revision(
-                    debt_asset.v_token_revision
+                    debt_reserve.v_token_revision
                 )
                 burn_value = token_math.get_debt_burn_scaled_amount(
                     debt_to_cover, scaled_event.index
@@ -964,13 +964,13 @@ def _process_debt_burn_with_match(
                 index=scaled_event.index,
                 scaled_amount=scaled_amount,
             ),
-            scaled_token_revision=debt_asset.v_token_revision,
+            scaled_token_revision=debt_reserve.v_token_revision,
             position=debt_position,
         )
 
         update_debt_position_index(
             tx_context=tx_context,
-            debt_asset=debt_asset,
+            debt_reserve=debt_reserve,
             debt_position=debt_position,
             event_index=scaled_event.index,
             event_block_number=scaled_event.event["blockNumber"],

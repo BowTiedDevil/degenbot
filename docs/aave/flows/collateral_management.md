@@ -1,6 +1,6 @@
 # Collateral Management Flow
 
-End-to-end execution flow for enabling or disabling a supplied asset as collateral in Aave V3.
+End-to-end execution flow for enabling or disabling a supplied **Token** as collateral in Aave V3.
 
 ## Quick Reference
 
@@ -369,7 +369,7 @@ self.data &= ~bit;  // Clears the collateral bit to 0
 
 ### ReserveUsedAsCollateralEnabled Event
 
-Emitted when a user enables an asset as collateral.
+Emitted when a user enables an **Asset** as collateral.
 
 ```solidity
 event ReserveUsedAsCollateralEnabled(
@@ -380,7 +380,7 @@ event ReserveUsedAsCollateralEnabled(
 
 ### ReserveUsedAsCollateralDisabled Event
 
-Emitted when a user disables an asset as collateral.
+Emitted when a user disables an **Asset** as collateral.
 
 ```solidity
 event ReserveUsedAsCollateralDisabled(
@@ -400,7 +400,7 @@ event ReserveUsedAsCollateralDisabled(
 | `UnderlyingBalanceZero` | User has no aToken balance when enabling | SupplyLogic.sol |
 | `UserInIsolationModeOrLtvZero` | Cannot enable as collateral (LTV=0 or isolation mode) | SupplyLogic.sol |
 | `HealthFactorLowerThanLiquidationThreshold` | Disabling would make HF < 1.0 | ValidationLogic.sol |
-| `LtvValidationFailed` | Has LTV0 collateral but trying to disable non-LTV0 asset | ValidationLogic.sol |
+| `LtvValidationFailed` | Has LTV0 collateral but trying to disable non-LTV0 **Asset** | ValidationLogic.sol |
 | `InvalidReserveIndex` | Reserve index exceeds maximum | UserConfiguration.sol |
 
 ---

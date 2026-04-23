@@ -81,7 +81,7 @@ class ScaledEventEnricher:
         token_address = ChecksumAddress(scaled_event.event["address"])
         token_revision = self._get_token_revision(token_address)
 
-        # 2. Get underlying asset address
+        # 2. Get underlying Asset address
         underlying_asset = self._get_underlying_asset(token_address)
 
         # Track calculation type to detect overrides for validation skipping
@@ -406,14 +406,14 @@ class ScaledEventEnricher:
         if v_token_asset is not None:
             return v_token_asset.v_token_revision
 
-        msg = f"Could not find asset for token {token_address}"
+        msg = f"Could not find Asset for token {token_address}"
         raise EnrichmentError(msg)
 
     def _get_underlying_asset(
         self,
         token_address: ChecksumAddress,
     ) -> ChecksumAddress:
-        """Get underlying asset address for a token."""
+        """Get underlying Asset address for a token."""
 
         # Query by joining with a_token or v_token
         asset = (
@@ -434,7 +434,7 @@ class ScaledEventEnricher:
             )
 
         if asset is None:
-            msg = f"Could not find underlying asset for token {token_address}"
+            msg = f"Could not find underlying Asset for token {token_address}"
             raise EnrichmentError(msg)
 
         return ChecksumAddress(asset.underlying_token.address)

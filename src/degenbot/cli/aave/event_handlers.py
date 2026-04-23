@@ -44,7 +44,7 @@ def _process_collateral_configuration_changed_event(
     market: AaveV3Market,
 ) -> AaveV3AssetConfig | None:
     """
-    Process a CollateralConfigurationChanged event to update asset configuration.
+    Process a CollateralConfigurationChanged event to update Asset configuration.
 
     Fetches full configuration from the Pool contract via getConfiguration()
     and decodes the bitmap to populate all config fields.
@@ -62,13 +62,13 @@ def _process_collateral_configuration_changed_event(
 
     asset_address = decode_address(event["topics"][1])
 
-    # Find the asset in the database
-    asset = session.scalar(
+    # Find the Asset in the database
+    reserve = session.scalar(
         select(AaveV3Asset).where(
             AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address))
         )
     )
-    assert asset is not None
+    assert reserve is not None
 
     # Get the Pool contract address
     pool_contract = get_contract(
@@ -93,12 +93,12 @@ def _process_collateral_configuration_changed_event(
     # Decode the configuration bitmap
     decoded = _decode_reserve_configuration_bitmap(config_bitmap)
 
-    # Get or create the asset config
-    config = session.scalar(select(AaveV3AssetConfig).where(AaveV3AssetConfig.asset_id == asset.id))
+    # Get or create the Asset config
+    config = session.scalar(select(AaveV3AssetConfig).where(AaveV3AssetConfig.asset_id == reserve.id))
 
     if config is None:
         config = AaveV3AssetConfig(
-            asset_id=asset.id,
+            asset_id=reserve.id,
             ltv=decoded["ltv"],
             liquidation_threshold=decoded["liquidation_threshold"],
             liquidation_bonus=decoded["liquidation_bonus"],
@@ -275,7 +275,7 @@ def _process_emode_asset_category_changed_event(
     """
     Process an EModeAssetCategoryChanged event (older Aave versions).
 
-    Updates the asset's eMode category assignment.
+    Updates the Asset's eMode category assignment.
 
     Reference:
     ```
@@ -294,21 +294,21 @@ def _process_emode_asset_category_changed_event(
         data=event["data"],
     )
 
-    # Find the asset
-    asset = session.scalar(
+    # Find the Asset
+    reserve = session.scalar(
         select(AaveV3Asset).where(
             AaveV3Asset.market_id == market_id,
             AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
         )
     )
-    assert asset is not None
+    assert reserve is not None
 
-    # Get or create the asset config
-    config = session.scalar(select(AaveV3AssetConfig).where(AaveV3AssetConfig.asset_id == asset.id))
+    # Get or create the Asset config
+    config = session.scalar(select(AaveV3AssetConfig).where(AaveV3AssetConfig.asset_id == reserve.id))
 
     if config is None:
         config = AaveV3AssetConfig(
-            asset_id=asset.id,
+            asset_id=reserve.id,
             ltv=0,
             liquidation_threshold=0,
             liquidation_bonus=0,
@@ -342,8 +342,8 @@ def _process_asset_collateral_in_emode_changed_event(
     """
     Process an AssetCollateralInEModeChanged event (newer Aave versions v3.4+).
 
-    This event is emitted when an asset is added or removed as collateral
-    in an eMode category. The category_id in the event is the asset's primary
+    This event is emitted when an Asset is added or removed as collateral
+    in an eMode category. The category_id in the event is the Asset's primary
     eMode category.
 
     Reference:
@@ -363,23 +363,23 @@ def _process_asset_collateral_in_emode_changed_event(
         data=event["data"],
     )
 
-    # Find the asset
-    asset = session.scalar(
+    # Find the Asset
+    reserve = session.scalar(
         select(AaveV3Asset).where(
             AaveV3Asset.market_id == market_id,
             AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
         )
     )
-    assert asset is not None
+    assert reserve is not None
 
-    # Get or create the asset config
-    config = session.scalar(select(AaveV3AssetConfig).where(AaveV3AssetConfig.asset_id == asset.id))
+    # Get or create the Asset config
+    config = session.scalar(select(AaveV3AssetConfig).where(AaveV3AssetConfig.asset_id == reserve.id))
 
     if config is None:
-        # Only set e_mode_category_id if this asset is being added as collateral
+        # Only set e_mode_category_id if this Asset is being added as collateral
         e_mode_cat = int(category_id) if is_collateral and category_id > 0 else None
         config = AaveV3AssetConfig(
-            asset_id=asset.id,
+            asset_id=reserve.id,
             ltv=0,
             liquidation_threshold=0,
             liquidation_bonus=0,
@@ -395,7 +395,7 @@ def _process_asset_collateral_in_emode_changed_event(
         logger.info(
             f"Created AaveV3AssetConfig for {asset_address} with eMode category {e_mode_cat}"
         )
-    # Update category if asset is being added as collateral, clear if removed
+    # Update category if the Asset is being added as collateral, clear if removed
     elif is_collateral and category_id > 0:
         config.e_mode_category_id = int(category_id)
         logger.info(f"Set eMode category for {asset_address} to {category_id} (collateral enabled)")
@@ -428,14 +428,14 @@ def _process_reserve_used_as_collateral_enabled_event(
     asset_address = decode_address(event["topics"][1])
     user_address = decode_address(event["topics"][2])
 
-    # Find the asset
-    asset = session.scalar(
+    # Find the Asset
+    reserve = session.scalar(
         select(AaveV3Asset).where(
             AaveV3Asset.market_id == market_id,
             AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
         )
     )
-    assert asset is not None
+    assert reserve is not None
 
     # Find or create the user
     user = session.scalar(
@@ -450,14 +450,14 @@ def _process_reserve_used_as_collateral_enabled_event(
     config = session.scalar(
         select(AaveV3UserCollateralConfig).where(
             AaveV3UserCollateralConfig.user_id == user.id,
-            AaveV3UserCollateralConfig.asset_id == asset.id,
+            AaveV3UserCollateralConfig.asset_id == reserve.id,
         )
     )
 
     if config is None:
         config = AaveV3UserCollateralConfig(
             user_id=user.id,
-            asset_id=asset.id,
+            asset_id=reserve.id,
             enabled=True,
         )
         session.add(config)
@@ -489,14 +489,14 @@ def _process_reserve_used_as_collateral_disabled_event(
     asset_address = decode_address(event["topics"][1])
     user_address = decode_address(event["topics"][2])
 
-    # Find the asset
-    asset = session.scalar(
+    # Find the Asset
+    reserve = session.scalar(
         select(AaveV3Asset).where(
             AaveV3Asset.market_id == market_id,
             AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
         )
     )
-    assert asset is not None
+    assert reserve is not None
 
     # Find the user
     user = session.scalar(
@@ -511,7 +511,7 @@ def _process_reserve_used_as_collateral_disabled_event(
     config = session.scalar(
         select(AaveV3UserCollateralConfig).where(
             AaveV3UserCollateralConfig.user_id == user.id,
-            AaveV3UserCollateralConfig.asset_id == asset.id,
+            AaveV3UserCollateralConfig.asset_id == reserve.id,
         )
     )
 
@@ -519,7 +519,7 @@ def _process_reserve_used_as_collateral_disabled_event(
         # No existing config - create one disabled
         config = AaveV3UserCollateralConfig(
             user_id=user.id,
-            asset_id=asset.id,
+            asset_id=reserve.id,
             enabled=False,
         )
         session.add(config)
@@ -537,7 +537,7 @@ def _process_asset_initialization_event(
     session: Session,
 ) -> None:
     """
-    Process a ReserveInitialized event to add a new Aave asset to the database.
+    Process a ReserveInitialized event to add a new Aave Asset to the database.
 
     Reference:
     ```
@@ -551,7 +551,7 @@ def _process_asset_initialization_event(
     ```
     """
 
-    logger.debug(f"Processing asset initialization event at block {event['blockNumber']}")
+    logger.debug(f"Processing Asset initialization event at block {event['blockNumber']}")
 
     asset_address = decode_address(event["topics"][1])
     a_token_address = decode_address(event["topics"][2])
@@ -622,7 +622,7 @@ def _process_asset_initialization_event(
         return_types=["uint256"],
     )
 
-    asset = AaveV3Asset(
+    reserve = AaveV3Asset(
         market_id=market.id,
         underlying_asset_id=erc20_token_in_db.id,
         a_token_id=a_token.id,
@@ -634,9 +634,9 @@ def _process_asset_initialization_event(
         borrow_index=0,
         borrow_rate=0,
     )
-    session.add(asset)
-    session.flush([asset])
-    logger.info(f"Added new Aave V3 asset: {asset.underlying_token!r}")
+    session.add(reserve)
+    session.flush([reserve])
+    logger.info(f"Added new Aave V3 Asset: {reserve.underlying_token!r}")
 
     # Fetch and set the initial price source from the oracle
     oracle_contract = get_contract(
@@ -656,10 +656,10 @@ def _process_asset_initialization_event(
         return_types=["address"],
         block_identifier=event["blockNumber"],
     )
-    asset.price_source = get_checksum_address(price_source)
+    reserve.price_source = get_checksum_address(price_source)
     logger.info(f"Set initial price source for {asset_address} to {price_source}")
 
-    # If this is the GHO asset, update the GHO token entry with the vToken reference
+    # If this is the GHO Asset, update the GHO token entry with the vToken reference
     gho_asset = get_gho_asset(session, market)
     if asset_address == gho_asset.token.address:
         gho_token_entry = session.scalar(
@@ -782,7 +782,7 @@ def _process_reserve_data_update_event(
     market: AaveV3Market,
 ) -> None:
     """
-    Process a ReserveDataUpdated event to update asset rates and indices.
+    Process a ReserveDataUpdated event to update Asset rates and indices.
 
     Reference:
     ```
@@ -858,7 +858,7 @@ def _process_scaled_token_upgrade_event(
     new_implementation_address = decode_address(event["topics"][1])
 
     if (
-        aave_collateral_asset := get_asset_by_token_type(
+        aave_collateral_reserve := get_asset_by_token_type(
             session=tx_context.session,
             market=tx_context.market,
             token_address=event["address"],
@@ -874,12 +874,12 @@ def _process_scaled_token_upgrade_event(
             ),
             return_types=["uint256"],
         )
-        aave_collateral_asset.a_token_revision = atoken_revision
+        aave_collateral_reserve.a_token_revision = atoken_revision
         logger.info(
-            f"Upgraded aToken revision for {aave_collateral_asset.a_token} to {atoken_revision}"
+            f"Upgraded aToken revision for {aave_collateral_reserve.a_token} to {atoken_revision}"
         )
     elif (
-        aave_debt_asset := get_asset_by_token_type(
+        aave_debt_reserve := get_asset_by_token_type(
             session=tx_context.session,
             market=tx_context.market,
             token_address=event["address"],
@@ -895,14 +895,14 @@ def _process_scaled_token_upgrade_event(
             ),
             return_types=["uint256"],
         )
-        aave_debt_asset.v_token_revision = vtoken_revision
-        logger.info(f"Upgraded vToken revision for {aave_debt_asset.v_token} to {vtoken_revision}")
+        aave_debt_reserve.v_token_revision = vtoken_revision
+        logger.info(f"Upgraded vToken revision for {aave_debt_reserve.v_token} to {vtoken_revision}")
 
         # Handle GHO discount deprecation on upgrade to revision 4+
         gho_asset = get_gho_asset(tx_context.session, tx_context.market)
         if (
             gho_asset.v_token is not None
-            and aave_debt_asset.v_token.address == gho_asset.v_token.address
+            and aave_debt_reserve.v_token.address == gho_asset.v_token.address
             and vtoken_revision >= GHO_DISCOUNT_DEPRECATION_REVISION
         ):
             gho_asset.v_gho_discount_token = None
@@ -1138,7 +1138,7 @@ def _process_asset_source_updated_event(
     - topics[1]: asset (address indexed)
     - topics[2]: source (address indexed)
 
-    Updates the asset's price_source field in the database.
+    Updates the Asset's price_source field in the database.
 
     Event definition:
         event AssetSourceUpdated(
@@ -1150,16 +1150,16 @@ def _process_asset_source_updated_event(
     asset_address = decode_address(event["topics"][1])
     source_address = decode_address(event["topics"][2])
 
-    # Find the asset by underlying token address
-    asset = session.scalar(
+    # Find the Asset by underlying token address
+    reserve = session.scalar(
         select(AaveV3Asset).where(
             AaveV3Asset.market_id == market.id,
             AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
         )
     )
-    assert asset is not None
+    assert reserve is not None
 
-    asset.price_source = get_checksum_address(source_address)
+    reserve.price_source = get_checksum_address(source_address)
     logger.info(
         f"AssetSourceUpdated: asset={asset_address}, source={source_address} "
         f"(block {event['blockNumber']})"
