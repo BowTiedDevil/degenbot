@@ -744,7 +744,7 @@ vars.healthFactor = totalDebtInBaseCurrency > 0
 
 ## Version Differences
 
-| Operation | Pool v1-3 | Pool v4+ | Reason |
+| Operation | **Pool contract** v1-3 | **Pool contract** v4+ | Reason |
 |-----------|-----------|----------|---------|
 | AToken Mint | `rayDiv` (half-up) | `rayDivFloor` | Prevent rounding up debt |
 | AToken Burn | `rayDiv` (half-up) | `rayDivCeil` | Ensure full repayment |

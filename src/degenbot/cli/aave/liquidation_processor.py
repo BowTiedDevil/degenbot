@@ -58,7 +58,7 @@ def _process_deferred_debt_burns(
     3. Collateral token operations
     4. LiquidationCall event (at the end)
 
-    Since operations are parsed from Pool events, the burn event may not be matched
+    Since operations are parsed from Pool contract events, the burn event may not be matched
     to a liquidation if the burn has a lower log index than the LiquidationCall.
 
     This function finds unassigned debt burns and matches them to liquidation operations
@@ -100,14 +100,14 @@ def _find_matching_liquidation_for_burn(
     before the LiquidationCall event.
     """
     # Get the debt asset for this burn token
-    debt_asset = get_asset_by_token_type(
+    debt_reserve = get_asset_by_token_type(
         session=tx_context.session,
         market=tx_context.market,
         token_address=burn_token_address,
         token_type=TokenType.V_TOKEN,
     )
 
-    if debt_asset is None:
+    if debt_reserve is None:
         return None
 
     # Find matching liquidation operation
@@ -121,13 +121,13 @@ def _find_matching_liquidation_for_burn(
             continue
 
         # Check if debt asset matches
-        debt_asset_addr = decode_address(op.pool_event["topics"][2])
+        debt_reserve_addr = decode_address(op.pool_event["topics"][2])
 
         # Get vToken address for the debt asset
         debt_v_token = _get_v_token_for_underlying(
             session=tx_context.session,
             market=tx_context.market,
-            underlying_address=debt_asset_addr,
+            underlying_address=debt_reserve_addr,
         )
 
         if debt_v_token is None:

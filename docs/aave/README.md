@@ -1,6 +1,6 @@
 # Aave V3 Protocol Documentation
 
-Comprehensive control flow diagrams and amount transformations for debugging Aave V3 pool operations.
+Comprehensive control flow diagrams and amount transformations for debugging Aave V3 **Market** operations.
 
 ## Quick Navigation
 
@@ -23,7 +23,7 @@ Comprehensive control flow diagrams and amount transformations for debugging Aav
 - [Treasury Accrual](./transformations/index.md#treasury-accrual) - Protocol fees
 - [Liquidation Calculations](./transformations/index.md#liquidation-calculations) - Collateral seizure math
 - [Flash Loan Premiums](./transformations/index.md#flash-loan-premiums) - Premium distribution
-- [E-Mode Calculations](./transformations/index.md#e-mode-calculations) - Correlated asset pricing
+- [E-Mode Calculations](./transformations/index.md#e-mode-calculations) - Correlated Asset pricing
 - [Version Differences](./transformations/index.md#version-differences) - v1-3 vs v4+ rounding
 
 ---

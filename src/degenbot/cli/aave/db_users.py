@@ -25,7 +25,7 @@ def get_gho_vtoken_revision(
     """
     Get the GHO vToken revision for the given market.
 
-    Queries the AaveV3Asset table to get the v_token_revision for the GHO asset.
+    Queries the AaveV3Asset table to get the v_token_revision for the GHO Asset.
     """
 
     gho_asset = session.scalar(

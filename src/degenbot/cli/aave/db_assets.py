@@ -1,7 +1,7 @@
 """
-Asset and token database operations for Aave V3.
+Asset and Token database operations for Aave V3.
 
-Functions for managing ERC20 tokens, Aave assets, contracts, and related lookups.
+Functions for managing ERC20 tokens, Aave Assets, contracts, and related lookups.
 """
 
 from eth_typing import ChecksumAddress
@@ -69,7 +69,7 @@ def get_gho_asset(
     market: AaveV3Market,
 ) -> AaveGhoToken:
     """
-    Get GHO token asset for a given market.
+    Get GHO Asset for a given Market.
     """
 
     gho_asset = session.scalar(
@@ -111,7 +111,7 @@ def get_asset_by_token_type(
     token_type: TokenType,
 ) -> AaveV3Asset | None:
     """
-    Get AaveV3 asset by aToken (collateral) or vToken (debt) address.
+    Get AaveV3 Asset by aToken (collateral) or vToken (debt) address.
     """
 
     match token_type:
@@ -146,7 +146,7 @@ def get_asset_by_underlying_address(
     underlying_address: ChecksumAddress,
 ) -> AaveV3Asset | None:
     """
-    Get AaveV3 asset by underlying token address.
+    Get AaveV3 Asset by underlying Token address.
     """
 
     return session.scalar(
@@ -162,7 +162,7 @@ def get_asset_by_id(
     asset_id: int,
 ) -> AaveV3Asset | None:
     """
-    Get AaveV3 asset by ID.
+    Get AaveV3 Asset by ID.
     """
 
     return session.get(AaveV3Asset, asset_id)
@@ -191,7 +191,7 @@ def get_v_token_for_underlying(
     underlying_token_address: ChecksumAddress,
 ) -> Erc20TokenTable | None:
     """
-    Get the vToken for an underlying asset address.
+    Get the vToken for an underlying Token address.
     """
 
     asset = session.scalar(
@@ -209,9 +209,9 @@ def get_v_token_for_underlying(
 
 def get_asset_identifier(asset: AaveV3Asset) -> str:
     """
-    Get a human-readable identifier for an asset.
+    Get a human-readable identifier for an Asset.
 
-    This provides consistent asset identification in debug logs and error messages.
+    This provides consistent Asset identification in debug logs and error messages.
     """
 
     return asset.underlying_token.symbol or asset.underlying_token.address

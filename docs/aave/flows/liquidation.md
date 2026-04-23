@@ -528,7 +528,7 @@ function validateLiquidationCall(
 ### Debt to Collateral Conversion
 
 ```
-debtToCover (in debt asset decimals)
+debtToCover (in debt Asset decimals)
     |
     v
 // Get prices

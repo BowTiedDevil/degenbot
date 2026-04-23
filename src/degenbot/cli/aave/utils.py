@@ -39,7 +39,7 @@ def _get_v_token_for_underlying(
     market: AaveV3Market,
     underlying_address: ChecksumAddress,
 ) -> ChecksumAddress | None:
-    """Get vToken address for an underlying asset."""
+    """Get vToken address for an underlying Token."""
     asset = session.scalar(
         select(AaveV3Asset).where(
             AaveV3Asset.market_id == market.id,

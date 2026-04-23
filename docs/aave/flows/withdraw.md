@@ -392,7 +392,7 @@ event Withdraw(
 
 ### ReserveUsedAsCollateralDisabled Event
 
-Emitted when withdrawing all of a collateral asset.
+Emitted when withdrawing all of a collateral Asset.
 
 ```solidity
 event ReserveUsedAsCollateralDisabled(
