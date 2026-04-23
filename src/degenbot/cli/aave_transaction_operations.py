@@ -1839,9 +1839,6 @@ class TransactionOperationsParser:
                     assert liquidation_position < total_burn_count
                     target_burn = all_burns_for_asset[liquidation_position]
 
-                    # TODO: collapse if this is true
-                    assert target_burn.event["logIndex"] == target_burn.index
-
                     assert target_burn.event["logIndex"] not in assigned_indices
                     burns.append(target_burn)
                     assigned_indices.add(target_burn.event["logIndex"])
@@ -1854,9 +1851,6 @@ class TransactionOperationsParser:
                     # COMBINED_BURN pattern: More liquidations than burns
                     # All burns go to the first liquidation
                     for ev in candidate_burns:
-                        # TODO: collapse if this is true
-                        assert ev.event["logIndex"] == ev.index
-
                         burns.append(ev)
                         assigned_indices.add(ev.event["logIndex"])
 
