@@ -25,6 +25,7 @@ from degenbot.arbitrage.optimizers.solver import (
     SolveInput,
     SolverMethod,
 )
+from degenbot.exceptions import OptimizationError
 
 from .conftest import FEE_0_3_PCT, FEE_0_5_PCT, USDC_1_5M, USDC_2M, WETH_800, WETH_1000
 
@@ -63,10 +64,10 @@ class TestConstantProductHop:
     def test_asymmetric_fee(self):
         """Camelot pools have different fees per direction."""
         hop = ConstantProductHop(
-            reserve_in=USDC_2M,
-            reserve_out=WETH_1000,
-            fee=FEE_0_3_PCT,
-            fee_out=FEE_0_5_PCT,
+        reserve_in=USDC_2M,
+        reserve_out=WETH_1000,
+        fee=FEE_0_3_PCT,
+        fee_out=FEE_0_5_PCT,
         )
         assert hop.fee_out == FEE_0_5_PCT
 
@@ -93,13 +94,13 @@ class TestConstantProductHop:
 class TestBoundedProductHop:
     def test_construction(self):
         hop = BoundedProductHop(
-            reserve_in=USDC_2M,
-            reserve_out=WETH_1000,
-            fee=FEE_0_3_PCT,
-            liquidity=10**18,
-            sqrt_price=2**96,
-            tick_lower=-100,
-            tick_upper=100,
+        reserve_in=USDC_2M,
+        reserve_out=WETH_1000,
+        fee=FEE_0_3_PCT,
+        liquidity=10**18,
+        sqrt_price=2**96,
+        tick_lower=-100,
+        tick_upper=100,
         )
         assert hop.invariant == PoolInvariant.BOUNDED_PRODUCT
         assert hop.liquidity == 10**18
@@ -108,13 +109,13 @@ class TestBoundedProductHop:
 
     def test_frozen(self):
         hop = BoundedProductHop(
-            reserve_in=USDC_2M,
-            reserve_out=WETH_1000,
-            fee=FEE_0_3_PCT,
-            liquidity=10**18,
-            sqrt_price=2**96,
-            tick_lower=-100,
-            tick_upper=100,
+        reserve_in=USDC_2M,
+        reserve_out=WETH_1000,
+        fee=FEE_0_3_PCT,
+        liquidity=10**18,
+        sqrt_price=2**96,
+        tick_lower=-100,
+        tick_upper=100,
         )
         with pytest.raises(AttributeError):
             hop.liquidity = 0
@@ -128,11 +129,11 @@ class TestBoundedProductHop:
 class TestSolidlyStableHop:
     def test_construction(self):
         hop = SolidlyStableHop(
-            reserve_in=USDC_2M,
-            reserve_out=WETH_1000,
-            fee=FEE_0_3_PCT,
-            decimals_in=6,
-            decimals_out=18,
+        reserve_in=USDC_2M,
+        reserve_out=WETH_1000,
+        fee=FEE_0_3_PCT,
+        decimals_in=6,
+        decimals_out=18,
         )
         assert hop.invariant == PoolInvariant.SOLIDLY_STABLE
         assert hop.decimals_in == 6
@@ -142,11 +143,11 @@ class TestSolidlyStableHop:
 
     def test_frozen(self):
         hop = SolidlyStableHop(
-            reserve_in=USDC_2M,
-            reserve_out=WETH_1000,
-            fee=FEE_0_3_PCT,
-            decimals_in=6,
-            decimals_out=18,
+        reserve_in=USDC_2M,
+        reserve_out=WETH_1000,
+        fee=FEE_0_3_PCT,
+        decimals_in=6,
+        decimals_out=18,
         )
         with pytest.raises(AttributeError):
             hop.decimals_in = 0
@@ -160,11 +161,11 @@ class TestSolidlyStableHop:
 class TestBalancerWeightedHop:
     def test_construction(self):
         hop = BalancerWeightedHop(
-            reserve_in=USDC_2M,
-            reserve_out=WETH_1000,
-            fee=FEE_0_3_PCT,
-            weight_in=500_000_000_000_000_000,  # 50% = 0.5e18
-            weight_out=500_000_000_000_000_000,  # 50% = 0.5e18
+        reserve_in=USDC_2M,
+        reserve_out=WETH_1000,
+        fee=FEE_0_3_PCT,
+        weight_in=500_000_000_000_000_000,  # 50% = 0.5e18
+        weight_out=500_000_000_000_000_000,  # 50% = 0.5e18
         )
         assert hop.invariant == PoolInvariant.BALANCER_WEIGHTED
         assert hop.weight_in == 500_000_000_000_000_000
@@ -173,11 +174,11 @@ class TestBalancerWeightedHop:
 
     def test_frozen(self):
         hop = BalancerWeightedHop(
-            reserve_in=USDC_2M,
-            reserve_out=WETH_1000,
-            fee=FEE_0_3_PCT,
-            weight_in=500_000_000_000_000_000,
-            weight_out=500_000_000_000_000_000,
+        reserve_in=USDC_2M,
+        reserve_out=WETH_1000,
+        fee=FEE_0_3_PCT,
+        weight_in=500_000_000_000_000_000,
+        weight_out=500_000_000_000_000_000,
         )
         with pytest.raises(AttributeError):
             hop.weight_in = 0
@@ -191,15 +192,15 @@ class TestBalancerWeightedHop:
 class TestCurveStableswapHop:
     def test_construction(self):
         hop = CurveStableswapHop(
-            reserve_in=USDC_2M,
-            reserve_out=USDC_1_5M,
-            fee=FEE_0_3_PCT,
-            curve_a=100,
-            curve_n_coins=2,
-            curve_d=3_500_000_000_000,
-            token_index_in=0,
-            token_index_out=1,
-            precisions=(10**6, 10**6),
+        reserve_in=USDC_2M,
+        reserve_out=USDC_1_5M,
+        fee=FEE_0_3_PCT,
+        curve_a=100,
+        curve_n_coins=2,
+        curve_d=3_500_000_000_000,
+        token_index_in=0,
+        token_index_out=1,
+        precisions=(10**6, 10**6),
         )
         assert hop.invariant == PoolInvariant.CURVE_STABLESWAP
         assert hop.curve_a == 100
@@ -208,15 +209,15 @@ class TestCurveStableswapHop:
 
     def test_frozen(self):
         hop = CurveStableswapHop(
-            reserve_in=USDC_2M,
-            reserve_out=USDC_1_5M,
-            fee=FEE_0_3_PCT,
-            curve_a=100,
-            curve_n_coins=2,
-            curve_d=3_500_000_000_000,
-            token_index_in=0,
-            token_index_out=1,
-            precisions=(10**6, 10**6),
+        reserve_in=USDC_2M,
+        reserve_out=USDC_1_5M,
+        fee=FEE_0_3_PCT,
+        curve_a=100,
+        curve_n_coins=2,
+        curve_d=3_500_000_000_000,
+        token_index_in=0,
+        token_index_out=1,
+        precisions=(10**6, 10**6),
         )
         with pytest.raises(AttributeError):
             hop.curve_a = 0
@@ -232,38 +233,38 @@ class TestHopUnion:
         """All hop variants should be assignable to the Hop type alias."""
         v2: HopType = ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
         v3: HopType = BoundedProductHop(
-            reserve_in=USDC_2M,
-            reserve_out=WETH_1000,
-            fee=FEE_0_3_PCT,
-            liquidity=10**18,
-            sqrt_price=2**96,
-            tick_lower=-100,
-            tick_upper=100,
+        reserve_in=USDC_2M,
+        reserve_out=WETH_1000,
+        fee=FEE_0_3_PCT,
+        liquidity=10**18,
+        sqrt_price=2**96,
+        tick_lower=-100,
+        tick_upper=100,
         )
         solidly: HopType = SolidlyStableHop(
-            reserve_in=USDC_2M,
-            reserve_out=WETH_1000,
-            fee=FEE_0_3_PCT,
-            decimals_in=6,
-            decimals_out=18,
+        reserve_in=USDC_2M,
+        reserve_out=WETH_1000,
+        fee=FEE_0_3_PCT,
+        decimals_in=6,
+        decimals_out=18,
         )
         balancer: HopType = BalancerWeightedHop(
-            reserve_in=USDC_2M,
-            reserve_out=WETH_1000,
-            fee=FEE_0_3_PCT,
-            weight_in=500_000_000_000_000_000,
-            weight_out=500_000_000_000_000_000,
+        reserve_in=USDC_2M,
+        reserve_out=WETH_1000,
+        fee=FEE_0_3_PCT,
+        weight_in=500_000_000_000_000_000,
+        weight_out=500_000_000_000_000_000,
         )
         curve: HopType = CurveStableswapHop(
-            reserve_in=USDC_2M,
-            reserve_out=USDC_1_5M,
-            fee=FEE_0_3_PCT,
-            curve_a=100,
-            curve_n_coins=2,
-            curve_d=3_500_000_000_000,
-            token_index_in=0,
-            token_index_out=1,
-            precisions=(10**6, 10**6),
+        reserve_in=USDC_2M,
+        reserve_out=USDC_1_5M,
+        fee=FEE_0_3_PCT,
+        curve_a=100,
+        curve_n_coins=2,
+        curve_d=3_500_000_000_000,
+        token_index_in=0,
+        token_index_out=1,
+        precisions=(10**6, 10**6),
         )
         # All have common reserve/fee fields
         assert v2.reserve_in == USDC_2M
@@ -281,10 +282,10 @@ class TestHopUnion:
 class TestSolveInputTaggedHops:
     def test_all_constant_product(self):
         inp = SolveInput(
-            hops=(
+        hops=(
                 ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
                 ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
+        )
         )
         assert inp.all_constant_product
         assert not inp.has_v3
@@ -294,7 +295,7 @@ class TestSolveInputTaggedHops:
 
     def test_mixed_v2_v3(self):
         inp = SolveInput(
-            hops=(
+        hops=(
                 ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
                 BoundedProductHop(
                     reserve_in=WETH_800,
@@ -305,7 +306,7 @@ class TestSolveInputTaggedHops:
                     tick_lower=-100,
                     tick_upper=100,
                 ),
-            )
+        )
         )
         assert inp.has_v3
         assert not inp.all_constant_product
@@ -313,7 +314,7 @@ class TestSolveInputTaggedHops:
 
     def test_solidly_stable_detected(self):
         inp = SolveInput(
-            hops=(
+        hops=(
                 SolidlyStableHop(
                     reserve_in=USDC_2M,
                     reserve_out=WETH_1000,
@@ -322,13 +323,13 @@ class TestSolveInputTaggedHops:
                     decimals_out=18,
                 ),
                 ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
+        )
         )
         assert inp.has_solidly_stable
 
     def test_balancer_detected(self):
         inp = SolveInput(
-            hops=(
+        hops=(
                 BalancerWeightedHop(
                     reserve_in=USDC_2M,
                     reserve_out=WETH_1000,
@@ -337,13 +338,13 @@ class TestSolveInputTaggedHops:
                     weight_out=500_000_000_000_000_000,
                 ),
                 ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
+        )
         )
         assert inp.has_balancer_weighted
 
     def test_curve_detected(self):
         inp = SolveInput(
-            hops=(
+        hops=(
                 CurveStableswapHop(
                     reserve_in=USDC_2M,
                     reserve_out=USDC_1_5M,
@@ -356,7 +357,7 @@ class TestSolveInputTaggedHops:
                     precisions=(10**6, 10**6),
                 ),
                 ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
+        )
         )
         assert inp.has_curve_stableswap
 
@@ -371,13 +372,12 @@ class TestMobiusSolverTaggedHops:
         """MobiusSolver should accept ConstantProductHop and produce same results."""
         solver = MobiusSolver()
         inp = SolveInput(
-            hops=(
+        hops=(
                 ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
                 ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
+        )
         )
         result = solver.solve(inp)
-        assert result.success
         assert result.method == SolverMethod.MOBIUS
         assert result.optimal_input > 0
         assert result.profit > 0
@@ -386,7 +386,7 @@ class TestMobiusSolverTaggedHops:
         """MobiusSolver should handle ConstantProductHop with asymmetric fees."""
         solver = MobiusSolver()
         inp = SolveInput(
-            hops=(
+        hops=(
                 ConstantProductHop(
                     reserve_in=USDC_1_5M,
                     reserve_out=WETH_800,
@@ -394,10 +394,9 @@ class TestMobiusSolverTaggedHops:
                     fee_out=FEE_0_5_PCT,
                 ),
                 ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
+        )
         )
         result = solver.solve(inp)
-        assert result.success
         assert result.method == SolverMethod.MOBIUS
 
 
@@ -411,7 +410,7 @@ class TestPiecewiseMobiusSolver:
         """PiecewiseMobiusSolver should support paths with V3 hops."""
         solver = PiecewiseMobiusSolver()
         inp = SolveInput(
-            hops=(
+        hops=(
                 ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
                 BoundedProductHop(
                     reserve_in=WETH_800,
@@ -422,7 +421,7 @@ class TestPiecewiseMobiusSolver:
                     tick_lower=-100,
                     tick_upper=100,
                 ),
-            )
+        )
         )
         # Should support inputs with V3 bounded-product hops
         assert solver.supports(inp)
@@ -437,13 +436,12 @@ class TestArbSolverTaggedDispatch:
     def test_v2_path_uses_mobius(self):
         solver = ArbSolver()
         inp = SolveInput(
-            hops=(
+        hops=(
                 ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
                 ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
+        )
         )
         result = solver.solve(inp)
-        assert result.success
         assert result.method == SolverMethod.MOBIUS
 
     def test_solidly_stable_falls_to_brent(self):
@@ -451,7 +449,7 @@ class TestArbSolverTaggedDispatch:
         SolidlyStableSolver is implemented."""
         solver = ArbSolver()
         inp = SolveInput(
-            hops=(
+        hops=(
                 SolidlyStableHop(
                     reserve_in=USDC_2M,
                     reserve_out=WETH_1000,
@@ -460,18 +458,19 @@ class TestArbSolverTaggedDispatch:
                     decimals_out=18,
                 ),
                 ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
         )
-        result = solver.solve(inp)
-        # Should succeed (Brent can handle it) but use BRENT method
-        if result.success:
+        )
+        try:
+            result = solver.solve(inp)
             assert result.method == SolverMethod.BRENT
+        except OptimizationError:
+            pass
 
     def test_balancer_falls_to_brent(self):
         """Paths with Balancer hops should fall back to Brent."""
         solver = ArbSolver()
         inp = SolveInput(
-            hops=(
+        hops=(
                 BalancerWeightedHop(
                     reserve_in=USDC_2M,
                     reserve_out=WETH_1000,
@@ -480,11 +479,13 @@ class TestArbSolverTaggedDispatch:
                     weight_out=500_000_000_000_000_000,
                 ),
                 ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
         )
-        result = solver.solve(inp)
-        if result.success:
+        )
+        try:
+            result = solver.solve(inp)
             assert result.method == SolverMethod.BRENT
+        except OptimizationError:
+            pass
 
 
 # ---------------------------------------------------------------------------

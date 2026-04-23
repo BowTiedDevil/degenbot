@@ -25,7 +25,6 @@ class TestV3V3SingleRange:
 
         result = mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
 
-        assert result.success
         assert result.optimal_input > 0
         assert result.profit > 0
         assert result.iterations == 0  # Fast path
@@ -188,7 +187,6 @@ class TestV3V3ProfitComputation:
 
         result = mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
 
-        assert result.success
         assert result.profit > 0
 
     def test_profit_increases_with_price_spread(self):

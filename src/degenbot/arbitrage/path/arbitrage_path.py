@@ -19,6 +19,7 @@ from degenbot.arbitrage.types import (
     UniswapV4PoolSwapAmounts,
 )
 from degenbot.erc20 import Erc20Token
+from degenbot.exceptions import OptimizationError
 from degenbot.types.concrete import (
     AbstractPublisherMessage,
     PoolStateMessage,
@@ -234,10 +235,6 @@ class ArbitragePath(PublisherMixin):
         result: MobiusSolveResult,
         state_overrides: Mapping[Any, Any] | None = None,
     ) -> ArbitrageCalculationResult[AbstractSwapAmounts]:
-        if not result.is_profitable:
-            msg = "Cannot build swap amounts for unprofitable result"
-            raise PathValidationError(msg)
-
         if state_overrides is None:
             state_overrides = {}
 
@@ -296,10 +293,10 @@ class ArbitragePath(PublisherMixin):
             publisher,
             self._swap_vectors[idx].zero_for_one,
         )
-        result = self.calculate()
-        if result.is_profitable:
+        try:
+            result = self.calculate()
             self._notify_subscribers(_ProfitableStateDiscovered(result, self))
-        else:
+        except OptimizationError:
             self._notify_subscribers(_StateUpdatedNoProfit(self))
 
     def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:

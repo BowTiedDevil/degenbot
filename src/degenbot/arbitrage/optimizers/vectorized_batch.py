@@ -372,9 +372,7 @@ class BatchNewtonOptimizer:
                 profit=int(int_result.profit[i]),
                 solve_time_ms=elapsed_ms / paths.num_paths,  # Per-path time
                 iterations=int(vec_result.iterations[i]),
-                success=bool(int_result.profit[i] > 0),
                 optimizer_type=OptimizerType.NEWTON,
-                error_message=None if int_result.profit[i] > 0 else "No profit",
             )
             results.append(result)
 
@@ -395,6 +393,6 @@ class BatchNewtonOptimizer:
         results = self.solve_batch(pool_pairs)
         best_idx = max(
             range(len(results)),
-            key=lambda i: results[i].profit if results[i].success else 0,
+            key=lambda i: max(0, results[i].profit),
         )
         return best_idx, results[best_idx]

@@ -766,7 +766,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
-                connection_manager.get_web3(self.chain_id),
+                connection_manager.get_provider(self.chain_id),
             )
         )
 
@@ -796,7 +796,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
-                connection_manager.get_web3(self.chain_id),
+                connection_manager.get_provider(self.chain_id),
             )
         )
 
@@ -887,7 +887,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
-                connection_manager.get_web3(self.chain_id),
+                connection_manager.get_provider(self.chain_id),
             )
         )
 
@@ -2197,7 +2197,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
-                connection_manager.get_web3(self.chain_id),
+                connection_manager.get_provider(self.chain_id),
             )
         )
 

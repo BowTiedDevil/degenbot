@@ -14,6 +14,7 @@ from degenbot.arbitrage.optimizers.solver import (
     SolveResult,
     SolverMethod,
 )
+from degenbot.exceptions import OptimizationError
 
 from .conftest import FEE_0_3_PCT, USDC_1_5M, USDC_2M, WETH_800, WETH_1000
 
@@ -34,13 +35,13 @@ class TestV3BuyPoolFastPath:
         r_in, r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
 
         hop = BoundedProductHop(
-            reserve_in=r_in,
-            reserve_out=r_out,
-            fee=FEE_0_3_PCT,
-            liquidity=L,
-            sqrt_price=sqrt_price_x96,
-            tick_lower=0,
-            tick_upper=0,
+        reserve_in=r_in,
+        reserve_out=r_out,
+        fee=FEE_0_3_PCT,
+        liquidity=L,
+        sqrt_price=sqrt_price_x96,
+        tick_lower=0,
+        tick_upper=0,
         )
         assert hop.is_v3
         assert hop.invariant.name == "BOUNDED_PRODUCT"
@@ -54,7 +55,7 @@ class TestV3BuyPoolFastPath:
         v3_r_in, v3_r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
 
         hops = (
-            BoundedProductHop(
+        BoundedProductHop(
                 reserve_in=v3_r_in,
                 reserve_out=v3_r_out,
                 fee=FEE_0_3_PCT,
@@ -62,15 +63,18 @@ class TestV3BuyPoolFastPath:
                 sqrt_price=sqrt_price_x96,
                 tick_lower=0,
                 tick_upper=0,
-            ),
-            ConstantProductHop(
+        ),
+        ConstantProductHop(
                 reserve_in=WETH_1000,
                 reserve_out=USDC_2M,
                 fee=FEE_0_3_PCT,
-            ),
+        ),
         )
-        result = solver.solve(SolveInput(hops=hops))
-        assert isinstance(result, SolveResult)
+        try:
+            result = solver.solve(SolveInput(hops=hops))
+            assert isinstance(result, SolveResult)
+        except OptimizationError:
+            pass
 
     def test_v3_buypool_solver_selects_mobius_or_piecewise(self, solver):
         """For V3+V2 paths, solver should use Mobius or PiecewiseMobius."""
@@ -81,7 +85,7 @@ class TestV3BuyPoolFastPath:
         v3_r_in, v3_r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
 
         hops = (
-            BoundedProductHop(
+        BoundedProductHop(
                 reserve_in=v3_r_in,
                 reserve_out=v3_r_out,
                 fee=FEE_0_3_PCT,
@@ -89,16 +93,18 @@ class TestV3BuyPoolFastPath:
                 sqrt_price=sqrt_price_x96,
                 tick_lower=0,
                 tick_upper=0,
-            ),
-            ConstantProductHop(
+        ),
+        ConstantProductHop(
                 reserve_in=WETH_1000,
                 reserve_out=USDC_2M,
                 fee=FEE_0_3_PCT,
-            ),
+        ),
         )
-        result = solver.solve(SolveInput(hops=hops))
-        if result.success:
+        try:
+            result = solver.solve(SolveInput(hops=hops))
             assert result.method in {SolverMethod.MOBIUS, SolverMethod.PIECEWISE_MOBIUS}
+        except OptimizationError:
+            pass
 
     def test_v3_buypool_approximation_matches_v3_math(self):
         """Constant-product approximation should be close to actual V3 output."""
@@ -155,12 +161,12 @@ class TestV3SellPool:
         v3_r_in, v3_r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
 
         hops = (
-            ConstantProductHop(
+        ConstantProductHop(
                 reserve_in=USDC_1_5M,
                 reserve_out=WETH_800,
                 fee=FEE_0_3_PCT,
-            ),
-            BoundedProductHop(
+        ),
+        BoundedProductHop(
                 reserve_in=v3_r_in,
                 reserve_out=v3_r_out,
                 fee=FEE_0_3_PCT,
@@ -168,12 +174,11 @@ class TestV3SellPool:
                 sqrt_price=sqrt_price_x96,
                 tick_lower=0,
                 tick_upper=0,
-            ),
+        ),
         )
         result = solver.solve(SolveInput(hops=hops))
         assert isinstance(result, SolveResult)
-        if result.success:
-            assert result.method == SolverMethod.MOBIUS
+        assert result.method == SolverMethod.MOBIUS
 
 
 class TestSolverResultValidation:
@@ -182,12 +187,10 @@ class TestSolverResultValidation:
     def test_solver_result_has_required_fields(self):
         """SolveResult should have all fields needed for validation."""
         result = SolveResult(
-            optimal_input=1000,
-            profit=50,
-            success=True,
-            iterations=0,
-            method=SolverMethod.MOBIUS,
+        optimal_input=1000,
+        profit=50,
+        iterations=0,
+        method=SolverMethod.MOBIUS,
         )
         assert result.optimal_input > 0
         assert result.profit >= 0
-        assert result.success

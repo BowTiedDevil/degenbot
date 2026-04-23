@@ -25,6 +25,7 @@ from degenbot.arbitrage.optimizers.base import (
     OptimizerResult,
     OptimizerType,
 )
+from degenbot.exceptions import OptimizationError
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
@@ -201,29 +202,19 @@ class BoundedProductOptimizer:
         start_time = time.perf_counter_ns()
 
         if len(pools) != 1:
-            elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-            return OptimizerResult(
-                optimal_input=0,
-                profit=0,
-                solve_time_ms=elapsed_ms,
+            raise OptimizationError(
+                "Bounded product optimizer requires single V3 pool",
                 iterations=0,
-                success=False,
-                optimizer_type=self.optimizer_type,
-                error_message="Bounded product optimizer requires single V3 pool",
+                method="bounded_product",
             )
 
         pool = pools[0]
 
         if not isinstance(pool, UniswapV3Pool):
-            elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-            return OptimizerResult(
-                optimal_input=0,
-                profit=0,
-                solve_time_ms=elapsed_ms,
+            raise OptimizationError(
+                "Pool must be UniswapV3Pool",
                 iterations=0,
-                success=False,
-                optimizer_type=self.optimizer_type,
-                error_message="Pool must be UniswapV3Pool",
+                method="bounded_product",
             )
 
         try:
@@ -254,15 +245,10 @@ class BoundedProductOptimizer:
 
             # If no external price provided, can't optimize
             if external_price is None:
-                elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-                return OptimizerResult(
-                    optimal_input=0,
-                    profit=0,
-                    solve_time_ms=elapsed_ms,
+                raise OptimizationError(
+                    "External price required for bounded product optimization",
                     iterations=0,
-                    success=False,
-                    optimizer_type=self.optimizer_type,
-                    error_message="External price required for bounded product optimization",
+                    method="bounded_product",
                 )
 
             # Find optimal reserves
@@ -289,14 +275,10 @@ class BoundedProductOptimizer:
                 profit = int(delta_R0) if delta_R1 > 0 else 0
 
             if optimal_input <= 0 or profit <= 0:
-                return OptimizerResult(
-                    optimal_input=0,
-                    profit=0,
-                    solve_time_ms=elapsed_ms,
+                raise OptimizationError(
+                    "No profitable arbitrage",
                     iterations=1,
-                    success=False,
-                    optimizer_type=self.optimizer_type,
-                    error_message="No profitable arbitrage",
+                    method="bounded_product",
                 )
 
             return OptimizerResult(
@@ -304,18 +286,14 @@ class BoundedProductOptimizer:
                 profit=profit,
                 solve_time_ms=elapsed_ms,
                 iterations=1,  # Closed-form
-                success=True,
                 optimizer_type=self.optimizer_type,
             )
 
+        except OptimizationError:
+            raise
         except Exception as e:
-            elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-            return OptimizerResult(
-                optimal_input=0,
-                profit=0,
-                solve_time_ms=elapsed_ms,
+            raise OptimizationError(
+                str(e),
                 iterations=0,
-                success=False,
-                optimizer_type=self.optimizer_type,
-                error_message=str(e),
-            )
+                method="bounded_product",
+            ) from e

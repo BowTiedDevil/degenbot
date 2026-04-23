@@ -397,9 +397,8 @@ class TestBatchMobiusOptimizer:
         results = optimizer.solve_batch(paths)
 
         assert len(results) == 1
-        assert results[0].success
-        assert results[0].iterations == 0
         assert results[0].profit > 0
+        assert results[0].iterations == 0
         assert results[0].optimizer_type.value == "mobius"
 
     def test_mixed_hop_counts(self):
@@ -416,7 +415,6 @@ class TestBatchMobiusOptimizer:
         assert len(results) == 3
         # All should succeed
         for r in results:
-            assert r.success
             assert r.profit > 0
 
     def test_unprofitable_path(self):
@@ -428,11 +426,9 @@ class TestBatchMobiusOptimizer:
         results = optimizer.solve_batch(paths)
 
         assert len(results) == 1
-        assert not results[0].success
         assert results[0].profit == 0
 
     def test_max_input_constraint(self):
-        """Max input constraint should be respected."""
         optimizer = BatchMobiusOptimizer()
         x_unconstrained, _, _ = mobius_solve(profitable_3pool_hops())
 
@@ -444,7 +440,7 @@ class TestBatchMobiusOptimizer:
         ]
         results = optimizer.solve_batch(paths)
 
-        assert results[0].success
+        assert results[0].profit > 0
         assert results[0].optimal_input <= int(x_unconstrained * 0.5) + 1
 
     def test_get_best_path(self):
@@ -457,7 +453,6 @@ class TestBatchMobiusOptimizer:
         ]
         _best_idx, best_result = optimizer.get_best_path(paths)
 
-        assert best_result.success
         assert best_result.profit > 0
 
     def test_solve_batch_hops(self):
@@ -480,10 +475,9 @@ class TestBatchMobiusOptimizer:
         results = optimizer.solve_batch(paths)
 
         assert len(results) == 1
-        assert not results[0].success
+        assert results[0].profit == 0
 
     def test_results_preserve_input_order(self):
-        """Results should be in the same order as input paths."""
         optimizer = BatchMobiusOptimizer()
 
         paths = [
@@ -494,12 +488,9 @@ class TestBatchMobiusOptimizer:
         results = optimizer.solve_batch(paths)
 
         assert len(results) == 3
-        # First path (2-pool profitable) should succeed
-        assert results[0].success
-        # Second path (3-pool profitable) should succeed
-        assert results[1].success
-        # Third path (unprofitable) should fail
-        assert not results[2].success
+        assert results[0].profit > 0
+        assert results[1].profit > 0
+        assert results[2].profit == 0
 
 
 # ==============================================================================

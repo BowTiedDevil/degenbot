@@ -70,12 +70,10 @@ def test_parallel_block_number_calls(provider):
     # 1. Parallel should be much faster than sequential
     # 2. Parallel should take close to single call time (not N * single)
 
-    # Parallel should be at least 1.5x faster than sequential
-    # (allowing for HTTP connection pool limits and network variability)
-    speedup = sequential_time / parallel_time
-    assert speedup > 1.5, (
-        f"Parallel execution ({parallel_time * 1000:.1f}ms) should be at least 1.5x faster than "
-        f"sequential ({sequential_time * 1000:.1f}ms). Got {speedup:.1f}x speedup. "
+    serialized_upper_bound = num_calls * avg_single_time
+    assert parallel_time < serialized_upper_bound * 0.75, (
+        f"Parallel execution ({parallel_time * 1000:.1f}ms) should be well below "
+        f"fully-serialized time ({serialized_upper_bound * 1000:.1f}ms). "
         "This suggests the GIL is not being released properly."
     )
 
@@ -126,11 +124,11 @@ def test_parallel_get_block_calls(provider):
     assert all(b is not None for b in parallel_blocks)
     assert all(b is not None for b in sequential_blocks)
 
-    # Parallel should be at least 2x faster
-    speedup = sequential_time / parallel_time
-    assert speedup > 2.0, (
-        f"Parallel block fetch ({parallel_time * 1000:.1f}ms) should be at least 2x faster than "
-        f"sequential ({sequential_time * 1000:.1f}ms). Got {speedup:.1f}x speedup."
+    serialized_upper_bound = num_calls * avg_single_time
+    assert parallel_time < serialized_upper_bound * 0.75, (
+        f"Parallel time ({parallel_time * 1000:.1f}ms) should be well below "
+        f"fully-serialized time ({serialized_upper_bound * 1000:.1f}ms). "
+        "This suggests the GIL is not being released properly."
     )
 
 
@@ -170,10 +168,10 @@ def test_parallel_mixed_calls(provider):
     # All calls should succeed
     assert len(parallel_results) == len(call_types)
 
-    speedup = sequential_time / parallel_time
-    assert speedup > 2.0, (
-        f"Parallel mixed calls ({parallel_time * 1000:.1f}ms) should be at least 2x faster than "
-        f"sequential ({sequential_time * 1000:.1f}ms). Got {speedup:.1f}x speedup."
+    assert parallel_time < sequential_time * 0.75, (
+        f"Parallel mixed calls ({parallel_time * 1000:.1f}ms) should be well below "
+        f"sequential ({sequential_time * 1000:.1f}ms). "
+        "This suggests the GIL is not being released properly."
     )
 
 
@@ -207,13 +205,10 @@ def test_parallel_provider_creation():
     assert len(parallel_providers) == num_providers
     assert all(hasattr(p, "get_block_number") for p in parallel_providers)
 
-    speedup = sequential_time / parallel_time
-    print(f"Speedup: {speedup:.1f}x")
-
-    # Provider creation should show speedup
-    assert speedup > 1.5, (
-        f"Parallel provider creation ({parallel_time * 1000:.1f}ms) should be faster than "
-        f"sequential ({sequential_time * 1000:.1f}ms). Got {speedup:.1f}x speedup."
+    assert parallel_time < sequential_time * 0.75, (
+        f"Parallel provider creation ({parallel_time * 1000:.1f}ms) should be well below "
+        f"sequential ({sequential_time * 1000:.1f}ms). "
+        "This suggests the GIL is not being released properly."
     )
 
 

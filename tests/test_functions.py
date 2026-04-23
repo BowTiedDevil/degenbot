@@ -5,7 +5,7 @@ from hexbytes import HexBytes
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
+from degenbot.connection import get_provider, set_web3
 from degenbot.exceptions import DegenbotValueError
 from degenbot.functions import (
     create2_address,
@@ -57,13 +57,14 @@ def test_encode_function_calldata():
 
 def test_low_level_call_for_factory_address(fork_mainnet_full: AnvilFork):
     set_web3(fork_mainnet_full.w3)
+    provider = get_provider()
 
     pool_address = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 
     function_prototype = "factory()"
 
     (result,) = raw_call(
-        w3=fork_mainnet_full.w3,
+        provider=provider,
         block_identifier=fork_mainnet_full.w3.eth.block_number,
         address=pool_address,
         calldata=encode_function_calldata(
@@ -141,13 +142,14 @@ def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
 
     w3 = fork_mainnet_full.w3
     set_web3(w3)
+    provider = get_provider()
 
     # Known string literals
-    latest_block = get_number_for_block_identifier("latest", w3)
-    earliest_block = get_number_for_block_identifier("earliest", w3)
-    pending_block = get_number_for_block_identifier("pending", w3)
-    safe_block = get_number_for_block_identifier("safe", w3)
-    finalized_block = get_number_for_block_identifier("finalized", w3)
+    latest_block = get_number_for_block_identifier("latest", provider)
+    earliest_block = get_number_for_block_identifier("earliest", provider)
+    pending_block = get_number_for_block_identifier("pending", provider)
+    safe_block = get_number_for_block_identifier("safe", provider)
+    finalized_block = get_number_for_block_identifier("finalized", provider)
 
     assert BlockNumber.__value__ is int
     assert isinstance(latest_block, BlockNumber.__value__)
@@ -160,36 +162,36 @@ def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
 
     # BlockNumber
     assert isinstance(
-        get_number_for_block_identifier(1, w3),
+        get_number_for_block_identifier(1, provider),
         BlockNumber.__value__,
     )
 
     # Hash32
     assert isinstance(
-        get_number_for_block_identifier(Hash32((1).to_bytes(length=32, byteorder="big")), w3),
+        get_number_for_block_identifier(Hash32((1).to_bytes(length=32, byteorder="big")), provider),
         BlockNumber.__value__,
     )
 
     # HexStr
     assert isinstance(
         get_number_for_block_identifier(
-            HexStr("0x" + (128).to_bytes(32, byteorder="big").hex()), w3
+            HexStr("0x" + (128).to_bytes(32, byteorder="big").hex()), provider
         ),
         BlockNumber.__value__,
     )
 
     # HexBytes
-    assert isinstance(get_number_for_block_identifier(HexBytes(1), w3), BlockNumber.__value__)
+    assert isinstance(get_number_for_block_identifier(HexBytes(1), provider), BlockNumber.__value__)
 
     # int
-    assert isinstance(get_number_for_block_identifier(1, w3), BlockNumber.__value__)
+    assert isinstance(get_number_for_block_identifier(1, provider), BlockNumber.__value__)
 
     for invalid_tag in ["Latest", "latest ", "next", "previous"]:
         with pytest.raises(DegenbotValueError):
-            get_number_for_block_identifier(invalid_tag, w3)  # type: ignore[arg-type]
+            get_number_for_block_identifier(invalid_tag, provider)  # type: ignore[arg-type]
 
     with pytest.raises(DegenbotValueError):
-        get_number_for_block_identifier(1.0, w3)  # type: ignore[arg-type]
+        get_number_for_block_identifier(1.0, provider)  # type: ignore[arg-type]
 
 
 def test_fee_calcs():

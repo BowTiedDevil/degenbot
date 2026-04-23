@@ -390,8 +390,7 @@ class BatchMobiusOptimizer:
     >>> inputs = [BatchMobiusPathInput(hops=[...]), ...]
     >>> results = optimizer.solve_batch(inputs)
     >>> for result in results:
-    ...     if result.success:
-    ...         print(f"Input: {result.optimal_input}, Profit: {result.profit}")
+    ...     print(f"Input: {result.optimal_input}, Profit: {result.profit}")
     """
 
     def __init__(
@@ -459,9 +458,7 @@ class BatchMobiusOptimizer:
                         profit=0,
                         solve_time_ms=0.0,
                         iterations=0,
-                        success=False,
                         optimizer_type=self.optimizer_type,
-                        error_message="Empty path",
                     )
                 continue
 
@@ -490,16 +487,13 @@ class BatchMobiusOptimizer:
             for i, (idx, _path) in enumerate(group):
                 optimal_input = int(int_result.optimal_input[i])
                 profit = int(int_result.profit[i])
-                success = profit > 0
 
                 results[idx] = OptimizerResult(
                     optimal_input=optimal_input,
                     profit=profit,
                     solve_time_ms=0.0,  # Filled below
                     iterations=0,  # Möbius is always 0 iterations
-                    success=success,
                     optimizer_type=self.optimizer_type,
-                    error_message=None if success else "No profitable arbitrage",
                 )
 
         # Fill in solve times
@@ -514,9 +508,7 @@ class BatchMobiusOptimizer:
                     profit=result.profit,
                     solve_time_ms=per_path_ms,
                     iterations=result.iterations,
-                    success=result.success,
                     optimizer_type=result.optimizer_type,
-                    error_message=result.error_message,
                 )
 
         return list(results)  # type: ignore[arg-type]
@@ -566,6 +558,6 @@ class BatchMobiusOptimizer:
         results = self.solve_batch(paths)
         best_idx = max(
             range(len(results)),
-            key=lambda i: results[i].profit if results[i].success else 0,
+            key=lambda i: max(0, results[i].profit),
         )
         return best_idx, results[best_idx]

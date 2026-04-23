@@ -8,6 +8,8 @@ both small and large (uint256-scale) reserves.
 
 from fractions import Fraction
 
+import pytest
+
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
     Hop,
@@ -15,6 +17,7 @@ from degenbot.arbitrage.optimizers.solver import (
     SolverMethod,
 )
 from degenbot.degenbot_rs import mobius as rs_mobius
+from degenbot.exceptions import OptimizationError
 
 from .conftest import (
     FEE_0_3_PCT,
@@ -43,7 +46,6 @@ class TestRustMobiusRefineInt:
             rs_mobius.RustIntHopState(1_500_000, 3_000_000, 997, 1000),
         ]
         result = rs_mobius.py_mobius_refine_int(499445.0, hops, None)
-        assert result.success
         assert int(result.optimal_input) > 0
         assert int(result.profit) > 0
         # Profit at returned optimal_input must equal result.profit exactly
@@ -89,7 +91,6 @@ class TestRustMobiusRefineInt:
             rs_mobius.RustIntHopState(r1_b, r0_b, 997, 1000),
         ]
         result = rs_mobius.py_mobius_refine_int(x_opt, hops, None)
-        assert result.success
         assert int(result.profit) > 0
         # Verify EVM-exact: simulate at optimal_input
         output = int(rs_mobius.py_int_simulate_path(int(result.optimal_input), hops))
@@ -102,7 +103,6 @@ class TestRustMobiusRefineInt:
             rs_mobius.RustIntHopState(1_500_000, 3_000_000, 997, 1000),
         ]
         result = rs_mobius.py_mobius_refine_int(999.0, hops, 1000.0)
-        assert result.success
         assert int(result.optimal_input) <= 1000
 
     def test_not_profitable(self):
@@ -115,6 +115,7 @@ class TestRustMobiusRefineInt:
         # Even with a fake x_approx, integer simulation shows unprofitable
         result = rs_mobius.py_mobius_refine_int(10.0, hops, None)
         assert not result.success
+        assert result.profit == 0
 
     def test_3hop_refinement(self):
         """3-hop path should use larger search radius."""
@@ -132,7 +133,6 @@ class TestRustMobiusRefineInt:
         )
         x_opt = float_result.optimal_input
         result = rs_mobius.py_mobius_refine_int(x_opt, hops, None)
-        assert result.success
         assert int(result.profit) > 0
 
     def test_zero_x_approx(self):
@@ -143,6 +143,7 @@ class TestRustMobiusRefineInt:
         ]
         result = rs_mobius.py_mobius_refine_int(0.0, hops, None)
         assert not result.success
+        assert result.profit == 0
 
     def test_fee_as_fraction(self):
         """Hops with Fraction fees (e.g. 3/1000) need fee_numer/fee_denom extraction."""
@@ -156,7 +157,6 @@ class TestRustMobiusRefineInt:
             )
         )
         result = solver.solve(inp)
-        assert result.success
         assert result.profit > 0
 
 
@@ -173,7 +173,6 @@ class TestArbSolverRustIntRefinement:
         solver = ArbSolver()
         inp = make_2hop_v2_input()
         result = solver.solve(inp)
-        assert result.success
         assert result.method == SolverMethod.MOBIUS
 
         # EVM-exact verification: simulate the path at optimal_input
@@ -204,7 +203,6 @@ class TestArbSolverRustIntRefinement:
             )
         )
         result = solver.solve(inp)
-        assert result.success
 
         # Verify with Rust EVM-exact simulation
         hops_int = [
@@ -226,7 +224,6 @@ class TestArbSolverRustIntRefinement:
             )
         )
         result = solver.solve(inp)
-        assert result.success
 
         # Build Rust int hops for verification
         hops_int = [
@@ -239,7 +236,7 @@ class TestArbSolverRustIntRefinement:
         assert evm_profit == result.profit
 
     def test_unprofitable_returns_zero_profit(self):
-        """Unprofitable path should return success=False, profit=0."""
+        """Unprofitable path should raise OptimizationError."""
         solver = ArbSolver()
         inp = SolveInput(
             hops=(
@@ -247,9 +244,8 @@ class TestArbSolverRustIntRefinement:
                 Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=Fraction(30, 100)),
             )
         )
-        result = solver.solve(inp)
-        assert not result.success
-        assert result.profit == 0
+        with pytest.raises(OptimizationError):
+            solver.solve(inp)
 
     def test_max_input_constrains_integer_result(self):
         """max_input must constrain the integer refinement."""
@@ -257,7 +253,6 @@ class TestArbSolverRustIntRefinement:
         inp = make_2hop_v2_input()
         constrained = SolveInput(hops=inp.hops, max_input=1000)
         result = solver.solve(constrained)
-        assert result.success
         assert result.optimal_input <= 1000
 
     def test_different_fee_tiers_evm_exact(self):
@@ -273,7 +268,6 @@ class TestArbSolverRustIntRefinement:
             )
         )
         result = solver.solve(inp)
-        assert result.success
 
         # Verify EVM-exact: gamma_numer for 0.05% fee = 10000-5 = 9995
         # gamma_numer for 0.3% fee = 1000-3 = 997
@@ -290,7 +284,6 @@ class TestArbSolverRustIntRefinement:
         solver = ArbSolver()
         inp = make_2hop_v2_input()
         result = solver.solve(inp)
-        assert result.success
 
         # Build Rust int hops for brute-force check
         hops_int = [

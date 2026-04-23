@@ -64,7 +64,6 @@ class TestIntMobiusSolve:
             rs_mobius.RustIntHopState(1_500_000, 3_000_000, 997, 1000),
         ]
         result = rs_mobius.py_int_mobius_solve(hops)
-        assert result.success
         assert int(result.optimal_input) > 0
         assert int(result.profit) > 0
 
@@ -84,7 +83,6 @@ class TestIntMobiusSolve:
             rs_mobius.RustIntHopState(2_050_000, 2_000_000, 997, 1000),
         ]
         result = rs_mobius.py_int_mobius_solve(hops)
-        assert result.success
         assert int(result.profit) > 0
 
     def test_full_scale_reserves(self):
@@ -99,7 +97,6 @@ class TestIntMobiusSolve:
             rs_mobius.RustIntHopState(r1_b, r0_b, 997, 1000),
         ]
         result = rs_mobius.py_int_mobius_solve(hops)
-        assert result.success
         assert int(result.profit) > 0
 
     def test_evm_profit_matches_float(self):

@@ -56,3 +56,35 @@ class NoSolverSolution(ArbitrageError):
     def __reduce__(self) -> tuple[Any, ...]:
         # Pickling will raise an exception if a reduction method is not defined
         return self.__class__, (self.message,)
+
+
+class OptimizationError(ArbitrageError):
+    """
+    Raised when an optimizer fails to find a profitable solution,
+    fails to converge, or receives invalid inputs.
+
+    Attributes
+    ----------
+    message : str
+        Human-readable error message explaining why optimization failed.
+    iterations : int
+        Number of iterations completed before failure (if applicable).
+    method : str | None
+        The solver method that was attempted (if applicable).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        iterations: int = 0,
+        method: str | None = None,
+    ) -> None:
+        self.message = message
+        self.iterations = iterations
+        self.method = method
+        super().__init__(message=message)
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Pickling support for multiprocessing
+        return self.__class__, (self.message, self.iterations, self.method)

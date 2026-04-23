@@ -59,8 +59,7 @@ class SomeClass:
 - Create a test double with `Fake` prefix instead of mocking
 
 ## Refactoring
-
-- Unless directed otherwise, design standalone features without a backwards compatibility layer. Use a feature flag during development and testing to enable hard cutover. Feature flags are typically implemented as a module-level boolean constant (e.g. `USE_NEW_PATH = bool(os.environ.get("DEGENBOT_NEW_FEATURE", ""))`) that gates the new code path.
+- Unless directed otherwise, design standalone features without a backwards compatibility layer.
 
 ## Solidity
 

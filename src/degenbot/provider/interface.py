@@ -476,7 +476,7 @@ class AsyncProviderAdapter:
     async def get_chain_id(self) -> int:
         """Get the chain ID."""
         if self._provider_type == "web3":
-            return await self._provider.eth.get_chain_id()
+            return await self._provider.eth.chain_id
         return await self._provider.get_chain_id()
 
     async def get_block(

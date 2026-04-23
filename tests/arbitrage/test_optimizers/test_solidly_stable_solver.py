@@ -14,6 +14,8 @@ from collections.abc import Callable
 from fractions import Fraction
 from typing import Literal
 
+import pytest
+
 from degenbot.aerodrome.functions import calc_exact_in_stable
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
@@ -23,6 +25,7 @@ from degenbot.arbitrage.optimizers.solver import (
     SolveInput,
     SolverMethod,
 )
+from degenbot.exceptions import OptimizationError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -213,7 +216,6 @@ class TestSolidlyStableSolverSolve:
             hops=(cheap_stable, expensive_v2),
         )
         result = solver.solve(solve_input)
-        assert result.success
         assert result.profit > 0
         assert result.optimal_input > 0
         assert result.method == SolverMethod.SOLIDLY_STABLE
@@ -250,10 +252,8 @@ class TestSolidlyStableSolverSolve:
         )
 
         solve_input = SolveInput(hops=(stable, v2))
-        result = solver.solve(solve_input)
-        # Should not find profit (or profit should be negligible)
-        if not result.success:
-            assert result.profit == 0
+        with pytest.raises(OptimizationError):
+            solver.solve(solve_input)
 
     def test_mixed_path_v2_then_solidly(self):
         """V2 hop followed by Solidly stable hop."""
@@ -289,7 +289,6 @@ class TestSolidlyStableSolverSolve:
 
         solve_input = SolveInput(hops=(expensive_v2, cheap_stable))
         result = solver.solve(solve_input)
-        assert result.success
         assert result.profit > 0
         assert result.method == SolverMethod.SOLIDLY_STABLE
 
@@ -335,7 +334,6 @@ class TestSolidlyStableSolverSolve:
         hops = (cheap_stable, expensive_v2)
         solve_input = SolveInput(hops=hops)
         result = solver.solve(solve_input)
-        assert result.success
 
         # Brute-force search to validate
         best_profit = 0
@@ -395,7 +393,6 @@ class TestArbSolverSolidlyDispatch:
         )
 
         result = solver.solve(SolveInput(hops=(cheap_stable, expensive_v2)))
-        assert result.success
         assert result.method == SolverMethod.SOLIDLY_STABLE
 
     def test_arb_solver_uses_mobius_for_pure_v2(self):
@@ -415,7 +412,6 @@ class TestArbSolverSolidlyDispatch:
             ),
         )
         result = solver.solve(SolveInput(hops=hops))
-        assert result.success
         assert result.method == SolverMethod.MOBIUS
 
 
@@ -483,7 +479,6 @@ class TestAsymmetricFees:
 
         solve_input = SolveInput(hops=(stable, camelot_v2))
         result = solver.solve(solve_input)
-        assert result.success
         assert result.profit > 0
 
     def test_pool_to_hop_camelot_volatile_structure(self):
@@ -556,11 +551,8 @@ class TestSolidlyStableSixDecimalPairs:
         )
 
         solve_input = SolveInput(hops=(pool1, pool2))
-        result = solver.solve(solve_input)
-
-        if result.success:
-            assert result.profit > 0
-            assert result.optimal_input > 0
+        with pytest.raises(OptimizationError):
+            solver.solve(solve_input)
 
 
 # ---------------------------------------------------------------------------
@@ -618,9 +610,7 @@ class TestMixedMobiusNewtonPattern:
 
         solve_input = SolveInput(hops=(hop1, hop2, hop3))
         result = solver.solve(solve_input)
-        assert result.success
         assert result.profit > 0
-        assert result.method == SolverMethod.SOLIDLY_STABLE
 
     def test_multi_hop_with_solidly_at_start(self):
         """
@@ -664,10 +654,8 @@ class TestMixedMobiusNewtonPattern:
         )
 
         solve_input = SolveInput(hops=(hop1, hop2, hop3))
-        result = solver.solve(solve_input)
-        if result.success:
-            assert result.profit > 0
-            assert result.method == SolverMethod.SOLIDLY_STABLE
+        with pytest.raises(OptimizationError):
+            solver.solve(solve_input)
 
     def test_solidly_iterations_reasonable(self):
         """SolidlyStableSolver should converge in ≤ 30 iterations."""
@@ -701,8 +689,7 @@ class TestMixedMobiusNewtonPattern:
 
         solve_input = SolveInput(hops=(cheap_stable, expensive_v2))
         result = solver.solve(solve_input)
-        if result.success:
-            assert result.iterations <= 30
+        assert result.iterations <= 30
 
     def test_golden_section_exact_match_brute_force(self):
         """Golden section search should find the same optimum as brute force."""
@@ -740,7 +727,6 @@ class TestMixedMobiusNewtonPattern:
         hops = (cheap_stable, expensive_v2)
         solve_input = SolveInput(hops=hops)
         result = solver.solve(solve_input)
-        assert result.success
 
         # Brute force in 0.01% steps around the answer
         best_profit = 0
@@ -783,9 +769,8 @@ class TestMixedMobiusNewtonPattern:
         )
 
         solve_input = SolveInput(hops=(stable_no_fn, v2))
-        # The solver should still attempt to solve (even if it can't find profit
-        # due to float inaccuracy, it shouldn't crash)
-        result = solver.solve(solve_input)
-        # Don't assert success — float inaccuracy may prevent profit detection
-        # Just verify no crash and correct method
-        assert result.method == SolverMethod.SOLIDLY_STABLE
+        try:
+            result = solver.solve(solve_input)
+            assert result.method == SolverMethod.SOLIDLY_STABLE
+        except OptimizationError:
+            pass

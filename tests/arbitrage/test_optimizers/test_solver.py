@@ -18,6 +18,7 @@ from degenbot.arbitrage.optimizers.solver import (
     _compute_mobius_coefficients,
     _simulate_path,
 )
+from degenbot.exceptions import OptimizationError
 
 from .conftest import (
     FEE_0_3_PCT,
@@ -103,24 +104,21 @@ class TestSolveResult:
         result = SolveResult(
             optimal_input=1000,
             profit=500,
-            success=True,
             iterations=0,
             method=SolverMethod.MOBIUS,
         )
-        assert result.success
         assert result.method == SolverMethod.MOBIUS
 
-    def test_failure_result(self):
-        result = SolveResult(
-            optimal_input=0,
-            profit=0,
-            success=False,
-            iterations=0,
-            method=SolverMethod.MOBIUS,
-            error="Not profitable",
+    def test_failure_raises(self):
+        solver = ArbSolver()
+        inp = SolveInput(
+            hops=(
+                Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=Fraction(30, 100)),
+                Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=Fraction(30, 100)),
+            )
         )
-        assert not result.success
-        assert result.error is not None
+        with pytest.raises(OptimizationError):
+            solver.solve(inp)
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +198,6 @@ class TestMobiusSolver:
         solver = MobiusSolver()
         inp = make_2hop_v2_input()
         result = solver.solve(inp)
-        assert result.success
         assert result.optimal_input > 0
         assert result.profit > 0
         assert result.method == SolverMethod.MOBIUS
@@ -217,8 +214,8 @@ class TestMobiusSolver:
                 Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=Fraction(30, 100)),
             )
         )
-        result = solver.solve(inp)
-        assert not result.success
+        with pytest.raises(OptimizationError):
+            result = solver.solve(inp)
 
     def test_max_input_constraint(self):
         solver = MobiusSolver()
@@ -226,7 +223,6 @@ class TestMobiusSolver:
         # Set max_input very low — should constrain
         constrained = SolveInput(hops=inp.hops, max_input=100)
         result = solver.solve(constrained)
-        assert result.success
         assert result.optimal_input <= 100
 
     def test_3hop_solve(self):
@@ -240,7 +236,6 @@ class TestMobiusSolver:
             )
         )
         result = solver.solve(inp)
-        assert result.success
         assert result.iterations == 0
 
     def test_different_fees(self):
@@ -253,7 +248,6 @@ class TestMobiusSolver:
             )
         )
         result = solver.solve(inp)
-        assert result.success
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +291,6 @@ class TestNewtonSolver:
         solver = NewtonSolver()
         inp = make_2hop_v2_input()
         result = solver.solve(inp)
-        assert result.success
         assert result.optimal_input > 0
         assert result.profit > 0
         assert result.method == SolverMethod.NEWTON
@@ -319,7 +312,6 @@ class TestBrentSolver:
         solver = BrentSolver()
         inp = make_2hop_v2_input()
         result = solver.solve(inp)
-        assert result.success
         assert result.optimal_input > 0
         assert result.profit > 0
         assert result.method == SolverMethod.BRENT
@@ -335,7 +327,6 @@ class TestArbSolver:
         solver = ArbSolver()
         inp = make_2hop_v2_input()
         result = solver.solve(inp)
-        assert result.success
         assert result.method == SolverMethod.MOBIUS
 
     def test_v2_3hop_uses_mobius(self):
@@ -348,7 +339,6 @@ class TestArbSolver:
             )
         )
         result = solver.solve(inp)
-        assert result.success
         assert result.method == SolverMethod.MOBIUS
 
     def test_unprofitable_returns_failure(self):
@@ -360,15 +350,14 @@ class TestArbSolver:
                 Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=Fraction(30, 100)),
             )
         )
-        result = solver.solve(inp)
-        assert not result.success
+        with pytest.raises(OptimizationError):
+            result = solver.solve(inp)
 
     def test_max_input_respected(self):
         solver = ArbSolver()
         inp = make_2hop_v2_input()
         constrained = SolveInput(hops=inp.hops, max_input=100)
         result = solver.solve(constrained)
-        assert result.success
         assert result.optimal_input <= 100
 
 
@@ -386,8 +375,6 @@ class TestCrossValidation:
         mobius = MobiusSolver().solve(inp)
         newton = NewtonSolver().solve(inp)
 
-        assert mobius.success
-        assert newton.success
         # Same profit (flat peak)
         assert mobius.profit == newton.profit
         # Inputs agree within 0.01%
@@ -401,8 +388,6 @@ class TestCrossValidation:
         mobius = MobiusSolver().solve(inp)
         brent = BrentSolver().solve(inp)
 
-        assert mobius.success
-        assert brent.success
         # Both find the same profit (flat peak means multiple inputs give same profit)
         assert mobius.profit == brent.profit
         # Inputs agree within 0.01% (flat peak allows small input differences)
@@ -414,8 +399,6 @@ class TestCrossValidation:
         newton = NewtonSolver().solve(inp)
         brent = BrentSolver().solve(inp)
 
-        assert newton.success
-        assert brent.success
         assert newton.profit == brent.profit
         assert abs(newton.optimal_input - brent.optimal_input) / brent.optimal_input < 1e-4
 
@@ -425,8 +408,6 @@ class TestCrossValidation:
         arb = ArbSolver().solve(inp)
         mobius = MobiusSolver().solve(inp)
 
-        assert arb.success
-        assert mobius.success
         assert arb.profit == mobius.profit
 
     @pytest.mark.parametrize(
@@ -450,8 +431,6 @@ class TestCrossValidation:
         mobius = MobiusSolver().solve(inp)
         brent = BrentSolver().solve(inp)
 
-        assert mobius.success
-        assert brent.success
         assert mobius.profit == brent.profit
         assert abs(mobius.optimal_input - brent.optimal_input) / brent.optimal_input < 1e-4
 
@@ -475,7 +454,5 @@ class TestCrossValidation:
         mobius = MobiusSolver().solve(inp)
         brent = BrentSolver().solve(inp)
 
-        assert mobius.success
-        assert brent.success
         assert mobius.profit == brent.profit
         assert abs(mobius.optimal_input - brent.optimal_input) / brent.optimal_input < 1e-4

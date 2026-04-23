@@ -292,7 +292,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
             solver = _UniswapTwoPoolCycleTesting._get_arb_solver()
             result = solver.solve(solve_input)
 
-            if result.success and result.profit > 0:
+            if result.profit > 0:
                 # The solver returns optimal_input in input_token units.
                 # Convert to forward_token_amount by simulating the first
                 # pool (buy pool) to find how much forward token the optimal

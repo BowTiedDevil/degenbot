@@ -70,7 +70,6 @@ class TestBuildSwapAmountsV2V2:
     def test_build_swap_amounts_returns_result(self):
         path = self._make_path()
         result = path.calculate()
-        assert result.is_profitable
 
         arb_result = path.build_swap_amounts(result)
         assert arb_result.input_amount > 0
@@ -118,10 +117,9 @@ class TestBuildSwapAmountsV2V2:
         unprofitable = MobiusSolveResult(
             optimal_input=0,
             profit=0,
-            is_profitable=False,
             method=SolverMethod.MOBIUS,
         )
-        with pytest.raises(PathValidationError, match="unprofitable"):
+        with pytest.raises(PathValidationError, match="output of zero"):
             path.build_swap_amounts(unprofitable)
 
     def test_pool_addresses_set(self):
@@ -153,7 +151,7 @@ class TestBuildSwapAmountsThreeHop:
         )
 
         result = path.calculate()
-        if not result.is_profitable:
+        if result.profit == 0:
             pytest.skip("Three-hop path not profitable with these reserves")
 
         arb_result = path.build_swap_amounts(result)

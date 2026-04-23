@@ -55,7 +55,7 @@ def _get_tick_ranges(
     if cache_key in _TICK_RANGE_CACHE:
         return _TICK_RANGE_CACHE[cache_key]
 
-    result = _compute_tick_ranges(pool, zero_for_one, max_ranges)
+    result = _compute_tick_ranges(pool, zero_for_one=zero_for_one, max_ranges=max_ranges)
 
     if len(_TICK_RANGE_CACHE) >= _MAX_TICK_RANGE_CACHE_SIZE:
         _TICK_RANGE_CACHE.clear()

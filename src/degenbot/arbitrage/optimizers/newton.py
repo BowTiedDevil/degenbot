@@ -32,7 +32,6 @@ Convergence: Quadratic (error roughly squares each iteration)
 Typical iterations: 3-4 for machine precision
 """
 
-import math
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -41,6 +40,7 @@ from degenbot.arbitrage.optimizers.base import (
     OptimizerResult,
     OptimizerType,
 )
+from degenbot.exceptions import OptimizationError
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 if TYPE_CHECKING:
@@ -166,8 +166,8 @@ def v2_optimal_arbitrage_newton(
     max_step_multiplier : float | None
         Maximum multiplier for Newton step size relative to current x.
         If specified, |dx| <= max_step_multiplier * x.
-        For example, max_step_multiplier=10 means step can be at most 10×
-        the current input value. Use None for the default 100× bound.
+        For example, max_step_multiplier=10 means step can be at most 10x
+        the current input value. Use None for the default 100x bound.
         Pass float('inf') to disable (unbounded).
 
     Returns
@@ -254,9 +254,8 @@ class NewtonV2Optimizer(ArbitrageOptimizer):
     -----
     >>> optimizer = NewtonV2Optimizer()
     >>> result = optimizer.solve([pool_a, pool_b], input_token)
-    >>> if result.success:
-    ...     print(f"Optimal input: {result.optimal_input}")
-    ...     print(f"Expected profit: {result.profit}")
+    >>> print(f"Optimal input: {result.optimal_input}")
+    >>> print(f"Expected profit: {result.profit}")
     """
 
     @property
@@ -288,182 +287,138 @@ class NewtonV2Optimizer(ArbitrageOptimizer):
 
         Raises
         ------
-        ValueError
-            If pools is not exactly 2 V2 pools.
+        OptimizationError
+            If validation fails, optimization doesn't converge, or no profitable arbitrage found.
         """
         start_time = time.perf_counter_ns()
 
         if len(pools) != 2:
-            elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-            return OptimizerResult(
-                optimal_input=0,
-                profit=0,
-                solve_time_ms=elapsed_ms,
+            raise OptimizationError(
+                "Newton optimizer requires exactly 2 pools",
                 iterations=0,
-                success=False,
-                optimizer_type=self.optimizer_type,
-                error_message="Newton optimizer requires exactly 2 pools",
+                method="newton",
             )
 
         pool_a, pool_b = pools
 
         # Accept both real V2 pools and mock pools for testing
-        def is_v2_pool(p) -> bool:
-            return isinstance(p, UniswapV2Pool) or type(p).__name__ == "MockV2Pool"
+        is_v2_pool = lambda p: isinstance(p, UniswapV2Pool) or type(p).__name__ == "MockV2Pool"  # noqa: E731
 
         if not is_v2_pool(pool_a) or not is_v2_pool(pool_b):
-            elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-            return OptimizerResult(
-                optimal_input=0,
-                profit=0,
-                solve_time_ms=elapsed_ms,
+            raise OptimizationError(
+                "Newton optimizer requires V2 pools",
                 iterations=0,
-                success=False,
-                optimizer_type=self.optimizer_type,
-                error_message="Newton optimizer requires V2 pools",
+                method="newton",
             )
 
-        try:
-            # Determine forward token (the token that gets transferred between pools)
-            if input_token == pool_a.token0:
-                forward_token = pool_a.token1
-            elif input_token == pool_a.token1:
-                forward_token = pool_a.token0
-            else:
-                elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-                return OptimizerResult(
-                    optimal_input=0,
-                    profit=0,
-                    solve_time_ms=elapsed_ms,
-                    iterations=0,
-                    success=False,
-                    optimizer_type=self.optimizer_type,
-                    error_message="Input token not found in pool",
-                )
-
-            # Get reserves based on token positions
-            # We need to determine which pool has higher ROE (rate of exchange)
-            # Higher ROE means cheaper forward token = BUY forward token there
-
-            if input_token == pool_a.token0:
-                # Input is token0, forward is token1
-                # ROE = R1/R0 (token1 per token0)
-                roe_a = pool_a.state.reserves_token1 / pool_a.state.reserves_token0
-                roe_b = pool_b.state.reserves_token1 / pool_b.state.reserves_token0
-                reserve0_pool_a, reserve1_pool_a = (
-                    pool_a.state.reserves_token0,
-                    pool_a.state.reserves_token1,
-                )
-                reserve0_pool_b, reserve1_pool_b = (
-                    pool_b.state.reserves_token0,
-                    pool_b.state.reserves_token1,
-                )
-            else:
-                # Input is token1, forward is token0
-                # ROE = R0/R1 (token0 per token1)
-                roe_a = pool_a.state.reserves_token0 / pool_a.state.reserves_token1
-                roe_b = pool_b.state.reserves_token0 / pool_b.state.reserves_token1
-                reserve0_pool_a, reserve1_pool_a = (
-                    pool_a.state.reserves_token1,
-                    pool_a.state.reserves_token0,
-                )
-                reserve0_pool_b, reserve1_pool_b = (
-                    pool_b.state.reserves_token1,
-                    pool_b.state.reserves_token0,
-                )
-
-            # Higher ROE = cheaper forward token = BUY forward token there
-            if roe_a > roe_b:
-                pool_buy, pool_sell = pool_a, pool_b
-                reserve0_buy, reserve1_buy = float(reserve0_pool_a), float(reserve1_pool_a)
-                reserve0_sell, reserve1_sell = float(reserve0_pool_b), float(reserve1_pool_b)
-                fee_buy = float(pool_a.fee)
-                fee_sell = float(pool_b.fee)
-            else:
-                pool_buy, pool_sell = pool_b, pool_a
-                reserve0_buy, reserve1_buy = float(reserve0_pool_b), float(reserve1_pool_b)
-                reserve0_sell, reserve1_sell = float(reserve0_pool_a), float(reserve1_pool_a)
-                fee_buy = float(pool_b.fee)
-                fee_sell = float(pool_a.fee)
-
-            # Run Newton optimization
-            x_opt, _y_opt, iterations = v2_optimal_arbitrage_newton(
-                reserve0_buy,
-                reserve1_buy,
-                reserve0_sell,
-                reserve1_sell,
-                fee_buy,
-                fee_sell,
-                max_input=float(max_input) if max_input else None,
+        # Determine forward token (the token that gets transferred between pools)
+        if input_token == pool_a.token0:
+            forward_token = pool_a.token1
+        elif input_token == pool_a.token1:
+            forward_token = pool_a.token0
+        else:
+            raise OptimizationError(
+                "Input token not found in pool",
+                iterations=0,
+                method="newton",
             )
 
-            optimal_input = int(x_opt)
+        # Get reserves based on token positions
+        # We need to determine which pool has higher ROE (rate of exchange)
+        # Higher ROE means cheaper forward token = BUY forward token there
 
-            if optimal_input <= 0:
-                elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-                return OptimizerResult(
-                    optimal_input=0,
-                    profit=0,
-                    solve_time_ms=elapsed_ms,
-                    iterations=iterations,
-                    success=False,
-                    optimizer_type=self.optimizer_type,
-                    error_message="No profitable arbitrage found",
-                )
-
-            # Calculate actual profit using pool methods for exact amounts
-            forward_amount = pool_buy.calculate_tokens_out_from_tokens_in(
-                input_token, optimal_input
+        if input_token == pool_a.token0:
+            # Input is token0, forward is token1
+            # ROE = R1/R0 (token1 per token0)
+            roe_a = pool_a.state.reserves_token1 / pool_a.state.reserves_token0
+            roe_b = pool_b.state.reserves_token1 / pool_b.state.reserves_token0
+            reserve0_pool_a, reserve1_pool_a = (
+                pool_a.state.reserves_token0,
+                pool_a.state.reserves_token1,
+            )
+            reserve0_pool_b, reserve1_pool_b = (
+                pool_b.state.reserves_token0,
+                pool_b.state.reserves_token1,
+            )
+        else:
+            # Input is token1, forward is token0
+            # ROE = R0/R1 (token0 per token1)
+            roe_a = pool_a.state.reserves_token0 / pool_a.state.reserves_token1
+            roe_b = pool_b.state.reserves_token0 / pool_b.state.reserves_token1
+            reserve0_pool_a, reserve1_pool_a = (
+                pool_a.state.reserves_token1,
+                pool_a.state.reserves_token0,
+            )
+            reserve0_pool_b, reserve1_pool_b = (
+                pool_b.state.reserves_token1,
+                pool_b.state.reserves_token0,
             )
 
-            if forward_amount <= 0:
-                elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-                return OptimizerResult(
-                    optimal_input=optimal_input,
-                    profit=0,
-                    solve_time_ms=elapsed_ms,
-                    iterations=iterations,
-                    success=False,
-                    optimizer_type=self.optimizer_type,
-                    error_message="Zero forward amount",
-                )
+        # Higher ROE = cheaper forward token = BUY forward token there
+        if roe_a > roe_b:
+            pool_buy, pool_sell = pool_a, pool_b
+            reserve0_buy, reserve1_buy = float(reserve0_pool_a), float(reserve1_pool_a)
+            reserve0_sell, reserve1_sell = float(reserve0_pool_b), float(reserve1_pool_b)
+            fee_buy = float(pool_a.fee)
+            fee_sell = float(pool_b.fee)
+        else:
+            pool_buy, pool_sell = pool_b, pool_a
+            reserve0_buy, reserve1_buy = float(reserve0_pool_b), float(reserve1_pool_b)
+            reserve0_sell, reserve1_sell = float(reserve0_pool_a), float(reserve1_pool_a)
+            fee_buy = float(pool_b.fee)
+            fee_sell = float(pool_a.fee)
 
-            output_amount = pool_sell.calculate_tokens_out_from_tokens_in(
-                forward_token, forward_amount
-            )
+        # Run Newton optimization
+        x_opt, _, iterations = v2_optimal_arbitrage_newton(
+            reserve0_buy,
+            reserve1_buy,
+            reserve0_sell,
+            reserve1_sell,
+            fee_buy,
+            fee_sell,
+            max_input=float(max_input) if max_input else None,
+        )
 
-            profit = output_amount - optimal_input
+        optimal_input = int(x_opt)
 
-            elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-
-            if profit <= 0:
-                return OptimizerResult(
-                    optimal_input=optimal_input,
-                    profit=0,
-                    solve_time_ms=elapsed_ms,
-                    iterations=iterations,
-                    success=False,
-                    optimizer_type=self.optimizer_type,
-                    error_message="No profitable arbitrage",
-                )
-
-            return OptimizerResult(
-                optimal_input=optimal_input,
-                profit=profit,
-                solve_time_ms=elapsed_ms,
+        if optimal_input <= 0:
+            raise OptimizationError(
+                "No profitable arbitrage found",
                 iterations=iterations,
-                success=True,
-                optimizer_type=self.optimizer_type,
+                method="newton",
             )
 
-        except Exception as e:
-            elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-            return OptimizerResult(
-                optimal_input=0,
-                profit=0,
-                solve_time_ms=elapsed_ms,
-                iterations=0,
-                success=False,
-                optimizer_type=self.optimizer_type,
-                error_message=str(e),
+        # Calculate actual profit using pool methods for exact amounts
+        forward_amount = pool_buy.calculate_tokens_out_from_tokens_in(
+            input_token, optimal_input
+        )
+
+        if forward_amount <= 0:
+            raise OptimizationError(
+                "Zero forward amount",
+                iterations=iterations,
+                method="newton",
             )
+
+        output_amount = pool_sell.calculate_tokens_out_from_tokens_in(
+            forward_token, forward_amount
+        )
+
+        profit = output_amount - optimal_input
+
+        elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
+
+        if profit <= 0:
+            raise OptimizationError(
+                "No profitable arbitrage",
+                iterations=iterations,
+                method="newton",
+            )
+
+        return OptimizerResult(
+            optimal_input=optimal_input,
+            profit=profit,
+            solve_time_ms=elapsed_ms,
+            iterations=iterations,
+            optimizer_type=self.optimizer_type,
+        )

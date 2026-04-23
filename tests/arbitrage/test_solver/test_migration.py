@@ -10,6 +10,7 @@ from fractions import Fraction
 import pytest
 
 from degenbot.arbitrage.optimizers.solver import ArbSolver, ConstantProductHop, SolveInput
+from degenbot.exceptions import OptimizationError
 
 FEE_03 = Fraction(3, 1000)
 FEE_05 = Fraction(5, 1000)
@@ -56,8 +57,6 @@ class TestGeneralizedSolverMigration:
         legacy = _solve_with_legacy(hops)
         gen = _solve_with_generalized(hops)
 
-        assert legacy.success
-        assert gen.success
         assert gen.optimal_input == legacy.optimal_input
         assert gen.profit == legacy.profit
 
@@ -74,11 +73,10 @@ class TestGeneralizedSolverMigration:
                 fee=FEE_03,
             ),
         )
-        legacy = _solve_with_legacy(hops)
-        gen = _solve_with_generalized(hops)
-
-        assert not legacy.success
-        assert not gen.success
+        with pytest.raises(OptimizationError):
+            _solve_with_legacy(hops)
+        with pytest.raises(OptimizationError):
+            _solve_with_generalized(hops)
 
     def test_three_hop_matches(self):
         hops = (
@@ -89,9 +87,6 @@ class TestGeneralizedSolverMigration:
         legacy = _solve_with_legacy(hops)
         gen = _solve_with_generalized(hops)
 
-        if not legacy.success:
-            pytest.skip("Three-hop path not profitable")
-        assert gen.success
         assert gen.optimal_input == legacy.optimal_input
         assert gen.profit == legacy.profit
 
@@ -103,8 +98,6 @@ class TestGeneralizedSolverMigration:
         legacy = _solve_with_legacy(hops)
         gen = _solve_with_generalized(hops)
 
-        assert legacy.success
-        assert gen.success
         assert gen.optimal_input == legacy.optimal_input
         assert gen.profit == legacy.profit
 
@@ -124,8 +117,6 @@ class TestGeneralizedSolverMigration:
         legacy = _solve_with_legacy(hops)
         gen = _solve_with_generalized(hops)
 
-        assert legacy.success
-        assert gen.success
         assert gen.optimal_input == legacy.optimal_input
         assert gen.profit == legacy.profit
 
@@ -146,8 +137,6 @@ class TestGeneralizedSolverMigration:
         legacy = _solve_with_legacy(hops, max_input=max_input)
         gen = _solve_with_generalized(hops, max_input=max_input)
 
-        assert legacy.success
-        assert gen.success
         assert gen.optimal_input == legacy.optimal_input
         assert gen.profit == legacy.profit
 
@@ -168,8 +157,9 @@ class TestGeneralizedSolverMigration:
         legacy = _solve_with_legacy(hops)
         gen = _solve_with_generalized(hops)
 
-        if not legacy.success:
+        try:
+            pass
+        except OptimizationError:
             pytest.skip("Five-hop path not profitable")
-        assert gen.success
         assert gen.optimal_input == legacy.optimal_input
         assert gen.profit == legacy.profit

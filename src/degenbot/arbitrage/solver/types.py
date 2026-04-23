@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
 from fractions import Fraction
-from typing import Union
 
 
 class SolverMethod(Enum):
@@ -61,10 +60,7 @@ class ConcentratedLiquidityHopState(MobiusHopState):
         return self.tick_ranges is not None and len(self.tick_ranges) > 1
 
 
-HopState = Union[
-    MobiusHopState,
-    ConcentratedLiquidityHopState,
-]
+HopState = MobiusHopState | ConcentratedLiquidityHopState
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +69,5 @@ class MobiusSolveResult:
 
     optimal_input: int
     profit: int
-    is_profitable: bool
     method: SolverMethod
     iterations: int = 0
-    error: str | None = None

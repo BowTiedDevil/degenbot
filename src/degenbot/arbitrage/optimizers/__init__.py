@@ -36,10 +36,19 @@ Quick Start:
 ...     Hop(reserve_in=r1_in, reserve_out=r1_out, fee=fee1),
 ... )
 >>> result = solver.solve(SolveInput(hops=hops))
->>> if result.success:
-...     print(f"Optimal: {result.optimal_input}, Profit: {result.profit}")
+>>> print(f"Optimal: {result.optimal_input}, Profit: {result.profit}")
 """
 
+from degenbot.arbitrage.optimizers.balancer_weighted import (
+    BalancerMultiTokenState,
+    BalancerWeightedPoolSolver,
+    MultiTokenArbitrageResult,
+    TradeSignature,
+    balancer_pool_to_state,
+    compute_optimal_trade,
+    compute_profit_token_units,
+    generate_trade_signatures,
+)
 from degenbot.arbitrage.optimizers.base import (
     ArbitrageOptimizer,
     OptimizerResult,
@@ -65,8 +74,6 @@ from degenbot.arbitrage.optimizers.chain_rule import (
 from degenbot.arbitrage.optimizers.chain_rule import (
     compute_path_gradient as chain_rule_gradient,
 )
-
-# Möbius transformation optimizer
 from degenbot.arbitrage.optimizers.mobius import (
     HopState,
     MobiusCoefficients,
@@ -81,8 +88,6 @@ from degenbot.arbitrage.optimizers.mobius import (
     piecewise_v3_swap,
     simulate_path,
 )
-
-# New optimizers (production)
 from degenbot.arbitrage.optimizers.newton import (
     NewtonV2Optimizer,
     v2_optimal_arbitrage_newton,
@@ -119,8 +124,6 @@ from degenbot.arbitrage.optimizers.solver import (
 from degenbot.arbitrage.optimizers.solver import (
     NewtonSolver as NewtonSolverUnified,
 )
-
-# V2-V3 optimizer
 from degenbot.arbitrage.optimizers.v2_v3_optimizer import (
     CandidateSolution,
     V2PoolState,
@@ -132,8 +135,6 @@ from degenbot.arbitrage.optimizers.v2_v3_optimizer import (
     optimize_v2_v3_arbitrage,
     sort_ranges_by_equilibrium_distance,
 )
-
-# V3 tick prediction
 from degenbot.arbitrage.optimizers.v3_tick_predictor import (
     BoundedProductCFMM as V3BoundedProductCFMM,
 )
@@ -155,27 +156,6 @@ from degenbot.arbitrage.optimizers.vectorized_batch import (
     VectorizedPoolState,
 )
 
-# Placeholder for Brent (uses scipy)
-try:
-    from degenbot.arbitrage.optimizers.brent import BrentOptimizer
-except ImportError:
-    BrentOptimizer = None  # type: ignore[misc,assignment]
-
-# Balancer weighted pool solver
-from degenbot.arbitrage.optimizers.balancer_weighted import (
-    BalancerMultiTokenState,
-    BalancerWeightedPoolSolver,
-    MultiTokenArbitrageResult,
-    TradeSignature,
-    balancer_pool_to_state,
-    compute_optimal_trade,
-    compute_profit_token_units,
-    generate_trade_signatures,
-)
-
-# Type aliases
-NewtonOptimizer = NewtonV2Optimizer  # Alias for backward compatibility
-
 __all__ = [
     "ArbSolver",
     "ArbitrageOptimizer",
@@ -190,7 +170,6 @@ __all__ = [
     "BoundedProductCFMM",
     "BoundedProductHop",
     "BoundedProductOptimizer",
-    "BrentOptimizer",
     "BrentSolverUnified",
     "CandidateSolution",
     "ChainRuleNewtonOptimizer",
@@ -204,7 +183,6 @@ __all__ = [
     "MobiusSolverUnified",
     "MobiusV2Optimizer",
     "MultiTokenArbitrageResult",
-    "NewtonOptimizer",
     "NewtonSolverUnified",
     "NewtonV2Optimizer",
     "OptimizerResult",

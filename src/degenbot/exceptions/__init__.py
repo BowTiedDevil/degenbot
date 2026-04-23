@@ -5,6 +5,7 @@ from degenbot.exceptions.arbitrage import (
     InvalidSwapPathError,
     NoLiquidity,
     NoSolverSolution,
+    OptimizationError,
     RateOfExchangeBelowMinimum,
     Unprofitable,
 )
@@ -50,6 +51,7 @@ __all__ = (
     "LogFetchingTimeout",
     "NoLiquidity",
     "NoSolverSolution",
+    "OptimizationError",
     "RateOfExchangeBelowMinimum",
     "Unprofitable",
     "Web3ConnectionTimeout",

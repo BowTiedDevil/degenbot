@@ -16,6 +16,7 @@ from degenbot.arbitrage.optimizers.solver import (
     SolveInput,
     V3TickRangeInfo,
 )
+from degenbot.exceptions import OptimizationError
 
 # Test constants
 Q96 = 2**96
@@ -70,7 +71,7 @@ def test_piecewise_performance_single_candidate():
     avg_time_us = elapsed_ns / n_iterations / 1000
 
     print(f"\nSingle-range V3: {avg_time_us:.2f}μs per solve")
-    print(f"Result: success={result.success}, method={result.method}")
+    print(f"Result: method={result.method}")
 
     # Single-range should delegate to Mobius
     # Target: ~1-5μs, but Python overhead may push to ~50μs
@@ -124,9 +125,15 @@ def test_piecewise_performance_multi_candidate():
 
     input_data = SolveInput(hops=(v3_hop, v2_hop))
 
+    # Check that solve actually works before benchmarking
+    try:
+        solver.solve(input_data)
+    except OptimizationError:
+        pytest.skip("Test data not profitable, benchmark meaningless")
+
     # Warmup
     for _ in range(5):
-        result = solver.solve(input_data)
+        solver.solve(input_data)
 
     # Benchmark
     n_iterations = 50
@@ -138,24 +145,17 @@ def test_piecewise_performance_multi_candidate():
     avg_time_us = elapsed_ns / n_iterations / 1000
 
     print(f"\nMulti-range V3 (2 ranges): {avg_time_us:.2f}μs per solve")
-    print(f"Result: success={result.success}, method={result.method}")
-    print(f"Solver has Rust optimizer: {solver._rust_optimizer is not None}")
-
-    # Check that result is successful
     print(f"Result details: profit={result.profit}, optimal_input={result.optimal_input}")
+    print(f"Solver has Rust optimizer: {solver._rust_optimizer is not None}")
 
     # Multi-range target: ~10-50μs (Python implementation)
     # If Rust is available and working: ~5-15μs
     # Still much better than Brent (~390μs)
     # NOTE: Test data may not form profitable arbitrage, so just check performance
-    if result.success:
-        if solver._rust_optimizer is not None:
-            assert avg_time_us < 100.0, f"Too slow with Rust: {avg_time_us:.2f}μs"
-        else:
-            assert avg_time_us < 200.0, f"Too slow without Rust: {avg_time_us:.2f}μs"
+    if solver._rust_optimizer is not None:
+        assert avg_time_us < 100.0, f"Too slow with Rust: {avg_time_us:.2f}μs"
     else:
-        # If not profitable, just verify it's not absurdly slow
-        assert avg_time_us < 5000.0, f"Way too slow even for failed solve: {avg_time_us:.2f}μs"
+        assert avg_time_us < 200.0, f"Too slow without Rust: {avg_time_us:.2f}μs"
 
 
 def test_rust_vs_python_performance():
@@ -206,6 +206,12 @@ def test_rust_vs_python_performance():
     # Force Rust path by calling _try_rust_candidate_range directly
     # Then compare with Python fallback
 
+    # Check that solve actually works before benchmarking
+    try:
+        solver.solve(input_data)
+    except OptimizationError:
+        pytest.skip("Test data not profitable, benchmark meaningless")
+
     # Warmup
     for _ in range(5):
         solver.solve(input_data)
@@ -223,15 +229,11 @@ def test_rust_vs_python_performance():
     print(f"Rust optimizer type: {type(solver._rust_optimizer)}")
 
     # Check result details
-    print(f"Result details: profit={result.profit}, success={result.success}")
+    print(f"Result details: profit={result.profit}")
 
     # Should be significantly faster than baseline Brent (~390μs)
     # Target is <200μs for reasonable performance
-    # NOTE: Test data may not form profitable arbitrage
-    if result.success:
-        assert avg_time_us < 200.0, f"Much slower than expected: {avg_time_us:.2f}μs"
-    else:
-        assert avg_time_us < 5000.0, f"Way too slow even for failed solve: {avg_time_us:.2f}μs"
+    assert avg_time_us < 200.0, f"Much slower than expected: {avg_time_us:.2f}μs"
 
 
 if __name__ == "__main__":

@@ -55,6 +55,7 @@ from degenbot.arbitrage.optimizers.base import (
     OptimizerResult,
     OptimizerType,
 )
+from degenbot.exceptions import OptimizationError
 
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
@@ -600,8 +601,7 @@ class MobiusOptimizer:
     -----
     >>> optimizer = MobiusOptimizer()
     >>> result = optimizer.solve([pool_a, pool_b, pool_c], input_token)
-    >>> if result.success:
-    ...     print(f"Optimal: {result.optimal_input}, Profit: {result.profit}")
+    >>> print(f"Optimal: {result.optimal_input}, Profit: {result.profit}")
     """
 
     @property
@@ -641,15 +641,10 @@ class MobiusOptimizer:
 
         min_pools = 2
         if len(pools) < min_pools:
-            elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-            return OptimizerResult(
-                optimal_input=0,
-                profit=0,
-                solve_time_ms=elapsed_ms,
+            raise OptimizationError(
+                "Möbius optimizer requires 2+ pools",
                 iterations=0,
-                success=False,
-                optimizer_type=self.optimizer_type,
-                error_message="Möbius optimizer requires 2+ pools",
+                method="mobius",
             )
 
         v2_pool_types = {"UniswapV2Pool", "MockV2Pool"}
@@ -673,18 +668,11 @@ class MobiusOptimizer:
 
             pool_type = type(pool).__name__
             if pool_type not in v2_pool_types:
-                elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-                return OptimizerResult(
-                    optimal_input=0,
-                    profit=0,
-                    solve_time_ms=elapsed_ms,
+                raise OptimizationError(
+                    f"Unsupported pool type: {pool_type}. "
+                    "Use V2 pools or V3TickRangeHop objects.",
                     iterations=0,
-                    success=False,
-                    optimizer_type=self.optimizer_type,
-                    error_message=(
-                        f"Unsupported pool type: {pool_type}. "
-                        "Use V2 pools or V3TickRangeHop objects."
-                    ),
+                    method="mobius",
                 )
 
             if current_token == pool.token0:
@@ -696,15 +684,10 @@ class MobiusOptimizer:
                 reserve_out = float(pool.state.reserves_token0)
                 next_token = pool.token0
             else:
-                elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-                return OptimizerResult(
-                    optimal_input=0,
-                    profit=0,
-                    solve_time_ms=elapsed_ms,
+                raise OptimizationError(
+                    f"Token {current_token} not in pool",
                     iterations=0,
-                    success=False,
-                    optimizer_type=self.optimizer_type,
-                    error_message=f"Token {current_token} not in pool",
+                    method="mobius",
                 )
 
             hops.append(
@@ -723,15 +706,10 @@ class MobiusOptimizer:
         optimal_input = int(x_opt)
 
         if optimal_input <= 0 or profit <= 0:
-            elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-            return OptimizerResult(
-                optimal_input=0,
-                profit=0,
-                solve_time_ms=elapsed_ms,
+            raise OptimizationError(
+                "No profitable arbitrage",
                 iterations=iterations,
-                success=False,
-                optimizer_type=self.optimizer_type,
-                error_message="No profitable arbitrage",
+                method="mobius",
             )
 
         # Validate V3 hops: check that the swap stays within assumed tick range
@@ -746,22 +724,13 @@ class MobiusOptimizer:
                         # This is the V3 hop — estimate final sqrt price
                         final_sqrt_price = estimate_v3_final_sqrt_price(amt, v3_hop)
                         if not v3_hop.contains_sqrt_price(final_sqrt_price):
-                            elapsed_ms = (
-                                time.perf_counter_ns() - start_time
-                            ) / 1_000_000
-                            return OptimizerResult(
-                                optimal_input=0,
-                                profit=0,
-                                solve_time_ms=elapsed_ms,
+                            raise OptimizationError(
+                                f"V3 swap at hop {hop_idx} crosses tick "
+                                f"boundary (sqrt_price={final_sqrt_price:.6f} "
+                                f"outside [{v3_hop.sqrt_price_lower:.6f}, "
+                                f"{v3_hop.sqrt_price_upper:.6f}])",
                                 iterations=iterations,
-                                success=False,
-                                optimizer_type=self.optimizer_type,
-                                error_message=(
-                                    f"V3 swap at hop {hop_idx} crosses tick "
-                                    f"boundary (sqrt_price={final_sqrt_price:.6f} "
-                                    f"outside [{v3_hop.sqrt_price_lower:.6f}, "
-                                    f"{v3_hop.sqrt_price_upper:.6f}])"
-                                ),
+                                method="mobius",
                             )
                     else:
                         h = hops[j]
@@ -785,14 +754,10 @@ class MobiusOptimizer:
         elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
 
         if actual_profit <= 0:
-            return OptimizerResult(
-                optimal_input=0,
-                profit=0,
-                solve_time_ms=elapsed_ms,
+            raise OptimizationError(
+                "No profitable arbitrage (integer verification failed)",
                 iterations=iterations,
-                success=False,
-                optimizer_type=self.optimizer_type,
-                error_message="No profitable arbitrage (integer verification failed)",
+                method="mobius",
             )
 
         return OptimizerResult(
@@ -800,7 +765,6 @@ class MobiusOptimizer:
             profit=actual_profit,
             solve_time_ms=elapsed_ms,
             iterations=iterations,
-            success=True,
             optimizer_type=self.optimizer_type,
         )
 
@@ -892,7 +856,6 @@ class MobiusOptimizer:
                         profit=actual_profit,
                         solve_time_ms=elapsed_ms,
                         iterations=iterations,
-                        success=True,
                         optimizer_type=self.optimizer_type,
                     )
 
@@ -900,14 +863,10 @@ class MobiusOptimizer:
             return best_result
 
         elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-        return OptimizerResult(
-            optimal_input=0,
-            profit=0,
-            solve_time_ms=elapsed_ms,
+        raise OptimizationError(
+            "No valid V3 candidate range found",
             iterations=0,
-            success=False,
-            optimizer_type=self.optimizer_type,
-            error_message="No valid V3 candidate range found",
+            method="mobius",
         )
 
     def solve_piecewise(
@@ -1070,22 +1029,16 @@ class MobiusOptimizer:
                     profit=actual_profit,
                     solve_time_ms=elapsed_ms,
                     iterations=n_iterations,
-                    success=True,
                     optimizer_type=self.optimizer_type,
                 )
 
         if best_result is not None:
             return best_result
 
-        elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-        return OptimizerResult(
-            optimal_input=0,
-            profit=0,
-            solve_time_ms=elapsed_ms,
+        raise OptimizationError(
+            "No valid piecewise-Mobius solution found",
             iterations=0,
-            success=False,
-            optimizer_type=self.optimizer_type,
-            error_message="No valid piecewise-Mobius solution found",
+            method="mobius",
         )
 
 

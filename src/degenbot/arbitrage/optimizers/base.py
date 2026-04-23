@@ -34,21 +34,15 @@ class OptimizerResult:
         Time to solve in milliseconds.
     iterations : int
         Number of iterations taken.
-    success : bool
-        Whether optimization succeeded.
     optimizer_type : OptimizerType
         Which optimizer was used.
-    error_message : str | None
-        Error message if unsuccessful.
     """
 
     optimal_input: int
     profit: int
     solve_time_ms: float
     iterations: int
-    success: bool
     optimizer_type: OptimizerType
-    error_message: str | None = None
 
 
 class ArbitrageOptimizer(ABC):

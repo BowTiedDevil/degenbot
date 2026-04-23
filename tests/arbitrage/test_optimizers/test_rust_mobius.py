@@ -42,7 +42,6 @@ class TestRustHopState:
 class TestRustMobiusSolve:
     def test_two_hop_profitable(self):
         result = rs_mobius.py_mobius_solve(PROFIT_HOPS_2)
-        assert result.success
         assert result.optimal_input > 0
         assert result.profit > 0
         assert result.iterations == 0
@@ -53,7 +52,6 @@ class TestRustMobiusSolve:
 
     def test_three_hop_profitable(self):
         result = rs_mobius.py_mobius_solve(PROFIT_HOPS_3)
-        assert result.success
         assert result.optimal_input > 0
         assert result.profit > 0
 
@@ -183,7 +181,6 @@ class TestRustMobiusOptimizer:
     def test_solve(self):
         optimizer = rs_mobius.RustMobiusOptimizer()
         result = optimizer.solve(PROFIT_HOPS_2)
-        assert result.success
         assert result.optimal_input > 0
         assert result.profit > 0
 

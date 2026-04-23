@@ -19,7 +19,7 @@ from degenbot.arbitrage.solver.types import (
     MobiusSolveResult,
     SolverMethod,
 )
-from degenbot.degenbot_rs import mobius
+from degenbot.exceptions import OptimizationError
 
 # Constants for path constraints
 MIN_HOPS_FOR_ARBITRAGE: int = 2
@@ -118,19 +118,6 @@ def _integer_refinement(
     return best_input, best_profit
 
 
-def _unprofitable_result(
-    method: SolverMethod = SolverMethod.MOBIUS,
-    error: str = "Not profitable",
-) -> MobiusSolveResult:
-    return MobiusSolveResult(
-        optimal_input=0,
-        profit=0,
-        is_profitable=False,
-        method=method,
-        error=error,
-    )
-
-
 _SENTINEL = object()
 
 
@@ -146,13 +133,15 @@ class MobiusSolver(SolverProtocol):
     """
 
     def __init__(self) -> None:
-        self._rust_solver: mobius.RustArbSolver | None = None
-        self._pool_cache: mobius.RustPoolCache | None = None
+        self._rust_solver: Any = None
+        self._pool_cache: Any = None
         self._piecewise_solver: ArbSolver | object = _SENTINEL
         self._try_load_rust()
 
     def _try_load_rust(self) -> None:
         try:
+            from degenbot.degenbot_rs import mobius
+
             self._rust_solver = mobius.RustArbSolver()
             self._pool_cache = mobius.RustPoolCache()
         except ImportError:
@@ -168,7 +157,11 @@ class MobiusSolver(SolverProtocol):
         max_input: int | None = None,
     ) -> MobiusSolveResult:
         if not self.supports(hops):
-            return _unprofitable_result(error="Unsupported hop types")
+            raise OptimizationError(
+                "Unsupported hop types",
+                iterations=0,
+                method=SolverMethod.MOBIUS.value,
+            )
 
         has_multi_range = any(
             isinstance(h, ConcentratedLiquidityHopState) and h.has_multi_range for h in hops
@@ -185,9 +178,10 @@ class MobiusSolver(SolverProtocol):
         max_input: int | None = None,
     ) -> MobiusSolveResult:
         if self._rust_solver is not None:
-            result = self._try_rust_solve(hops, max_input)
-            if result is not None:
-                return result
+            try:
+                return self._try_rust_solve(hops, max_input)
+            except OptimizationError:
+                pass
 
         return MobiusSolver._solve_mobius_python(hops, max_input)
 
@@ -200,11 +194,19 @@ class MobiusSolver(SolverProtocol):
 
         coeffs = _compute_mobius_coefficients(mobius_hops)
         if not coeffs.is_profitable:
-            return _unprofitable_result(error="k/m <= 1")
+            raise OptimizationError(
+                "k/m <= 1",
+                iterations=0,
+                method=SolverMethod.MOBIUS.value,
+            )
 
         x_opt = coeffs.optimal_input()
         if x_opt <= 0:
-            return _unprofitable_result(error="Optimal input <= 0")
+            raise OptimizationError(
+                "Optimal input <= 0",
+                iterations=0,
+                method=SolverMethod.MOBIUS.value,
+            )
 
         if max_input is not None and x_opt > float(max_input):
             x_opt = float(max_input)
@@ -212,12 +214,15 @@ class MobiusSolver(SolverProtocol):
         best_input, best_profit = _integer_refinement(x_opt, mobius_hops, max_input)
 
         if best_profit <= 0:
-            return _unprofitable_result(error="Not profitable (integer verification failed)")
+            raise OptimizationError(
+                "Not profitable (integer verification failed)",
+                iterations=0,
+                method=SolverMethod.MOBIUS.value,
+            )
 
         return MobiusSolveResult(
             optimal_input=best_input,
             profit=best_profit,
-            is_profitable=True,
             method=SolverMethod.MOBIUS,
         )
 
@@ -225,23 +230,31 @@ class MobiusSolver(SolverProtocol):
         self,
         hops: Sequence[HopState],
         max_input: int | None = None,
-    ) -> MobiusSolveResult | None:
+    ) -> MobiusSolveResult:
 
         max_input_float = float(max_input) if max_input is not None else None
 
         all_simple = all(isinstance(h, MobiusHopState) for h in hops)
-        if all_simple:
-            return self._try_rust_solve_raw(hops, max_input_float)
+        if not all_simple:
+            raise OptimizationError(
+                "Rust solver requires all MobiusHopState hops",
+                iterations=0,
+                method=SolverMethod.MOBIUS.value,
+            )
 
-        return None
+        return self._try_rust_solve_raw(hops, max_input_float)
 
     def _try_rust_solve_raw(
         self,
         hops: Sequence[HopState],
         max_input_float: float | None,
-    ) -> MobiusSolveResult | None:
+    ) -> MobiusSolveResult:
         if self._rust_solver is None:
-            return None
+            raise OptimizationError(
+                "Rust solver not available",
+                iterations=0,
+                method=SolverMethod.MOBIUS.value,
+            )
 
         int_hops_flat: list[int] = []
         for hop in hops:
@@ -252,14 +265,26 @@ class MobiusSolver(SolverProtocol):
 
         try:
             result = self._rust_solver.solve_raw(int_hops_flat, max_input_float)
-        except (ValueError, TypeError):
-            return None
+        except (ValueError, TypeError) as e:
+            raise OptimizationError(
+                f"Rust solve failed: {e}",
+                iterations=0,
+                method=SolverMethod.MOBIUS.value,
+            ) from e
 
         if not result.supported:
-            return None
+            raise OptimizationError(
+                "Not supported by Rust solver",
+                iterations=0,
+                method=SolverMethod.MOBIUS.value,
+            )
 
         if not result.success:
-            return _unprofitable_result(error="Not profitable (Rust)")
+            raise OptimizationError(
+                "Not profitable (Rust)",
+                iterations=result.iterations if hasattr(result, "iterations") else 0,
+                method=SolverMethod.MOBIUS.value,
+            )
 
         if result.optimal_input_int is not None and result.profit_int is not None:
             optimal_input = int(result.optimal_input_int)
@@ -268,12 +293,19 @@ class MobiusSolver(SolverProtocol):
                 return MobiusSolveResult(
                     optimal_input=optimal_input,
                     profit=profit,
-                    is_profitable=True,
                     method=SolverMethod.MOBIUS,
                 )
-            return _unprofitable_result(error="Not profitable (integer verification failed)")
+            raise OptimizationError(
+                "Not profitable (integer verification failed)",
+                iterations=result.iterations if hasattr(result, "iterations") else 0,
+                method=SolverMethod.MOBIUS.value,
+            )
 
-        return None
+        raise OptimizationError(
+            "Rust solver returned no integer results",
+            iterations=result.iterations if hasattr(result, "iterations") else 0,
+            method=SolverMethod.MOBIUS.value,
+        )
 
     def _solve_piecewise(
         self,
@@ -281,9 +313,10 @@ class MobiusSolver(SolverProtocol):
         max_input: int | None = None,
     ) -> MobiusSolveResult:
         if self._rust_solver is not None:
-            result = self._try_rust_piecewise(hops, max_input)
-            if result is not None:
-                return result
+            try:
+                return self._try_rust_piecewise(hops, max_input)
+            except OptimizationError:
+                pass
 
         return self._solve_piecewise_python(hops, max_input)
 
@@ -291,20 +324,30 @@ class MobiusSolver(SolverProtocol):
         self,
         hops: Sequence[HopState],
         max_input: int | None = None,
-    ) -> MobiusSolveResult | None:
+    ) -> MobiusSolveResult:
+        from degenbot.degenbot_rs import mobius
+
         if self._rust_solver is None:
-            return None
+            raise OptimizationError(
+                "Rust solver not available",
+                iterations=0,
+                method=SolverMethod.PIECEWISE_MOBIUS.value,
+            )
 
         max_input_float = float(max_input) if max_input is not None else None
         rust_hops: list[Any] = []
-        v3_sequences: list[tuple[int, mobius.RustV3TickRangeSequence]] = []
+        v3_sequences: list[tuple[int, Any]] = []
 
         for i, hop in enumerate(hops):
             if isinstance(hop, ConcentratedLiquidityHopState):
                 if hop.has_multi_range:
                     seq = MobiusSolver._build_rust_v3_sequence(hop)
                     if seq is None:
-                        return None
+                        raise OptimizationError(
+                            "Cannot build V3 sequence",
+                            iterations=0,
+                            method=SolverMethod.PIECEWISE_MOBIUS.value,
+                        )
                     v3_sequences.append((i, seq))
                     rust_hops.append((
                         float(hop.reserve_in),
@@ -326,7 +369,11 @@ class MobiusSolver(SolverProtocol):
                     mobius.RustIntHopState(hop.reserve_in, hop.reserve_out, gamma_numer, fee_denom)
                 )
             else:
-                return None
+                raise OptimizationError(
+                    f"Unsupported hop type: {type(hop).__name__}",
+                    iterations=0,
+                    method=SolverMethod.PIECEWISE_MOBIUS.value,
+                )
 
         result = self._rust_solver.solve(
             rust_hops,
@@ -336,12 +383,17 @@ class MobiusSolver(SolverProtocol):
         )
 
         if not result.supported:
-            return None
+            raise OptimizationError(
+                "Not supported by Rust solver",
+                iterations=0,
+                method=SolverMethod.PIECEWISE_MOBIUS.value,
+            )
 
         if not result.success:
-            return _unprofitable_result(
-                method=SolverMethod.PIECEWISE_MOBIUS,
-                error="Not profitable (Rust piecewise)",
+            raise OptimizationError(
+                "Not profitable (Rust piecewise)",
+                iterations=result.iterations if hasattr(result, "iterations") else 0,
+                method=SolverMethod.PIECEWISE_MOBIUS.value,
             )
 
         if result.optimal_input_int is not None and result.profit_int is not None:
@@ -351,7 +403,6 @@ class MobiusSolver(SolverProtocol):
                 return MobiusSolveResult(
                     optimal_input=optimal_input,
                     profit=profit,
-                    is_profitable=True,
                     method=SolverMethod.PIECEWISE_MOBIUS,
                     iterations=result.iterations,
                 )
@@ -362,20 +413,22 @@ class MobiusSolver(SolverProtocol):
                 return MobiusSolveResult(
                     optimal_input=optimal_input,
                     profit=profit,
-                    is_profitable=True,
                     method=SolverMethod.PIECEWISE_MOBIUS,
                     iterations=result.iterations,
                 )
 
-        return _unprofitable_result(
-            method=SolverMethod.PIECEWISE_MOBIUS,
-            error="Not profitable",
+        raise OptimizationError(
+            "Not profitable",
+            iterations=result.iterations if hasattr(result, "iterations") else 0,
+            method=SolverMethod.PIECEWISE_MOBIUS.value,
         )
 
     @staticmethod
     def _build_rust_v3_sequence(
         v3_hop: ConcentratedLiquidityHopState,
-    ) -> mobius.RustV3TickRangeSequence | None:
+    ) -> Any:
+        from degenbot.degenbot_rs import mobius
+
         assert v3_hop.tick_ranges is not None
         q96 = Q96_CONSTANT
         zero_for_one = v3_hop.reserve_in > v3_hop.reserve_out
@@ -453,25 +506,19 @@ class MobiusSolver(SolverProtocol):
                     )
                 )
             else:
-                return _unprofitable_result(
-                    method=SolverMethod.PIECEWISE_MOBIUS,
-                    error="Unsupported hop type",
+                raise OptimizationError(
+                    f"Unsupported hop type: {type(hop).__name__}",
+                    iterations=0,
+                    method=SolverMethod.PIECEWISE_MOBIUS.value,
                 )
 
         old_result = self._get_piecewise_solver().solve(
             SolveInput(hops=tuple(old_hops), max_input=max_input)
         )
 
-        if not old_result.success:
-            return _unprofitable_result(
-                method=SolverMethod.PIECEWISE_MOBIUS,
-                error=old_result.error or "Not profitable",
-            )
-
         return MobiusSolveResult(
             optimal_input=old_result.optimal_input,
             profit=old_result.profit,
-            is_profitable=True,
             method=SolverMethod.PIECEWISE_MOBIUS,
             iterations=old_result.iterations,
         )
@@ -519,14 +566,26 @@ class MobiusSolver(SolverProtocol):
 
         try:
             result = cache.solve(path, max_input_float)
-        except (ValueError, TypeError):
-            return _unprofitable_result(error="Pool cache solve failed")
+        except (ValueError, TypeError) as e:
+            raise OptimizationError(
+                f"Pool cache solve failed: {e}",
+                iterations=0,
+                method=SolverMethod.MOBIUS.value,
+            ) from e
 
         if not result.supported:
-            return _unprofitable_result(error="Not supported by cache")
+            raise OptimizationError(
+                "Not supported by cache",
+                iterations=0,
+                method=SolverMethod.MOBIUS.value,
+            )
 
         if not result.success:
-            return _unprofitable_result(error="Not profitable")
+            raise OptimizationError(
+                "Not profitable",
+                iterations=result.iterations if hasattr(result, "iterations") else 0,
+                method=SolverMethod.MOBIUS.value,
+            )
 
         if result.optimal_input_int is not None and result.profit_int is not None:
             optimal_input = int(result.optimal_input_int)
@@ -535,13 +594,16 @@ class MobiusSolver(SolverProtocol):
                 return MobiusSolveResult(
                     optimal_input=optimal_input,
                     profit=profit,
-                    is_profitable=True,
                     method=SolverMethod.MOBIUS,
                 )
 
-        return _unprofitable_result(error="Not profitable")
+        raise OptimizationError(
+            "Not profitable",
+            iterations=result.iterations if hasattr(result, "iterations") else 0,
+            method=SolverMethod.MOBIUS.value,
+        )
 
-    def get_pool_cache(self) -> mobius.RustPoolCache:
+    def get_pool_cache(self):
         if self._pool_cache is None:
             msg = "Pool cache requires the Rust extension (degenbot_rs)"
             raise RuntimeError(msg)

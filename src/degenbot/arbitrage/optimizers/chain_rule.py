@@ -21,6 +21,7 @@ from degenbot.arbitrage.optimizers.base import (
     OptimizerResult,
     OptimizerType,
 )
+from degenbot.exceptions import OptimizationError
 
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
@@ -212,15 +213,10 @@ class ChainRuleNewtonOptimizer:
         start_time = time.perf_counter_ns()
 
         if len(pools) < 2:
-            elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-            return OptimizerResult(
-                optimal_input=0,
-                profit=0,
-                solve_time_ms=elapsed_ms,
+            raise OptimizationError(
+                "Chain rule optimizer requires 2+ pools",
                 iterations=0,
-                success=False,
-                optimizer_type=self.optimizer_type,
-                error_message="Chain rule optimizer requires 2+ pools",
+                method="chain_rule",
             )
 
         # Validate pools and build pool states
@@ -230,15 +226,10 @@ class ChainRuleNewtonOptimizer:
         for pool in pools:
             # Accept both real and mock pools
             if type(pool).__name__ not in ("UniswapV2Pool", "MockV2Pool"):
-                elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-                return OptimizerResult(
-                    optimal_input=0,
-                    profit=0,
-                    solve_time_ms=elapsed_ms,
+                raise OptimizationError(
+                    "All pools must be V2 pools",
                     iterations=0,
-                    success=False,
-                    optimizer_type=self.optimizer_type,
-                    error_message="All pools must be V2 pools",
+                    method="chain_rule",
                 )
 
             # Determine which reserve is input/output
@@ -251,15 +242,10 @@ class ChainRuleNewtonOptimizer:
                 reserve_out = float(pool.state.reserves_token0)
                 next_token = pool.token0
             else:
-                elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-                return OptimizerResult(
-                    optimal_input=0,
-                    profit=0,
-                    solve_time_ms=elapsed_ms,
+                raise OptimizationError(
+                    f"Token {current_token} not in pool",
                     iterations=0,
-                    success=False,
-                    optimizer_type=self.optimizer_type,
-                    error_message=f"Token {current_token} not in pool",
+                    method="chain_rule",
                 )
 
             pool_states.append(
@@ -286,15 +272,10 @@ class ChainRuleNewtonOptimizer:
         optimal_input = int(x_opt)
 
         if optimal_input <= 0 or profit <= 0:
-            elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
-            return OptimizerResult(
-                optimal_input=optimal_input,
-                profit=0,
-                solve_time_ms=elapsed_ms,
+            raise OptimizationError(
+                "No profitable arbitrage",
                 iterations=iterations,
-                success=False,
-                optimizer_type=self.optimizer_type,
-                error_message="No profitable arbitrage",
+                method="chain_rule",
             )
 
         # Verify profit with pool methods
@@ -311,14 +292,10 @@ class ChainRuleNewtonOptimizer:
         self._last_solve_time_ms = elapsed_ms
 
         if actual_profit <= 0:
-            return OptimizerResult(
-                optimal_input=optimal_input,
-                profit=0,
-                solve_time_ms=elapsed_ms,
+            raise OptimizationError(
+                "No profitable arbitrage",
                 iterations=iterations,
-                success=False,
-                optimizer_type=self.optimizer_type,
-                error_message="No profitable arbitrage",
+                method="chain_rule",
             )
 
         return OptimizerResult(
@@ -326,6 +303,5 @@ class ChainRuleNewtonOptimizer:
             profit=actual_profit,
             solve_time_ms=elapsed_ms,
             iterations=iterations,
-            success=True,
             optimizer_type=self.optimizer_type,
         )

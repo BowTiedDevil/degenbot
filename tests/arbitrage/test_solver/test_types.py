@@ -154,29 +154,23 @@ class TestMobiusSolveResult:
         result = MobiusSolveResult(
             optimal_input=10**18,
             profit=10**15,
-            is_profitable=True,
             method=SolverMethod.MOBIUS,
         )
-        assert result.is_profitable
         assert result.iterations == 0
-        assert result.error is None
+        assert result.profit > 0
 
     def test_unprofitable_result(self):
         result = MobiusSolveResult(
             optimal_input=0,
             profit=0,
-            is_profitable=False,
             method=SolverMethod.MOBIUS,
-            error="K/M <= 1",
         )
-        assert not result.is_profitable
-        assert result.error == "K/M <= 1"
+        assert result.profit == 0
 
     def test_piecewise_result(self):
         result = MobiusSolveResult(
             optimal_input=10**17,
             profit=10**14,
-            is_profitable=True,
             method=SolverMethod.PIECEWISE_MOBIUS,
             iterations=25,
         )
@@ -187,7 +181,6 @@ class TestMobiusSolveResult:
         result = MobiusSolveResult(
             optimal_input=0,
             profit=0,
-            is_profitable=False,
             method=SolverMethod.MOBIUS,
         )
         with pytest.raises(AttributeError):
@@ -221,7 +214,6 @@ class TestSolverProtocol:
                 return MobiusSolveResult(
                     optimal_input=0,
                     profit=0,
-                    is_profitable=False,
                     method=SolverMethod.MOBIUS,
                 )
 
@@ -231,4 +223,4 @@ class TestSolverProtocol:
         solver = FakeSolver()
         assert solver.supports([])
         result = solver.solve([])
-        assert not result.is_profitable
+        assert result.profit == 0

@@ -219,7 +219,6 @@ class TestArbitragePathConstruction:
         )
         result = path.calculate()
         assert isinstance(result, MobiusSolveResult)
-        assert result.is_profitable
 
     def test_calculate_updates_last_result(self):
         t0, _t1, pool0, pool1 = self._make_cyclic_v2_pools()
@@ -232,7 +231,6 @@ class TestArbitragePathConstruction:
         assert path.last_result is None
         path.calculate()
         assert path.last_result is not None
-        assert path.last_result.is_profitable
 
     def test_max_input_property(self):
         t0, _t1, pool0, pool1 = self._make_cyclic_v2_pools()
@@ -365,7 +363,6 @@ class TestArbitragePathCalculate:
 
         assert new_result.optimal_input == old_result.optimal_input
         assert new_result.profit == old_result.profit
-        assert new_result.is_profitable == old_result.success
 
     def test_calculate_with_state_override(self):
         t0, _t1, pool0, pool1 = TestArbitragePathConstruction._make_cyclic_v2_pools(self)

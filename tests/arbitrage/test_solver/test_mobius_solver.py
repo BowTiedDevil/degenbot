@@ -20,22 +20,23 @@ from degenbot.arbitrage.solver.types import (
     MobiusHopState,
     SolverMethod,
 )
+from degenbot.exceptions import OptimizationError
 
 FEE_03 = Fraction(3, 1000)
 FEE_05 = Fraction(5, 1000)
 FEE_01 = Fraction(1, 1000)
 
 
-def _solve_old(hops: tuple, max_input: int | None = None) -> tuple[int, int, bool]:
+def _solve_old(hops: tuple, max_input: int | None = None) -> tuple[int, int]:
     solver = ArbSolver()
     result = solver.solve(SolveInput(hops=hops, max_input=max_input))
-    return result.optimal_input, result.profit, result.success
+    return result.optimal_input, result.profit
 
 
-def _solve_new(hops, max_input: int | None = None) -> tuple[int, int, bool, SolverMethod]:
+def _solve_new(hops, max_input: int | None = None) -> tuple[int, int, SolverMethod]:
     solver = MobiusSolver()
     result = solver.solve(hops, max_input=max_input)
-    return result.optimal_input, result.profit, result.is_profitable, result.method
+    return result.optimal_input, result.profit, result.method
 
 
 class TestMobiusSolverSupports:
@@ -78,11 +79,9 @@ class TestV2V2:
             for h in new_hops
         )
 
-        old_input, old_profit, old_ok = _solve_old(old_hops)
-        new_input, new_profit, new_ok, method = _solve_new(new_hops)
+        old_input, old_profit = _solve_old(old_hops)
+        new_input, new_profit, method = _solve_new(new_hops)
 
-        assert old_ok
-        assert new_ok
         assert new_input == old_input
         assert new_profit == old_profit
         assert method == SolverMethod.MOBIUS
@@ -109,11 +108,10 @@ class TestV2V2:
             for h in new_hops
         )
 
-        _, _, old_ok = _solve_old(old_hops)
-        _, _, new_ok, _ = _solve_new(new_hops)
-
-        assert not old_ok
-        assert not new_ok
+        with pytest.raises(OptimizationError):
+            _solve_old(old_hops)
+        with pytest.raises(OptimizationError):
+            _solve_new(new_hops)
 
     def test_large_reserves(self):
         new_hops = (
@@ -137,11 +135,9 @@ class TestV2V2:
             for h in new_hops
         )
 
-        old_input, old_profit, old_ok = _solve_old(old_hops)
-        new_input, new_profit, new_ok, _ = _solve_new(new_hops)
+        old_input, old_profit = _solve_old(old_hops)
+        new_input, new_profit, _ = _solve_new(new_hops)
 
-        assert old_ok
-        assert new_ok
         assert new_input == old_input
         assert new_profit == old_profit
 
@@ -167,11 +163,9 @@ class TestV2V2:
             for h in new_hops
         )
 
-        old_input, old_profit, old_ok = _solve_old(old_hops)
-        new_input, new_profit, new_ok, _ = _solve_new(new_hops)
+        old_input, old_profit = _solve_old(old_hops)
+        new_input, new_profit, _ = _solve_new(new_hops)
 
-        assert old_ok
-        assert new_ok
         assert new_input == old_input
         assert new_profit == old_profit
 
@@ -185,11 +179,9 @@ class TestMultiHop:
         )
         old_hops = tuple(ConstantProductHop(h.reserve_in, h.reserve_out, h.fee) for h in new_hops)
 
-        old_input, old_profit, old_ok = _solve_old(old_hops)
-        new_input, new_profit, new_ok, _ = _solve_new(new_hops)
+        old_input, old_profit = _solve_old(old_hops)
+        new_input, new_profit, _ = _solve_new(new_hops)
 
-        assert old_ok
-        assert new_ok
         assert new_input == old_input
         assert new_profit == old_profit
 
@@ -204,11 +196,9 @@ class TestMultiHop:
         )
         old_hops = tuple(ConstantProductHop(h.reserve_in, h.reserve_out, h.fee) for h in new_hops)
 
-        old_input, old_profit, old_ok = _solve_old(old_hops)
-        new_input, new_profit, new_ok, _ = _solve_new(new_hops)
+        old_input, old_profit = _solve_old(old_hops)
+        new_input, new_profit, _ = _solve_new(new_hops)
 
-        assert old_ok
-        assert new_ok
         assert new_input == old_input
         assert new_profit == old_profit
 
@@ -231,11 +221,9 @@ class TestMaxInput:
 
         max_input = 10**10
 
-        old_input, old_profit, old_ok = _solve_old(old_hops, max_input=max_input)
-        new_input, new_profit, new_ok, _ = _solve_new(new_hops, max_input=max_input)
+        old_input, old_profit = _solve_old(old_hops, max_input=max_input)
+        new_input, new_profit, _ = _solve_new(new_hops, max_input=max_input)
 
-        assert old_ok
-        assert new_ok
         assert new_input <= max_input
         assert new_input == old_input
         assert new_profit == old_profit
@@ -251,7 +239,7 @@ class TestMobiusCoefficients:
         )
         coeffs = _compute_mobius_coefficients(profitable_hops)
         assert coeffs.is_profitable
-        assert coeffs.K > coeffs.M
+        assert coeffs.k > coeffs.m
 
     def test_unprofitable_check(self):
         from degenbot.arbitrage.solver.mobius_solver import _compute_mobius_coefficients
