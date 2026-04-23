@@ -34,7 +34,10 @@ from typing import Any, Self, cast
 
 from hexbytes import HexBytes
 
-from degenbot.degenbot_rs import AlloyProvider as _AlloyProvider
+try:
+    from degenbot.degenbot_rs import AlloyProvider as _AlloyProvider
+except ImportError:
+    _AlloyProvider = None  # type: ignore[assignment,misc]
 from degenbot.provider.async_provider import AsyncAlloyProvider
 from degenbot.provider.interface import (
     AsyncProviderAdapter,

@@ -21,6 +21,11 @@ from degenbot.arbitrage.solver.types import (
 )
 from degenbot.exceptions import OptimizationError
 
+try:
+    from degenbot.degenbot_rs import mobius as _rs_mobius
+except ImportError:
+    _rs_mobius = None
+
 # Constants for path constraints
 MIN_HOPS_FOR_ARBITRAGE: int = 2
 MAX_SEARCH_RADIUS: int = 5
@@ -136,17 +141,9 @@ class MobiusSolver(SolverProtocol):
         self._rust_solver: Any = None
         self._pool_cache: Any = None
         self._piecewise_solver: ArbSolver | object = _SENTINEL
-        self._try_load_rust()
-
-    def _try_load_rust(self) -> None:
-        try:
-            from degenbot.degenbot_rs import mobius
-
-            self._rust_solver = mobius.RustArbSolver()
-            self._pool_cache = mobius.RustPoolCache()
-        except ImportError:
-            self._rust_solver = None
-            self._pool_cache = None
+        if _rs_mobius is not None:
+            self._rust_solver = _rs_mobius.RustArbSolver()
+            self._pool_cache = _rs_mobius.RustPoolCache()
 
     def supports(self, hops: Sequence[HopState]) -> bool:  # noqa: PLR6301
         return len(hops) >= MIN_HOPS_FOR_ARBITRAGE
@@ -325,8 +322,6 @@ class MobiusSolver(SolverProtocol):
         hops: Sequence[HopState],
         max_input: int | None = None,
     ) -> MobiusSolveResult:
-        from degenbot.degenbot_rs import mobius
-
         if self._rust_solver is None:
             raise OptimizationError(
                 "Rust solver not available",
@@ -358,7 +353,7 @@ class MobiusSolver(SolverProtocol):
                     fee_denom = hop.fee.denominator
                     gamma_numer = fee_denom - hop.fee.numerator
                     rust_hops.append(
-                        mobius.RustIntHopState(
+                        _rs_mobius.RustIntHopState(
                             hop.reserve_in, hop.reserve_out, gamma_numer, fee_denom
                         )
                     )
@@ -366,7 +361,7 @@ class MobiusSolver(SolverProtocol):
                 fee_denom = hop.fee.denominator
                 gamma_numer = fee_denom - hop.fee.numerator
                 rust_hops.append(
-                    mobius.RustIntHopState(hop.reserve_in, hop.reserve_out, gamma_numer, fee_denom)
+                    _rs_mobius.RustIntHopState(hop.reserve_in, hop.reserve_out, gamma_numer, fee_denom)
                 )
             else:
                 raise OptimizationError(
@@ -427,8 +422,6 @@ class MobiusSolver(SolverProtocol):
     def _build_rust_v3_sequence(
         v3_hop: ConcentratedLiquidityHopState,
     ) -> Any:
-        from degenbot.degenbot_rs import mobius
-
         assert v3_hop.tick_ranges is not None
         q96 = Q96_CONSTANT
         zero_for_one = v3_hop.reserve_in > v3_hop.reserve_out
@@ -444,7 +437,7 @@ class MobiusSolver(SolverProtocol):
                     sqrt_p_current = float(range_info.sqrt_price_lower) / q96
 
                 rust_ranges.append(
-                    mobius.RustV3TickRangeHop(
+                    _rs_mobius.RustV3TickRangeHop(
                         liquidity=float(range_info.liquidity),
                         sqrt_price_current=sqrt_p_current,
                         sqrt_price_lower=float(range_info.sqrt_price_lower) / q96,
@@ -454,7 +447,7 @@ class MobiusSolver(SolverProtocol):
                     )
                 )
 
-            return mobius.RustV3TickRangeSequence(rust_ranges)
+            return _rs_mobius.RustV3TickRangeSequence(rust_ranges)
         except (ValueError, TypeError, AttributeError):
             return None
 

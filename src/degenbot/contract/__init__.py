@@ -32,10 +32,16 @@ from typing import TYPE_CHECKING
 
 from eth_typing import ChecksumAddress as Address
 
-from degenbot.degenbot_rs import Contract as _Contract
-from degenbot.degenbot_rs import decode_return_data as _decode_return_data
-from degenbot.degenbot_rs import encode_function_call as _encode_function_call
-from degenbot.degenbot_rs import get_function_selector as _get_function_selector
+try:
+    from degenbot.degenbot_rs import Contract as _Contract
+    from degenbot.degenbot_rs import decode_return_data as _decode_return_data
+    from degenbot.degenbot_rs import encode_function_call as _encode_function_call
+    from degenbot.degenbot_rs import get_function_selector as _get_function_selector
+except ImportError:
+    _Contract = None  # type: ignore[assignment,misc]
+    _decode_return_data = None  # type: ignore[assignment]
+    _encode_function_call = None  # type: ignore[assignment]
+    _get_function_selector = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from degenbot.provider.interface import ProviderAdapter

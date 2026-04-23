@@ -20,7 +20,10 @@ Example:
 
 from collections.abc import Sequence
 
-from degenbot.degenbot_rs import AsyncContract as _AsyncContract
+try:
+    from degenbot.degenbot_rs import AsyncContract as _AsyncContract
+except ImportError:
+    _AsyncContract = None  # type: ignore[assignment,misc]
 
 
 class AsyncContract:

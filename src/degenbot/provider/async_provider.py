@@ -17,7 +17,10 @@ Example:
 
 from typing import Any, Self
 
-from degenbot.degenbot_rs import AsyncAlloyProvider as _AsyncAlloyProvider
+try:
+    from degenbot.degenbot_rs import AsyncAlloyProvider as _AsyncAlloyProvider
+except ImportError:
+    _AsyncAlloyProvider = None  # type: ignore[assignment,misc]
 
 
 class AsyncAlloyProvider:
