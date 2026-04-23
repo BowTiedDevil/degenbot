@@ -1598,14 +1598,7 @@ class TransactionOperationsParser:
             else:  # DEBT_MINT or GHO_DEBT_MINT
                 calculated_amount = ev.balance_increase - ev.amount
 
-            # Pool revision 9 began pre-scaling the amount with flooring ray division.
-            # Calculating it exactly requires injecting extra details about the position,
-            # so this check will allow up to a TOKEN_AMOUNT_MATCH_TOLERANCE wei deviation
-            # on pool revisions 9+
-            if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
-                if abs(calculated_amount - repay_amount) > TOKEN_AMOUNT_MATCH_TOLERANCE:
-                    continue
-            elif calculated_amount != repay_amount:
+            if calculated_amount != repay_amount:
                 continue
 
             return ev
@@ -1843,22 +1836,33 @@ class TransactionOperationsParser:
                 if liquidation_count_for_asset == total_burn_count:
                     # SEPARATE_BURNS pattern: Each liquidation gets exactly one burn
                     # Get burn at position liquidation_position from ALL burns (not just unassigned)
-                    if liquidation_position < total_burn_count:
-                        target_burn = all_burns_for_asset[liquidation_position]
-                        # Only assign if not already assigned
-                        if target_burn.event["logIndex"] not in assigned_indices:
-                            burns.append(target_burn)
-                            assigned_indices.add(target_burn.event["logIndex"])
-                            if target_burn.index is not None and target_burn.index > 0:
-                                assigned_indices.add(target_burn.index)
-                # COMBINED_BURN pattern: More liquidations than burns
-                # All burns go to the first liquidation
+                    assert liquidation_position < total_burn_count
+                    target_burn = all_burns_for_asset[liquidation_position]
+
+                    # TODO: collapse if this is true
+                    assert target_burn.event["logIndex"] == target_burn.index
+
+                    assert target_burn.event["logIndex"] not in assigned_indices
+                    burns.append(target_burn)
+                    assigned_indices.add(target_burn.event["logIndex"])
+
+                    assert target_burn.index is not None
+                    assert target_burn.index > 0
+                    assigned_indices.add(target_burn.index)
+
                 elif liquidation_position == 0:
+                    # COMBINED_BURN pattern: More liquidations than burns
+                    # All burns go to the first liquidation
                     for ev in candidate_burns:
+                        # TODO: collapse if this is true
+                        assert ev.event["logIndex"] == ev.index
+
                         burns.append(ev)
                         assigned_indices.add(ev.event["logIndex"])
-                        if ev.index is not None and ev.index > 0:
-                            assigned_indices.add(ev.index)
+
+                        assert ev.index is not None
+                        assert ev.index > 0
+                        assigned_indices.add(ev.index)
 
             else:
                 # Single liquidation or no burns: collect all available burns
@@ -2037,12 +2041,9 @@ class TransactionOperationsParser:
 
             # Match debt mint events only if they belong to this liquidation's debt asset
             event_token_address = scaled_event.event["address"]
-            if event_token_address != debt_v_token_address:
-                continue
-            if scaled_event.balance_increase is None:
-                continue
-            if scaled_event.balance_increase <= scaled_event.amount:
-                continue
+            assert event_token_address == debt_v_token_address
+            assert scaled_event.balance_increase is not None
+            assert scaled_event.balance_increase > scaled_event.amount
 
             # This Mint event represents net debt increase during liquidation
             debt_mint = scaled_event
@@ -2624,15 +2625,14 @@ class TransactionOperationsParser:
             if ev.event["logIndex"] in assigned_indices or ev.event["logIndex"] in local_assigned:
                 continue
 
-            if ev.event_type not in {
+            assert ev.event_type in {
                 ScaledTokenEventType.COLLATERAL_TRANSFER,
-                ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
                 ScaledTokenEventType.DEBT_TRANSFER,
+                ScaledTokenEventType.DISCOUNT_TRANSFER,
+                ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
                 ScaledTokenEventType.ERC20_DEBT_TRANSFER,
                 ScaledTokenEventType.GHO_DEBT_TRANSFER,
-                ScaledTokenEventType.DISCOUNT_TRANSFER,
-            }:
-                continue
+            }
 
             # Only ERC20 Transfer events should make it here (index=None means no index from event)
             assert ev.index is None
@@ -2838,21 +2838,7 @@ class TransactionOperationsParser:
 
     def _validate_gho_liquidation(self, op: Operation) -> list[str]:
         """Validate GHO LIQUIDATION operation."""
-        errors = self._validate_liquidation(op)
-
-        # Additional GHO-specific validation
-        gho_burns = [
-            e for e in op.scaled_token_events if e.event_type == ScaledTokenEventType.GHO_DEBT_BURN
-        ]
-        match len(gho_burns):
-            case 0:
-                pass
-            case 1:
-                pass
-            case _:
-                assert_never()
-
-        return errors
+        return self._validate_liquidation(op)
 
     @staticmethod
     def _validate_interest_accrual(op: Operation) -> list[str]:
