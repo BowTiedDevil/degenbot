@@ -9,6 +9,8 @@ import eth_abi.abi
 import hypothesis
 import hypothesis.strategies as st
 import pytest
+from degenbot.degenbot_rs import decode as decode_rs
+from degenbot.degenbot_rs import decode_single as decode_single_rs
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import (
@@ -39,8 +41,6 @@ from degenbot.constants import (
     MIN_UINT128,
     MIN_UINT256,
 )
-from degenbot.degenbot_rs import decode as decode_rs
-from degenbot.degenbot_rs import decode_single as decode_single_rs
 
 
 class TestBasicTypes:

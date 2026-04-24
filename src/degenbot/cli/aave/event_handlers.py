@@ -94,7 +94,9 @@ def _process_collateral_configuration_changed_event(
     decoded = _decode_reserve_configuration_bitmap(config_bitmap)
 
     # Get or create the Asset config
-    config = session.scalar(select(AaveV3AssetConfig).where(AaveV3AssetConfig.asset_id == reserve.id))
+    config = session.scalar(
+        select(AaveV3AssetConfig).where(AaveV3AssetConfig.asset_id == reserve.id)
+    )
 
     if config is None:
         config = AaveV3AssetConfig(
@@ -304,7 +306,9 @@ def _process_emode_asset_category_changed_event(
     assert reserve is not None
 
     # Get or create the Asset config
-    config = session.scalar(select(AaveV3AssetConfig).where(AaveV3AssetConfig.asset_id == reserve.id))
+    config = session.scalar(
+        select(AaveV3AssetConfig).where(AaveV3AssetConfig.asset_id == reserve.id)
+    )
 
     if config is None:
         config = AaveV3AssetConfig(
@@ -373,7 +377,9 @@ def _process_asset_collateral_in_emode_changed_event(
     assert reserve is not None
 
     # Get or create the Asset config
-    config = session.scalar(select(AaveV3AssetConfig).where(AaveV3AssetConfig.asset_id == reserve.id))
+    config = session.scalar(
+        select(AaveV3AssetConfig).where(AaveV3AssetConfig.asset_id == reserve.id)
+    )
 
     if config is None:
         # Only set e_mode_category_id if this Asset is being added as collateral
@@ -896,7 +902,9 @@ def _process_scaled_token_upgrade_event(
             return_types=["uint256"],
         )
         aave_debt_reserve.v_token_revision = vtoken_revision
-        logger.info(f"Upgraded vToken revision for {aave_debt_reserve.v_token} to {vtoken_revision}")
+        logger.info(
+            f"Upgraded vToken revision for {aave_debt_reserve.v_token} to {vtoken_revision}"
+        )
 
         # Handle GHO discount deprecation on upgrade to revision 4+
         gho_asset = get_gho_asset(tx_context.session, tx_context.market)

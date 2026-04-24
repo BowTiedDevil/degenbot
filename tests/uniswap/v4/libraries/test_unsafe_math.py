@@ -65,8 +65,6 @@ def test_simple_mul_div_succeeds():
 
 
 def test_simple_mul_div_no_overflow():
-    # NOTE: test does not actually call simple_mul_div
-    # TODO: file issue
     assert MAX_INT128 * Q128 <= MAX_UINT256
 
 

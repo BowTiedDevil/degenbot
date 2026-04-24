@@ -21,9 +21,6 @@ def test_cli_version(runner: CliRunner):
     assert __version__ in result.output
 
 
-# TODO: create fake database for reset/upgrade tests
-
-
 def test_cli_database_reset(runner: CliRunner):
     result = runner.invoke(cli, ["database", "reset"], input="n")
     assert result.exit_code == 1

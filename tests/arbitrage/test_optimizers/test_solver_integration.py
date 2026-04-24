@@ -89,8 +89,8 @@ class TestSolverFastPathV2V2:
     def test_various_fees(self, solver, fee):
         """Solver should work across different fee tiers."""
         hops = (
-        Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=fee),
-        Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=fee),
+            Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=fee),
+            Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=fee),
         )
         result = solver.solve(SolveInput(hops=hops))
         assert result.profit > 0
@@ -107,11 +107,11 @@ class TestSolverFastPathUnprofitable:
     def test_unprofitable_path(self, solver):
         """Identical reserves should yield no arbitrage opportunity."""
         hops = (
-        Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
-        Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
+            Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+            Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
         )
         with pytest.raises(OptimizationError):
-            result = solver.solve(SolveInput(hops=hops))
+            solver.solve(SolveInput(hops=hops))
 
     def test_reverse_reserves_unprofitable(self, solver):
         """If pool_hi has lower ROE than pool_lo, no arbitrage."""
@@ -119,11 +119,11 @@ class TestSolverFastPathUnprofitable:
         # pool_hi: 800 WETH → 1.5M USDC (sell WETH at 1875 USDC each)
         # Buying at 2000 and selling at 1875 = loss
         hops = (
-        Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
-        Hop(reserve_in=WETH_800, reserve_out=USDC_1_5M, fee=FEE_0_3_PCT),
+            Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+            Hop(reserve_in=WETH_800, reserve_out=USDC_1_5M, fee=FEE_0_3_PCT),
         )
         with pytest.raises(OptimizationError):
-            result = solver.solve(SolveInput(hops=hops))
+            solver.solve(SolveInput(hops=hops))
 
 
 class TestSolverFastPathEdgeCases:
@@ -137,22 +137,22 @@ class TestSolverFastPathEdgeCases:
         """Single-hop path should fail (needs 2+ hops)."""
         hops = (Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),)
         with pytest.raises(OptimizationError):
-            result = solver.solve(SolveInput(hops=hops))
+            solver.solve(SolveInput(hops=hops))
 
     def test_zero_reserves_fails(self, solver):
         """Zero reserves should fail gracefully."""
         hops = (
-        Hop(reserve_in=0, reserve_out=0, fee=FEE_0_3_PCT),
-        Hop(reserve_in=0, reserve_out=0, fee=FEE_0_3_PCT),
+            Hop(reserve_in=0, reserve_out=0, fee=FEE_0_3_PCT),
+            Hop(reserve_in=0, reserve_out=0, fee=FEE_0_3_PCT),
         )
         with pytest.raises(OptimizationError):
-            result = solver.solve(SolveInput(hops=hops))
+            solver.solve(SolveInput(hops=hops))
 
     def test_max_input_constraint(self, solver):
         """max_input should constrain the solver result."""
         hops = (
-        Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
-        Hop(reserve_in=WETH_800, reserve_out=USDC_1_5M, fee=FEE_0_3_PCT),
+            Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+            Hop(reserve_in=WETH_800, reserve_out=USDC_1_5M, fee=FEE_0_3_PCT),
         )
         try:
             result = solver.solve(SolveInput(hops=hops, max_input=100))
@@ -163,8 +163,8 @@ class TestSolverFastPathEdgeCases:
     def test_very_small_price_difference(self, solver):
         """Very small price difference between pools."""
         hops = (
-        Hop(reserve_in=1_000_000_000_000, reserve_out=500_000_000_000_000_000, fee=FEE_0_3_PCT),
-        Hop(reserve_in=499_000_000_000_000_000, reserve_out=1_001_000_000_000, fee=FEE_0_3_PCT),
+            Hop(reserve_in=1_000_000_000_000, reserve_out=500_000_000_000_000_000, fee=FEE_0_3_PCT),
+            Hop(reserve_in=499_000_000_000_000_000, reserve_out=1_001_000_000_000, fee=FEE_0_3_PCT),
         )
         try:
             result = solver.solve(SolveInput(hops=hops))
@@ -230,9 +230,9 @@ class TestSolverTimingComparison:
         # Möbius should be at least 5x faster than Brent for V2-V2
         # (conservative — benchmarks show 100-200x, but CI can be noisy)
         assert speedup >= 5, (
-        f"ArbSolver only {speedup:.1f}x faster than Brent "
-        f"(solver median: {solver_median / 1000:.1f}μs, "
-        f"Brent median: {brent_median / 1000:.1f}μs)"
+            f"ArbSolver only {speedup:.1f}x faster than Brent "
+            f"(solver median: {solver_median / 1000:.1f}μs, "
+            f"Brent median: {brent_median / 1000:.1f}μs)"
         )
 
     def test_mobius_zero_iterations_v2v2(self, solver, v2_v2_input):
@@ -262,9 +262,9 @@ class TestSolverTimingComparison:
         # Möbius should be within 5x of Newton (both are ~5-10μs for 2-hop V2)
         # This just verifies neither is pathologically slow
         assert speedup >= 0.2, (
-        f"ArbSolver {speedup:.1f}x vs Newton "
-        f"(solver median: {solver_median / 1000:.1f}μs, "
-        f"Newton median: {newton_median / 1000:.1f}μs)"
+            f"ArbSolver {speedup:.1f}x vs Newton "
+            f"(solver median: {solver_median / 1000:.1f}μs, "
+            f"Newton median: {newton_median / 1000:.1f}μs)"
         )
 
         # Both should be at least 5x faster than Brent
@@ -290,8 +290,8 @@ class TestSolverTimingComparison:
         from degenbot.arbitrage.optimizers.solver import BrentSolver
 
         hops = (
-        Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=fee),
-        Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=fee),
+            Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=fee),
+            Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=fee),
         )
         solve_input = SolveInput(hops=hops)
 
@@ -301,8 +301,7 @@ class TestSolverTimingComparison:
 
         # Profit should match within 2 wei across fee tiers
         assert abs(solver_result.profit - brent_result.profit) <= 2, (
-        f"Fee {fee}: solver profit {solver_result.profit} "
-        f"vs Brent profit {brent_result.profit}"
+            f"Fee {fee}: solver profit {solver_result.profit} vs Brent profit {brent_result.profit}"
         )
 
 
@@ -363,13 +362,13 @@ class TestPoolStateToHop:
         r_in, r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
 
         hop = Hop(
-        reserve_in=r_in,
-        reserve_out=r_out,
-        fee=FEE_0_3_PCT,
-        liquidity=L,
-        sqrt_price=sqrt_price_x96,
-        tick_lower=0,
-        tick_upper=0,
+            reserve_in=r_in,
+            reserve_out=r_out,
+            fee=FEE_0_3_PCT,
+            liquidity=L,
+            sqrt_price=sqrt_price_x96,
+            tick_lower=0,
+            tick_upper=0,
         )
         assert hop.is_v3
 
@@ -396,7 +395,7 @@ class TestArbSolverAllPoolTypes:
         v3_r_in, v3_r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
 
         hops = (
-        Hop(
+            Hop(
                 reserve_in=v3_r_in,
                 reserve_out=v3_r_out,
                 fee=FEE_0_3_PCT,
@@ -404,8 +403,8 @@ class TestArbSolverAllPoolTypes:
                 sqrt_price=sqrt_price_x96,
                 tick_lower=0,
                 tick_upper=0,
-        ),
-        Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
+            ),
+            Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
         )
         try:
             result = solver.solve(SolveInput(hops=hops))
@@ -422,8 +421,8 @@ class TestArbSolverAllPoolTypes:
         v3_r_in, v3_r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
 
         hops = (
-        Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
-        Hop(
+            Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
+            Hop(
                 reserve_in=v3_r_in,
                 reserve_out=v3_r_out,
                 fee=FEE_0_3_PCT,
@@ -431,7 +430,7 @@ class TestArbSolverAllPoolTypes:
                 sqrt_price=sqrt_price_x96,
                 tick_lower=0,
                 tick_upper=0,
-        ),
+            ),
         )
         result = solver.solve(SolveInput(hops=hops))
         assert isinstance(result, SolveResult)
@@ -448,7 +447,7 @@ class TestArbSolverAllPoolTypes:
         hi_r_in, hi_r_out = _v3_virtual_reserves(L_hi, sqrt_price_x96, zero_for_one=True)
 
         hops = (
-        Hop(
+            Hop(
                 reserve_in=lo_r_in,
                 reserve_out=lo_r_out,
                 fee=FEE_0_3_PCT,
@@ -456,8 +455,8 @@ class TestArbSolverAllPoolTypes:
                 sqrt_price=sqrt_price_x96,
                 tick_lower=0,
                 tick_upper=0,
-        ),
-        Hop(
+            ),
+            Hop(
                 reserve_in=hi_r_in,
                 reserve_out=hi_r_out,
                 fee=FEE_0_3_PCT,
@@ -465,7 +464,7 @@ class TestArbSolverAllPoolTypes:
                 sqrt_price=sqrt_price_x96,
                 tick_lower=0,
                 tick_upper=0,
-        ),
+            ),
         )
         try:
             result = solver.solve(SolveInput(hops=hops))
@@ -485,13 +484,13 @@ class TestArbSolverMultiHop:
         """3-hop triangular path should work."""
         # USDC → WETH → USDT → USDC (triangular)
         hops = (
-        Hop(
+            Hop(
                 reserve_in=2_000_000_000_000, reserve_out=1_000_000_000_000_000_000, fee=FEE_0_3_PCT
-        ),
-        Hop(reserve_in=800_000_000_000_000_000, reserve_out=1_500_000_000_000, fee=FEE_0_3_PCT),
-        Hop(
+            ),
+            Hop(reserve_in=800_000_000_000_000_000, reserve_out=1_500_000_000_000, fee=FEE_0_3_PCT),
+            Hop(
                 reserve_in=1_800_000_000_000, reserve_out=1_200_000_000_000_000_000, fee=FEE_0_3_PCT
-        ),
+            ),
         )
         result = solver.solve(SolveInput(hops=hops))
         assert isinstance(result, SolveResult)
@@ -502,16 +501,16 @@ class TestArbSolverMultiHop:
     def test_four_hop_path(self, solver):
         """4-hop path should work with Möbius O(n)."""
         hops = (
-        Hop(
+            Hop(
                 reserve_in=2_000_000_000_000, reserve_out=1_000_000_000_000_000_000, fee=FEE_0_3_PCT
-        ),
-        Hop(
+            ),
+            Hop(
                 reserve_in=800_000_000_000_000_000, reserve_out=1_500_000_000_000, fee=FEE_0_05_PCT
-        ),
-        Hop(reserve_in=1_500_000_000_000, reserve_out=900_000_000_000_000_000, fee=FEE_0_3_PCT),
-        Hop(
+            ),
+            Hop(reserve_in=1_500_000_000_000, reserve_out=900_000_000_000_000_000, fee=FEE_0_3_PCT),
+            Hop(
                 reserve_in=900_000_000_000_000_000, reserve_out=2_200_000_000_000, fee=FEE_0_05_PCT
-        ),
+            ),
         )
         result = solver.solve(SolveInput(hops=hops))
         assert isinstance(result, SolveResult)
@@ -521,15 +520,15 @@ class TestArbSolverMultiHop:
     def test_five_hop_path(self, solver):
         """5-hop path should work."""
         hops = (
-        Hop(
+            Hop(
                 reserve_in=2_000_000_000_000, reserve_out=1_000_000_000_000_000_000, fee=FEE_0_3_PCT
-        ),
-        Hop(reserve_in=900_000_000_000_000_000, reserve_out=1_800_000_000_000, fee=FEE_0_3_PCT),
-        Hop(
+            ),
+            Hop(reserve_in=900_000_000_000_000_000, reserve_out=1_800_000_000_000, fee=FEE_0_3_PCT),
+            Hop(
                 reserve_in=1_800_000_000_000, reserve_out=700_000_000_000_000_000, fee=FEE_0_05_PCT
-        ),
-        Hop(reserve_in=700_000_000_000_000_000, reserve_out=1_600_000_000_000, fee=FEE_0_3_PCT),
-        Hop(reserve_in=1_600_000_000_000, reserve_out=2_100_000_000_000, fee=FEE_0_05_PCT),
+            ),
+            Hop(reserve_in=700_000_000_000_000_000, reserve_out=1_600_000_000_000, fee=FEE_0_3_PCT),
+            Hop(reserve_in=1_600_000_000_000, reserve_out=2_100_000_000_000, fee=FEE_0_05_PCT),
         )
         result = solver.solve(SolveInput(hops=hops))
         assert isinstance(result, SolveResult)
@@ -540,13 +539,13 @@ class TestArbSolverMultiHop:
 
         # Set up a 3-hop path with clear arbitrage
         hops = (
-        Hop(
+            Hop(
                 reserve_in=2_000_000_000_000, reserve_out=1_000_000_000_000_000_000, fee=FEE_0_3_PCT
-        ),
-        Hop(reserve_in=800_000_000_000_000_000, reserve_out=1_500_000_000_000, fee=FEE_0_3_PCT),
-        Hop(
+            ),
+            Hop(reserve_in=800_000_000_000_000_000, reserve_out=1_500_000_000_000, fee=FEE_0_3_PCT),
+            Hop(
                 reserve_in=1_800_000_000_000, reserve_out=1_200_000_000_000_000_000, fee=FEE_0_3_PCT
-        ),
+            ),
         )
         solve_input = SolveInput(hops=hops)
 
@@ -554,12 +553,12 @@ class TestArbSolverMultiHop:
         brent_solver = BrentSolver()
         brent_result = brent_solver.solve(solve_input)
 
-            # For V2 paths, Möbius and Brent should find the same profit
+        # For V2 paths, Möbius and Brent should find the same profit
         # within a small tolerance. Multi-hop paths can have slightly
         # larger integer rounding effects.
         abs_diff = abs(solver_result.profit - brent_result.profit)
         rel_diff = abs_diff / max(solver_result.profit, 1)
         # Absolute: within 100 wei, relative: within 0.01%
         assert abs_diff <= 100 or rel_diff < 1e-4, (
-                f"Möbius profit {solver_result.profit} vs Brent profit {brent_result.profit}"
+            f"Möbius profit {solver_result.profit} vs Brent profit {brent_result.profit}"
         )

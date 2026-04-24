@@ -6,10 +6,6 @@ cases where the Hessian magnitude threshold may be too conservative
 or too lenient.
 """
 
-import math
-from collections.abc import Sequence
-from dataclasses import dataclass
-
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -19,262 +15,6 @@ from degenbot.arbitrage.optimizers.newton import (
     v2_optimal_arbitrage_newton,
     v2_profit_gradient_and_hessian,
 )
-
-
-@dataclass(frozen=True)
-class HessianResult:
-    """Result from Hessian computation for analysis."""
-
-    hessian: float
-    gradient: float
-    profit: float
-    reserves_buy: tuple[float, float]
-    reserves_sell: tuple[float, float]
-    fees: tuple[float, float]
-    input_x: float
-
-    @property
-    def hessian_magnitude(self) -> float:
-        return abs(self.hessian)
-
-    @property
-    def would_trigger_threshold(self) -> bool:
-        return self.hessian_magnitude < 1e-30
-
-
-class TestHessianMagnitudeExploration:
-    """
-        Exploration tests to understand Hessian magnitude distribution.
-
-        These tests don't assert correctness but collect data on when
-    the Hessian becomes small enough to trigger the threshold.
-    """
-
-    @given(
-        # Large reserves (typical mainnet pools: 1e18 to 1e30)
-        reserve0_buy=st.floats(
-            min_value=1e18, max_value=1e30, allow_nan=False, allow_infinity=False
-        ),
-        reserve1_buy=st.floats(
-            min_value=1e18, max_value=1e30, allow_nan=False, allow_infinity=False
-        ),
-        reserve0_sell=st.floats(
-            min_value=1e18, max_value=1e30, allow_nan=False, allow_infinity=False
-        ),
-        reserve1_sell=st.floats(
-            min_value=1e18, max_value=1e30, allow_nan=False, allow_infinity=False
-        ),
-        # Standard fees: 0.01% to 1%
-        fee_buy=st.floats(min_value=0.0001, max_value=0.01, allow_nan=False, allow_infinity=False),
-        fee_sell=st.floats(min_value=0.0001, max_value=0.01, allow_nan=False, allow_infinity=False),
-        # Initial guess: small fraction of reserves (0.001% to 10%)
-        x_pct=st.floats(min_value=1e-5, max_value=0.1, allow_nan=False, allow_infinity=False),
-    )
-    @settings(max_examples=1000, deadline=None)
-    def test_hessian_distribution_typical_pools(
-        self,
-        reserve0_buy: float,
-        reserve1_buy: float,
-        reserve0_sell: float,
-        reserve1_sell: float,
-        fee_buy: float,
-        fee_sell: float,
-        x_pct: float,
-    ) -> None:
-        """
-        Explore Hessian magnitude distribution with typical pool parameters.
-
-        This test records cases where the Hessian magnitude falls below
-        various thresholds to understand if 1e-30 is appropriate.
-        """
-        fee_mult_buy = 1.0 - fee_buy
-        fee_mult_sell = 1.0 - fee_sell
-        x = reserve0_buy * x_pct
-
-        profit, gradient, hessian = v2_profit_gradient_and_hessian(
-            x=x,
-            reserve0_buy=reserve0_buy,
-            reserve1_buy=reserve1_buy,
-            reserve0_sell=reserve0_sell,
-            reserve1_sell=reserve1_sell,
-            fee_multiplier_buy=fee_mult_buy,
-            fee_multiplier_sell=fee_mult_sell,
-        )
-
-        # Basic sanity checks
-        assert math.isfinite(hessian), f"Non-finite hessian: {hessian}"
-
-        # Track distribution of hessian magnitudes
-        # These thresholds represent potential cutoff values
-        thresholds = [1e-10, 1e-15, 1e-20, 1e-25, 1e-30, 1e-35]
-        hessian_mag = abs(hessian)
-
-        # If hessian is very small, record the context
-        if hessian_mag < 1e-20:
-            result = HessianResult(
-                hessian=hessian,
-                gradient=gradient,
-                profit=profit,
-                reserves_buy=(reserve0_buy, reserve1_buy),
-                reserves_sell=(reserve0_sell, reserve1_sell),
-                fees=(fee_buy, fee_sell),
-                input_x=x,
-            )
-            # Store for analysis (hypothesis will show examples)
-            self._record_small_hessian(result, thresholds)
-
-    def _record_small_hessian(self, result: HessianResult, thresholds: Sequence[float]) -> None:
-        """Record details about small hessian cases for analysis."""
-        hessian_mag = result.hessian_magnitude
-
-        # Find which thresholds this would trigger
-        triggered = [t for t in thresholds if hessian_mag < t]
-
-        if triggered:
-            # This will be shown in Hypothesis output on failure/verbose
-            msg = (
-                f"Small hessian: {hessian_mag:.2e} triggers {len(triggered)} thresholds. "
-                f"Reserves buy: ({result.reserves_buy[0]:.2e}, {result.reserves_buy[1]:.2e}), "
-                f"sell: ({result.reserves_sell[0]:.2e}, {result.reserves_sell[1]:.2e}), "
-                f"x: {result.input_x:.2e}"
-            )
-            # Use pytest's record_property for CI analysis
-            if hasattr(pytest, "config"):
-                pytest.record_property("small_hessian", hessian_mag)
-
-    @given(
-        # Extreme: very large reserves (1e30 to 1e60 - beyond typical but possible)
-        reserve0_buy=st.floats(
-            min_value=1e30, max_value=1e60, allow_nan=False, allow_infinity=False
-        ),
-        reserve1_buy=st.floats(
-            min_value=1e30, max_value=1e60, allow_nan=False, allow_infinity=False
-        ),
-        reserve0_sell=st.floats(
-            min_value=1e30, max_value=1e60, allow_nan=False, allow_infinity=False
-        ),
-        reserve1_sell=st.floats(
-            min_value=1e30, max_value=1e60, allow_nan=False, allow_infinity=False
-        ),
-        # Low fees (1 basis point to 10 basis points)
-        fee_buy=st.floats(min_value=0.0001, max_value=0.001, allow_nan=False, allow_infinity=False),
-        fee_sell=st.floats(
-            min_value=0.0001, max_value=0.001, allow_nan=False, allow_infinity=False
-        ),
-        # Tiny input relative to reserves
-        x_factor=st.floats(min_value=1e-20, max_value=1e-10, allow_nan=False, allow_infinity=False),
-    )
-    @settings(max_examples=500, deadline=None)
-    def test_hessian_extreme_large_reserves(
-        self,
-        reserve0_buy: float,
-        reserve1_buy: float,
-        reserve0_sell: float,
-        reserve1_sell: float,
-        fee_buy: float,
-        fee_sell: float,
-        x_factor: float,
-    ) -> None:
-        """
-        Test with extremely large reserves that might cause hessian underflow.
-
-        Stablecoin pools or wrapped assets can have enormous reserve values.
-        The hessian formula involves (R + x*γ)³ in the denominator.
-
-        This test collects cases where the hessian falls below threshold
-        to understand when the 1e-30 cutoff might be problematic.
-        """
-        fee_mult_buy = 1.0 - fee_buy
-        fee_mult_sell = 1.0 - fee_sell
-        x = reserve0_buy * x_factor
-
-        profit, gradient, hessian = v2_profit_gradient_and_hessian(
-            x=x,
-            reserve0_buy=reserve0_buy,
-            reserve1_buy=reserve1_buy,
-            reserve0_sell=reserve0_sell,
-            reserve1_sell=reserve1_sell,
-            fee_multiplier_buy=fee_mult_buy,
-            fee_multiplier_sell=fee_mult_sell,
-        )
-
-        # Check for numerical issues
-        assert math.isfinite(hessian), f"Non-finite hessian with large reserves: {hessian}"
-
-        # With extreme reserves, hessian can legitimately be very small
-        # The question is: does this break convergence?
-        hessian_mag = abs(hessian)
-
-        # If hessian is sub-1e-30 with significant gradient, this indicates
-        # the threshold may be too conservative for large reserve pools
-        if hessian_mag < 1e-30 and hessian_mag > 0 and abs(gradient) >= 1e-10:
-            # Record this finding - significant gradient with tiny hessian
-            # means Newton would stop before converging
-            # This is data for threshold tuning, not a failure
-            pass  # Hypothesis will show examples in verbose mode
-
-    @given(
-        # Small reserves (new/poorly funded pools: 1e6 to 1e12)
-        reserve0_buy=st.floats(
-            min_value=1e6, max_value=1e12, allow_nan=False, allow_infinity=False
-        ),
-        reserve1_buy=st.floats(
-            min_value=1e6, max_value=1e12, allow_nan=False, allow_infinity=False
-        ),
-        reserve0_sell=st.floats(
-            min_value=1e6, max_value=1e12, allow_nan=False, allow_infinity=False
-        ),
-        reserve1_sell=st.floats(
-            min_value=1e6, max_value=1e12, allow_nan=False, allow_infinity=False
-        ),
-        # High fees (1% to 10%)
-        fee_buy=st.floats(min_value=0.01, max_value=0.10, allow_nan=False, allow_infinity=False),
-        fee_sell=st.floats(min_value=0.01, max_value=0.10, allow_nan=False, allow_infinity=False),
-        # Reasonable input (1% to 50% of reserves)
-        x_pct=st.floats(min_value=0.01, max_value=0.5, allow_nan=False, allow_infinity=False),
-    )
-    @settings(max_examples=500, deadline=None)
-    def test_hessian_small_reserves_high_fees(
-        self,
-        reserve0_buy: float,
-        reserve1_buy: float,
-        reserve0_sell: float,
-        reserve1_sell: float,
-        fee_buy: float,
-        fee_sell: float,
-        x_pct: float,
-    ) -> None:
-        """
-        Test with small reserves and high fees.
-
-        With small reserves, hessian should never trigger the 1e-30 threshold
-        due to underflow. If it does, that indicates a numerical issue.
-        """
-        fee_mult_buy = 1.0 - fee_buy
-        fee_mult_sell = 1.0 - fee_sell
-        x = reserve0_buy * x_pct
-
-        _, _, hessian = v2_profit_gradient_and_hessian(
-            x=x,
-            reserve0_buy=reserve0_buy,
-            reserve1_buy=reserve1_buy,
-            reserve0_sell=reserve0_sell,
-            reserve1_sell=reserve1_sell,
-            fee_multiplier_buy=fee_mult_buy,
-            fee_multiplier_sell=fee_mult_sell,
-        )
-
-        assert math.isfinite(hessian), f"Non-finite hessian: {hessian}"
-
-        # With reserves 1e6+, hessian should never legitimately be < 1e-25
-        # (that's 5 orders of magnitude below the 1e-30 threshold)
-        # This only catches pathological numerical issues
-        hessian_mag = abs(hessian)
-        assert hessian_mag > 1e-25 or hessian_mag == 0.0, (
-            f"Pathologically small hessian: {hessian_mag:.2e} "
-            f"with reserves ({reserve0_buy:.2e}, {reserve1_buy:.2e}). "
-            f"This indicates numerical underflow, not normal behavior."
-        )
 
 
 class TestStepBound:
@@ -318,7 +58,7 @@ class TestStepBound:
         """
         Test that passing float('inf') allows unbounded steps.
         """
-        x_opt, _, iterations = v2_optimal_arbitrage_newton(
+        x_opt, _, _ = v2_optimal_arbitrage_newton(
             reserve0_buy=1e18,
             reserve1_buy=2e18,
             reserve0_sell=1.1e18,
@@ -495,7 +235,7 @@ class TestHessianFormulaCorrectness:
         x = reserve0_buy * x_pct
 
         # Get analytical gradient and hessian
-        _, gradient, hessian = v2_profit_gradient_and_hessian(
+        _, _, hessian = v2_profit_gradient_and_hessian(
             x=x,
             reserve0_buy=reserve0_buy,
             reserve1_buy=reserve1_buy,
