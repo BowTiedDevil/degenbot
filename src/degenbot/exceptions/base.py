@@ -22,7 +22,7 @@ class DegenbotError(Exception):
 
     message: str | None = None
 
-    def __init__(self, message: str | None = None) -> None:
+    def __init__(self, *, message: str | None = None) -> None:
         if message:
             self.message = message
             super().__init__(message)

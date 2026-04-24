@@ -11,8 +11,16 @@ Quick Start:
 >>> from degenbot.arbitrage.optimizers.solver import ArbSolver, Hop, SolveInput
 >>> solver = ArbSolver()
 >>> hops = (
-...     Hop(reserve_in=2_000_000_000_000, reserve_out=1_000_000_000_000_000_000, fee=Fraction(3, 1000)),
-...     Hop(reserve_in=1_500_000_000_000, reserve_out=800_000_000_000_000_000, fee=Fraction(3, 1000)),
+...     Hop(
+...         reserve_in=2_000_000_000_000,
+...         reserve_out=1_000_000_000_000_000_000,
+...         fee=Fraction(3, 1000),
+...     ),
+...     Hop(
+...         reserve_in=1_500_000_000_000,
+...         reserve_out=800_000_000_000_000_000,
+...         fee=Fraction(3, 1000),
+...     ),
 ... )
 >>> result = solver.solve(SolveInput(hops=hops))
 >>> print(f"Optimal: {result.optimal_input}, Profit: {result.profit}, Method: {result.method}")
@@ -36,7 +44,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from fractions import Fraction
-from typing import Any
+from typing import Any, ClassVar, override
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.arbitrage.optimizers.balancer_weighted import (
@@ -53,9 +61,6 @@ from degenbot.arbitrage.optimizers.mobius import (
 )
 from degenbot.arbitrage.optimizers.mobius import (
     V3TickRangeSequence as _V3TickRangeSequence,
-)
-from degenbot.arbitrage.optimizers.mobius import (
-    compute_mobius_coefficients as _compute_mobius_coefficients,
 )
 from degenbot.arbitrage.optimizers.mobius import (
     mobius_solve as _mobius_solve,
@@ -749,17 +754,20 @@ class MobiusSolver(Solver):
     Performance: ~0.86μs (Python), ~0.19μs (Rust)
     """
 
+    MIN_HOPS = 2
+
+    @override
     def supports(self, solve_input: SolveInput) -> bool:
-        if solve_input.num_hops < 2:
+        if solve_input.num_hops < self.MIN_HOPS:
             return False
         # Supports V2-only paths and V3 single-range paths
         # Does NOT support Solidly, Balancer, Curve (those need other solvers)
         # Does NOT support V3 with tick crossings (PiecewiseMobiusSolver handles those)
         for hop in solve_input.hops:
-            if hop.invariant not in (
+            if hop.invariant not in {
                 PoolInvariant.CONSTANT_PRODUCT,
                 PoolInvariant.BOUNDED_PRODUCT,
-            ):
+            }:
                 return False
             # Multi-range V3 requires PiecewiseMobiusSolver
             if (
@@ -770,32 +778,33 @@ class MobiusSolver(Solver):
                 return False
         return True
 
+    @override
     def solve(self, solve_input: SolveInput) -> SolveResult:
         start_ns = time.perf_counter_ns()
 
-        if solve_input.num_hops < 2:
+        if solve_input.num_hops < self.MIN_HOPS:
             raise OptimizationError(
-                "Möbius solver requires 2+ hops",
+                message="Möbius solver requires 2+ hops",
                 iterations=0,
-                method=SolverMethod.MOBIUS.value,
+                method=SolverMethod.MOBIUS.name,
             )
 
         coeffs = _compute_mobius_coefficients(solve_input.hops)
 
         if not coeffs.is_profitable:
             raise OptimizationError(
-                "Not profitable (K/M <= 1)",
+                message="Not profitable (K/M <= 1)",
                 iterations=0,
-                method=SolverMethod.MOBIUS.value,
+                method=SolverMethod.MOBIUS.name,
             )
 
         x_opt = coeffs.optimal_input()
 
         if x_opt <= 0:
             raise OptimizationError(
-                "Optimal input <= 0",
+                message="Optimal input <= 0",
                 iterations=0,
-                method=SolverMethod.MOBIUS.value,
+                method=SolverMethod.MOBIUS.name,
             )
 
         # Apply max_input constraint
@@ -809,7 +818,7 @@ class MobiusSolver(Solver):
         # slightly wider integer deviation. We check a small neighborhood
         # proportional to path length.
         num_hops = solve_input.num_hops
-        search_radius = 1 if num_hops <= 2 else min(num_hops, 5)
+        search_radius = 1 if num_hops <= self.MIN_HOPS else min(num_hops, 5)
 
         x_floor = int(x_opt)
         best_input = x_floor
@@ -828,9 +837,9 @@ class MobiusSolver(Solver):
 
         if best_profit <= 0:
             raise OptimizationError(
-                "Not profitable (integer verification failed)",
+                message="Not profitable (integer verification failed)",
                 iterations=0,
-                method=SolverMethod.MOBIUS.value,
+                method=SolverMethod.MOBIUS.name,
             )
 
         return SolveResult(
@@ -860,17 +869,19 @@ class NewtonSolver(Solver):
     MAX_ITERATIONS = 10
     TOLERANCE = 1e-9
 
+    @override
     def supports(self, solve_input: SolveInput) -> bool:
-        return solve_input.num_hops == 2 and solve_input.all_constant_product
+        return solve_input.num_hops == self.MIN_HOPS and solve_input.all_constant_product
 
+    @override
     def solve(self, solve_input: SolveInput) -> SolveResult:
         start_ns = time.perf_counter_ns()
 
         if not self.supports(solve_input):
             raise OptimizationError(
-                "Newton solver requires exactly 2 V2 hops",
+                message="Newton solver requires exactly 2 V2 hops",
                 iterations=0,
-                method=SolverMethod.NEWTON.value,
+                method=SolverMethod.NEWTON.name,
             )
 
         r0_buy, s0_buy, g0_buy = _hop_to_float_state(solve_input.hops[0])
@@ -884,15 +895,15 @@ class NewtonSolver(Solver):
             x = mobius_coeffs.optimal_input()
             if x <= 0:
                 raise OptimizationError(
-                    "Möbius optimal <= 0",
+                    message="Möbius optimal <= 0",
                     iterations=0,
-                    method=SolverMethod.NEWTON.value,
+                    method=SolverMethod.NEWTON.name,
                 )
         else:
             raise OptimizationError(
-                "Not profitable (Möbius check failed)",
+                message="Not profitable (Möbius check failed)",
                 iterations=0,
-                method=SolverMethod.NEWTON.value,
+                method=SolverMethod.NEWTON.name,
             )
 
         iterations = 0
@@ -909,9 +920,8 @@ class NewtonSolver(Solver):
             denom_sell = r0_sell + y * g0_sell
             if denom_sell <= 0:
                 break
-            z = y * g0_sell * s0_sell / denom_sell
+            _output = y * g0_sell * s0_sell / denom_sell
 
-            # Chain rule: dP/dx = dz/dy * dy/dx - 1
             dy_dx = g0_buy * s0_buy * r0_buy / (denom_buy**2)
             dz_dy = g0_sell * s0_sell * r0_sell / (denom_sell**2)
             dprofit_dx = dz_dy * dy_dx - 1.0
@@ -938,9 +948,9 @@ class NewtonSolver(Solver):
 
         if x <= 0:
             raise OptimizationError(
-                "Newton did not converge to positive input",
+                message="Newton did not converge to positive input",
                 iterations=iterations,
-                method=SolverMethod.NEWTON.value,
+                method=SolverMethod.NEWTON.name,
             )
 
         # Apply max_input constraint
@@ -956,9 +966,9 @@ class NewtonSolver(Solver):
 
         if actual_profit <= 0:
             raise OptimizationError(
-                "Not profitable (integer verification failed)",
+                message="Not profitable (integer verification failed)",
                 iterations=iterations,
-                method=SolverMethod.NEWTON.value,
+                method=SolverMethod.NEWTON.name,
             )
 
         return SolveResult(
@@ -983,17 +993,19 @@ class BrentSolver(Solver):
     Performance: ~194μs (V2-V2), ~390μs (V3-V3)
     """
 
+    @override
     def supports(self, solve_input: SolveInput) -> bool:
-        return solve_input.num_hops >= 2
+        return solve_input.num_hops >= self.MIN_HOPS
 
+    @override
     def solve(self, solve_input: SolveInput) -> SolveResult:
         start_ns = time.perf_counter_ns()
 
-        if solve_input.num_hops < 2:
+        if solve_input.num_hops < self.MIN_HOPS:
             raise OptimizationError(
-                "Brent solver requires 2+ hops",
+                message="Brent solver requires 2+ hops",
                 iterations=0,
-                method=SolverMethod.BRENT.value,
+                method=SolverMethod.BRENT.name,
             )
 
         from scipy.optimize import minimize_scalar
@@ -1014,9 +1026,9 @@ class BrentSolver(Solver):
 
         if upper <= 0:
             raise OptimizationError(
-                "Upper bound is zero or negative",
+                message="Upper bound is zero or negative",
                 iterations=0,
-                method=SolverMethod.BRENT.value,
+                method=SolverMethod.BRENT.name,
             )
 
         result = minimize_scalar(
@@ -1030,9 +1042,9 @@ class BrentSolver(Solver):
 
         if not result.success and result.fun >= 0:
             raise OptimizationError(
-                "No profitable solution found",
+                message="No profitable solution found",
                 iterations=result.nfev if hasattr(result, "nfev") else 0,
-                method=SolverMethod.BRENT.value,
+                method=SolverMethod.BRENT.name,
             )
 
         x_opt = result.x
@@ -1042,9 +1054,9 @@ class BrentSolver(Solver):
 
         if actual_profit <= 0:
             raise OptimizationError(
-                "Not profitable (integer verification failed)",
+                message="Not profitable (integer verification failed)",
                 iterations=result.nfev if hasattr(result, "nfev") else 0,
-                method=SolverMethod.BRENT.value,
+                method=SolverMethod.BRENT.name,
             )
 
         return SolveResult(
@@ -1075,27 +1087,29 @@ class PiecewiseMobiusSolver(Solver):
     - Rust implementation: ~9μs end-to-end (~1μs raw computation)
     """
 
+    MIN_HOPS = 2
     GOLDEN_SECTION_ITERATIONS = 25
     PHI = (math.sqrt(5) - 1) / 2  # ~0.618
 
     def __init__(self) -> None:
         self._rust_optimizer: Any = None
-        self._mobius_solver = None
+        self._mobius_solver: MobiusSolver | None = None
         self._rust_hop_cache: dict[int, list] = {}
         self._rust_sequence_cache: dict[tuple[tuple[int, ...], int, bool], Any] = {}
         if _rs_mobius is not None:
             self._rust_optimizer = _rs_mobius.RustMobiusOptimizer()
 
+    @override
     def supports(self, solve_input: SolveInput) -> bool:
-        if solve_input.num_hops < 2:
+        if solve_input.num_hops < self.MIN_HOPS:
             return False
         # Supports paths with V3 bounded-product hops
         # (handles both single-range and multi-range V3)
         for hop in solve_input.hops:
-            if hop.invariant not in (
+            if hop.invariant not in {
                 PoolInvariant.CONSTANT_PRODUCT,
                 PoolInvariant.BOUNDED_PRODUCT,
-            ):
+            }:
                 return False
         return solve_input.has_v3
 
@@ -1113,27 +1127,26 @@ class PiecewiseMobiusSolver(Solver):
     def _find_v3_hop_index(self, solve_input: SolveInput) -> tuple[int, BoundedProductHop] | None:
         """Find the first V3 hop with multi-range data."""
         for i, hop in enumerate(solve_input.hops):
-            if (
-                hop.invariant == PoolInvariant.BOUNDED_PRODUCT
-                and isinstance(hop, BoundedProductHop)
-                and hop.has_multi_range
-            ):
+            if not isinstance(hop, BoundedProductHop):
+                continue
+            if hop.invariant == PoolInvariant.BOUNDED_PRODUCT and hop.has_multi_range:
                 return i, hop
         return None
 
+    @override
     def solve(self, solve_input: SolveInput) -> SolveResult:
         start_ns = time.perf_counter_ns()
 
         # Fast path: check we have 2+ hops with V3 data
-        if solve_input.num_hops < 2:
+        if solve_input.num_hops < self.MIN_HOPS:
             raise OptimizationError(
-                "Need 2+ hops",
+                message="Need 2+ hops",
                 iterations=0,
-                method=SolverMethod.PIECEWISE_MOBIUS.value,
+                method=SolverMethod.PIECEWISE_MOBIUS.name,
             )
 
         # V3-V3 fast path: 2-hop path with both V3 multi-range
-        if solve_input.num_hops == 2 and self._rust_optimizer is not None:
+        if solve_input.num_hops == self.MIN_HOPS and self._rust_optimizer is not None:
             try:
                 v3_v3_result = self._try_rust_v3_v3(solve_input, start_ns)
                 if v3_v3_result is not None:
@@ -1180,9 +1193,9 @@ class PiecewiseMobiusSolver(Solver):
             )
         except OptimizationError:
             raise OptimizationError(
-                "Single-range fallback failed",
+                message="Single-range fallback failed",
                 iterations=0,
-                method=SolverMethod.PIECEWISE_MOBIUS.value,
+                method=SolverMethod.PIECEWISE_MOBIUS.name,
             ) from None
 
     def _solve_multi_range(self, solve_input: SolveInput, start_ns: int) -> SolveResult:
@@ -1191,9 +1204,9 @@ class PiecewiseMobiusSolver(Solver):
         v3_result = self._find_v3_hop_index(solve_input)
         if v3_result is None:
             raise OptimizationError(
-                "No multi-range V3 hop found",
+                message="No multi-range V3 hop found",
                 iterations=0,
-                method=SolverMethod.PIECEWISE_MOBIUS.value,
+                method=SolverMethod.PIECEWISE_MOBIUS.name,
             )
 
         v3_hop_index, v3_hop = v3_result
@@ -1221,9 +1234,9 @@ class PiecewiseMobiusSolver(Solver):
         if not plausible_candidates:
             elapsed_ns = time.perf_counter_ns() - start_ns
             raise OptimizationError(
-                "No plausible candidate ranges found",
+                message="No plausible candidate ranges found",
                 iterations=0,
-                method=SolverMethod.PIECEWISE_MOBIUS.value,
+                method=SolverMethod.PIECEWISE_MOBIUS.name,
             )
 
         # Evaluate candidates (parallel if multiple, sequential if single)
@@ -1249,9 +1262,9 @@ class PiecewiseMobiusSolver(Solver):
         if best_result is None:
             elapsed_ns = time.perf_counter_ns() - start_ns
             raise OptimizationError(
-                "No profitable candidate range found",
+                message="No profitable candidate range found",
                 iterations=0,
-                method=SolverMethod.PIECEWISE_MOBIUS.value,
+                method=SolverMethod.PIECEWISE_MOBIUS.name,
             )
 
         # Return best result with updated timing
@@ -1360,9 +1373,8 @@ class PiecewiseMobiusSolver(Solver):
             crossing_input += gross_input
 
         # If crossing cost alone exceeds max_input, skip this candidate
-        if solve_input.max_input is not None:
-            if crossing_input > float(solve_input.max_input):
-                return False
+        if solve_input.max_input is not None and crossing_input > float(solve_input.max_input):
+            return False
 
         # If we already have a good profit, skip distant ranges unless they might be better
         if current_best_profit > 0 and end_idx > start_idx + 1:
@@ -1460,9 +1472,9 @@ class PiecewiseMobiusSolver(Solver):
             crossing = sequence.compute_crossing(end_idx)
         except (IndexError, ValueError) as e:
             raise OptimizationError(
-                f"Invalid crossing range index {end_idx}: {e}",
+                message=f"Invalid crossing range index {end_idx}: {e}",
                 iterations=0,
-                method=SolverMethod.PIECEWISE_MOBIUS.value,
+                method=SolverMethod.PIECEWISE_MOBIUS.name,
             ) from e
 
         # Build _MobiusHopState lists for before/after V3
@@ -1470,8 +1482,8 @@ class PiecewiseMobiusSolver(Solver):
         hops_after: list[_MobiusHopState] = []
 
         # Convert hops before V3 to _MobiusHopState
-        for i, hop in enumerate(solve_input.hops[:v3_hop_index]):
-            if isinstance(hop, ConstantProductHop) or isinstance(hop, BoundedProductHop):
+        for hop in solve_input.hops[:v3_hop_index]:
+            if isinstance(hop, ConstantProductHop | BoundedProductHop):
                 hops_before.append(
                     _MobiusHopState(
                         reserve_in=float(hop.reserve_in),
@@ -1481,8 +1493,8 @@ class PiecewiseMobiusSolver(Solver):
                 )
 
         # Convert hops after V3 to _MobiusHopState
-        for i, hop in enumerate(solve_input.hops[v3_hop_index + 1 :]):
-            if isinstance(hop, ConstantProductHop) or isinstance(hop, BoundedProductHop):
+        for hop in solve_input.hops[v3_hop_index + 1 :]:
+            if isinstance(hop, ConstantProductHop | BoundedProductHop):
                 hops_after.append(
                     _MobiusHopState(
                         reserve_in=float(hop.reserve_in),
@@ -1503,9 +1515,9 @@ class PiecewiseMobiusSolver(Solver):
             target = crossing.crossing_gross_input
             if target >= coeffs_before.K / coeffs_before.N:
                 raise OptimizationError(
-                    "Crossing requires more than path can deliver",
+                    message="Crossing requires more than path can deliver",
                     iterations=0,
-                    method=SolverMethod.PIECEWISE_MOBIUS.value,
+                    method=SolverMethod.PIECEWISE_MOBIUS.name,
                 )
             x_min = target * coeffs_before.M / (coeffs_before.K - target * coeffs_before.N)
         elif crossing.crossing_gross_input > 0:
@@ -1514,7 +1526,7 @@ class PiecewiseMobiusSolver(Solver):
             x_min = 0.0
 
         # Single-range Möbius solve as starting point for bracket
-        full_hops = hops_before + [ending_hop_state] + hops_after
+        full_hops = [*hops_before, ending_hop_state, *hops_after]
         max_input_float = (
             float(solve_input.max_input) if solve_input.max_input is not None else None
         )
@@ -1526,19 +1538,16 @@ class PiecewiseMobiusSolver(Solver):
 
         # Build bracket for golden section search
         x_low = max(x_min, 0.0)
-        if x_mobius > x_low:
-            x_high = max(x_mobius * 3, x_low + 1.0)
-        else:
-            x_high = max(x_low * 5, x_low + 1.0)
+        x_high = max(x_mobius * 3, x_low + 1.0) if x_mobius > x_low else max(x_low * 5, x_low + 1.0)
 
         if max_input_float is not None:
             x_high = min(x_high, max_input_float)
 
         if x_low >= x_high:
             raise OptimizationError(
-                "Invalid bracket for golden section search",
+                message="Invalid bracket for golden section search",
                 iterations=0,
-                method=SolverMethod.PIECEWISE_MOBIUS.value,
+                method=SolverMethod.PIECEWISE_MOBIUS.name,
             )
 
         # Define profit evaluation functions (scalar and vectorized)
@@ -1577,16 +1586,19 @@ class PiecewiseMobiusSolver(Solver):
 
         # Try vectorized batch evaluation for initial bracket refinement
         # This uses NumPy to evaluate multiple points simultaneously
-        try:
-            import numpy as np
+        import importlib.util
 
-            vectorized_result = self._vectorized_bracket_search(
-                x_low, x_high, coeffs_before, coeffs_after, crossing, ending_hop_state, eval_profit
-            )
-            if vectorized_result is not None:
-                return vectorized_result
-        except ImportError:
-            pass  # Fall back to scalar golden section
+        if importlib.util.find_spec("numpy") is not None:
+            try:
+                vectorized_result = self._vectorized_bracket_search(
+                    x_low=x_low,
+                    x_high=x_high,
+                    eval_profit_scalar=eval_profit,
+                )
+                if vectorized_result is not None:
+                    return vectorized_result
+            except ImportError:
+                pass
 
         # Golden section search with adaptive convergence
         phi = self.PHI
@@ -1635,9 +1647,9 @@ class PiecewiseMobiusSolver(Solver):
 
         if p_opt <= 0:
             raise OptimizationError(
-                "No profitable solution in candidate range",
+                message="No profitable solution in candidate range",
                 iterations=iterations,
-                method=SolverMethod.PIECEWISE_MOBIUS.value,
+                method=SolverMethod.PIECEWISE_MOBIUS.name,
             )
 
         optimal_input = int(x_opt)
@@ -1652,15 +1664,12 @@ class PiecewiseMobiusSolver(Solver):
         )
 
     def _vectorized_bracket_search(
+        *,
         self,
         x_low: float,
         x_high: float,
-        coeffs_before,
-        coeffs_after,
-        crossing,
-        ending_hop_state,
-        eval_profit_scalar,
-    ):
+        eval_profit_scalar: Callable,
+    ) -> SolveResult:
         """
         Vectorized bracket search using NumPy for parallel evaluation.
 
@@ -1669,10 +1678,8 @@ class PiecewiseMobiusSolver(Solver):
 
         Returns SolveResult if successful, None to fall back to scalar search.
         """
-        try:
-            import numpy as np
-        except ImportError:
-            return None
+
+        import numpy as np
 
         # Number of points for initial vectorized evaluation
         # Reduced from 20 to 10 to minimize overhead
@@ -1692,7 +1699,6 @@ class PiecewiseMobiusSolver(Solver):
         # Find best point
         best_idx = np.argmax(profits)
         best_profit = profits[best_idx]
-        best_x = x_points[best_idx]
 
         if best_profit <= 0:
             return None  # No profitable solution in bracket
@@ -1736,21 +1742,20 @@ class PiecewiseMobiusSolver(Solver):
         """
         if self._rust_optimizer is None:
             raise OptimizationError(
-                "Rust optimizer not available",
+                message="Rust optimizer not available",
                 iterations=0,
-                method=SolverMethod.PIECEWISE_MOBIUS.value,
+                method=SolverMethod.PIECEWISE_MOBIUS.name,
             )
 
-        rust_hops = []
-        for hop in solve_input.hops:
-            if isinstance(hop, ConstantProductHop) or isinstance(hop, BoundedProductHop):
-                rust_hops.append(
-                    _rs_mobius.RustHopState(
-                        float(hop.reserve_in),
-                        float(hop.reserve_out),
-                        float(hop.fee),
-                    )
-                )
+        rust_hops = [
+            _rs_mobius.RustHopState(
+                float(hop.reserve_in),
+                float(hop.reserve_out),
+                float(hop.fee),
+            )
+            for hop in solve_input.hops
+            if isinstance(hop, ConstantProductHop | BoundedProductHop)
+        ]
 
         assert v3_hop.tick_ranges is not None
 
@@ -1826,9 +1831,9 @@ class PiecewiseMobiusSolver(Solver):
                 solve_time_ns=0,  # Will be set by caller
             )
         raise OptimizationError(
-            "Rust piecewise solve failed",
+            message="Rust piecewise solve failed",
             iterations=result.iterations if hasattr(result, "iterations") else 0,
-            method=SolverMethod.PIECEWISE_MOBIUS.value,
+            method=SolverMethod.PIECEWISE_MOBIUS.name,
         )
 
     def _get_cached_rust_hops(self, solve_input: SolveInput) -> list:
@@ -1854,7 +1859,7 @@ class PiecewiseMobiusSolver(Solver):
     def _get_cached_rust_sequence(
         self,
         v3_hop: BoundedProductHop,
-    ):
+    ) -> Any:
         assert v3_hop.tick_ranges is not None
         zero_for_one = v3_hop.reserve_in > v3_hop.reserve_out
 
@@ -1901,9 +1906,9 @@ class PiecewiseMobiusSolver(Solver):
         """
         if self._rust_optimizer is None:
             raise OptimizationError(
-                "Rust optimizer not available",
+                message="Rust optimizer not available",
                 iterations=0,
-                method=SolverMethod.PIECEWISE_MOBIUS.value,
+                method=SolverMethod.PIECEWISE_MOBIUS.name,
             )
 
         # Check both hops are V3 with tick range data
@@ -1915,16 +1920,16 @@ class PiecewiseMobiusSolver(Solver):
                 v3_hops.append(hop)
             else:
                 raise OptimizationError(
-                    "Non-V3 hop in V3-V3 path",
+                    message="Non-V3 hop in V3-V3 path",
                     iterations=0,
-                    method=SolverMethod.PIECEWISE_MOBIUS.value,
+                    method=SolverMethod.PIECEWISE_MOBIUS.name,
                 )
 
         if len(v3_hops) != 2:
             raise OptimizationError(
-                "Need exactly 2 V3 hops",
+                message="Need exactly 2 V3 hops",
                 iterations=0,
-                method=SolverMethod.PIECEWISE_MOBIUS.value,
+                method=SolverMethod.PIECEWISE_MOBIUS.name,
             )
 
         # Get cached Rust sequences for both hops
@@ -1952,9 +1957,9 @@ class PiecewiseMobiusSolver(Solver):
                 solve_time_ns=elapsed_ns,
             )
         raise OptimizationError(
-            "V3-V3 Rust solve failed",
+            message="V3-V3 Rust solve failed",
             iterations=result.iterations if hasattr(result, "iterations") else 0,
-            method=SolverMethod.PIECEWISE_MOBIUS.value,
+            method=SolverMethod.PIECEWISE_MOBIUS.name,
         )
 
     def _try_rust_multi_range(
@@ -1972,9 +1977,9 @@ class PiecewiseMobiusSolver(Solver):
         """
         if self._rust_optimizer is None:
             raise OptimizationError(
-                "Rust optimizer not available",
+                message="Rust optimizer not available",
                 iterations=0,
-                method=SolverMethod.PIECEWISE_MOBIUS.value,
+                method=SolverMethod.PIECEWISE_MOBIUS.name,
             )
 
         # Get cached Rust objects
@@ -2004,9 +2009,9 @@ class PiecewiseMobiusSolver(Solver):
                 solve_time_ns=elapsed_ns,
             )
         raise OptimizationError(
-            "Rust V3 sequence solve failed",
+            message="Rust V3 sequence solve failed",
             iterations=result.iterations if hasattr(result, "iterations") else 0,
-            method=SolverMethod.PIECEWISE_MOBIUS.value,
+            method=SolverMethod.PIECEWISE_MOBIUS.name,
         )
 
     def _estimate_final_sqrt_price(
@@ -2020,16 +2025,14 @@ class PiecewiseMobiusSolver(Solver):
 
         # For constant product, price moves as: 1/sqrt_p_new = 1/sqrt_p + amount/L
         # So: sqrt_p_new = 1 / (1/sqrt_p + amount/L) # noqa: ERA001
-        L = ending_range.liquidity
+        liq = ending_range.liquidity
         sqrt_p = ending_range.sqrt_price_current
         gamma = 1.0 - ending_range.fee
 
         if ending_range.zero_for_one:
-            # token0 -> token1: price goes down
-            new_sqrt_p = L / (L / sqrt_p + amount_in / gamma)
+            new_sqrt_p = liq / (liq / sqrt_p + amount_in / gamma)
         else:
-            # token1 -> token0: price goes up
-            new_sqrt_p = sqrt_p + amount_in * gamma / L
+            new_sqrt_p = sqrt_p + amount_in * gamma / liq
 
         return new_sqrt_p
 
@@ -2142,10 +2145,10 @@ def _simulate_mixed_path(
         if amount <= 0:
             return 0.0
 
-        if hop.invariant in (
+        if hop.invariant in {
             PoolInvariant.CONSTANT_PRODUCT,
             PoolInvariant.BOUNDED_PRODUCT,
-        ):
+        }:
             r_i = float(hop.reserve_in)
             s_i = float(hop.reserve_out)
             g_i = hop.gamma
@@ -2192,10 +2195,10 @@ def _simulate_mixed_path_int(
         if amount <= 0:
             return 0
 
-        if hop.invariant in (
+        if hop.invariant in {
             PoolInvariant.CONSTANT_PRODUCT,
             PoolInvariant.BOUNDED_PRODUCT,
-        ):
+        }:
             r_i = hop.reserve_in
             s_i = hop.reserve_out
             g_num = hop.fee.denominator - hop.fee.numerator
@@ -2252,28 +2255,30 @@ class SolidlyStableSolver(Solver):
         """Compute an adaptive finite-difference step size."""
         return max(min(x * 1e-4, 1e12), 1e6)
 
+    @override
     def supports(self, solve_input: SolveInput) -> bool:
         if solve_input.num_hops < 2:
             return False
         if not solve_input.has_solidly_stable:
             return False
         for hop in solve_input.hops:
-            if hop.invariant not in (
+            if hop.invariant not in {
                 PoolInvariant.CONSTANT_PRODUCT,
                 PoolInvariant.BOUNDED_PRODUCT,
                 PoolInvariant.SOLIDLY_STABLE,
-            ):
+            }:
                 return False
         return True
 
+    @override
     def solve(self, solve_input: SolveInput) -> SolveResult:
         start_ns = time.perf_counter_ns()
 
         if not self.supports(solve_input):
             raise OptimizationError(
-                "SolidlyStableSolver requires 2+ hops with at least one Solidly stable",
+                message="SolidlyStableSolver requires 2+ hops with at least one Solidly stable",
                 iterations=0,
-                method=SolverMethod.SOLIDLY_STABLE.value,
+                method=SolverMethod.SOLIDLY_STABLE.name,
             )
 
         # --- Profitability check via V2-equivalent Möbius ---
@@ -2294,9 +2299,9 @@ class SolidlyStableSolver(Solver):
 
         if not mobius_coeffs.is_profitable:
             raise OptimizationError(
-                "Not profitable (V2-equivalent Möbius check failed)",
+                message="Not profitable (V2-equivalent Möbius check failed)",
                 iterations=0,
-                method=SolverMethod.SOLIDLY_STABLE.value,
+                method=SolverMethod.SOLIDLY_STABLE.name,
             )
 
         # Check whether all Solidly hops have swap_fn (integer path)
@@ -2376,9 +2381,9 @@ class SolidlyStableSolver(Solver):
 
         if best_profit <= 0:
             raise OptimizationError(
-                "Not profitable (integer verification failed)",
+                message="Not profitable (integer verification failed)",
                 iterations=n_iterations,
-                method=SolverMethod.SOLIDLY_STABLE.value,
+                method=SolverMethod.SOLIDLY_STABLE.name,
             )
 
         return SolveResult(
@@ -2401,9 +2406,9 @@ class SolidlyStableSolver(Solver):
         x = mobius_coeffs.optimal_input()
         if x <= 0:
             raise OptimizationError(
-                "Möbius initial guess <= 0",
+                message="Möbius initial guess <= 0",
                 iterations=0,
-                method=SolverMethod.SOLIDLY_STABLE.value,
+                method=SolverMethod.SOLIDLY_STABLE.name,
             )
 
         if solve_input.max_input is not None and x > float(solve_input.max_input):
@@ -2449,9 +2454,9 @@ class SolidlyStableSolver(Solver):
 
         if x <= 0:
             raise OptimizationError(
-                "Newton did not converge to positive input",
+                message="Newton did not converge to positive input",
                 iterations=iterations,
-                method=SolverMethod.SOLIDLY_STABLE.value,
+                method=SolverMethod.SOLIDLY_STABLE.name,
             )
 
         if solve_input.max_input is not None and x > float(solve_input.max_input):
@@ -2476,9 +2481,9 @@ class SolidlyStableSolver(Solver):
 
         if best_profit <= 0:
             raise OptimizationError(
-                "Not profitable (integer verification failed)",
+                message="Not profitable (integer verification failed)",
                 iterations=iterations,
-                method=SolverMethod.SOLIDLY_STABLE.value,
+                method=SolverMethod.SOLIDLY_STABLE.name,
             )
 
         return SolveResult(
@@ -2528,6 +2533,7 @@ class BalancerMultiTokenSolver(Solver):
 
     def __init__(
         self,
+        *,
         use_heuristic_pruning: bool = False,
         max_signatures: int = 500,
     ) -> None:
@@ -2547,6 +2553,7 @@ class BalancerMultiTokenSolver(Solver):
             max_signatures=max_signatures,
         )
 
+    @override
     def supports(self, solve_input: SolveInput) -> bool:
         # Only supports single BalancerMultiTokenHop
         return (
@@ -2554,14 +2561,15 @@ class BalancerMultiTokenSolver(Solver):
             and solve_input.hops[0].invariant == PoolInvariant.BALANCER_MULTI_TOKEN
         )
 
+    @override
     def solve(self, solve_input: SolveInput) -> SolveResult:
         start_ns = time.perf_counter_ns()
 
         if not self.supports(solve_input):
             raise OptimizationError(
-                "BalancerMultiTokenSolver requires single BalancerMultiTokenHop",
+                message="BalancerMultiTokenSolver requires single BalancerMultiTokenHop",
                 iterations=0,
-                method=SolverMethod.BALANCER_MULTI_TOKEN.value,
+                method=SolverMethod.BALANCER_MULTI_TOKEN.name,
             )
 
         hop = solve_input.hops[0]
@@ -2569,9 +2577,9 @@ class BalancerMultiTokenSolver(Solver):
 
         if hop.market_prices is None:
             raise OptimizationError(
-                "BalancerMultiTokenHop requires market_prices",
+                message="BalancerMultiTokenHop requires market_prices",
                 iterations=0,
-                method=SolverMethod.BALANCER_MULTI_TOKEN.value,
+                method=SolverMethod.BALANCER_MULTI_TOKEN.name,
             )
 
         pool = _BalancerMultiTokenState(
@@ -2591,9 +2599,9 @@ class BalancerMultiTokenSolver(Solver):
 
         if not result.success:
             raise OptimizationError(
-                "No profitable basket trade found",
+                message="No profitable basket trade found",
                 iterations=result.iterations,
-                method=SolverMethod.BALANCER_MULTI_TOKEN.value,
+                method=SolverMethod.BALANCER_MULTI_TOKEN.name,
             )
 
         # For basket trades, "optimal_input" is the total deposit value
@@ -2638,7 +2646,7 @@ class ArbSolver(Solver):
     """
 
     # Method tag mapping from Rust to Python SolverMethod
-    _RUST_METHOD_MAP: dict[int, SolverMethod] = {
+    _RUST_METHOD_MAP: ClassVar[dict[int, SolverMethod]] = {
         0: SolverMethod.MOBIUS,
         1: SolverMethod.PIECEWISE_MOBIUS,
         2: SolverMethod.PIECEWISE_MOBIUS,  # V3-V3 dispatched as piecewise
@@ -2667,7 +2675,7 @@ class ArbSolver(Solver):
         construction on the solve path.
         """
         if self._pool_cache is None:
-            raise RuntimeError("Pool cache requires the Rust extension (degenbot_rs)")
+            raise RuntimeError(message="Pool cache requires the Rust extension (degenbot_rs)")
         return self._pool_cache
 
     def register_pool(
@@ -2755,16 +2763,16 @@ class ArbSolver(Solver):
             result = cache.solve(path, max_input_float)
         except (ValueError, TypeError) as e:
             raise OptimizationError(
-                f"Pool cache solve failed: {e}",
+                message=f"Pool cache solve failed: {e}",
                 iterations=0,
-                method=SolverMethod.MOBIUS.value,
+                method=SolverMethod.MOBIUS.name,
             ) from e
 
         if not result.supported:
             raise OptimizationError(
-                "Not supported by cache",
+                message="Not supported by cache",
                 iterations=0,
-                method=SolverMethod.MOBIUS.value,
+                method=SolverMethod.MOBIUS.name,
             )
 
         elapsed_ns = time.perf_counter_ns() - start_ns
@@ -2772,9 +2780,9 @@ class ArbSolver(Solver):
 
         if not result.success:
             raise OptimizationError(
-                "Not profitable",
+                message="Not profitable",
                 iterations=result.iterations,
-                method=method.value,
+                method=method.name,
             )
 
         # Integer refinement results from cache
@@ -2791,14 +2799,16 @@ class ArbSolver(Solver):
                 )
 
         raise OptimizationError(
-            "Not profitable",
+            message="Not profitable",
             iterations=result.iterations,
-            method=method.value,
+            method=method.name,
         )
 
+    @override
     def supports(self, solve_input: SolveInput) -> bool:
         return solve_input.num_hops >= 2
 
+    @override
     def solve(self, solve_input: SolveInput) -> SolveResult:
         """
         Solve with automatic method selection.
@@ -2852,9 +2862,9 @@ class ArbSolver(Solver):
 
         # All methods failed
         raise OptimizationError(
-            "All solver methods failed to find a profitable solution",
+            message="All solver methods failed to find a profitable solution",
             iterations=0,
-            method=SolverMethod.MOBIUS.value,
+            method=SolverMethod.MOBIUS.name,
         )
 
     def _try_rust_solve(self, solve_input: SolveInput, start_ns: int) -> SolveResult:
@@ -2879,15 +2889,15 @@ class ArbSolver(Solver):
         # Check if we can use the raw array path:
         # - All hops must be ConstantProduct or single-range BoundedProduct
         # - USE_RAW_ARRAY_MARSHALLING must be enabled
-        all_möbius_int = USE_RAW_ARRAY_MARSHALLING
+        all_mobius_int = USE_RAW_ARRAY_MARSHALLING
         for hop in solve_input.hops:
             if isinstance(hop, ConstantProductHop | BoundedProductHop):
                 if isinstance(hop, BoundedProductHop) and hop.has_multi_range:
-                    all_möbius_int = False
+                    all_mobius_int = False
             else:
-                all_möbius_int = False
+                all_mobius_int = False
 
-        if all_möbius_int:
+        if all_mobius_int:
             return self._try_rust_solve_raw(solve_input, start_ns, max_input_float)
 
         # Build hop list for the object-based solve() path
@@ -2918,9 +2928,9 @@ class ArbSolver(Solver):
                     seq = self._build_rust_v3_sequence(hop)
                     if seq is None:
                         raise OptimizationError(
-                            "Cannot build V3 sequence",
+                            message="Cannot build V3 sequence",
                             iterations=0,
-                            method=SolverMethod.MOBIUS.value,
+                            method=SolverMethod.MOBIUS.name,
                         )
                     v3_sequences.append((i, seq))
                     rust_hops.append((
@@ -2947,9 +2957,9 @@ class ArbSolver(Solver):
             else:
                 # Unsupported hop type for Rust (Solidly, Balancer, Curve)
                 raise OptimizationError(
-                    f"Unsupported hop type for Rust: {type(hop).__name__}",
+                    message=f"Unsupported hop type for Rust: {type(hop).__name__}",
                     iterations=0,
-                    method=SolverMethod.MOBIUS.value,
+                    method=SolverMethod.MOBIUS.name,
                 )
 
         result = self._rust_solver.solve(
@@ -2980,9 +2990,9 @@ class ArbSolver(Solver):
             result = self._rust_solver.solve_raw(int_hops_flat, max_input_float)
         except (ValueError, TypeError) as e:
             raise OptimizationError(
-                f"Rust solve_raw failed: {e}",
+                message=f"Rust solve_raw failed: {e}",
                 iterations=0,
-                method=SolverMethod.MOBIUS.value,
+                method=SolverMethod.MOBIUS.name,
             ) from e
 
         return self._process_rust_result(result, start_ns, solve_input)
@@ -2994,9 +3004,9 @@ class ArbSolver(Solver):
         refinement and unprofitable cases."""
         if not result.supported:
             raise OptimizationError(
-                "Rust solver does not support this path",
+                message="Rust solver does not support this path",
                 iterations=0,
-                method=SolverMethod.MOBIUS.value,
+                method=SolverMethod.MOBIUS.name,
             )
 
         elapsed_ns = time.perf_counter_ns() - start_ns
@@ -3004,9 +3014,9 @@ class ArbSolver(Solver):
 
         if not result.success:
             raise OptimizationError(
-                "Not profitable",
+                message="Not profitable",
                 iterations=result.iterations,
-                method=method.value,
+                method=method.name,
             )
 
         # Check for merged integer refinement results
@@ -3023,9 +3033,9 @@ class ArbSolver(Solver):
                     solve_time_ns=elapsed_ns,
                 )
             raise OptimizationError(
-                "Not profitable (integer verification failed)",
+                message="Not profitable (integer verification failed)",
                 iterations=result.iterations,
-                method=method.value,
+                method=method.name,
             )
 
         # Fallback: no merged integer refinement (float tuples only)
@@ -3043,9 +3053,9 @@ class ArbSolver(Solver):
                     solve_time_ns=elapsed_ns,
                 )
             raise OptimizationError(
-                "Not profitable (integer verification failed)",
+                message="Not profitable (integer verification failed)",
                 iterations=result.iterations,
-                method=method.value,
+                method=method.name,
             )
 
         # For non-Möbius methods (V3 multi-range, V3-V3), use int() conversion
@@ -3122,9 +3132,9 @@ class ArbSolver(Solver):
                 )
             else:
                 raise OptimizationError(
-                    f"Unsupported hop type for generalized solver: {type(hop).__name__}",
+                    message=f"Unsupported hop type for generalized solver: {type(hop).__name__}",
                     iterations=0,
-                    method=SolverMethod.MOBIUS.value,
+                    method=SolverMethod.MOBIUS.name,
                 )
 
         gen_result = self._generalized_solver.solve(new_hops, max_input=solve_input.max_input)
@@ -3214,7 +3224,7 @@ class ArbSolver(Solver):
             return int(result.optimal_input), int(result.profit)
         return 0, 0
 
-    def _build_rust_v3_sequence(self, v3_hop: BoundedProductHop):
+    def _build_rust_v3_sequence(self, v3_hop: BoundedProductHop) -> Any:
         assert v3_hop.tick_ranges is not None
         zero_for_one = v3_hop.reserve_in > v3_hop.reserve_out
 
@@ -3249,9 +3259,9 @@ class ArbSolver(Solver):
 
             sequence = _rs_mobius.RustV3TickRangeSequence(rust_ranges)
             self._v3_sequence_cache[cache_key] = sequence
-            return sequence
         except Exception:
-            return None
+            pass
+        return self._v3_sequence_cache.get(cache_key)
 
 
 # ---------------------------------------------------------------------------
@@ -3293,11 +3303,10 @@ def _v3_virtual_reserves(
     """
     # Convert X96 to float for virtual reserve computation
     sqrt_price = sqrt_price_x96 / Q96
-    L = float(liquidity)
+    liq = float(liquidity)
 
-    # Virtual reserves: R0 = L/sqrt_p, R1 = L*sqrt_p
-    r0_virtual = L / sqrt_price  # token0 virtual reserves
-    r1_virtual = L * sqrt_price  # token1 virtual reserves
+    r0_virtual = liq / sqrt_price
+    r1_virtual = liq * sqrt_price
 
     # Scale to integer — multiply by Q96 to preserve precision
     # The Möbius solver uses float internally, so the exact integer
@@ -3305,8 +3314,8 @@ def _v3_virtual_reserves(
     # Using int(round()) to avoid drift.
     scale = Q96
     if zero_for_one:
-        return int(round(r0_virtual * scale)), int(round(r1_virtual * scale))
-    return int(round(r1_virtual * scale)), int(round(r0_virtual * scale))
+        return round(r0_virtual * scale), round(r1_virtual * scale)
+    return round(r1_virtual * scale), round(r0_virtual * scale)
 
 
 # Cache for tick range lookups: (pool_address, current_tick, zero_for_one) -> result
@@ -3325,8 +3334,6 @@ def _get_cached_tick_ranges(
     Uses LRU-style cache keyed by (pool_address, current_tick, zero_for_one).
     Cache is cleared when it exceeds _MAX_TICK_RANGE_CACHE_SIZE entries.
     """
-    global _tick_range_cache
-
     cache_key = (str(pool.address), pool.tick, zero_for_one)
 
     # Check cache
@@ -3509,21 +3516,21 @@ def pool_to_hop(
             decimals_out = pool.token0.decimals
 
         # Build swap_fn using Camelot's get_y
-        _reserves0 = pool.state.reserves_token0
-        _reserves1 = pool.state.reserves_token1
-        _decimals0 = 10**pool.token0.decimals
-        _decimals1 = 10**pool.token1.decimals
-        _fee = pool.fee
-        _token_in = 0 if zero_for_one else 1
+        reserves0 = pool.state.reserves_token0
+        reserves1 = pool.state.reserves_token1
+        decimals0 = 10**pool.token0.decimals
+        decimals1 = 10**pool.token1.decimals
+        fee = pool.fee
+        token_in = 0 if zero_for_one else 1
 
         def _camelot_stable_swap_fn(
             amount_in: int,
-            __reserves0: int = _reserves0,
-            __reserves1: int = _reserves1,
-            __decimals0: int = _decimals0,
-            __decimals1: int = _decimals1,
-            __fee: Fraction = _fee,
-            __token_in: int = _token_in,
+            __reserves0: int = reserves0,
+            __reserves1: int = reserves1,
+            __decimals0: int = decimals0,
+            __decimals1: int = decimals1,
+            __fee: Fraction = fee,
+            __token_in: int = token_in,
         ) -> int:
             return general_calc_exact_in_stable(
                 amount_in=amount_in,
@@ -3584,21 +3591,21 @@ def pool_to_hop(
             decimals_out = pool.token0.decimals
 
         # Build swap_fn using Aerodrome's calc_exact_in_stable
-        _reserves0 = pool.state.reserves_token0
-        _reserves1 = pool.state.reserves_token1
-        _decimals0 = 10**pool.token0.decimals
-        _decimals1 = 10**pool.token1.decimals
-        _fee = pool.fee
-        _token_in = 0 if zero_for_one else 1
+        reserves0 = pool.state.reserves_token0
+        reserves1 = pool.state.reserves_token1
+        decimals0 = 10**pool.token0.decimals
+        decimals1 = 10**pool.token1.decimals
+        fee = pool.fee
+        token_in = 0 if zero_for_one else 1
 
         def _aerodrome_stable_swap_fn(
             amount_in: int,
-            __reserves0: int = _reserves0,
-            __reserves1: int = _reserves1,
-            __decimals0: int = _decimals0,
-            __decimals1: int = _decimals1,
-            __fee: Fraction = _fee,
-            __token_in: int = _token_in,
+            __reserves0: int = reserves0,
+            __reserves1: int = reserves1,
+            __decimals0: int = decimals0,
+            __decimals1: int = decimals1,
+            __fee: Fraction = fee,
+            __token_in: int = token_in,
         ) -> int:
             return _aerodrome_stable_calc(
                 amount_in=amount_in,
@@ -3747,7 +3754,7 @@ def pool_state_to_hop(
             decimals_out=decimals_out,
         )
 
-    if isinstance(pool, UniswapV3Pool) or isinstance(pool, UniswapV4Pool):
+    if isinstance(pool, UniswapV3Pool | UniswapV4Pool):
         fee_fraction = Fraction(pool.fee, pool.FEE_DENOMINATOR)
         reserve_in, reserve_out = _v3_virtual_reserves(
             liquidity=state.liquidity,
@@ -3822,9 +3829,6 @@ def pools_to_solve_input(
         hop = pool_to_hop(pool, current_token)
         hops.append(hop)
         # Advance the current token
-        if current_token == pool.token0:
-            current_token = pool.token1
-        else:
-            current_token = pool.token0
+        current_token = pool.token1 if current_token == pool.token0 else pool.token0
 
     return SolveInput(hops=tuple(hops), max_input=max_input)
