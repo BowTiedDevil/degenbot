@@ -110,8 +110,6 @@ def test_mul_div_rounding_up_valid_with_no_phantom_overflow():
 
 
 def test_mul_div_rounding_up_valid_with_phantom_overflow():
-    # NOTE: test on github uses muldiv incorrectly, should be mulDivRoundingUp
-    # TODO: file bug
     result = 4375 * Q128 // 1000
     assert muldiv_rounding_up(Q128, 35 * Q128, 8 * Q128) == result
 

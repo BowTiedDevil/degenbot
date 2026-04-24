@@ -907,10 +907,13 @@ def update_aave_market(
     Update the Aave V3 market.
 
     Processes events in three phases:
-    1. Bootstrap: Fetch and process proxy creation events to discover Pool contract and PoolConfigurator
-       contracts.
-    2. Reserve Discovery: Fetch all targeted events and build transaction contexts
-    3. User Event Processing: Process transactions with assertions that classifying events exist
+    1. Bootstrap:
+        Fetch and process proxy creation events to discover Pool contract and
+        PoolConfigurator contracts.
+    2. Reserve Discovery:
+        Fetch all targeted events and build transaction contexts
+    3. User Event Processing:
+        Process transactions with assertions that classifying events exist
     """
 
     logger.debug(
