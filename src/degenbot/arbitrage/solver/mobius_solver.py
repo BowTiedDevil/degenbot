@@ -19,12 +19,8 @@ from degenbot.arbitrage.solver.types import (
     MobiusSolveResult,
     SolverMethod,
 )
+from degenbot.degenbot_rs import mobius as _rs_mobius
 from degenbot.exceptions import OptimizationError
-
-try:
-    from degenbot.degenbot_rs import mobius as _rs_mobius
-except ImportError:
-    _rs_mobius = None
 
 # Constants for path constraints
 MIN_HOPS_FOR_ARBITRAGE: int = 2
@@ -155,7 +151,7 @@ class MobiusSolver(SolverProtocol):
     ) -> MobiusSolveResult:
         if not self.supports(hops):
             raise OptimizationError(
-                "Unsupported hop types",
+                message="Unsupported hop types",
                 iterations=0,
                 method=SolverMethod.MOBIUS.value,
             )
@@ -192,7 +188,7 @@ class MobiusSolver(SolverProtocol):
         coeffs = _compute_mobius_coefficients(mobius_hops)
         if not coeffs.is_profitable:
             raise OptimizationError(
-                "k/m <= 1",
+                message="k/m <= 1",
                 iterations=0,
                 method=SolverMethod.MOBIUS.value,
             )
@@ -200,7 +196,7 @@ class MobiusSolver(SolverProtocol):
         x_opt = coeffs.optimal_input()
         if x_opt <= 0:
             raise OptimizationError(
-                "Optimal input <= 0",
+                message="Optimal input <= 0",
                 iterations=0,
                 method=SolverMethod.MOBIUS.value,
             )
@@ -212,7 +208,7 @@ class MobiusSolver(SolverProtocol):
 
         if best_profit <= 0:
             raise OptimizationError(
-                "Not profitable (integer verification failed)",
+                message="Not profitable (integer verification failed)",
                 iterations=0,
                 method=SolverMethod.MOBIUS.value,
             )
@@ -234,7 +230,7 @@ class MobiusSolver(SolverProtocol):
         all_simple = all(isinstance(h, MobiusHopState) for h in hops)
         if not all_simple:
             raise OptimizationError(
-                "Rust solver requires all MobiusHopState hops",
+                message="Rust solver requires all MobiusHopState hops",
                 iterations=0,
                 method=SolverMethod.MOBIUS.value,
             )
@@ -248,7 +244,7 @@ class MobiusSolver(SolverProtocol):
     ) -> MobiusSolveResult:
         if self._rust_solver is None:
             raise OptimizationError(
-                "Rust solver not available",
+                message="Rust solver not available",
                 iterations=0,
                 method=SolverMethod.MOBIUS.value,
             )
@@ -264,21 +260,21 @@ class MobiusSolver(SolverProtocol):
             result = self._rust_solver.solve_raw(int_hops_flat, max_input_float)
         except (ValueError, TypeError) as e:
             raise OptimizationError(
-                f"Rust solve failed: {e}",
+                message=f"Rust solve failed: {e}",
                 iterations=0,
                 method=SolverMethod.MOBIUS.value,
             ) from e
 
         if not result.supported:
             raise OptimizationError(
-                "Not supported by Rust solver",
+                message="Not supported by Rust solver",
                 iterations=0,
                 method=SolverMethod.MOBIUS.value,
             )
 
         if not result.success:
             raise OptimizationError(
-                "Not profitable (Rust)",
+                message="Not profitable (Rust)",
                 iterations=result.iterations if hasattr(result, "iterations") else 0,
                 method=SolverMethod.MOBIUS.value,
             )
@@ -293,13 +289,13 @@ class MobiusSolver(SolverProtocol):
                     method=SolverMethod.MOBIUS,
                 )
             raise OptimizationError(
-                "Not profitable (integer verification failed)",
+                message="Not profitable (integer verification failed)",
                 iterations=result.iterations if hasattr(result, "iterations") else 0,
                 method=SolverMethod.MOBIUS.value,
             )
 
         raise OptimizationError(
-            "Rust solver returned no integer results",
+            message="Rust solver returned no integer results",
             iterations=result.iterations if hasattr(result, "iterations") else 0,
             method=SolverMethod.MOBIUS.value,
         )
@@ -324,7 +320,7 @@ class MobiusSolver(SolverProtocol):
     ) -> MobiusSolveResult:
         if self._rust_solver is None:
             raise OptimizationError(
-                "Rust solver not available",
+                message="Rust solver not available",
                 iterations=0,
                 method=SolverMethod.PIECEWISE_MOBIUS.value,
             )
@@ -339,7 +335,7 @@ class MobiusSolver(SolverProtocol):
                     seq = MobiusSolver._build_rust_v3_sequence(hop)
                     if seq is None:
                         raise OptimizationError(
-                            "Cannot build V3 sequence",
+                            message="Cannot build V3 sequence",
                             iterations=0,
                             method=SolverMethod.PIECEWISE_MOBIUS.value,
                         )
@@ -361,11 +357,13 @@ class MobiusSolver(SolverProtocol):
                 fee_denom = hop.fee.denominator
                 gamma_numer = fee_denom - hop.fee.numerator
                 rust_hops.append(
-                    _rs_mobius.RustIntHopState(hop.reserve_in, hop.reserve_out, gamma_numer, fee_denom)
+                    _rs_mobius.RustIntHopState(
+                        hop.reserve_in, hop.reserve_out, gamma_numer, fee_denom
+                    )
                 )
             else:
                 raise OptimizationError(
-                    f"Unsupported hop type: {type(hop).__name__}",
+                    message=f"Unsupported hop type: {type(hop).__name__}",
                     iterations=0,
                     method=SolverMethod.PIECEWISE_MOBIUS.value,
                 )
@@ -379,14 +377,14 @@ class MobiusSolver(SolverProtocol):
 
         if not result.supported:
             raise OptimizationError(
-                "Not supported by Rust solver",
+                message="Not supported by Rust solver",
                 iterations=0,
                 method=SolverMethod.PIECEWISE_MOBIUS.value,
             )
 
         if not result.success:
             raise OptimizationError(
-                "Not profitable (Rust piecewise)",
+                message="Not profitable (Rust piecewise)",
                 iterations=result.iterations if hasattr(result, "iterations") else 0,
                 method=SolverMethod.PIECEWISE_MOBIUS.value,
             )
@@ -413,7 +411,7 @@ class MobiusSolver(SolverProtocol):
                 )
 
         raise OptimizationError(
-            "Not profitable",
+            message="Not profitable",
             iterations=result.iterations if hasattr(result, "iterations") else 0,
             method=SolverMethod.PIECEWISE_MOBIUS.value,
         )
@@ -500,7 +498,7 @@ class MobiusSolver(SolverProtocol):
                 )
             else:
                 raise OptimizationError(
-                    f"Unsupported hop type: {type(hop).__name__}",
+                    message=f"Unsupported hop type: {type(hop).__name__}",
                     iterations=0,
                     method=SolverMethod.PIECEWISE_MOBIUS.value,
                 )
@@ -561,21 +559,21 @@ class MobiusSolver(SolverProtocol):
             result = cache.solve(path, max_input_float)
         except (ValueError, TypeError) as e:
             raise OptimizationError(
-                f"Pool cache solve failed: {e}",
+                message=f"Pool cache solve failed: {e}",
                 iterations=0,
                 method=SolverMethod.MOBIUS.value,
             ) from e
 
         if not result.supported:
             raise OptimizationError(
-                "Not supported by cache",
+                message="Not supported by cache",
                 iterations=0,
                 method=SolverMethod.MOBIUS.value,
             )
 
         if not result.success:
             raise OptimizationError(
-                "Not profitable",
+                message="Not profitable",
                 iterations=result.iterations if hasattr(result, "iterations") else 0,
                 method=SolverMethod.MOBIUS.value,
             )
@@ -591,7 +589,7 @@ class MobiusSolver(SolverProtocol):
                 )
 
         raise OptimizationError(
-            "Not profitable",
+            message="Not profitable",
             iterations=result.iterations if hasattr(result, "iterations") else 0,
             method=SolverMethod.MOBIUS.value,
         )

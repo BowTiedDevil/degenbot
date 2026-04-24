@@ -294,7 +294,7 @@ class NewtonV2Optimizer(ArbitrageOptimizer):
 
         if len(pools) != 2:
             raise OptimizationError(
-                "Newton optimizer requires exactly 2 pools",
+                message="Newton optimizer requires exactly 2 pools",
                 iterations=0,
                 method="newton",
             )
@@ -306,7 +306,7 @@ class NewtonV2Optimizer(ArbitrageOptimizer):
 
         if not is_v2_pool(pool_a) or not is_v2_pool(pool_b):
             raise OptimizationError(
-                "Newton optimizer requires V2 pools",
+                message="Newton optimizer requires V2 pools",
                 iterations=0,
                 method="newton",
             )
@@ -318,7 +318,7 @@ class NewtonV2Optimizer(ArbitrageOptimizer):
             forward_token = pool_a.token0
         else:
             raise OptimizationError(
-                "Input token not found in pool",
+                message="Input token not found in pool",
                 iterations=0,
                 method="newton",
             )
@@ -383,26 +383,22 @@ class NewtonV2Optimizer(ArbitrageOptimizer):
 
         if optimal_input <= 0:
             raise OptimizationError(
-                "No profitable arbitrage found",
+                message="No profitable arbitrage found",
                 iterations=iterations,
                 method="newton",
             )
 
         # Calculate actual profit using pool methods for exact amounts
-        forward_amount = pool_buy.calculate_tokens_out_from_tokens_in(
-            input_token, optimal_input
-        )
+        forward_amount = pool_buy.calculate_tokens_out_from_tokens_in(input_token, optimal_input)
 
         if forward_amount <= 0:
             raise OptimizationError(
-                "Zero forward amount",
+                message="Zero forward amount",
                 iterations=iterations,
                 method="newton",
             )
 
-        output_amount = pool_sell.calculate_tokens_out_from_tokens_in(
-            forward_token, forward_amount
-        )
+        output_amount = pool_sell.calculate_tokens_out_from_tokens_in(forward_token, forward_amount)
 
         profit = output_amount - optimal_input
 
@@ -410,7 +406,7 @@ class NewtonV2Optimizer(ArbitrageOptimizer):
 
         if profit <= 0:
             raise OptimizationError(
-                "No profitable arbitrage",
+                message="No profitable arbitrage",
                 iterations=iterations,
                 method="newton",
             )
