@@ -9,6 +9,7 @@ from degenbot.connection import connection_manager
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20 import Erc20Token
 from degenbot.functions import get_number_for_block_identifier
+from degenbot.provider.interface import ProviderAdapter
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import BoundedCache
 
@@ -35,9 +36,11 @@ class EtherPlaceholder(Erc20Token):
         address: str,
         *,
         chain_id: ChainId | None = None,
+        provider: ProviderAdapter | None = None,
         state_cache_depth: int = 8,
     ) -> None:
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
+        self._provider = provider
         self._cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]] = {}
         self.address = get_checksum_address(address)
         degenbot.registry.token_registry.add(
@@ -52,7 +55,11 @@ class EtherPlaceholder(Erc20Token):
     ) -> int:
         address = get_checksum_address(address)
 
-        provider = connection_manager.get_provider(self.chain_id)
+        provider = (
+            self._provider
+            if self._provider is not None
+            else connection_manager.get_provider(self.chain_id)
+        )
 
         block_number = (
             block_identifier

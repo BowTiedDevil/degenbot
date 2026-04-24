@@ -14,10 +14,10 @@ import math
 import signal
 
 import pytest
+from degenbot.degenbot_rs import mobius as rs_mobius
 from scipy.optimize import minimize_scalar
 
 from degenbot.arbitrage.optimizers.v3_tick_predictor import tick_to_sqrt_price
-from degenbot.degenbot_rs import mobius as rs_mobius
 from degenbot.uniswap.v3_libraries.swap_math import compute_swap_step
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 

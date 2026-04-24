@@ -1,0 +1,53 @@
+{
+  "chain_id": 1,
+  "name": "mainnet_test_data",
+  "description": "Test data for Ethereum mainnet V2/V3/V4/Curve pools",
+  "blocks": [24945920],
+  "rpc_url": "http://localhost:8545",
+  "tokens": [
+    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+  ],
+  "pools": {
+    "v2": [
+      {
+        "address": "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940",
+        "name": "UniswapV2",
+        "token0": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+        "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "factory": "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+        "init_hash": "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
+      }
+    ],
+    "v3": [
+      {
+        "address": "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD",
+        "name": "UniswapV3",
+        "token0": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+        "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+        "init_hash": "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
+      }
+    ],
+    "v4": [
+      {
+        "pool_id": "0x21c67e77068de97969ba93d4aab21826d33ca12bb9f565d8496e8fda8a82ca27",
+        "name": "UniswapV4",
+        "pool_manager": "0x000000000004444c5dc75cB358380D2e3dE08A90",
+        "state_view": "0x7fFE42C4a5DEeA5b0feC41C94C136Cf115597227",
+        "token0": "0x0000000000000000000000000000000000000000",
+        "token1": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "fee": 500,
+        "tick_spacing": 10
+      }
+    ],
+    "curve": [
+      {
+        "address": "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
+        "name": "Curve3Pool"
+      }
+    ]
+  }
+}

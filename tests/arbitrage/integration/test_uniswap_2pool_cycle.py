@@ -3,9 +3,7 @@ import dataclasses
 import pytest
 
 from degenbot.anvil_fork import AnvilFork
-from degenbot.arbitrage.uniswap_2pool_cycle_testing import (
-    _UniswapTwoPoolCycleTesting,
-)
+from degenbot.arbitrage.uniswap_2pool_cycle_testing import _UniswapTwoPoolCycleTesting
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import set_web3
 from degenbot.erc20.erc20 import Erc20Token
@@ -15,8 +13,6 @@ from degenbot.registry import pool_registry, token_registry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-
-pytestmark = pytest.mark.fork
 
 # Token addresses
 NATIVE_ADDRESS = get_checksum_address("0x0000000000000000000000000000000000000000")

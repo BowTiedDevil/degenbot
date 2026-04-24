@@ -63,11 +63,15 @@ class Erc20Token(AbstractErc20Token):
         *,
         chain_id: ChainId | None = None,
         oracle_address: str | None = None,
+        provider: ProviderAdapter | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
     ) -> None:
         self.address = get_checksum_address(address)
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
+
+        # Use injected provider, or fall back to global connection_manager
+        self._provider = provider if provider is not None else self.provider
 
         token_from_db = get_token_from_database(
             token=self.address,
@@ -93,7 +97,7 @@ class Erc20Token(AbstractErc20Token):
             and self.name == self.UNKNOWN_NAME
             and self.symbol == self.UNKNOWN_SYMBOL
         ):
-            provider = self.w3
+            provider = self._provider
 
             if not provider.get_code(self.address):
                 raise DegenbotValueError(message="No contract deployed at this address")
@@ -121,9 +125,7 @@ class Erc20Token(AbstractErc20Token):
 
                 for func_prototype in ("decimals()", "DECIMALS()"):
                     try:
-                        self.decimals = self.get_decimals(
-                            provider, func_prototype=func_prototype
-                        )
+                        self.decimals = self.get_decimals(provider, func_prototype=func_prototype)
                     except (Web3Exception, DecodingError):
                         continue
                     else:
@@ -248,7 +250,7 @@ class Erc20Token(AbstractErc20Token):
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
-                self.w3,
+                self.provider,
             )
         )
 
@@ -258,7 +260,7 @@ class Erc20Token(AbstractErc20Token):
         approval: int
         (approval,) = eth_abi.abi.decode(
             types=["uint256"],
-            data=self.w3.call(
+            data=self.provider.call(
                 to=self.address,
                 data=Web3.keccak(text="allowance(address,address)")[:4]
                 + eth_abi.abi.encode(types=["address", "address"], args=[owner, spender]),
@@ -322,7 +324,7 @@ class Erc20Token(AbstractErc20Token):
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
-                self.w3,
+                self.provider,
             )
         )
 
@@ -332,7 +334,7 @@ class Erc20Token(AbstractErc20Token):
         balance: int
         (balance,) = eth_abi.abi.decode(
             types=["uint256"],
-            data=self.w3.call(
+            data=self.provider.call(
                 to=self.address,
                 data=Web3.keccak(text="balanceOf(address)")[:4]
                 + eth_abi.abi.encode(types=["address"], args=[address]),
@@ -396,7 +398,7 @@ class Erc20Token(AbstractErc20Token):
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
-                self.w3,
+                self.provider,
             )
         )
 
@@ -406,7 +408,7 @@ class Erc20Token(AbstractErc20Token):
         total_supply: int
         (total_supply,) = eth_abi.abi.decode(
             types=["uint256"],
-            data=self.w3.call(
+            data=self.provider.call(
                 to=self.address,
                 data=Web3.keccak(text="totalSupply()")[:4],
                 block=block_number,
@@ -455,7 +457,7 @@ class Erc20Token(AbstractErc20Token):
         return self._price_oracle.price
 
     @property
-    def w3(self) -> ProviderAdapter:
+    def provider(self) -> ProviderAdapter:
         return connection_manager.get_provider(self.chain_id)
 
     @property

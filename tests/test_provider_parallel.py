@@ -12,7 +12,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
-
 from degenbot.degenbot_rs import AlloyProvider
 
 # Use HTTP RPC for meaningful latency measurements

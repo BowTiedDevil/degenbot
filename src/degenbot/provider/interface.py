@@ -114,32 +114,59 @@ class EthereumProvider(Protocol):
         ...
 
 
-class ProviderAdapter:
+class ProviderAdapter:  # noqa:PLR0904
     """
-    Adapter that wraps either Web3 or AlloyProvider.
+    Adapter that wraps Web3, AlloyProvider, or OfflineProvider.
 
     Provides a uniform interface for Ethereum RPC operations,
-    allowing existing code to work with either backend.
+    allowing existing code to work with any backend.
 
     Use factory methods to create:
         - ProviderAdapter.from_web3(w3)
         - ProviderAdapter.from_alloy(alloy_provider)
+        - ProviderAdapter.from_offline(offline_provider)
     """
 
     def __init__(
         self,
         provider: Any,  # noqa: ANN401
         *,
-        provider_type: Literal["web3", "alloy"],
+        provider_type: Literal["web3", "alloy", "offline"],
     ) -> None:
         """Initialize the adapter.
 
         Args:
-            provider: The underlying provider (Web3 or AlloyProvider)
-            provider_type: "web3" or "alloy" to indicate the backend type
+            provider: The underlying provider (Web3, AlloyProvider, or OfflineProvider)
+            provider_type: "web3", "alloy", or "offline" to indicate the backend type
         """
         self._provider = provider
         self._provider_type = provider_type
+
+    def __getstate__(self) -> dict[str, Any]:
+        """
+        Pickle the adapter by excluding the unpicklable provider.
+        The provider must be re-acquired when unpickling.
+        """
+        return {
+            "_provider_type": self._provider_type,
+            "_provider": None,  # Exclude unpicklable provider
+        }
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """
+        Restore the adapter. Note: the provider will be None after unpickling
+        and must be explicitly set by the caller (e.g., via set_provider).
+        """
+        self.__dict__ = state
+
+    def set_provider(self, provider: Any) -> None:  # noqa: ANN401
+        """Set the underlying provider. Used after unpickling."""
+        self._provider = provider
+
+    @property
+    def provider(self) -> Any:  # noqa: ANN401
+        """Get the underlying provider, or None if not set (e.g., after unpickling)."""
+        return self._provider
 
     @classmethod
     def from_web3(cls, w3: Any) -> Self:  # noqa: ANN401
@@ -165,8 +192,20 @@ class ProviderAdapter:
         """
         return cls(provider=alloy, provider_type="alloy")
 
+    @classmethod
+    def from_offline(cls, offline: Any) -> Self:  # noqa: ANN401
+        """Create an adapter wrapping an OfflineProvider instance.
+
+        Args:
+            offline: An OfflineProvider instance
+
+        Returns:
+            A ProviderAdapter wrapping the OfflineProvider instance
+        """
+        return cls(provider=offline, provider_type="offline")
+
     @property
-    def provider_type(self) -> Literal["web3", "alloy"]:
+    def provider_type(self) -> Literal["web3", "alloy", "offline"]:
         """Get the type of the underlying provider."""
         return self._provider_type
 
@@ -184,6 +223,7 @@ class ProviderAdapter:
         """Get the chain ID."""
         if self._provider_type == "web3":
             return self._provider.eth.chain_id
+        # alloy and offline both have chain_id property
         return self._provider.chain_id
 
     @property
@@ -191,6 +231,7 @@ class ProviderAdapter:
         """Get the current block number."""
         if self._provider_type == "web3":
             return self._provider.eth.block_number
+        # alloy and offline both have block_number property
         return self._provider.block_number
 
     # =========================================================================
@@ -201,6 +242,7 @@ class ProviderAdapter:
         """Get the current block number."""
         if self._provider_type == "web3":
             return self._provider.eth.get_block_number()
+        # alloy and offline both have get_block_number method
         return self._provider.get_block_number()
 
     def get_block(
@@ -215,8 +257,13 @@ class ProviderAdapter:
         Returns:
             Block data dict, or None if not found
         """
+        if self._provider_type == "offline":
+            # OfflineProvider supports int or "latest" string
+            return self._provider.get_block(block_identifier)
+
         if self._provider_type == "web3":
             return self._provider.eth.get_block(block_identifier)
+
         # AlloyProvider only supports integer block numbers
         if isinstance(block_identifier, str):
             if block_identifier == "latest":
@@ -245,6 +292,14 @@ class ProviderAdapter:
         Returns:
             List of log dictionaries
         """
+        if self._provider_type == "offline":
+            return self._provider.get_logs(
+                from_block=from_block,
+                to_block=to_block,
+                addresses=addresses,
+                topics=topics,
+            )
+
         if self._provider_type == "web3":
             filter_param: dict[str, Any] = {
                 "fromBlock": from_block,
@@ -284,7 +339,8 @@ class ProviderAdapter:
             if block is not None:
                 return self._provider.eth.call(tx, block)
             return self._provider.eth.call(tx)
-        return self._provider.call(to, data, block)
+        # alloy and offline both have block_number as keyword arg
+        return self._provider.call(to, data, block_number=block)
 
     def get_code(
         self,
@@ -304,7 +360,8 @@ class ProviderAdapter:
             if block is not None:
                 return self._provider.eth.get_code(address, block)
             return self._provider.eth.get_code(address)
-        return self._provider.get_code(address, block)
+        # alloy and offline both use block_number as keyword arg
+        return self._provider.get_code(address, block_number=block)
 
     def get_balance(
         self,
@@ -324,9 +381,8 @@ class ProviderAdapter:
             if block is not None:
                 return self._provider.eth.get_balance(address, block)
             return self._provider.eth.get_balance(address)
-        # AlloyProvider doesn't have get_balance yet
-        msg = "get_balance not implemented for AlloyProvider"
-        raise NotImplementedError(msg)
+        # alloy and offline use block_number as keyword arg
+        return self._provider.get_balance(address, block_number=block)
 
     def get_storage_at(
         self,
@@ -348,7 +404,8 @@ class ProviderAdapter:
             if block is not None:
                 return self._provider.eth.get_storage_at(address, position, block)
             return self._provider.eth.get_storage_at(address, position)
-        return self._provider.get_storage_at(address, position, block)
+        # alloy and offline both use block_number as keyword arg
+        return self._provider.get_storage_at(address, position, block_number=block)
 
     def get_transaction_count(
         self,
@@ -368,20 +425,19 @@ class ProviderAdapter:
             if block is not None:
                 return self._provider.eth.get_transaction_count(address, block)
             return self._provider.eth.get_transaction_count(address)
-        # AlloyProvider doesn't have get_transaction_count yet
-        msg = "get_transaction_count not implemented for AlloyProvider"
-        raise NotImplementedError(msg)
+        # alloy and offline use block_number as keyword arg
+        return self._provider.get_transaction_count(address, block_number=block)
 
     def is_connected(self) -> bool:
         """Check if the provider is connected."""
         if self._provider_type == "web3":
             return self._provider.is_connected()
-        # AlloyProvider doesn't have is_connected - assume connected if created
+        # alloy and offline - assume connected
         return True
 
     def close(self) -> None:
-        """Close the provider connection (AlloyProvider only)."""
-        if self._provider_type == "alloy" and hasattr(self._provider, "close"):
+        """Close the provider connection if supported."""
+        if hasattr(self._provider, "close"):
             self._provider.close()
 
     def __repr__(self) -> str:
@@ -456,12 +512,16 @@ class AsyncProviderAdapter:
     @property
     def chain_id(self) -> int:
         """Get the chain ID."""
-        raise NotImplementedError("Use await get_chain_id() for async provider")
+
+        msg = "Use await get_chain_id() for async provider"
+        raise NotImplementedError(msg)
 
     @property
     def block_number(self) -> int:
         """Get the current block number."""
-        raise NotImplementedError("Use await get_block_number() for async provider")
+
+        msg = "Use await get_block_number() for async provider"
+        raise NotImplementedError(msg)
 
     # =========================================================================
     # Async Methods
@@ -560,7 +620,8 @@ class AsyncProviderAdapter:
             if block is not None:
                 return await self._provider.eth.call(tx, block)
             return await self._provider.eth.call(tx)
-        return await self._provider.call(to, data, block)
+        # AsyncAlloyProvider uses block_number as keyword arg
+        return await self._provider.call(to, data, block_number=block)
 
     async def get_code(
         self,

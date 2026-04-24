@@ -1,11 +1,11 @@
 from fractions import Fraction
 
+from degenbot.degenbot_rs import mobius as rs_mobius
 from scipy.optimize import minimize_scalar
 
 from degenbot.arbitrage.optimizers.mobius import HopState, V3TickRangeHop, simulate_path
 from degenbot.arbitrage.optimizers.solver import Hop, SolveInput
 from degenbot.arbitrage.optimizers.v3_tick_predictor import tick_to_sqrt_price
-from degenbot.degenbot_rs import mobius as rs_mobius
 
 # ==============================================================================
 # Shared constants — realistic reserve magnitudes with correct decimals

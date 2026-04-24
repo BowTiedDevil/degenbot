@@ -18,6 +18,7 @@ where gamma_numer = fee_denom - fee.numerator (e.g. 997 for 0.3% fee).
 from fractions import Fraction
 
 import pytest
+from degenbot.degenbot_rs import mobius as rs_mobius
 
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
@@ -25,7 +26,6 @@ from degenbot.arbitrage.optimizers.solver import (
     SolveInput,
     SolverMethod,
 )
-from degenbot.degenbot_rs import mobius as rs_mobius
 
 from .conftest import (
     FEE_0_05_PCT,
