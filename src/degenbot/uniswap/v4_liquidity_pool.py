@@ -260,6 +260,7 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         chain_id: ChainId | None = None,
         tick_data: dict[Tick, dict[str, Any] | UniswapV4LiquidityAtTick] | None = None,
         tick_bitmap: dict[BitmapWord, dict[str, Any] | UniswapV4BitmapAtWord] | None = None,
+        provider: ProviderAdapter | None = None,
         state_block: BlockNumber | int | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
@@ -267,8 +268,10 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         self._chain_id: Final[int] = (
             chain_id if chain_id is not None else connection_manager.default_chain_id
         )
-        provider = connection_manager.get_provider(self.chain_id)
-        state_block = state_block if state_block is not None else provider.get_block_number()
+        self._provider = (
+            provider if provider is not None else connection_manager.get_provider(self.chain_id)
+        )
+        state_block = state_block if state_block is not None else self._provider.get_block_number()
         self._initial_state_block = state_block
 
         self._pool_manager_address = get_checksum_address(pool_manager_address)
@@ -315,7 +318,7 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
 
         self._state_view_address = get_checksum_address(state_view_address)
 
-        token_manager = Erc20TokenManager(chain_id=self.chain_id)
+        token_manager = Erc20TokenManager(chain_id=self.chain_id, provider=self._provider)
         self.token0: Final[Erc20Token] = token_manager.get_erc20token(
             address=currency0_address,
             silent=silent,
@@ -343,7 +346,7 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
 
         try:
             working_slot0, working_liquidity = self._get_state_values(
-                provider=provider, state_block=state_block
+                provider=self._provider, state_block=state_block
             )
             working_sqrt_price_x96 = working_slot0.sqrt_price_x96
             working_tick = working_slot0.tick
@@ -465,6 +468,7 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         # the calculation
         copied_attributes: set[str] = set()
         dropped_attributes = (
+            "_provider",
             "_state_lock",
             "_subscribers",
             "_swap_step_cache_lock",
@@ -500,21 +504,19 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         position. A word is divided into 256 ticks, spaced at a fixed interval.
         """
 
-        provider = connection_manager.get_provider(self.chain_id)
-
         if block_number is None:
-            block_number = provider.get_block_number()
+            block_number = self._provider.get_block_number()
 
         working_tick_bitmap = 0
         working_tick_data: list[tuple[Tick, LiquidityGross, LiquidityNet]] = []
         working_tick_bitmap = self.get_tick_bitmap_at_word(
-            provider=provider,
+            provider=self._provider,
             word_position=word_position,
             block_identifier=block_number,
         )
         if working_tick_bitmap != 0:
             working_tick_data = self.get_populated_ticks_in_word(
-                provider=provider,
+                provider=self._provider,
                 word_position=word_position,
                 block_identifier=block_number,
             )
@@ -1122,7 +1124,7 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
             if block_number is not None and block_number < self.update_block:
                 raise LateUpdateError
 
-            provider = connection_manager.get_provider(self.chain_id)
+            provider = self._provider
             block_number = block_number if block_number is not None else provider.get_block_number()
 
             new_slot0, new_liquidity = self._get_state_values(

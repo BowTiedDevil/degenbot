@@ -39,6 +39,7 @@ from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.liquidity_pool import BrokenPool, InvalidSwapInputAmount
 from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from degenbot.logging import logger
+from degenbot.provider import ProviderAdapter
 from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
@@ -173,6 +174,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         address: ChecksumAddress | str,
         *,
         chain_id: ChainId | None = None,
+        provider: ProviderAdapter | None = None,
         state_block: BlockNumber | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
@@ -186,6 +188,9 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             Address for the deployed pool contract.
         chain_id:
             The chain ID where the pool contract is deployed.
+        provider:
+            A ProviderAdapter instance for blockchain calls. Uses the default provider if not
+            provided.
         state_block:
             Fetch initial state values from the chain at a particular block height. Defaults to the
             latest block if omitted.
@@ -196,10 +201,16 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         """
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        provider = connection_manager.get_provider(self.chain_id)
+        self._provider = (
+            provider if provider is not None else connection_manager.get_provider(self._chain_id)
+        )
+        # Track whether provider was fetched from connection_manager (True) or passed in (False)
+        # This is used to determine whether to refresh the provider from connection_manager
+        self._provider_from_connection_manager = provider is None
+        provider = self._provider
         w3: web3.Web3 = connection_manager.get_web3(self.chain_id)
         if state_block is None:
-            state_block = provider.get_block_number()
+            state_block = self._provider.get_block_number()
 
         self.fee_gamma: int
         self.mid_fee: int
@@ -669,12 +680,22 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
         dropped_attributes = (
+            "_provider",
+            "_provider_from_connection_manager",
             "_state_lock",
             "_subscribers",
         )
 
         with self._state_lock:
             return {k: v for k, v in self.__dict__.items() if k not in dropped_attributes}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        state["_state_lock"] = Lock()
+        # After unpickling, provider must be re-acquired from connection_manager
+        state["_provider_from_connection_manager"] = True
+        # Provider will be fetched from connection_manager when needed
+        state["_provider"] = None
+        self.__dict__ = state
 
     def __repr__(self) -> str:  # pragma: no cover
         token_string = "-".join([token.symbol for token in self.tokens])
@@ -766,7 +787,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
-                connection_manager.get_provider(self.chain_id),
+                self._provider,
             )
         )
 
@@ -796,7 +817,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
-                connection_manager.get_provider(self.chain_id),
+                self._provider,
             )
         )
 
@@ -827,16 +848,17 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         redemption_price_scale = 10**9
 
-        provider = connection_manager.get_provider(self.chain_id)
+        # Fetch current provider from connection manager to handle provider updates
+        provider = self._get_provider_for_chain()
 
         snap_contract_address: str
         (snap_contract_address,) = eth_abi.abi.decode(
             types=["address"],
             data=provider.call(
-                    to=self.address,
-                    data=Web3.keccak(text="redemption_price_snap()")[:4],
-                    block=block_number,
-                ),
+                to=self.address,
+                data=Web3.keccak(text="redemption_price_snap()")[:4],
+                block=block_number,
+            ),
         )
 
         rate: int
@@ -882,12 +904,14 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         pool_balances = override_state.balances if override_state is not None else self.balances
         rates = self.rate_multipliers
 
+        # Fetch current provider from connection manager to handle provider updates
+        provider = self._get_provider_for_chain()
         block_number = (
             block_identifier
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
-                connection_manager.get_provider(self.chain_id),
+                provider,
             )
         )
 
@@ -946,8 +970,6 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 with contextlib.suppress(KeyError):
                     return self._cached_contract_D[block_number]
 
-                provider = connection_manager.get_provider(self.chain_id)
-
                 d: int
                 (d,) = eth_abi.abi.decode(
                     types=["uint256"],
@@ -963,8 +985,6 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             def _gamma(block_number: BlockNumber) -> int:
                 with contextlib.suppress(KeyError):
                     return self._cached_gamma[block_number]
-
-                provider = connection_manager.get_provider(self.chain_id)
 
                 gamma: int
                 (gamma,) = eth_abi.abi.decode(
@@ -983,8 +1003,6 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                     return self._cached_price_scale[block_number]
 
                 n_coins = len(self.tokens)
-
-                provider = connection_manager.get_provider(self.chain_id)
 
                 price_scale = [0] * (n_coins - 1)
                 for token_index in range(n_coins - 1):
@@ -1375,7 +1393,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 identifier=block_identifier,
-                provider=connection_manager.get_provider(self.chain_id),
+                provider=self._provider,
             )
         )
 
@@ -1610,7 +1628,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         with contextlib.suppress(KeyError):
             return self._cached_base_cache_updated[block_number]
 
-        provider = connection_manager.get_provider(self.chain_id)
+        # Fetch current provider from connection manager to handle provider updates
+        provider = self._get_provider_for_chain()
 
         base_cache_updated: int
         (base_cache_updated,) = eth_abi.abi.decode(
@@ -1628,7 +1647,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         with contextlib.suppress(KeyError):
             return self._cached_base_virtual_price[block_number]
 
-        provider = connection_manager.get_provider(self.chain_id)
+        # Fetch current provider from connection manager to handle provider updates
+        provider = self._get_provider_for_chain()
 
         base_virtual_price: int
         (base_virtual_price,) = eth_abi.abi.decode(
@@ -1651,7 +1671,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         base_cache_expires = 10 * 60  # 10 minutes
 
-        provider = connection_manager.get_provider(self.chain_id)
+        # Fetch current provider from connection manager to handle provider updates
+        provider = self._get_provider_for_chain()
         self._block_timestamps[block_number] = provider.get_block(block_identifier=block_number)[
             "timestamp"
         ]
@@ -1900,7 +1921,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         raise EVMRevertError(error="y_d calculation did not converge.")  # pragma: no cover
 
     def _set_oracle_method(self, block_number: BlockNumber) -> None:
-        provider = connection_manager.get_provider(self.chain_id)
+        # Fetch current provider from connection manager to handle provider updates
+        provider = self._get_provider_for_chain()
         (self.oracle_method,) = eth_abi.abi.decode(
             types=["uint256"],
             data=provider.call(
@@ -1914,6 +1936,9 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_ctokens[block_number]
 
+        # Fetch current provider from connection manager to handle provider updates
+        provider = self._get_provider_for_chain()
+
         result: list[int] = []
         rate: int
         for token, use_lending, multiplier in zip(
@@ -1925,7 +1950,6 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             if not use_lending:
                 rate = self.PRECISION
             else:
-                provider = connection_manager.get_provider(self.chain_id)
                 (rate,) = eth_abi.abi.decode(
                     types=["uint256"],
                     data=provider.call(
@@ -1966,6 +1990,9 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         # ref: https://etherscan.io/address/0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27#code
 
+        # Fetch current provider from connection manager to handle provider updates
+        provider = self._get_provider_for_chain()
+
         result: list[int] = []
         for token, multiplier, use_lending in zip(
             self.tokens,
@@ -1974,7 +2001,6 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             strict=True,
         ):
             if use_lending:
-                provider = connection_manager.get_provider(self.chain_id)
                 rate: int
                 (rate,) = eth_abi.abi.decode(
                     types=["uint256"],
@@ -1996,7 +2022,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_cytokens[block_number]
 
-        provider = connection_manager.get_provider(self.chain_id)
+        # Fetch current provider from connection manager to handle provider updates
+        provider = self._get_provider_for_chain()
 
         result: list[int] = []
         for token, precision_multiplier in zip(
@@ -2042,7 +2069,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         with contextlib.suppress(KeyError):
             return self.PRECISION, self._cached_rates_from_reth[block_number]
 
-        provider = connection_manager.get_provider(self.chain_id)
+        # Fetch current provider from connection manager to handle provider updates
+        provider = self._get_provider_for_chain()
 
         # ref: https://etherscan.io/address/0xF9440930043eb3997fc70e1339dBb11F341de7A8#code
         ratio: int
@@ -2066,7 +2094,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 // self._cached_rates_from_aeth[block_number],
             )
 
-        provider = connection_manager.get_provider(self.chain_id)
+        # Fetch current provider from connection manager to handle provider updates
+        provider = self._get_provider_for_chain()
 
         # ref: https://etherscan.io/address/0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2#code
         ratio: int
@@ -2091,6 +2120,9 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_oracle[block_number]
 
+        # Fetch current provider from connection manager to handle provider updates
+        provider = self._get_provider_for_chain()
+
         self._set_oracle_method(block_number=block_number)
         if TYPE_CHECKING:
             assert self.oracle_method is not None
@@ -2102,7 +2134,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             oracle_rate: int
             (oracle_rate,) = eth_abi.abi.decode(
                 types=["uint256"],
-                data=connection_manager.get_provider(self.chain_id).call(
+                data=provider.call(
                     to=get_checksum_address(HexBytes(self.oracle_method % 2**160)),
                     data=HexBytes(self.oracle_method & oracle_bit_mask),
                     block=block_number,
@@ -2127,7 +2159,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         """
 
         with self._state_lock:
-            provider = connection_manager.get_provider(self.chain_id)
+            provider = self._get_provider_for_chain()
 
             state_block = provider.get_block("latest" if block_number is None else block_number)
             block_number = state_block["number"]
@@ -2180,6 +2212,22 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
             return found_updates
 
+    def _get_provider_for_chain(self) -> ProviderAdapter | None:
+        """Get the provider for this pool's chain.
+
+        If the provider was passed in explicitly during construction, use the cached provider.
+        Otherwise, fetch from connection_manager to handle provider updates.
+        Returns None if no provider is available (e.g., in multiprocessing context).
+        """
+        if self._provider_from_connection_manager:
+            try:
+                return connection_manager.get_provider(self._chain_id)
+            except Exception:  # noqa: BLE001
+                # No provider available from connection_manager (e.g., multiprocessing)
+                pass
+        # Use cached provider if available
+        return self._provider
+
     def calculate_tokens_out_from_tokens_in(
         self,
         token_in: Erc20Token,
@@ -2192,12 +2240,13 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
         """
 
+        provider = self._get_provider_for_chain()
         block_number = (
             block_identifier
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
-                connection_manager.get_provider(self.chain_id),
+                provider,
             )
         )
 

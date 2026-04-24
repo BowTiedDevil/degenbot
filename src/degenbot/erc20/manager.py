@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
 from degenbot.erc20 import Erc20Token, EtherPlaceholder
+from degenbot.provider.interface import ProviderAdapter
 from degenbot.registry import token_registry
 from degenbot.types.abstract import AbstractManager
 from degenbot.types.aliases import ChainId
@@ -26,6 +27,7 @@ class Erc20TokenManager(AbstractManager):
         self,
         *,
         chain_id: ChainId | None = None,
+        provider: ProviderAdapter | None = None,
     ) -> None:
         chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
 
@@ -41,6 +43,7 @@ class Erc20TokenManager(AbstractManager):
             self._erc20tokens: dict[ChecksumAddress, Erc20Token] = {}
             self._lock = Lock()
             self._chain_id = chain_id
+            self._provider = provider
 
     def get_erc20token(
         self,
@@ -67,11 +70,13 @@ class Erc20TokenManager(AbstractManager):
             token_helper = EtherPlaceholder(
                 address,
                 chain_id=self._chain_id,
+                provider=self._provider,
             )
         else:
             token_helper = Erc20Token(
                 address,
                 chain_id=self._chain_id,
+                provider=self._provider,
                 silent=silent,
                 **kwargs,
             )

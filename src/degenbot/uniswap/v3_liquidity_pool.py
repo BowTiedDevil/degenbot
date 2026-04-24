@@ -241,6 +241,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
             | dict[str, UniswapV3LiquidityAtTickAsDict]
             | None
         ) = None,
+        provider: ProviderAdapter | None = None,
         state_block: BlockNumber | None = None,
         verify_address: bool = True,
         silent: bool = False,
@@ -248,8 +249,12 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
     ) -> None:
         self.address = get_checksum_address(address)
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        provider = connection_manager.get_provider(self.chain_id)
-        state_block = state_block if state_block is not None else provider.get_block_number()
+        self._provider = (
+            provider if provider is not None else connection_manager.get_provider(self.chain_id)
+        )
+        # Track whether provider was fetched from connection_manager (True) or passed in (False)
+        self._provider_from_connection_manager = provider is None
+        state_block = state_block if state_block is not None else self._provider.get_block_number()
         self._initial_state_block = state_block
 
         pool_from_db = get_pool_from_database(address=self.address, chain_id=self.chain_id)
@@ -272,7 +277,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         else:
             try:
                 factory_address, (token0_address, token1_address), self.fee, self.tick_spacing = (
-                    self.get_immutable_pool_values(provider)
+                    self.get_immutable_pool_values(self._provider)
                 )
 
             except (ContractLogicError, DecodingError) as exc:
@@ -282,7 +287,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
 
         try:
             sqrt_price_x96, tick, liquidity = self.get_mutable_pool_values(
-                provider, state_block=state_block
+                self._provider, state_block=state_block
             )
         except (ContractLogicError, DecodingError) as exc:
             # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch this
@@ -307,7 +312,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
                 init_hash if init_hash is not None else self.UNISWAP_V3_MAINNET_POOL_INIT_HASH
             )
 
-        token_manager = Erc20TokenManager(chain_id=self.chain_id)
+        token_manager = Erc20TokenManager(chain_id=self.chain_id, provider=self._provider)
         try:
             self.token0, self.token1 = (
                 token_manager.get_erc20token(
@@ -408,6 +413,8 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         # after pickling/unpickling
         copied_attributes: set[str] = set()
         dropped_attributes = {
+            "_provider",
+            "_provider_from_connection_manager",
             "_state_lock",
             "_subscribers",
             "_swap_step_cache_lock",
@@ -423,7 +430,16 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
     def __setstate__(self, state: dict[str, Any]) -> None:
         state["_state_lock"] = Lock()
         state["_swap_step_cache_lock"] = Lock()
+        # After unpickling, provider must be re-acquired from connection_manager
+        state["_provider_from_connection_manager"] = True
         self.__dict__ = state
+
+    def __getnewargs_ex__(self) -> tuple[tuple[()], dict[str, Any]]:
+        """
+        Return empty args so __init__ is not called during unpickling.
+        The object is reconstructed via __setstate__.
+        """
+        return (), {}
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1}, fee={100 * self.fee / self.FEE_DENOMINATOR:.2f}%, tick spacing={self.tick_spacing})"  # noqa:E501
@@ -727,20 +743,18 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         position. A word is divided into 256 ticks, spaced at a fixed interval.
         """
 
-        provider = connection_manager.get_provider(self.chain_id)
-
         if block_number is None:
-            block_number = provider.get_block_number()
+            block_number = self._provider.get_block_number()
 
         working_tick_data: list[tuple[Tick, LiquidityGross, LiquidityNet]] = []
         working_tick_bitmap = self.get_tick_bitmap_at_word(
-            provider,
+            self._provider,
             word_position=word_position,
             block_identifier=block_number,
         )
         if working_tick_bitmap != 0:
             working_tick_data = self.get_populated_ticks_in_word(
-                provider,
+                self._provider,
                 word_position=word_position,
                 block_identifier=block_number,
             )
@@ -872,9 +886,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
             (token0,) = eth_abi.abi.decode(types=["address"], data=token0_result)
             (token1,) = eth_abi.abi.decode(types=["address"], data=token1_result)
             (fee,) = eth_abi.abi.decode(types=["uint256"], data=fee_result)
-            (tick_spacing,) = eth_abi.abi.decode(
-                types=["uint256"], data=tick_spacing_result
-            )
+            (tick_spacing,) = eth_abi.abi.decode(types=["uint256"], data=tick_spacing_result)
 
         except (ContractLogicError, DecodingError) as exc:
             # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch this
@@ -912,9 +924,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
                 block=state_block,
             )
 
-            price, tick, *_ = eth_abi.abi.decode(
-                types=self.SLOT0_STRUCT_TYPES, data=slot0_result
-            )
+            price, tick, *_ = eth_abi.abi.decode(types=self.SLOT0_STRUCT_TYPES, data=slot0_result)
             (liquidity,) = eth_abi.abi.decode(types=["uint256"], data=liquidity_result)
 
         except (ContractLogicError, DecodingError) as exc:
@@ -1007,6 +1017,21 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         # above the current price, similar to the above comment.
         return get_sqrt_ratio_at_tick(max(state.tick_data)) > state.sqrt_price_x96
 
+    def _get_provider_for_chain(self) -> ProviderAdapter:
+        """Get the provider for this pool's chain.
+
+        If the provider was passed in explicitly during construction, use the cached provider.
+        Otherwise, fetch from connection_manager to handle provider updates.
+        """
+        if self._provider_from_connection_manager:
+            try:
+                return connection_manager.get_provider(self._chain_id)
+            except Exception:  # noqa: BLE001
+                # Fall back to cached provider if connection_manager doesn't have one
+                # (e.g., in multiprocessing context)
+                return self._provider
+        return self._provider
+
     def auto_update(
         self,
         *,
@@ -1025,7 +1050,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
             if block_number is not None and block_number < self.update_block:
                 raise LateUpdateError
 
-            provider = connection_manager.get_provider(self.chain_id)
+            provider = self._get_provider_for_chain()
             block_number = block_number if block_number is not None else provider.get_block_number()
 
             slot0_result = provider.call(
@@ -1052,9 +1077,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
             sqrt_price_x96, tick, *_ = eth_abi.abi.decode(
                 types=self.SLOT0_STRUCT_TYPES, data=slot0_result
             )
-            (liquidity,) = eth_abi.abi.decode(
-                types=["uint256"], data=liquidity_result
-            )
+            (liquidity,) = eth_abi.abi.decode(types=["uint256"], data=liquidity_result)
 
             if (
                 sqrt_price_x96 == self.sqrt_price_x96

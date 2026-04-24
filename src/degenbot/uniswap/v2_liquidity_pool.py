@@ -117,6 +117,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
         deployer_address: str | None = None,
         init_hash: str | None = None,
         fee: Fraction | Iterable[Fraction] | None = None,
+        provider: ProviderAdapter | None = None,
         state_block: BlockNumber | None = None,
         verify_address: bool = True,
         silent: bool = False,
@@ -142,6 +143,9 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
             can be specified by passing `fee=Fraction(3,1000)`. For split-fee pools of unequal
             value, provide an iterable of fees ordered by token position, e.g.
             `fee=[Fraction(3,1000), Fraction(2,1000)]`
+        provider:
+            A ProviderAdapter instance for blockchain calls. Uses the default provider if not
+            provided.
         state_block:
             Fetch initial state values from the chain at a particular block height. Defaults to the
             latest block if omitted.
@@ -155,8 +159,12 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
 
         self.address = get_checksum_address(address)
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        provider = connection_manager.get_provider(self.chain_id)
-        state_block = state_block if state_block is not None else provider.get_block_number()
+        self._provider = (
+            provider if provider is not None else connection_manager.get_provider(self.chain_id)
+        )
+        # Track whether provider was fetched from connection_manager (True) or passed in (False)
+        self._provider_from_connection_manager = provider is None
+        state_block = state_block if state_block is not None else self._provider.get_block_number()
 
         self.init_hash = (
             init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
@@ -176,7 +184,9 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
                 token1_address = pool_from_db.token1.address
             else:
                 try:
-                    _, (token0_address, token1_address) = self.get_immutable_pool_values(provider)
+                    _, (token0_address, token1_address) = self.get_immutable_pool_values(
+                        self._provider
+                    )
                 except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
                     # Contracts differ slightly across Uniswap V2 forks, so decoding may fail.
                     # Catch this here and raise as a pool-specific exception
@@ -192,7 +202,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
                 )
             else:
                 try:
-                    factory, _ = self.get_immutable_pool_values(provider)
+                    factory, _ = self.get_immutable_pool_values(self._provider)
                     self.factory = get_checksum_address(factory)
                 except (ContractLogicError, DecodingError) as exc:  # pragma: no cover
                     # Contracts differ slightly across Uniswap V2 forks, so decoding may fail.
@@ -225,7 +235,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
             else:
                 self.fee_token0 = self.fee_token1 = self.FEE
 
-        token_manager = Erc20TokenManager(chain_id=self.chain_id)
+        token_manager = Erc20TokenManager(chain_id=self.chain_id, provider=self._provider)
         try:
             self.token0 = token_manager.get_erc20token(
                 address=token0_address,
@@ -252,7 +262,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
         )
         self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, {fee_string}%)"
 
-        reserves0, reserves1 = self.get_reserves(provider, block_identifier=state_block)
+        reserves0, reserves1 = self.get_reserves(self._provider, block_identifier=state_block)
 
         initial_state = self.PoolState.__value__(
             address=self.address,
@@ -281,6 +291,8 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
         # Remove objects that either cannot be pickled or are unnecessary to perform the calculation
         copied_attributes = ()
         dropped_attributes = (
+            "_provider",
+            "_provider_from_connection_manager",
             "_state_lock",
             "_subscribers",
         )
@@ -291,6 +303,12 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
                 for k, v in self.__dict__.items()
                 if k not in dropped_attributes
             }
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        state["_state_lock"] = Lock()
+        # After unpickling, provider must be re-acquired from connection_manager
+        state["_provider_from_connection_manager"] = True
+        self.__dict__ = state
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1})"  # noqa:E501
@@ -375,6 +393,21 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
             return False
         return state.reserves_token1 > 1 if vector.zero_for_one else state.reserves_token0 > 1
 
+    def _get_provider_for_chain(self) -> ProviderAdapter:
+        """Get the provider for this pool's chain.
+
+        If the provider was passed in explicitly during construction, use the cached provider.
+        Otherwise, fetch from connection_manager to handle provider updates.
+        """
+        if self._provider_from_connection_manager:
+            try:
+                return connection_manager.get_provider(self._chain_id)
+            except Exception:  # noqa: BLE001
+                # Fall back to cached provider if connection_manager doesn't have one
+                # (e.g., in multiprocessing context)
+                return self._provider
+        return self._provider
+
     def auto_update(
         self,
         *,
@@ -393,7 +426,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
             if block_number is not None and block_number < self.update_block:
                 raise LateUpdateError
 
-            provider = self.w3
+            provider = self._get_provider_for_chain()
             block_number = block_number if block_number is not None else provider.get_block_number()
             reserves0, reserves1 = self.get_reserves(provider, block_identifier=block_number)
 

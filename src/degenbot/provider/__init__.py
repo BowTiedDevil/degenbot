@@ -34,20 +34,18 @@ from typing import Any, Self, cast
 
 from hexbytes import HexBytes
 
-try:
-    from degenbot.degenbot_rs import AlloyProvider as _AlloyProvider
-except ImportError:
-    _AlloyProvider = None  # type: ignore[assignment,misc]
+from degenbot.degenbot_rs import AlloyProvider as _AlloyProvider
 from degenbot.provider.async_provider import AsyncAlloyProvider
-from degenbot.provider.interface import (
-    AsyncProviderAdapter,
-    EthereumProvider,
-    ProviderAdapter,
+from degenbot.provider.interface import AsyncProviderAdapter, EthereumProvider, ProviderAdapter
+from degenbot.provider.offline_provider import (
+    BlockNotRecordedError,
+    OfflineDataMissing,
+    OfflineProvider,
 )
 from degenbot.types.aliases import BlockNumber
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class LogFilter:
     """
     Filter criteria for log fetching.
@@ -350,7 +348,10 @@ __all__ = [
     "AlloyProvider",
     "AsyncAlloyProvider",
     "AsyncProviderAdapter",
+    "BlockNotRecordedError",
     "EthereumProvider",
     "LogFilter",
+    "OfflineDataMissing",
+    "OfflineProvider",
     "ProviderAdapter",
 ]

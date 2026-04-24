@@ -22,8 +22,6 @@ from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RAT
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import UniswapV3PoolState
 
-pytestmark = pytest.mark.fork
-
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 DAI_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
 USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"

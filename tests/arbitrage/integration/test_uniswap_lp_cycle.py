@@ -47,8 +47,6 @@ from tests.conftest import FakeSubscriber
 if TYPE_CHECKING:
     from degenbot.arbitrage.uniswap_lp_cycle import Pool, PoolState
 
-pytestmark = pytest.mark.fork
-
 WBTC_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 WBTC_WETH_V2_POOL_ADDRESS = "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
