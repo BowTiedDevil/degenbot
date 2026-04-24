@@ -18,7 +18,10 @@ if os.environ.get("DEGENBOT_COVERAGE") and not os.environ.get("PYTEST_VERSION"):
 
     _cov = Coverage(
         config_file=False,
-        include=["**/cli/**/*.py"],
+        include=[
+            "**/aave/**/*.py",
+            "**/cli/**/*.py",
+        ],
         branch=True,
         auto_data=True,
     )
