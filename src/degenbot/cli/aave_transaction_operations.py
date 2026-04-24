@@ -1598,7 +1598,14 @@ class TransactionOperationsParser:
             else:  # DEBT_MINT or GHO_DEBT_MINT
                 calculated_amount = ev.balance_increase - ev.amount
 
-            if calculated_amount != repay_amount:
+            # Pool revision 9 began pre-scaling the amount with flooring ray division.
+            # Calculating it exactly requires injecting extra details about the position,
+            # so this check will allow up to a TOKEN_AMOUNT_MATCH_TOLERANCE wei deviation
+            # on pool revisions 9+
+            if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
+                if abs(calculated_amount - repay_amount) > TOKEN_AMOUNT_MATCH_TOLERANCE:
+                    continue
+            elif calculated_amount != repay_amount:
                 continue
 
             return ev
