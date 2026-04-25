@@ -11,12 +11,8 @@ from fractions import Fraction
 import pytest
 from degenbot.degenbot_rs import mobius as rs_mobius
 
-from degenbot.arbitrage.optimizers.solver import (
-    ArbSolver,
-    Hop,
-    SolveInput,
-    SolverMethod,
-)
+from degenbot.arbitrage.optimizers import Hop, SolveInput, SolverMethod
+from degenbot.arbitrage.optimizers.solver import ArbSolver
 from degenbot.exceptions import OptimizationError
 
 from .conftest import (
@@ -59,9 +55,10 @@ class TestRustMobiusRefineInt:
             rs_mobius.RustIntHopState(1_500_000, 3_000_000, 997, 1000),
         ]
         # Get float optimum from standard solve
-        float_result = rs_mobius.RustArbSolver().solve(
-            [(1_000_000.0, 5_000_000.0, 0.003), (1_500_000.0, 3_000_000.0, 0.003)]
-        )
+        float_result = rs_mobius.RustArbSolver().solve([
+            (1_000_000.0, 5_000_000.0, 0.003),
+            (1_500_000.0, 3_000_000.0, 0.003),
+        ])
         x_opt = float_result.optimal_input
 
         # Refine in Rust
@@ -75,15 +72,16 @@ class TestRustMobiusRefineInt:
 
     def test_full_scale_reserves(self):
         """Full uint256-scale reserves (USDC 6-dec, WETH 18-dec)."""
-        r0_a = 100_000_000 * 10**USDC_DECIMALS   # 100M USDC
-        r1_a = 60_000 * 10**WETH_DECIMALS         # 60K WETH
-        r1_b = 40_000 * 10**WETH_DECIMALS         # 40K WETH
-        r0_b = 80_000_000 * 10**USDC_DECIMALS     # 80M USDC
+        r0_a = 100_000_000 * 10**USDC_DECIMALS  # 100M USDC
+        r1_a = 60_000 * 10**WETH_DECIMALS  # 60K WETH
+        r1_b = 40_000 * 10**WETH_DECIMALS  # 40K WETH
+        r0_b = 80_000_000 * 10**USDC_DECIMALS  # 80M USDC
 
         # Get float optimum
-        float_result = rs_mobius.RustArbSolver().solve(
-            [(float(r0_a), float(r1_a), 0.003), (float(r1_b), float(r0_b), 0.003)]
-        )
+        float_result = rs_mobius.RustArbSolver().solve([
+            (float(r0_a), float(r1_a), 0.003),
+            (float(r1_b), float(r0_b), 0.003),
+        ])
         x_opt = float_result.optimal_input
 
         hops = [
@@ -124,13 +122,11 @@ class TestRustMobiusRefineInt:
             rs_mobius.RustIntHopState(2_000_000, 2_050_000, 997, 1000),
             rs_mobius.RustIntHopState(2_050_000, 2_000_000, 997, 1000),
         ]
-        float_result = rs_mobius.RustArbSolver().solve(
-            [
-                (2_000_000.0, 2_100_000.0, 0.003),
-                (2_000_000.0, 2_050_000.0, 0.003),
-                (2_050_000.0, 2_000_000.0, 0.003),
-            ]
-        )
+        float_result = rs_mobius.RustArbSolver().solve([
+            (2_000_000.0, 2_100_000.0, 0.003),
+            (2_000_000.0, 2_050_000.0, 0.003),
+            (2_050_000.0, 2_000_000.0, 0.003),
+        ])
         x_opt = float_result.optimal_input
         result = rs_mobius.py_mobius_refine_int(x_opt, hops, None)
         assert int(result.profit) > 0
@@ -164,6 +160,7 @@ class TestRustMobiusRefineInt:
 # Test: ArbSolver end-to-end with Rust integer refinement
 # ---------------------------------------------------------------------------
 
+
 class TestArbSolverRustIntRefinement:
     """Tests that ArbSolver uses Rust integer refinement and produces
     EVM-exact results, especially for large reserves."""
@@ -191,10 +188,10 @@ class TestArbSolverRustIntRefinement:
     def test_v2_2hop_large_reserves_evm_exact(self):
         """Full uint256-scale reserves: profit must be EVM-exact."""
         solver = ArbSolver()
-        r0_a = 100_000_000 * 10**USDC_DECIMALS   # 100M USDC
-        r1_a = 60_000 * 10**WETH_DECIMALS         # 60K WETH
-        r1_b = 40_000 * 10**WETH_DECIMALS         # 40K WETH
-        r0_b = 80_000_000 * 10**USDC_DECIMALS     # 80M USDC
+        r0_a = 100_000_000 * 10**USDC_DECIMALS  # 100M USDC
+        r1_a = 60_000 * 10**WETH_DECIMALS  # 60K WETH
+        r1_b = 40_000 * 10**WETH_DECIMALS  # 40K WETH
+        r0_b = 80_000_000 * 10**USDC_DECIMALS  # 80M USDC
 
         inp = SolveInput(
             hops=(

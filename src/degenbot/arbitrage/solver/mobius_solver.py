@@ -2,10 +2,9 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from degenbot.arbitrage.optimizers.solver import (
-    ArbSolver,
+from degenbot.arbitrage.optimizers.hop_types import (
     BoundedProductHop,
     ConstantProductHop,
     SolveInput,
@@ -19,8 +18,14 @@ from degenbot.arbitrage.solver.types import (
     MobiusSolveResult,
     SolverMethod,
 )
+from degenbot.arbitrage.solver_registry import SolverRegistry
 from degenbot.degenbot_rs import mobius as _rs_mobius
 from degenbot.exceptions import OptimizationError
+
+if TYPE_CHECKING:
+    from degenbot.arbitrage.optimizers.solver import ArbSolver
+
+_SENTINEL = object()
 
 # Constants for path constraints
 MIN_HOPS_FOR_ARBITRAGE: int = 2
@@ -119,9 +124,6 @@ def _integer_refinement(
     return best_input, best_profit
 
 
-_SENTINEL = object()
-
-
 class MobiusSolver(SolverProtocol):
     """
     Generalized Mobius solver for constant-product and bounded-product CFMM paths.
@@ -136,7 +138,7 @@ class MobiusSolver(SolverProtocol):
     def __init__(self) -> None:
         self._rust_solver: Any = None
         self._pool_cache: Any = None
-        self._piecewise_solver: ArbSolver | object = _SENTINEL
+        self._piecewise_solver: ArbSolver | object = _SENTINEL  # type: ignore[name-defined]
         if _rs_mobius is not None:
             self._rust_solver = _rs_mobius.RustArbSolver()
             self._pool_cache = _rs_mobius.RustPoolCache()
@@ -449,9 +451,9 @@ class MobiusSolver(SolverProtocol):
         except (ValueError, TypeError, AttributeError):
             return None
 
-    def _get_piecewise_solver(self) -> ArbSolver:
+    def _get_piecewise_solver(self) -> "ArbSolver":
         if self._piecewise_solver is _SENTINEL:
-            self._piecewise_solver = ArbSolver()
+            self._piecewise_solver = SolverRegistry.get_arb_solver()
         return self._piecewise_solver  # type: ignore[return-value]
 
     def _solve_piecewise_python(
@@ -599,3 +601,6 @@ class MobiusSolver(SolverProtocol):
             msg = "Pool cache requires the Rust extension (degenbot_rs)"
             raise RuntimeError(msg)
         return self._pool_cache
+
+
+SolverRegistry.register_mobius_solver(MobiusSolver)

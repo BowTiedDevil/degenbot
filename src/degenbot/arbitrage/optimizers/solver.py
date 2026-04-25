@@ -1,74 +1,55 @@
 """
 Unified solver interface for arbitrage optimization.
 
-All optimizers accept the same `SolveInput` (a sequence of `Hop` objects)
-and return the same `SolveResult`. The `ArbSolver` dispatcher automatically
-selects the best method based on the hop types.
-
-Quick Start:
-===========
-
->>> from degenbot.arbitrage.optimizers.solver import ArbSolver, Hop, SolveInput
->>> solver = ArbSolver()
->>> hops = (
-...     Hop(
-...         reserve_in=2_000_000_000_000,
-...         reserve_out=1_000_000_000_000_000_000,
-...         fee=Fraction(3, 1000),
-...     ),
-...     Hop(
-...         reserve_in=1_500_000_000_000,
-...         reserve_out=800_000_000_000_000_000,
-...         fee=Fraction(3, 1000),
-...     ),
-... )
->>> result = solver.solve(SolveInput(hops=hops))
->>> print(f"Optimal: {result.optimal_input}, Profit: {result.profit}, Method: {result.method}")
-
-Performance:
-============
-
-| Method | Time | Use Case |
-|--------|------|----------|
-| Mobius | 0.86μs (Py), 0.19μs (Rust) | All V2, V3 single-range (zero iterations) |
-| Newton | 7.5μs | V2-V2 fallback |
-| PiecewiseMobius | ~25μs | V3 multi-range with tick crossing |
-| Brent | ~194μs | V3-V3 complex fallback |
+All optimizers accept the same `SolveInput` (a sequence of `Hop` objects) and return the same
+`SolveResult`. The `ArbSolver` dispatcher automatically selects the best method based on the hop
+types.
 """
 
+import importlib.util
 import math
 import os
 import time
-from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from enum import Enum, auto
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any, ClassVar, override
 
+import numpy as np
+from scipy.optimize import minimize_scalar
+
+from degenbot.aerodrome.functions import calc_exact_in_stable as _aerodrome_stable_calc
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.arbitrage.optimizers.balancer_weighted import (
-    BalancerMultiTokenState as _BalancerMultiTokenState,
+    BalancerMultiTokenState,
+    BalancerWeightedPoolSolver,
 )
-from degenbot.arbitrage.optimizers.balancer_weighted import (
-    BalancerWeightedPoolSolver as _BalancerWeightedPoolSolver,
+from degenbot.arbitrage.optimizers.hop_types import (
+    BalancerMultiTokenHop,
+    BoundedProductHop,
+    ConstantProductHop,
+    HopType,
+    PoolInvariant,
+    SolidlyStableHop,
+    SolveInput,
+    Solver,
+    SolveResult,
+    V3TickRangeInfo,
 )
-from degenbot.arbitrage.optimizers.mobius import (
-    HopState as _MobiusHopState,
+from degenbot.arbitrage.optimizers.mobius import V3TickRangeHop, V3TickRangeSequence, mobius_solve
+from degenbot.arbitrage.optimizers.mobius import simulate_path as _mobius_simulate_path
+from degenbot.arbitrage.optimizers.v3_tick_predictor import estimate_price_impact
+from degenbot.arbitrage.solver.types import (
+    ConcentratedLiquidityHopState,
+    MobiusHopState,
+    SolverMethod,
+    TickRangeState,
 )
-from degenbot.arbitrage.optimizers.mobius import (
-    V3TickRangeHop as _V3TickRangeHop,
-)
-from degenbot.arbitrage.optimizers.mobius import (
-    V3TickRangeSequence as _V3TickRangeSequence,
-)
-from degenbot.arbitrage.optimizers.mobius import (
-    mobius_solve as _mobius_solve,
-)
-from degenbot.arbitrage.optimizers.mobius import (
-    simulate_path as _mobius_simulate_path,
-)
+from degenbot.arbitrage.solver_registry import SolverRegistry
+from degenbot.camelot.functions import get_y_camelot, k_camelot
 from degenbot.camelot.pools import CamelotLiquidityPool
+from degenbot.degenbot_rs import mobius as _rs_mobius
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import OptimizationError
 from degenbot.solidly.solidly_functions import general_calc_exact_in_stable
@@ -78,11 +59,6 @@ from degenbot.uniswap.v3_libraries.tick_bitmap import gen_ticks
 from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK, get_sqrt_ratio_at_tick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-
-try:
-    from degenbot.degenbot_rs import mobius as _rs_mobius
-except ImportError:
-    _rs_mobius = None
 
 # Feature flag: when True, RustArbSolver.solve() receives RustIntHopState objects
 # and does float solve + U256 integer refinement in a single Rust call.
@@ -101,565 +77,7 @@ USE_RAW_ARRAY_MARSHALLING = bool(os.environ.get("DEGENBOT_RAW_ARRAY_MARSHALLING"
 # inline dispatch code.
 USE_GENERALIZED_SOLVER = bool(os.environ.get("DEGENBOT_GENERALIZED_SOLVER", ""))
 
-
-# ---------------------------------------------------------------------------
-# Core Types
-# ---------------------------------------------------------------------------
-
-
-class SolverMethod(Enum):
-    """Solver algorithm used to produce a result."""
-
-    MOBIUS = auto()
-    NEWTON = auto()
-    PIECEWISE_MOBIUS = auto()
-    SOLIDLY_STABLE = auto()
-    BALANCER_MULTI_TOKEN = auto()
-    BRENT = auto()
-
-
-class PoolInvariant(Enum):
-    """Pool invariant type for a hop."""
-
-    CONSTANT_PRODUCT = auto()
-    BOUNDED_PRODUCT = auto()
-    SOLIDLY_STABLE = auto()
-    BALANCER_WEIGHTED = auto()
-    BALANCER_MULTI_TOKEN = auto()
-    CURVE_STABLESWAP = auto()
-
-
-@dataclass(frozen=True, slots=True)
-class ConstantProductHop:
-    """
-    A constant-product (x*y=k) pool hop.
-
-    For V2 pools: UniswapV2Pool, AerodromeV2Pool (volatile), CamelotLiquidityPool.
-    Supports asymmetric fees via fee_out (Camelot has different fees per direction).
-
-    Attributes
-    ----------
-    reserve_in : int
-        Input reserve in wei.
-    reserve_out : int
-        Output reserve in wei.
-    fee : Fraction
-        Fee for the input direction as an exact fraction.
-    fee_out : Fraction | None
-        Fee for the output direction (None if same as fee). Used by
-        Camelot and other pools with asymmetric fees.
-    """
-
-    reserve_in: int
-    reserve_out: int
-    fee: Fraction
-    fee_out: Fraction | None = None
-    invariant: PoolInvariant = PoolInvariant.CONSTANT_PRODUCT
-
-    @property
-    def is_v2(self) -> bool:
-        return True
-
-    @property
-    def is_v3(self) -> bool:
-        return False
-
-    @property
-    def gamma(self) -> float:
-        """Fee multiplier (1 - fee) as float."""
-        return 1.0 - float(self.fee)
-
-
-@dataclass(frozen=True, slots=True)
-class V3TickRangeInfo:
-    """
-    Information about a V3/V4 tick range for multi-range support.
-
-    Attributes
-    ----------
-    tick_lower : int
-        Lower tick bound of this range.
-    tick_upper : int
-        Upper tick bound of this range.
-    liquidity : int
-        Liquidity in this range.
-    sqrt_price_lower : int
-        Lower sqrt price bound (X96).
-    sqrt_price_upper : int
-        Upper sqrt price bound (X96).
-    """
-
-    tick_lower: int
-    tick_upper: int
-    liquidity: int
-    sqrt_price_lower: int
-    sqrt_price_upper: int
-
-
-@dataclass(frozen=True, slots=True)
-class BoundedProductHop:
-    """
-    A bounded-product (concentrated liquidity) pool hop for V3/V4.
-
-    V3/V4 tick ranges are bounded product CFMMs with effective reserves
-    (R0+alpha, R1+beta) that follow the same Möbius form.
-
-    For multi-range support (tick crossings), tick_ranges contains adjacent
-    ranges and current_range_index indicates which range contains the current
-    price. When tick_ranges is None, the hop represents a single range.
-
-    Attributes
-    ----------
-    reserve_in : int
-        Effective input reserve in wei.
-    reserve_out : int
-        Effective output reserve in wei.
-    fee : Fraction
-        Fee as an exact fraction.
-    liquidity : int
-        V3/V4 liquidity in the current tick range.
-    sqrt_price : int
-        V3/V4 current sqrt price as X96.
-    tick_lower : int
-        V3/V4 lower tick of the current range.
-    tick_upper : int
-        V3/V4 upper tick of the current range.
-    tick_ranges : tuple[V3TickRangeInfo, ...] | None
-        Optional adjacent tick ranges for multi-range (tick crossing) support.
-        When provided, includes all ranges that might be crossed in a swap.
-    current_range_index : int
-        Index into tick_ranges indicating which range contains current price.
-        Ignored when tick_ranges is None.
-    """
-
-    reserve_in: int
-    reserve_out: int
-    fee: Fraction
-    liquidity: int
-    sqrt_price: int
-    tick_lower: int
-    tick_upper: int
-    tick_ranges: tuple[V3TickRangeInfo, ...] | None = None
-    current_range_index: int = 0
-    invariant: PoolInvariant = PoolInvariant.BOUNDED_PRODUCT
-
-    @property
-    def is_v2(self) -> bool:
-        return False
-
-    @property
-    def is_v3(self) -> bool:
-        return True
-
-    @property
-    def gamma(self) -> float:
-        """Fee multiplier (1 - fee) as float."""
-        return 1.0 - float(self.fee)
-
-    @property
-    def has_multi_range(self) -> bool:
-        """True if this hop has adjacent tick ranges for crossing support."""
-        return self.tick_ranges is not None and len(self.tick_ranges) > 1
-
-
-@dataclass(frozen=True, slots=True)
-class SolidlyStableHop:
-    """
-    A Solidly stable (x³y + xy³ ≥ k) pool hop.
-
-    Used by AerodromeV2Pool (stable=True) and CamelotLiquidityPool (stable_swap=True).
-    Not a Möbius transformation — the swap function comes from solving a cubic.
-
-    The optional ``swap_fn`` provides an integer-accurate swap simulation
-    (e.g. wrapping ``calc_exact_in_stable``). When provided, the solver
-    uses it for exact path evaluation. When absent, a float approximation
-    is used (less accurate for extreme decimal differences).
-
-    Attributes
-    ----------
-    reserve_in : int
-        Input reserve in wei.
-    reserve_out : int
-        Output reserve in wei.
-    fee : Fraction
-        Fee as an exact fraction.
-    decimals_in : int
-        Decimal places of the input token (e.g. 6 for USDC, 18 for WETH).
-    decimals_out : int
-        Decimal places of the output token.
-    swap_fn : Callable[[int], int] | None
-        Integer swap function: ``swap_fn(amount_in) -> amount_out``.
-        When provided, the solver uses this for exact evaluation.
-    """
-
-    reserve_in: int
-    reserve_out: int
-    fee: Fraction
-    decimals_in: int
-    decimals_out: int
-    swap_fn: Callable[[int], int] | None = field(default=None, compare=False, hash=False)
-    invariant: PoolInvariant = PoolInvariant.SOLIDLY_STABLE
-
-    @property
-    def is_v2(self) -> bool:
-        return False
-
-    @property
-    def is_v3(self) -> bool:
-        return False
-
-    @property
-    def gamma(self) -> float:
-        """Fee multiplier (1 - fee) as float."""
-        return 1.0 - float(self.fee)
-
-
-@dataclass(frozen=True, slots=True)
-class BalancerWeightedHop:
-    """
-    A Balancer weighted pool (∏xᵂⁱ ≥ k) hop.
-
-    Not a Möbius transformation — the swap function uses power-law exponents.
-    A 50/50 pool reduces to constant product.
-
-    Attributes
-    ----------
-    reserve_in : int
-        Input reserve in wei.
-    reserve_out : int
-        Output reserve in wei.
-    fee : Fraction
-        Fee as an exact fraction.
-    weight_in : int
-        Input token weight as 18-decimal fixed point (0.5 = 5e17).
-    weight_out : int
-        Output token weight as 18-decimal fixed point.
-    """
-
-    reserve_in: int
-    reserve_out: int
-    fee: Fraction
-    weight_in: int
-    weight_out: int
-    invariant: PoolInvariant = PoolInvariant.BALANCER_WEIGHTED
-
-    @property
-    def is_v2(self) -> bool:
-        return False
-
-    @property
-    def is_v3(self) -> bool:
-        return False
-
-    @property
-    def gamma(self) -> float:
-        """Fee multiplier (1 - fee) as float."""
-        return 1.0 - float(self.fee)
-
-
-@dataclass(frozen=True, slots=True)
-class CurveStableswapHop:
-    """
-    A Curve stableswap pool hop.
-
-    Uses the invariant: A*n^n*Σx + D = A*n^n*D + (D^(n+1) / n^n / ∏x)
-    The swap function is inherently iterative (Newton's method for get_y).
-
-    Attributes
-    ----------
-    reserve_in : int
-        Input reserve in wei.
-    reserve_out : int
-        Output reserve in wei.
-    fee : Fraction
-        Fee as an exact fraction.
-    curve_a: int
-        Amplification coefficient (named A in Curve docs).
-    curve_n_coins : int
-        Number of coins in the pool.
-    curve_d : int
-        Current invariant value D (named D in Curve docs).
-    token_index_in : int
-        Index of the input token in the pool.
-    token_index_out : int
-        Index of the output token in the pool.
-    precisions : tuple[int, ...]
-        Decimal scaling per token (10^decimals for each coin).
-    """
-
-    reserve_in: int
-    reserve_out: int
-    fee: Fraction
-    curve_a: int
-    curve_n_coins: int
-    curve_d: int
-    token_index_in: int
-    token_index_out: int
-    precisions: tuple[int, ...]
-    invariant: PoolInvariant = PoolInvariant.CURVE_STABLESWAP
-
-    @property
-    def is_v2(self) -> bool:
-        return False
-
-    @property
-    def is_v3(self) -> bool:
-        return False
-
-    @property
-    def gamma(self) -> float:
-        """Fee multiplier (1 - fee) as float."""
-        return 1.0 - float(self.fee)
-
-
-@dataclass(frozen=True, slots=True)
-class BalancerMultiTokenHop:
-    """
-    An N-token Balancer weighted pool for multi-token basket arbitrage.
-
-    Unlike pairwise hops, this represents the entire pool state and
-    enables closed-form basket trade optimization.
-
-    Attributes
-    ----------
-    reserves : tuple[int, ...]
-        Token reserves in wei, ordered by token index.
-    weights : tuple[int, ...]
-        Normalized weights as 18-decimal fixed point (sum = 1e18).
-    fee : Fraction
-        Swap fee as an exact fraction.
-    decimals : tuple[int, ...]
-        Decimal places for each token (e.g. 18 for ETH, 6 for USDC).
-        Required for proper scaling in the closed-form formula.
-    market_prices : tuple[float, ...] | None
-        Market prices for each token in a common numéraire.
-        Required for multi-token arbitrage optimization.
-    """
-
-    reserves: tuple[int, ...]
-    weights: tuple[int, ...]
-    fee: Fraction
-    decimals: tuple[int, ...] = ()
-    market_prices: tuple[float, ...] | None = None
-    invariant: PoolInvariant = PoolInvariant.BALANCER_MULTI_TOKEN
-
-    @property
-    def n_tokens(self) -> int:
-        return len(self.reserves)
-
-    @property
-    def is_v2(self) -> bool:
-        return False
-
-    @property
-    def is_v3(self) -> bool:
-        return False
-
-    @property
-    def gamma(self) -> float:
-        """Fee multiplier (1 - fee) as float."""
-        return 1.0 - float(self.fee)
-
-
-# HopType is the union of all hop variants for type annotations.
-# Use specific types (ConstantProductHop, BoundedProductHop, etc.) for construction.
-HopType = (
-    ConstantProductHop
-    | BoundedProductHop
-    | SolidlyStableHop
-    | BalancerWeightedHop
-    | CurveStableswapHop
-    | BalancerMultiTokenHop
-)
-
-
-def hop_factory(
-    *,
-    reserve_in: int,
-    reserve_out: int,
-    fee: Fraction,
-    liquidity: int | None = None,
-    sqrt_price: int | None = None,
-    tick_lower: int | None = None,
-    tick_upper: int | None = None,
-) -> HopType:
-    """
-    Backward-compatible Hop constructor.
-
-    Returns the correct hop variant based on the arguments:
-    - With liquidity/sqrt_price/tick fields -> BoundedProductHop
-    - Without V3 fields -> ConstantProductHop
-
-    This preserves the old ``Hop(...)`` API while routing to the new
-    tagged union types.
-    """
-    has_v3 = (
-        liquidity is not None
-        and sqrt_price is not None
-        and tick_lower is not None
-        and tick_upper is not None
-    )
-    if has_v3:
-        assert liquidity is not None
-        assert sqrt_price is not None
-        assert tick_lower is not None
-        assert tick_upper is not None
-        return BoundedProductHop(
-            reserve_in=reserve_in,
-            reserve_out=reserve_out,
-            fee=fee,
-            liquidity=liquidity,
-            sqrt_price=sqrt_price,
-            tick_lower=tick_lower,
-            tick_upper=tick_upper,
-        )
-    return ConstantProductHop(
-        reserve_in=reserve_in,
-        reserve_out=reserve_out,
-        fee=fee,
-    )
-
-
-# Backward-compatible alias: Hop(...) calls hop_factory(...)
-Hop = hop_factory
-
-
-@dataclass(frozen=True, slots=True)
-class SolveInput:
-    """
-    Unified input for all solvers.
-
-    Attributes
-    ----------
-    hops : tuple[Hop, ...]
-        Ordered pool hops forming the arbitrage path.
-    max_input : int | None
-        Optional upper bound on input amount in wei.
-    """
-
-    hops: tuple[HopType, ...]
-    max_input: int | None = None
-
-    @property
-    def num_hops(self) -> int:
-        return len(self.hops)
-
-    @property
-    def has_v3(self) -> bool:
-        """True if any hop has V3/V4 bounded-liquidity data."""
-        return any(h.is_v3 for h in self.hops)
-
-    @property
-    def all_v2(self) -> bool:
-        """True if no hop has V3/V4 data (pure V2 path)."""
-        return not self.has_v3
-
-    @property
-    def all_constant_product(self) -> bool:
-        """True if all hops are constant product (pure V2 path)."""
-        return all(h.invariant == PoolInvariant.CONSTANT_PRODUCT for h in self.hops)
-
-    @property
-    def has_solidly_stable(self) -> bool:
-        """True if any hop is a Solidly stable invariant."""
-        return any(h.invariant == PoolInvariant.SOLIDLY_STABLE for h in self.hops)
-
-    @property
-    def has_balancer_weighted(self) -> bool:
-        """True if any hop is a Balancer weighted invariant."""
-        return any(h.invariant == PoolInvariant.BALANCER_WEIGHTED for h in self.hops)
-
-    @property
-    def has_curve_stableswap(self) -> bool:
-        """True if any hop is a Curve stableswap invariant."""
-        return any(h.invariant == PoolInvariant.CURVE_STABLESWAP for h in self.hops)
-
-    @property
-    def has_balancer_multi_token(self) -> bool:
-        """True if any hop is a Balancer multi-token invariant."""
-        return any(h.invariant == PoolInvariant.BALANCER_MULTI_TOKEN for h in self.hops)
-
-    @property
-    def v3_indices(self) -> tuple[int, ...]:
-        """Indices of hops with V3/V4 data."""
-        return tuple(i for i, h in enumerate(self.hops) if h.is_v3)
-
-
-@dataclass(frozen=True, slots=True)
-class SolveResult:
-    """
-    Unified output from all solvers.
-
-    Raises OptimizationError on failure.
-
-    Attributes
-    ----------
-    optimal_input : int
-        Optimal input amount in wei.
-    profit : int
-        Expected profit in wei (output - input).
-    iterations : int
-        Number of iterations taken (0 for closed-form).
-    method : SolverMethod
-        Which solver algorithm was used.
-    solve_time_ns : int
-        Solve time in nanoseconds.
-    """
-
-    optimal_input: int
-    profit: int
-    iterations: int
-    method: SolverMethod
-    solve_time_ns: int = 0
-
-
-# ---------------------------------------------------------------------------
-# Solver ABC
-# ---------------------------------------------------------------------------
-
-
-class Solver(ABC):
-    """
-    Abstract base class for arbitrage solvers.
-
-    Every solver accepts a `SolveInput` and returns a `SolveResult`.
-    The `supports()` method indicates whether a solver can handle a
-    given input (used by `ArbSolver` for dispatch).
-    """
-
-    @abstractmethod
-    def solve(self, solve_input: SolveInput) -> SolveResult:
-        """
-        Find optimal arbitrage input.
-
-        Parameters
-        ----------
-        solve_input : SolveInput
-            The arbitrage path and constraints.
-
-        Returns
-        -------
-        SolveResult
-            Optimization result.
-        """
-        ...
-
-    @abstractmethod
-    def supports(self, solve_input: SolveInput) -> bool:
-        """
-        Whether this solver can handle the given input.
-
-        Parameters
-        ----------
-        solve_input : SolveInput
-            The arbitrage path to check.
-
-        Returns
-        -------
-        bool
-            True if this solver supports the input.
-        """
-        ...
+_NUMPY_AVAILABLE = importlib.util.find_spec("numpy") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -1008,8 +426,6 @@ class BrentSolver(Solver):
                 method=SolverMethod.BRENT.name,
             )
 
-        from scipy.optimize import minimize_scalar
-
         def neg_profit(x: float) -> float:
             """Negative profit for minimization."""
             if x <= 0:
@@ -1306,8 +722,6 @@ class PiecewiseMobiusSolver(Solver):
             return results
 
         # Parallel evaluation only for 3+ candidates
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
         with ThreadPoolExecutor(max_workers=min(len(candidates), 3)) as executor:
             future_to_idx = {
                 executor.submit(
@@ -1388,8 +802,6 @@ class PiecewiseMobiusSolver(Solver):
         # Price impact pruning: use quick estimate to check if swap stays in ending range
         # This is cheaper than full golden section search
         if end_idx > start_idx:
-            from degenbot.arbitrage.optimizers.v3_tick_predictor import estimate_price_impact
-
             # Estimate price after crossing (roughly the input needed for crossing)
             estimated_sqrt_price = estimate_price_impact(
                 amount_in=crossing_input * 1.1,  # 10% buffer for safety
@@ -1445,7 +857,7 @@ class PiecewiseMobiusSolver(Solver):
         # Determine swap direction from hop reserves
         zero_for_one = v3_hop.reserve_in > v3_hop.reserve_out
 
-        v3_ranges: list[_V3TickRangeHop] = []
+        v3_ranges: list[V3TickRangeHop] = []
         for i, range_info in enumerate(v3_hop.tick_ranges):
             if i == v3_hop.current_range_index:
                 sqrt_price_current = float(v3_hop.sqrt_price) / Q96
@@ -1455,7 +867,7 @@ class PiecewiseMobiusSolver(Solver):
                 sqrt_price_current = float(range_info.sqrt_price_lower) / Q96
 
             v3_ranges.append(
-                _V3TickRangeHop(
+                V3TickRangeHop(
                     liquidity=float(range_info.liquidity),
                     sqrt_price_current=sqrt_price_current,
                     sqrt_price_lower=float(range_info.sqrt_price_lower) / Q96,
@@ -1465,7 +877,7 @@ class PiecewiseMobiusSolver(Solver):
                 )
             )
 
-        sequence = _V3TickRangeSequence(tuple(v3_ranges))
+        sequence = V3TickRangeSequence(tuple(v3_ranges))
 
         # Compute crossing data for this candidate
         try:
@@ -1478,14 +890,14 @@ class PiecewiseMobiusSolver(Solver):
             ) from e
 
         # Build _MobiusHopState lists for before/after V3
-        hops_before: list[_MobiusHopState] = []
-        hops_after: list[_MobiusHopState] = []
+        hops_before: list[MobiusHopState] = []
+        hops_after: list[MobiusHopState] = []
 
         # Convert hops before V3 to _MobiusHopState
         for hop in solve_input.hops[:v3_hop_index]:
             if isinstance(hop, ConstantProductHop | BoundedProductHop):
                 hops_before.append(
-                    _MobiusHopState(
+                    MobiusHopState(
                         reserve_in=float(hop.reserve_in),
                         reserve_out=float(hop.reserve_out),
                         fee=float(hop.fee),
@@ -1496,7 +908,7 @@ class PiecewiseMobiusSolver(Solver):
         for hop in solve_input.hops[v3_hop_index + 1 :]:
             if isinstance(hop, ConstantProductHop | BoundedProductHop):
                 hops_after.append(
-                    _MobiusHopState(
+                    MobiusHopState(
                         reserve_in=float(hop.reserve_in),
                         reserve_out=float(hop.reserve_out),
                         fee=float(hop.fee),
@@ -1532,7 +944,7 @@ class PiecewiseMobiusSolver(Solver):
         )
 
         try:
-            x_mobius, _, _ = _mobius_solve(full_hops, max_input=max_input_float)
+            x_mobius, _, _ = mobius_solve(full_hops, max_input=max_input_float)
         except (ZeroDivisionError, ValueError):
             x_mobius = x_min + 1.0
 
@@ -1586,9 +998,7 @@ class PiecewiseMobiusSolver(Solver):
 
         # Try vectorized batch evaluation for initial bracket refinement
         # This uses NumPy to evaluate multiple points simultaneously
-        import importlib.util
-
-        if importlib.util.find_spec("numpy") is not None:
+        if _NUMPY_AVAILABLE:
             try:
                 vectorized_result = self._vectorized_bracket_search(
                     x_low=x_low,
@@ -1678,8 +1088,6 @@ class PiecewiseMobiusSolver(Solver):
 
         Returns SolveResult if successful, None to fall back to scalar search.
         """
-
-        import numpy as np
 
         # Number of points for initial vectorized evaluation
         # Reduced from 20 to 10 to minimize overhead
@@ -1925,7 +1333,7 @@ class PiecewiseMobiusSolver(Solver):
                     method=SolverMethod.PIECEWISE_MOBIUS.name,
                 )
 
-        if len(v3_hops) != 2:
+        if len(v3_hops) != self.MIN_HOPS:
             raise OptimizationError(
                 message="Need exactly 2 V3 hops",
                 iterations=0,
@@ -2017,7 +1425,7 @@ class PiecewiseMobiusSolver(Solver):
     def _estimate_final_sqrt_price(
         self,
         amount_in: float,
-        ending_range: _V3TickRangeHop,
+        ending_range: V3TickRangeHop,
     ) -> float:
         """Estimate the final sqrt price after swapping within ending range."""
         if amount_in <= 0:
@@ -2257,7 +1665,7 @@ class SolidlyStableSolver(Solver):
 
     @override
     def supports(self, solve_input: SolveInput) -> bool:
-        if solve_input.num_hops < 2:
+        if solve_input.num_hops < self.MIN_HOPS:
             return False
         if not solve_input.has_solidly_stable:
             return False
@@ -2548,7 +1956,7 @@ class BalancerMultiTokenSolver(Solver):
         max_signatures
             Maximum signatures to evaluate before forcing pruning.
         """
-        self._solver = _BalancerWeightedPoolSolver(
+        self._solver = BalancerWeightedPoolSolver(
             use_heuristic_pruning=use_heuristic_pruning,
             max_signatures=max_signatures,
         )
@@ -2582,7 +1990,7 @@ class BalancerMultiTokenSolver(Solver):
                 method=SolverMethod.BALANCER_MULTI_TOKEN.name,
             )
 
-        pool = _BalancerMultiTokenState(
+        pool = BalancerMultiTokenState(
             reserves=hop.reserves,
             weights=hop.weights,
             fee=hop.fee,
@@ -2644,6 +2052,8 @@ class ArbSolver(Solver):
     ...     Hop(reserve_in=1_500_000e6, reserve_out=800e18, fee=Fraction(3, 1000)),
     ... )))
     """
+
+    MIN_HOPS = 2
 
     # Method tag mapping from Rust to Python SolverMethod
     _RUST_METHOD_MAP: ClassVar[dict[int, SolverMethod]] = {
@@ -2806,7 +2216,7 @@ class ArbSolver(Solver):
 
     @override
     def supports(self, solve_input: SolveInput) -> bool:
-        return solve_input.num_hops >= 2
+        return solve_input.num_hops >= self.MIN_HOPS
 
     @override
     def solve(self, solve_input: SolveInput) -> SolveResult:
@@ -3079,20 +2489,8 @@ class ArbSolver(Solver):
         calls MobiusSolver.solve(), and converts the result back to SolveResult.
         Raises OptimizationError on failure.
         """
-        # Deferred import: genuine circular dependency with
-        # arbitrage/solver/mobius_solver.py (which imports from this module).
-        from degenbot.arbitrage.solver.mobius_solver import MobiusSolver
-        from degenbot.arbitrage.solver.types import (
-            ConcentratedLiquidityHopState,
-            MobiusHopState,
-            TickRangeState,
-        )
-        from degenbot.arbitrage.solver.types import (
-            SolverMethod as _GenSolverMethod,
-        )
-
         if self._generalized_solver is None:
-            self._generalized_solver = MobiusSolver()
+            self._generalized_solver = SolverRegistry.get_mobius_solver()
 
         new_hops: list[MobiusHopState | ConcentratedLiquidityHopState] = []
         for hop in solve_input.hops:
@@ -3140,8 +2538,8 @@ class ArbSolver(Solver):
         gen_result = self._generalized_solver.solve(new_hops, max_input=solve_input.max_input)
 
         method_map = {
-            _GenSolverMethod.MOBIUS: SolverMethod.MOBIUS,
-            _GenSolverMethod.PIECEWISE_MOBIUS: SolverMethod.PIECEWISE_MOBIUS,
+            SolverMethod.MOBIUS: SolverMethod.MOBIUS,
+            SolverMethod.PIECEWISE_MOBIUS: SolverMethod.PIECEWISE_MOBIUS,
         }
 
         elapsed_ns = time.perf_counter_ns() - start_ns
@@ -3155,8 +2553,8 @@ class ArbSolver(Solver):
             solve_time_ns=elapsed_ns,
         )
 
-    @staticmethod
     def _integer_refinement(
+        self,
         x_opt: float,
         hops: tuple[HopType, ...],
         max_input: int | None,
@@ -3168,7 +2566,7 @@ class ArbSolver(Solver):
         exceeding i64 range correctly.
         """
         num_hops = len(hops)
-        search_radius = 1 if num_hops <= 2 else min(num_hops, 5)
+        search_radius = 1 if num_hops <= self.MIN_HOPS else min(num_hops, 5)
 
         x_floor = int(x_opt)
         best_input = x_floor
@@ -3202,8 +2600,6 @@ class ArbSolver(Solver):
         3-5 Python float-arithmetic _simulate_path calls (~3.7μs) in favor
         of a single Rust U256 call (~0.2μs).
         """
-        if _rs_mobius is None:
-            return ArbSolver._integer_refinement(x_opt, hops, max_input)
 
         rust_int_hops: list[Any] = []
         for hop in hops:
@@ -3502,8 +2898,6 @@ def pool_to_hop(
 
     # Camelot stable pool — Solidly invariant
     if isinstance(pool, CamelotLiquidityPool) and getattr(pool, "stable_swap", False):
-        from degenbot.camelot.functions import get_y_camelot, k_camelot
-
         if zero_for_one:
             reserve_in = pool.state.reserves_token0
             reserve_out = pool.state.reserves_token1
@@ -3577,8 +2971,6 @@ def pool_to_hop(
 
     # Aerodrome stable pool — Solidly invariant
     if isinstance(pool, AerodromeV2Pool) and getattr(pool, "stable", False):
-        from degenbot.aerodrome.functions import calc_exact_in_stable as _aerodrome_stable_calc
-
         if zero_for_one:
             reserve_in = pool.state.reserves_token0
             reserve_out = pool.state.reserves_token1
@@ -3832,3 +3224,6 @@ def pools_to_solve_input(
         current_token = pool.token1 if current_token == pool.token0 else pool.token0
 
     return SolveInput(hops=tuple(hops), max_input=max_input)
+
+
+SolverRegistry.register_arb_solver(ArbSolver)

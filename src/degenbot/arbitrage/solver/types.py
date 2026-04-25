@@ -1,11 +1,7 @@
 from dataclasses import dataclass
-from enum import Enum, auto
 from fractions import Fraction
 
-
-class SolverMethod(Enum):
-    MOBIUS = auto()
-    PIECEWISE_MOBIUS = auto()
+from degenbot.arbitrage.optimizers.hop_types import SolverMethod
 
 
 @dataclass(frozen=True, slots=True)

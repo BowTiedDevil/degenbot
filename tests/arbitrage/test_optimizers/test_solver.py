@@ -6,10 +6,10 @@ from fractions import Fraction
 
 import pytest
 
+from degenbot.arbitrage.optimizers.hop_types import Hop
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
     BrentSolver,
-    Hop,
     MobiusSolver,
     NewtonSolver,
     SolveInput,
