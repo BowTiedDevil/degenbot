@@ -13,12 +13,7 @@ from fractions import Fraction
 
 from degenbot.degenbot_rs import mobius as rs_mobius
 
-from degenbot.arbitrage.optimizers.solver import (
-    ArbSolver,
-    Hop,
-    SolveInput,
-    SolverMethod,
-)
+from degenbot.arbitrage.optimizers import ArbSolver, Hop, SolveInput, SolverMethod
 
 from .conftest import (
     FEE_0_3_PCT,

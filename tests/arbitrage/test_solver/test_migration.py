@@ -5,39 +5,28 @@ Validates that ArbSolver.solve() produces identical results when
 USE_GENERALIZED_SOLVER is enabled vs disabled.
 """
 
+from contextlib import contextmanager
 from fractions import Fraction
 
 import pytest
 
-from degenbot.arbitrage.optimizers.solver import ArbSolver, ConstantProductHop, SolveInput
+import degenbot.arbitrage.optimizers.solver
+from degenbot.arbitrage.optimizers import ArbSolver, ConstantProductHop, SolveInput
 from degenbot.exceptions import OptimizationError
 
 FEE_03 = Fraction(3, 1000)
 FEE_05 = Fraction(5, 1000)
 
 
-def _solve_with_generalized(hops, max_input=None):
-    import degenbot.arbitrage.optimizers.solver as solver_mod
-
-    old_flag = solver_mod.USE_GENERALIZED_SOLVER
+@contextmanager
+def use_generalized_solver(*, enabled: bool):
+    module = degenbot.arbitrage.optimizers.solver
+    old_flag = module.USE_GENERALIZED_SOLVER
     try:
-        solver_mod.USE_GENERALIZED_SOLVER = True
-        solver = ArbSolver()
-        return solver.solve(SolveInput(hops=hops, max_input=max_input))
+        module.USE_GENERALIZED_SOLVER = enabled
+        yield ArbSolver()
     finally:
-        solver_mod.USE_GENERALIZED_SOLVER = old_flag
-
-
-def _solve_with_legacy(hops, max_input=None):
-    import degenbot.arbitrage.optimizers.solver as solver_mod
-
-    old_flag = solver_mod.USE_GENERALIZED_SOLVER
-    try:
-        solver_mod.USE_GENERALIZED_SOLVER = False
-        solver = ArbSolver()
-        return solver.solve(SolveInput(hops=hops, max_input=max_input))
-    finally:
-        solver_mod.USE_GENERALIZED_SOLVER = old_flag
+        module.USE_GENERALIZED_SOLVER = old_flag
 
 
 class TestGeneralizedSolverMigration:
@@ -54,8 +43,10 @@ class TestGeneralizedSolverMigration:
                 fee=FEE_03,
             ),
         )
-        legacy = _solve_with_legacy(hops)
-        gen = _solve_with_generalized(hops)
+        with use_generalized_solver(enabled=False) as legacy_solver:
+            legacy = legacy_solver.solve(SolveInput(hops=hops))
+        with use_generalized_solver(enabled=True) as generalized_solver:
+            gen = generalized_solver.solve(SolveInput(hops=hops))
 
         assert gen.optimal_input == legacy.optimal_input
         assert gen.profit == legacy.profit
@@ -73,10 +64,10 @@ class TestGeneralizedSolverMigration:
                 fee=FEE_03,
             ),
         )
-        with pytest.raises(OptimizationError):
-            _solve_with_legacy(hops)
-        with pytest.raises(OptimizationError):
-            _solve_with_generalized(hops)
+        with pytest.raises(OptimizationError), use_generalized_solver(enabled=False) as solver:
+            solver.solve(SolveInput(hops=hops))
+        with pytest.raises(OptimizationError), use_generalized_solver(enabled=True) as solver:
+            solver.solve(SolveInput(hops=hops))
 
     def test_three_hop_matches(self):
         hops = (
@@ -84,8 +75,10 @@ class TestGeneralizedSolverMigration:
             ConstantProductHop(3 * 10**18, 10**18, FEE_03),
             ConstantProductHop(2 * 10**18, 4 * 10**18, FEE_03),
         )
-        legacy = _solve_with_legacy(hops)
-        gen = _solve_with_generalized(hops)
+        with use_generalized_solver(enabled=False) as solver:
+            legacy = solver.solve(SolveInput(hops=hops))
+        with use_generalized_solver(enabled=True) as solver:
+            gen = solver.solve(SolveInput(hops=hops))
 
         assert gen.optimal_input == legacy.optimal_input
         assert gen.profit == legacy.profit
@@ -95,8 +88,10 @@ class TestGeneralizedSolverMigration:
             ConstantProductHop(10**27, 10**27, FEE_03),
             ConstantProductHop(10**24, 2 * 10**27, FEE_03),
         )
-        legacy = _solve_with_legacy(hops)
-        gen = _solve_with_generalized(hops)
+        with use_generalized_solver(enabled=False) as legacy_solver:
+            legacy = legacy_solver.solve(SolveInput(hops=hops))
+        with use_generalized_solver(enabled=True) as generalized_solver:
+            gen = generalized_solver.solve(SolveInput(hops=hops))
 
         assert gen.optimal_input == legacy.optimal_input
         assert gen.profit == legacy.profit
@@ -114,8 +109,10 @@ class TestGeneralizedSolverMigration:
                 fee=FEE_05,
             ),
         )
-        legacy = _solve_with_legacy(hops)
-        gen = _solve_with_generalized(hops)
+        with use_generalized_solver(enabled=False) as legacy_solver:
+            legacy = legacy_solver.solve(SolveInput(hops=hops))
+        with use_generalized_solver(enabled=True) as generalized_solver:
+            gen = generalized_solver.solve(SolveInput(hops=hops))
 
         assert gen.optimal_input == legacy.optimal_input
         assert gen.profit == legacy.profit
@@ -134,16 +131,16 @@ class TestGeneralizedSolverMigration:
             ),
         )
         max_input = 10**10
-        legacy = _solve_with_legacy(hops, max_input=max_input)
-        gen = _solve_with_generalized(hops, max_input=max_input)
+        with use_generalized_solver(enabled=False) as legacy_solver:
+            legacy = legacy_solver.solve(SolveInput(hops=hops, max_input=max_input))
+        with use_generalized_solver(enabled=True) as generalized_solver:
+            gen = generalized_solver.solve(SolveInput(hops=hops, max_input=max_input))
 
         assert gen.optimal_input == legacy.optimal_input
         assert gen.profit == legacy.profit
 
     def test_feature_flag_default_off(self):
-        import degenbot.arbitrage.optimizers.solver as solver_mod
-
-        assert not solver_mod.USE_GENERALIZED_SOLVER
+        assert not degenbot.arbitrage.optimizers.solver.USE_GENERALIZED_SOLVER
 
     def test_five_hop_matches(self):
         hops = tuple(
@@ -154,12 +151,11 @@ class TestGeneralizedSolverMigration:
             )
             for i in range(5)
         )
-        legacy = _solve_with_legacy(hops)
-        gen = _solve_with_generalized(hops)
 
-        try:
-            pass
-        except OptimizationError:
-            pytest.skip("Five-hop path not profitable")
+        with use_generalized_solver(enabled=False) as legacy_solver:
+            legacy = legacy_solver.solve(SolveInput(hops=hops))
+        with use_generalized_solver(enabled=True) as generalized_solver:
+            gen = generalized_solver.solve(SolveInput(hops=hops))
+
         assert gen.optimal_input == legacy.optimal_input
         assert gen.profit == legacy.profit

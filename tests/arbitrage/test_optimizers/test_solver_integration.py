@@ -8,12 +8,9 @@ import time
 
 import pytest
 
+from degenbot.arbitrage.optimizers import Hop, SolveInput, SolveResult, SolverMethod
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
-    Hop,
-    SolveInput,
-    SolveResult,
-    SolverMethod,
     _compute_mobius_coefficients,
     _simulate_path,
 )
@@ -354,7 +351,8 @@ class TestPoolStateToHop:
     def test_v3_hop_has_v3_flag(self):
         """V3 pool should produce a Hop with is_v3=True."""
 
-        from degenbot.arbitrage.optimizers.solver import Hop, _v3_virtual_reserves
+        from degenbot.arbitrage.optimizers import Hop
+        from degenbot.arbitrage.optimizers.solver import _v3_virtual_reserves
 
         # Build a V3-style Hop manually
         L = 1_000_000_000_000_000_000
