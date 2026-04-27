@@ -231,5 +231,5 @@ class TestV3V3ProfitComputation:
         max_input = result_unconstrained.optimal_input * 0.1
         result_constrained = mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2, max_input)
 
-        assert result_constrained.optimal_input <= max_input * 1.01  # Within 1% tolerance
+        assert result_constrained.optimal_input <= max_input
         assert result_constrained.profit <= result_unconstrained.profit

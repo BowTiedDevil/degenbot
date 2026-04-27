@@ -16,7 +16,6 @@ from degenbot.arbitrage.optimizers.solver import (
     SolveInput,
     V3TickRangeInfo,
 )
-from degenbot.exceptions import OptimizationError
 
 # Test constants
 Q96 = 2**96
@@ -125,12 +124,6 @@ def test_piecewise_performance_multi_candidate():
 
     input_data = SolveInput(hops=(v3_hop, v2_hop))
 
-    # Check that solve actually works before benchmarking
-    try:
-        solver.solve(input_data)
-    except OptimizationError:
-        pytest.skip("Test data not profitable, benchmark meaningless")
-
     # Warmup
     for _ in range(5):
         solver.solve(input_data)
@@ -205,12 +198,6 @@ def test_rust_vs_python_performance():
 
     # Force Rust path by calling _try_rust_candidate_range directly
     # Then compare with Python fallback
-
-    # Check that solve actually works before benchmarking
-    try:
-        solver.solve(input_data)
-    except OptimizationError:
-        pytest.skip("Test data not profitable, benchmark meaningless")
 
     # Warmup
     for _ in range(5):

@@ -340,7 +340,7 @@ class TestMobiusArbitrageVsV3Integer:
         x_mobius, profit_mobius, _ = mobius_solve(hops)
 
         if x_mobius <= 0:
-            pytest.skip("No profitable arbitrage found by Möbius")
+            pytest.xfail("No profitable arbitrage found by Möbius for this test setup")
 
         # --- Check if Möbius solution stays in V3 range ---
         weth_out_v2_at_opt = int(
@@ -499,7 +499,7 @@ class TestMobiusArbitrageVsV3Integer:
         x_opt, _, _ = mobius_solve(hops)
 
         if x_opt <= 0:
-            pytest.skip("No profitable arbitrage for this test setup")
+            pytest.xfail("No profitable arbitrage for this test setup")
 
         x_opt_int = int(x_opt)
 

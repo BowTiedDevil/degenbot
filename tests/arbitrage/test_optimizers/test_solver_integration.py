@@ -151,11 +151,8 @@ class TestSolverFastPathEdgeCases:
             Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
             Hop(reserve_in=WETH_800, reserve_out=USDC_1_5M, fee=FEE_0_3_PCT),
         )
-        try:
-            result = solver.solve(SolveInput(hops=hops, max_input=100))
-            assert isinstance(result, SolveResult)
-        except OptimizationError:
-            pass
+        with pytest.raises(OptimizationError):
+            solver.solve(SolveInput(hops=hops, max_input=100))
 
     def test_very_small_price_difference(self, solver):
         """Very small price difference between pools."""
@@ -163,11 +160,8 @@ class TestSolverFastPathEdgeCases:
             Hop(reserve_in=1_000_000_000_000, reserve_out=500_000_000_000_000_000, fee=FEE_0_3_PCT),
             Hop(reserve_in=499_000_000_000_000_000, reserve_out=1_001_000_000_000, fee=FEE_0_3_PCT),
         )
-        try:
-            result = solver.solve(SolveInput(hops=hops))
-            assert isinstance(result, SolveResult)
-        except OptimizationError:
-            pass
+        with pytest.raises(OptimizationError):
+            solver.solve(SolveInput(hops=hops))
 
 
 # ---------------------------------------------------------------------------
@@ -384,12 +378,11 @@ class TestArbSolverAllPoolTypes:
         return ArbSolver()
 
     def test_v3_buy_v2_sell(self, solver):
-        """V3 buy pool + V2 sell pool: should succeed with virtual reserves."""
+        """V3 buy pool + V2 sell pool: no arbitrage at same effective rate."""
         from degenbot.arbitrage.optimizers.solver import _v3_virtual_reserves
 
         L = 1_000_000_000_000_000_000
-        sqrt_price_x96 = 2**96
-        # V3 buy pool (token0 in, token1 out)
+        sqrt_price_x96 = int(1.1 * (2**96))
         v3_r_in, v3_r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
 
         hops = (
@@ -404,18 +397,15 @@ class TestArbSolverAllPoolTypes:
             ),
             Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
         )
-        try:
-            result = solver.solve(SolveInput(hops=hops))
-            assert isinstance(result, SolveResult)
-        except (OptimizationError, AssertionError):
-            pass
+        with pytest.raises(OptimizationError):
+            solver.solve(SolveInput(hops=hops))
 
     def test_v2_buy_v3_sell(self, solver):
         """V2 buy pool + V3 sell pool: should succeed."""
         from degenbot.arbitrage.optimizers.solver import _v3_virtual_reserves
 
-        L = 2_000_000_000_000_000_000  # Higher liquidity for V3 sell
-        sqrt_price_x96 = int(2.0 * (2**96))  # price = 4.0
+        L = 2_000_000_000_000_000_000
+        sqrt_price_x96 = int(2.0 * (2**96))
         v3_r_in, v3_r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
 
         hops = (
@@ -432,43 +422,6 @@ class TestArbSolverAllPoolTypes:
         )
         result = solver.solve(SolveInput(hops=hops))
         assert isinstance(result, SolveResult)
-
-    def test_v3_buy_v3_sell(self, solver):
-        """V3 buy pool + V3 sell pool: should succeed."""
-        from degenbot.arbitrage.optimizers.solver import _v3_virtual_reserves
-
-        L_lo = 1_000_000_000_000_000_000
-        L_hi = 2_000_000_000_000_000_000
-        sqrt_price_x96 = 2**96
-
-        lo_r_in, lo_r_out = _v3_virtual_reserves(L_lo, sqrt_price_x96, zero_for_one=True)
-        hi_r_in, hi_r_out = _v3_virtual_reserves(L_hi, sqrt_price_x96, zero_for_one=True)
-
-        hops = (
-            Hop(
-                reserve_in=lo_r_in,
-                reserve_out=lo_r_out,
-                fee=FEE_0_3_PCT,
-                liquidity=L_lo,
-                sqrt_price=sqrt_price_x96,
-                tick_lower=0,
-                tick_upper=0,
-            ),
-            Hop(
-                reserve_in=hi_r_in,
-                reserve_out=hi_r_out,
-                fee=FEE_0_3_PCT,
-                liquidity=L_hi,
-                sqrt_price=sqrt_price_x96,
-                tick_lower=0,
-                tick_upper=0,
-            ),
-        )
-        try:
-            result = solver.solve(SolveInput(hops=hops))
-            assert isinstance(result, SolveResult)
-        except (OptimizationError, AssertionError):
-            pass
 
 
 class TestArbSolverMultiHop:

@@ -778,7 +778,7 @@ class TestV3V3VsBrent:
         __x_brent, profit_brent, brent_success = v3_v3_brent_solve(seq1, seq2)
 
         if not result_rust.success and not brent_success:
-            pytest.skip("Neither solver found profit")
+            pytest.xfail("Neither solver found profit for this test setup")
 
         assert brent_success, "Brent solver should find profit for single-range V3-V3"
 
@@ -829,7 +829,7 @@ class TestV3V3VsBrent:
         __x_brent, profit_brent, brent_success = v3_v3_brent_solve(seq1, seq2)
 
         if not result_rust.success and not brent_success:
-            pytest.skip("Neither solver found profit")
+            pytest.xfail("Neither solver found profit for this test setup")
 
         if brent_success and profit_brent > 0 and result_rust.success:
             rel_diff = abs(result_rust.profit - profit_brent) / profit_brent
@@ -839,7 +839,7 @@ class TestV3V3VsBrent:
             )
 
     def test_both_pools_crossing_matches_brent(self):
-        """V3-V3 with both pools crossing should match Brent within 1%."""
+        """V3-V3 with both pools crossing should match Brent within 0.5%."""
         sqrt_pa = math.sqrt(2000.0)
         sqrt_pb = math.sqrt(1900.0)
         fee = 0.003
@@ -886,12 +886,11 @@ class TestV3V3VsBrent:
         __x_brent, profit_brent, brent_success = v3_v3_brent_solve(seq1, seq2)
 
         if not result_rust.success and not brent_success:
-            pytest.skip("Neither solver found profit")
+            pytest.xfail("Neither solver found profit for this test setup")
 
         if brent_success and profit_brent > 0 and result_rust.success:
             rel_diff = abs(result_rust.profit - profit_brent) / profit_brent
-            # Both crossing: relax to 1% due to piecewise approximation
-            assert rel_diff < 0.01, (
+            assert rel_diff < 0.005, (
                 f"Rust profit={result_rust.profit}, Brent profit={profit_brent}, "
                 f"rel_diff={rel_diff:.6f}"
             )
@@ -963,7 +962,7 @@ class TestV3V3VsBrent:
         )
 
         if result_constrained.success:
-            assert result_constrained.optimal_input <= max_input * 1.01, (
+            assert result_constrained.optimal_input <= max_input, (
                 f"Constrained input {result_constrained.optimal_input:.2e} "
                 f"exceeds max_input {max_input:.2e}"
             )

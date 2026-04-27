@@ -2,6 +2,7 @@
 Unit tests for the pool state generator.
 """
 
+import math
 from fractions import Fraction
 
 import pytest
@@ -64,9 +65,13 @@ class TestV2PoolStateGeneration:
         )
 
         assert isinstance(state, UniswapV2PoolState)
-        # Price should be approximately 2000
+        liquidity_base = 10**21
+        expected_r0 = int(math.sqrt(liquidity_base / 2000.0))
+        expected_r1 = int(math.sqrt(liquidity_base * 2000.0))
+        assert state.reserves_token0 == expected_r0
+        assert state.reserves_token1 == expected_r1
         actual_price = state.reserves_token1 / state.reserves_token0
-        assert 1900 < actual_price < 2100
+        assert abs(actual_price - 2000.0) / 2000.0 < 1e-9
 
 
 class TestV3PoolStateGeneration:
@@ -126,8 +131,11 @@ class TestV3PoolStateGeneration:
         )
 
         assert isinstance(state, UniswapV3PoolState)
-        # Tick should be approximately log(2000)/log(1.0001) ≈ 76000
-        assert 75000 < state.tick < 77000
+        expected_tick = (
+            round(math.log(2000.0) / math.log(1.0001) / config.tick_spacing)
+            * config.tick_spacing
+        )
+        assert state.tick == expected_tick
 
 
 class TestV4PoolStateGeneration:
@@ -169,12 +177,10 @@ class TestProfitablePairGeneration:
             liquidity_base=10**21,
         )
 
-        # Check pools have different prices
         price_a = pool_a.reserves_token1 / pool_a.reserves_token0
         price_b = pool_b.reserves_token1 / pool_b.reserves_token0
 
-        # Price ratio should be approximately 1.02
-        assert abs(price_a / price_b - 1.02) < 0.01
+        assert abs(price_a / price_b - 1.02) / 1.02 < 1e-6
 
     def test_generate_profitable_v3_pair(self, generator: PoolStateGenerator) -> None:
         """Test that V3 pair generation creates arbitrage opportunity."""
@@ -186,8 +192,10 @@ class TestProfitablePairGeneration:
             liquidity=10**18,
         )
 
-        # Check pools have different sqrt prices
-        assert pool_a.sqrt_price_x96 != pool_b.sqrt_price_x96
+        Q96 = 2**96
+        price_a = (pool_a.sqrt_price_x96 / Q96) ** 2
+        price_b = (pool_b.sqrt_price_x96 / Q96) ** 2
+        assert abs(price_a / price_b - 1.02) / 1.02 < 0.01
 
     def test_generate_profitable_v4_pair(self, generator: PoolStateGenerator) -> None:
         """Test that V4 pair generation creates arbitrage opportunity."""
@@ -201,8 +209,10 @@ class TestProfitablePairGeneration:
             liquidity=10**18,
         )
 
-        # Check pools have different sqrt prices
-        assert pool_a.sqrt_price_x96 != pool_b.sqrt_price_x96
+        Q96 = 2**96
+        price_a = (pool_a.sqrt_price_x96 / Q96) ** 2
+        price_b = (pool_b.sqrt_price_x96 / Q96) ** 2
+        assert abs(price_a / price_b - 1.02) / 1.02 < 0.01
 
     def test_generate_profitable_mixed_pair(self, generator: PoolStateGenerator) -> None:
         """Test mixed V2/V3 pair generation."""
@@ -239,11 +249,10 @@ class TestPriceDiscrepancyInjection:
             discrepancy=discrepancy,
         )
 
-        # Pools should have different prices
         price_a = pool_a.reserves_token1 / pool_a.reserves_token0
         price_b = pool_b.reserves_token1 / pool_b.reserves_token0
 
-        assert price_a != price_b
+        assert abs(price_a / price_b - 1.02) / 1.02 < 1e-6
 
 
 class TestProfitValidation:

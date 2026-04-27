@@ -137,10 +137,18 @@ class TestBuildSwapAmountsThreeHop:
         t1 = FakeToken("0xtokenB")
         t2 = FakeToken("0xtokenC")
 
-        pool0 = _make_pool_with_swap(t0, t1, reserve0=10**18, reserve1=2 * 10**18, address="0xp0")
-        pool1 = _make_pool_with_swap(t1, t2, reserve0=3 * 10**18, reserve1=10**18, address="0xp1")
+        # Reserves chosen so the three-hop path is profitable:
+        # pool0: tokenA -> tokenB (cheap to buy tokenB)
+        # pool1: tokenB -> tokenC (cheap to buy tokenC)
+        # pool2: tokenC -> tokenA (expensive to sell tokenC)
+        pool0 = _make_pool_with_swap(
+            t0, t1, reserve0=10_000_000, reserve1=20_000_000, address="0xp0"
+        )
+        pool1 = _make_pool_with_swap(
+            t1, t2, reserve0=20_000_000, reserve1=30_000_000, address="0xp1"
+        )
         pool2 = _make_pool_with_swap(
-            t2, t0, reserve0=2 * 10**18, reserve1=4 * 10**18, address="0xp2"
+            t2, t0, reserve0=30_000_000, reserve1=40_000_000, address="0xp2"
         )
 
         solver = MobiusSolver()
@@ -151,8 +159,7 @@ class TestBuildSwapAmountsThreeHop:
         )
 
         result = path.calculate()
-        if result.profit == 0:
-            pytest.skip("Three-hop path not profitable with these reserves")
+        assert result.profit > 0, "Three-hop path should be profitable with these reserves"
 
         arb_result = path.build_swap_amounts(result)
         assert len(arb_result.swap_amounts) == 3
