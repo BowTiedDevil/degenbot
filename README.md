@@ -567,7 +567,6 @@ Commands accepting `--to-block` support the following formats:
 |----------|--------|-------------|
 | `DEGENBOT_DEBUG` | `1`, `true`, `yes` | Enable debug-level logging output |
 | `DEGENBOT_DEBUG_FUNCTION_CALLS` | `1`, `true`, `yes` | Enable function call trace logging |
-| `DEGENBOT_COVERAGE` | `1` | Enable CLI code coverage tracking (dev use) |
 
 ```bash
 DEGENBOT_DEBUG=1 python my_script.py

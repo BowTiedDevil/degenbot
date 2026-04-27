@@ -21,8 +21,6 @@ complexity: simple
 |----------|--------|-------------|
 | `DEGENBOT_DEBUG` | `1`, `true`, `yes` | Enable debug-level logging output globally |
 | `DEGENBOT_DEBUG_FUNCTION_CALLS` | `1`, `true`, `yes` | Enable function call trace logging |
-| `DEGENBOT_COVERAGE` | `1` | Enable CLI code coverage tracking (dev use) |
-| `DEGENBOT_COVERAGE_OUTPUT` | directory path | Output directory for coverage report (default: `htmlcov`) |
 
 Set `DEGENBOT_DEBUG` before importing degenbot to see all `logger.debug()` messages throughout the codebase. This is useful for troubleshooting and development.
 

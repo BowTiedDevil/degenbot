@@ -61,12 +61,12 @@ exclude_also = [
 
 [tool.coverage.run]
 source = ["src/degenbot"]
+parallel = true
+branch = true
 
 [tool.mypy]
 plugins = ["pydantic.mypy"]
-files=[
-    "src/degenbot",
-]
+files=["src/degenbot"]
 python_version = "3.12"
 python_executable = ".venv/bin/python"
 untyped_calls_exclude = "cvxpy"
