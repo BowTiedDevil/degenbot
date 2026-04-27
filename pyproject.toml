@@ -55,8 +55,8 @@ exclude_also = [
     "def __repr__",
     "def __str__",
     "logger.debug",
-    "assert_never",    
-    "case _:", # exclude catch-all
+    "assert_never",
+    "case _",
 ]
 
 [tool.coverage.run]
