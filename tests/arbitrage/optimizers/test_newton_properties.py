@@ -133,7 +133,7 @@ class TestThresholdComparison:
                     "iterations": iterations,
                     "success": True,
                 })
-            except Exception as e:  # noqa: BLE001
+            except (ValueError, ZeroDivisionError, OverflowError) as e:
                 results.append({"threshold": threshold, "error": str(e), "success": False})
 
         # Analyze results
@@ -147,9 +147,10 @@ class TestThresholdComparison:
 
             # If relative difference > 1%, threshold matters
             if avg_x > 0 and max_diff / avg_x > 0.01:
-                # This is interesting - threshold choice affects result
-                # Record for analysis but don't fail
-                pass
+                pytest.xfail(
+                    f"Threshold choice affects result by {max_diff / avg_x:.2%}: "
+                    f"x_opts={x_opts}"
+                )
 
     @pytest.mark.parametrize(
         "min_hessian",
@@ -277,6 +278,7 @@ class TestHessianFormulaCorrectness:
             error = abs(hessian - hessian_fd)
             relative_error = error / hessian_abs
             # Allow 2% relative error or absolute error of 1e-25, whichever is larger
+            # (finite difference approximation has inherent numerical error)
             assert relative_error < 0.02 or error < 1e-25, (
                 f"Hessian mismatch: analytical={hessian:.6e}, "
                 f"finite_diff={hessian_fd:.6e}, relative_error={relative_error:.2%}"

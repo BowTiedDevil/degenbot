@@ -2,6 +2,8 @@
 Tests for mock pools.
 """
 
+from fractions import Fraction
+
 import pytest
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
@@ -16,7 +18,6 @@ from degenbot.uniswap.v3_types import (
 )
 from degenbot.uniswap.v4_types import UniswapV4PoolState
 from tests.arbitrage.generator import FixtureFactory
-from tests.arbitrage.generator.fixtures import ArbitrageCycleFixture
 from tests.arbitrage.mock_pools import (
     MockErc20Token,
     MockV2Pool,
@@ -134,15 +135,21 @@ class TestMockV2Pool:
             pool_state,
         )
 
-        # Sell 1000 USDC for WETH
-        amount_out = pool.calculate_tokens_out_from_tokens_in(
-            token_in=usdc,
-            token_in_quantity=1000000000,  # 1000 USDC
+        # Sell 1000 USDC for WETH: 1000 * 997 * 10**18 / (2000000000 * 1000 + 1000 * 997)
+        fee = Fraction(3, 1000)
+        gamma = fee.denominator - fee.numerator
+        expected_amount_out = (
+            pool_state.reserves_token1
+            * (1000000000 * gamma)
+            // (pool_state.reserves_token0 * fee.denominator + 1000000000 * gamma)
         )
 
-        # Should get roughly 0.5 ETH (minus fee)
-        assert amount_out > 0
-        assert amount_out < 10**18
+        amount_out = pool.calculate_tokens_out_from_tokens_in(
+            token_in=usdc,
+            token_in_quantity=1000000000,
+        )
+
+        assert amount_out == expected_amount_out
 
     def test_calculate_with_override_state(
         self,
@@ -150,7 +157,7 @@ class TestMockV2Pool:
         weth: MockErc20Token,
         pool_state: UniswapV2PoolState,
     ) -> None:
-        """Test calculation with state override."""
+        """Test calculation with state override produces different output."""
         pool = MockV2Pool(
             ChecksumAddress("0x0000000000000000000000000000000000000001"),
             usdc,
@@ -158,12 +165,11 @@ class TestMockV2Pool:
             pool_state,
         )
 
-        # Different state
         override_state = UniswapV2PoolState(
             address=ChecksumAddress("0x0000000000000000000000000000000000000001"),
             block=12346,
-            reserves_token0=4000000000,  # 4000 USDC
-            reserves_token1=10**18,  # 1 WETH
+            reserves_token0=4000000000,
+            reserves_token1=10**18,
         )
 
         amount_normal = pool.calculate_tokens_out_from_tokens_in(
@@ -177,8 +183,8 @@ class TestMockV2Pool:
             override_state=override_state,
         )
 
-        # Different reserves = different output
-        assert amount_normal != amount_override
+        # Override has 2x token0 reserves, so token1 is scarcer → output is smaller
+        assert amount_override < amount_normal
 
     def test_swap_is_viable(
         self,
@@ -536,73 +542,7 @@ class TestUniswapLpCycleIntegration:
 
         cycle, pools = create_cycle_with_mocks(fixture, token0, token1)
 
-        # Build state overrides from fixture
         state_overrides = dict(zip(pools, fixture.pool_states.values(), strict=False))
 
-        # Run calculation - may raise ArbitrageError if not profitable
-        # We're testing that mock pools integrate with UniswapLpCycle
-        try:
-            result = cycle.calculate(state_overrides=state_overrides)
-            assert result.id == "test_cycle"
-            assert result.input_amount >= 0
-        except ArbitrageError:
-            # Solver didn't find profitable opportunity - OK for this test
-            pass
-
-    def test_calculate_produces_profit(self) -> None:
-        """Test that calculation can find profit with manually configured pools."""
-
-        # Create pools with guaranteed arbitrage opportunity
-        # Pool A: 1 WETH = 2000 USDC (token0=USDC, token1=WETH)
-        # Pool B: 1 WETH = 2100 USDC (5% higher price)
-        # Arbitrage: Buy WETH in A (cheap), sell in B (expensive)
-
-        token0 = MockErc20Token(
-            ChecksumAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
-            "USDC",
-            6,
-        )
-        token1 = MockErc20Token(
-            ChecksumAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
-            "WETH",
-            18,
-        )
-
-        # Pool A: 10000 USDC, 5 WETH (price = 2000 USDC per WETH)
-        state_a = UniswapV2PoolState(
-            address=ChecksumAddress("0x0000000000000000000000000000000000000001"),
-            block=0,
-            reserves_token0=10_000_000_000,  # 10000 USDC (6 decimals)
-            reserves_token1=5 * 10**18,  # 5 WETH
-        )
-
-        # Pool B: 10500 USDC, 5 WETH (price = 2100 USDC per WETH)
-        state_b = UniswapV2PoolState(
-            address=ChecksumAddress("0x0000000000000000000000000000000000000002"),
-            block=0,
-            reserves_token0=10_500_000_000,  # 10500 USDC
-            reserves_token1=5 * 10**18,  # 5 WETH
-        )
-
-        pool_a = MockV2Pool(state_a.address, token0, token1, state_a)
-        pool_b = MockV2Pool(state_b.address, token0, token1, state_b)
-
-        # Create a simple fixture-like structure
-        fixture = ArbitrageCycleFixture(
-            id="manual_arb",
-            cycle_type="v2_v2",
-            pool_states={state_a.address: state_a, state_b.address: state_b},
-            input_token_address=token0.address,  # USDC is input
-        )
-
-        cycle, _pools = create_cycle_with_mocks(fixture, token0, token1)
-        state_overrides = {pool_a: state_a, pool_b: state_b}
-
-        # The calculation should run
-        try:
-            result = cycle.calculate(state_overrides=state_overrides)
-            assert result.id == "test_cycle"
-        except ArbitrageError:
-            # Solver didn't find profitable opportunity
-            # This is OK - we're testing infrastructure works
-            pass
+        with pytest.raises(ArbitrageError):
+            cycle.calculate(state_overrides=state_overrides)

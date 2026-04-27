@@ -85,10 +85,7 @@ class TestEventDrivenAutoSolve:
 
         last_notification = subscriber.notifications[-1]
         _, msg = last_notification
-        if isinstance(msg, _StateUpdatedNoProfit):
-            assert True
-        elif isinstance(msg, _ProfitableStateDiscovered):
-            pass
+        assert isinstance(msg, (_ProfitableStateDiscovered | _StateUpdatedNoProfit))
 
     def test_state_override_does_not_affect_subscribed_state(self):
         path, pool0, _pool1, _t0, _t1 = _make_cyclic_path()

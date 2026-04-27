@@ -157,8 +157,8 @@ class TestOptimizerMethodComparison:
             f"Bounded did not find profitable arbitrage, fun={result_bounded.fun}"
         )
 
-        # Optimal inputs should be close (within 1% relative tolerance)
-        assert result_brent.x == pytest.approx(result_bounded.x, rel=1e-2)
+        # Optimal inputs should be close (within 0.1% relative tolerance)
+        assert result_brent.x == pytest.approx(result_bounded.x, rel=1e-3)
 
     def test_golden_vs_bounded_finds_same_optimum(
         self,
@@ -195,9 +195,13 @@ class TestOptimizerMethodComparison:
             f"Bounded did not find profitable arbitrage, fun={result_bounded.fun}"
         )
 
-        # Optimal inputs should be close
-        assert result_golden.x == pytest.approx(result_bounded.x, rel=1e-2)
+        # Optimal inputs should be close (within 0.1% relative tolerance)
+        assert result_golden.x == pytest.approx(result_bounded.x, rel=1e-3)
 
+    @pytest.mark.xfail(
+        reason="Brent may be slower than Golden in CI due to timing variance",
+        strict=False,
+    )
     def test_brent_faster_than_golden(
         self,
         profit_function: "Callable[[float], float]",
@@ -247,11 +251,10 @@ class TestOptimizerMethodComparison:
         print(f"Brent evaluations: {result_brent.nfev}")
         print(f"Golden evaluations: {result_golden.nfev}")
 
-        # Brent should generally be faster (this is a soft assertion)
-        if brent_time > golden_time:
-            pytest.skip(
-                f"Brent was slower ({brent_time:.4f}s vs {golden_time:.4f}s) - acceptable variance"
-            )
+        # Brent should generally be faster
+        assert brent_time <= golden_time, (
+            f"Brent was slower ({brent_time:.4f}s vs {golden_time:.4f}s)"
+        )
 
     def test_brent_fewer_evaluations_than_golden(
         self,
