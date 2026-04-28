@@ -13,6 +13,7 @@ from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
     _compute_mobius_coefficients,
     _simulate_path,
+    _v3_virtual_reserves,
 )
 from degenbot.exceptions import OptimizationError
 
@@ -306,14 +307,17 @@ class TestV3VirtualReserves:
 
     def test_virtual_reserves_basic(self):
         """V3 virtual reserves should match L/sqrt_p and L*sqrt_p."""
-        from degenbot.arbitrage.optimizers.solver import _v3_virtual_reserves
 
         # L=1e18, sqrt_price_x96 = 2^96 (price = 1.0)
         L = 1_000_000_000_000_000_000  # 1e18
         sqrt_price_x96 = 2**96  # price = 1.0
 
         # token0 as input (zero_for_one=True)
-        r_in, r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
+        r_in, r_out = _v3_virtual_reserves(
+            liquidity=L,
+            sqrt_price_x96=sqrt_price_x96,
+            zero_for_one=True,
+        )
         # R0 = L/sqrt_p = 1e18/1.0 = 1e18 (scaled by Q96)
         # R1 = L*sqrt_p = 1e18*1.0 = 1e18 (scaled by Q96)
         assert r_in > 0
@@ -324,14 +328,21 @@ class TestV3VirtualReserves:
 
     def test_virtual_reserves_unequal_price(self):
         """At price != 1.0, virtual reserves should reflect the price."""
-        from degenbot.arbitrage.optimizers.solver import _v3_virtual_reserves
 
         L = 1_000_000_000_000_000_000
         # sqrt_price = 2.0 → price = 4.0 (token1 is 4x token0)
         sqrt_price_x96 = int(2.0 * (2**96))
 
-        r_in_zfo, r_out_zfo = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
-        r_in_ofz, r_out_ofz = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=False)
+        r_in_zfo, r_out_zfo = _v3_virtual_reserves(
+            liquidity=L,
+            sqrt_price_x96=sqrt_price_x96,
+            zero_for_one=True,
+        )
+        r_in_ofz, r_out_ofz = _v3_virtual_reserves(
+            liquidity=L,
+            sqrt_price_x96=sqrt_price_x96,
+            zero_for_one=False,
+        )
 
         # zero_for_one: R0_in = L/sqrt_p (smaller), R1_out = L*sqrt_p (larger)
         assert r_out_zfo > r_in_zfo, "R1 = L*sqrt_p should be larger than R0 = L/sqrt_p"
@@ -345,13 +356,14 @@ class TestPoolStateToHop:
     def test_v3_hop_has_v3_flag(self):
         """V3 pool should produce a Hop with is_v3=True."""
 
-        from degenbot.arbitrage.optimizers import Hop
-        from degenbot.arbitrage.optimizers.solver import _v3_virtual_reserves
-
         # Build a V3-style Hop manually
         L = 1_000_000_000_000_000_000
         sqrt_price_x96 = 2**96
-        r_in, r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
+        r_in, r_out = _v3_virtual_reserves(
+            liquidity=L,
+            sqrt_price_x96=sqrt_price_x96,
+            zero_for_one=True,
+        )
 
         hop = Hop(
             reserve_in=r_in,
@@ -379,11 +391,14 @@ class TestArbSolverAllPoolTypes:
 
     def test_v3_buy_v2_sell(self, solver):
         """V3 buy pool + V2 sell pool: no arbitrage at same effective rate."""
-        from degenbot.arbitrage.optimizers.solver import _v3_virtual_reserves
 
         L = 1_000_000_000_000_000_000
         sqrt_price_x96 = int(1.1 * (2**96))
-        v3_r_in, v3_r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
+        v3_r_in, v3_r_out = _v3_virtual_reserves(
+            liquidity=L,
+            sqrt_price_x96=sqrt_price_x96,
+            zero_for_one=True,
+        )
 
         hops = (
             Hop(
@@ -402,11 +417,14 @@ class TestArbSolverAllPoolTypes:
 
     def test_v2_buy_v3_sell(self, solver):
         """V2 buy pool + V3 sell pool: should succeed."""
-        from degenbot.arbitrage.optimizers.solver import _v3_virtual_reserves
 
         L = 2_000_000_000_000_000_000
         sqrt_price_x96 = int(2.0 * (2**96))
-        v3_r_in, v3_r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
+        v3_r_in, v3_r_out = _v3_virtual_reserves(
+            liquidity=L,
+            sqrt_price_x96=sqrt_price_x96,
+            zero_for_one=True,
+        )
 
         hops = (
             Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),

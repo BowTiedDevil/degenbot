@@ -13,6 +13,7 @@ from degenbot.arbitrage.optimizers.solver import (
     SolveInput,
     SolveResult,
     SolverMethod,
+    _v3_virtual_reserves,
 )
 from degenbot.exceptions import OptimizationError
 
@@ -28,34 +29,40 @@ class TestV3BuyPoolFastPath:
 
     def test_v3_buypool_detected_as_bounded_product(self):
         """V3 buy pool should be detected as BoundedProductHop."""
-        from degenbot.arbitrage.optimizers.solver import _v3_virtual_reserves
 
         L = 1_000_000_000_000_000_000
         sqrt_price_x96 = 2**96
-        r_in, r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
+        r_in, r_out = _v3_virtual_reserves(
+            liquidity=L,
+            sqrt_price_x96=sqrt_price_x96,
+            zero_for_one=True,
+        )
 
         hop = BoundedProductHop(
-        reserve_in=r_in,
-        reserve_out=r_out,
-        fee=FEE_0_3_PCT,
-        liquidity=L,
-        sqrt_price=sqrt_price_x96,
-        tick_lower=0,
-        tick_upper=0,
+            reserve_in=r_in,
+            reserve_out=r_out,
+            fee=FEE_0_3_PCT,
+            liquidity=L,
+            sqrt_price=sqrt_price_x96,
+            tick_lower=0,
+            tick_upper=0,
         )
         assert hop.is_v3
         assert hop.invariant.name == "BOUNDED_PRODUCT"
 
     def test_v3_buypool_with_v2_sell_path_completes(self, solver):
         """V3 buy + V2 sell path should complete without error."""
-        from degenbot.arbitrage.optimizers.solver import _v3_virtual_reserves
 
         L = 1_000_000_000_000_000_000
         sqrt_price_x96 = 2**96
-        v3_r_in, v3_r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
+        v3_r_in, v3_r_out = _v3_virtual_reserves(
+            liquidity=L,
+            sqrt_price_x96=sqrt_price_x96,
+            zero_for_one=True,
+        )
 
         hops = (
-        BoundedProductHop(
+            BoundedProductHop(
                 reserve_in=v3_r_in,
                 reserve_out=v3_r_out,
                 fee=FEE_0_3_PCT,
@@ -63,12 +70,12 @@ class TestV3BuyPoolFastPath:
                 sqrt_price=sqrt_price_x96,
                 tick_lower=0,
                 tick_upper=0,
-        ),
-        ConstantProductHop(
+            ),
+            ConstantProductHop(
                 reserve_in=WETH_1000,
                 reserve_out=USDC_2M,
                 fee=FEE_0_3_PCT,
-        ),
+            ),
         )
         try:
             result = solver.solve(SolveInput(hops=hops))
@@ -78,14 +85,17 @@ class TestV3BuyPoolFastPath:
 
     def test_v3_buypool_solver_selects_mobius_or_piecewise(self, solver):
         """For V3+V2 paths, solver should use Mobius or PiecewiseMobius."""
-        from degenbot.arbitrage.optimizers.solver import _v3_virtual_reserves
 
         L = 2_000_000_000_000_000_000
         sqrt_price_x96 = int(1.5 * (2**96))  # price = 2.25
-        v3_r_in, v3_r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
+        v3_r_in, v3_r_out = _v3_virtual_reserves(
+            liquidity=L,
+            sqrt_price_x96=sqrt_price_x96,
+            zero_for_one=True,
+        )
 
         hops = (
-        BoundedProductHop(
+            BoundedProductHop(
                 reserve_in=v3_r_in,
                 reserve_out=v3_r_out,
                 fee=FEE_0_3_PCT,
@@ -93,12 +103,12 @@ class TestV3BuyPoolFastPath:
                 sqrt_price=sqrt_price_x96,
                 tick_lower=0,
                 tick_upper=0,
-        ),
-        ConstantProductHop(
+            ),
+            ConstantProductHop(
                 reserve_in=WETH_1000,
                 reserve_out=USDC_2M,
                 fee=FEE_0_3_PCT,
-        ),
+            ),
         )
         try:
             result = solver.solve(SolveInput(hops=hops))
@@ -108,13 +118,16 @@ class TestV3BuyPoolFastPath:
 
     def test_v3_buypool_approximation_matches_v3_math(self):
         """Constant-product approximation should be close to actual V3 output."""
-        from degenbot.arbitrage.optimizers.solver import _v3_virtual_reserves
 
         # For a single V3 tick range, the constant-product formula using
         # virtual reserves should match the actual V3 swap math exactly.
         L = 1_000_000_000_000_000_000
         sqrt_price_x96 = 2**96  # price = 1.0
-        v3_r_in, v3_r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
+        v3_r_in, v3_r_out = _v3_virtual_reserves(
+            liquidity=L,
+            sqrt_price_x96=sqrt_price_x96,
+            zero_for_one=True,
+        )
 
         # Input amount (in token0 units, scaled)
         x_in = 100_000_000_000  # 100k USDC
@@ -154,19 +167,22 @@ class TestV3SellPool:
 
     def test_v2_buypool_v3_sellpool_path(self, solver):
         """V2 buy + V3 sell should complete."""
-        from degenbot.arbitrage.optimizers.solver import _v3_virtual_reserves
 
         L = 2_000_000_000_000_000_000
         sqrt_price_x96 = int(2.0 * (2**96))
-        v3_r_in, v3_r_out = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
+        v3_r_in, v3_r_out = _v3_virtual_reserves(
+            liquidity=L,
+            sqrt_price_x96=sqrt_price_x96,
+            zero_for_one=True,
+        )
 
         hops = (
-        ConstantProductHop(
+            ConstantProductHop(
                 reserve_in=USDC_1_5M,
                 reserve_out=WETH_800,
                 fee=FEE_0_3_PCT,
-        ),
-        BoundedProductHop(
+            ),
+            BoundedProductHop(
                 reserve_in=v3_r_in,
                 reserve_out=v3_r_out,
                 fee=FEE_0_3_PCT,
@@ -174,7 +190,7 @@ class TestV3SellPool:
                 sqrt_price=sqrt_price_x96,
                 tick_lower=0,
                 tick_upper=0,
-        ),
+            ),
         )
         result = solver.solve(SolveInput(hops=hops))
         assert isinstance(result, SolveResult)
@@ -187,10 +203,10 @@ class TestSolverResultValidation:
     def test_solver_result_has_required_fields(self):
         """SolveResult should have all fields needed for validation."""
         result = SolveResult(
-        optimal_input=1000,
-        profit=50,
-        iterations=0,
-        method=SolverMethod.MOBIUS,
+            optimal_input=1000,
+            profit=50,
+            iterations=0,
+            method=SolverMethod.MOBIUS,
         )
         assert result.optimal_input > 0
         assert result.profit >= 0
