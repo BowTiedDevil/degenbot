@@ -139,6 +139,9 @@ class BoundedProductHop:
     current_range_index : int
         Index into tick_ranges indicating which range contains current price.
         Ignored when tick_ranges is None.
+    zero_for_one : bool | None
+        Swap direction: True if token0→token1, False if token1→token0.
+        When None, the solver infers direction from reserves and sqrt_price.
     """
 
     reserve_in: int
@@ -150,6 +153,7 @@ class BoundedProductHop:
     tick_upper: int
     tick_ranges: tuple[V3TickRangeInfo, ...] | None = None
     current_range_index: int = 0
+    zero_for_one: bool | None = None
     invariant: PoolInvariant = PoolInvariant.BOUNDED_PRODUCT
 
     @property
@@ -389,6 +393,7 @@ def hop_factory(
     sqrt_price: int | None = None,
     tick_lower: int | None = None,
     tick_upper: int | None = None,
+    zero_for_one: bool | None = None,
 ) -> HopType:
     """
     Backward-compatible Hop constructor.
@@ -419,6 +424,7 @@ def hop_factory(
             sqrt_price=sqrt_price,
             tick_lower=tick_lower,
             tick_upper=tick_upper,
+            zero_for_one=zero_for_one,
         )
     return ConstantProductHop(
         reserve_in=reserve_in,
