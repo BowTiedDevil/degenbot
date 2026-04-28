@@ -42,7 +42,11 @@ def _make_profitable_v3_v2_path(
         V2 marginal rate as a multiple of V3 inverse rate. Values > 1
         produce profitable arbitrage (token0→V3→token1→V2→token0).
     """
-    ri, ro = _v3_virtual_reserves(liquidity, sqrt_price_x96, zero_for_one=True)
+    ri, ro = _v3_virtual_reserves(
+        liquidity=liquidity,
+        sqrt_price_x96=sqrt_price_x96,
+        zero_for_one=True,
+    )
     v2_reserve_in = ro
     v2_reserve_out = round(float(ri) * v2_rate_multiplier)
     v3_hop = BoundedProductHop(

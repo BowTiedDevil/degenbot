@@ -663,10 +663,11 @@ class PiecewiseMobiusSolver(Solver):
         current_idx = v3_hop.current_range_index
 
         # Collect plausible candidates first
-        plausible_candidates: list[int] = []
-        for end_idx in range(current_idx, min(current_idx + 3, len(v3_hop.tick_ranges))):
-            if self._is_candidate_plausible(solve_input, v3_hop, current_idx, end_idx, best_profit):
-                plausible_candidates.append(end_idx)
+        plausible_candidates: list[int] = [
+            end_idx
+            for end_idx in range(current_idx, min(current_idx + 3, len(v3_hop.tick_ranges)))
+            if self._is_candidate_plausible(solve_input, v3_hop, current_idx, end_idx, best_profit)
+        ]
 
         if not plausible_candidates:
             elapsed_ns = time.perf_counter_ns() - start_ns
@@ -765,8 +766,8 @@ class PiecewiseMobiusSolver(Solver):
 
         return results
 
+    @staticmethod
     def _is_candidate_plausible(
-        self,
         solve_input: SolveInput,
         v3_hop: BoundedProductHop,
         start_idx: int,
@@ -911,30 +912,28 @@ class PiecewiseMobiusSolver(Solver):
             ) from e
 
         # Build _MobiusHopState lists for before/after V3
-        hops_before: list[MobiusHopState] = []
-        hops_after: list[MobiusHopState] = []
 
         # Convert hops before V3 to _MobiusHopState
-        for hop in solve_input.hops[:v3_hop_index]:
-            if isinstance(hop, ConstantProductHop | BoundedProductHop):
-                hops_before.append(
-                    MobiusHopState(
-                        reserve_in=float(hop.reserve_in),
-                        reserve_out=float(hop.reserve_out),
-                        fee=float(hop.fee),
-                    )
-                )
+        hops_before: list[MobiusHopState] = [
+            MobiusHopState(
+                reserve_in=float(hop.reserve_in),
+                reserve_out=float(hop.reserve_out),
+                fee=float(hop.fee),
+            )
+            for hop in solve_input.hops[:v3_hop_index]
+            if isinstance(hop, ConstantProductHop | BoundedProductHop)
+        ]
 
         # Convert hops after V3 to _MobiusHopState
-        for hop in solve_input.hops[v3_hop_index + 1 :]:
-            if isinstance(hop, ConstantProductHop | BoundedProductHop):
-                hops_after.append(
-                    MobiusHopState(
-                        reserve_in=float(hop.reserve_in),
-                        reserve_out=float(hop.reserve_out),
-                        fee=float(hop.fee),
-                    )
-                )
+        hops_after: list[MobiusHopState] = [
+            MobiusHopState(
+                reserve_in=float(hop.reserve_in),
+                reserve_out=float(hop.reserve_out),
+                fee=float(hop.fee),
+            )
+            for hop in solve_input.hops[v3_hop_index + 1 :]
+            if isinstance(hop, ConstantProductHop | BoundedProductHop)
+        ]
 
         # Pre-compute Möbius coefficients
         coeffs_before = _compute_mobius_coefficients(hops_before) if hops_before else None
@@ -1472,6 +1471,7 @@ class PiecewiseMobiusSolver(Solver):
 
 
 def _solidly_swap_output_float(
+    *,
     reserve_in: float,
     reserve_out: float,
     amount_in: float,
@@ -2687,6 +2687,7 @@ class ArbSolver(Solver):
 
 
 def _v3_virtual_reserves(
+    *,
     liquidity: int,
     sqrt_price_x96: int,
     zero_for_one: bool,
@@ -2741,6 +2742,7 @@ _MAX_TICK_RANGE_CACHE_SIZE = 128
 
 
 def _get_cached_tick_ranges(
+    *,
     pool: UniswapV3Pool | UniswapV4Pool,
     zero_for_one: bool,
     max_ranges: int = 3,
@@ -2758,7 +2760,11 @@ def _get_cached_tick_ranges(
         return _tick_range_cache[cache_key]
 
     # Compute and cache result
-    result = _v3_get_adjacent_tick_ranges(pool, zero_for_one, max_ranges)
+    result = _v3_get_adjacent_tick_ranges(
+        pool=pool,
+        zero_for_one=zero_for_one,
+        max_ranges=max_ranges,
+    )
 
     # Simple LRU: clear if too large (simplest approach)
     if len(_tick_range_cache) >= _MAX_TICK_RANGE_CACHE_SIZE:
@@ -2769,6 +2775,7 @@ def _get_cached_tick_ranges(
 
 
 def _v3_get_adjacent_tick_ranges(
+    *,
     pool: UniswapV3Pool | UniswapV4Pool,
     zero_for_one: bool,
     max_ranges: int = 3,
@@ -2811,15 +2818,12 @@ def _v3_get_adjacent_tick_ranges(
     # Generate ticks in swap direction
     less_than_or_equal = not zero_for_one  # token0→token1: price goes down, tick goes down
 
-    try:
-        ticks_along_path = gen_ticks(
-            tick_data=tick_data,
-            starting_tick=current_tick,
-            tick_spacing=tick_spacing,
-            less_than_or_equal=less_than_or_equal,
-        )
-    except Exception:
-        return None
+    ticks_along_path = gen_ticks(
+        tick_data=tick_data,
+        starting_tick=current_tick,
+        tick_spacing=tick_spacing,
+        less_than_or_equal=less_than_or_equal,
+    )
 
     # Build list of initialized ticks
     # Clamp ticks to MIN_TICK/MAX_TICK bounds like real V3 pool does

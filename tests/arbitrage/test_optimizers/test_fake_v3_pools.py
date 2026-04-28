@@ -161,7 +161,11 @@ class TestGetCachedTickRanges:
         )
 
         # Should return tick ranges for zero_for_one swap
-        result = _get_cached_tick_ranges(pool, zero_for_one=True, max_ranges=3)
+        result = _get_cached_tick_ranges(
+            pool=pool,
+            zero_for_one=True,
+            max_ranges=3,
+        )
 
         assert result is not None
         tick_ranges, _current_range_index = result
@@ -196,7 +200,11 @@ class TestGetCachedTickRanges:
             ],
         )
 
-        result = _get_cached_tick_ranges(pool, zero_for_one=True, max_ranges=2)
+        result = _get_cached_tick_ranges(
+            pool=pool,
+            zero_for_one=True,
+            max_ranges=2,
+        )
 
         assert result is not None
         tick_ranges, _ = result
@@ -214,10 +222,16 @@ class TestGetCachedTickRanges:
         )
 
         # First call populates cache
-        result1 = _get_cached_tick_ranges(pool, zero_for_one=True)
+        result1 = _get_cached_tick_ranges(
+            pool=pool,
+            zero_for_one=True,
+        )
 
         # Second call should hit cache
-        result2 = _get_cached_tick_ranges(pool, zero_for_one=True)
+        result2 = _get_cached_tick_ranges(
+            pool=pool,
+            zero_for_one=True,
+        )
 
         assert result1 is not None
         assert result2 is not None
@@ -258,9 +272,7 @@ class TestPoolStateToHopIntegration:
         assert isinstance(pool.tick_bitmap, dict)
         assert pool.sparse_liquidity_map is False
 
-    def test_sparse_flag_causes_early_return(
-        self, usdc: MockErc20Token, weth: MockErc20Token
-    ):
+    def test_sparse_flag_causes_early_return(self, usdc: MockErc20Token, weth: MockErc20Token):
         """Test that sparse_liquidity_map flag causes immediate None return."""
         pool = create_two_range_v3_pool(
             address="0x1234567890123456789012345678901234567890",
@@ -273,7 +285,11 @@ class TestPoolStateToHopIntegration:
 
         # Sparse pool should return None immediately (before any iteration)
         pool.sparse_liquidity_map = True
-        result = _v3_get_adjacent_tick_ranges(pool, zero_for_one=True, max_ranges=3)
+        result = _v3_get_adjacent_tick_ranges(
+            pool=pool,
+            zero_for_one=True,
+            max_ranges=3,
+        )
         assert result is None
 
 
