@@ -85,6 +85,27 @@ _NUMPY_AVAILABLE = importlib.util.find_spec("numpy") is not None
 # ---------------------------------------------------------------------------
 
 
+def _infer_zero_for_one(v3_hop: BoundedProductHop) -> bool:
+    """Infer swap direction from BoundedProductHop data.
+
+    Uses the stored zero_for_one if available. Otherwise computes it
+    from the reserve ratio vs the expected ratio from L/sqrt_price.
+
+    For properly-constructed reserves (from _v3_virtual_reserves):
+    - zero_for_one=True: reserve_in/reserve_out = R0/R1 = 1/sqrt_p²
+    - zero_for_one=False: reserve_in/reserve_out = R1/R0 = sqrt_p²
+
+    The ratio comparison is scale-invariant (works regardless of Q96 scaling).
+    """
+    if v3_hop.zero_for_one is not None:
+        return v3_hop.zero_for_one
+
+    sqrt_p = float(v3_hop.sqrt_price) / Q96
+    price = sqrt_p * sqrt_p
+    reserve_ratio = float(v3_hop.reserve_in) / float(v3_hop.reserve_out)
+    return abs(reserve_ratio - 1.0 / price) < abs(reserve_ratio - price)
+
+
 @dataclass(frozen=True, slots=True)
 class _MobiusCoefficients:
     """
@@ -808,7 +829,7 @@ class PiecewiseMobiusSolver(Solver):
                 liquidity=float(ending_range.liquidity),
                 current_sqrt_price=float(ending_range.sqrt_price_lower) / Q96,
                 fee=float(v3_hop.fee),
-                zero_for_one=v3_hop.reserve_in > v3_hop.reserve_out,
+                zero_for_one=_infer_zero_for_one(v3_hop),
             )
 
             # Check if estimated price stays within ending range bounds
@@ -855,7 +876,7 @@ class PiecewiseMobiusSolver(Solver):
 
         # Convert V3TickRangeInfo to _V3TickRangeHop
         # Determine swap direction from hop reserves
-        zero_for_one = v3_hop.reserve_in > v3_hop.reserve_out
+        zero_for_one = _infer_zero_for_one(v3_hop)
 
         v3_ranges: list[V3TickRangeHop] = []
         for i, range_info in enumerate(v3_hop.tick_ranges):
@@ -1074,8 +1095,8 @@ class PiecewiseMobiusSolver(Solver):
         )
 
     def _vectorized_bracket_search(
-        *,
         self,
+        *,
         x_low: float,
         x_high: float,
         eval_profit_scalar: Callable,
@@ -1168,7 +1189,7 @@ class PiecewiseMobiusSolver(Solver):
         assert v3_hop.tick_ranges is not None
 
         ending_range_info = v3_hop.tick_ranges[end_idx]
-        zero_for_one = v3_hop.reserve_in > v3_hop.reserve_out
+        zero_for_one = _infer_zero_for_one(v3_hop)
 
         if end_idx > 0 and v3_hop.tick_ranges:
             prev_range = v3_hop.tick_ranges[end_idx - 1]
@@ -1269,7 +1290,7 @@ class PiecewiseMobiusSolver(Solver):
         v3_hop: BoundedProductHop,
     ) -> Any:
         assert v3_hop.tick_ranges is not None
-        zero_for_one = v3_hop.reserve_in > v3_hop.reserve_out
+        zero_for_one = _infer_zero_for_one(v3_hop)
 
         # Create cache key from hop identity + tick data
         # Use id() for object identity since V3TickRangeInfo is immutable
@@ -2622,7 +2643,7 @@ class ArbSolver(Solver):
 
     def _build_rust_v3_sequence(self, v3_hop: BoundedProductHop) -> Any:
         assert v3_hop.tick_ranges is not None
-        zero_for_one = v3_hop.reserve_in > v3_hop.reserve_out
+        zero_for_one = _infer_zero_for_one(v3_hop)
 
         # Cache key: object identity of tick ranges + direction
         range_ids = tuple(id(r) for r in v3_hop.tick_ranges)
@@ -3049,6 +3070,7 @@ def pool_to_hop(
             tick_upper=pool.tick,
             tick_ranges=tick_ranges,
             current_range_index=current_range_index,
+            zero_for_one=zero_for_one,
         )
 
     if isinstance(pool, UniswapV4Pool):
@@ -3081,6 +3103,7 @@ def pool_to_hop(
             tick_upper=pool.tick,
             tick_ranges=tick_ranges,
             current_range_index=current_range_index,
+            zero_for_one=zero_for_one,
         )
 
     # V2 pool (UniswapV2Pool or AerodromeV2Pool volatile) — actual reserves
@@ -3175,6 +3198,7 @@ def pool_state_to_hop(
             tick_upper=state.tick,
             tick_ranges=tick_ranges,
             current_range_index=current_range_index,
+            zero_for_one=zero_for_one,
         )
 
     # V2 pool (UniswapV2Pool or AerodromeV2Pool volatile)

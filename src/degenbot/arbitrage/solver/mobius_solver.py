@@ -424,7 +424,14 @@ class MobiusSolver(SolverProtocol):
     ) -> Any:
         assert v3_hop.tick_ranges is not None
         q96 = Q96_CONSTANT
-        zero_for_one = v3_hop.reserve_in > v3_hop.reserve_out
+        zero_for_one: bool
+        if v3_hop.zero_for_one is not None:
+            zero_for_one = v3_hop.zero_for_one
+        else:
+            sqrt_p = float(v3_hop.sqrt_price) / q96
+            price = sqrt_p * sqrt_p
+            reserve_ratio = float(v3_hop.reserve_in) / float(v3_hop.reserve_out)
+            zero_for_one = abs(reserve_ratio - 1.0 / price) < abs(reserve_ratio - price)
 
         try:
             rust_ranges = []

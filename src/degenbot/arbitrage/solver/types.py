@@ -50,6 +50,7 @@ class ConcentratedLiquidityHopState(MobiusHopState):
     tick_upper: int
     tick_ranges: tuple[TickRangeState, ...] | None = None
     current_range_index: int = 0
+    zero_for_one: bool | None = None
 
     @property
     def has_multi_range(self) -> bool:
