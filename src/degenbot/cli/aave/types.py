@@ -12,7 +12,7 @@ from web3.types import LogReceipt
 
 from degenbot.aave.events import ERC20Event
 from degenbot.aave.pattern_types import LiquidationPatternContext
-from degenbot.cli.aave_utils import decode_address
+from degenbot.aave.utils import decode_address
 from degenbot.database.models.aave import (
     AaveGhoToken,
     AaveV3CollateralPosition,

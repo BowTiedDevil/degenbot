@@ -1,5 +1,8 @@
 """Aave V3 CLI subpackage for market management and position tracking."""
 
+# Re-export constants
+from degenbot.aave.types import UserOperation
+
 # Re-export types
 # Import commands module to register CLI commands
 # This must happen after other imports to avoid circular dependencies
@@ -7,14 +10,11 @@ from degenbot.cli.aave import commands
 
 # Re-export the aave CLI group
 from degenbot.cli.aave.commands import aave
-
-# Re-export constants
 from degenbot.cli.aave.constants import (
     AAVE_EVENT_TOPIC_TO_CATEGORY,
     GHO_DISCOUNT_DEPRECATION_REVISION,
     POSITION_RISK_DISPLAY_LIMIT,
     SCALED_AMOUNT_POOL_REVISION,
-    UserOperation,
     WadRayMathLibrary,
 )
 

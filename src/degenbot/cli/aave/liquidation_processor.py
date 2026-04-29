@@ -11,10 +11,10 @@ from eth_typing import ChecksumAddress
 
 from degenbot.aave.events import AaveV3ScaledTokenEvent
 from degenbot.aave.liquidation_patterns import detect_liquidation_patterns
+from degenbot.aave.types import Operation
 from degenbot.cli.aave.db_assets import get_asset_by_token_type
 from degenbot.cli.aave.types import TokenType, TransactionContext
 from degenbot.cli.aave.utils import _get_v_token_for_underlying
-from degenbot.cli.aave_transaction_operations import Operation
 from degenbot.cli.aave_utils import decode_address
 
 
