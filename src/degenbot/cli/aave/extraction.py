@@ -19,7 +19,7 @@ from degenbot.aave.events import (
     ERC20Event,
 )
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.cli.aave_utils import decode_address
+from degenbot.aave.utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
 
 

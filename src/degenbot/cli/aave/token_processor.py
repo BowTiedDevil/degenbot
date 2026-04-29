@@ -11,11 +11,13 @@ from typing import TYPE_CHECKING, assert_never
 import eth_abi.abi
 from web3.types import LogReceipt
 
-from degenbot.aave.events import AaveV3PoolEvent
+from degenbot.aave.events import AaveV3PoolEvent, ScaledTokenEventType
 from degenbot.aave.libraries.gho_math import GhoMath
 from degenbot.aave.libraries.pool_math import PoolMath
 from degenbot.aave.libraries.token_math import TokenMathFactory
+from degenbot.aave.libraries.wad_ray_math import ray_mul
 from degenbot.aave.models import EnrichedScaledTokenEvent
+from degenbot.aave.operation_types import OperationType
 from degenbot.aave.pattern_types import LiquidationPattern
 from degenbot.aave.processors import (
     CollateralBurnEvent,
@@ -24,7 +26,8 @@ from degenbot.aave.processors import (
     DebtMintEvent,
     TokenProcessorFactory,
 )
-from degenbot.cli.aave.constants import UserOperation, WadRayMathLibrary
+from degenbot.aave.types import Operation, ScaledTokenEvent, UserOperation
+from degenbot.aave.utils import decode_address
 from degenbot.cli.aave.db_assets import get_asset_by_token_type, get_asset_identifier
 from degenbot.cli.aave.db_positions import (
     get_or_create_collateral_position,
@@ -35,13 +38,6 @@ from degenbot.cli.aave.stkaave import get_or_init_stk_aave_balance
 from degenbot.cli.aave.transfers import _process_collateral_transfer
 from degenbot.cli.aave.types import TokenType, TransactionContext
 from degenbot.cli.aave.verification import update_debt_position_index
-from degenbot.cli.aave_transaction_operations import (
-    Operation,
-    OperationType,
-    ScaledTokenEvent,
-    ScaledTokenEventType,
-)
-from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.database.models.aave import AaveV3CollateralPosition, AaveV3DebtPosition, AaveV3User
 from degenbot.logging import logger
@@ -183,7 +179,6 @@ def _refresh_discount_rate(
     discount_token_balance: int,
     scaled_debt_balance: int,
     debt_index: int,
-    wad_ray_math: WadRayMathLibrary,
 ) -> None:
     """
     Calculate and update the user's GHO discount rate.
@@ -192,8 +187,7 @@ def _refresh_discount_rate(
     computes the discount rate locally using the same logic as the GhoDiscountRateStrategy
     contract.
     """
-
-    debt_token_balance = wad_ray_math.ray_mul(
+    debt_token_balance = ray_mul(
         a=scaled_debt_balance,
         b=debt_index,
     )
@@ -614,7 +608,6 @@ def _process_debt_mint_with_match(
                 discount_token_balance=discount_token_balance,
                 scaled_debt_balance=debt_position.balance,
                 debt_index=debt_position.last_index,
-                wad_ray_math=gho_processor.get_math_libraries()["wad_ray"],
             )
     else:
         # Use standard debt processor for non-GHO tokens
@@ -758,7 +751,7 @@ def _process_debt_burn_with_match(
     tx_context: TransactionContext,
     operation: Operation,
     scaled_event: ScaledTokenEvent,
-    enriched_event: EnrichedScaledTokenEvent,
+    enriched_event: EnrichedScaledTokenEvent | None = None,
 ) -> None:
     """
     Process debt (vToken) burn with operation match.
@@ -794,8 +787,8 @@ def _process_debt_burn_with_match(
         asset_id=debt_reserve.id,
     )
 
-    # Use enriched event data for scaled amount
-    scaled_amount: int | None = enriched_event.scaled_amount
+    # Use enriched event data for scaled amount when available
+    scaled_amount: int | None = enriched_event.scaled_amount if enriched_event else None
 
     # Check for bad debt liquidation first - applies to both GHO and non-GHO tokens
     # Bad debt liquidations emit a DEFICIT_CREATED event and burn the FULL debt balance
@@ -871,7 +864,6 @@ def _process_debt_burn_with_match(
                 discount_token_balance=discount_token_balance,
                 scaled_debt_balance=debt_position.balance,
                 debt_index=current_index,
-                wad_ray_math=gho_processor.get_math_libraries()["wad_ray"],
             )
     else:
         # Use standard debt processor for non-GHO tokens

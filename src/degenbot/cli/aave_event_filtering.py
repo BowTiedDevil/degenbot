@@ -9,7 +9,7 @@ from collections.abc import Iterator
 from collections.abc import Set as AbstractSet
 
 from degenbot.aave.events import ScaledTokenEventType
-from degenbot.cli.aave_transaction_operations import ScaledTokenEvent
+from degenbot.aave.types import ScaledTokenEvent
 
 
 def filter_scaled_events[T: ScaledTokenEvent](

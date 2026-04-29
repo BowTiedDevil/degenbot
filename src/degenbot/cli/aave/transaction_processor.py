@@ -12,12 +12,11 @@ This module contains the main transaction processing orchestrator that handles:
 """
 
 from operator import itemgetter
-from typing import TYPE_CHECKING, assert_never
+from typing import TYPE_CHECKING
 
 import eth_abi.abi
 from sqlalchemy import select
 
-from degenbot.aave.enrichment import ScaledEventEnricher
 from degenbot.aave.events import (
     AaveV3GhoDebtTokenEvent,
     AaveV3OracleEvent,
@@ -25,10 +24,19 @@ from degenbot.aave.events import (
     AaveV3PoolEvent,
     AaveV3ScaledTokenEvent,
     ERC20Event,
+    ScaledTokenEventType,
 )
+from degenbot.aave.operation_types import OperationType
+from degenbot.aave.pipeline import EventPipeline, PositionContext
+from degenbot.aave.types import Operation
+from degenbot.aave.utils import decode_address
 from degenbot.cli.aave.constants import LIQUIDATION_OPERATION_TYPES
-from degenbot.cli.aave.db_assets import get_contract
-from degenbot.cli.aave.db_users import is_discount_supported
+from degenbot.cli.aave.db_assets import get_asset_by_token_type, get_contract
+from degenbot.cli.aave.db_positions import (
+    get_or_create_collateral_position,
+    get_or_create_debt_position,
+)
+from degenbot.cli.aave.db_users import get_or_create_user, is_discount_supported
 from degenbot.cli.aave.event_handlers import (
     _process_address_set_event,
     _process_asset_source_updated_event,
@@ -48,29 +56,25 @@ from degenbot.cli.aave.liquidation_processor import (
     _preprocess_liquidation_aggregates,
     _process_deferred_debt_burns,
 )
-from degenbot.cli.aave.stkaave import process_stk_aave_transfer_event
+from degenbot.cli.aave.stkaave import get_or_init_stk_aave_balance, process_stk_aave_transfer_event
 from degenbot.cli.aave.token_processor import (
-    _process_collateral_burn_with_match,
-    _process_collateral_mint_with_match,
+    _is_bad_debt_liquidation,
     _process_debt_burn_with_match,
-    _process_debt_mint_with_match,
     _process_deficit_coverage_operation,
+    _refresh_discount_rate,
 )
 from degenbot.cli.aave.transfers import _process_collateral_transfer
-from degenbot.cli.aave.types import TransactionContext
-from degenbot.cli.aave_transaction_operations import (
-    Operation,
-    OperationType,
-    ScaledTokenEventType,
-    TransactionOperationsParser,
-)
-from degenbot.cli.aave_utils import decode_address
+from degenbot.cli.aave.types import TokenType, TransactionContext
+from degenbot.cli.aave.verification import update_debt_position_index
+from degenbot.cli.aave_transaction_operations import TransactionOperationsParser
 from degenbot.database.models.aave import AaveV3User
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
+
+    from degenbot.aave.types import ScaledTokenEvent
 
 
 def _process_transaction(tx_context: TransactionContext) -> None:
@@ -450,6 +454,10 @@ def _process_operation(
 ) -> None:
     """
     Process a single operation.
+
+    Uses EventPipeline for extraction, enrichment, and processor dispatch.
+    Falls back to specialized handlers for liquidation debt burns (pattern logic)
+    and collateral transfers (sender + recipient handling).
     """
 
     logger.debug(
@@ -457,14 +465,9 @@ def _process_operation(
         f"{operation.operation_type.name}"
     )
 
-    # Skip stkAAVE transfers - they're pre-processed separately before operations
-    # to ensure stkAAVE balances are up-to-date when GHO operations calculate
-    # discount rates. They should not be processed again here.
     if operation.operation_type == OperationType.STKAAVE_TRANSFER:
         return
 
-    # Handle DEFICIT_COVERAGE operations specially
-    # These have paired Transfer + Burn events that must be processed atomically
     if operation.operation_type == OperationType.DEFICIT_COVERAGE:
         _process_deficit_coverage_operation(
             operation=operation,
@@ -472,104 +475,19 @@ def _process_operation(
         )
         return
 
-    # Create enricher for this operation
-    enricher = ScaledEventEnricher(
+    pipeline = EventPipeline(
         pool_revision=tx_context.pool_revision,
         token_revisions={},
-        session=tx_context.session,
     )
 
-    # Process each scaled token event in the operation
-    # Sort by log index to ensure events are processed in chronological order
     sorted_scaled_events = sorted(
         operation.scaled_token_events,
         key=lambda e: e.event["logIndex"],
     )
     for scaled_event in sorted_scaled_events:
-        event = scaled_event.event
+        event_type = scaled_event.event_type
 
-        # Enrich the scaled event with calculated amounts
-        enriched_event = enricher.enrich(scaled_event, operation)
-        if scaled_event.event_type == ScaledTokenEventType.COLLATERAL_MINT:
-            # Special case: When interest exceeds withdrawal amount, the aToken contract
-            # emits a Mint event instead of a Burn event (AToken rev_4.sol:2836-2839).
-            # This happens when nextBalance > previousBalance after burning.
-            # Detection: amount < balance_increase indicates the withdrawal/repayment was less
-            # than interest. In this case, we should treat it as a burn (subtract from balance),
-            # not a mint.
-            if (
-                operation.operation_type == OperationType.WITHDRAW
-                and scaled_event.balance_increase is not None
-                and scaled_event.amount < scaled_event.balance_increase
-            ):
-                logger.debug(
-                    f"WITHDRAW: Treating COLLATERAL_MINT as burn - interest exceeds withdrawal "
-                    f"(amount={scaled_event.amount}, "
-                    f"balance_increase={scaled_event.balance_increase})"
-                )
-                _process_collateral_burn_with_match(
-                    event=event,
-                    tx_context=tx_context,
-                    scaled_event=scaled_event,
-                    enriched_event=enriched_event,
-                )
-            elif (
-                # Special case: In REPAY_WITH_ATOKENS, when interest exceeds repayment,
-                # the Mint event's amount field represents net interest
-                # (balance_increase - repay_amount). Treat as burn.
-                operation.operation_type == OperationType.REPAY_WITH_ATOKENS
-                and scaled_event.balance_increase is not None
-                and scaled_event.amount < scaled_event.balance_increase
-            ):
-                logger.debug(
-                    f"REPAY_WITH_ATOKENS: Treating COLLATERAL_MINT as burn - "
-                    f"interest exceeds repayment (amount={scaled_event.amount}, "
-                    f"balance_increase={scaled_event.balance_increase})"
-                )
-                _process_collateral_burn_with_match(
-                    event=event,
-                    tx_context=tx_context,
-                    scaled_event=scaled_event,
-                    enriched_event=enriched_event,
-                )
-            else:
-                _process_collateral_mint_with_match(
-                    event=event,
-                    tx_context=tx_context,
-                    operation=operation,
-                    scaled_event=scaled_event,
-                    enriched_event=enriched_event,
-                )
-        elif scaled_event.event_type == ScaledTokenEventType.COLLATERAL_BURN:
-            _process_collateral_burn_with_match(
-                event=event,
-                tx_context=tx_context,
-                scaled_event=scaled_event,
-                enriched_event=enriched_event,
-            )
-        elif scaled_event.event_type in {
-            ScaledTokenEventType.DEBT_MINT,
-            ScaledTokenEventType.GHO_DEBT_MINT,
-        }:
-            _process_debt_mint_with_match(
-                event=event,
-                tx_context=tx_context,
-                operation=operation,
-                scaled_event=scaled_event,
-                enriched_event=enriched_event,
-            )
-        elif scaled_event.event_type in {
-            ScaledTokenEventType.DEBT_BURN,
-            ScaledTokenEventType.GHO_DEBT_BURN,
-        }:
-            _process_debt_burn_with_match(
-                event=event,
-                tx_context=tx_context,
-                operation=operation,
-                scaled_event=scaled_event,
-                enriched_event=enriched_event,
-            )
-        elif scaled_event.event_type in {
+        if event_type in {
             ScaledTokenEventType.COLLATERAL_TRANSFER,
             ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
         }:
@@ -578,5 +496,144 @@ def _process_operation(
                 operation=operation,
                 scaled_event=scaled_event,
             )
-        else:
-            assert_never(scaled_event.event_type)
+            continue
+
+        # Liquidation debt burns need pattern-based logic not in the pipeline
+        if (
+            event_type
+            in {ScaledTokenEventType.DEBT_BURN, ScaledTokenEventType.GHO_DEBT_BURN}
+            and operation.operation_type in LIQUIDATION_OPERATION_TYPES
+        ):
+            _process_debt_burn_with_match(
+                event=scaled_event.event,
+                tx_context=tx_context,
+                operation=operation,
+                scaled_event=scaled_event,
+                enriched_event=None,
+            )
+            continue
+
+        _process_scaled_event_via_pipeline(
+            pipeline=pipeline,
+            scaled_event=scaled_event,
+            operation=operation,
+            tx_context=tx_context,
+        )
+
+
+def _process_scaled_event_via_pipeline(
+    *,
+    pipeline: EventPipeline,
+    scaled_event: "ScaledTokenEvent",
+    operation: Operation,
+    tx_context: TransactionContext,
+) -> None:
+    """Process a single scaled event through the pipeline and apply the delta to DB."""
+    token_address = scaled_event.event["address"]
+    is_collateral = scaled_event.event_type in {
+        ScaledTokenEventType.COLLATERAL_MINT,
+        ScaledTokenEventType.COLLATERAL_BURN,
+        ScaledTokenEventType.COLLATERAL_TRANSFER,
+        ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+    }
+    is_gho = tx_context.is_gho_vtoken(token_address)
+
+    if is_collateral:
+        asset = get_asset_by_token_type(
+            session=tx_context.session,
+            market=tx_context.market,
+            token_address=token_address,
+            token_type=TokenType.A_TOKEN,
+        )
+        assert asset is not None
+        user = get_or_create_user(
+            tx_context=tx_context,
+            user_address=scaled_event.user_address,
+            block_number=scaled_event.event["blockNumber"],
+        )
+        position = get_or_create_collateral_position(
+            tx_context=tx_context,
+            user=user,
+            asset_id=asset.id,
+        )
+        token_revision = asset.a_token_revision
+        is_bad_debt = False
+    else:
+        asset = get_asset_by_token_type(
+            session=tx_context.session,
+            market=tx_context.market,
+            token_address=token_address,
+            token_type=TokenType.V_TOKEN,
+        )
+        assert asset is not None
+        user = get_or_create_user(
+            tx_context=tx_context,
+            user_address=scaled_event.user_address,
+            block_number=scaled_event.event["blockNumber"],
+        )
+        position = get_or_create_debt_position(
+            tx_context=tx_context,
+            user=user,
+            asset_id=asset.id,
+        )
+        token_revision = asset.v_token_revision
+        is_bad_debt = (
+            operation.operation_type
+            in {OperationType.LIQUIDATION, OperationType.GHO_LIQUIDATION}
+            and _is_bad_debt_liquidation(user, tx_context)
+        )
+
+    previous_discount = 0
+    if is_gho:
+        previous_discount = tx_context.user_discounts.get(user.address, user.gho_discount)
+
+    position_context = PositionContext(
+        previous_balance=position.balance,
+        previous_index=position.last_index or 0,
+        previous_discount=previous_discount,
+        token_revision=token_revision,
+        pool_revision=tx_context.pool_revision,
+        is_gho=is_gho,
+        is_bad_debt=is_bad_debt,
+    )
+
+    delta = pipeline.process(scaled_event, operation, position_context)
+
+    # Apply PositionDelta to DB position
+    if delta.set_balance_to_zero:
+        position.balance = 0
+    else:
+        position.balance += delta.balance_delta
+
+    if delta.new_index > (position.last_index or 0):
+        position.last_index = delta.new_index
+
+    # GHO discount refresh
+    if (
+        delta.should_refresh_discount
+        and tx_context.gho_asset is not None
+        and tx_context.gho_asset.v_gho_discount_token is not None
+    ):
+        discount_token_balance = get_or_init_stk_aave_balance(
+            user=user,
+            tx_context=tx_context,
+            log_index=scaled_event.event["logIndex"],
+        )
+        assert position.last_index is not None
+        _refresh_discount_rate(
+            user=user,
+            discount_token_balance=discount_token_balance,
+            scaled_debt_balance=position.balance,
+            debt_index=position.last_index,
+            wad_ray_math=None,
+        )
+
+    # Debt position index update for verification
+    if not is_collateral:
+        update_debt_position_index(
+            tx_context=tx_context,
+            debt_reserve=asset,
+            debt_position=position,
+            event_index=scaled_event.index,
+            event_block_number=scaled_event.event["blockNumber"],
+        )
