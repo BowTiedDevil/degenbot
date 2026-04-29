@@ -5,10 +5,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import set_web3
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.registry import RegistryAlreadyInitialized
 from degenbot.registry import pool_registry, token_registry
-from degenbot.registry.pool import PoolRegistry
-from degenbot.registry.token import TokenRegistry
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
@@ -38,14 +35,11 @@ class FakeUniswapV4Pool(AbstractLiquidityPool):
 def test_singleton(fork_mainnet_full: AnvilFork):
     set_web3(fork_mainnet_full.w3)
 
-    with pytest.raises(RegistryAlreadyInitialized):
-        PoolRegistry()
+    new_pool_registry = type(pool_registry)()
+    new_token_registry = type(token_registry)()
 
-    with pytest.raises(RegistryAlreadyInitialized):
-        TokenRegistry()
-
-    assert PoolRegistry.get_instance() is pool_registry
-    assert TokenRegistry.get_instance() is token_registry
+    assert new_pool_registry is not pool_registry
+    assert new_token_registry is not token_registry
 
 
 def test_adding_pool(fork_mainnet_full: AnvilFork):

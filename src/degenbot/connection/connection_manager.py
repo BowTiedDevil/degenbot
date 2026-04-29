@@ -29,6 +29,10 @@ class ConnectionManager:
         self.connections: dict[ChainId, ProviderAdapter] = {}
         self._default_chain_id: ChainId | None = None
 
+    def _reset(self) -> None:
+        self.connections.clear()
+        self._default_chain_id = None
+
     def get_provider(self, chain_id: ChainId) -> ProviderAdapter:
         """Get a ProviderAdapter for the specified chain ID.
 
