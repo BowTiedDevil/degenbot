@@ -3,7 +3,7 @@ Tests for the generalized Möbius optimizer with V3/V4 bounded liquidity pools.
 
 Verifies that:
 1. V3TickRangeHop produces correct effective reserves
-2. V3 single-range swaps match V2-equivalent HopState behavior
+2. V3 single-range swaps match V2-equivalent MobiusFloatHop behavior
 3. Mixed V2+V3 paths produce correct Möbius compositions
 4. Range validation catches tick-crossing solutions
 5. solve_v3_candidates checks multiple tick ranges
@@ -15,7 +15,7 @@ import pytest
 
 from degenbot.arbitrage.optimizers.base import OptimizerType
 from degenbot.arbitrage.optimizers.mobius import (
-    HopState,
+    MobiusFloatHop,
     MobiusOptimizer,
     MobiusV2Optimizer,
     V3TickRangeHop,
@@ -94,7 +94,7 @@ class TestV3TickRangeHop:
 
     def test_v2_recovered_when_alpha_beta_zero(self):
         """
-        V3 HopState with effective reserves L/sqrt_p and L*sqrt_p
+        V3 MobiusFloatHop with effective reserves L/sqrt_p and L*sqrt_p
         matches V2 behavior where r = L/sqrt_p, s = L*sqrt_p.
 
         The α and β are implicitly included in the virtual reserves:
@@ -149,7 +149,7 @@ class TestV3MobiusSwapFormula:
 
     @pytest.mark.parametrize("current_tick", [0, -30, 30, 100, -100])
     def test_v3_hop_matches_simulate_path(self, current_tick):
-        """V3 HopState should produce the same output as the bounded product formula."""
+        """V3 MobiusFloatHop should produce the same output as the bounded product formula."""
         L = 1_000_000.0
         v3_hop = make_v3_tick_range(liquidity=L, current_tick=current_tick)
         hop = v3_hop.to_hop_state()
@@ -260,7 +260,7 @@ class TestV3MobiusVsBrent:
         A mixed V2+V3 path should produce correct results via Möbius.
         """
         # V2 pool
-        v2_hop = HopState(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003)
+        v2_hop = MobiusFloatHop(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003)
 
         # V3 pool (similar price range)
         L = 2_000_000.0
@@ -350,7 +350,7 @@ class TestV3RangeValidation:
         )
 
         # And a V2 hop that would drive a large swap
-        v2_hop = HopState(reserve_in=100_000_000.0, reserve_out=50_000_000.0, fee=0.003)
+        v2_hop = MobiusFloatHop(reserve_in=100_000_000.0, reserve_out=50_000_000.0, fee=0.003)
 
         # Build a path with both
         # The optimal swap may cross the narrow V3 range
@@ -388,7 +388,7 @@ class TestSolveV3Candidates:
             tick_spacing=60,
         )
 
-        v2_hop = HopState(
+        v2_hop = MobiusFloatHop(
             reserve_in=v3_candidate.to_hop_state().reserve_in,
             reserve_out=v3_candidate.to_hop_state().reserve_out,
             fee=0.003,
@@ -408,7 +408,7 @@ class TestSolveV3Candidates:
         """
         optimizer = MobiusOptimizer()
 
-        v2_hop = HopState(
+        v2_hop = MobiusFloatHop(
             reserve_in=5_000_000.0,
             reserve_out=10_000_000.0,
             fee=0.003,
@@ -431,7 +431,7 @@ class TestSolveV3Candidates:
         """No candidates should return failure."""
         optimizer = MobiusOptimizer()
 
-        v2_hop = HopState(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003)
+        v2_hop = MobiusFloatHop(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003)
 
         with pytest.raises(Exception, match="No valid V3 candidate range"):
             optimizer.solve_v3_candidates(
@@ -454,10 +454,10 @@ class TestMixedV2V3Composition:
         Verify K, M, N from a V2+V3 path match hand-computed values.
         """
         # V2 hop
-        v2 = HopState(reserve_in=10_000.0, reserve_out=5_000.0, fee=0.003)
+        v2 = MobiusFloatHop(reserve_in=10_000.0, reserve_out=5_000.0, fee=0.003)
 
         # V3 hop (use effective reserves)
-        v3 = HopState(reserve_in=8_000.0, reserve_out=12_000.0, fee=0.003)
+        v3 = MobiusFloatHop(reserve_in=8_000.0, reserve_out=12_000.0, fee=0.003)
 
         # For a 2-hop path: K = γ₁·s₁·γ₂·s₂, M = r₁·r₂, N = γ₁·(γ₁·s₁ + r₂)
         # Wait — the recurrence is: N_new = N_old * r₂ + K_old * γ₂
@@ -483,7 +483,7 @@ class TestMixedV2V3Composition:
 
     def test_path_output_matches_simulation_v2_v3(self):
         """Möbius formula should match simulation for mixed V2+V3 paths."""
-        v2 = HopState(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003)
+        v2 = MobiusFloatHop(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003)
 
         L = 2_000_000.0
         v3_hop = make_v3_tick_range(
@@ -503,7 +503,7 @@ class TestMixedV2V3Composition:
 
     def test_three_hop_v2_v3_v2(self):
         """V2 → V3 → V2 path should compose correctly."""
-        v2_a = HopState(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003)
+        v2_a = MobiusFloatHop(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003)
 
         L = 2_000_000.0
         v3_hop = make_v3_tick_range(
@@ -511,7 +511,7 @@ class TestMixedV2V3Composition:
         )
         v3 = v3_hop.to_hop_state()
 
-        v2_b = HopState(reserve_in=4_800.0, reserve_out=11_000_000.0, fee=0.003)
+        v2_b = MobiusFloatHop(reserve_in=4_800.0, reserve_out=11_000_000.0, fee=0.003)
 
         hops = [v2_a, v3, v2_b]
         coeffs = compute_mobius_coefficients(hops)
@@ -620,7 +620,7 @@ class TestV3MobiusOptimalInput:
     def test_v2_v3_mixed_path_profitable(self):
         """V2+V3 path should find profitable arbitrage when price divergence exists."""
         # V2 pool with price different from V3
-        v2_hop = HopState(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003)
+        v2_hop = MobiusFloatHop(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003)
 
         # V3 pool at similar but different price
         L = 5_000_000.0
@@ -638,7 +638,7 @@ class TestV3MobiusOptimalInput:
 
     def test_gradient_zero_at_v3_optimum(self):
         """The profit gradient should be approximately zero at the V3 Möbius optimum."""
-        v2 = HopState(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003)
+        v2 = MobiusFloatHop(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003)
 
         L = 2_000_000.0
         v3_hop = make_v3_tick_range(
@@ -677,7 +677,7 @@ class TestV3ProfitabilityCheck:
 
     def test_mixed_v2_v3_profitability(self):
         """Mixed V2+V3 path profitability check."""
-        v2 = HopState(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003)
+        v2 = MobiusFloatHop(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003)
 
         L = 2_000_000.0
         v3_hop = make_v3_tick_range(

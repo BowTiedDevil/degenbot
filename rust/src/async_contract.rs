@@ -39,8 +39,7 @@ impl PyAsyncContract {
 
             let provider = Arc::new(provider);
 
-            let contract = Contract::new(&address, provider)
-                .map_err(Into::<PyErr>::into)?;
+            let contract = Contract::new(&address, provider).map_err(Into::<PyErr>::into)?;
 
             Ok(Self {
                 contract: Arc::new(contract),

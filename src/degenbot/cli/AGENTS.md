@@ -92,10 +92,10 @@ The enrichment layer handles both systems independently:
 {
     1: GhoV1Processor,  # No discount
     2: GhoV2Processor,  # Discount support
-    3: GhoV2Processor,   # Same as rev 2
+    3: GhoV2Processor,  # Same as rev 2
     4: GhoV4Processor,  # Discount deprecated
     5: GhoV5Processor,  # Explicit rounding
-    6: GhoV5Processor,   # Same as rev 5
+    6: GhoV5Processor,  # Same as rev 5
 }
 ```
 
@@ -103,10 +103,10 @@ The enrichment layer handles both systems independently:
 ```python
 # TokenMathFactory._TOKEN_MATH
 {
-    1: HalfUpRoundingMath,   # Pool revs 1-3
+    1: HalfUpRoundingMath,  # Pool revs 1-3
     2: HalfUpRoundingMath,
     3: HalfUpRoundingMath,
-    4: ExplicitRoundingMath, # Pool revs 4-10
+    4: ExplicitRoundingMath,  # Pool revs 4-10
     5: ExplicitRoundingMath,
     6: ExplicitRoundingMath,
     7: ExplicitRoundingMath,
@@ -156,7 +156,7 @@ The Aave module uses a layered architecture:
 result = processor.process_mint_event(
     event_data=CollateralMintEvent(...),
     previous_balance=user_balance,  # For reference only
-    previous_index=user_index,      # For reference only
+    previous_index=user_index,  # For reference only
 )
 # Caller applies the result
 user_balance += result.balance_delta
@@ -421,22 +421,24 @@ All processors return frozen dataclasses with the calculated delta:
 ```python
 @dataclass(frozen=True, slots=True)
 class ScaledTokenMintResult:
-    balance_delta: int   # Change in scaled balance
-    new_index: int       # New liquidity/debt index
-    is_repay: bool       # True for repay/withdrawal
+    balance_delta: int  # Change in scaled balance
+    new_index: int  # New liquidity/debt index
+    is_repay: bool  # True for repay/withdrawal
+
 
 @dataclass(frozen=True, slots=True)
 class ScaledTokenBurnResult:
-    balance_delta: int   # Change in scaled balance (negative)
-    new_index: int       # New liquidity/debt index
+    balance_delta: int  # Change in scaled balance (negative)
+    new_index: int  # New liquidity/debt index
+
 
 @dataclass(frozen=True, slots=True)
 class GhoScaledTokenMintResult:
     balance_delta: int
     new_index: int
     user_operation: GhoUserOperation  # GHO_BORROW, GHO_REPAY, etc.
-    discount_scaled: int              # Discount amount
-    should_refresh_discount: bool     # Whether to refresh discount rate
+    discount_scaled: int  # Discount amount
+    should_refresh_discount: bool  # Whether to refresh discount rate
 ```
 
 **Key Benefits:**

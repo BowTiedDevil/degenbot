@@ -67,9 +67,7 @@ class AsyncConnectionManager:
         """
         provider = self.get_provider(chain_id)
         if provider.provider_type != "web3":
-            raise DegenbotValueError(
-                message="Provider is not a Web3 provider."
-            ) from None
+            raise DegenbotValueError(message="Provider is not a Web3 provider.") from None
         return provider.underlying
 
     async def register_provider(

@@ -34,8 +34,8 @@
 #![allow(clippy::needless_range_loop)]
 
 use crate::optimizers::mobius::{
-    compute_mobius_coefficients, golden_section_search_max, invert_path_output,
-    mobius_solve, simulate_path, HopState, MobiusError, RANGE_CAPACITY_MARGIN,
+    compute_mobius_coefficients, golden_section_search_max, invert_path_output, mobius_solve,
+    simulate_path, HopState, MobiusError, RANGE_CAPACITY_MARGIN,
 };
 
 /// V3/V4 tick range data needed to build a Möbius `HopState`.
@@ -798,7 +798,10 @@ mod tests {
         // Use an input that stays within the tick range (~5% of max capacity)
         let final_price = estimate_v3_final_sqrt_price(5e13, &v3);
         assert!(final_price < 1000.0);
-        assert!(final_price > 900.0, "Should stay in range, got {final_price}");
+        assert!(
+            final_price > 900.0,
+            "Should stay in range, got {final_price}"
+        );
     }
 
     #[test]

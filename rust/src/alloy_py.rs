@@ -15,8 +15,8 @@
 use crate::abi_types::AbiValue;
 use crate::py_cache::{bytes_to_int, bytes_to_int_signed};
 use alloy::primitives::{I256, U256};
-use pyo3::{exceptions::PyValueError, prelude::*};
 use pyo3::types::{PyAny, PyBool, PyBytes, PyDict, PyList, PyString};
+use pyo3::{exceptions::PyValueError, prelude::*};
 use std::str::FromStr;
 
 /// Wrapper for Alloy `U256` that implements `IntoPyObject`.
@@ -104,9 +104,8 @@ pub(crate) fn extract_python_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {
         kwargs.set_item("signed", false)?;
         let bytes = obj.call_method("to_bytes", (32, "big"), Some(&kwargs))?;
         let bytes: &[u8] = bytes.extract()?;
-        return U256::try_from_be_slice(bytes).ok_or_else(|| {
-            PyValueError::new_err("Value is too large (exceeds 256 bits)")
-        });
+        return U256::try_from_be_slice(bytes)
+            .ok_or_else(|| PyValueError::new_err("Value is too large (exceeds 256 bits)"));
     }
 
     // Try raw bytes
@@ -115,9 +114,7 @@ pub(crate) fn extract_python_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {
             .ok_or_else(|| PyValueError::new_err("Failed to parse value from bytes"));
     }
 
-    Err(PyValueError::new_err(
-        "Value must be an integer or bytes",
-    ))
+    Err(PyValueError::new_err("Value must be an integer or bytes"))
 }
 
 // =============================================================================
@@ -175,9 +172,8 @@ pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult
             let bytes = obj.call_method("to_bytes", (32, "big"), Some(&kwargs))?;
             let bytes: &[u8] = bytes.extract()?;
             let u256 = U256::from_be_bytes(
-                <[u8; 32]>::try_from(bytes).map_err(|_| {
-                    PyValueError::new_err("Integer value out of range for int256")
-                })?,
+                <[u8; 32]>::try_from(bytes)
+                    .map_err(|_| PyValueError::new_err("Integer value out of range for int256"))?,
             );
             // Directly interpret as I256 (two's complement encoding)
             return Ok(AbiValue::Int(I256::from_raw(u256)));
@@ -188,9 +184,8 @@ pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult
         let bytes = obj.call_method("to_bytes", (32, "big"), Some(&kwargs))?;
         let bytes: &[u8] = bytes.extract()?;
         let u256 = U256::from_be_bytes(
-            <[u8; 32]>::try_from(bytes).map_err(|_| {
-                PyValueError::new_err("Integer value out of range for uint256")
-            })?,
+            <[u8; 32]>::try_from(bytes)
+                .map_err(|_| PyValueError::new_err("Integer value out of range for uint256"))?,
         );
         return Ok(AbiValue::Uint(u256));
     }
@@ -214,8 +209,7 @@ pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult
 
     // Try list (for arrays)
     if let Ok(list) = obj.cast::<PyList>() {
-        let values: Result<Vec<_>, _> =
-            list.iter().map(|item| convert_item(&item, py)).collect();
+        let values: Result<Vec<_>, _> = list.iter().map(|item| convert_item(&item, py)).collect();
         return Ok(AbiValue::Array(values?));
     }
 

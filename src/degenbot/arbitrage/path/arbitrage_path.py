@@ -3,14 +3,13 @@ from fractions import Fraction
 from typing import Any
 from weakref import WeakSet
 
+from degenbot.arbitrage.optimizers.hop_types import HopType, Solver, SolveResult
 from degenbot.arbitrage.path import adapters  # noqa: F401 trigger registration
 from degenbot.arbitrage.path.adapters.concentrated_liquidity import (  # noqa: F401 re-export for tests
     _v3_virtual_reserves,
 )
 from degenbot.arbitrage.path.pool_adapter import check_pool_compatibility, get_adapter
 from degenbot.arbitrage.path.types import PathValidationError, PoolCompatibility, SwapVector
-from degenbot.arbitrage.solver.protocol import SolverProtocol
-from degenbot.arbitrage.solver.types import HopState, MobiusSolveResult
 from degenbot.arbitrage.types import (
     AbstractSwapAmounts,
     ArbitrageCalculationResult,
@@ -45,7 +44,7 @@ def _pool_to_hop_state(
     pool: Any,
     zero_for_one: bool,
     state_override: Any = None,
-) -> HopState:
+) -> HopType:
     adapter = get_adapter(pool)
     if adapter is None:
         msg = f"No adapter for {type(pool).__name__}"
@@ -56,7 +55,7 @@ def _pool_to_hop_state(
 class _ProfitableStateDiscovered(AbstractPublisherMessage):
     __slots__ = ("path", "result")
 
-    def __init__(self, result: MobiusSolveResult, path: "ArbitragePath") -> None:
+    def __init__(self, result: SolveResult, path: "ArbitragePath") -> None:
         self.result = result
         self.path = path
 
@@ -73,7 +72,7 @@ class ArbitragePath(PublisherMixin):
     Event-driven arbitrage path helper.
 
     Wraps a sequence of Mobius-compatible pools, validates token flow, pre-computes directional
-    data, subscribes to state updates, and delegates solving to a swappable SolverProtocol
+    data, subscribes to state updates, and delegates solving to a swappable Solver
     implementation.
     """
 
@@ -81,7 +80,7 @@ class ArbitragePath(PublisherMixin):
         self,
         pools: Sequence[Any],
         input_token: Erc20Token,
-        solver: SolverProtocol,
+        solver: Solver,
         max_input: int | None = None,
         id: str | None = None,  # noqa:A002
     ) -> None:
@@ -95,12 +94,12 @@ class ArbitragePath(PublisherMixin):
         self._max_input = max_input
         self._id = id or ""
         self._subscribers: WeakSet[Subscriber] = WeakSet()
-        self._last_result: MobiusSolveResult | None = None
+        self._last_result: SolveResult | None = None
 
         self._validate_pools()
         self._swap_vectors = self._build_swap_vectors()
         self._pool_index: dict[Any, int] = {pool: i for i, pool in enumerate(self._pools)}
-        self._hop_states: list[HopState] = [
+        self._hop_states: list[HopType] = [
             _pool_to_hop_state(pool, self._swap_vectors[i].zero_for_one)
             for i, pool in enumerate(self._pools)
         ]
@@ -173,15 +172,15 @@ class ArbitragePath(PublisherMixin):
         return self._swap_vectors
 
     @property
-    def solver(self) -> SolverProtocol:
+    def solver(self) -> Solver:
         return self._solver
 
     @property
-    def last_result(self) -> MobiusSolveResult | None:
+    def last_result(self) -> SolveResult | None:
         return self._last_result
 
     @property
-    def hop_states(self) -> tuple[HopState, ...]:
+    def hop_states(self) -> tuple[HopType, ...]:
         return tuple(self._hop_states)
 
     @property
@@ -196,7 +195,7 @@ class ArbitragePath(PublisherMixin):
     def id(self) -> str:
         return self._id
 
-    def set_solver(self, solver: SolverProtocol) -> None:
+    def set_solver(self, solver: Solver) -> None:
         self._solver = solver
 
     def close(self) -> None:
@@ -204,17 +203,18 @@ class ArbitragePath(PublisherMixin):
             pool.unsubscribe(self)
         self._subscribers.clear()
 
-    def calculate(self) -> MobiusSolveResult:
+    def calculate(self) -> SolveResult:
         self._refresh_hop_states()
-        result = self._solver.solve(self._hop_states, max_input=self._max_input)
+        solve_input = self._build_solve_input()
+        result = self._solver.solve(solve_input)
         self._last_result = result
         return result
 
     def calculate_with_state_override(
         self,
         state_overrides: dict[Any, Any],
-    ) -> MobiusSolveResult:
-        hop_states: list[HopState] = []
+    ) -> SolveResult:
+        hop_states: list[HopType] = []
         for i, pool in enumerate(self._pools):
             state = state_overrides.get(pool)
             if state is not None:
@@ -228,11 +228,23 @@ class ArbitragePath(PublisherMixin):
             else:
                 hop_states.append(self._hop_states[i])
 
-        return self._solver.solve(hop_states, max_input=self._max_input)
+        solve_input = self._build_solve_input(hops=tuple(hop_states))
+        return self._solver.solve(solve_input)
+
+    def _build_solve_input(
+        self,
+        hops: tuple[HopType, ...] | None = None,
+    ) -> Any:
+        from degenbot.arbitrage.optimizers.hop_types import SolveInput
+
+        return SolveInput(
+            hops=hops or tuple(self._hop_states),
+            max_input=self._max_input,
+        )
 
     def build_swap_amounts(
         self,
-        result: MobiusSolveResult,
+        result: SolveResult,
         state_overrides: Mapping[Any, Any] | None = None,
     ) -> ArbitrageCalculationResult[AbstractSwapAmounts]:
         if state_overrides is None:

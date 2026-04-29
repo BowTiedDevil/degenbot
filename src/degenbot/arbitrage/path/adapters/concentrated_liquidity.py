@@ -1,8 +1,8 @@
 from fractions import Fraction
 
+from degenbot.arbitrage.optimizers.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
 from degenbot.arbitrage.path.pool_adapter import register_pool_adapter
 from degenbot.arbitrage.path.types import SwapVector
-from degenbot.arbitrage.solver.types import ConcentratedLiquidityHopState, HopState, TickRangeState
 from degenbot.arbitrage.types import (
     AbstractSwapAmounts,
     UniswapV3PoolSwapAmounts,
@@ -41,7 +41,7 @@ def _v3_virtual_reserves(
     return y_virtual, x_virtual
 
 
-_TICK_RANGE_CACHE: dict[tuple[str, int, bool], tuple[tuple[TickRangeState, ...], int] | None] = {}
+_TICK_RANGE_CACHE: dict[tuple[str, int, bool], tuple[tuple[V3TickRangeInfo, ...], int] | None] = {}
 _MAX_TICK_RANGE_CACHE_SIZE = 128
 
 
@@ -49,7 +49,7 @@ def _get_tick_ranges(
     pool: CLPool,
     zero_for_one: bool,
     max_ranges: int = 3,
-) -> tuple[tuple[TickRangeState, ...], int] | None:
+) -> tuple[tuple[V3TickRangeInfo, ...], int] | None:
     cache_key = (str(pool.address), pool.tick, zero_for_one)
 
     if cache_key in _TICK_RANGE_CACHE:
@@ -69,7 +69,7 @@ def _compute_tick_ranges(
     *,
     zero_for_one: bool,
     max_ranges: int = 3,
-) -> tuple[tuple[TickRangeState, ...], int] | None:
+) -> tuple[tuple[V3TickRangeInfo, ...], int] | None:
 
     if getattr(pool, "sparse_liquidity_map", True):
         return None
@@ -110,7 +110,7 @@ def _compute_tick_ranges(
     if len(initialized_ticks) < 2:
         return None
 
-    ranges: list[TickRangeState] = []
+    ranges: list[V3TickRangeInfo] = []
     current_idx = 0
 
     for i in range(len(initialized_ticks) - 1):
@@ -128,7 +128,7 @@ def _compute_tick_ranges(
         sqrt_price_upper = int(get_sqrt_ratio_at_tick(tick_upper))
 
         ranges.append(
-            TickRangeState(
+            V3TickRangeInfo(
                 tick_lower=tick_lower,
                 tick_upper=tick_upper,
                 liquidity=liquidity,
@@ -161,7 +161,7 @@ class ConcentratedLiquidityAdapter:
         *,
         zero_for_one: bool,
         state_override: CLPoolState | None = None,
-    ) -> HopState:
+    ) -> HopType:
         state = state_override or pool.state
         fee = self.extract_fee(pool, zero_for_one=zero_for_one)
 
@@ -175,7 +175,7 @@ class ConcentratedLiquidityAdapter:
             tick_ranges = _get_tick_ranges(pool, zero_for_one)
             if tick_ranges is not None:
                 ranges, current_idx = tick_ranges
-                return ConcentratedLiquidityHopState(
+                return BoundedProductHop(
                     reserve_in=reserve_in,
                     reserve_out=reserve_out,
                     fee=fee,
@@ -187,7 +187,7 @@ class ConcentratedLiquidityAdapter:
                     current_range_index=current_idx,
                 )
 
-        return ConcentratedLiquidityHopState(
+        return BoundedProductHop(
             reserve_in=reserve_in,
             reserve_out=reserve_out,
             fee=fee,

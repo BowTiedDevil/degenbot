@@ -18,9 +18,7 @@ def get_async_provider() -> AsyncProviderAdapter:
         DegenbotValueError: If no default provider has been registered
     """
     if async_connection_manager.default_chain_id is None:
-        raise DegenbotValueError(
-            message="A default provider has not been registered."
-        ) from None
+        raise DegenbotValueError(message="A default provider has not been registered.") from None
     return async_connection_manager.get_provider(chain_id=async_connection_manager.default_chain_id)
 
 
@@ -35,9 +33,7 @@ def get_async_web3() -> AsyncWeb3[AsyncBaseProvider]:
         DegenbotValueError: If the provider is not a Web3 provider
     """
     if async_connection_manager.default_chain_id is None:
-        raise DegenbotValueError(
-            message="A default provider has not been registered."
-        ) from None
+        raise DegenbotValueError(message="A default provider has not been registered.") from None
     return async_connection_manager.get_web3(chain_id=async_connection_manager.default_chain_id)
 
 

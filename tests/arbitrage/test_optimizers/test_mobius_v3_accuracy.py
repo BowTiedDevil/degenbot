@@ -17,7 +17,7 @@ to understand why and potentially add a refinement step.
 import pytest
 
 from degenbot.arbitrage.optimizers.mobius import (
-    HopState,
+    MobiusFloatHop,
     MobiusOptimizer,
     V3TickRangeHop,
     estimate_v3_final_sqrt_price,
@@ -317,7 +317,7 @@ class TestMobiusArbitrageVsV3Integer:
         sqrt_price_upper_x96 = tick_to_sqrt_price_x96(v3_tick_upper)
 
         # --- Möbius approach ---
-        v2_hop = HopState(
+        v2_hop = MobiusFloatHop(
             reserve_in=float(v2_reserve_usdc),
             reserve_out=float(v2_reserve_weth),
             fee=v2_fee,
@@ -477,7 +477,7 @@ class TestMobiusArbitrageVsV3Integer:
         sqrt_price_upper_x96 = tick_to_sqrt_price_x96(v3_tick_upper)
 
         # Get Möbius optimum
-        v2_hop = HopState(
+        v2_hop = MobiusFloatHop(
             reserve_in=float(v2_reserve_usdc),
             reserve_out=float(v2_reserve_weth),
             fee=v2_fee,

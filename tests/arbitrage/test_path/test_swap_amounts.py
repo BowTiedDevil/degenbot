@@ -10,8 +10,8 @@ from fractions import Fraction
 import pytest
 
 from degenbot.arbitrage.path import ArbitragePath, PathValidationError
-from degenbot.arbitrage.solver import MobiusSolver
-from degenbot.arbitrage.solver.types import MobiusSolveResult, SolverMethod
+from degenbot.arbitrage.optimizers.hop_types import SolveResult, SolverMethod
+from degenbot.arbitrage.optimizers.solver import MobiusSolver
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
 
 from .conftest import FakeToken, FakeUniswapV2Pool, _make_v2_pool
@@ -114,9 +114,10 @@ class TestBuildSwapAmountsV2V2:
 
     def test_rejects_unprofitable_result(self):
         path = self._make_path()
-        unprofitable = MobiusSolveResult(
+        unprofitable = SolveResult(
             optimal_input=0,
             profit=0,
+            iterations=0,
             method=SolverMethod.MOBIUS,
         )
         with pytest.raises(PathValidationError, match="output of zero"):

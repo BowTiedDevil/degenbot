@@ -20,8 +20,8 @@ pub mod value;
 
 // Re-export all public items at the module root for backward compatibility.
 // External code can use `crate::abi_types::AbiType` or `crate::abi_types::type_::AbiType`.
-pub use type_::{AbiType, AbiTypeError, parse_type_list};
+pub use cached::{get_cached_types, value_to_alloy_for_type, CachedAbiTypes};
+pub use type_::{parse_type_list, AbiType, AbiTypeError};
 pub use value::{AbiValue, ParseIntError};
 #[allow(deprecated)]
-pub use value::{ParseU256Error, ParseI256Error};
-pub use cached::{CachedAbiTypes, value_to_alloy_for_type, get_cached_types};
+pub use value::{ParseI256Error, ParseU256Error};

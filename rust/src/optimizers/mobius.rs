@@ -281,11 +281,7 @@ const GOLDEN_SECTION: f64 = 0.618_033_988_749_894_9;
 /// (relative) or [`GSS_ABS_TOL`] (absolute near zero).
 ///
 /// Returns `(argmax, iterations)`.
-pub fn golden_section_search_max(
-    f: impl Fn(f64) -> f64,
-    a: f64,
-    b: f64,
-) -> (f64, u32) {
+pub fn golden_section_search_max(f: impl Fn(f64) -> f64, a: f64, b: f64) -> (f64, u32) {
     debug_assert!(a < b, "Search interval must be non-empty");
     let initial_interval = b - a;
     let abs_tol = GSS_ABS_TOL.max(initial_interval * GSS_REL_TOL);
@@ -371,7 +367,10 @@ mod tests {
         ];
 
         let coeffs = compute_mobius_coefficients(&hops).expect("Should compute coefficients");
-        assert!(!coeffs.is_profitable, "Identical reserves should not be profitable");
+        assert!(
+            !coeffs.is_profitable,
+            "Identical reserves should not be profitable"
+        );
 
         let (x_opt, profit, iters) = mobius_solve(&hops, None);
         assert_eq!(x_opt, 0.0);
@@ -443,7 +442,10 @@ mod tests {
         // f(x) = -x^2 + 4x, maximum at x=2
         let f = |x: f64| -x * x + 4.0 * x;
         let (x_max, iters) = golden_section_search_max(f, 0.0, 4.0);
-        assert!((x_max - 2.0).abs() < 0.01, "Should find max at x=2, got {x_max}");
+        assert!(
+            (x_max - 2.0).abs() < 0.01,
+            "Should find max at x=2, got {x_max}"
+        );
         assert!(iters > 0, "Should take at least one iteration");
     }
 

@@ -518,17 +518,15 @@ mod proptests {
     fn arb_full_signature_string() -> impl Strategy<Value = String> {
         let input_types = prop::collection::vec(arb_abi_type_string(), 0..5);
         let output_types = prop::collection::vec(arb_abi_type_string(), 0..5);
-        (arb_identifier(), input_types, output_types).prop_map(
-            |(name, inputs, outputs)| {
-                let input_str = inputs.join(",");
-                let output_str = outputs.join(",");
-                if outputs.is_empty() {
-                    format!("{name}({input_str})")
-                } else {
-                    format!("{name}({input_str}) returns ({output_str})")
-                }
-            },
-        )
+        (arb_identifier(), input_types, output_types).prop_map(|(name, inputs, outputs)| {
+            let input_str = inputs.join(",");
+            let output_str = outputs.join(",");
+            if outputs.is_empty() {
+                format!("{name}({input_str})")
+            } else {
+                format!("{name}({input_str}) returns ({output_str})")
+            }
+        })
     }
 
     proptest! {

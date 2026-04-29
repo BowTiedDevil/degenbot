@@ -134,9 +134,9 @@ class MobiusCoefficients:
 
 
 @dataclass(frozen=True, slots=True)
-class HopState:
+class MobiusFloatHop:
     """
-    Reserve and fee state for a single pool hop.
+    Reserve and fee state for a single pool hop in float space.
 
     For V2 pools, reserve_in and reserve_out are the raw reserves.
     For V3 tick ranges, they are the effective reserves:
@@ -168,7 +168,7 @@ class HopState:
 @dataclass(frozen=True, slots=True)
 class V3TickRangeHop:
     """
-    V3/V4 tick range data needed to build a Möbius HopState.
+    V3/V4 tick range data needed to build a Möbius MobiusFloatHop.
 
     Stores the bounded product CFMM parameters for a single V3 tick range
     along with the current pool state, so that we can construct effective
@@ -207,9 +207,9 @@ class V3TickRangeHop:
         """Lower bound on R1: L * sqrt(P_lower)."""
         return self.liquidity * self.sqrt_price_lower
 
-    def to_hop_state(self) -> HopState:
+    def to_hop_state(self) -> MobiusFloatHop:
         """
-        Convert this V3 tick range to a Möbius HopState with effective reserves.
+        Convert this V3 tick range to a MobiusFloatHop with effective reserves.
 
         The swap function for a bounded product CFMM is:
             y = gamma*(R1+beta)*x / ((R0+alpha) + gamma*x)
@@ -222,7 +222,7 @@ class V3TickRangeHop:
 
         Returns
         -------
-        HopState
+        MobiusFloatHop
             Hop with effective reserves for Möbius composition.
         """
         if self.zero_for_one:
@@ -232,7 +232,7 @@ class V3TickRangeHop:
             r_eff = self.liquidity * self.sqrt_price_current
             s_eff = self.liquidity / self.sqrt_price_current
 
-        return HopState(
+        return MobiusFloatHop(
             reserve_in=r_eff,
             reserve_out=s_eff,
             fee=self.fee,
@@ -425,7 +425,7 @@ def piecewise_v3_swap(
     return total_output, True
 
 
-def compute_mobius_coefficients(hops: list[HopState]) -> MobiusCoefficients:
+def compute_mobius_coefficients(hops: list[MobiusFloatHop]) -> MobiusCoefficients:
     """
     Compute the Möbius transformation coefficients K, M, N for an n-hop
     constant product path via a single forward pass.
@@ -440,7 +440,7 @@ def compute_mobius_coefficients(hops: list[HopState]) -> MobiusCoefficients:
 
     Parameters
     ----------
-    hops : list[HopState]
+    hops : list[MobiusFloatHop]
         Pool states ordered along the arbitrage path.
 
     Returns
@@ -470,7 +470,7 @@ def compute_mobius_coefficients(hops: list[HopState]) -> MobiusCoefficients:
     return MobiusCoefficients(K=K, M=M, N=N, is_profitable=is_profitable)
 
 
-def simulate_path(x: float, hops: list[HopState]) -> float:
+def simulate_path(x: float, hops: list[MobiusFloatHop]) -> float:
     """
     Simulate a swap through all hops for verification.
 
@@ -478,7 +478,7 @@ def simulate_path(x: float, hops: list[HopState]) -> float:
     ----------
     x : float
         Input amount to the first pool.
-    hops : list[HopState]
+    hops : list[MobiusFloatHop]
         Pool states along the path.
 
     Returns
@@ -498,7 +498,7 @@ def simulate_path(x: float, hops: list[HopState]) -> float:
 
 
 def mobius_solve(
-    hops: list[HopState],
+    hops: list[MobiusFloatHop],
     max_input: float | None = None,
 ) -> tuple[float, float, int]:
     """
@@ -506,7 +506,7 @@ def mobius_solve(
 
     Parameters
     ----------
-    hops : list[HopState]
+    hops : list[MobiusFloatHop]
         Pool states along the arbitrage path.
     max_input : float | None
         Optional upper bound on input amount.
@@ -586,8 +586,8 @@ class MobiusOptimizer:
     optimal input apply uniformly.
 
     For V3/V4 hops, you may pass either:
-    - V3TickRangeHop objects (automatically converted to HopState), or
-    - Pre-built HopState objects with effective reserves.
+    - V3TickRangeHop objects (automatically converted to MobiusFloatHop), or
+    - Pre-built MobiusFloatHop objects with effective reserves.
 
     For multi-range V3 swaps (tick crossing), use solve_v3_candidates()
     which checks multiple candidate tick ranges.
@@ -618,8 +618,8 @@ class MobiusOptimizer:
         Find optimal arbitrage for a constant product path.
 
         Accepts V2 pools and/or V3TickRangeHop objects for V3 ranges.
-        For V2 pools, builds HopState from raw reserves. For V3 tick
-        ranges, builds HopState from effective reserves (R0+alpha, R1+beta).
+        For V2 pools, builds MobiusFloatHop from raw reserves. For V3 tick
+        ranges, builds MobiusFloatHop from effective reserves (R0+alpha, R1+beta).
 
         Parameters
         ----------
@@ -649,7 +649,7 @@ class MobiusOptimizer:
 
         v2_pool_types = {"UniswapV2Pool", "MockV2Pool"}
 
-        hops: list[HopState] = []
+        hops: list[MobiusFloatHop] = []
         v3_hops: list[tuple[int, V3TickRangeHop]] = []  # (index, V3Hop) for validation
         current_token = input_token
 
@@ -690,7 +690,7 @@ class MobiusOptimizer:
                 )
 
             hops.append(
-                HopState(
+                MobiusFloatHop(
                     reserve_in=reserve_in,
                     reserve_out=reserve_out,
                     fee=float(pool.fee),
@@ -769,7 +769,7 @@ class MobiusOptimizer:
 
     def solve_v3_candidates(
         self,
-        base_hops: list[HopState],
+        base_hops: list[MobiusFloatHop],
         v3_hop_index: int,
         v3_candidates: list[V3TickRangeHop],
         max_input: int | None = None,
@@ -783,7 +783,7 @@ class MobiusOptimizer:
 
         Parameters
         ----------
-        base_hops : list[HopState]
+        base_hops : list[MobiusFloatHop]
             V2 (or other) hops in the path, excluding the V3 hop.
         v3_hop_index : int
             Index in the full path where the V3 hop sits.
@@ -870,7 +870,7 @@ class MobiusOptimizer:
 
     def solve_piecewise(
         self,
-        hops: list[HopState],
+        hops: list[MobiusFloatHop],
         v3_hop_index: int,
         v3_crossings: list[TickRangeCrossing],
         max_input: int | None = None,
@@ -890,9 +890,9 @@ class MobiusOptimizer:
 
         Parameters
         ----------
-        hops : list[HopState]
+        hops : list[MobiusFloatHop]
             Full path hops with the V3 hop at v3_hop_index.
-            The V3 hop entry should be the first range's HopState
+            The V3 hop entry should be the first range's MobiusFloatHop
             (used as starting point for the search bracket).
         v3_hop_index : int
             Index of the V3 hop in the path.
@@ -911,7 +911,7 @@ class MobiusOptimizer:
         best_result: OptimizerResult | None = None
 
         for crossing in v3_crossings:
-            # Build the full hop list with the ending range's HopState
+            # Build the full hop list with the ending range's MobiusFloatHop
             full_hops = list(hops)
             full_hops[v3_hop_index] = crossing.ending_range.to_hop_state()
 
@@ -945,8 +945,8 @@ class MobiusOptimizer:
 
             def eval_profit(
                 x: float,
-                _hops_before: list[HopState] = hb,
-                _hops_after: list[HopState] = ha,
+                _hops_before: list[MobiusFloatHop] = hb,
+                _hops_after: list[MobiusFloatHop] = ha,
                 _crossing: TickRangeCrossing = cr,
             ) -> float:
                 if x <= 0:

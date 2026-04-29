@@ -39,7 +39,7 @@ from degenbot.arbitrage.optimizers.base import (
     OptimizerType,
 )
 from degenbot.arbitrage.optimizers.mobius import (
-    HopState,
+    MobiusFloatHop,
     mobius_solve,
 )
 
@@ -47,13 +47,13 @@ from degenbot.arbitrage.optimizers.mobius import (
 @dataclass(frozen=True)
 class BatchMobiusPathInput:
     """
-    A single arbitrage path expressed as a list of HopState objects.
+    A single arbitrage path expressed as a list of MobiusFloatHop objects.
 
     Used as input for BatchMobiusOptimizer. Each path represents a sequence
     of constant-product pool hops forming an arbitrage cycle.
     """
 
-    hops: list[HopState]
+    hops: list[MobiusFloatHop]
     max_input: float | None = None
 
 
@@ -256,9 +256,7 @@ class VectorizedMobiusSolver:
             profit = x_opt * np.expm1(half_diff)
 
         # Zero profit for unprofitable or invalid paths
-        profit = np.where(
-            is_profitable & (x_opt > 0) & np.isfinite(profit), profit, 0.0
-        )
+        profit = np.where(is_profitable & (x_opt > 0) & np.isfinite(profit), profit, 0.0)
 
         return VectorizedMobiusResult(
             optimal_input=x_opt,
@@ -289,7 +287,7 @@ class SerialMobiusSolver:
 
         for i in range(hops_array.shape[0]):
             hops = [
-                HopState(
+                MobiusFloatHop(
                     reserve_in=float(hops_array[i, j, 0]),
                     reserve_out=float(hops_array[i, j, 1]),
                     fee=float(hops_array[i, j, 2]),

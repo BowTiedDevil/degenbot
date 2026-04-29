@@ -43,8 +43,7 @@ pub fn address_to_checksum_string(address: &Address) -> String {
 ///
 /// Returns `AddressError::InvalidAddress` if the string is not a valid hex address.
 pub fn to_checksum_address_str(addr_str: &str) -> Result<String, AddressError> {
-    let addr =
-        parse_address(addr_str)?;
+    let addr = parse_address(addr_str)?;
     Ok(address_to_checksum_string(&addr))
 }
 

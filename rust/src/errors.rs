@@ -18,11 +18,9 @@ impl From<TickMathError> for PyErr {
     fn from(err: TickMathError) -> Self {
         // Preserve the specific error type and message
         match err {
-            TickMathError::InvalidTick(tick) => {
-                Self::new::<PyValueError, _>(format!(
-                    "Invalid tick value: {tick}. Must be in range [-887272, 887272]"
-                ))
-            }
+            TickMathError::InvalidTick(tick) => Self::new::<PyValueError, _>(format!(
+                "Invalid tick value: {tick}. Must be in range [-887272, 887272]"
+            )),
             TickMathError::SqrtRatioOutOfBounds => {
                 Self::new::<PyValueError, _>("Sqrt ratio out of bounds")
             }
@@ -234,9 +232,13 @@ impl From<ContractError> for PyErr {
 impl From<crate::errors::AbiDecodeError> for ContractError {
     fn from(err: crate::errors::AbiDecodeError) -> Self {
         match err {
-            crate::errors::AbiDecodeError::UnsupportedType(msg) => Self::InvalidAbi { message: msg },
+            crate::errors::AbiDecodeError::UnsupportedType(msg) => {
+                Self::InvalidAbi { message: msg }
+            }
             crate::errors::AbiDecodeError::InvalidLength(msg)
-            | crate::errors::AbiDecodeError::InvalidOffset(msg) => Self::DecodingError { message: msg },
+            | crate::errors::AbiDecodeError::InvalidOffset(msg) => {
+                Self::DecodingError { message: msg }
+            }
             crate::errors::AbiDecodeError::InsufficientData { .. } => Self::DecodingError {
                 message: err.to_string(),
             },

@@ -62,14 +62,14 @@ class TestRustMobiusSolve:
 
     def test_matches_python(self):
         """Rust solver should produce identical results to Python solver."""
-        from degenbot.arbitrage.optimizers.mobius import HopState
+        from degenbot.arbitrage.optimizers.mobius import MobiusFloatHop
         from degenbot.arbitrage.optimizers.mobius import mobius_solve as py_solve
 
         hops_data = [
             (1_000_000.0, 5_000_000.0, 0.003),
             (1_500_000.0, 3_000_000.0, 0.003),
         ]
-        py_hops = list(starmap(HopState, hops_data))
+        py_hops = list(starmap(MobiusFloatHop, hops_data))
         rust_hops = list(starmap(rs_mobius.RustHopState, hops_data))
 
         py_x, py_profit, py_iters = py_solve(py_hops)

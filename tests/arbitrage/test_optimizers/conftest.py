@@ -4,7 +4,7 @@ from degenbot.degenbot_rs import mobius as rs_mobius
 from scipy.optimize import minimize_scalar
 
 from degenbot.arbitrage.optimizers.hop_types import Hop
-from degenbot.arbitrage.optimizers.mobius import HopState, V3TickRangeHop, simulate_path
+from degenbot.arbitrage.optimizers.mobius import MobiusFloatHop, V3TickRangeHop, simulate_path
 from degenbot.arbitrage.optimizers.solver import SolveInput
 from degenbot.arbitrage.optimizers.v3_tick_predictor import tick_to_sqrt_price
 
@@ -32,7 +32,7 @@ FEE_1_PCT = Fraction(1, 100)  # 1% (Uniswap fee_pips=10000)
 
 
 def brent_solve_hops(
-    hops: list[HopState],
+    hops: list[MobiusFloatHop],
     xatol: float = 1.0,
 ) -> tuple[float, float, int]:
     """Solve optimal arbitrage using scipy Brent method."""

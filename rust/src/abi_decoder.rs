@@ -21,8 +21,8 @@
 //! This provides significant performance benefits when processing thousands of values
 //! (e.g., decoding Transfer events from historical blocks).
 
-use crate::abi_types::AbiValue;
 use crate::abi_types::cached::get_cached_types;
+use crate::abi_types::AbiValue;
 use crate::errors::AbiDecodeError;
 use alloy::hex;
 use alloy::primitives::Address;
@@ -131,7 +131,10 @@ pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDe
 ///
 /// Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn decode_for_types(types: &[crate::abi_types::AbiType], data: &[u8]) -> Result<Vec<AbiValue>, AbiDecodeError> {
+pub fn decode_for_types(
+    types: &[crate::abi_types::AbiType],
+    data: &[u8],
+) -> Result<Vec<AbiValue>, AbiDecodeError> {
     if types.is_empty() {
         return Ok(Vec::new());
     }
@@ -149,7 +152,11 @@ pub fn decode_for_types(types: &[crate::abi_types::AbiType], data: &[u8]) -> Res
 // =============================================================================
 
 /// Convert an `AbiValue` to a Python object.
-fn abi_value_to_python<'py>(value: &AbiValue, py: Python<'py>, checksum: bool) -> PyResult<Bound<'py, PyAny>> {
+fn abi_value_to_python<'py>(
+    value: &AbiValue,
+    py: Python<'py>,
+    checksum: bool,
+) -> PyResult<Bound<'py, PyAny>> {
     match value {
         AbiValue::Address(addr_bytes) => {
             if checksum {

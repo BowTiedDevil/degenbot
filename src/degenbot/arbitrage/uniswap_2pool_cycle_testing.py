@@ -885,10 +885,12 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     pools=[v4_pool_lo, v4_pool_hi],
                     input_token=self.input_token,
                     state_overrides={
-                        k: v for k, v in [
+                        k: v
+                        for k, v in [
                             (v4_pool_lo, v4_pool_lo_state_override),
                             (v4_pool_hi, v4_pool_hi_state_override),
-                        ] if v is not None
+                        ]
+                        if v is not None
                     },
                 )
 
@@ -1056,10 +1058,12 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     pools=[v3_pool, v4_pool],
                     input_token=self.input_token,
                     state_overrides={
-                        k: v for k, v in [
+                        k: v
+                        for k, v in [
                             (v3_pool, v3_pool_state_override),
                             (v4_pool, v4_pool_state_override),
-                        ] if v is not None
+                        ]
+                        if v is not None
                     },
                 )
 
@@ -1234,10 +1238,12 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     pools=[v4_pool, v2_pool],
                     input_token=self.input_token,
                     state_overrides={
-                        k: v for k, v in [
+                        k: v
+                        for k, v in [
                             (v4_pool, v4_pool_state_override),
                             (v2_pool, v2_pool_state_override),
-                        ] if v is not None
+                        ]
+                        if v is not None
                     },
                 )
 
@@ -1261,7 +1267,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                         options={
                             "xatol": XATOL,
                         },
-                )
+                    )
                 forward_token_amount = int(opt.x)
                 if forward_token_amount == 0:
                     raise ArbitrageError(message="Zero amount optimum")
@@ -1424,10 +1430,12 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     pools=[v4_pool, v3_pool],
                     input_token=self.input_token,
                     state_overrides={
-                        k: v for k, v in [
+                        k: v
+                        for k, v in [
                             (v4_pool, v4_pool_state_override),
                             (v3_pool, v3_pool_state_override),
-                        ] if v is not None
+                        ]
+                        if v is not None
                     },
                 )
 
@@ -1607,10 +1615,12 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     pools=[v3_pool_lo, v3_pool_hi],
                     input_token=self.input_token,
                     state_overrides={
-                        k: v for k, v in [
+                        k: v
+                        for k, v in [
                             (v3_pool_lo, v3_pool_lo_state_override),
                             (v3_pool_hi, v3_pool_hi_state_override),
-                        ] if v is not None
+                        ]
+                        if v is not None
                     },
                 )
 
@@ -1759,10 +1769,12 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     pools=[v2_pool, v3_pool],
                     input_token=self.input_token,
                     state_overrides={
-                        k: v for k, v in [
+                        k: v
+                        for k, v in [
                             (v2_pool, v2_pool_state_override),
                             (v3_pool, v3_pool_state_override),
-                        ] if v is not None
+                        ]
+                        if v is not None
                     },
                 )
 
@@ -1937,10 +1949,12 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     pools=[v2_pool, v4_pool],
                     input_token=self.input_token,
                     state_overrides={
-                        k: v for k, v in [
+                        k: v
+                        for k, v in [
                             (v2_pool, v2_pool_state_override),
                             (v4_pool, v4_pool_state_override),
-                        ] if v is not None
+                        ]
+                        if v is not None
                     },
                 )
 
@@ -2114,10 +2128,12 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     pools=[v3_pool, v2_pool],
                     input_token=self.input_token,
                     state_overrides={
-                        k: v for k, v in [
+                        k: v
+                        for k, v in [
                             (v3_pool, v3_pool_state_override),
                             (v2_pool, v2_pool_state_override),
-                        ] if v is not None
+                        ]
+                        if v is not None
                     },
                 )
 
@@ -2129,16 +2145,16 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                             v2_pool=v2_pool,
                             v3_pool_state_override=v3_pool_state_override,
                             v2_pool_state_override=v2_pool_state_override,
-                        forward_token=forward_token,
-                        forward_token_amount=x,
-                    )
-                ),
-                method="bounded",
-                bounds=forward_token_bounds,
-                options={
-                    "xatol": XATOL,
-                },
-            )
+                            forward_token=forward_token,
+                            forward_token_amount=x,
+                        )
+                    ),
+                    method="bounded",
+                    bounds=forward_token_bounds,
+                    options={
+                        "xatol": XATOL,
+                    },
+                )
 
                 if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
                     logger.debug(
@@ -2955,10 +2971,12 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                             pools=[v2_pool_a, v2_pool_b],
                             input_token=self.input_token,
                             state_overrides={
-                                k: v for k, v in [
+                                k: v
+                                for k, v in [
                                     (v2_pool_a, v2_pool_a_state),
                                     (v2_pool_b, v2_pool_b_state),
-                                ] if v is not None
+                                ]
+                                if v is not None
                             },
                         )
                         if forward_token_amt is not None and forward_token_amt > 0:
@@ -3034,8 +3052,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                                 pool_state_blocks = tuple(
                                     block
                                     for pool in self.swap_pools
-                                    if (block := pool.state.block)
-                                    is not None
+                                    if (block := pool.state.block) is not None
                                 )
                                 if len(pool_state_blocks) == len(self.swap_pools):
                                     newest_state_block = max(pool_state_blocks)
