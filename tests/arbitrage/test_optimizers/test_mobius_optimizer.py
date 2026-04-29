@@ -18,7 +18,7 @@ from degenbot.arbitrage.optimizers.chain_rule import (
     multi_pool_newton_solve,
 )
 from degenbot.arbitrage.optimizers.mobius import (
-    HopState,
+    MobiusFloatHop,
     compute_mobius_coefficients,
     mobius_solve,
     simulate_path,
@@ -44,8 +44,8 @@ class PoolDef:
         return 1.0 - self.fee
 
 
-def hop_from_def(pd: PoolDef) -> HopState:
-    return HopState(
+def hop_from_def(pd: PoolDef) -> MobiusFloatHop:
+    return MobiusFloatHop(
         reserve_in=pd.reserve_in,
         reserve_out=pd.reserve_out,
         fee=pd.fee,
@@ -61,12 +61,12 @@ def chain_state_from_def(pd: PoolDef) -> ChainPoolState:
 
 
 def chain_rule_solve(
-    hops: list[HopState],
+    hops: list[MobiusFloatHop],
 ) -> tuple[float, float, int]:
     """
     Solve using the existing chain rule Newton optimizer.
     """
-    pool_states = [chain_state_from_def(HopState(h.reserve_in, h.reserve_out, h.fee)) for h in hops]
+    pool_states = [chain_state_from_def(MobiusFloatHop(h.reserve_in, h.reserve_out, h.fee)) for h in hops]
     return multi_pool_newton_solve(pool_states)
 
 
@@ -178,7 +178,7 @@ class TestMobiusCoefficients:
 
     def test_single_hop_matches_v2_formula(self):
         """A 1-hop path should match the direct V2 swap formula."""
-        hop = HopState(reserve_in=10_000.0, reserve_out=5_000.0, fee=0.003)
+        hop = MobiusFloatHop(reserve_in=10_000.0, reserve_out=5_000.0, fee=0.003)
         coeffs = compute_mobius_coefficients([hop])
 
         # K = gamma * s, M = r, N = gamma
@@ -196,8 +196,8 @@ class TestMobiusCoefficients:
         d, c = 3000.0, 4000.0
 
         hops = [
-            HopState(reserve_in=a, reserve_out=b, fee=0.003),
-            HopState(reserve_in=d, reserve_out=c, fee=0.003),
+            MobiusFloatHop(reserve_in=a, reserve_out=b, fee=0.003),
+            MobiusFloatHop(reserve_in=d, reserve_out=c, fee=0.003),
         ]
         coeffs = compute_mobius_coefficients(hops)
 
@@ -389,7 +389,7 @@ class TestMobiusBenchmarks:
 
     def _benchmark_solver(
         self,
-        hops: list[HopState],
+        hops: list[MobiusFloatHop],
         solver_fn,
         solver_name: str,
         num_runs: int = 1000,
@@ -544,8 +544,8 @@ class TestMobiusBenchmarks:
         d, c = 4_800.0, 11_000_000.0
 
         hops = [
-            HopState(reserve_in=a, reserve_out=b, fee=fee),
-            HopState(reserve_in=d, reserve_out=c, fee=fee),
+            MobiusFloatHop(reserve_in=a, reserve_out=b, fee=fee),
+            MobiusFloatHop(reserve_in=d, reserve_out=c, fee=fee),
         ]
 
         x_mobius, _, _ = mobius_solve(hops)

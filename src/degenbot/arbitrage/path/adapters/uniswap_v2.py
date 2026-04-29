@@ -1,8 +1,8 @@
 from fractions import Fraction
 
+from degenbot.arbitrage.optimizers.hop_types import ConstantProductHop, HopType
 from degenbot.arbitrage.path.pool_adapter import register_pool_adapter
 from degenbot.arbitrage.path.types import SwapVector
-from degenbot.arbitrage.solver.types import HopState, MobiusHopState
 from degenbot.arbitrage.types import AbstractSwapAmounts, UniswapV2PoolSwapAmounts
 from degenbot.types.abstract import AbstractUniswapV2Pool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -21,7 +21,7 @@ class UniswapV2PoolAdapter:
         *,
         zero_for_one: bool,
         state_override: UniswapV2PoolState | None = None,
-    ) -> HopState:
+    ) -> HopType:
         state = state_override or pool.state
         fee = self.extract_fee(pool, zero_for_one=zero_for_one)
         if zero_for_one:
@@ -30,7 +30,7 @@ class UniswapV2PoolAdapter:
         else:
             reserve_in = state.reserves_token1
             reserve_out = state.reserves_token0
-        return MobiusHopState(
+        return ConstantProductHop(
             reserve_in=reserve_in,
             reserve_out=reserve_out,
             fee=fee,

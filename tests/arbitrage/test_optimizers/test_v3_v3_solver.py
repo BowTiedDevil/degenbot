@@ -42,7 +42,7 @@ class TestV3V3SingleRange:
         seq2 = mobius.RustV3TickRangeSequence([hop2])
         result_v3v3 = mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
 
-        # Standard Möbius solve (using HopState from V3 ranges)
+        # Standard Möbius solve (using MobiusFloatHop from V3 ranges)
         hs1 = hop1.to_hop_state()
         hs2 = hop2.to_hop_state()
         result_mobius = mobius.RustMobiusOptimizer().solve([hs1, hs2])

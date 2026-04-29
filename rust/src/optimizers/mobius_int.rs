@@ -32,7 +32,7 @@
 
 use alloy::primitives::{U256, U512};
 
-use crate::optimizers::mobius::{MobiusError, mobius_solve, HopState};
+use crate::optimizers::mobius::{mobius_solve, HopState, MobiusError};
 
 /// Fee parameters for a single pool hop.
 ///
@@ -61,7 +61,12 @@ pub struct IntHopState {
 impl IntHopState {
     /// Create a new integer hop state.
     #[must_use]
-    pub const fn new(reserve_in: U256, reserve_out: U256, gamma_numer: u64, fee_denom: u64) -> Self {
+    pub const fn new(
+        reserve_in: U256,
+        reserve_out: U256,
+        gamma_numer: u64,
+        fee_denom: u64,
+    ) -> Self {
         Self {
             reserve_in,
             reserve_out,

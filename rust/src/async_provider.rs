@@ -78,10 +78,7 @@ impl PyAsyncAlloyProvider {
     fn get_chain_id<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let provider = Arc::clone(&self.provider);
         future_into_py(py, async move {
-            provider
-                .get_chain_id()
-                .await
-                .map_err(Into::<PyErr>::into)
+            provider.get_chain_id().await.map_err(Into::<PyErr>::into)
         })
     }
 
@@ -95,10 +92,7 @@ impl PyAsyncAlloyProvider {
         addresses: Option<Vec<String>>,
         topics: Option<Vec<Vec<String>>>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let fetcher = LogFetcher::new(
-            Arc::clone(&self.provider),
-            self.max_blocks_per_request,
-        );
+        let fetcher = LogFetcher::new(Arc::clone(&self.provider), self.max_blocks_per_request);
 
         future_into_py(py, async move {
             let logs = fetcher
@@ -173,9 +167,7 @@ impl PyAsyncAlloyProvider {
                 .await
                 .map_err(Into::<PyErr>::into)?;
 
-            Python::attach(|py| {
-                create_hexbytes(py, &result).map(Bound::unbind)
-            })
+            Python::attach(|py| create_hexbytes(py, &result).map(Bound::unbind))
         })
     }
 
@@ -197,9 +189,7 @@ impl PyAsyncAlloyProvider {
                 .await
                 .map_err(Into::<PyErr>::into)?;
 
-            Python::attach(|py| {
-                create_hexbytes(py, &result).map(Bound::unbind)
-            })
+            Python::attach(|py| create_hexbytes(py, &result).map(Bound::unbind))
         })
     }
 
@@ -239,7 +229,13 @@ impl PyAsyncAlloyProvider {
 
         future_into_py(py, async move {
             let gas = provider
-                .estimate_gas(&to_address, data_bytes, from_address.as_ref(), value, block_number)
+                .estimate_gas(
+                    &to_address,
+                    data_bytes,
+                    from_address.as_ref(),
+                    value,
+                    block_number,
+                )
                 .await
                 .map_err(Into::<PyErr>::into)?;
 
@@ -248,7 +244,11 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Get a transaction by hash asynchronously.
-    fn get_transaction<'py>(&self, py: Python<'py>, tx_hash: String) -> PyResult<Bound<'py, PyAny>> {
+    fn get_transaction<'py>(
+        &self,
+        py: Python<'py>,
+        tx_hash: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let provider = Arc::clone(&self.provider);
 
         future_into_py(py, async move {
@@ -258,13 +258,9 @@ impl PyAsyncAlloyProvider {
                 .map_err(Into::<PyErr>::into)?;
 
             tx.map_or_else(
-                || {
-                    Ok(pyo3::Python::attach(|py| py.None().into_bound(py).unbind()))
-                },
+                || Ok(pyo3::Python::attach(|py| py.None().into_bound(py).unbind())),
                 |tx_json| {
-                    Python::attach(|py| {
-                        json_to_py_with_hexbytes(py, tx_json).map(Bound::unbind)
-                    })
+                    Python::attach(|py| json_to_py_with_hexbytes(py, tx_json).map(Bound::unbind))
                 },
             )
         })
@@ -285,9 +281,7 @@ impl PyAsyncAlloyProvider {
                 .map_err(Into::<PyErr>::into)?;
 
             receipt.map_or_else(
-                || {
-                    Ok(pyo3::Python::attach(|py| py.None().into_bound(py).unbind()))
-                },
+                || Ok(pyo3::Python::attach(|py| py.None().into_bound(py).unbind())),
                 |receipt_json| {
                     Python::attach(|py| {
                         json_to_py_with_hexbytes(py, receipt_json).map(Bound::unbind)
@@ -317,9 +311,7 @@ impl PyAsyncAlloyProvider {
                 .await
                 .map_err(Into::<PyErr>::into)?;
 
-            Python::attach(|py| {
-                create_hexbytes(py, result.as_slice()).map(Bound::unbind)
-            })
+            Python::attach(|py| create_hexbytes(py, result.as_slice()).map(Bound::unbind))
         })
     }
 

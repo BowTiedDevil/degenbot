@@ -30,11 +30,14 @@ impl PyContract {
 
         // Release GIL during provider creation
         let provider = py
-            .detach(|| get_runtime().block_on(async { AlloyProvider::new(&url, crate::provider::DEFAULT_MAX_RETRIES).await }))
+            .detach(|| {
+                get_runtime().block_on(async {
+                    AlloyProvider::new(&url, crate::provider::DEFAULT_MAX_RETRIES).await
+                })
+            })
             .map_err(Into::<PyErr>::into)?;
 
-        let contract = Contract::new(&address, Arc::new(provider))
-            .map_err(Into::<PyErr>::into)?;
+        let contract = Contract::new(&address, Arc::new(provider)).map_err(Into::<PyErr>::into)?;
 
         Ok(Self { contract })
     }
@@ -151,7 +154,11 @@ fn decode_return_data(
 
     let types: Vec<AbiType> = output_types
         .iter()
-        .map(|t| AbiType::parse(t).map_err(|e| crate::errors::ContractError::InvalidAbi { message: format!("{e}") }))
+        .map(|t| {
+            AbiType::parse(t).map_err(|e| crate::errors::ContractError::InvalidAbi {
+                message: format!("{e}"),
+            })
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
     // Copy data before releasing GIL

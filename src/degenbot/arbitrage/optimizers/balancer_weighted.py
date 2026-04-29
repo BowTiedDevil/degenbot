@@ -113,11 +113,7 @@ def generate_trade_signatures(n_tokens: int) -> list[TradeSignature]:
 
     N=3: 12 signatures, N=4: 50, N=5: 180.
     """
-    return [
-        s
-        for s in itertools.product((-1, 0, 1), repeat=n_tokens)
-        if 1 in s and -1 in s
-    ]
+    return [s for s in itertools.product((-1, 0, 1), repeat=n_tokens) if 1 in s and -1 in s]
 
 
 # ---------------------------------------------------------------------------
@@ -165,10 +161,7 @@ def compute_optimal_trade(
 
     # Active-token normalized weights: sum to 1.0
     active_weight_sum = sum(pool.weights[i] for i in active_indices)
-    w_tilde = [
-        pool.weights[i] / active_weight_sum if signature[i] != 0 else 0.0
-        for i in range(n)
-    ]
+    w_tilde = [pool.weights[i] / active_weight_sum if signature[i] != 0 else 0.0 for i in range(n)]
 
     # k_tilde = prod(R_i^w_tilde_i) for active tokens (upscaled)
     k_tilde = 1.0
@@ -234,7 +227,7 @@ def validate_trade(
         new_reserve = reserves_f[i] + effective
         if new_reserve <= 0:
             return False
-        product *= new_reserve ** w_tilde
+        product *= new_reserve**w_tilde
 
     k_tilde = 1.0
     for i in active_indices:
@@ -407,10 +400,7 @@ class BalancerWeightedPoolSolver:
             profit = compute_profit_token_units(trades, market_prices)
 
             if max_input is not None:
-                total_input = sum(
-                    market_prices[i] * max(0.0, trades[i] / 1e18)
-                    for i in range(n)
-                )
+                total_input = sum(market_prices[i] * max(0.0, trades[i] / 1e18) for i in range(n))
                 if total_input > max_input:
                     continue
 

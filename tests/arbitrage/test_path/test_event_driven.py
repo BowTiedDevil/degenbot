@@ -13,8 +13,8 @@ from degenbot.arbitrage.path.arbitrage_path import (
     _ProfitableStateDiscovered,
     _StateUpdatedNoProfit,
 )
-from degenbot.arbitrage.solver import MobiusSolver
-from degenbot.arbitrage.solver.types import MobiusSolveResult
+from degenbot.arbitrage.optimizers.hop_types import SolveResult
+from degenbot.arbitrage.optimizers.solver import MobiusSolver
 from degenbot.types.concrete import PoolStateMessage
 
 from .conftest import FakeSubscriber, FakeToken, FakeV2PoolState, _make_v2_pool
@@ -151,4 +151,4 @@ class TestEventDrivenAutoSolve:
         )
 
         assert path.last_result is not None
-        assert isinstance(path.last_result, MobiusSolveResult)
+        assert isinstance(path.last_result, SolveResult)

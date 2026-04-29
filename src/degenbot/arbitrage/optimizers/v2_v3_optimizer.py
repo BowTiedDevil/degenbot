@@ -116,7 +116,11 @@ def estimate_equilibrium_price(
         Estimated equilibrium price (token1/token0).
     """
     v2_price = v2_state.price
-    v3_price = v3_state.virtual_reserve1 / v3_state.virtual_reserve0 if v3_state.virtual_reserve0 > 0 else 0.0
+    v3_price = (
+        v3_state.virtual_reserve1 / v3_state.virtual_reserve0
+        if v3_state.virtual_reserve0 > 0
+        else 0.0
+    )
 
     if v2_price <= 0 or v3_price <= 0:
         return v2_price if v2_price > 0 else v3_price
@@ -389,7 +393,9 @@ def solve_v2_v3_single_range(
             profit_plus = z_v2_plus - x_plus
         else:
             y_v2_plus = x_plus * gamma_v2 * R1_v2 / (R0_v2 + x_plus * gamma_v2)
-            z_v3_plus = y_v2_plus * gamma_v3 * L**2 / (L * v3_current_sqrt_price + y_v2_plus * gamma_v3)
+            z_v3_plus = (
+                y_v2_plus * gamma_v3 * L**2 / (L * v3_current_sqrt_price + y_v2_plus * gamma_v3)
+            )
             profit_plus = z_v3_plus - x_plus
 
         gradient = (profit_plus - profit) / eps
@@ -400,12 +406,16 @@ def solve_v2_v3_single_range(
         # Second derivative for Newton step
         x_minus = max(1.0, x - eps)
         if v2_price > v3_price:
-            y_v3_minus = x_minus * gamma_v3 * L**2 / (L / v3_current_sqrt_price + x_minus * gamma_v3)
+            y_v3_minus = (
+                x_minus * gamma_v3 * L**2 / (L / v3_current_sqrt_price + x_minus * gamma_v3)
+            )
             z_v2_minus = y_v3_minus * gamma_v2 * R0_v2 / (R1_v2 + y_v3_minus * gamma_v2)
             profit_minus = z_v2_minus - x_minus
         else:
             y_v2_minus = x_minus * gamma_v2 * R1_v2 / (R0_v2 + x_minus * gamma_v2)
-            z_v3_minus = y_v2_minus * gamma_v3 * L**2 / (L * v3_current_sqrt_price + y_v2_minus * gamma_v3)
+            z_v3_minus = (
+                y_v2_minus * gamma_v3 * L**2 / (L * v3_current_sqrt_price + y_v2_minus * gamma_v3)
+            )
             profit_minus = z_v3_minus - x_minus
 
         gradient_minus = (profit - profit_minus) / eps

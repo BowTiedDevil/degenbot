@@ -16,12 +16,12 @@ from degenbot.arbitrage.path.arbitrage_path import (
     _pool_to_hop_state,
     _v3_virtual_reserves,
 )
-from degenbot.arbitrage.solver import MobiusSolver
-from degenbot.arbitrage.solver.types import (
-    ConcentratedLiquidityHopState,
-    MobiusHopState,
-    MobiusSolveResult,
+from degenbot.arbitrage.optimizers.hop_types import (
+    BoundedProductHop,
+    ConstantProductHop,
+    SolveResult,
 )
+from degenbot.arbitrage.optimizers.solver import MobiusSolver
 
 from .conftest import (
     FakeAerodromeV2Pool,
@@ -129,22 +129,22 @@ class TestFeeExtraction:
 
 
 class TestPoolToHopState:
-    def test_v2_produces_mobius_hop_state(self):
+    def test_v2_produces_constant_product_hop(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         pool = _make_v2_pool(t0, t1)
         hop = _pool_to_hop_state(pool, zero_for_one=True)
-        assert isinstance(hop, MobiusHopState)
+        assert isinstance(hop, ConstantProductHop)
         assert hop.reserve_in == 10**18
         assert hop.reserve_out == 2 * 10**18
         assert hop.fee == FEE_03
 
-    def test_v3_produces_concentrated_hop_state(self):
+    def test_v3_produces_bounded_product_hop(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         pool = _make_v3_pool(t0, t1)
         hop = _pool_to_hop_state(pool, zero_for_one=True)
-        assert isinstance(hop, ConcentratedLiquidityHopState)
+        assert isinstance(hop, BoundedProductHop)
 
     def test_v2_direction(self):
         t0 = _make_token("0xt0")
@@ -206,8 +206,8 @@ class TestArbitragePathConstruction:
             solver=solver,
         )
         assert len(path.hop_states) == 2
-        assert isinstance(path.hop_states[0], MobiusHopState)
-        assert isinstance(path.hop_states[1], MobiusHopState)
+        assert isinstance(path.hop_states[0], ConstantProductHop)
+        assert isinstance(path.hop_states[1], ConstantProductHop)
 
     def test_calculate_profitable(self):
         t0, _t1, pool0, pool1 = self._make_cyclic_v2_pools()
@@ -218,7 +218,7 @@ class TestArbitragePathConstruction:
             solver=solver,
         )
         result = path.calculate()
-        assert isinstance(result, MobiusSolveResult)
+        assert isinstance(result, SolveResult)
 
     def test_calculate_updates_last_result(self):
         t0, _t1, pool0, pool1 = self._make_cyclic_v2_pools()

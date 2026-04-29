@@ -297,8 +297,14 @@ impl CachedAbiTypes {
     ///
     /// Returns `AbiDecodeError` if any encode fails.
     #[inline]
-    pub fn encode_batch(&self, values_batch: &[&[AbiValue]]) -> Result<Vec<Vec<u8>>, AbiDecodeError> {
-        values_batch.iter().map(|values| self.encode(values)).collect()
+    pub fn encode_batch(
+        &self,
+        values_batch: &[&[AbiValue]],
+    ) -> Result<Vec<Vec<u8>>, AbiDecodeError> {
+        values_batch
+            .iter()
+            .map(|values| self.encode(values))
+            .collect()
     }
 
     /// Get the cached type strings.
@@ -455,7 +461,10 @@ mod tests {
 
         let mut encoded_items: Vec<Vec<u8>> = Vec::new();
         for i in 0..3u64 {
-            let values = vec![AbiValue::Uint(U256::from(i * 10)), AbiValue::Bool(i % 2 == 0)];
+            let values = vec![
+                AbiValue::Uint(U256::from(i * 10)),
+                AbiValue::Bool(i % 2 == 0),
+            ];
             encoded_items.push(cached.encode(&values).unwrap());
         }
 

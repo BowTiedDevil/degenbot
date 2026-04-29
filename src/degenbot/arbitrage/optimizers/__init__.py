@@ -84,13 +84,14 @@ from degenbot.arbitrage.optimizers.hop_types import (
     HopType,
     PoolInvariant,
     SolidlyStableHop,
+    SolverMethod,
     SolveInput,
     SolveResult,
     V3TickRangeInfo,
 )
 from degenbot.arbitrage.optimizers.mobius import (
-    HopState,
     MobiusCoefficients,
+    MobiusFloatHop,
     MobiusOptimizer,
     MobiusV2Optimizer,
     TickRangeCrossing,
@@ -110,20 +111,14 @@ from degenbot.arbitrage.optimizers.newton import (
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
     BalancerMultiTokenSolver,
+    BrentSolver,
+    MobiusSolver,
+    NewtonSolver,
     PiecewiseMobiusSolver,
     SolidlyStableSolver,
     pool_state_to_hop,
     pool_to_hop,
     pools_to_solve_input,
-)
-from degenbot.arbitrage.optimizers.solver import (
-    BrentSolver as BrentSolverUnified,
-)
-from degenbot.arbitrage.optimizers.solver import (
-    MobiusSolver as MobiusSolverUnified,
-)
-from degenbot.arbitrage.optimizers.solver import (
-    NewtonSolver as NewtonSolverUnified,
 )
 from degenbot.arbitrage.optimizers.v2_v3_optimizer import (
     CandidateSolution,
@@ -156,7 +151,6 @@ from degenbot.arbitrage.optimizers.vectorized_batch import (
     VectorizedPathState,
     VectorizedPoolState,
 )
-from degenbot.arbitrage.solver.types import SolverMethod
 
 __all__ = [
     "ArbSolver",
@@ -172,20 +166,20 @@ __all__ = [
     "BoundedProductCFMM",
     "BoundedProductHop",
     "BoundedProductOptimizer",
-    "BrentSolverUnified",
+    "BrentSolver",
     "CandidateSolution",
     "ChainRuleNewtonOptimizer",
     "ConstantProductHop",
     "CurveStableswapHop",
     "Hop",
-    "HopState",
+    "MobiusFloatHop",
     "HopType",
     "MobiusCoefficients",
     "MobiusOptimizer",
-    "MobiusSolverUnified",
+    "MobiusSolver",
     "MobiusV2Optimizer",
     "MultiTokenArbitrageResult",
-    "NewtonSolverUnified",
+    "NewtonSolver",
     "NewtonV2Optimizer",
     "OptimizerResult",
     "OptimizerType",

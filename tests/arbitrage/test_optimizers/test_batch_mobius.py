@@ -21,7 +21,7 @@ from degenbot.arbitrage.optimizers.batch_mobius import (
     generate_batch_paths,
 )
 from degenbot.arbitrage.optimizers.mobius import (
-    HopState,
+    MobiusFloatHop,
     compute_mobius_coefficients,
     mobius_solve,
     simulate_path,
@@ -37,10 +37,10 @@ from degenbot.arbitrage.optimizers.vectorized_batch import (
 
 
 def make_hops_array(
-    paths: list[list[HopState]],
+    paths: list[list[MobiusFloatHop]],
 ) -> np.ndarray:
     """
-    Convert a list of HopState lists to a numpy array of shape
+    Convert a list of MobiusFloatHop lists to a numpy array of shape
     (num_paths, num_hops, 3).
     """
     num_hops = len(paths[0])
@@ -53,26 +53,26 @@ def make_hops_array(
     return arr
 
 
-def profitable_2pool_hops() -> list[HopState]:
+def profitable_2pool_hops() -> list[MobiusFloatHop]:
     return [
-        HopState(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003),
-        HopState(reserve_in=4_800.0, reserve_out=11_000_000.0, fee=0.003),
+        MobiusFloatHop(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003),
+        MobiusFloatHop(reserve_in=4_800.0, reserve_out=11_000_000.0, fee=0.003),
     ]
 
 
-def profitable_3pool_hops() -> list[HopState]:
+def profitable_3pool_hops() -> list[MobiusFloatHop]:
     return [
-        HopState(reserve_in=1_000_000.0, reserve_out=1_000.0, fee=0.003),
-        HopState(reserve_in=500.0, reserve_out=1_000_000.0, fee=0.003),
-        HopState(reserve_in=1_000_000.0, reserve_out=1_100_000.0, fee=0.003),
+        MobiusFloatHop(reserve_in=1_000_000.0, reserve_out=1_000.0, fee=0.003),
+        MobiusFloatHop(reserve_in=500.0, reserve_out=1_000_000.0, fee=0.003),
+        MobiusFloatHop(reserve_in=1_000_000.0, reserve_out=1_100_000.0, fee=0.003),
     ]
 
 
-def unprofitable_3pool_hops() -> list[HopState]:
+def unprofitable_3pool_hops() -> list[MobiusFloatHop]:
     return [
-        HopState(reserve_in=1_000_000.0, reserve_out=1_000.0, fee=0.003),
-        HopState(reserve_in=1_000.0, reserve_out=1_000_000.0, fee=0.003),
-        HopState(reserve_in=1_000_000.0, reserve_out=1_000_000.0, fee=0.003),
+        MobiusFloatHop(reserve_in=1_000_000.0, reserve_out=1_000.0, fee=0.003),
+        MobiusFloatHop(reserve_in=1_000.0, reserve_out=1_000_000.0, fee=0.003),
+        MobiusFloatHop(reserve_in=1_000_000.0, reserve_out=1_000_000.0, fee=0.003),
     ]
 
 
@@ -340,7 +340,7 @@ class TestVectorizedVsScalar:
 
         for i in range(hops_array.shape[0]):
             hops = [
-                HopState(
+                MobiusFloatHop(
                     reserve_in=float(hops_array[i, j, 0]),
                     reserve_out=float(hops_array[i, j, 1]),
                     fee=float(hops_array[i, j, 2]),
@@ -501,12 +501,12 @@ class TestNumericalAccuracy:
         # Pool A: 2M USDC, 1000 WETH
         # Pool B: 2.1M USDC, 1000 WETH
         hops = [
-            HopState(
+            MobiusFloatHop(
                 reserve_in=2_000_000_000_000.0,
                 reserve_out=1_000 * 10**18,
                 fee=0.003,
             ),
-            HopState(
+            MobiusFloatHop(
                 reserve_in=1_000 * 10**18,
                 reserve_out=2_100_000_000_000.0,
                 fee=0.003,
@@ -537,7 +537,7 @@ class TestNumericalAccuracy:
 
             # Rebuild hops and compute via simulate_path
             hops = [
-                HopState(
+                MobiusFloatHop(
                     reserve_in=float(hops_array[i, j, 0]),
                     reserve_out=float(hops_array[i, j, 1]),
                     fee=float(hops_array[i, j, 2]),
@@ -575,7 +575,7 @@ class TestProfitabilityCheck:
             f = hops_array[i, :, 2]
             gammas = 1.0 - f
 
-            # Compute K, M, N inline (avoid HopState construction overhead)
+            # Compute K, M, N inline (avoid MobiusFloatHop construction overhead)
             k = gammas[0] * r_out[0]
             m = r_in[0]
             n = gammas[0]
@@ -830,8 +830,8 @@ class TestEdgeCases:
     def test_zero_fee(self):
         """Zero fee should still work (gamma = 1.0)."""
         hops = [
-            HopState(reserve_in=1_000_000.0, reserve_out=1_100.0, fee=0.0),
-            HopState(reserve_in=1_000.0, reserve_out=1_100_000.0, fee=0.0),
+            MobiusFloatHop(reserve_in=1_000_000.0, reserve_out=1_100.0, fee=0.0),
+            MobiusFloatHop(reserve_in=1_000.0, reserve_out=1_100_000.0, fee=0.0),
         ]
         hops_array = make_hops_array([hops])
         max_inputs = np.array([np.inf])
@@ -845,8 +845,8 @@ class TestEdgeCases:
     def test_high_fee(self):
         """Very high fee (1%) should still compute correctly."""
         hops = [
-            HopState(reserve_in=1_000_000.0, reserve_out=1_100.0, fee=0.01),
-            HopState(reserve_in=1_000.0, reserve_out=1_100_000.0, fee=0.01),
+            MobiusFloatHop(reserve_in=1_000_000.0, reserve_out=1_100.0, fee=0.01),
+            MobiusFloatHop(reserve_in=1_000.0, reserve_out=1_100_000.0, fee=0.01),
         ]
         hops_array = make_hops_array([hops])
         max_inputs = np.array([np.inf])
@@ -861,8 +861,8 @@ class TestEdgeCases:
     def test_small_reserves(self):
         """Very small reserves should work without numerical issues."""
         hops = [
-            HopState(reserve_in=100.0, reserve_out=200.0, fee=0.003),
-            HopState(reserve_in=150.0, reserve_out=300.0, fee=0.003),
+            MobiusFloatHop(reserve_in=100.0, reserve_out=200.0, fee=0.003),
+            MobiusFloatHop(reserve_in=150.0, reserve_out=300.0, fee=0.003),
         ]
         hops_array = make_hops_array([hops])
         max_inputs = np.array([np.inf])

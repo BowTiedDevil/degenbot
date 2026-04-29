@@ -19,21 +19,20 @@
 #![allow(clippy::option_if_let_else)]
 #![allow(clippy::unnecessary_wraps)]
 
+use crate::alloy_py::{extract_python_u256, PyU256};
 use crate::optimizers::mobius::{
     compute_mobius_coefficients, mobius_solve, simulate_path, HopState, MobiusCoefficients,
     MobiusError,
 };
-use crate::optimizers::mobius_batch::{
-    mobius_batch_solve, mobius_batch_solve_vectorized,
+use crate::optimizers::mobius_batch::{mobius_batch_solve, mobius_batch_solve_vectorized};
+use crate::optimizers::mobius_int::{
+    mobius_refine_int, mobius_solve_with_refinement, u256_to_f64, IntHopState,
 };
 use crate::optimizers::mobius_v3::{
     estimate_v3_final_sqrt_price, solve_piecewise, solve_v3_candidates,
-    solve_v3_tick_range_sequence,
-    TickRangeCrossing, V3TickRangeHop, V3TickRangeSequence,
+    solve_v3_tick_range_sequence, TickRangeCrossing, V3TickRangeHop, V3TickRangeSequence,
 };
 use crate::optimizers::mobius_v3_v3::solve_v3_v3;
-use crate::optimizers::mobius_int::{IntHopState, mobius_refine_int, mobius_solve_with_refinement, u256_to_f64};
-use crate::alloy_py::{extract_python_u256, PyU256};
 use alloy::primitives::U256;
 
 use pyo3::prelude::*;
@@ -261,11 +260,11 @@ impl PyV3TickRangeSequence {
             let py_v3 = item.extract::<PyRef<PyV3TickRangeHop>>()?;
             rust_ranges.push(py_v3.inner.clone());
         }
-        
+
         match V3TickRangeSequence::new(rust_ranges) {
             Ok(seq) => Ok(Self { inner: seq }),
             Err(_) => Err(pyo3::exceptions::PyValueError::new_err(
-                "Invalid V3 tick range sequence"
+                "Invalid V3 tick range sequence",
             )),
         }
     }
@@ -276,7 +275,7 @@ impl PyV3TickRangeSequence {
         match self.inner.compute_crossing(k) {
             Ok(crossing) => Ok(PyTickRangeCrossing { inner: crossing }),
             Err(_) => Err(pyo3::exceptions::PyValueError::new_err(
-                "Invalid range index"
+                "Invalid range index",
             )),
         }
     }
@@ -356,7 +355,11 @@ impl PyMobiusOptimizer {
     /// -------
     /// RustMobiusCoefficients
     #[pyo3(signature = (hops))]
-    fn compute_coefficients(&self, py: Python<'_>, hops: &Bound<'_, PyList>) -> PyResult<PyMobiusCoefficients> {
+    fn compute_coefficients(
+        &self,
+        py: Python<'_>,
+        hops: &Bound<'_, PyList>,
+    ) -> PyResult<PyMobiusCoefficients> {
         let hop_states = extract_hops(hops)?;
         let coeffs = py.detach(|| compute_mobius_coefficients(&hop_states))?;
         Ok(PyMobiusCoefficients { inner: coeffs })
@@ -436,7 +439,8 @@ impl PyMobiusOptimizer {
     ) -> PyResult<PyMobiusResult> {
         let hop_states = extract_hops(base_hops)?;
         let candidates = extract_v3_candidates(v3_candidates)?;
-        let (x_opt, profit, iters) = py.detach(|| solve_v3_candidates(&hop_states, v3_hop_index, &candidates, max_input));
+        let (x_opt, profit, iters) =
+            py.detach(|| solve_v3_candidates(&hop_states, v3_hop_index, &candidates, max_input));
         Ok(PyMobiusResult {
             optimal_input: x_opt,
             profit,
@@ -499,7 +503,8 @@ impl PyMobiusOptimizer {
     ) -> PyResult<PyMobiusResult> {
         let hop_states = extract_hops(hops)?;
         let crossing_data = extract_tick_range_crossings(crossings)?;
-        let (x_opt, profit, iters) = py.detach(|| solve_piecewise(&hop_states, v3_hop_index, &crossing_data, max_input));
+        let (x_opt, profit, iters) =
+            py.detach(|| solve_piecewise(&hop_states, v3_hop_index, &crossing_data, max_input));
         Ok(PyMobiusResult {
             optimal_input: x_opt,
             profit,
@@ -541,13 +546,9 @@ impl PyMobiusOptimizer {
     ) -> PyResult<PyMobiusResult> {
         let hop_states = extract_hops(hops)?;
         let seq = sequence.inner.clone();
-        let (x_opt, profit, iters) = py.detach(|| solve_v3_tick_range_sequence(
-            &hop_states,
-            v3_hop_index,
-            &seq,
-            max_candidates,
-            max_input,
-        ));
+        let (x_opt, profit, iters) = py.detach(|| {
+            solve_v3_tick_range_sequence(&hop_states, v3_hop_index, &seq, max_candidates, max_input)
+        });
         Ok(PyMobiusResult {
             optimal_input: x_opt,
             profit,
@@ -585,12 +586,8 @@ impl PyMobiusOptimizer {
     ) -> PyResult<PyMobiusResult> {
         let seq1 = sequence1.inner.clone();
         let seq2 = sequence2.inner.clone();
-        let (x_opt, profit, iters) = py.detach(|| solve_v3_v3(
-            &seq1,
-            &seq2,
-            max_input,
-            max_candidates,
-        ));
+        let (x_opt, profit, iters) =
+            py.detach(|| solve_v3_v3(&seq1, &seq2, max_input, max_candidates));
         Ok(PyMobiusResult {
             optimal_input: x_opt,
             profit,
@@ -624,7 +621,8 @@ impl PyMobiusOptimizer {
         let hops_vec: Vec<f64> = hops_array.extract()?;
         let max_vec: Vec<f64> = max_inputs.extract()?;
 
-        let result = py.detach(|| mobius_batch_solve(&hops_vec, num_hops, &max_vec))
+        let result = py
+            .detach(|| mobius_batch_solve(&hops_vec, num_hops, &max_vec))
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
         let dict = pyo3::types::PyDict::new(py);
@@ -668,15 +666,13 @@ impl PyMobiusOptimizer {
         let max_vec: Vec<f64> = max_inputs.extract()?;
 
         let num_paths = max_vec.len();
-        let result = py.detach(|| mobius_batch_solve_vectorized(
-            num_paths,
-            num_hops,
-            &r_in,
-            &r_out,
-            &fee_vec,
-            &max_vec,
-        ))
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let result = py
+            .detach(|| {
+                mobius_batch_solve_vectorized(
+                    num_paths, num_hops, &r_in, &r_out, &fee_vec, &max_vec,
+                )
+            })
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
         let dict = pyo3::types::PyDict::new(py);
         dict.set_item("optimal_input", result.optimal_input.clone())?;
@@ -866,9 +862,7 @@ impl PyArbResult {
 ///
 /// Returns `(base_hops, int_hops, all_int, unsupported)`.
 /// When all hops are RustIntHopState, `all_int=true` and `int_hops` is populated.
-fn parse_hops(
-    hops: &Bound<'_, PyList>,
-) -> PyResult<(Vec<HopState>, Vec<IntHopState>, bool, bool)> {
+fn parse_hops(hops: &Bound<'_, PyList>) -> PyResult<(Vec<HopState>, Vec<IntHopState>, bool, bool)> {
     let mut base_hops: Vec<HopState> = Vec::new();
     let mut int_hops: Vec<IntHopState> = Vec::new();
     let mut all_int = true;
@@ -893,8 +887,7 @@ fn parse_hops(
         else if let Ok(py_hop) = item.extract::<PyRef<PyHopState>>() {
             base_hops.push(py_hop.inner.clone());
             all_int = false;
-        }
-        else {
+        } else {
             unsupported = true;
         }
     }
@@ -1034,24 +1027,33 @@ impl PyArbSolver {
         } else if v3_seqs.len() == 2 && base_hops.len() == 2 {
             let seq0 = v3_seqs[0].1.clone();
             let seq1 = v3_seqs[1].1.clone();
-            let (x_opt, profit, iters) = py.detach(|| solve_v3_v3(
-                &seq0, &seq1, max_input, max_candidates,
-            ));
+            let (x_opt, profit, iters) =
+                py.detach(|| solve_v3_v3(&seq0, &seq1, max_input, max_candidates));
             return Ok(PyArbResult {
-                optimal_input: x_opt, profit, iterations: iters,
-                success: x_opt > 0.0 && profit > 0.0, method: SolveMethod::V3V3 as u8,
-                supported: true, optimal_input_int: None, profit_int: None,
+                optimal_input: x_opt,
+                profit,
+                iterations: iters,
+                success: x_opt > 0.0 && profit > 0.0,
+                method: SolveMethod::V3V3 as u8,
+                supported: true,
+                optimal_input_int: None,
+                profit_int: None,
             });
         } else if v3_seqs.len() == 1 {
             let v3_idx = v3_seqs[0].0;
             let seq = v3_seqs[0].1.clone();
-            let (x_opt, profit, iters) = py.detach(|| solve_v3_tick_range_sequence(
-                &base_hops, v3_idx, &seq, max_candidates, max_input,
-            ));
+            let (x_opt, profit, iters) = py.detach(|| {
+                solve_v3_tick_range_sequence(&base_hops, v3_idx, &seq, max_candidates, max_input)
+            });
             return Ok(PyArbResult {
-                optimal_input: x_opt, profit, iterations: iters,
-                success: x_opt > 0.0 && profit > 0.0, method: SolveMethod::PiecewiseMobius as u8,
-                supported: true, optimal_input_int: None, profit_int: None,
+                optimal_input: x_opt,
+                profit,
+                iterations: iters,
+                success: x_opt > 0.0 && profit > 0.0,
+                method: SolveMethod::PiecewiseMobius as u8,
+                supported: true,
+                optimal_input_int: None,
+                profit_int: None,
             });
         }
 
@@ -1090,15 +1092,15 @@ impl PyArbSolver {
         // Validate array length: 4 elements per hop
         let n = int_hops_flat.len();
         if n % 4 != 0 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                format!("int_hops_flat length ({n}) must be a multiple of 4"),
-            ));
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "int_hops_flat length ({n}) must be a multiple of 4"
+            )));
         }
         let num_hops = n / 4;
         if num_hops < 2 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                format!("Need at least 2 hops, got {num_hops}"),
-            ));
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Need at least 2 hops, got {num_hops}"
+            )));
         }
 
         let mut base_hops: Vec<HopState> = Vec::with_capacity(num_hops);
@@ -1192,14 +1194,15 @@ impl PyPoolCache {
         let r_out = extract_python_u256(reserve_out)?;
 
         if gamma_numer >= fee_denom {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                format!(
-                    "gamma_numer ({gamma_numer}) must be less than fee_denom ({fee_denom})"
-                ),
-            ));
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "gamma_numer ({gamma_numer}) must be less than fee_denom ({fee_denom})"
+            )));
         }
 
-        self.pools.insert(pool_id, IntHopState::new(r_in, r_out, gamma_numer, fee_denom));
+        self.pools.insert(
+            pool_id,
+            IntHopState::new(r_in, r_out, gamma_numer, fee_denom),
+        );
         Ok(())
     }
 
@@ -1242,9 +1245,10 @@ impl PyPoolCache {
         let pool_ids: Vec<u64> = path.extract()?;
 
         if pool_ids.len() < 2 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                format!("Need at least 2 pools in path, got {}", pool_ids.len()),
-            ));
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Need at least 2 pools in path, got {}",
+                pool_ids.len()
+            )));
         }
 
         let mut int_hops: Vec<IntHopState> = Vec::with_capacity(pool_ids.len());
@@ -1324,7 +1328,10 @@ pub fn add_mobius_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// Compute Möbius coefficients for an n-hop path.
 #[pyfunction]
 #[pyo3(signature = (hops))]
-fn py_compute_mobius_coefficients(py: Python<'_>, hops: &Bound<'_, PyList>) -> PyResult<PyMobiusCoefficients> {
+fn py_compute_mobius_coefficients(
+    py: Python<'_>,
+    hops: &Bound<'_, PyList>,
+) -> PyResult<PyMobiusCoefficients> {
     let hop_states = extract_hops(hops)?;
     let coeffs = py.detach(|| compute_mobius_coefficients(&hop_states))?;
     Ok(PyMobiusCoefficients { inner: coeffs })
@@ -1333,7 +1340,11 @@ fn py_compute_mobius_coefficients(py: Python<'_>, hops: &Bound<'_, PyList>) -> P
 /// Solve for optimal arbitrage input.
 #[pyfunction]
 #[pyo3(signature = (hops, max_input=None))]
-fn py_mobius_solve(py: Python<'_>, hops: &Bound<'_, PyList>, max_input: Option<f64>) -> PyResult<PyMobiusResult> {
+fn py_mobius_solve(
+    py: Python<'_>,
+    hops: &Bound<'_, PyList>,
+    max_input: Option<f64>,
+) -> PyResult<PyMobiusResult> {
     let hop_states = extract_hops(hops)?;
     let (x_opt, profit, iters) = py.detach(|| mobius_solve(&hop_states, max_input));
     Ok(PyMobiusResult {
@@ -1377,7 +1388,12 @@ pub struct PyIntHopState {
 impl PyIntHopState {
     #[new]
     #[pyo3(signature = (reserve_in, reserve_out, gamma_numer, fee_denom))]
-    fn new(reserve_in: &Bound<'_, PyAny>, reserve_out: &Bound<'_, PyAny>, gamma_numer: u64, fee_denom: u64) -> PyResult<Self> {
+    fn new(
+        reserve_in: &Bound<'_, PyAny>,
+        reserve_out: &Bound<'_, PyAny>,
+        gamma_numer: u64,
+        fee_denom: u64,
+    ) -> PyResult<Self> {
         let r_in = extract_python_u256(reserve_in)?;
         let r_out = extract_python_u256(reserve_out)?;
         Ok(Self {
@@ -1417,7 +1433,8 @@ impl PyIntHopState {
             "RustIntHopState(reserve_in={:?}, reserve_out={:?}, gamma={}/{})",
             self.inner.reserve_in,
             self.inner.reserve_out,
-            self.inner.gamma_numer, self.inner.fee_denom
+            self.inner.gamma_numer,
+            self.inner.fee_denom
         )
     }
 }
@@ -1480,9 +1497,9 @@ fn py_int_mobius_solve(py: Python<'_>, hops: &Bound<'_, PyList>) -> PyResult<PyI
         int_hops.push(py_hop.inner.clone());
     }
 
-    let result = py.detach(|| int_mobius_solve(&int_hops)).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("{e}"))
-    })?;
+    let result = py
+        .detach(|| int_mobius_solve(&int_hops))
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
 
     Ok(PyIntMobiusResult {
         optimal_input: result.optimal_input,
@@ -1506,7 +1523,11 @@ fn py_int_mobius_solve(py: Python<'_>, hops: &Bound<'_, PyList>) -> PyResult<PyI
 /// int
 #[pyfunction]
 #[pyo3(signature = (x, hops))]
-fn py_int_simulate_path<'py>(py: Python<'py>, x: &Bound<'_, PyAny>, hops: &Bound<'_, PyList>) -> PyResult<Bound<'py, PyAny>> {
+fn py_int_simulate_path<'py>(
+    py: Python<'py>,
+    x: &Bound<'_, PyAny>,
+    hops: &Bound<'_, PyList>,
+) -> PyResult<Bound<'py, PyAny>> {
     let x_u256 = extract_python_u256(x)?;
     let mut int_hops = Vec::new();
     for item in hops.iter() {

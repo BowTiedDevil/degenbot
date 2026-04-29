@@ -3,7 +3,7 @@ from fractions import Fraction
 from typing import Any, Protocol
 
 from degenbot.arbitrage.path.types import PoolCompatibility, SwapVector
-from degenbot.arbitrage.solver.types import HopState
+from degenbot.arbitrage.optimizers.hop_types import HopType
 from degenbot.arbitrage.types import AbstractSwapAmounts
 
 
@@ -15,7 +15,7 @@ class PoolAdapter[PoolT, StateT](Protocol):
         *,
         zero_for_one: bool,
         state_override: StateT | None = None,
-    ) -> HopState: ...
+    ) -> HopType: ...
     def build_swap_amount(
         self,
         pool: PoolT,

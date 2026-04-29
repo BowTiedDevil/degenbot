@@ -7,9 +7,9 @@
 //! - Serialization/conversion errors during Python object creation → `PyValueError`
 
 use crate::provider::{AlloyProvider, LogFetcher, LogFilter};
-use crate::runtime::get_runtime;
-use crate::py_converters::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
 use crate::py_cache::create_hexbytes;
+use crate::py_converters::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
+use crate::runtime::get_runtime;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
@@ -147,7 +147,6 @@ impl PyAlloyProvider {
         data: &Bound<'_, PyBytes>,
         block_number: Option<u64>,
     ) -> PyResult<Py<PyAny>> {
-
         // Parse the address (input validation → ValueError)
         let to_address = crate::address_utils::parse_address(to)
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
@@ -181,7 +180,6 @@ impl PyAlloyProvider {
         address: &str,
         block_number: Option<u64>,
     ) -> PyResult<Py<PyAny>> {
-
         // Parse the address (input validation → ValueError)
         let addr = crate::address_utils::parse_address(address)
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
@@ -285,7 +283,6 @@ impl PyAlloyProvider {
         value: Option<u128>,
         block_number: Option<u64>,
     ) -> PyResult<u64> {
-
         // Parse addresses (input validation → ValueError)
         let to_address = crate::address_utils::parse_address(to)
             .map_err(|e| PyValueError::new_err(format!("Invalid 'to' address: {e}")))?;

@@ -157,7 +157,10 @@ impl Contract {
     /// # Errors
     ///
     /// Returns `AddressError` if the address is invalid.
-    pub fn new(address: &str, provider: Arc<AlloyProvider>) -> Result<Self, crate::errors::AddressError> {
+    pub fn new(
+        address: &str,
+        provider: Arc<AlloyProvider>,
+    ) -> Result<Self, crate::errors::AddressError> {
         let addr = crate::address_utils::parse_address(address)?;
 
         Ok(Self {
@@ -323,7 +326,8 @@ mod tests {
 
     #[test]
     fn test_encode_bool() {
-        let encoded = AbiValue::from_str_arg(&AbiType::Bool, "true").expect("bool true should parse");
+        let encoded =
+            AbiValue::from_str_arg(&AbiType::Bool, "true").expect("bool true should parse");
         match encoded {
             AbiValue::Bool(true) => {}
             _ => panic!("Expected Bool(true)"),
@@ -505,9 +509,8 @@ mod tests {
 
     #[test]
     fn test_encode_empty_dynamic_array() {
-        let encoded =
-            AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::Uint(256))), "[]")
-                .expect("should encode empty array");
+        let encoded = AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::Uint(256))), "[]")
+            .expect("should encode empty array");
         match encoded {
             AbiValue::Array(arr) => assert!(arr.is_empty()),
             _ => panic!("Expected Array variant"),
@@ -559,9 +562,8 @@ mod tests {
         let addr2 = "0x66f9664f97f2b50f62d13ea064982f936de76657";
         let input = format!("[{addr1}, {addr2}]");
 
-        let value =
-            AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::Address)), &input)
-                .expect("should encode address[]");
+        let value = AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::Address)), &input)
+            .expect("should encode address[]");
         match value {
             AbiValue::Array(arr) => {
                 assert_eq!(arr.len(), 2);
@@ -731,7 +733,9 @@ mod tests {
         let decoded = decode_return_data(&encoded, &types).expect("should decode");
 
         assert_eq!(decoded.len(), 1);
-        assert!(decoded[0].to_lowercase().contains("742d35cc6634c0532925a3b8d4c9db96590d6b75"));
+        assert!(decoded[0]
+            .to_lowercase()
+            .contains("742d35cc6634c0532925a3b8d4c9db96590d6b75"));
     }
 
     #[test]
@@ -780,6 +784,9 @@ mod tests {
         let result = decode_return_data(&data, &[AbiType::Array(Box::new(AbiType::Uint(256)))])
             .map_err(|e| e.to_string());
 
-        assert!(result.is_err(), "Should reject array with length exceeding available data");
+        assert!(
+            result.is_err(),
+            "Should reject array with length exceeding available data"
+        );
     }
 }

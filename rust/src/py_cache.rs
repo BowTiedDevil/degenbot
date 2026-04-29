@@ -121,7 +121,11 @@ mod tests {
             let max_bytes = [0xFFu8; 32];
             let py_max = bytes_to_int(py, &max_bytes).unwrap();
             // Verify it's a large positive number
-            let is_positive: bool = py_max.call_method1("__gt__", (0,)).unwrap().extract().unwrap();
+            let is_positive: bool = py_max
+                .call_method1("__gt__", (0,))
+                .unwrap()
+                .extract()
+                .unwrap();
             assert!(is_positive);
         });
     }

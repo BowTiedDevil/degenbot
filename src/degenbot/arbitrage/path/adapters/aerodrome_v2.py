@@ -2,9 +2,9 @@ from fractions import Fraction
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.aerodrome.types import AerodromeV2PoolState
+from degenbot.arbitrage.optimizers.hop_types import ConstantProductHop, HopType
 from degenbot.arbitrage.path.pool_adapter import register_pool_adapter
 from degenbot.arbitrage.path.types import PoolCompatibility, SwapVector
-from degenbot.arbitrage.solver.types import HopState, MobiusHopState
 from degenbot.arbitrage.types import AbstractSwapAmounts
 from degenbot.types.abstract import AbstractAerodromeV2Pool
 
@@ -19,7 +19,7 @@ class AerodromeV2PoolAdapter:
         *,
         zero_for_one: bool,
         state_override: AerodromeV2PoolState | None = None,
-    ) -> HopState:
+    ) -> HopType:
         state = state_override or pool.state
         fee = self.extract_fee(pool, zero_for_one=zero_for_one)
         if zero_for_one:
@@ -28,7 +28,7 @@ class AerodromeV2PoolAdapter:
         else:
             reserve_in = state.reserves_token1
             reserve_out = state.reserves_token0
-        return MobiusHopState(
+        return ConstantProductHop(
             reserve_in=reserve_in,
             reserve_out=reserve_out,
             fee=fee,

@@ -80,6 +80,4 @@ def get_web3_from_config(
     Returns:
         A ProviderAdapter wrapping either Web3 or AlloyProvider
     """
-    return get_provider_from_config(
-        chain_id=chain_id, optimize=optimize, use_alloy=use_alloy
-    )
+    return get_provider_from_config(chain_id=chain_id, optimize=optimize, use_alloy=use_alloy)

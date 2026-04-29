@@ -50,9 +50,7 @@ pub mod tick_math;
 pub mod tick_math_py;
 
 // Re-export commonly used items at the crate root
-pub use address_utils::{
-    parse_address, to_checksum_address_bytes, to_checksum_address_str,
-};
+pub use address_utils::{parse_address, to_checksum_address_bytes, to_checksum_address_str};
 pub use address_utils_py::to_checksum_address;
 pub use hex_utils::{decode_hex, encode_hex, HexError};
 

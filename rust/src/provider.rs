@@ -148,9 +148,11 @@ impl LogFilter {
                 .addresses
                 .iter()
                 .map(|addr| {
-                    crate::address_utils::parse_address(addr).map_err(|e| ProviderError::InvalidAddress {
-                        address: addr.clone(),
-                        reason: format!("{e}"),
+                    crate::address_utils::parse_address(addr).map_err(|e| {
+                        ProviderError::InvalidAddress {
+                            address: addr.clone(),
+                            reason: format!("{e}"),
+                        }
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;

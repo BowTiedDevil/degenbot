@@ -121,9 +121,8 @@ fn is_hex_string(s: &str) -> bool {
 
 /// Convert a hex string to a `HexBytes` object.
 fn hex_to_hexbytes<'py>(py: Python<'py>, hex_str: &str) -> PyResult<Bound<'py, PyAny>> {
-    let bytes = decode_hex(hex_str).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("Invalid hex string: {e}"))
-    })?;
+    let bytes = decode_hex(hex_str)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid hex string: {e}")))?;
     create_hexbytes(py, &bytes)
 }
 
@@ -465,7 +464,10 @@ fn set_eip7702_tx_fields(dict: &Bound<'_, PyDict>, tx: &TxEip7702) -> PyResult<(
     let auth_list = PyList::empty(py);
     for auth in &tx.authorization_list {
         let auth_dict = PyDict::new(py);
-        auth_dict.set_item("chain_id", crate::alloy_py::u256_to_py(py, auth.chain_id())?)?;
+        auth_dict.set_item(
+            "chain_id",
+            crate::alloy_py::u256_to_py(py, auth.chain_id())?,
+        )?;
         auth_dict.set_item("address", address_to_checksum_string(auth.address()))?;
         auth_dict.set_item("nonce", auth.nonce())?;
         let r_bytes: [u8; 32] = auth.r().to_be_bytes();
@@ -529,9 +531,8 @@ fn transaction_to_py_dict<'py>(
         TxEnvelope::Eip7702(signed_tx) => {
             set_eip7702_tx_fields(&dict, signed_tx.tx())?;
             set_signature_fields(&dict, signed_tx.signature(), 4)?;
-        }
-        // NOTE: When alloy adds new TxEnvelope variants, add match arms here.
-        // The compiler will error on exhaustive match to alert you.
+        } // NOTE: When alloy adds new TxEnvelope variants, add match arms here.
+          // The compiler will error on exhaustive match to alert you.
     }
 
     Ok(dict)
@@ -568,7 +569,10 @@ fn consensus_header_to_py_dict<'py>(
         "logs_bloom",
         create_hexbytes(py, header.logs_bloom.as_ref())?,
     )?;
-    dict.set_item("difficulty", crate::alloy_py::u256_to_py(py, &header.difficulty)?)?;
+    dict.set_item(
+        "difficulty",
+        crate::alloy_py::u256_to_py(py, &header.difficulty)?,
+    )?;
     dict.set_item("number", header.number)?;
     dict.set_item("gas_limit", header.gas_limit)?;
     dict.set_item("gas_used", header.gas_used)?;

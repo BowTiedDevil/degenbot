@@ -166,7 +166,10 @@ fn test_python_int_i128_boundary() {
         let py_int = i128::MIN.into_pyobject(py).unwrap();
         abi_value_from_python(py, &py_int).unwrap()
     });
-    assert_eq!(result_min, AbiValue::Int(I256::try_from(i128::MIN).unwrap()));
+    assert_eq!(
+        result_min,
+        AbiValue::Int(I256::try_from(i128::MIN).unwrap())
+    );
 }
 
 /// Test Python int larger than i128 (requires `to_bytes` path).
@@ -180,7 +183,10 @@ fn test_python_int_large_positive() {
 
     if let AbiValue::Uint(n) = result {
         let expected = U256::from(2u128.pow(127));
-        assert_eq!(n, expected, "Large positive int should convert via to_bytes path");
+        assert_eq!(
+            n, expected,
+            "Large positive int should convert via to_bytes path"
+        );
     } else {
         panic!("Expected Uint variant, got {result:?}");
     }
@@ -211,7 +217,10 @@ fn test_python_invalid_type() {
         abi_value_from_python(py, &dict)
     });
 
-    assert!(result.is_err(), "Dict should not be convertible to AbiValue");
+    assert!(
+        result.is_err(),
+        "Dict should not be convertible to AbiValue"
+    );
 }
 
 /// Test empty Python list.
