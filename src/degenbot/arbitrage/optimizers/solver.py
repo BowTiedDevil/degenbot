@@ -25,24 +25,14 @@ from degenbot.arbitrage.optimizers.balancer_weighted import (
     BalancerMultiTokenState,
     BalancerWeightedPoolSolver,
 )
-from degenbot.arbitrage.optimizers.hop_types import (
-    BalancerMultiTokenHop,
-    BoundedProductHop,
-    ConstantProductHop,
-    HopType,
-    PoolInvariant,
-    SolidlyStableHop,
-    SolverMethod,
-    SolveInput,
-    Solver,
-    SolveResult,
-    V3TickRangeInfo,
-)
+from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult, SolverMethod
 from degenbot.arbitrage.optimizers.mobius import (
     V3TickRangeHop,
     V3TickRangeSequence,
-    compute_mobius_coefficients as _float_compute_mobius_coefficients,
     mobius_solve,
+)
+from degenbot.arbitrage.optimizers.mobius import (
+    compute_mobius_coefficients as _float_compute_mobius_coefficients,
 )
 from degenbot.arbitrage.optimizers.mobius import simulate_path as _mobius_simulate_path
 from degenbot.arbitrage.optimizers.v3_tick_predictor import estimate_price_impact
@@ -52,6 +42,15 @@ from degenbot.degenbot_rs import mobius as _rs_mobius
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import OptimizationError
 from degenbot.solidly.solidly_functions import general_calc_exact_in_stable
+from degenbot.types.hop_types import (
+    BalancerMultiTokenHop,
+    BoundedProductHop,
+    ConstantProductHop,
+    HopType,
+    PoolInvariant,
+    SolidlyStableHop,
+    V3TickRangeInfo,
+)
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_libraries.constants import Q96
 from degenbot.uniswap.v3_libraries.tick_bitmap import gen_ticks

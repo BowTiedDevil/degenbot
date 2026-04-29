@@ -6,19 +6,19 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.arbitrage.optimizers.hop_types import Hop
+from degenbot.arbitrage.optimizers.hop_types import SolveInput
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
     BrentSolver,
     MobiusSolver,
     NewtonSolver,
-    SolveInput,
     SolveResult,
     SolverMethod,
     _compute_mobius_coefficients,
     _simulate_path,
 )
 from degenbot.exceptions import OptimizationError
+from degenbot.types.hop_types import Hop
 
 from .conftest import (
     FEE_0_3_PCT,

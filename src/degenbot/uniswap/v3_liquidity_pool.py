@@ -40,6 +40,8 @@ from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractArbitrage, AbstractConcentratedLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import AbstractPublisherMessage, Publisher, PublisherMixin, Subscriber
+from degenbot.types.pool_protocols import SimulationResult
+from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV3ExchangeDeployment
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import (
@@ -1629,3 +1631,207 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
             return {
                 "cache_size": len(self._swap_step_cache),
             }
+
+    def simulate_swap(
+        self,
+        token_in: ChecksumAddress,
+        amount_in: int,
+        token_out: ChecksumAddress,  # noqa: ARG002
+        state_override: UniswapV3PoolState | None = None,
+    ) -> SimulationResult:
+        if token_in == self.token0.address:
+            token_in_obj = self.token0
+        elif token_in == self.token1.address:
+            token_in_obj = self.token1
+        else:
+            raise DegenbotValueError(message=f"token_in {token_in} not in pool")
+
+        result = self.simulate_exact_input_swap(
+            token_in=token_in_obj,
+            token_in_quantity=amount_in,
+            override_state=state_override,
+        )
+        zero_for_one = token_in_obj == self.token0
+        amount_out = -result.amount1_delta if zero_for_one else -result.amount0_delta
+        return SimulationResult(
+            amount_in=amount_in,
+            amount_out=amount_out,
+            initial_state=result.initial_state,
+            final_state=result.final_state,
+        )
+
+    def simulate_swap_for_output(
+        self,
+        token_in: ChecksumAddress,
+        token_out: ChecksumAddress,
+        amount_out: int,
+        state_override: UniswapV3PoolState | None = None,
+    ) -> SimulationResult:
+        if token_out == self.token0.address:
+            token_out_obj = self.token0
+        elif token_out == self.token1.address:
+            token_out_obj = self.token1
+        else:
+            raise DegenbotValueError(message=f"token_out {token_out} not in pool")
+
+        result = self.simulate_exact_output_swap(
+            token_out=token_out_obj,
+            token_out_quantity=amount_out,
+            override_state=state_override,
+        )
+        zero_for_one = token_out_obj == self.token1
+        amount_in = result.amount0_delta if zero_for_one else result.amount1_delta
+        return SimulationResult(
+            amount_in=amount_in,
+            amount_out=amount_out,
+            initial_state=result.initial_state,
+            final_state=result.final_state,
+        )
+
+    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
+        return Fraction(self.fee, self.FEE_DENOMINATOR)
+
+    _TICK_RANGE_CACHE: dict[tuple[str, int, bool], tuple[tuple[V3TickRangeInfo, ...], int] | None]
+    _MAX_TICK_RANGE_CACHE_SIZE: int = 128
+
+    def _get_tick_ranges(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        max_ranges: int = 3,
+    ) -> tuple[tuple[V3TickRangeInfo, ...], int] | None:
+        if not hasattr(self, "_TICK_RANGE_CACHE"):
+            self._TICK_RANGE_CACHE = {}
+
+        cache_key = (str(self.address), self.tick, zero_for_one)
+
+        if cache_key in self._TICK_RANGE_CACHE:
+            return self._TICK_RANGE_CACHE[cache_key]
+
+        result = self._compute_tick_ranges(zero_for_one=zero_for_one, max_ranges=max_ranges)
+
+        if len(self._TICK_RANGE_CACHE) >= self._MAX_TICK_RANGE_CACHE_SIZE:
+            self._TICK_RANGE_CACHE.clear()
+
+        self._TICK_RANGE_CACHE[cache_key] = result
+        return result
+
+    def _compute_tick_ranges(
+        self,
+        *,
+        zero_for_one: bool,  # noqa: FBT001
+        max_ranges: int = 3,
+    ) -> tuple[tuple[V3TickRangeInfo, ...], int] | None:
+        if getattr(self, "sparse_liquidity_map", True):
+            return None
+
+        tick_data = getattr(self, "tick_data", None)
+        tick_bitmap = getattr(self, "tick_bitmap", None)
+        tick_spacing = getattr(self, "tick_spacing", 0)
+
+        if tick_data is None or tick_bitmap is None or tick_spacing == 0:
+            return None
+
+        current_tick = self.tick
+        less_than_or_equal = not zero_for_one
+
+        try:
+            ticks_along_path = gen_ticks(
+                tick_data=tick_data,
+                starting_tick=current_tick,
+                tick_spacing=tick_spacing,
+                less_than_or_equal=less_than_or_equal,
+            )
+        except Exception:
+            return None
+
+        initialized_ticks: list[int] = []
+        try:
+            for tick, is_initialized in ticks_along_path:
+                clamped_tick = max(MIN_TICK, tick) if less_than_or_equal else min(MAX_TICK, tick)
+                if clamped_tick != tick:
+                    break
+                if len(initialized_ticks) >= max_ranges + 1:
+                    break
+                if is_initialized or tick == current_tick:
+                    initialized_ticks.append(tick)
+        except StopIteration:
+            pass
+
+        if len(initialized_ticks) < 2:
+            return None
+
+        ranges: list[V3TickRangeInfo] = []
+        current_idx = 0
+
+        for i in range(len(initialized_ticks) - 1):
+            if zero_for_one:
+                tick_lower = initialized_ticks[i + 1]
+                tick_upper = initialized_ticks[i]
+            else:
+                tick_lower = initialized_ticks[i]
+                tick_upper = initialized_ticks[i + 1]
+
+            tick_info = tick_data.get(tick_lower if zero_for_one else tick_upper)
+            liquidity = tick_info.liquidity_net if tick_info else self.liquidity
+
+            sqrt_price_lower = int(get_sqrt_ratio_at_tick(tick_lower))
+            sqrt_price_upper = int(get_sqrt_ratio_at_tick(tick_upper))
+
+            ranges.append(
+                V3TickRangeInfo(
+                    tick_lower=tick_lower,
+                    tick_upper=tick_upper,
+                    liquidity=liquidity,
+                    sqrt_price_lower=sqrt_price_lower,
+                    sqrt_price_upper=sqrt_price_upper,
+                )
+            )
+
+            if tick_lower <= current_tick < tick_upper:
+                current_idx = i
+
+        if len(ranges) < 1:
+            return None
+
+        return (tuple(ranges), current_idx)
+
+    def to_hop_state(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        state_override: UniswapV3PoolState | None = None,
+    ) -> HopType:
+        from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves  # noqa: PLC0415
+
+        state = state_override or self.state
+        fee = self.extract_fee(zero_for_one=zero_for_one)
+        reserve_in, reserve_out = v3_virtual_reserves(
+            liquidity=state.liquidity,
+            sqrt_price_x96=state.sqrt_price_x96,
+            zero_for_one=zero_for_one,
+        )
+
+        if state_override is None:
+            tick_ranges = self._get_tick_ranges(zero_for_one)
+            if tick_ranges is not None:
+                ranges, current_idx = tick_ranges
+                return BoundedProductHop(
+                    reserve_in=reserve_in,
+                    reserve_out=reserve_out,
+                    fee=fee,
+                    liquidity=state.liquidity,
+                    sqrt_price=state.sqrt_price_x96,
+                    tick_lower=state.tick,
+                    tick_upper=state.tick,
+                    tick_ranges=ranges,
+                    current_range_index=current_idx,
+                )
+
+        return BoundedProductHop(
+            reserve_in=reserve_in,
+            reserve_out=reserve_out,
+            fee=fee,
+            liquidity=state.liquidity,
+            sqrt_price=state.sqrt_price_x96,
+            tick_lower=state.tick,
+            tick_upper=state.tick,
+        )

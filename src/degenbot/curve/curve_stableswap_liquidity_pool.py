@@ -9,6 +9,7 @@
 
 import contextlib
 from collections.abc import Iterable, Sequence
+from fractions import Fraction
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Literal, cast
 from weakref import WeakSet
@@ -50,6 +51,8 @@ from degenbot.types.concrete import (
     PublisherMixin,
     Subscriber,
 )
+from degenbot.types.pool_protocols import SimulationResult
+from degenbot.types.hop_types import CurveStableswapHop, HopType
 
 
 class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
@@ -2351,4 +2354,54 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             subscriber
             for subscriber in self._subscribers
             if isinstance(subscriber, AbstractArbitrage)
+        )
+
+    def simulate_swap(
+        self,
+        token_in: ChecksumAddress,
+        amount_in: int,
+        token_out: ChecksumAddress,
+        state_override: CurveStableswapPoolState | None = None,
+    ) -> SimulationResult:
+        token_in_obj = next((t for t in self.tokens if t.address == token_in), None)
+        if token_in_obj is None:
+            all_tokens = list(self.tokens)
+            if self.base_pool is not None:
+                all_tokens.extend(self.base_pool.tokens)
+            if token_in not in {t.address for t in all_tokens}:
+                raise DegenbotValueError(message=f"token_in {token_in} not in pool")
+
+        token_out_obj = next((t for t in self.tokens if t.address == token_out), None)
+        if token_out_obj is None:
+            all_tokens = list(self.tokens)
+            if self.base_pool is not None:
+                all_tokens.extend(self.base_pool.tokens)
+            if token_out not in {t.address for t in all_tokens}:
+                raise DegenbotValueError(message=f"token_out {token_out} not in pool")
+
+        initial_state = state_override or self.state
+        amount_out = self.calculate_tokens_out_from_tokens_in(
+            token_in=token_in_obj,  # type: ignore[arg-type]
+            token_out=token_out_obj,  # type: ignore[arg-type]
+            token_in_quantity=amount_in,
+            override_state=state_override,
+        )
+        return SimulationResult(
+            amount_in=amount_in,
+            amount_out=amount_out,
+            initial_state=initial_state,
+            final_state=initial_state,
+        )
+
+    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
+        return Fraction(self.fee, self.FEE_DENOMINATOR)
+
+    def to_hop_state(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        state_override: CurveStableswapPoolState | None = None,
+    ) -> HopType:
+        raise NotImplementedError(
+            "Curve pool to_hop_state is not yet implemented. "
+            "It requires D computation which is pool-variant-specific."
         )

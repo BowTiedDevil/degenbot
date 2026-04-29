@@ -1,11 +1,5 @@
-import degenbot.arbitrage.path.adapters as _adapters  # noqa: F401 trigger registration
 from degenbot.arbitrage.path.arbitrage_path import ArbitragePath
-from degenbot.arbitrage.path.pool_adapter import (
-    PoolAdapter,
-    check_pool_compatibility,
-    get_adapter,
-    register_pool_adapter,
-)
+from degenbot.arbitrage.path.swap_amount_builder import build_swap_amount
 from degenbot.arbitrage.path.types import (
     PathValidationError,
     PoolCompatibility,
@@ -15,10 +9,7 @@ from degenbot.arbitrage.path.types import (
 __all__ = [
     "ArbitragePath",
     "PathValidationError",
-    "PoolAdapter",
     "PoolCompatibility",
     "SwapVector",
-    "check_pool_compatibility",
-    "get_adapter",
-    "register_pool_adapter",
+    "build_swap_amount",
 ]

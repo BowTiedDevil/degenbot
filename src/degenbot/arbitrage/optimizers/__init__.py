@@ -75,19 +75,9 @@ from degenbot.arbitrage.optimizers.chain_rule import (
     compute_path_gradient as chain_rule_gradient,
 )
 from degenbot.arbitrage.optimizers.hop_types import (
-    BalancerMultiTokenHop,
-    BalancerWeightedHop,
-    BoundedProductHop,
-    ConstantProductHop,
-    CurveStableswapHop,
-    Hop,
-    HopType,
-    PoolInvariant,
-    SolidlyStableHop,
-    SolverMethod,
     SolveInput,
     SolveResult,
-    V3TickRangeInfo,
+    SolverMethod,
 )
 from degenbot.arbitrage.optimizers.mobius import (
     MobiusCoefficients,
@@ -151,6 +141,18 @@ from degenbot.arbitrage.optimizers.vectorized_batch import (
     VectorizedPathState,
     VectorizedPoolState,
 )
+from degenbot.types.hop_types import (
+    BalancerMultiTokenHop,
+    BalancerWeightedHop,
+    BoundedProductHop,
+    ConstantProductHop,
+    CurveStableswapHop,
+    Hop,
+    HopType,
+    PoolInvariant,
+    SolidlyStableHop,
+    V3TickRangeInfo,
+)
 
 __all__ = [
     "ArbSolver",
@@ -172,9 +174,9 @@ __all__ = [
     "ConstantProductHop",
     "CurveStableswapHop",
     "Hop",
-    "MobiusFloatHop",
     "HopType",
     "MobiusCoefficients",
+    "MobiusFloatHop",
     "MobiusOptimizer",
     "MobiusSolver",
     "MobiusV2Optimizer",

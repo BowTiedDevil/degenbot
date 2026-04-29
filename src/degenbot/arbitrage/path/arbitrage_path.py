@@ -1,14 +1,12 @@
 from collections.abc import Mapping, Sequence
 from fractions import Fraction
-from typing import Any
+from typing import Any, cast
 from weakref import WeakSet
 
-from degenbot.arbitrage.optimizers.hop_types import HopType, Solver, SolveResult
-from degenbot.arbitrage.path import adapters  # noqa: F401 trigger registration
-from degenbot.arbitrage.path.adapters.concentrated_liquidity import (  # noqa: F401 re-export for tests
-    _v3_virtual_reserves,
-)
-from degenbot.arbitrage.path.pool_adapter import check_pool_compatibility, get_adapter
+from eth_typing import ChecksumAddress
+
+from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult
+from degenbot.arbitrage.path.swap_amount_builder import build_swap_amount
 from degenbot.arbitrage.path.types import PathValidationError, PoolCompatibility, SwapVector
 from degenbot.arbitrage.types import (
     AbstractSwapAmounts,
@@ -19,6 +17,8 @@ from degenbot.arbitrage.types import (
 )
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import OptimizationError
+from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
+from degenbot.types.abstract import AbstractPoolState
 from degenbot.types.concrete import (
     AbstractPublisherMessage,
     PoolStateMessage,
@@ -26,30 +26,36 @@ from degenbot.types.concrete import (
     PublisherMixin,
     Subscriber,
 )
+from degenbot.types.hop_types import HopType
+from degenbot.types.pool_protocols import ArbitrageCapablePool
+from degenbot.uniswap.v3_libraries.functions import (
+    v3_virtual_reserves as _v3_virtual_reserves,  # noqa: F401 re-export for tests
+)
+
+_MIN_POOLS_FOR_ARBITRAGE_PATH = 2
 
 
-def _check_pool_compatibility(pool: Any) -> PoolCompatibility:
-    return check_pool_compatibility(pool)
+def _check_pool_compatibility(pool: object) -> PoolCompatibility:
+    if not isinstance(pool, ArbitrageCapablePool):
+        return PoolCompatibility.INCOMPATIBLE_INVARIANT
+    try:
+        pool.to_hop_state(zero_for_one=True)
+    except IncompatiblePoolInvariant:
+        return PoolCompatibility.INCOMPATIBLE_INVARIANT
+    else:
+        return PoolCompatibility.COMPATIBLE
 
 
-def _extract_fee(pool: Any, zero_for_one: bool) -> Fraction:
-    adapter = get_adapter(pool)
-    if adapter is None:
-        msg = f"Cannot extract fee from {type(pool).__name__}"
-        raise PathValidationError(msg)
-    return adapter.extract_fee(pool, zero_for_one=zero_for_one)
+def _extract_fee(pool: ArbitrageCapablePool, zero_for_one: bool) -> Fraction:  # noqa: FBT001
+    return pool.extract_fee(zero_for_one=zero_for_one)
 
 
 def _pool_to_hop_state(
-    pool: Any,
-    zero_for_one: bool,
-    state_override: Any = None,
+    pool: ArbitrageCapablePool,
+    zero_for_one: bool,  # noqa: FBT001
+    state_override: AbstractPoolState | None = None,
 ) -> HopType:
-    adapter = get_adapter(pool)
-    if adapter is None:
-        msg = f"No adapter for {type(pool).__name__}"
-        raise PathValidationError(msg)
-    return adapter.to_hop_state(pool, zero_for_one=zero_for_one, state_override=state_override)
+    return pool.to_hop_state(zero_for_one=zero_for_one, state_override=state_override)
 
 
 class _ProfitableStateDiscovered(AbstractPublisherMessage):
@@ -84,8 +90,8 @@ class ArbitragePath(PublisherMixin):
         max_input: int | None = None,
         id: str | None = None,  # noqa:A002
     ) -> None:
-        if len(pools) < 2:
-            msg = "Arbitrage path requires at least 2 pools"
+        if len(pools) < _MIN_POOLS_FOR_ARBITRAGE_PATH:
+            msg = f"Arbitrage path requires at least {_MIN_POOLS_FOR_ARBITRAGE_PATH} pools"
             raise PathValidationError(msg)
 
         self._pools: tuple[Any, ...] = tuple(pools)
@@ -205,18 +211,17 @@ class ArbitragePath(PublisherMixin):
 
     def calculate(self) -> SolveResult:
         self._refresh_hop_states()
-        solve_input = self._build_solve_input()
-        result = self._solver.solve(solve_input)
+        result = self._solver.solve(self._build_solve_input())
         self._last_result = result
         return result
 
     def calculate_with_state_override(
         self,
-        state_overrides: dict[Any, Any],
+        state_overrides: dict[ChecksumAddress, AbstractPoolState],
     ) -> SolveResult:
         hop_states: list[HopType] = []
         for i, pool in enumerate(self._pools):
-            state = state_overrides.get(pool)
+            state = state_overrides.get(pool.address)
             if state is not None:
                 hop_states.append(
                     _pool_to_hop_state(
@@ -228,15 +233,12 @@ class ArbitragePath(PublisherMixin):
             else:
                 hop_states.append(self._hop_states[i])
 
-        solve_input = self._build_solve_input(hops=tuple(hop_states))
-        return self._solver.solve(solve_input)
+        return self._solver.solve(self._build_solve_input(hops=tuple(hop_states)))
 
     def _build_solve_input(
         self,
         hops: tuple[HopType, ...] | None = None,
-    ) -> Any:
-        from degenbot.arbitrage.optimizers.hop_types import SolveInput
-
+    ) -> SolveInput:
         return SolveInput(
             hops=hops or tuple(self._hop_states),
             max_input=self._max_input,
@@ -245,7 +247,7 @@ class ArbitragePath(PublisherMixin):
     def build_swap_amounts(
         self,
         result: SolveResult,
-        state_overrides: Mapping[Any, Any] | None = None,
+        state_overrides: Mapping[ChecksumAddress, AbstractPoolState] | None = None,
     ) -> ArbitrageCalculationResult[AbstractSwapAmounts]:
         if state_overrides is None:
             state_overrides = {}
@@ -258,20 +260,13 @@ class ArbitragePath(PublisherMixin):
                 msg = "A swap would result in an output of zero"
                 raise PathValidationError(msg)
 
-            adapter = get_adapter(pool)
-            if adapter is None:
-                msg = f"No adapter for {type(pool).__name__}"
-                raise PathValidationError(msg)
-
-            pool_state = state_overrides.get(pool)
+            pool_state = state_overrides.get(pool.address)
             token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                 token_in=sv.token_in,
                 token_in_quantity=token_in_quantity,
                 override_state=pool_state,
             )
-            swap_amounts.append(
-                adapter.build_swap_amount(pool, sv, token_in_quantity, token_out_quantity)
-            )
+            swap_amounts.append(build_swap_amount(pool, sv, token_in_quantity, token_out_quantity))
             token_in_quantity = token_out_quantity
 
         input_swap = swap_amounts[0]
@@ -302,7 +297,7 @@ class ArbitragePath(PublisherMixin):
 
         idx = self._pool_index[publisher]
         self._hop_states[idx] = _pool_to_hop_state(
-            publisher,
+            cast("ArbitrageCapablePool", publisher),
             self._swap_vectors[idx].zero_for_one,
         )
         try:

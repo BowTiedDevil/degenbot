@@ -53,6 +53,8 @@ from degenbot.types.concrete import (
     PublisherMixin,
     Subscriber,
 )
+from degenbot.types.pool_protocols import SimulationResult
+from degenbot.types.hop_types import BoundedProductHop, HopType
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import (
     exchange_rate_from_sqrt_price_x96,
@@ -1547,3 +1549,40 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
             return {
                 "cache_size": len(self._swap_step_cache),
             }
+
+    def simulate_swap(
+        self,
+        token_in: ChecksumAddress,
+        amount_in: int,
+        token_out: ChecksumAddress,  # noqa: ARG002
+        state_override: UniswapV4PoolState | None = None,
+    ) -> SimulationResult:
+        if token_in == self.token0.address:
+            token_in_obj = self.token0
+        elif token_in == self.token1.address:
+            token_in_obj = self.token1
+        else:
+            raise DegenbotValueError(message=f"token_in {token_in} not in pool")
+
+        initial_state = state_override or self.state
+        amount_out = self.calculate_tokens_out_from_tokens_in(
+            token_in=token_in_obj,
+            token_in_quantity=amount_in,
+            override_state=state_override,
+        )
+        return SimulationResult(
+            amount_in=amount_in,
+            amount_out=amount_out,
+            initial_state=initial_state,
+            final_state=initial_state,
+        )
+
+    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
+        return Fraction(self.fee, self.FEE_DENOMINATOR)
+
+    def to_hop_state(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        state_override: UniswapV4PoolState | None = None,
+    ) -> HopType:
+        return super().to_hop_state(zero_for_one=zero_for_one, state_override=state_override)
