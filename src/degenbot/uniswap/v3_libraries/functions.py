@@ -27,3 +27,19 @@ def to_uint160(x: int) -> int:
     if x > MAX_UINT160:
         raise EVMRevertError(error=f"{x} greater than maximum uint160 value")
     return x
+
+
+Q96 = 2**96
+
+
+def v3_virtual_reserves(
+    liquidity: int,
+    sqrt_price_x96: int,
+    *,
+    zero_for_one: bool,
+) -> tuple[int, int]:
+    x_virtual = liquidity * Q96 * Q96 // sqrt_price_x96
+    y_virtual = liquidity * sqrt_price_x96
+    if zero_for_one:
+        return x_virtual, y_virtual
+    return y_virtual, x_virtual

@@ -8,6 +8,8 @@ from fractions import Fraction
 
 import pytest
 
+from degenbot.arbitrage.optimizers.hop_types import SolveResult
+from degenbot.arbitrage.optimizers.solver import MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath, PathValidationError, SwapVector
 from degenbot.arbitrage.path.arbitrage_path import (
     PoolCompatibility,
@@ -16,12 +18,7 @@ from degenbot.arbitrage.path.arbitrage_path import (
     _pool_to_hop_state,
     _v3_virtual_reserves,
 )
-from degenbot.arbitrage.optimizers.hop_types import (
-    BoundedProductHop,
-    ConstantProductHop,
-    SolveResult,
-)
-from degenbot.arbitrage.optimizers.solver import MobiusSolver
+from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop
 
 from .conftest import (
     FakeAerodromeV2Pool,
@@ -375,9 +372,14 @@ class TestArbitragePathCalculate:
 
         original_result = path.calculate()
 
-        override_state = FakeV2PoolState(5_000_000, 2_000_000_000)
+        override_state = FakeV2PoolState(
+            address=pool0.address,
+            block=None,
+            reserves_token0=5_000_000,
+            reserves_token1=2_000_000_000,
+        )
 
-        override_result = path.calculate_with_state_override({pool0: override_state})
+        override_result = path.calculate_with_state_override({pool0.address: override_state})
 
         assert override_result.optimal_input != original_result.optimal_input
 

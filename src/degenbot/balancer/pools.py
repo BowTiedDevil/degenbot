@@ -17,10 +17,13 @@ from degenbot.balancer.types import BalancerV2PoolState
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
 from degenbot.erc20 import Erc20Token, Erc20TokenManager
+from degenbot.exceptions import DegenbotValueError
 from degenbot.functions import encode_function_calldata
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin
+from degenbot.types.pool_protocols import SimulationResult
+from degenbot.types.hop_types import BalancerWeightedHop, HopType
 
 
 class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
@@ -191,4 +194,46 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         return int(
             _downscale_down(amount=amount_out, scaling_factor=self.scaling_factors[token_out_index])
+        )
+
+    def simulate_swap(
+        self,
+        token_in: ChecksumAddress,
+        amount_in: int,
+        token_out: ChecksumAddress,
+        state_override: BalancerV2PoolState | None = None,
+    ) -> SimulationResult:
+        token_in_obj = next((t for t in self.tokens if t.address == token_in), None)
+        if token_in_obj is None:
+            raise DegenbotValueError(message=f"token_in {token_in} not in pool")
+
+        token_out_obj = next((t for t in self.tokens if t.address == token_out), None)
+        if token_out_obj is None:
+            raise DegenbotValueError(message=f"token_out {token_out} not in pool")
+
+        initial_state = state_override or self.state
+        amount_out = self.calculate_tokens_out_from_tokens_in(
+            token_in=token_in_obj,
+            token_in_quantity=amount_in,
+            token_out=token_out_obj,
+            override_state=state_override,
+        )
+        return SimulationResult(
+            amount_in=amount_in,
+            amount_out=amount_out,
+            initial_state=initial_state,
+            final_state=initial_state,
+        )
+
+    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
+        return self.fee
+
+    def to_hop_state(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        state_override: BalancerV2PoolState | None = None,
+    ) -> HopType:
+        raise NotImplementedError(
+            "Balancer pool to_hop_state is not yet implemented. "
+            "Pair-wise hop state extraction from N-token pools is not straightforward."
         )

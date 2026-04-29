@@ -42,6 +42,8 @@ from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractArbitrage, AbstractUniswapV2Pool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import AbstractPublisherMessage, Publisher, PublisherMixin, Subscriber
+from degenbot.types.pool_protocols import SimulationResult
+from degenbot.types.hop_types import ConstantProductHop, HopType
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_functions import (
@@ -896,9 +898,87 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
             ),
         )
 
+    def simulate_swap(
+        self,
+        token_in: ChecksumAddress,
+        amount_in: int,
+        token_out: ChecksumAddress,
+        state_override: UniswapV2PoolState | None = None,
+    ) -> SimulationResult:
+        if token_in == self.token0.address:
+            token_in_obj = self.token0
+        elif token_in == self.token1.address:
+            token_in_obj = self.token1
+        else:
+            raise DegenbotValueError(message=f"token_in {token_in} not in pool")
+
+        result = self.simulate_exact_input_swap(
+            token_in=token_in_obj,
+            token_in_quantity=amount_in,
+            override_state=state_override,
+        )
+        zero_for_one = token_in_obj == self.token0
+        amount_out = -result.amount1_delta if zero_for_one else -result.amount0_delta
+        return SimulationResult(
+            amount_in=amount_in,
+            amount_out=amount_out,
+            initial_state=result.initial_state,
+            final_state=result.final_state,
+        )
+
+    def simulate_swap_for_output(
+        self,
+        token_in: ChecksumAddress,
+        token_out: ChecksumAddress,
+        amount_out: int,
+        state_override: UniswapV2PoolState | None = None,
+    ) -> SimulationResult:
+        if token_out == self.token0.address:
+            token_out_obj = self.token0
+        elif token_out == self.token1.address:
+            token_out_obj = self.token1
+        else:
+            raise DegenbotValueError(message=f"token_out {token_out} not in pool")
+
+        result = self.simulate_exact_output_swap(
+            token_out=token_out_obj,
+            token_out_quantity=amount_out,
+            override_state=state_override,
+        )
+        zero_for_one = token_out_obj == self.token1
+        amount_in = result.amount0_delta if zero_for_one else result.amount1_delta
+        return SimulationResult(
+            amount_in=amount_in,
+            amount_out=amount_out,
+            initial_state=result.initial_state,
+            final_state=result.final_state,
+        )
+
     def get_arbitrage_helpers(self) -> tuple[AbstractArbitrage, ...]:
         return tuple(
             subscriber
             for subscriber in self._subscribers
             if isinstance(subscriber, AbstractArbitrage)
+        )
+
+    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
+        return self.fee_token0 if zero_for_one else self.fee_token1
+
+    def to_hop_state(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        state_override: UniswapV2PoolState | None = None,
+    ) -> HopType:
+        state = state_override or self.state
+        fee = self.extract_fee(zero_for_one=zero_for_one)
+        if zero_for_one:
+            reserve_in = state.reserves_token0
+            reserve_out = state.reserves_token1
+        else:
+            reserve_in = state.reserves_token1
+            reserve_out = state.reserves_token0
+        return ConstantProductHop(
+            reserve_in=reserve_in,
+            reserve_out=reserve_out,
+            fee=fee,
         )

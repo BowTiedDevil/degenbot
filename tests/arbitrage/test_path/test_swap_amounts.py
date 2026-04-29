@@ -9,9 +9,9 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.arbitrage.path import ArbitragePath, PathValidationError
 from degenbot.arbitrage.optimizers.hop_types import SolveResult, SolverMethod
 from degenbot.arbitrage.optimizers.solver import MobiusSolver
+from degenbot.arbitrage.path import ArbitragePath, PathValidationError
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
 
 from .conftest import FakeToken, FakeUniswapV2Pool, _make_v2_pool

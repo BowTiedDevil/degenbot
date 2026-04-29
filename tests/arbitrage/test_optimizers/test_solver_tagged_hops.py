@@ -11,20 +11,22 @@ Validates:
 
 import pytest
 
-from degenbot.arbitrage.optimizers.hop_types import BalancerWeightedHop, CurveStableswapHop
+from degenbot.arbitrage.optimizers.hop_types import SolveInput, SolverMethod
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
-    BoundedProductHop,
-    ConstantProductHop,
-    HopType,
     MobiusSolver,
     PiecewiseMobiusSolver,
-    PoolInvariant,
-    SolidlyStableHop,
-    SolveInput,
-    SolverMethod,
 )
 from degenbot.exceptions import OptimizationError
+from degenbot.types.hop_types import (
+    BalancerWeightedHop,
+    BoundedProductHop,
+    ConstantProductHop,
+    CurveStableswapHop,
+    HopType,
+    PoolInvariant,
+    SolidlyStableHop,
+)
 
 from .conftest import FEE_0_3_PCT, FEE_0_5_PCT, USDC_1_5M, USDC_2M, WETH_800, WETH_1000
 
