@@ -13,7 +13,7 @@ test-rust:
 
 # Run wrapped Rust Python tests
 test-rust-python:
-    uv run pytest tests/rust -x -q --no-header
+    uv run pytest tests/rust --sw -q --no-header
 
 # Run Rust linter (clippy)
 lint-rust:
@@ -43,11 +43,11 @@ compile-test-contracts:
 
 # Run Python tests
 test-python: compile-test-contracts
-    uv run pytest tests/ -x -q --no-header
+    uv run pytest tests/ --sw -q --no-header
 
 # Run Python tests with coverage
 test-python-cov: compile-test-contracts
-    uv run pytest tests/ -x -q --no-header --cov=src/degenbot --cov-branch
+    uv run pytest tests/ --sw -q --no-header --cov=src/degenbot --cov-branch
 
 # Run all tests (Rust + Python)
 test-all: test-rust test-python
