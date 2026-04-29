@@ -1,9 +1,8 @@
 import contextlib
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING
 
 import degenbot.exceptions
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.exceptions.registry import RegistryAlreadyInitialized
 from degenbot.types.aliases import ChainId
 
 if TYPE_CHECKING:
@@ -13,19 +12,7 @@ if TYPE_CHECKING:
 
 
 class TokenRegistry:
-    instance: Self | None = None
-
-    @classmethod
-    def get_instance(cls) -> Self | None:
-        return cls.instance
-
     def __init__(self) -> None:
-        if self.__class__.instance is not None:
-            raise RegistryAlreadyInitialized(
-                message="A registry has already been initialized. Access it using the get_instance() class method"  # noqa:E501
-            )
-        self.__class__.instance = self
-
         self._all_tokens: dict[
             tuple[
                 int,  # chain ID
@@ -33,6 +20,9 @@ class TokenRegistry:
             ],
             Erc20Token,
         ] = {}
+
+    def _reset(self) -> None:
+        self._all_tokens.clear()
 
     def get(self, token_address: str, chain_id: ChainId) -> "Erc20Token | None":
         return self._all_tokens.get(

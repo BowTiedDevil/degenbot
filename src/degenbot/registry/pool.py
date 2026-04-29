@@ -1,10 +1,9 @@
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING
 
 from hexbytes import HexBytes
 
 import degenbot.exceptions
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.exceptions.registry import RegistryAlreadyInitialized
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractRegistry
 from degenbot.types.aliases import ChainId
 
@@ -87,19 +86,7 @@ class _UniswapV4PoolManagerRegistry(AbstractRegistry):
 
 
 class PoolRegistry(AbstractRegistry):
-    instance: Self | None = None
-
-    @classmethod
-    def get_instance(cls) -> Self | None:
-        return cls.instance
-
     def __init__(self) -> None:
-        if type(self).instance is not None:
-            raise RegistryAlreadyInitialized(
-                message="A registry has already been initialized. Access it using the pool_registry.get_instance() class method"  # noqa:E501
-            )
-        type(self).instance = self
-
         self._all_pools: dict[
             tuple[
                 ChainId,
@@ -107,6 +94,10 @@ class PoolRegistry(AbstractRegistry):
             ],
             AbstractLiquidityPool,
         ] = {}
+        self._v4_pool_registry = _UniswapV4PoolManagerRegistry()
+
+    def _reset(self) -> None:
+        self._all_pools.clear()
         self._v4_pool_registry = _UniswapV4PoolManagerRegistry()
 
     def get(

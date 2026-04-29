@@ -64,13 +64,14 @@ def save_config_to_file(config: Settings) -> None:
     )
 
 
-if not CONFIG_DIR.exists():
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Created a configuration directory at {CONFIG_DIR}.")
+def _init_settings() -> Settings:
+    if not CONFIG_DIR.exists():
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Created a configuration directory at {CONFIG_DIR}.")
 
-if CONFIG_FILE.exists():
-    settings = load_config_from_file(CONFIG_FILE)
-else:
+    if CONFIG_FILE.exists():
+        return load_config_from_file(CONFIG_FILE)
+
     settings = Settings(
         database=DatabaseSettings(
             path=DB_PATH,
@@ -82,6 +83,32 @@ else:
     logger.info(f"Created a configuration file at {CONFIG_FILE}.")
 
     if not settings.database.path.exists():
-        from degenbot.database.operations import create_new_sqlite_database
+        from degenbot.database.operations import create_new_sqlite_database  # noqa: PLC0415
 
         create_new_sqlite_database(db_path=settings.database.path)
+
+    return settings
+
+
+_settings: list[Settings] = []
+
+
+def _load_settings() -> Settings:
+    if not _settings:
+        _settings.append(_init_settings())
+    return _settings[0]
+
+
+def _reset_settings() -> None:
+    _settings.clear()
+
+
+class _SettingsProxy:
+    def __getattr__(self, name: str) -> object:
+        return getattr(_load_settings(), name)
+
+    def __repr__(self) -> str:
+        return repr(_load_settings())
+
+
+settings = _SettingsProxy()

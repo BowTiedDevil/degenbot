@@ -1,5 +1,5 @@
 from threading import Lock
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
@@ -14,36 +14,19 @@ if TYPE_CHECKING:
 
 
 class Erc20TokenManager(AbstractManager):
-    """
-    A class that generates and tracks Erc20Token helpers
-
-    The state dictionary is held using the "Borg" singleton pattern, which
-    ensures that all instances of the class have access to the same state data
-    """
-
-    _state: ClassVar[dict[int, dict[str, Any]]] = {}
-
     def __init__(
         self,
         *,
         chain_id: ChainId | None = None,
         provider: ProviderAdapter | None = None,
     ) -> None:
-        chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
+        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
+        self._erc20tokens: dict[ChecksumAddress, Erc20Token] = {}
+        self._lock = Lock()
+        self._provider = provider
 
-        # the internal state data for this object is held in the
-        # class-level _state dictionary, keyed by the chain ID
-        if self._state.get(chain_id):
-            self.__dict__ = self._state[chain_id]
-        else:
-            self._state[chain_id] = {}
-            self.__dict__ = self._state[chain_id]
-
-            # initialize internal attributes
-            self._erc20tokens: dict[ChecksumAddress, Erc20Token] = {}
-            self._lock = Lock()
-            self._chain_id = chain_id
-            self._provider = provider
+    def _reset(self) -> None:
+        self._erc20tokens.clear()
 
     def get_erc20token(
         self,

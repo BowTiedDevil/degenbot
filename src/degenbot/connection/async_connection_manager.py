@@ -29,6 +29,10 @@ class AsyncConnectionManager:
         self.connections: dict[ChainId, AsyncProviderAdapter] = {}
         self._default_chain_id: ChainId | None = None
 
+    def _reset(self) -> None:
+        self.connections.clear()
+        self._default_chain_id = None
+
     def get_provider(self, chain_id: ChainId) -> AsyncProviderAdapter:
         """Get an AsyncProviderAdapter for the specified chain ID.
 
