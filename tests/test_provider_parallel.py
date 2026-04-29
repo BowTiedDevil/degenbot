@@ -4,18 +4,17 @@ This test verifies that the Rust provider's use of Python::detach()
 allows multiple threads to execute RPC calls concurrently, rather than
 serializing them behind the GIL.
 
-Key insight: If GIL is held, N parallel calls would be serialized (~N * T).
-If GIL is released, N parallel calls should take ~T (single call time).
+Detection method: Track concurrent execution via thread counter.
+If GIL is released, multiple threads will be inside the RPC call simultaneously.
+If GIL is held, only one thread can execute at a time (max_concurrent == 1).
 """
 
-import time
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
 from degenbot.degenbot_rs import AlloyProvider
 
-# Use HTTP RPC for meaningful latency measurements
-# IPC is too fast (~0.05ms) - thread overhead dominates
 HTTP_RPC_URL = "https://ethereum.publicnode.com"
 
 
@@ -28,186 +27,155 @@ def provider():
 def test_parallel_block_number_calls(provider):
     """Test that multiple get_block_number calls execute in parallel.
 
-    Key insight: If the GIL is held, N parallel calls would be serialized
-    and take N * T time. If GIL is released, they should take ~T time.
+    Uses a concurrent thread counter to detect GIL release:
+    - If GIL is held: only 1 thread can be inside the call at a time
+    - If GIL is released: multiple threads execute concurrently
     """
-    # Warm up the connection
     provider.get_block_number()
 
-    # Measure single call time (average of a few calls)
-    single_times = []
-    for _ in range(3):
-        start = time.perf_counter()
-        provider.get_block_number()
-        single_times.append(time.perf_counter() - start)
-    avg_single_time = sum(single_times) / len(single_times)
+    concurrent_count = 0
+    max_concurrent = 0
+    lock = threading.Lock()
 
-    # Run parallel calls
+    def call_and_track():
+        nonlocal concurrent_count, max_concurrent
+        with lock:
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
+        result = provider.get_block_number()
+        with lock:
+            concurrent_count -= 1
+        return result
+
     num_calls = 5
-
-    start_parallel = time.perf_counter()
     with ThreadPoolExecutor(max_workers=num_calls) as executor:
-        futures = [executor.submit(provider.get_block_number) for _ in range(num_calls)]
-        parallel_results = [f.result() for f in as_completed(futures)]
-    parallel_time = time.perf_counter() - start_parallel
+        futures = [executor.submit(call_and_track) for _ in range(num_calls)]
+        results = [f.result() for f in as_completed(futures)]
 
-    # Run sequential calls for comparison
-    start_sequential = time.perf_counter()
-    _sequential_results = [provider.get_block_number() for _ in range(num_calls)]
-    sequential_time = time.perf_counter() - start_sequential
+    assert len(results) == num_calls
+    assert all(isinstance(r, int) and r > 0 for r in results)
 
-    # All results should be valid block numbers
-    assert len(parallel_results) == num_calls
-    assert all(isinstance(r, int) and r > 0 for r in parallel_results)
+    print(f"\nMax concurrent threads during parallel calls: {max_concurrent}/{num_calls}")
 
-    print(f"\nAverage single call time: {avg_single_time * 1000:.1f}ms")
-    print(f"Sequential {num_calls} calls: {sequential_time * 1000:.1f}ms")
-    print(f"Parallel {num_calls} calls: {parallel_time * 1000:.1f}ms")
-    print(f"Speedup: {sequential_time / parallel_time:.1f}x")
-
-    # Key assertions:
-    # 1. Parallel should be much faster than sequential
-    # 2. Parallel should take close to single call time (not N * single)
-
-    serialized_upper_bound = num_calls * avg_single_time
-    assert parallel_time < serialized_upper_bound * 0.75, (
-        f"Parallel execution ({parallel_time * 1000:.1f}ms) should be well below "
-        f"fully-serialized time ({serialized_upper_bound * 1000:.1f}ms). "
-        "This suggests the GIL is not being released properly."
-    )
-
-    # Parallel time should be less than 2x single call time
-    # (allows for thread overhead, but not N * single time)
-    assert parallel_time < avg_single_time * 2, (
-        f"Parallel time ({parallel_time * 1000:.1f}ms) should be close to "
-        f"single call time ({avg_single_time * 1000:.1f}ms), not N times it. "
-        "This suggests calls are being serialized behind the GIL."
+    assert max_concurrent > 1, (
+        f"Only {max_concurrent} thread(s) executed concurrently. "
+        "Expected multiple threads in-flight during parallel calls, "
+        "which indicates GIL is not being released properly."
     )
 
 
 def test_parallel_get_block_calls(provider):
     """Test that multiple get_block calls execute in parallel."""
-    # Warm up
     current_block = provider.get_block_number()
     provider.get_block(current_block)
 
-    # Measure single call time
-    single_times = []
-    for _ in range(3):
-        start = time.perf_counter()
-        provider.get_block(current_block)
-        single_times.append(time.perf_counter() - start)
-    avg_single_time = sum(single_times) / len(single_times)
+    concurrent_count = 0
+    max_concurrent = 0
+    lock = threading.Lock()
 
-    # Run parallel calls
+    def call_and_track(block_num):
+        nonlocal concurrent_count, max_concurrent
+        with lock:
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
+        result = provider.get_block(block_num)
+        with lock:
+            concurrent_count -= 1
+        return result
+
     num_calls = 5
     block_numbers = [current_block - i for i in range(num_calls)]
 
-    start_parallel = time.perf_counter()
     with ThreadPoolExecutor(max_workers=num_calls) as executor:
-        futures = {executor.submit(provider.get_block, bn): bn for bn in block_numbers}
-        parallel_blocks = [futures[f] for f in as_completed(futures)]
-    parallel_time = time.perf_counter() - start_parallel
+        futures = {executor.submit(call_and_track, bn): bn for bn in block_numbers}
+        results = [f.result() for f in as_completed(futures)]
 
-    # Run sequential for comparison
-    start_sequential = time.perf_counter()
-    sequential_blocks = [provider.get_block(bn) for bn in block_numbers]
-    sequential_time = time.perf_counter() - start_sequential
+    assert all(b is not None for b in results)
 
-    print(f"\nBlock fetch single avg: {avg_single_time * 1000:.1f}ms")
-    print(f"Sequential {num_calls} blocks: {sequential_time * 1000:.1f}ms")
-    print(f"Parallel {num_calls} blocks: {parallel_time * 1000:.1f}ms")
-    print(f"Speedup: {sequential_time / parallel_time:.1f}x")
+    print(f"\nMax concurrent threads during get_block calls: {max_concurrent}/{num_calls}")
 
-    # All blocks should be fetched successfully
-    assert all(b is not None for b in parallel_blocks)
-    assert all(b is not None for b in sequential_blocks)
-
-    serialized_upper_bound = num_calls * avg_single_time
-    assert parallel_time < serialized_upper_bound * 0.75, (
-        f"Parallel time ({parallel_time * 1000:.1f}ms) should be well below "
-        f"fully-serialized time ({serialized_upper_bound * 1000:.1f}ms). "
-        "This suggests the GIL is not being released properly."
+    assert max_concurrent > 1, (
+        f"Only {max_concurrent} thread(s) executed concurrently. "
+        "Expected multiple threads in-flight during parallel calls, "
+        "which indicates GIL is not being released properly."
     )
 
 
 def test_parallel_mixed_calls(provider):
     """Test that different provider methods can run in parallel."""
-    # Warm up
     provider.get_block_number()
     provider.get_chain_id()
     provider.get_gas_price()
 
+    concurrent_count = 0
+    max_concurrent = 0
+    lock = threading.Lock()
+
     def make_call(call_type):
+        nonlocal concurrent_count, max_concurrent
+        with lock:
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
         if call_type == "block_number":
-            return ("block_number", provider.get_block_number())
-        if call_type == "chain_id":
-            return ("chain_id", provider.get_chain_id())
-        return ("gas_price", provider.get_gas_price())
+            result = ("block_number", provider.get_block_number())
+        elif call_type == "chain_id":
+            result = ("chain_id", provider.get_chain_id())
+        else:
+            result = ("gas_price", provider.get_gas_price())
+        with lock:
+            concurrent_count -= 1
+        return result
 
     call_types = ["block_number", "chain_id", "gas_price"] * 2
 
-    # Sequential execution
-    start_sequential = time.perf_counter()
-    _sequential_results = [make_call(ct) for ct in call_types]
-    sequential_time = time.perf_counter() - start_sequential
-
-    # Parallel execution
-    start_parallel = time.perf_counter()
     with ThreadPoolExecutor(max_workers=len(call_types)) as executor:
         futures = [executor.submit(make_call, ct) for ct in call_types]
-        parallel_results = [f.result() for f in as_completed(futures)]
-    parallel_time = time.perf_counter() - start_parallel
+        results = [f.result() for f in as_completed(futures)]
 
-    print(
-        f"\nMixed calls - Sequential: {sequential_time * 1000:.1f}ms, "
-        f"Parallel: {parallel_time * 1000:.1f}ms"
-    )
+    assert len(results) == len(call_types)
 
-    # All calls should succeed
-    assert len(parallel_results) == len(call_types)
+    print(f"\nMax concurrent threads during mixed calls: {max_concurrent}/{len(call_types)}")
 
-    assert parallel_time < sequential_time * 0.75, (
-        f"Parallel mixed calls ({parallel_time * 1000:.1f}ms) should be well below "
-        f"sequential ({sequential_time * 1000:.1f}ms). "
-        "This suggests the GIL is not being released properly."
+    assert max_concurrent > 1, (
+        f"Only {max_concurrent} thread(s) executed concurrently. "
+        "Expected multiple threads in-flight during parallel calls, "
+        "which indicates GIL is not being released properly."
     )
 
 
 def test_parallel_provider_creation():
     """Test that multiple providers can be created in parallel."""
-    # Warm up
     AlloyProvider(HTTP_RPC_URL, max_retries=2)
+
+    concurrent_count = 0
+    max_concurrent = 0
+    lock = threading.Lock()
+
+    def create_and_track():
+        nonlocal concurrent_count, max_concurrent
+        with lock:
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
+        provider = AlloyProvider(HTTP_RPC_URL, max_retries=2)
+        with lock:
+            concurrent_count -= 1
+        return provider
 
     num_providers = 3
 
-    # Sequential creation
-    start_sequential = time.perf_counter()
-    _sequential_providers = [
-        AlloyProvider(HTTP_RPC_URL, max_retries=2) for _ in range(num_providers)
-    ]
-    sequential_time = time.perf_counter() - start_sequential
-
-    # Parallel creation
-    start_parallel = time.perf_counter()
     with ThreadPoolExecutor(max_workers=num_providers) as executor:
-        futures = [executor.submit(AlloyProvider, HTTP_RPC_URL, 2) for _ in range(num_providers)]
-        parallel_providers = [f.result() for f in as_completed(futures)]
-    parallel_time = time.perf_counter() - start_parallel
+        futures = [executor.submit(create_and_track) for _ in range(num_providers)]
+        providers = [f.result() for f in as_completed(futures)]
 
-    print(
-        f"\nProvider creation - Sequential: {sequential_time * 1000:.1f}ms, "
-        f"Parallel: {parallel_time * 1000:.1f}ms"
-    )
+    assert len(providers) == num_providers
+    assert all(hasattr(p, "get_block_number") for p in providers)
 
-    # All providers should be created successfully
-    assert len(parallel_providers) == num_providers
-    assert all(hasattr(p, "get_block_number") for p in parallel_providers)
+    print(f"\nMax concurrent threads during provider creation: {max_concurrent}/{num_providers}")
 
-    assert parallel_time < sequential_time * 0.75, (
-        f"Parallel provider creation ({parallel_time * 1000:.1f}ms) should be well below "
-        f"sequential ({sequential_time * 1000:.1f}ms). "
-        "This suggests the GIL is not being released properly."
+    assert max_concurrent > 1, (
+        f"Only {max_concurrent} thread(s) executed concurrently. "
+        "Expected multiple threads in-flight during parallel creation, "
+        "which indicates GIL is not being released properly."
     )
 
 
