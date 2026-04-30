@@ -18,12 +18,18 @@ if TYPE_CHECKING:
 
 
 class FakeToken:
+    """Lightweight token stand-in for V2/V3 pools.
+    
+    Compatible with FakeCurveToken from fake_curve_pool for interoperability.
+    """
+
     def __init__(self, address: str, decimals: int = 18) -> None:
         self.address = address
         self.decimals = decimals
 
     def __eq__(self, other: object) -> bool:
-        if isinstance(other, FakeToken):
+        # Check for any object with 'address' attribute (interoperable with FakeCurveToken)
+        if hasattr(other, "address"):
             return self.address.lower() == other.address.lower()
         return NotImplemented
 
