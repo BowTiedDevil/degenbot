@@ -190,7 +190,7 @@ addopts = [
     "--cov-report", "html",
     "--random-order",
     "-m",
-    "not base",
+    "not slow and not base",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -202,6 +202,7 @@ markers = [
     "arbitrum: tests requiring an Arbitrum One mainnet RPC",
     "base: tests requiring a Base mainnet RPC",
     "ethereum: tests requiring an Ethereum mainnet RPC",
+    "slow: tests that are too slow for routine local runs (e.g. pathfinding)",
 ]
 
 [dependency-groups]

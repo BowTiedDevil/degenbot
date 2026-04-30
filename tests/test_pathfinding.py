@@ -14,7 +14,7 @@ BASE_CHAIN_ID = ChainId.BASE
 WETH_BASE_ADDRESS = WRAPPED_NATIVE_TOKENS[BASE_CHAIN_ID]
 
 
-pytestmark = pytest.mark.skip(reason="Skipping this entire file because it is very slow.")
+pytestmark = pytest.mark.slow(reason="Use -m 'slow' to run slow pathfinding tests")
 
 
 def path_step_identifiers(path: list[PathStep]) -> tuple[str, ...]:

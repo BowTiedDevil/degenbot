@@ -30,10 +30,23 @@ from tests.arbitrage.test_path.conftest import FakeConcentratedLiquidityPool, Fa
 
 
 @pytest.fixture
-def tokens():
+def t0():
+    return FakeToken("0xt0", decimals=18)
+
+
+@pytest.fixture
+def t1():
+    return FakeToken("0xt1", decimals=18)
+
+
+@pytest.fixture
+def t2():
+    return FakeToken("0xt2", decimals=18)
+
+
+@pytest.fixture
+def tokens(t0, t1):
     """Two-token pair forming an arbitrage cycle."""
-    t0 = FakeToken("0xt0", decimals=18)
-    t1 = FakeToken("0xt1", decimals=18)
     return t0, t1
 
 
@@ -199,7 +212,7 @@ class TestV3OnlyEquivalance:
         assert profits[result.optimal_input] >= profits.get(result.optimal_input - 1, -1)
         assert profits[result.optimal_input] + 1 >= profits.get(result.optimal_input + 1, -1)
 
-    def test_v3_3hop_mixed_directions(self, tokens):
+    def test_v3_3hop_mixed_directions(self, t0, t1, t2):
         """
         A 3-hop V3-only cycle with alternating price directions.
 
@@ -212,8 +225,6 @@ class TestV3OnlyEquivalance:
         constant-product share. If the directions and prices are asymmetric,
         the path can be profitable even with 0.05% fees.
         """
-        t0, t1 = tokens
-        t2 = FakeToken("0xt2", decimals=18)
 
         # Ticks for prices: 2200, 3.0, and 1/5.0 (which is -tick of 5.0)
         tick_2200 = round(math.log(2200.0) / math.log(1.0001))

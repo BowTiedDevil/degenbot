@@ -19,6 +19,21 @@ from .conftest import FakeToken, FakeUniswapV2Pool, _make_v2_pool
 FEE_03 = Fraction(3, 1000)
 
 
+@pytest.fixture
+def token_a():
+    return FakeToken("0xtokenA")
+
+
+@pytest.fixture
+def token_b():
+    return FakeToken("0xtokenB")
+
+
+@pytest.fixture
+def token_c():
+    return FakeToken("0xtokenC")
+
+
 def _constant_product_swap(
     reserve_in: int,
     reserve_out: int,
@@ -51,24 +66,22 @@ def _make_pool_with_swap(
 
 
 class TestBuildSwapAmountsV2V2:
-    def _make_path(self):
-        t0 = FakeToken("0xtokenA")
-        t1 = FakeToken("0xtokenB")
+    def _make_path(self, token_a, token_b):
         pool0 = _make_pool_with_swap(
-            t0, t1, reserve0=2_000_000, reserve1=1_000_000_000, address="0xpool0"
+            token_a, token_b, reserve0=2_000_000, reserve1=1_000_000_000, address="0xpool0"
         )
         pool1 = _make_pool_with_swap(
-            t1, t0, reserve0=1_500_000, reserve1=800_000_000, address="0xpool1"
+            token_b, token_a, reserve0=1_500_000, reserve1=800_000_000, address="0xpool1"
         )
         solver = MobiusSolver()
         return ArbitragePath(
             pools=[pool0, pool1],
-            input_token=t0,
+            input_token=token_a,
             solver=solver,
         )
 
-    def test_build_swap_amounts_returns_result(self):
-        path = self._make_path()
+    def test_build_swap_amounts_returns_result(self, token_a, token_b):
+        path = self._make_path(token_a, token_b)
         result = path.calculate()
 
         arb_result = path.build_swap_amounts(result)
@@ -76,24 +89,24 @@ class TestBuildSwapAmountsV2V2:
         assert arb_result.profit_amount > 0
         assert len(arb_result.swap_amounts) == 2
 
-    def test_swap_amounts_are_v2_type(self):
-        path = self._make_path()
+    def test_swap_amounts_are_v2_type(self, token_a, token_b):
+        path = self._make_path(token_a, token_b)
         result = path.calculate()
         arb_result = path.build_swap_amounts(result)
 
         for sa in arb_result.swap_amounts:
             assert isinstance(sa, UniswapV2PoolSwapAmounts)
 
-    def test_first_swap_input_matches_optimal(self):
-        path = self._make_path()
+    def test_first_swap_input_matches_optimal(self, token_a, token_b):
+        path = self._make_path(token_a, token_b)
         result = path.calculate()
         arb_result = path.build_swap_amounts(result)
 
         first_swap = arb_result.swap_amounts[0]
         assert max(first_swap.amounts_in) == result.optimal_input
 
-    def test_profit_matches_swap_amounts(self):
-        path = self._make_path()
+    def test_profit_matches_swap_amounts(self, token_a, token_b):
+        path = self._make_path(token_a, token_b)
         result = path.calculate()
         arb_result = path.build_swap_amounts(result)
 
@@ -101,8 +114,8 @@ class TestBuildSwapAmountsV2V2:
         last_output = max(arb_result.swap_amounts[-1].amounts_out)
         assert last_output - first_input == arb_result.profit_amount
 
-    def test_direction_encoding(self):
-        path = self._make_path()
+    def test_direction_encoding(self, token_a, token_b):
+        path = self._make_path(token_a, token_b)
         result = path.calculate()
         arb_result = path.build_swap_amounts(result)
 
@@ -112,8 +125,8 @@ class TestBuildSwapAmountsV2V2:
         assert first_swap.amounts_out[0] == 0
         assert first_swap.amounts_out[1] > 0
 
-    def test_rejects_unprofitable_result(self):
-        path = self._make_path()
+    def test_rejects_unprofitable_result(self, token_a, token_b):
+        path = self._make_path(token_a, token_b)
         unprofitable = SolveResult(
             optimal_input=0,
             profit=0,
@@ -123,8 +136,8 @@ class TestBuildSwapAmountsV2V2:
         with pytest.raises(PathValidationError, match="output of zero"):
             path.build_swap_amounts(unprofitable)
 
-    def test_pool_addresses_set(self):
-        path = self._make_path()
+    def test_pool_addresses_set(self, token_a, token_b):
+        path = self._make_path(token_a, token_b)
         result = path.calculate()
         arb_result = path.build_swap_amounts(result)
 
@@ -133,29 +146,25 @@ class TestBuildSwapAmountsV2V2:
 
 
 class TestBuildSwapAmountsThreeHop:
-    def test_three_hop_v2(self):
-        t0 = FakeToken("0xtokenA")
-        t1 = FakeToken("0xtokenB")
-        t2 = FakeToken("0xtokenC")
-
+    def test_three_hop_v2(self, token_a, token_b, token_c):
         # Reserves chosen so the three-hop path is profitable:
         # pool0: tokenA -> tokenB (cheap to buy tokenB)
         # pool1: tokenB -> tokenC (cheap to buy tokenC)
         # pool2: tokenC -> tokenA (expensive to sell tokenC)
         pool0 = _make_pool_with_swap(
-            t0, t1, reserve0=10_000_000, reserve1=20_000_000, address="0xp0"
+            token_a, token_b, reserve0=10_000_000, reserve1=20_000_000, address="0xp0"
         )
         pool1 = _make_pool_with_swap(
-            t1, t2, reserve0=20_000_000, reserve1=30_000_000, address="0xp1"
+            token_b, token_c, reserve0=20_000_000, reserve1=30_000_000, address="0xp1"
         )
         pool2 = _make_pool_with_swap(
-            t2, t0, reserve0=30_000_000, reserve1=40_000_000, address="0xp2"
+            token_c, token_a, reserve0=30_000_000, reserve1=40_000_000, address="0xp2"
         )
 
         solver = MobiusSolver()
         path = ArbitragePath(
             pools=[pool0, pool1, pool2],
-            input_token=t0,
+            input_token=token_a,
             solver=solver,
         )
 
