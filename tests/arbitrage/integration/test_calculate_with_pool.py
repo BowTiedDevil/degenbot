@@ -41,6 +41,11 @@ def weth() -> FakeToken:
 
 
 @pytest.fixture
+def dai() -> FakeToken:
+    return FakeToken("0xDAI", decimals=18)
+
+
+@pytest.fixture
 def t0() -> FakeToken:
     return FakeToken("0xt0", decimals=18)
 
@@ -245,14 +250,13 @@ class TestCalculateWithPool:
         assert async_overridden.profit == overridden.profit
         assert async_overridden.optimal_input != baseline.optimal_input
 
-    def test_unprofitable_path_raises(self, usdc):
+    def test_unprofitable_path_raises(self, usdc, dai):
         """Unprofitable cycle raises OptimizationError in executor too."""
-
 
         # Symmetric pools — no arb
         pool_a = FakeUniswapV2Pool(
             token0=usdc,
-            token1=FakeToken("0xDAI"),
+            token1=dai,
             reserve0=1_000_000 * 10**6,
             reserve1=1_000_000 * 10**18,
             fee=Fraction(3, 1000),
@@ -260,7 +264,7 @@ class TestCalculateWithPool:
         )
         pool_b = FakeUniswapV2Pool(
             token0=usdc,
-            token1=FakeToken("0xDAI"),
+            token1=dai,
             reserve0=1_000_000 * 10**6,
             reserve1=1_000_000 * 10**18,
             fee=Fraction(3, 1000),

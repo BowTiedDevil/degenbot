@@ -519,65 +519,6 @@ class TestTwoHopEquivalence:
 
 
 # ---------------------------------------------------------------------------
-# Test: V3-only path — BrentSolver
-# ---------------------------------------------------------------------------
-
-
-class TestV3OnlyEquivalence:
-    # NOTE: V3-only equivalence is now covered by
-    # tests/arbitrage/integration/test_v3_only_legacy_equivalence.py
-    # which verifies both systems on exact single-range V3 math.
-    @pytest.mark.skip(reason="Superseded by test_v3_only_legacy_equivalence.py")
-    def test_v3_single_range_solver_finds_profit(self, t0, t1, t2):
-        """
-        A V3-only path with BoundedProductHops must be solvable by BrentSolver.
-
-        We create asymmetric prices: pool_0 prices t0 cheaply (sqrt_p < 1),
-        pool_1 prices t0 expensively (sqrt_p > 1), creating an arb cycle.
-        """
-        from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
-
-        # pool_0: t0 cheap. sqrt_price = 1/2 => tick = -6931
-        sqrt_p0 = get_sqrt_ratio_at_tick(-6931)
-        pool_0 = FakeConcentratedLiquidityPool(
-            token0=t0,
-            token1=t1,
-            liquidity=10**18,
-            sqrt_price_x96=sqrt_p0,
-            tick=-6931,
-            fee=3000,
-            address="0xv3_0",
-        )
-        # pool_1: t0 expensive. sqrt_price = 2 => tick = 6931
-        sqrt_p1 = get_sqrt_ratio_at_tick(6931)
-        pool_1 = FakeConcentratedLiquidityPool(
-            token0=t1,
-            token1=t0,
-            liquidity=10**18,
-            sqrt_price_x96=sqrt_p1,
-            tick=6931,
-            fee=3000,
-            address="0xv3_1",
-        )
-
-        # Verify the hop states show the asymmetry
-        hop0 = pool_0.to_hop_state(zero_for_one=True)
-        hop1 = pool_1.to_hop_state(zero_for_one=True)
-        assert hop0.reserve_in != hop1.reserve_in
-
-        path = ArbitragePath(
-            pools=[pool_0, pool_1],
-            input_token=t0,
-            solver=BrentSolver(),
-            max_input=10 * 10**18,
-        )
-        result = path.calculate()
-
-        assert result.optimal_input > 0
-        assert result.profit > 0
-
-
-# ---------------------------------------------------------------------------
 # Test: Payload generation gap
 # ---------------------------------------------------------------------------
 
@@ -589,13 +530,6 @@ class TestPayloadGenerationGap:
         This is the bridge between the solver result and transaction execution.
         """
         pools = v2_v2_v2_pools
-        path = ArbitragePath(
-            pools=pools,
-            input_token=t0,
-            solver=MobiusSolver(),
-            max_input=100 * 10**18,
-        )
-        path.calculate()
         calc_result = _new_arbitrage_path(
             pools=pools,
             input_token=t0,
@@ -605,11 +539,3 @@ class TestPayloadGenerationGap:
 
         for swap in calc_result.swap_amounts:
             assert isinstance(swap, (UniswapV2PoolSwapAmounts, UniswapV3PoolSwapAmounts))
-
-    @pytest.mark.skip(reason="PayloadBuilder not yet implemented")
-    def test_payload_builder_matches_legacy_generate_payloads(self):
-        """
-        Once PayloadBuilder exists, this test verifies ABI-encoded calldata
-        matches legacy UniswapLpCycle.generate_payloads byte-for-byte.
-        """
-        raise NotImplementedError

@@ -18,6 +18,7 @@ from eth_typing import ChainId
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage import UniswapLpCycle
+from degenbot.exceptions.arbitrage import ArbitrageError, OptimizationError
 from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.arbitrage.types import (
@@ -145,7 +146,6 @@ class TestV2V3MixedEquivalence:
         ) / legacy_result.profit_amount
         assert relative_profit_diff < 0.00001  # 0.001%
 
-    @pytest.mark.skip(reason="State override shapes differ between systems")
     def test_state_override_equivalence(
         self,
         wbtc_weth_v2_lp: UniswapV2Pool,
@@ -153,15 +153,63 @@ class TestV2V3MixedEquivalence:
         weth_token: Erc20Token,
     ):
         """
-        V2 pool override:
-        reserves_token0=16027096956, reserves_token1=2602647332090181827846
-
-        V3 pool override:
-        liquidity=1533143241938066251,
-        sqrt_price_x96=31881290961944305252140777263703426,
-        tick=258116
+        Both systems should see equivalent profit when given identical
+        pool state overrides. Legacy uses pool objects as dict keys;
+        ArbitragePath uses checkSummed addresses.
         """
-        pass
+        max_input = 100 * 10**18
+
+        v2_override = UniswapV2PoolState(
+            address=wbtc_weth_v2_lp.address,
+            reserves_token0=16027096956,
+            reserves_token1=2602647332090181827846,
+            block=None,
+        )
+        v3_override = UniswapV3PoolState(
+            address=wbtc_weth_v3_lp.address,
+            liquidity=1533143241938066251,
+            sqrt_price_x96=31881290961944305252140777263703426,
+            tick=258116,
+            tick_bitmap={},
+            tick_data={},
+        )
+
+        # Legacy system: pool objects as dict keys
+        legacy = UniswapLpCycle(
+            input_token=weth_token,
+            swap_pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp],
+            max_input=max_input,
+        )
+        legacy_result = legacy.calculate(
+            state_overrides={
+                wbtc_weth_v2_lp: v2_override,
+                wbtc_weth_v3_lp: v3_override,
+            }
+        )
+
+        # New system: addresses as dict keys
+        path = ArbitragePath(
+            pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp],
+            input_token=weth_token,
+            solver=MobiusSolver(),
+            max_input=max_input,
+        )
+        solve_result = path.calculate_with_state_override(
+            state_overrides={
+                wbtc_weth_v2_lp.address: v2_override,
+                wbtc_weth_v3_lp.address: v3_override,
+            }
+        )
+        new_result = path.build_swap_amounts(solve_result)
+
+        assert new_result.input_amount > 0
+        assert new_result.profit_amount > 0
+
+        # Relative profit tolerance: 0.001%
+        relative_profit_diff = abs(
+            legacy_result.profit_amount - new_result.profit_amount
+        ) / legacy_result.profit_amount
+        assert relative_profit_diff < 0.00001
 
 
 class TestEdgeCases:
@@ -169,7 +217,6 @@ class TestEdgeCases:
     Edge case parity: behavior when the legacy system rejects a path early.
     """
 
-    @pytest.mark.skip(reason="UniswapLpCycle._pre_calculation_check vs OptimizationError")
     def test_unprofitable_path_rejection_parity(
         self,
         wbtc_weth_v2_lp: UniswapV2Pool,
@@ -178,7 +225,55 @@ class TestEdgeCases:
     ):
         """
         When reserves produce no arbitrage, both systems must reject.
-        Legacy raises ArbitrageError or RateOfExchangeBelowMinimum.
+        Legacy raises ArbitrageError (via _pre_calculation_check).
         New system raises OptimizationError.
         """
-        pass
+        max_input = 100 * 10**18
+
+        # Create state overrides that eliminate any arbitrage opportunity.
+        # Equal reserves + same fee on both pools means zero edge.
+        equal_v2_override = UniswapV2PoolState(
+            address=wbtc_weth_v2_lp.address,
+            reserves_token0=10_000 * 10**8,
+            reserves_token1=10_000 * 10**18,
+            block=None,
+        )
+        equal_v3_override = UniswapV3PoolState(
+            address=wbtc_weth_v3_lp.address,
+            liquidity=10**24,
+            sqrt_price_x96=158456325028528675187087900672,
+            tick=0,
+            tick_bitmap={},
+            tick_data={},
+            # Both pools price assets at 1:1
+        )
+
+        # Legacy system rejects via _pre_calculation_check
+        with pytest.raises(ArbitrageError):
+            legacy = UniswapLpCycle(
+                input_token=weth_token,
+                swap_pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp],
+                max_input=max_input,
+            )
+            legacy.calculate(
+                state_overrides={
+                    wbtc_weth_v2_lp: equal_v2_override,
+                    wbtc_weth_v3_lp: equal_v3_override,
+                }
+            )
+
+        # New system rejects via OptimizationError
+        with pytest.raises(OptimizationError):
+            path = ArbitragePath(
+                pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp],
+                input_token=weth_token,
+                solver=MobiusSolver(),
+                max_input=max_input,
+            )
+            solve_result = path.calculate_with_state_override(
+                state_overrides={
+                    wbtc_weth_v2_lp.address: equal_v2_override,
+                    wbtc_weth_v3_lp.address: equal_v3_override,
+                }
+            )
+            path.build_swap_amounts(solve_result)

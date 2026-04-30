@@ -6,17 +6,32 @@ to avoid external dependencies.
 """
 
 import pytest
+from eth_typing import ChainId
 from fractions import Fraction
-from eth_typing import ChecksumAddress
 from web3 import Web3
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.types.hop_types import CurveStableswapHop, ConstantProductHop, PoolInvariant
+
+from degenbot.anvil_fork import AnvilFork
+from degenbot.arbitrage.uniswap_curve_cycle import UniswapCurveCycle
 from degenbot.arbitrage.optimizers.solver import (
     BrentSolver,
     _simulate_path,
     _simulate_mixed_path,
     _simulate_mixed_path_int,
 )
+from degenbot.connection import set_web3
+from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from degenbot.erc20.erc20 import Erc20Token
+from degenbot.erc20.manager import Erc20TokenManager
+from degenbot.types.hop_types import CurveStableswapHop, ConstantProductHop, PoolInvariant
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v2_types import UniswapV2PoolState
+
+WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+DAI_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+UNISWAP_V2_WETH_DAI_ADDRESS = "0xA478c2975Ab1Ea89e8196811F51A7B7Ade33eB11"
+UNISWAP_V2_WETH_USDC_ADDRESS = "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"
+CURVE_TRIPOOL_ADDRESS = "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7"
 
 
 class MockCurveSwapper:
@@ -258,11 +273,50 @@ def test_brent_solver_with_curve():
         pass
 
 
-@pytest.mark.skip(reason="Requires real Curve pool on fork - not yet implemented")
-def test_curve_fork_equivalence():
-    """Placeholder for fork-based Curve equivalence test.
-    
-    This test would compare ArbitragePath with Curve hops against
-    legacy UniswapCurveCycle using real mainnet Curve pools.
+@pytest.mark.ethereum
+def test_curve_fork_equivalence(fork_mainnet_full: AnvilFork) -> None:
+    """Fork-based Curve equivalence test.
+
+    Compares ArbitragePath with Curve hops against legacy UniswapCurveCycle
+    using real mainnet Curve pools.
     """
-    pass
+    set_web3(fork_mainnet_full.w3)
+
+    weth = Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WETH_ADDRESS)
+    dai = Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(DAI_ADDRESS)
+
+    curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
+    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
+    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
+
+    # Override V2 pool state to create a profitable arbitrage condition
+    v2_weth_dai_override = UniswapV2PoolState(
+        address=uniswap_v2_weth_dai_lp.address,
+        reserves_token0=7154631418308101780013056,
+        reserves_token1=2641882268814772168174,
+        block=None,
+    )
+
+    max_input = 10 * 10**18
+
+    # Legacy system
+    legacy = UniswapCurveCycle(
+        input_token=weth,
+        swap_pools=[uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdc_lp],
+        id="legacy-test",
+        max_input=max_input,
+    )
+    legacy_result = legacy.calculate(
+        state_overrides={
+            uniswap_v2_weth_dai_lp: v2_weth_dai_override,
+        }
+    )
+    assert legacy_result.profit_amount > 0
+
+    # New system — ArbitragePath requires ArbitrageCapablePool. CurveStableswapPool
+    # provides to_hop_state but is not checked as ArbitrageCapablePool. Skip the
+    # new-system comparison until pool compatibility is resolved.
+    pytest.skip(
+        "CurveStableswapPool is not yet compatible with ArbitragePath "
+        "(needs ArbitrageCapablePool protocol check or pool wrapper)"
+    )

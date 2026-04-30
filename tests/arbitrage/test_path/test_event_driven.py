@@ -8,6 +8,8 @@ don't affect subscribed state.
 
 from fractions import Fraction
 
+import pytest
+
 from degenbot.arbitrage.optimizers.hop_types import SolveResult
 from degenbot.arbitrage.optimizers.solver import MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
@@ -22,31 +24,39 @@ from .conftest import FakeSubscriber, FakeToken, FakeV2PoolState, _make_v2_pool
 FEE_03 = Fraction(3, 1000)
 
 
+@pytest.fixture
+def token_a():
+    return FakeToken("0xtokenA")
+
+
+@pytest.fixture
+def token_b():
+    return FakeToken("0xtokenB")
+
+
 def _make_v2_message(state: FakeV2PoolState) -> PoolStateMessage:
     msg = PoolStateMessage()
     msg.state = state
     return msg
 
 
-def _make_cyclic_path():
-    t0 = FakeToken("0xtokenA")
-    t1 = FakeToken("0xtokenB")
-    pool0 = _make_v2_pool(t0, t1, reserve0=2_000_000, reserve1=1_000_000_000)
+def _make_cyclic_path(token_a, token_b):
+    pool0 = _make_v2_pool(token_a, token_b, reserve0=2_000_000, reserve1=1_000_000_000)
     pool0.address = "0xpool0"
-    pool1 = _make_v2_pool(t1, t0, reserve0=1_500_000, reserve1=800_000_000)
+    pool1 = _make_v2_pool(token_b, token_a, reserve0=1_500_000, reserve1=800_000_000)
     pool1.address = "0xpool1"
     solver = MobiusSolver()
     path = ArbitragePath(
         pools=[pool0, pool1],
-        input_token=t0,
+        input_token=token_a,
         solver=solver,
     )
-    return path, pool0, pool1, t0, t1
+    return path, pool0, pool1, token_a, token_b
 
 
 class TestEventDrivenAutoSolve:
-    def test_pool_update_triggers_resolve(self):
-        path, pool0, _pool1, _t0, _t1 = _make_cyclic_path()
+    def test_pool_update_triggers_resolve(self, token_a, token_b):
+        path, pool0, _pool1, _t0, _t1 = _make_cyclic_path(token_a, token_b)
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
@@ -61,8 +71,8 @@ class TestEventDrivenAutoSolve:
 
         assert path.last_result is not None
 
-    def test_profitable_update_notifies_subscriber(self):
-        path, pool0, _pool1, _t0, _t1 = _make_cyclic_path()
+    def test_profitable_update_notifies_subscriber(self, token_a, token_b):
+        path, pool0, _pool1, _t0, _t1 = _make_cyclic_path(token_a, token_b)
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
@@ -79,8 +89,8 @@ class TestEventDrivenAutoSolve:
         _, msg = subscriber.notifications[0]
         assert isinstance(msg, (_ProfitableStateDiscovered | _StateUpdatedNoProfit))
 
-    def test_unprofitable_update_sends_no_profit_message(self):
-        path, pool0, _pool1, _t0, _t1 = _make_cyclic_path()
+    def test_unprofitable_update_sends_no_profit_message(self, token_a, token_b):
+        path, pool0, _pool1, _t0, _t1 = _make_cyclic_path(token_a, token_b)
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
@@ -101,8 +111,8 @@ class TestEventDrivenAutoSolve:
         _, msg = last_notification
         assert isinstance(msg, (_ProfitableStateDiscovered | _StateUpdatedNoProfit))
 
-    def test_state_override_does_not_affect_subscribed_state(self):
-        path, pool0, _pool1, _t0, _t1 = _make_cyclic_path()
+    def test_state_override_does_not_affect_subscribed_state(self, token_a, token_b):
+        path, pool0, _pool1, _t0, _t1 = _make_cyclic_path(token_a, token_b)
 
         original_hop_0 = path.hop_states[0]
 
@@ -116,8 +126,8 @@ class TestEventDrivenAutoSolve:
 
         assert path.hop_states[0].reserve_in == original_hop_0.reserve_in
 
-    def test_multiple_pool_updates(self):
-        path, pool0, pool1, _t0, _t1 = _make_cyclic_path()
+    def test_multiple_pool_updates(self, token_a, token_b):
+        path, pool0, pool1, _t0, _t1 = _make_cyclic_path(token_a, token_b)
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
@@ -139,8 +149,8 @@ class TestEventDrivenAutoSolve:
 
         assert len(subscriber.notifications) >= 2
 
-    def test_ignore_unknown_publisher(self):
-        path, _pool0, _pool1, t0, t1 = _make_cyclic_path()
+    def test_ignore_unknown_publisher(self, token_a, token_b):
+        path, _pool0, _pool1, t0, t1 = _make_cyclic_path(token_a, token_b)
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
@@ -159,10 +169,10 @@ class TestEventDrivenAutoSolve:
 
         assert len(subscriber.notifications) == 0
 
-    def test_ignore_non_state_message(self):
+    def test_ignore_non_state_message(self, token_a, token_b):
         from degenbot.types.concrete import TextMessage
 
-        path, pool0, _pool1, _t0, _t1 = _make_cyclic_path()
+        path, pool0, _pool1, _t0, _t1 = _make_cyclic_path(token_a, token_b)
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
@@ -170,8 +180,8 @@ class TestEventDrivenAutoSolve:
 
         assert len(subscriber.notifications) == 0
 
-    def test_last_result_updated_on_profitable_discovery(self):
-        path, pool0, _pool1, _t0, _t1 = _make_cyclic_path()
+    def test_last_result_updated_on_profitable_discovery(self, token_a, token_b):
+        path, pool0, _pool1, _t0, _t1 = _make_cyclic_path(token_a, token_b)
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 

@@ -14,20 +14,32 @@ from degenbot.arbitrage.optimizers.hop_types import SolveInput
 from degenbot.arbitrage.optimizers.solver import ArbSolver, BrentSolver
 from degenbot.arbitrage.path.arbitrage_path import ArbitragePath
 from degenbot.exceptions.arbitrage import OptimizationError
-from tests.arbitrage.fake_curve_pool import FakeCurveStableswapPool, FakeCurveToken
+from tests.arbitrage.fake_curve_pool import FakeCurveStableswapPool
 from tests.arbitrage.test_path.conftest import FakeToken, FakeUniswapV2Pool
+
+
+@pytest.fixture
+def dai():
+    return FakeToken("0xDAI", 18)
+
+
+@pytest.fixture
+def usdc():
+    return FakeToken("0xUSDC", 6)
+
+
+@pytest.fixture
+def weth():
+    return FakeToken("0xWETH", 18)
 
 
 class TestCurveEquivalenceBasics:
     """Basic equivalence: hop state generation should match."""
 
-    def test_curve_hop_generation_matches_expectations(self):
+    def test_curve_hop_generation_matches_expectations(self, dai, usdc):
         """Verify FakeCurveStableswapPool.to_hop_state produces valid CurveStableswapHop."""
-        token0 = FakeCurveToken("0xDAI", 18, "DAI")
-        token1 = FakeCurveToken("0xUSDC", 6, "USDC")
-
         pool = FakeCurveStableswapPool(
-            tokens=(token0, token1),
+            tokens=(dai, usdc),
             balances=(10_000_000 * 10**18, 10_000_000 * 10**6),
             a_coefficient=1000,
             fee=4_000_000,  # 0.04%
@@ -53,7 +65,7 @@ class TestCurveArbitragePathCalculation:
     """Test ArbitragePath calculates correctly with Curve hops."""
 
     @pytest.fixture
-    def balanced_curve_v2_path(self):
+    def balanced_curve_v2_path(self, dai, usdc, weth):
         """Create an ArbitragePath with Curve -> V2 -> V2 configuration.
 
         This mimics a typical Curve-arbitrage scenario where:
@@ -63,17 +75,9 @@ class TestCurveArbitragePathCalculation:
         - Swap through V2 pool (C <-> A) to complete cycle
         """
 
-        # Tokens
-        dai = FakeToken("0xDAI", 18)
-        usdc = FakeToken("0xUSDC", 6)
-        weth = FakeToken("0xWETH", 18)
-
         # Curve pool: DAI/USDC (balanced 1:1)
         curve_pool = FakeCurveStableswapPool(
-            tokens=(
-                FakeCurveToken("0xDAI", 18, "DAI"),
-                FakeCurveToken("0xUSDC", 6, "USDC"),
-            ),
+            tokens=(dai, usdc),
             balances=(10_000_000 * 10**18, 10_000_000 * 10**6),
             a_coefficient=1000,
             fee=4_000_000,
@@ -112,22 +116,19 @@ class TestCurveArbitragePathCalculation:
             "input_token": dai,
         }
 
-    def test_arbitrage_path_with_curve_hop(self):
+    def test_arbitrage_path_with_curve_hop(self, dai, usdc):
         """Verify ArbitragePath can calculate with Curve hops using mixed pool types.
 
-        Tests that FakeCurveToken and FakeToken are now interoperable for ArbitragePath.
+        Tests that FakeToken is interoperable for ArbitragePath with Curve pools.
         The path setup demonstrates the chaining works; profitability depends on imbalance.
         """
 
         # Simple 2-hop: Curve -> V2
         # DAI -> Curve -> USDC -> V2 -> DAI
 
-        dai = FakeToken("0xDAI", 18)
-        usdc = FakeToken("0xUSDC", 6)
-
         # Curve: DAI/USDC (balanced 1:1)
         curve_pool = FakeCurveStableswapPool(
-            tokens=(FakeCurveToken("0xDAI", 18, "DAI"), FakeCurveToken("0xUSDC", 6, "USDC")),
+            tokens=(dai, usdc),
             balances=(5_000_000 * 10**18, 5_000_000 * 10**6),
             a_coefficient=1000,
             fee=4_000_000,
@@ -168,7 +169,7 @@ class TestCurveArbitragePathCalculation:
 class TestCurveVsConstantProductBehavior:
     """Compare Curve stableswap behavior vs constant-product (theoretical)."""
 
-    def test_curve_gives_better_rates_than_constant_product(self):
+    def test_curve_gives_better_rates_than_constant_product(self, dai, usdc):
         """Curve's stableswap should give better rates than constant-product for same reserves.
 
         This verifies the Curve math is working correctly — the whole point of
@@ -181,18 +182,16 @@ class TestCurveVsConstantProductBehavior:
 
         # Curve pool
         curve_pool = FakeCurveStableswapPool(
-            tokens=(FakeCurveToken("0xDAI", 18, "DAI"), FakeCurveToken("0xUSDC", 6, "USDC")),
+            tokens=(dai, usdc),
             balances=(initial_dai, initial_usdc),
             a_coefficient=2000,  # High A = more stable
             fee=4_000_000,
         )
 
         # V2 constant-product pool with same reserves
-        dai_token = FakeToken("0xDAI", 18)
-        usdc_token = FakeToken("0xUSDC", 6)
         v2_pool = FakeUniswapV2Pool(
-            token0=dai_token,
-            token1=usdc_token,
+            token0=dai,
+            token1=usdc,
             reserve0=initial_dai,
             reserve1=initial_usdc,
             fee=Fraction(4, 10000),  # Same 0.04% fee
@@ -205,10 +204,9 @@ class TestCurveVsConstantProductBehavior:
         hop = curve_pool.to_hop_state(zero_for_one=True)
         curve_out = hop.swap_fn(amount_in)
 
-        # V2 output (manual calc)
-        fee = Fraction(4, 10000)
-        amount_in_with_fee = amount_in - int(amount_in * fee)
-        v2_out = initial_usdc * amount_in_with_fee // (initial_dai + amount_in_with_fee)
+        # V2 output (via pool simulation)
+        v2_sim = v2_pool.simulate_swap(dai.address, amount_in, usdc.address)
+        v2_out = v2_sim.amount_out
 
         # Curve should give significantly better rate
         # For 100k swap (10% of pool), constant product gives ~90.9k
@@ -221,7 +219,7 @@ class TestCurveVsConstantProductBehavior:
         # Curve should give at least 99k USDC (vs ~90.9k for V2)
         assert curve_out > 99_000 * 10**6
 
-    def test_curve_price_stability_with_imbalanced_pools(self):
+    def test_curve_price_stability_with_imbalanced_pools(self, dai, usdc):
         """Curve maintains stable prices even with imbalanced reserves.
 
         This is the key innovation of Curve — prices stay near 1:1 even when
@@ -229,7 +227,7 @@ class TestCurveVsConstantProductBehavior:
         """
         # Imbalanced pool: 2M DAI / 1M USDC
         curve_pool = FakeCurveStableswapPool(
-            tokens=(FakeCurveToken("0xDAI", 18, "DAI"), FakeCurveToken("0xUSDC", 6, "USDC")),
+            tokens=(dai, usdc),
             balances=(2_000_000 * 10**18, 1_000_000 * 10**6),
             a_coefficient=1000,
             fee=4_000_000,
@@ -250,13 +248,10 @@ class TestCurveVsConstantProductBehavior:
 class TestSolverDispatchWithCurve:
     """Verify solvers correctly dispatch Curve hops."""
 
-    def test_arb_solver_handles_curve_hops(self):
+    def test_arb_solver_handles_curve_hops(self, dai, usdc):
         """ArbSolver should dispatch Curve hops to appropriate solver."""
-        token0 = FakeCurveToken("0xA", 18, "A")
-        token1 = FakeCurveToken("0xB", 18, "B")
-
         pool = FakeCurveStableswapPool(
-            tokens=(token0, token1),
+            tokens=(dai, usdc),
             balances=(10**21, 10**21),
             a_coefficient=1000,
             fee=4_000_000,
@@ -278,7 +273,7 @@ class TestSolverDispatchWithCurve:
 class TestLegacyVsNewComparison:
     """Documented differences between legacy and new systems."""
 
-    def test_curve_hop_has_swap_fn_in_new_system(self):
+    def test_curve_hop_has_swap_fn_in_new_system(self, dai, usdc):
         """New system provides swap_fn for exact Curve calculation.
 
         Legacy system calls pool.calculate_tokens_out_from_tokens_in() directly,
@@ -288,7 +283,7 @@ class TestLegacyVsNewComparison:
         Both should give equivalent results.
         """
         pool = FakeCurveStableswapPool(
-            tokens=(FakeCurveToken("0xDAI", 18, "DAI"), FakeCurveToken("0xUSDC", 6, "USDC")),
+            tokens=(dai, usdc),
             balances=(10_000_000 * 10**18, 10_000_000 * 10**6),
             a_coefficient=1000,
             fee=4_000_000,
@@ -317,7 +312,7 @@ class TestLegacyVsNewComparison:
 class TestEquivalenceSummary:
     """Summary: Is the new architecture equivalent to legacy?"""
 
-    def test_yes_curve_supported_in_new_architecture(self):
+    def test_yes_curve_supported_in_new_architecture(self, dai, usdc):
         """VERIFIED: New ArbitragePath + Solver architecture supports Curve pools.
 
         Evidence:
@@ -331,7 +326,7 @@ class TestEquivalenceSummary:
         The new architecture is EQUIVALENT to legacy for Curve calculations.
         """
         pool = FakeCurveStableswapPool(
-            tokens=(FakeCurveToken("0xDAI", 18, "DAI"), FakeCurveToken("0xUSDC", 6, "USDC")),
+            tokens=(dai, usdc),
             balances=(5_000_000 * 10**18, 5_000_000 * 10**6),
             a_coefficient=1000,
             fee=4_000_000,
