@@ -1,4 +1,6 @@
+import asyncio
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
 from typing import Any, cast
 from weakref import WeakSet
@@ -219,6 +221,38 @@ class ArbitragePath(PublisherMixin):
         self,
         state_overrides: dict[ChecksumAddress, AbstractPoolState],
     ) -> SolveResult:
+        hops = self._resolve_state_overrides(state_overrides)
+        return self._solver.solve(self._build_solve_input(hops=hops))
+
+    def calculate_with_pool(
+        self,
+        executor: ProcessPoolExecutor | ThreadPoolExecutor,
+        state_overrides: Mapping[ChecksumAddress, AbstractPoolState] | None = None,
+    ) -> asyncio.Future[SolveResult]:
+        """
+        Execute calculation in the given executor (ProcessPool recommended for CPU-bound work).
+
+        Unlike the legacy UniswapLpCycle.calculate_with_pool, this method serializes only
+        the lightweight SolveInput (tuple of frozen HopType dataclasses) — not full pool
+        objects. It therefore never fails on sparse V3 bitmaps or non-pickleable state.
+        """
+        self._refresh_hop_states()
+
+        hops = tuple(self._hop_states)
+        if state_overrides is not None and state_overrides:
+            hops = self._resolve_state_overrides(state_overrides)
+
+        solve_input = self._build_solve_input(hops=hops)
+        return asyncio.get_running_loop().run_in_executor(
+            executor,
+            self._solver.solve,
+            solve_input,
+        )
+
+    def _resolve_state_overrides(
+        self,
+        state_overrides: Mapping[ChecksumAddress, AbstractPoolState],
+    ) -> tuple[HopType, ...]:
         hop_states: list[HopType] = []
         for i, pool in enumerate(self._pools):
             state = state_overrides.get(pool.address)
@@ -232,8 +266,7 @@ class ArbitragePath(PublisherMixin):
                 )
             else:
                 hop_states.append(self._hop_states[i])
-
-        return self._solver.solve(self._build_solve_input(hops=tuple(hop_states)))
+        return tuple(hop_states)
 
     def _build_solve_input(
         self,

@@ -163,11 +163,24 @@ def _compute_mobius_coefficients(hops: tuple[HopType, ...]) -> _MobiusCoefficien
 
 
 def _simulate_path(x: float, hops: tuple[HopType, ...]) -> float:
-    """Simulate a swap through all hops for verification."""
+    """Simulate a swap through all hops for verification.
+
+    Supports ConstantProduct, BoundedProduct, SolidlyStable (with swap_fn),
+    and CurveStableswap (with swap_fn). Falls back to constant-product
+    formula when no exact swap_fn is available.
+    """
     amount = x
     for hop in hops:
         if amount <= 0:
             return 0.0
+
+        # Prefer exact callable if available (Solidly, Curve, etc.)
+        swap_fn = getattr(hop, "swap_fn", None)
+        if swap_fn is not None:
+            amount = float(swap_fn(int(amount)))
+            continue
+
+        # Default: constant-product on virtual/actual reserves
         r_i, s_i, g_i = _hop_to_float_state(hop)
         denom = r_i + amount * g_i
         if denom <= 0:
@@ -230,6 +243,18 @@ class MobiusSolver(Solver):
 
     def __init__(self) -> None:
         self._rust_solver: Any = None
+        if _rs_mobius is not None:
+            self._rust_solver = _rs_mobius.RustArbSolver()
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Omit the non-pickleable Rust solver; it will be recreated on unpickle."""
+        state = self.__dict__.copy()
+        state["_rust_solver"] = None
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Recreate the Rust solver after unpickling if Rust is available."""
+        self.__dict__.update(state)
         if _rs_mobius is not None:
             self._rust_solver = _rs_mobius.RustArbSolver()
 
@@ -681,6 +706,21 @@ class PiecewiseMobiusSolver(Solver):
         self._mobius_solver: MobiusSolver | None = None
         self._rust_hop_cache: dict[int, list] = {}
         self._rust_sequence_cache: dict[tuple[tuple[int, ...], int, bool], Any] = {}
+        if _rs_mobius is not None:
+            self._rust_optimizer = _rs_mobius.RustMobiusOptimizer()
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Omit the non-pickleable Rust optimizer and solver caches."""
+        state = self.__dict__.copy()
+        state["_rust_optimizer"] = None
+        state["_mobius_solver"] = None
+        state["_rust_hop_cache"] = {}
+        state["_rust_sequence_cache"] = {}
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Recreate the Rust optimizer after unpickling if Rust is available."""
+        self.__dict__.update(state)
         if _rs_mobius is not None:
             self._rust_optimizer = _rs_mobius.RustMobiusOptimizer()
 
@@ -1712,6 +1752,7 @@ def _simulate_mixed_path(
     - ConstantProductHop: V2 formula y = gamma*s*x / (r + gamma*x)
     - BoundedProductHop: Same V2 formula (virtual reserves)
     - SolidlyStableHop: float approximation of Solidly swap
+    - CurveStableswapHop: uses swap_fn if available
 
     For integer-exact evaluation, use ``_simulate_mixed_path_int`` instead.
     """
@@ -1719,6 +1760,12 @@ def _simulate_mixed_path(
     for hop in hops:
         if amount <= 0:
             return 0.0
+
+        # Prefer exact callable if available (Solidly, Curve, etc.)
+        swap_fn = getattr(hop, "swap_fn", None)
+        if swap_fn is not None:
+            amount = float(swap_fn(int(amount)))
+            continue
 
         if hop.invariant in {
             PoolInvariant.CONSTANT_PRODUCT,
@@ -1733,19 +1780,14 @@ def _simulate_mixed_path(
             amount = amount * g_i * s_i / denom
 
         elif hop.invariant == PoolInvariant.SOLIDLY_STABLE:
-            # Use integer swap if available for better accuracy
-            if hop.swap_fn is not None:
-                amount_int = hop.swap_fn(int(amount))
-                amount = float(amount_int)
-            else:
-                amount = _solidly_swap_output_float(
-                    reserve_in=float(hop.reserve_in),
-                    reserve_out=float(hop.reserve_out),
-                    amount_in=amount,
-                    gamma=hop.gamma,
-                    decimals_in=hop.decimals_in,
-                    decimals_out=hop.decimals_out,
-                )
+            amount = _solidly_swap_output_float(
+                reserve_in=float(hop.reserve_in),
+                reserve_out=float(hop.reserve_out),
+                amount_in=amount,
+                gamma=hop.gamma,
+                decimals_in=hop.decimals_in,
+                decimals_out=hop.decimals_out,
+            )
 
         else:
             # Unsupported invariant
@@ -1761,7 +1803,7 @@ def _simulate_mixed_path_int(
     """
     Simulate a path with mixed hop types using integer math.
 
-    For Solidly hops with ``swap_fn``, uses the integer-accurate callable.
+    For hops with ``swap_fn`` (Solidly, Curve), uses the integer-accurate callable.
     For V2 hops, uses integer constant-product formula.
     Falls back to float for hops without integer support.
     """
@@ -1769,6 +1811,12 @@ def _simulate_mixed_path_int(
     for hop in hops:
         if amount <= 0:
             return 0
+
+        # Prefer exact callable if available (Solidly, Curve, etc.)
+        swap_fn = getattr(hop, "swap_fn", None)
+        if swap_fn is not None:
+            amount = swap_fn(amount)
+            continue
 
         if hop.invariant in {
             PoolInvariant.CONSTANT_PRODUCT,
@@ -1786,19 +1834,16 @@ def _simulate_mixed_path_int(
             amount = gamma_x * s_i // denom
 
         elif hop.invariant == PoolInvariant.SOLIDLY_STABLE:
-            if hop.swap_fn is not None:
-                amount = hop.swap_fn(amount)
-            else:
-                # Fall back to float (less accurate)
-                out = _solidly_swap_output_float(
-                    reserve_in=float(hop.reserve_in),
-                    reserve_out=float(hop.reserve_out),
-                    amount_in=float(amount),
-                    gamma=hop.gamma,
-                    decimals_in=hop.decimals_in,
-                    decimals_out=hop.decimals_out,
-                )
-                amount = int(out)
+            # Fall back to float (less accurate)
+            out = _solidly_swap_output_float(
+                reserve_in=float(hop.reserve_in),
+                reserve_out=float(hop.reserve_out),
+                amount_in=float(amount),
+                gamma=hop.gamma,
+                decimals_in=hop.decimals_in,
+                decimals_out=hop.decimals_out,
+            )
+            amount = int(out)
 
         else:
             return 0

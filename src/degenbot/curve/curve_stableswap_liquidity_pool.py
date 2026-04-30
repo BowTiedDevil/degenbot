@@ -52,7 +52,7 @@ from degenbot.types.concrete import (
     Subscriber,
 )
 from degenbot.types.pool_protocols import SimulationResult
-from degenbot.types.hop_types import CurveStableswapHop, HopType
+from degenbot.types.hop_types import CurveStableswapHop, HopType, PoolInvariant
 
 
 class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
@@ -2401,7 +2401,48 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         zero_for_one: bool,  # noqa: FBT001
         state_override: CurveStableswapPoolState | None = None,
     ) -> HopType:
-        raise NotImplementedError(
-            "Curve pool to_hop_state is not yet implemented. "
-            "It requires D computation which is pool-variant-specific."
+        """Create a hop state for this pool.
+
+        For 2-token pools, zero_for_one maps to token[0] -> token[1] direction.
+        For metapools or base pools, swap direction is still determined by
+        token index in the pool's tokens tuple.
+
+        NOTE: swap_fn is not pickleable for ProcessPoolExecutor. For
+        multiprocessing, use constant-product approximation or build
+        hop states in the subprocess from pool IDs.
+        """
+        state = state_override or self.state
+        balances = state.balances
+
+        # For 2-token pools, zero_for_one maps to tokens[0] -> tokens[1]
+        # For N-token pools, this is ambiguous; the caller should use
+        # token_in/token_out kwargs when available
+        if zero_for_one:
+            i, j = 0, 1
+        else:
+            i, j = 1, 0
+
+        # Validate indices exist
+        if i >= len(balances) or j >= len(balances):
+            raise DegenbotValueError(
+                message=f"Invalid swap indices ({i}, {j}) for pool with {len(balances)} tokens"
+            )
+
+        # Create swap_fn closure wrapping get_dy
+        # NOTE: This closure captures `self` and is not pickleable!
+        def swap_fn(dx: int) -> int:
+            return self.get_dy(i=i, j=j, dx=dx, override_state=state_override)
+
+        return CurveStableswapHop(
+            reserve_in=balances[i],
+            reserve_out=balances[j],
+            fee=Fraction(self.fee, self.FEE_DENOMINATOR),
+            curve_a=self.a_coefficient,
+            curve_n_coins=len(self.tokens),
+            curve_d=0,  # D is computed dynamically in get_dy via _get_y
+            token_index_in=i,
+            token_index_out=j,
+            precisions=self.precision_multipliers,
+            swap_fn=swap_fn,
+            invariant=PoolInvariant.CURVE_STABLESWAP,
         )

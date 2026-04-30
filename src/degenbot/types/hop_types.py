@@ -178,6 +178,11 @@ class CurveStableswapHop:
 
     Uses the invariant: A*n^n*Σx + D = A*n^n*D + (D^(n+1) / n^n / ∏x)
     The swap function is inherently iterative (Newton's method for get_y).
+
+    The optional ``swap_fn`` provides an integer-accurate swap simulation
+    wrapping ``get_dy``. When provided, the solver uses it for exact path
+    evaluation. When absent, a float approximation is used (less accurate
+    for stable pairs with extreme decimal differences).
     """
 
     reserve_in: int
@@ -189,6 +194,7 @@ class CurveStableswapHop:
     token_index_in: int
     token_index_out: int
     precisions: tuple[int, ...]
+    swap_fn: "Callable[[int], int] | None" = field(default=None, compare=False, hash=False)
     invariant: PoolInvariant = PoolInvariant.CURVE_STABLESWAP
 
     @property
