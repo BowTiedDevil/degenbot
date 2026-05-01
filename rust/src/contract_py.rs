@@ -2,6 +2,7 @@
 
 use crate::contract::{encode_arguments, Contract, FunctionSignature};
 use crate::provider::AlloyProvider;
+use crate::provider_py::PyAlloyProvider;
 use crate::runtime::get_runtime;
 use alloy::hex;
 use pyo3::prelude::*;
@@ -39,6 +40,24 @@ impl PyContract {
 
         let contract = Contract::new(&address, Arc::new(provider)).map_err(Into::<PyErr>::into)?;
 
+        Ok(Self { contract })
+    }
+
+    /// Create a contract from an existing `AlloyProvider`, sharing its
+    /// connection pool across multiple contract instances.
+    ///
+    /// This is more efficient than `new` when creating many contracts
+    /// against the same RPC endpoint, since it avoids creating a new
+    /// HTTP connection pool for each contract.
+    ///
+    /// Args:
+    ///     address: Contract address (hex string)
+    ///     provider: An existing `AlloyProvider` instance
+    #[staticmethod]
+    #[pyo3(signature = (address, provider))]
+    fn from_provider(address: &str, provider: &PyAlloyProvider) -> PyResult<Self> {
+        let contract =
+            Contract::new(address, Arc::clone(&provider.provider)).map_err(Into::<PyErr>::into)?;
         Ok(Self { contract })
     }
 

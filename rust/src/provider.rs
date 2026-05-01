@@ -283,7 +283,7 @@ impl AlloyProvider {
                     })?
                     .erased();
                 Arc::new(provider)
-            } else {
+            } else if !rpc_url.contains("://") {
                 let ipc_connect: IpcConnect<String> = IpcConnect::new(rpc_url.to_string());
                 let provider = ProviderBuilder::default()
                     .with_default_caching()
@@ -294,6 +294,13 @@ impl AlloyProvider {
                     })?
                     .erased();
                 Arc::new(provider)
+            } else {
+                // `rpc_url` contains an unrecognised scheme.
+                // Extract the scheme portion for the error message.
+                let scheme = rpc_url.split("://").next().unwrap_or(rpc_url);
+                return Err(ProviderError::ConnectionFailed {
+                    message: format!("Unsupported transport scheme: {scheme}"),
+                });
             };
 
         Ok(Self {

@@ -43,15 +43,15 @@ pub enum HexError {
 pub fn decode_hex(hex_str: &str) -> Result<Vec<u8>, HexError> {
     let stripped = hex_str.strip_prefix("0x").unwrap_or(hex_str);
     let stripped = stripped.strip_prefix("0X").unwrap_or(stripped);
-    let padded = if stripped.len() % 2 == 1 {
+    // Avoid allocating an intermediate String for the common case (even length).
+    if stripped.len() % 2 == 1 {
         let mut s = String::with_capacity(stripped.len() + 1);
         s.push('0');
         s.push_str(stripped);
-        s
+        alloy::hex::decode(&s).map_err(|e| HexError::InvalidHex(e.to_string()))
     } else {
-        stripped.to_string()
-    };
-    alloy::hex::decode(&padded).map_err(|e| HexError::InvalidHex(e.to_string()))
+        alloy::hex::decode(stripped).map_err(|e| HexError::InvalidHex(e.to_string()))
+    }
 }
 
 /// Encode bytes as a hex string with "0x" prefix.
@@ -65,9 +65,12 @@ pub fn decode_hex(hex_str: &str) -> Result<Vec<u8>, HexError> {
 /// A hex-encoded string with "0x" prefix.
 #[must_use]
 pub fn encode_hex(bytes: &[u8]) -> String {
-    let hex = alloy::hex::encode(bytes);
-    let mut result = String::with_capacity(2 + hex.len());
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut result = String::with_capacity(2 + bytes.len() * 2);
     result.push_str("0x");
-    result.push_str(&hex);
+    for byte in bytes {
+        result.push(HEX[(byte >> 4) as usize] as char);
+        result.push(HEX[(byte & 0x0F) as usize] as char);
+    }
     result
 }

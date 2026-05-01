@@ -23,10 +23,8 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 alloy = { version = "^2.0", features = ["full", "transport-throttle"] }
-futures = { version = "^0.3" }
 log = { version = "^0.4" }
-lru = { version = "^0.14" }
-num-bigint = { version = "^0.4" }
+lru = { version = "^0.18" }
 parking_lot = { version = "^0.12" }
 pyo3 = { version = "^0.28", features = [ "abi3-py312", "serde"] }
 pyo3-async-runtimes = { version = "^0.28", features = ["tokio-runtime"] }
@@ -35,7 +33,7 @@ rand = { version = "^0.10" }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 thiserror = { version = "^2.0" }
-tokio = { version = "^1", features = ["rt-multi-thread", "time"] }
+tokio = { version = "^1.50", features = ["rt-multi-thread", "time", "macros", "sync"] }
 
 [features]
 default = []

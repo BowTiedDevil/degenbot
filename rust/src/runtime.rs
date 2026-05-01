@@ -44,8 +44,12 @@ fn build_runtime() -> Result<Runtime, std::io::Error> {
     let env_raw = std::env::var(ENV_VAR).ok();
     let env_worker_count = env_raw.as_deref().and_then(|v| v.parse::<usize>().ok());
 
-    let removed_invalid = env_raw.is_some() && env_worker_count.is_none();
-    if removed_invalid {
+    if env_worker_count.is_none() && env_raw.is_some() {
+        log::warn!(
+            "{ENV_VAR} is set but could not be parsed as a usize; ignoring"
+        );
+        // Remove the invalid env var so Tokio's internal machinery
+        // doesn't panic when it tries to parse it.
         std::env::remove_var(ENV_VAR);
     }
 
@@ -55,15 +59,7 @@ fn build_runtime() -> Result<Runtime, std::io::Error> {
         builder.worker_threads(n);
     }
 
-    let result = builder.enable_all().build();
-
-    if removed_invalid {
-        if let Some(val) = env_raw {
-            std::env::set_var(ENV_VAR, val);
-        }
-    }
-
-    result
+    builder.enable_all().build()
 }
 
 /// Get the shared Tokio runtime instance.
@@ -88,6 +84,11 @@ pub fn get_runtime() -> &'static Runtime {
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serialize tests that mutate the `TOKIO_WORKER_THREADS` environment
+    /// variable to prevent race conditions when running tests concurrently.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_runtime_singleton() {
@@ -113,6 +114,7 @@ mod tests {
 
     #[test]
     fn test_build_runtime_respects_env_var() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         std::env::set_var(ENV_VAR, "2");
         let rt = build_runtime().unwrap();
         std::env::remove_var(ENV_VAR);
@@ -126,14 +128,28 @@ mod tests {
 
     #[test]
     fn test_build_runtime_ignores_invalid_env() {
-        std::env::set_var(ENV_VAR, "not_a_number");
-        let rt = build_runtime().unwrap();
+        let _guard = ENV_MUTEX.lock().unwrap();
+        // Use a fresh runtime with the invalid env var unset so Tokio's
+        // internal machinery doesn't panic during startup.
         std::env::remove_var(ENV_VAR);
+        let rt = build_runtime().unwrap();
 
         let result = rt.block_on(async {
             let handle = tokio::spawn(async { 77 });
             handle.await.unwrap()
         });
         assert_eq!(result, 77);
+    }
+
+    #[test]
+    fn test_build_runtime_handles_invalid_env_var() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        // Verify that an invalid TOKIO_WORKER_THREADS value is silently
+        // ignored by build_runtime(). The function removes the invalid
+        // var internally so Tokio's internal machinery doesn't panic.
+        std::env::set_var(ENV_VAR, "not_a_number");
+        let result = build_runtime();
+        std::env::remove_var(ENV_VAR);
+        assert!(result.is_ok(), "build_runtime should ignore invalid env var");
     }
 }

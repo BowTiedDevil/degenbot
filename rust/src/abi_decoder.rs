@@ -123,7 +123,7 @@ pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDe
 ///
 /// // Encode first, then decode
 /// use degenbot_rs::abi_encoder::encode_for_types;
-/// let values = vec![AbiValue::Uint(U256::from(42u64)), AbiValue::Bool(true)];
+/// let values = vec![AbiValue::Uint(U256::from(42u64), 256), AbiValue::Bool(true)];
 /// let encoded = encode_for_types(&types, &values)?;
 ///
 /// let decoded = decode_for_types(&types, &encoded)?;
@@ -179,8 +179,8 @@ fn abi_value_to_python<'py>(
         AbiValue::FixedBytes(bytes) | AbiValue::Bytes(bytes) => {
             Ok(PyBytes::new(py, bytes).into_any())
         }
-        AbiValue::Uint(n) => crate::alloy_py::u256_to_py(py, n),
-        AbiValue::Int(n) => crate::alloy_py::i256_to_py(py, n),
+        AbiValue::Uint(n, _) => crate::alloy_py::u256_to_py(py, n),
+        AbiValue::Int(n, _) => crate::alloy_py::i256_to_py(py, n),
         AbiValue::String(s) => Ok(PyString::new(py, s).into_any()),
         AbiValue::Array(values) => {
             let list = PyList::empty(py);
@@ -327,7 +327,10 @@ mod tests {
 
         let result = decode_single_rust("uint256", &data).expect("should decode uint256");
         match result {
-            AbiValue::Uint(n) => assert_eq!(n, U256::from(12345u64)),
+            AbiValue::Uint(n, bits) => {
+                assert_eq!(n, U256::from(12345u64));
+                assert_eq!(bits, 256);
+            }
             _ => panic!("Expected Uint variant"),
         }
     }
@@ -438,7 +441,10 @@ mod tests {
                 assert_eq!(values.len(), 3);
                 for (i, val) in values.iter().enumerate() {
                     match val {
-                        AbiValue::Uint(n) => assert_eq!(*n, U256::from(i as u64 + 1)),
+                        AbiValue::Uint(n, bits) => {
+                            assert_eq!(*n, U256::from(i as u64 + 1));
+                            assert_eq!(*bits, 256);
+                        }
                         _ => panic!("Expected Uint in array"),
                     }
                 }
@@ -466,11 +472,17 @@ mod tests {
             AbiValue::Array(values) => {
                 assert_eq!(values.len(), 2);
                 match &values[0] {
-                    AbiValue::Uint(n) => assert_eq!(*n, U256::from(10u64)),
+                    AbiValue::Uint(n, bits) => {
+                        assert_eq!(*n, U256::from(10u64));
+                        assert_eq!(*bits, 256);
+                    }
                     _ => panic!("Expected Uint"),
                 }
                 match &values[1] {
-                    AbiValue::Uint(n) => assert_eq!(*n, U256::from(20u64)),
+                    AbiValue::Uint(n, bits) => {
+                        assert_eq!(*n, U256::from(20u64));
+                        assert_eq!(*bits, 256);
+                    }
                     _ => panic!("Expected Uint"),
                 }
             }
@@ -499,7 +511,10 @@ mod tests {
         assert_eq!(result.len(), 3);
 
         match &result[0] {
-            AbiValue::Uint(n) => assert_eq!(*n, U256::from(42u64)),
+            AbiValue::Uint(n, bits) => {
+                assert_eq!(*n, U256::from(42u64));
+                assert_eq!(*bits, 256);
+            }
             _ => panic!("Expected Uint"),
         }
         match &result[1] {
@@ -520,7 +535,10 @@ mod tests {
 
         let result = decode_single_rust("int256", &data).expect("should decode int256");
         match result {
-            AbiValue::Int(n) => assert_eq!(n, I256::MINUS_ONE),
+            AbiValue::Int(n, bits) => {
+                assert_eq!(n, I256::MINUS_ONE);
+                assert_eq!(bits, 256);
+            }
             _ => panic!("Expected Int variant"),
         }
     }
@@ -530,7 +548,7 @@ mod tests {
         #[allow(unsafe_code)]
         unsafe {
             pyo3::with_embedded_python_interpreter(|py| {
-                let val = AbiValue::Uint(U256::from(123_456_789_u64));
+                let val = AbiValue::Uint(U256::from(123_456_789_u64), 256);
                 let py_val = abi_value_to_python(&val, py, true).expect("should convert to Python");
                 let n: u64 = py_val.extract().expect("should extract as u64");
                 assert_eq!(n, 123_456_789_u64);
@@ -546,8 +564,8 @@ mod tests {
                 assert_eq!(s, "Hello");
 
                 let val = AbiValue::Array(vec![
-                    AbiValue::Uint(U256::from(1u64)),
-                    AbiValue::Uint(U256::from(2u64)),
+                    AbiValue::Uint(U256::from(1u64), 256),
+                    AbiValue::Uint(U256::from(2u64), 256),
                 ]);
                 let py_val = abi_value_to_python(&val, py, true).expect("should convert to Python");
                 let list: Vec<u64> = py_val.extract().expect("should extract as Vec<u64>");
@@ -579,7 +597,10 @@ mod tests {
 
         assert_eq!(decoded.len(), 2);
         match &decoded[0] {
-            AbiValue::Uint(n) => assert_eq!(*n, U256::from(42u64)),
+            AbiValue::Uint(n, bits) => {
+                assert_eq!(*n, U256::from(42u64));
+                assert_eq!(*bits, 256);
+            }
             _ => panic!("Expected Uint"),
         }
         match &decoded[1] {

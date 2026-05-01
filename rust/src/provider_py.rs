@@ -249,10 +249,10 @@ impl PyAlloyProvider {
     }
 
     /// Close the provider.
+    #[allow(clippy::unused_self)]
     const fn close(&self) {
         // No-op for now - provider connection is managed internally
         // This method exists for API compatibility
-        let _ = self;
     }
 
     #[getter]
@@ -261,7 +261,7 @@ impl PyAlloyProvider {
     }
 
     /// Get current gas price.
-    fn get_gas_price(&self, py: Python<'_>) -> PyResult<String> {
+    fn get_gas_price(&self, py: Python<'_>) -> PyResult<u128> {
         let provider = Arc::clone(&self.provider);
 
         // Release GIL during RPC call
@@ -269,7 +269,7 @@ impl PyAlloyProvider {
             .detach(|| get_runtime().block_on(async { provider.get_gas_price().await }))
             .map_err(Into::<PyErr>::into)?;
 
-        Ok(gas_price.to_string())
+        Ok(gas_price)
     }
 
     /// Estimate gas for a transaction.

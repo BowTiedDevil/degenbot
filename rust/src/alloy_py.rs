@@ -150,11 +150,11 @@ pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult
     if let Ok(int_val) = obj.extract::<i128>() {
         // Small integer fits in i128
         if int_val >= 0 {
-            return Ok(AbiValue::Uint(U256::from(int_val.cast_unsigned())));
+            return Ok(AbiValue::Uint(U256::from(int_val.cast_unsigned()), 256));
         }
         return Ok(AbiValue::Int(I256::try_from(int_val).map_err(|_| {
             PyValueError::new_err("Integer conversion failed")
-        })?));
+        })?, 256));
     }
 
     // For larger integers, try to extract via Python's to_bytes method
@@ -176,7 +176,7 @@ pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult
                     .map_err(|_| PyValueError::new_err("Integer value out of range for int256"))?,
             );
             // Directly interpret as I256 (two's complement encoding)
-            return Ok(AbiValue::Int(I256::from_raw(u256)));
+            return Ok(AbiValue::Int(I256::from_raw(u256), 256));
         }
         // Positive integer - use unsigned to_bytes
         let kwargs = PyDict::new(py);
@@ -187,17 +187,19 @@ pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult
             <[u8; 32]>::try_from(bytes)
                 .map_err(|_| PyValueError::new_err("Integer value out of range for uint256"))?,
         );
-        return Ok(AbiValue::Uint(u256));
+        return Ok(AbiValue::Uint(u256, 256));
     }
 
     // Try string (for addresses)
     if let Ok(s) = obj.cast::<PyString>() {
         let s = s.to_string();
-        // Check if it's an address
-        if s.starts_with("0x") && s.len() == 42 {
-            let addr = alloy::primitives::Address::from_str(&s)
-                .map_err(|e| PyValueError::new_err(format!("Invalid address '{s}': {e}")))?;
-            return Ok(AbiValue::Address(addr.into()));
+        // Check if it's an address: must be "0x" + 40 hex characters.
+        // Validate hex explicitly so random 42-char strings starting with
+        // "0x" don't get misinterpreted as addresses.
+        if s.starts_with("0x") && s.len() == 42 && s[2..].chars().all(|c| c.is_ascii_hexdigit()) {
+            if let Ok(addr) = alloy::primitives::Address::from_str(&s) {
+                return Ok(AbiValue::Address(addr.into()));
+            }
         }
         return Ok(AbiValue::String(s));
     }

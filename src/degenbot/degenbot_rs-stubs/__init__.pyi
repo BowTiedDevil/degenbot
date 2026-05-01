@@ -193,6 +193,21 @@ def encode_function_call(function_signature: str, args: list[str]) -> bytes:
         ValueError: If the signature or arguments are invalid
     """
 
+def encode_single(abi_type: str, value: Any) -> bytes:
+    """
+    Encode a single ABI value.
+
+    Args:
+        abi_type: ABI type string (e.g., "uint256", "address", "bytes")
+        value: Python value to encode (int, bool, str, bytes, or list)
+
+    Returns:
+        The ABI-encoded bytes.
+
+    Raises:
+        ValueError: If the value cannot be encoded for the given type
+    """
+
 def decode_return_data(data: bytes, output_types: list[str]) -> list[str]:
     """
     Decode return data from a contract call.
@@ -228,6 +243,8 @@ class Contract:
     """
 
     def __init__(self, address: str, provider_url: str | None = None) -> None: ...
+    @staticmethod
+    def from_provider(address: str, provider: AlloyProvider) -> Contract: ...
     @property
     def address(self) -> str: ...
     def call(
@@ -281,8 +298,6 @@ class AlloyProvider:
     def __init__(
         self,
         rpc_url: str,
-        max_connections: int = 10,
-        timeout: float = 30.0,
         max_retries: int = 10,
         max_blocks_per_request: int = 5000,
     ) -> None: ...
@@ -290,7 +305,7 @@ class AlloyProvider:
     def rpc_url(self) -> str: ...
     def get_block_number(self) -> int: ...
     def get_chain_id(self) -> int: ...
-    def get_gas_price(self) -> str: ...
+    def get_gas_price(self) -> int: ...
     def get_block(self, block_number: int) -> dict[str, Any] | None: ...
     def get_transaction(self, tx_hash: str) -> dict[str, Any] | None: ...
     def get_transaction_receipt(self, tx_hash: str) -> dict[str, Any] | None: ...
@@ -332,17 +347,75 @@ class AsyncAlloyProvider:
     @staticmethod
     def create(
         rpc_url: str,
-        max_connections: int = 10,
-        timeout: float = 30.0,
         max_retries: int = 10,
+        max_blocks_per_request: int = 5000,
     ) -> Coroutine[Any, Any, AsyncAlloyProvider]: ...
+    @property
+    def rpc_url(self) -> str: ...
+    def get_block_number(self) -> Coroutine[Any, Any, int]: ...
+    def get_chain_id(self) -> Coroutine[Any, Any, int]: ...
+    def get_gas_price(self) -> Coroutine[Any, Any, int]: ...
+    def get_block(
+        self, block_number: int
+    ) -> Coroutine[Any, Any, dict[str, Any] | None]: ...
+    def get_transaction(
+        self, tx_hash: str
+    ) -> Coroutine[Any, Any, dict[str, Any] | None]: ...
+    def get_transaction_receipt(
+        self, tx_hash: str
+    ) -> Coroutine[Any, Any, dict[str, Any] | None]: ...
+    def get_logs(
+        self,
+        *,
+        from_block: int,
+        to_block: int,
+        addresses: list[str] | None = None,
+        topics: list[list[str]] | None = None,
+    ) -> Coroutine[Any, Any, list[dict[str, Any]]]: ...
+    def call(
+        self,
+        to: str,
+        data: bytes,
+        block_number: int | None = None,
+    ) -> Coroutine[Any, Any, HexBytes]: ...
+    def get_code(
+        self,
+        address: str,
+        block_number: int | None = None,
+    ) -> Coroutine[Any, Any, HexBytes]: ...
+    def estimate_gas(
+        self,
+        to: str,
+        data: bytes,
+        from_: str | None = None,
+        value: int | None = None,
+        block_number: int | None = None,
+    ) -> Coroutine[Any, Any, int]: ...
+    def get_storage_at(
+        self,
+        address: str,
+        position: int,
+        block_number: int | None = None,
+    ) -> Coroutine[Any, Any, HexBytes]: ...
+    def close(self) -> None: ...
 
 class AsyncContract:
     """
     Async wrapper for contract interactions.
     """
 
-    def __init__(self, address: str, provider_url: str) -> None: ...
+    @staticmethod
+    def create(
+        address: str,
+        provider_url: str,
+        max_retries: int | None = None,
+    ) -> Coroutine[Any, Any, AsyncContract]: ...
+    @staticmethod
+    def from_provider(
+        address: str, provider: AsyncAlloyProvider
+    ) -> AsyncContract: ...
+    @property
+    def address(self) -> str: ...
     def call(
         self,
         function_signature: str,
@@ -366,6 +439,7 @@ __all__ = [
     "decode_return_data",
     "decode_single",
     "encode_function_call",
+    "encode_single",
     "get_function_selector",
     "get_sqrt_ratio_at_tick",
     "get_tick_at_sqrt_ratio",

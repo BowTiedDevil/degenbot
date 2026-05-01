@@ -73,11 +73,17 @@ impl FunctionSignature {
 
     /// Convert types back to comma-separated string.
     fn types_to_string(types: &[AbiType]) -> String {
-        types
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(",")
+        use std::fmt::Write;
+
+        let mut result = String::new();
+        for (i, ty) in types.iter().enumerate() {
+            if i > 0 {
+                result.push(',');
+            }
+            #[allow(clippy::unwrap_used)]
+            write!(&mut result, "{ty}").unwrap();
+        }
+        result
     }
 
     /// Calculate function selector (4-byte keccak256 hash).
@@ -346,8 +352,9 @@ mod tests {
         let encoded =
             AbiValue::from_str_arg(&AbiType::Uint(256), "12345").expect("uint256 should parse");
         match encoded {
-            AbiValue::Uint(n) => {
+            AbiValue::Uint(n, bits) => {
                 assert_eq!(n.to_string(), "12345");
+                assert_eq!(bits, 256);
             }
             _ => panic!("Expected Uint variant"),
         }
@@ -407,7 +414,10 @@ mod tests {
         // Negative decimal should still work
         let encoded_neg = AbiValue::from_str_arg(&AbiType::Int(256), "-1").unwrap();
         match encoded_neg {
-            AbiValue::Int(n) => assert_eq!(n, I256::MINUS_ONE),
+            AbiValue::Int(n, bits) => {
+                assert_eq!(n, I256::MINUS_ONE);
+                assert_eq!(bits, 256);
+            }
             _ => panic!("Expected Int variant"),
         }
     }

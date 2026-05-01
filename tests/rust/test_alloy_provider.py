@@ -24,17 +24,13 @@ class TestAlloyProviderInterface:
 
     def test_provider_has_required_properties(self, alloy_provider: AlloyProvider):
         """Test that AlloyProvider has required properties."""
-        # Properties should exist on the class
         assert hasattr(type(alloy_provider), "chain_id")
         assert hasattr(type(alloy_provider), "block_number")
-
-        # Properties should be property descriptors
         assert isinstance(type(alloy_provider).__dict__["chain_id"], property)
         assert isinstance(type(alloy_provider).__dict__["block_number"], property)
 
     def test_provider_has_required_methods(self, alloy_provider: AlloyProvider):
         """Test that AlloyProvider has required methods."""
-        # Methods should be callable
         assert callable(alloy_provider.get_block_number)
         assert callable(alloy_provider.get_block)
         assert callable(alloy_provider.get_logs)
@@ -42,12 +38,24 @@ class TestAlloyProviderInterface:
         assert callable(alloy_provider.get_code)
         assert callable(alloy_provider.is_connected)
 
-    def test_provider_has_stub_methods(self, alloy_provider: AlloyProvider):
-        """Test that AlloyProvider has stub methods for unimplemented operations."""
-        # These methods exist but raise NotImplementedError
-        assert callable(alloy_provider.get_balance)
+    def test_provider_has_all_rust_methods(self, alloy_provider: AlloyProvider):
+        """Test that all Rust-exposed methods are callable from Python."""
+        # Methods with full Rust implementations
+        assert callable(alloy_provider.get_gas_price)
+        assert callable(alloy_provider.get_chain_id)
+        assert callable(alloy_provider.get_transaction)
+        assert callable(alloy_provider.get_transaction_receipt)
         assert callable(alloy_provider.get_storage_at)
+        assert callable(alloy_provider.estimate_gas)
+        assert callable(alloy_provider.close)
+        # Stub methods (raise NotImplementedError)
+        assert callable(alloy_provider.get_balance)
         assert callable(alloy_provider.get_transaction_count)
+
+    def test_provider_has_rpc_url_property(self, alloy_provider: AlloyProvider):
+        """Test that rpc_url is exposed as a property."""
+        assert hasattr(type(alloy_provider), "rpc_url")
+        assert isinstance(type(alloy_provider).__dict__["rpc_url"], property)
 
 
 class TestAlloyProviderMethodSignatures:
@@ -75,11 +83,82 @@ class TestAlloyProviderMethodSignatures:
         assert "block_number" in params
 
     def test_get_logs_signature(self, alloy_provider: AlloyProvider):
-        """Test get_logs accepts filter parameters."""
+        """Test get_logs accepts LogFilter or keyword arguments."""
         sig = inspect.signature(alloy_provider.get_logs)
+        params = sig.parameters
+        assert "filter_param" in params
+        # from_block and to_block should be keyword-only
+        assert "from_block" in params
+        assert params["from_block"].kind == inspect.Parameter.KEYWORD_ONLY
+        assert "to_block" in params
+        assert params["to_block"].kind == inspect.Parameter.KEYWORD_ONLY
+
+    def test_get_storage_at_signature(self, alloy_provider: AlloyProvider):
+        """Test get_storage_at accepts address, position, block_number."""
+        sig = inspect.signature(alloy_provider.get_storage_at)
         params = list(sig.parameters.keys())
-        # Should accept either LogFilter or keyword arguments
-        assert "filter_param" in params or "from_block" in params
+        assert "address" in params
+        assert "position" in params
+        assert "block_number" in params
+
+    def test_get_transaction_signature(self, alloy_provider: AlloyProvider):
+        """Test get_transaction accepts tx_hash parameter."""
+        sig = inspect.signature(alloy_provider.get_transaction)
+        params = list(sig.parameters.keys())
+        assert "tx_hash" in params
+
+    def test_get_transaction_receipt_signature(self, alloy_provider: AlloyProvider):
+        """Test get_transaction_receipt accepts tx_hash parameter."""
+        sig = inspect.signature(alloy_provider.get_transaction_receipt)
+        params = list(sig.parameters.keys())
+        assert "tx_hash" in params
+
+
+class TestAlloyProviderReturnTypes:
+    """Test that Rust return types map correctly to Python types."""
+
+    def test_get_gas_price_returns_int(self, alloy_provider: AlloyProvider):
+        """get_gas_price should return int (not str)."""
+        result = alloy_provider.get_gas_price()
+        assert isinstance(result, int), f"Expected int, got {type(result)}"
+        assert result >= 0
+
+    def test_get_block_number_returns_int(self, alloy_provider: AlloyProvider):
+        """get_block_number should return int."""
+        result = alloy_provider.get_block_number()
+        assert isinstance(result, int)
+        assert result > 0
+
+    def test_get_chain_id_returns_int(self, alloy_provider: AlloyProvider):
+        """get_chain_id should return int."""
+        result = alloy_provider.get_chain_id()
+        assert isinstance(result, int)
+
+    def test_get_storage_at_returns_hexbytes(self, alloy_provider: AlloyProvider):
+        """get_storage_at should return HexBytes (functional, not stub)."""
+        from hexbytes import HexBytes
+        result = alloy_provider.get_storage_at(
+            "0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", 0
+        )
+        assert isinstance(result, HexBytes)
+        assert len(result) == 32
+
+    def test_get_transaction_returns_dict_or_none(self, alloy_provider: AlloyProvider):
+        """get_transaction should return dict or None for missing tx."""
+        result = alloy_provider.get_transaction(
+            "0x" + "00" * 32
+        )
+        assert result is None or isinstance(result, dict)
+
+    def test_estimate_gas_returns_int(self, alloy_provider: AlloyProvider):
+        """estimate_gas should return int."""
+        from hexbytes import HexBytes
+        result = alloy_provider.estimate_gas(
+            to="0x742d35Cc6634C0532925a3b8D4C9db96590d6B75",
+            data=HexBytes(b""),
+        )
+        assert isinstance(result, int)
+        assert result >= 0
 
 
 class TestAlloyProviderStubMethods:
@@ -94,10 +173,6 @@ class TestAlloyProviderStubMethods:
         """Test get_balance with block raises NotImplementedError."""
         with pytest.raises(NotImplementedError, match="get_balance not implemented"):
             alloy_provider.get_balance("0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", 18000000)
-
-    def test_get_storage_at_is_callable(self, alloy_provider: AlloyProvider):
-        """Test get_storage_at is callable (now implemented)."""
-        assert callable(alloy_provider.get_storage_at)
 
     def test_get_transaction_count_raises_not_implemented(self, alloy_provider: AlloyProvider):
         """Test get_transaction_count raises NotImplementedError."""

@@ -5,9 +5,12 @@ These tests use the async provider with proper tokio runtime support via pyo3-as
 """
 
 import pytest
+from hexbytes import HexBytes
 
 from degenbot.provider.async_provider import AsyncAlloyProvider
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+
+WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
 
 @pytest.mark.asyncio
@@ -30,17 +33,57 @@ class TestAsyncProviderWithLiveConnection:
     async def test_async_get_logs(self):
         """Test fetching logs with filter asynchronously from live RPC."""
         provider = await AsyncAlloyProvider.create(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
-        # WETH contract
         logs = await provider.get_logs(
             from_block=18000000,
             to_block=18000010,
             addresses=["0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"],
         )
         assert isinstance(logs, list)
-        # Should have some logs for WETH in that block range
         assert len(logs) > 0
 
     async def test_async_provider_properties(self):
         """Test async provider property access."""
         provider = await AsyncAlloyProvider.create(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
         assert provider.rpc_url == ETHEREUM_ARCHIVE_NODE_HTTP_URI
+
+    async def test_async_get_gas_price_returns_int(self):
+        """Async get_gas_price should return int (matches sync return type)."""
+        provider = await AsyncAlloyProvider.create(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
+        result = await provider.get_gas_price()
+        assert isinstance(result, int), f"Expected int, got {type(result)}"
+        assert result >= 0
+
+    async def test_async_call_returns_hexbytes(self):
+        """Async call should return HexBytes."""
+        provider = await AsyncAlloyProvider.create(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
+        # totalSupply() selector
+        result = await provider.call(
+            to=WETH_ADDRESS,
+            data=bytes.fromhex("18160ddd"),
+        )
+        assert isinstance(result, HexBytes)
+        assert len(result) == 32
+
+    async def test_async_get_code_returns_hexbytes(self):
+        """Async get_code should return HexBytes."""
+        provider = await AsyncAlloyProvider.create(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
+        code = await provider.get_code(WETH_ADDRESS)
+        assert isinstance(code, HexBytes)
+        assert len(code) > 0
+
+    async def test_async_get_balance_of(self):
+        """Async eth_call to balanceOf should decode correctly."""
+        provider = await AsyncAlloyProvider.create(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
+        # balanceOf(address) selector + WETH address padded to 32 bytes
+        calldata = bytes.fromhex(
+            "70a08231"
+            + "000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        )
+        result = await provider.call(
+            to=WETH_ADDRESS,
+            data=calldata,
+        )
+        assert isinstance(result, HexBytes)
+        # Should be able to decode as uint256
+        balance = int.from_bytes(result, "big")
+        assert balance >= 0
