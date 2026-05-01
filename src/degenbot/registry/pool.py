@@ -15,14 +15,12 @@ PoolId = bytes | str
 Address = bytes | str
 
 
-class _UniswapV4PoolManagerRegistry(AbstractRegistry):
+class ManagedPoolRegistry(AbstractRegistry):
     """
-    The Uniswap V4 singleton design breaks the fundamental assumption of the PoolRegistry: that each
-    liquidity pool can be uniquely identified by a chain ID and contract address. This private class
-    is used to represent Uniswap V4 PoolManager singleton contracts. `PoolRegistry` and similar high
-    level registries may defer to this class to track V4 pools by their pool ID and PoolManager
-    address.
+    Registry for Uniswap V4 pools, which are identified by
+    ``(chain_id, pool_manager_address, pool_id)`` rather than a simple address.
     """
+
 
     def __init__(self) -> None:
         self._all_v4_pools: dict[
@@ -84,9 +82,15 @@ class _UniswapV4PoolManagerRegistry(AbstractRegistry):
             None,
         )
 
+    def _reset(self) -> None:
+        self._all_v4_pools.clear()
+
 
 class PoolRegistry(AbstractRegistry):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        managed_pool_registry: ManagedPoolRegistry | None = None,
+    ) -> None:
         self._all_pools: dict[
             tuple[
                 ChainId,
@@ -94,11 +98,11 @@ class PoolRegistry(AbstractRegistry):
             ],
             AbstractLiquidityPool,
         ] = {}
-        self._v4_pool_registry = _UniswapV4PoolManagerRegistry()
+        self._managed_pool_registry = managed_pool_registry or ManagedPoolRegistry()
 
     def _reset(self) -> None:
         self._all_pools.clear()
-        self._v4_pool_registry = _UniswapV4PoolManagerRegistry()
+        self._managed_pool_registry._reset()
 
     def get(
         self,
@@ -107,7 +111,7 @@ class PoolRegistry(AbstractRegistry):
         pool_id: PoolId | None = None,
     ) -> "AbstractLiquidityPool | None":
         if pool_id is not None:
-            return self._v4_pool_registry.get(
+            return self._managed_pool_registry.get(
                 chain_id=chain_id,
                 pool_manager_address=get_checksum_address(pool_address),
                 pool_id=pool_id,
@@ -128,7 +132,7 @@ class PoolRegistry(AbstractRegistry):
         pool_id: PoolId | None = None,
     ) -> None:
         if pool_id is not None:
-            self._v4_pool_registry.add(
+            self._managed_pool_registry.add(
                 pool,
                 chain_id=chain_id,
                 pool_manager_address=get_checksum_address(pool_address),
@@ -149,7 +153,7 @@ class PoolRegistry(AbstractRegistry):
         pool_id: PoolId | None = None,
     ) -> None:
         if pool_id is not None:
-            self._v4_pool_registry.remove(
+            self._managed_pool_registry.remove(
                 chain_id=chain_id,
                 pool_manager_address=get_checksum_address(pool_address),
                 pool_id=pool_id,

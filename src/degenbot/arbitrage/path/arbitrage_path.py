@@ -9,6 +9,7 @@ from eth_typing import ChecksumAddress
 
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult
 from degenbot.arbitrage.path.swap_amount_builder import build_swap_amount
+from degenbot.arbitrage.path.pool_hop_adapter import extract_fee as _adapter_extract_fee, to_hop_state as _adapter_to_hop_state
 from degenbot.arbitrage.path.types import PathValidationError, PoolCompatibility, SwapVector
 from degenbot.arbitrage.types import (
     AbstractSwapAmounts,
@@ -38,26 +39,24 @@ _MIN_POOLS_FOR_ARBITRAGE_PATH = 2
 
 
 def _check_pool_compatibility(pool: object) -> PoolCompatibility:
-    if not isinstance(pool, ArbitrageCapablePool):
-        return PoolCompatibility.INCOMPATIBLE_INVARIANT
     try:
-        pool.to_hop_state(zero_for_one=True)
-    except IncompatiblePoolInvariant:
+        _adapter_to_hop_state(pool, zero_for_one=True)
+    except (IncompatiblePoolInvariant, TypeError, AttributeError):
         return PoolCompatibility.INCOMPATIBLE_INVARIANT
     else:
         return PoolCompatibility.COMPATIBLE
 
 
-def _extract_fee(pool: ArbitrageCapablePool, zero_for_one: bool) -> Fraction:  # noqa: FBT001
-    return pool.extract_fee(zero_for_one=zero_for_one)
+def _extract_fee(pool: object, zero_for_one: bool) -> Fraction:  # noqa: FBT001
+    return _adapter_extract_fee(pool, zero_for_one=zero_for_one)
 
 
 def _pool_to_hop_state(
-    pool: ArbitrageCapablePool,
+    pool: object,
     zero_for_one: bool,  # noqa: FBT001
     state_override: AbstractPoolState | None = None,
 ) -> HopType:
-    return pool.to_hop_state(zero_for_one=zero_for_one, state_override=state_override)
+    return _adapter_to_hop_state(pool, zero_for_one=zero_for_one, state_override=state_override)
 
 
 class _ProfitableStateDiscovered(AbstractPublisherMessage):

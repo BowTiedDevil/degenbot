@@ -44,7 +44,7 @@ from degenbot.exceptions.liquidity_pool import (
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
 from degenbot.provider import ProviderAdapter
-from degenbot.registry import pool_registry
+from degenbot.registry import managed_pool_registry
 from degenbot.types.abstract import AbstractArbitrage, AbstractConcentratedLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import (
@@ -439,10 +439,10 @@ class UniswapV4Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         self._swap_step_cache: dict[LiquidityRangeCacheKey, LiquidityRangeCacheValue] = {}
         self._swap_step_cache_lock = Lock()
 
-        pool_registry.add(
+        managed_pool_registry.add(
             pool=self,
             chain_id=self.chain_id,
-            pool_address=self.address,
+            pool_manager_address=self.address,
             pool_id=self.pool_id,
         )
 

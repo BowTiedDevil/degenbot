@@ -58,7 +58,7 @@ from .pancakeswap import (
     PancakeswapV3Pool,
     PancakeswapV3PoolManager,
 )
-from .registry import pool_registry, token_registry
+from .registry import managed_pool_registry, pool_registry, token_registry
 from .sushiswap import (
     SushiswapV2Pool,
     SushiswapV2PoolManager,
@@ -151,6 +151,7 @@ __all__ = (
     "get_tick_at_sqrt_ratio",
     "get_web3",
     "logger",
+    "managed_pool_registry",
     "pool_registry",
     "set_async_web3",
     "set_web3",
