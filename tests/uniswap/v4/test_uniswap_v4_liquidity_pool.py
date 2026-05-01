@@ -19,7 +19,7 @@ from degenbot.exceptions.liquidity_pool import (
     LiquidityPoolError,
     PossibleInaccurateResult,
 )
-from degenbot.registry import pool_registry
+from degenbot.registry import managed_pool_registry, pool_registry
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 if TYPE_CHECKING:
@@ -61,9 +61,9 @@ def eth_usdc_v4(fork_mainnet_full: AnvilFork) -> UniswapV4Pool:
     set_web3(fork_mainnet_full.w3)
 
     if (
-        pool := pool_registry.get(
+        pool := managed_pool_registry.get(
             chain_id=fork_mainnet_full.w3.eth.chain_id,
-            pool_address=V4_POOL_MANAGER_ADDRESS,
+            pool_manager_address=V4_POOL_MANAGER_ADDRESS,
             pool_id=ETH_USDC_V4_POOL_ID,
         )
     ) is None:
@@ -106,9 +106,9 @@ def _test_pool_exact_input(
 ):
     pool_id: HexStr = pool["pool_id"]
 
-    lp = pool_registry.get(
+    lp = managed_pool_registry.get(
         chain_id=fork.w3.eth.chain_id,
-        pool_address=V4_POOL_MANAGER_ADDRESS,
+        pool_manager_address=V4_POOL_MANAGER_ADDRESS,
         pool_id=pool_id,
     )
     if lp is None:
@@ -226,9 +226,9 @@ def _test_pool_exact_output(
 ):
     pool_id: HexStr = pool["pool_id"]
 
-    lp = pool_registry.get(
+    lp = managed_pool_registry.get(
         chain_id=fork.w3.eth.chain_id,
-        pool_address=V4_POOL_MANAGER_ADDRESS,
+        pool_manager_address=V4_POOL_MANAGER_ADDRESS,
         pool_id=pool_id,
     )
     if lp is None:
