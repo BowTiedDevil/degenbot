@@ -5,7 +5,7 @@ These tests demonstrate that the Rust-based Alloy integration is functional,
 covering provider operations, contract interactions, and connection management.
 """
 
-import pytest
+from degenbot.degenbot_rs import decode_single, encode_single
 
 from degenbot.contract import (
     Contract,
@@ -102,42 +102,10 @@ class TestContractUtilities:
         assert decoded == ["1000", "2000"]
 
 
-class TestLogFilter:
-    """Test LogFilter dataclass functionality."""
+class TestContractRustBoundary:
+    """Test Contract class boundary with Rust encode/decode.
 
-    def test_log_filter_creation(self):
-        """Test LogFilter can be created with valid block range."""
-        log_filter = LogFilter(from_block=1000, to_block=2000)
-        assert log_filter.from_block == 1000
-        assert log_filter.to_block == 2000
-        assert log_filter.addresses == []
-        assert log_filter.topics == []
-
-    def test_log_filter_with_addresses(self):
-        """Test LogFilter with contract addresses."""
-        log_filter = LogFilter(from_block=1000, to_block=2000, addresses=[WETH_ADDRESS])
-        assert len(log_filter.addresses) == 1
-
-    def test_log_filter_with_topics(self):
-        """Test LogFilter with topic filters."""
-        log_filter = LogFilter(
-            from_block=1000,
-            to_block=2000,
-            topics=[["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"]],
-        )
-        assert len(log_filter.topics) == 1
-
-    def test_log_filter_invalid_range(self):
-        """Test LogFilter raises error for invalid block range."""
-        with pytest.raises(ValueError, match="to_block must be >= from_block"):
-            LogFilter(from_block=2000, to_block=1000)
-
-
-class TestContractClass:
-    """Test Contract class initialization and properties.
-
-    Note: Contract initialization requires a valid provider connection,
-    so initialization tests are skipped when no connection is available.
+    Deduplicated: LogFilter creation tests are in test_provider_interface.py.
     """
 
     def test_contract_initialization(self):
@@ -153,31 +121,66 @@ class TestContractClass:
 
     def test_contract_static_methods(self):
         """Test Contract static utility methods (these don't require initialization)."""
-        # Test get_function_selector (static method)
         selector = Contract.get_function_selector("transfer(address,uint256)")
         assert selector == "0xa9059cbb"
-
-        # Test decode_return_data (static method)
         data = bytes.fromhex("0de0b6b3a7640000".rjust(64, "0"))
         decoded = Contract.decode_return_data(data, output_types=["uint256"])
         assert decoded == ["1000000000000000000"]
 
     def test_module_level_functions(self):
         """Test module-level utility functions (don't require Contract instance)."""
-        # Test get_function_selector
         selector = get_function_selector("transfer(address,uint256)")
         assert selector == "0xa9059cbb"
-
-        # Test encode_function_call
         calldata = encode_function_call(
             "balanceOf(address)", args=["0x742d35Cc6634C0532925a3b8D4C9db96590d6B75"]
         )
         assert len(calldata) == 36
-
-        # Test decode_return_data
         data = bytes.fromhex("0de0b6b3a7640000".rjust(64, "0"))
         decoded = decode_return_data(data, output_types=["uint256"])
         assert decoded == ["1000000000000000000"]
+
+    def test_encode_decode_roundtrip_uint256(self):
+        """Encoding then decoding a uint256 should return the original value."""
+        values = [0, 1, 2**256 - 1, 10**18]
+        for value in values:
+            encoded = encode_single("uint256", value)
+            decoded = decode_single("uint256", encoded)
+            assert decoded == value, f"Roundtrip failed for {value}: got {decoded}"
+
+    def test_encode_decode_roundtrip_int256_negative(self):
+        """Encoding then decoding negative int256 values should roundtrip."""
+        for value in [-1, -(2**255)]:
+            encoded = encode_single("int256", value)
+            decoded = decode_single("int256", encoded)
+            assert decoded == value, f"Roundtrip failed for {value}: got {decoded}"
+
+    def test_encode_decode_roundtrip_uint256_as_int_type(self):
+        """Positive values encoded as uint256 should decode from int256."""
+        value = 2**255 - 1
+        encoded = encode_single("uint256", value)
+        decoded = decode_single("int256", encoded)
+        assert decoded == value
+
+    def test_encode_decode_roundtrip_bool(self):
+        """Encoding then decoding a bool should return the original value."""
+        for value in (True, False):
+            encoded = encode_single("bool", value)
+            decoded = decode_single("bool", encoded)
+            assert decoded == value
+
+    def test_encode_decode_roundtrip_address(self):
+        """Encoding then decoding an address should return the original value."""
+        address = "0x742d35Cc6634C0532925a3b8D4C9db96590d6B75"
+        encoded = encode_single("address", address)
+        decoded = decode_single("address", encoded, checksum=False)
+        assert decoded.lower() == address.lower()
+
+    def test_encode_decode_roundtrip_bytes32(self):
+        """Encoding then decoding bytes32 should return the original value."""
+        value = b"\xab" * 32
+        encoded = encode_single("bytes32", value)
+        decoded = decode_single("bytes32", encoded)
+        assert decoded == value
 
 
 class TestProviderInitialization:

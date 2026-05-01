@@ -21,19 +21,20 @@ fn extract_u160(obj: &Bound<'_, PyAny>) -> PyResult<U160> {
                 "Sqrt price X96 is too large (exceeds 20 bytes)",
             ));
         }
-        return U160::try_from_be_slice(bytes).ok_or_else(|| {
-            PyErr::new::<PyValueError, _>("Failed to parse sqrt_price_x96 from bytes")
-        });
+        // Left-pad short slices to 20 bytes (U160 expects exactly 20 bytes).
+        if bytes.len() < BYTES_PER_WORD {
+            let mut padded = [0u8; BYTES_PER_WORD];
+            padded[BYTES_PER_WORD - bytes.len()..].copy_from_slice(bytes);
+            return Ok(U160::from_be_bytes::<20>(padded));
+        }
+        // SAFETY: `bytes` was checked to be exactly BYTES_PER_WORD (20) bytes.
+        #[allow(clippy::unwrap_used)]
+        return Ok(U160::from_be_bytes::<20>(bytes.try_into().unwrap()));
     }
 
-    // Try to extract as i128 first (common case)
-    if let Ok(int_val) = obj.extract::<i128>() {
-        if int_val < 0 {
-            return Err(PyErr::new::<PyValueError, _>(
-                "Sqrt price X96 cannot be negative",
-            ));
-        }
-        return Ok(U160::from(int_val.cast_unsigned()));
+    // Try to extract as u128 first (common case)
+    if let Ok(int_val) = obj.extract::<u128>() {
+        return Ok(U160::from(int_val));
     }
 
     // For larger integers, convert via bytes

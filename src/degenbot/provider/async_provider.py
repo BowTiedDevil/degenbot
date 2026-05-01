@@ -15,7 +15,9 @@ Example:
     >>> asyncio.run(main())
 """
 
-from typing import Any, Self
+from typing import Any, Self, cast
+
+from hexbytes import HexBytes
 
 try:
     from degenbot.degenbot_rs import AsyncAlloyProvider as _AsyncAlloyProvider
@@ -101,6 +103,47 @@ class AsyncAlloyProvider:
         """
         return await self._provider.get_chain_id()
 
+    async def get_gas_price(self) -> int:
+        """Get current gas price in wei asynchronously."""
+        return await self._provider.get_gas_price()
+
+    async def call(
+        self,
+        to: str,
+        data: bytes,
+        block_number: int | None = None,
+    ) -> HexBytes:
+        """Execute an eth_call to a contract asynchronously.
+
+        Args:
+            to: Contract address to call
+            data: Calldata bytes (function selector + encoded arguments)
+            block_number: Block number to execute call at (default: latest)
+
+        Returns:
+            Raw return data from the contract call as HexBytes
+        """
+        return cast("HexBytes", await self._provider.call(to, data, block_number))
+
+    async def get_code(
+        self,
+        address: str,
+        block_number: int | None = None,
+    ) -> HexBytes:
+        """Get contract code at an address asynchronously.
+
+        Args:
+            address: Contract address
+            block_number: Block number to get code at (default: latest)
+
+        Returns:
+            Contract bytecode as HexBytes
+        """
+        return cast(
+            "HexBytes",
+            await self._provider.get_code(address, block_number),
+        )
+
     async def get_logs(
         self,
         from_block: int,
@@ -153,6 +196,28 @@ class AsyncAlloyProvider:
             ValueError: If the RPC call fails
         """
         return await self._provider.get_block(block_number)
+
+    async def get_transaction(self, tx_hash: str) -> dict[str, Any] | None:
+        """Get a transaction by hash asynchronously.
+
+        Args:
+            tx_hash: Transaction hash as hex string
+
+        Returns:
+            Transaction data as dictionary, or None if not found.
+        """
+        return await self._provider.get_transaction(tx_hash)
+
+    async def get_transaction_receipt(self, tx_hash: str) -> dict[str, Any] | None:
+        """Get a transaction receipt by hash asynchronously.
+
+        Args:
+            tx_hash: Transaction hash as hex string
+
+        Returns:
+            Receipt data as dictionary, or None if not found.
+        """
+        return await self._provider.get_transaction_receipt(tx_hash)
 
 
 __all__ = ["AsyncAlloyProvider"]

@@ -198,12 +198,10 @@ impl PyAsyncAlloyProvider {
         let provider = Arc::clone(&self.provider);
 
         future_into_py(py, async move {
-            let gas_price = provider
+            provider
                 .get_gas_price()
                 .await
-                .map_err(Into::<PyErr>::into)?;
-
-            Ok(gas_price.to_string())
+                .map_err(Into::<PyErr>::into)
         })
     }
 

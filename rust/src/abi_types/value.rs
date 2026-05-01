@@ -24,6 +24,12 @@ pub(crate) fn decode_hex(hex_str: &str) -> Result<Vec<u8>, crate::hex_utils::Hex
 ///
 /// This enum captures all possible ABI types without any Python dependencies,
 /// enabling pure Rust testing and GIL-free processing.
+///
+/// # Integer bit widths
+///
+/// `Uint` and `Int` store their bit width alongside the value so that
+/// `to_alloy()` can produce correctly-typed `DynSolValue` without external
+/// context. The bit width must be a multiple of 8 in the range 8..=256.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AbiValue {
     /// Ethereum address (20 bytes)
@@ -34,10 +40,10 @@ pub enum AbiValue {
     FixedBytes(Vec<u8>),
     /// Dynamic bytes
     Bytes(Vec<u8>),
-    /// Unsigned integer (up to 256 bits)
-    Uint(U256),
-    /// Signed integer (up to 256 bits)
-    Int(I256),
+    /// Unsigned integer with bit width (8-256, multiple of 8)
+    Uint(U256, usize),
+    /// Signed integer with bit width (8-256, multiple of 8)
+    Int(I256, usize),
     /// String
     String(String),
     /// Array of values
@@ -73,8 +79,8 @@ impl AbiValue {
             }
             Self::Bytes(bytes) => Ok(DynSolValue::Bytes(bytes.clone())),
             Self::String(s) => Ok(DynSolValue::String(s.clone())),
-            Self::Uint(n) => Ok(DynSolValue::Uint(*n, 256)),
-            Self::Int(n) => Ok(DynSolValue::Int(*n, 256)),
+            Self::Uint(n, bits) => Ok(DynSolValue::Uint(*n, *bits)),
+            Self::Int(n, bits) => Ok(DynSolValue::Int(*n, *bits)),
             Self::Array(values) => {
                 let alloy_values: Result<Vec<_>, _> = values.iter().map(Self::to_alloy).collect();
                 Ok(DynSolValue::Array(alloy_values?))
@@ -91,8 +97,8 @@ impl AbiValue {
         match value {
             DynSolValue::Address(addr) => Ok(Self::Address(addr.into())),
             DynSolValue::Bool(b) => Ok(Self::Bool(b)),
-            DynSolValue::Uint(u, _bits) => Ok(Self::Uint(u)),
-            DynSolValue::Int(i, _bits) => Ok(Self::Int(i)),
+            DynSolValue::Uint(u, bits) => Ok(Self::Uint(u, bits)),
+            DynSolValue::Int(i, bits) => Ok(Self::Int(i, bits)),
             DynSolValue::FixedBytes(fb, size) => Ok(Self::FixedBytes(fb[..size].to_vec())),
             DynSolValue::Bytes(b) => Ok(Self::Bytes(b)),
             DynSolValue::String(s) => Ok(Self::String(s)),
@@ -129,25 +135,28 @@ impl AbiValue {
                     })?;
                 Ok(Self::Address(addr.into()))
             }
-            AbiType::Bool => {
-                let value = trimmed.to_lowercase() == "true" || trimmed == "1";
-                Ok(Self::Bool(value))
-            }
-            AbiType::Uint(_) => {
+            AbiType::Bool => match trimmed.to_lowercase().as_str() {
+                "true" | "1" => Ok(Self::Bool(true)),
+                "false" | "0" => Ok(Self::Bool(false)),
+                _ => Err(ContractError::InvalidAbi {
+                    message: format!("Invalid bool value '{arg}': expected 'true', 'false', '1', or '0'"),
+                }),
+            },
+            AbiType::Uint(bits) => {
                 let uint_val = parse_uint256_with_hex_prefix(trimmed).map_err(|e| {
                     ContractError::InvalidAbi {
                         message: format!("Invalid uint value '{arg}': {e}"),
                     }
                 })?;
-                Ok(Self::Uint(uint_val))
+                Ok(Self::Uint(uint_val, *bits))
             }
-            AbiType::Int(_) => {
+            AbiType::Int(bits) => {
                 let int_val = parse_int256_with_hex_prefix(trimmed).map_err(|e| {
                     ContractError::InvalidAbi {
                         message: format!("Invalid int value '{arg}': {e}"),
                     }
                 })?;
-                Ok(Self::Int(int_val))
+                Ok(Self::Int(int_val, *bits))
             }
             AbiType::FixedBytes(size) => {
                 let bytes = decode_hex(trimmed).map_err(|_| ContractError::InvalidAbi {
@@ -208,8 +217,8 @@ impl AbiValue {
             Self::FixedBytes(bytes) | Self::Bytes(bytes) => {
                 format!("0x{}", alloy::hex::encode(bytes))
             }
-            Self::Uint(n) => n.to_string(),
-            Self::Int(n) => n.to_string(),
+            Self::Uint(n, _) => n.to_string(),
+            Self::Int(n, _) => n.to_string(),
             Self::String(s) => s.clone(),
             Self::Array(values) => {
                 let elements: Vec<String> = values.iter().map(Self::to_contract_string).collect();
@@ -321,9 +330,9 @@ fn parse_json_array(input: &str) -> Result<Vec<&str>, ContractError> {
             '[' => depth += 1,
             ']' => depth -= 1,
             ',' if depth == 0 => {
-                let element = &content[start..i].trim();
+                let element = content[start..i].trim();
                 if !element.is_empty() || i > start {
-                    elements.push(*element);
+                    elements.push(element);
                 }
                 start = i + 1;
             }
@@ -331,9 +340,9 @@ fn parse_json_array(input: &str) -> Result<Vec<&str>, ContractError> {
         }
     }
 
-    let last_element = &content[start..].trim();
+    let last_element = content[start..].trim();
     if !last_element.is_empty() || start < content.len() {
-        elements.push(*last_element);
+        elements.push(last_element);
     }
 
     Ok(elements)
@@ -438,7 +447,10 @@ mod tests {
             "-57896044618658097711785492504343953926634992332820282019728792003956564819968";
         let result = AbiValue::from_str_arg(&AbiType::Int(256), min_val).unwrap();
         match result {
-            AbiValue::Int(n) => assert_eq!(n, I256::MIN),
+            AbiValue::Int(n, bits) => {
+                assert_eq!(n, I256::MIN);
+                assert_eq!(bits, 256);
+            }
             _ => panic!("Expected Int variant"),
         }
     }
@@ -448,7 +460,10 @@ mod tests {
         let min_hex = "-0x8000000000000000000000000000000000000000000000000000000000000000";
         let result = AbiValue::from_str_arg(&AbiType::Int(256), min_hex).unwrap();
         match result {
-            AbiValue::Int(n) => assert_eq!(n, I256::MIN),
+            AbiValue::Int(n, bits) => {
+                assert_eq!(n, I256::MIN);
+                assert_eq!(bits, 256);
+            }
             _ => panic!("Expected Int variant"),
         }
     }
@@ -458,8 +473,59 @@ mod tests {
         let max_hex = "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF";
         let result = AbiValue::from_str_arg(&AbiType::Uint(256), max_hex).unwrap();
         match result {
-            AbiValue::Uint(n) => assert_eq!(n, U256::MAX),
+            AbiValue::Uint(n, bits) => {
+                assert_eq!(n, U256::MAX);
+                assert_eq!(bits, 256);
+            }
             _ => panic!("Expected Uint variant"),
+        }
+    }
+
+    #[test]
+    fn test_abi_value_stores_bit_width() {
+        let u8_val = AbiValue::from_str_arg(&AbiType::Uint(8), "255").unwrap();
+        match u8_val {
+            AbiValue::Uint(n, bits) => {
+                assert_eq!(n, U256::from(255u64));
+                assert_eq!(bits, 8);
+            }
+            _ => panic!("Expected Uint variant"),
+        }
+
+        let u128_val = AbiValue::from_str_arg(&AbiType::Uint(128), "42").unwrap();
+        match u128_val {
+            AbiValue::Uint(n, bits) => {
+                assert_eq!(n, U256::from(42u64));
+                assert_eq!(bits, 128);
+            }
+            _ => panic!("Expected Uint variant"),
+        }
+    }
+
+    #[test]
+    fn test_bool_true_values() {
+        for val in ["true", "True", "TRUE", "1"] {
+            let result = AbiValue::from_str_arg(&AbiType::Bool, val).unwrap();
+            assert_eq!(result, AbiValue::Bool(true), "'{val}' should parse as true");
+        }
+    }
+
+    #[test]
+    fn test_bool_false_values() {
+        for val in ["false", "False", "FALSE", "0"] {
+            let result = AbiValue::from_str_arg(&AbiType::Bool, val).unwrap();
+            assert_eq!(result, AbiValue::Bool(false), "'{val}' should parse as false");
+        }
+    }
+
+    #[test]
+    fn test_bool_invalid_values() {
+        for val in ["yes", "no", "ture", "flase", "2", "-1", ""] {
+            let result = AbiValue::from_str_arg(&AbiType::Bool, val);
+            assert!(
+                result.is_err(),
+                "'{val}' should be rejected as invalid bool"
+            );
         }
     }
 }

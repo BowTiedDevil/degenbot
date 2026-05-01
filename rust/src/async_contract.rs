@@ -5,7 +5,7 @@
 
 use crate::contract::Contract;
 use crate::provider::AlloyProvider;
-use futures::future::join_all;
+use crate::provider_py::PyAlloyProvider;
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
@@ -44,6 +44,21 @@ impl PyAsyncContract {
             Ok(Self {
                 contract: Arc::new(contract),
             })
+        })
+    }
+
+    /// Create an async contract from an existing `AlloyProvider`, sharing
+    /// its connection pool across multiple contract instances.
+    ///
+    /// Args:
+    ///     address: Contract address (hex string)
+    ///     provider: An existing `AlloyProvider` instance
+    #[staticmethod]
+    fn from_provider(address: &str, provider: &PyAlloyProvider) -> PyResult<Self> {
+        let contract =
+            Contract::new(address, Arc::clone(&provider.provider)).map_err(Into::<PyErr>::into)?;
+        Ok(Self {
+            contract: Arc::new(contract),
         })
     }
 
@@ -92,21 +107,25 @@ impl PyAsyncContract {
         let contract = Arc::clone(&self.contract);
 
         future_into_py(py, async move {
-            let futures: Vec<_> = calls
-                .into_iter()
-                .map(|(func_sig, args)| {
-                    let contract = Arc::clone(&contract);
-                    async move {
-                        contract
-                            .call(&func_sig, &args, block_number)
-                            .await
-                            .map_err(Into::<PyErr>::into)
-                    }
-                })
-                .collect();
+            let mut set = tokio::task::JoinSet::new();
+            for (func_sig, args) in calls {
+                let contract = Arc::clone(&contract);
+                set.spawn(async move {
+                    contract
+                        .call(&func_sig, &args, block_number)
+                        .await
+                        .map_err(Into::<PyErr>::into)
+                });
+            }
 
-            let results: Result<Vec<_>, _> = join_all(futures).await.into_iter().collect();
-            results
+            let mut results = Vec::with_capacity(set.len());
+            while let Some(task_result) = set.join_next().await {
+                let call_result = task_result.map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("Task panicked: {e}"))
+                })?;
+                results.push(call_result);
+            }
+            results.into_iter().collect::<Result<Vec<_>, _>>()
         })
     }
 

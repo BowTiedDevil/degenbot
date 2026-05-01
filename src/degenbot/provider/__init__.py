@@ -150,6 +150,10 @@ class AlloyProvider:
         """Get chain ID."""
         return self._provider.get_chain_id()
 
+    def get_gas_price(self) -> int:
+        """Get current gas price in wei."""
+        return self._provider.get_gas_price()
+
     def get_block(self, block_number: int) -> dict[str, Any] | None:
         """Get a block by number.
 
@@ -275,6 +279,73 @@ class AlloyProvider:
             to_block=to_block_val,
             addresses=addresses_val,
             topics=topics_val,
+        )
+
+    def get_transaction(self, tx_hash: str) -> dict[str, Any] | None:
+        """Get a transaction by hash.
+
+        Args:
+            tx_hash: Transaction hash as hex string
+
+        Returns:
+            Transaction data as dictionary with HexBytes for hash fields,
+            or None if not found.
+        """
+        return self._provider.get_transaction(tx_hash)
+
+    def get_transaction_receipt(self, tx_hash: str) -> dict[str, Any] | None:
+        """Get a transaction receipt by hash.
+
+        Args:
+            tx_hash: Transaction hash as hex string
+
+        Returns:
+            Receipt data as dictionary with HexBytes for hash fields,
+            or None if not found.
+        """
+        return self._provider.get_transaction_receipt(tx_hash)
+
+    def estimate_gas(
+        self,
+        to: str,
+        data: bytes,
+        from_: str | None = None,
+        value: int | None = None,
+        block_number: int | None = None,
+    ) -> int:
+        """Estimate gas for a transaction.
+
+        Args:
+            to: Target address
+            data: Transaction data
+            from_: Sender address (optional)
+            value: Value in wei (optional)
+            block_number: Block number to estimate at (default: latest)
+
+        Returns:
+            Estimated gas as int
+        """
+        return self._provider.estimate_gas(to, data, from_, value, block_number)
+
+    def get_storage_at(
+        self,
+        address: str,
+        position: int,
+        block_number: int | None = None,
+    ) -> HexBytes:
+        """Get storage at a given position.
+
+        Args:
+            address: Contract address
+            position: Storage slot position (supports large values like mapping slots)
+            block_number: Block number to get storage at (default: latest)
+
+        Returns:
+            Storage value at the position as HexBytes (32 bytes)
+        """
+        return cast(
+            "HexBytes",
+            self._provider.get_storage_at(address, position, block_number),
         )
 
     def close(self) -> None:

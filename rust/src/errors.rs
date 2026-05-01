@@ -7,7 +7,7 @@ use pyo3::{exceptions::PyValueError, PyErr};
 #[non_exhaustive]
 pub enum TickMathError {
     /// Invalid tick value outside the valid range [-887272, 887272].
-    #[error("Invalid tick value: {0}")]
+    #[error("Invalid tick value: {0}. Must be in range [-887272, 887272]")]
     InvalidTick(i32),
     /// Sqrt ratio value outside the valid [`MIN_SQRT_RATIO`, `MAX_SQRT_RATIO`) range.
     #[error("Sqrt ratio out of bounds")]
@@ -16,15 +16,9 @@ pub enum TickMathError {
 
 impl From<TickMathError> for PyErr {
     fn from(err: TickMathError) -> Self {
-        // Preserve the specific error type and message
-        match err {
-            TickMathError::InvalidTick(tick) => Self::new::<PyValueError, _>(format!(
-                "Invalid tick value: {tick}. Must be in range [-887272, 887272]"
-            )),
-            TickMathError::SqrtRatioOutOfBounds => {
-                Self::new::<PyValueError, _>("Sqrt ratio out of bounds")
-            }
-        }
+        // Forward the Display impl so the Python error message matches
+        // the Rust error message exactly.
+        Self::new::<PyValueError, _>(err.to_string())
     }
 }
 
@@ -142,6 +136,10 @@ pub enum ProviderError {
     #[error("Invalid ABI: {message}")]
     InvalidAbi { message: String },
 
+    /// Encoding error.
+    #[error("Encoding error: {message}")]
+    EncodingError { message: String },
+
     /// Decoding error.
     #[error("Decoding error: {message}")]
     DecodingError { message: String },
@@ -168,8 +166,14 @@ impl From<ProviderError> for PyErr {
             | ProviderError::SerializationError { .. }
             | ProviderError::InvalidResponse { .. }
             | ProviderError::AnvilError { .. }
-            | ProviderError::Other { .. } => Self::new::<pyo3::exceptions::PyRuntimeError, _>(msg),
-            _ => Self::new::<PyValueError, _>(msg),
+            | ProviderError::Other { .. }
+            | ProviderError::InvalidBlockRange { .. }
+            | ProviderError::InvalidAddress { .. }
+            | ProviderError::InvalidTopic { .. }
+            | ProviderError::InvalidParams { .. }
+            | ProviderError::InvalidAbi { .. }
+            | ProviderError::EncodingError { .. }
+            | ProviderError::DecodingError { .. } => Self::new::<pyo3::exceptions::PyRuntimeError, _>(msg),
         }
     }
 }
@@ -216,9 +220,8 @@ impl From<ContractError> for ProviderError {
             ContractError::InvalidAddress { address, reason } => {
                 Self::InvalidAddress { address, reason }
             }
-            ContractError::EncodingError { message } | ContractError::DecodingError { message } => {
-                Self::DecodingError { message }
-            }
+            ContractError::EncodingError { message } => Self::EncodingError { message },
+            ContractError::DecodingError { message } => Self::DecodingError { message },
         }
     }
 }
