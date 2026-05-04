@@ -17,11 +17,13 @@ from typing import Literal
 import pytest
 
 from degenbot.aerodrome.functions import calc_exact_in_stable
+from degenbot.arbitrage.optimizers.solidly_stable import _simulate_mixed_path_int
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
     ConstantProductHop,
     PoolInvariant,
     SolidlyStableHop,
+    SolidlyStableSolver,
     SolveInput,
     SolverMethod,
 )
@@ -125,7 +127,6 @@ class TestSolidlyStableSolverSupports:
 
     def test_supports_pure_solidly_path(self):
         """Solver should support a path with only Solidly stable hops."""
-        from degenbot.arbitrage.optimizers.solver import SolidlyStableSolver
 
         solver = SolidlyStableSolver()
         solve_input = SolveInput(
@@ -135,7 +136,6 @@ class TestSolidlyStableSolverSupports:
 
     def test_supports_mixed_solidly_v2_path(self):
         """Solver should support a path with mixed Solidly + V2 hops."""
-        from degenbot.arbitrage.optimizers.solver import SolidlyStableSolver
 
         solver = SolidlyStableSolver()
         solve_input = SolveInput(
@@ -145,7 +145,6 @@ class TestSolidlyStableSolverSupports:
 
     def test_does_not_support_pure_v2_path(self):
         """Solver should NOT support a pure V2 path (that's MobiusSolver)."""
-        from degenbot.arbitrage.optimizers.solver import SolidlyStableSolver
 
         solver = SolidlyStableSolver()
         solve_input = SolveInput(
@@ -166,7 +165,6 @@ class TestSolidlyStableSolverSupports:
 
     def test_does_not_support_single_hop(self):
         """Solver requires 2+ hops."""
-        from degenbot.arbitrage.optimizers.solver import SolidlyStableSolver
 
         solver = SolidlyStableSolver()
         solve_input = SolveInput(hops=(STABLE_HOP_USDC_WETH,))
@@ -181,7 +179,6 @@ class TestSolidlyStableSolverSolve:
         2-hop path with price discrepancy: stable pool has cheaper WETH
         than V2 pool, so there's arbitrage opportunity.
         """
-        from degenbot.arbitrage.optimizers.solver import SolidlyStableSolver
 
         solver = SolidlyStableSolver()
 
@@ -222,7 +219,6 @@ class TestSolidlyStableSolverSolve:
 
     def test_not_profitable_equal_rates(self):
         """When stable pool and V2 pool have same rate, no profit."""
-        from degenbot.arbitrage.optimizers.solver import SolidlyStableSolver
 
         solver = SolidlyStableSolver()
 
@@ -257,7 +253,6 @@ class TestSolidlyStableSolverSolve:
 
     def test_mixed_path_v2_then_solidly(self):
         """V2 hop followed by Solidly stable hop."""
-        from degenbot.arbitrage.optimizers.solver import SolidlyStableSolver
 
         solver = SolidlyStableSolver()
 
@@ -300,10 +295,6 @@ class TestSolidlyStableSolverSolve:
         Since BrentSolver uses _simulate_path (V2 formula) for all hops,
         it won't match exactly — we compare against a manual search instead.
         """
-        from degenbot.arbitrage.optimizers.solver import (
-            SolidlyStableSolver,
-            _simulate_mixed_path_int,
-        )
 
         solver = SolidlyStableSolver()
 
@@ -447,7 +438,6 @@ class TestAsymmetricFees:
         Mixed path: Solidly stable + Camelot volatile (asymmetric fees).
         The V2 hop uses fee (input direction gamma).
         """
-        from degenbot.arbitrage.optimizers.solver import SolidlyStableSolver
 
         solver = SolidlyStableSolver()
 
@@ -506,7 +496,6 @@ class TestSolidlyStableSixDecimalPairs:
         USDC/USDT stable pair with small price discrepancy.
         These should produce small profits due to the flat curve.
         """
-        from degenbot.arbitrage.optimizers.solver import SolidlyStableSolver
 
         solver = SolidlyStableSolver()
 
@@ -572,7 +561,6 @@ class TestMixedMobiusNewtonPattern:
         V2 hops should be Möbius-composed for initial guess,
         Solidly hop is opaque.
         """
-        from degenbot.arbitrage.optimizers.solver import SolidlyStableSolver
 
         solver = SolidlyStableSolver()
 
@@ -617,7 +605,6 @@ class TestMixedMobiusNewtonPattern:
         3-hop path: Solidly → V2 → V2.
         Solidly hop first, then V2 hops Möbius-composed for initial guess.
         """
-        from degenbot.arbitrage.optimizers.solver import SolidlyStableSolver
 
         solver = SolidlyStableSolver()
 
@@ -659,7 +646,6 @@ class TestMixedMobiusNewtonPattern:
 
     def test_solidly_iterations_reasonable(self):
         """SolidlyStableSolver should converge in ≤ 30 iterations."""
-        from degenbot.arbitrage.optimizers.solver import SolidlyStableSolver
 
         solver = SolidlyStableSolver()
 
@@ -693,10 +679,6 @@ class TestMixedMobiusNewtonPattern:
 
     def test_golden_section_exact_match_brute_force(self):
         """Golden section search should find the same optimum as brute force."""
-        from degenbot.arbitrage.optimizers.solver import (
-            SolidlyStableSolver,
-            _simulate_mixed_path_int,
-        )
 
         solver = SolidlyStableSolver()
 
@@ -745,7 +727,6 @@ class TestMixedMobiusNewtonPattern:
         SolidlyStableHop without swap_fn should fall back to
         Newton's method with float simulation.
         """
-        from degenbot.arbitrage.optimizers.solver import SolidlyStableSolver
 
         solver = SolidlyStableSolver()
 
