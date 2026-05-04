@@ -2,7 +2,7 @@ from enum import Enum, auto
 
 
 class OperationType(Enum):
-    """Types of Aave operations based on Asset / Token flows."""
+    """Types of Aave operations based on asset flows."""
 
     # Standard operations
     SUPPLY = auto()  # SUPPLY -> COLLATERAL_MINT

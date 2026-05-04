@@ -18,8 +18,8 @@ from degenbot.aave.pattern_types import (
     LiquidationGroup,
     LiquidationPatternContext,
 )
-from degenbot.aave.types import Operation, ScaledTokenEvent
-from degenbot.aave.utils import decode_address
+from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
+from degenbot.cli.aave_utils import decode_address
 from degenbot.logging import logger
 
 

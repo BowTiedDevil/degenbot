@@ -4,15 +4,12 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any
 
-import eth_abi
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from sqlalchemy.orm import Session
 from web3.types import LogReceipt
 
-from degenbot.aave.events import ERC20Event
 from degenbot.aave.pattern_types import LiquidationPatternContext
-from degenbot.aave.utils import decode_address
 from degenbot.database.models.aave import (
     AaveGhoToken,
     AaveV3CollateralPosition,
@@ -64,7 +61,7 @@ class TransactionContext:
     # Track modified positions to ensure we use the same object across operations.
     # Key: (user_address, asset_id, position_table_class), Value: position object
     # Using table class as discriminator to distinguish collateral vs debt positions
-    # for the same user and Asset (e.g., user supplying and borrowing USDC)
+    # for the same user and asset (e.g., user supplying and borrowing USDC)
     # Using Any for the table class type to satisfy mypy with generic parameters
     modified_positions: dict[
         tuple[ChecksumAddress, int, Any],
@@ -143,63 +140,3 @@ class TransactionContext:
                 break
 
         return effective_discount
-
-    def get_pending_stk_aave_delta_at_log_index(
-        self,
-        user_address: ChecksumAddress,
-        log_index: int,
-        discount_token: ChecksumAddress,
-    ) -> int:
-        """
-        Calculate the net pending stkAAVE balance delta for a user at a specific log index.
-
-        When stkAAVE transfer events occur after the current event (higher log index),
-        but the transfer was initiated before the current event (due to reentrancy),
-        the GHO debt token contract uses the post-transfer balance. This method
-        calculates the net delta from pending transfers to determine the balance
-        that was used by the contract.
-
-        Event definition:
-            event Transfer(
-                address indexed from,
-                address indexed to,
-                uint256 value
-            );
-
-        Args:
-            user_address: The user's address
-            log_index: The current log index being processed
-            discount_token: The stkAAVE token address
-
-        Returns:
-            The net pending balance delta (positive for incoming, negative for outgoing)
-        """
-
-        net_delta = 0
-
-        for event in self.events:
-            # Only process TRANSFER events from the discount token
-            if event["topics"][0] != ERC20Event.TRANSFER.value:
-                continue
-            if event["address"] != discount_token:
-                continue
-
-            transfer_log_index = event["logIndex"]
-            # Only consider transfers that occur AFTER the current event
-            if transfer_log_index <= log_index:
-                continue
-
-            # Skip transfers that have already been processed (balance already updated)
-            if transfer_log_index in self.processed_stk_aave_transfers:
-                continue
-
-            from_addr = decode_address(event["topics"][1])
-            to_addr = decode_address(event["topics"][2])
-            (value,) = eth_abi.abi.decode(types=["uint256"], data=event["data"])
-
-            if from_addr == user_address:
-                net_delta -= value
-            if to_addr == user_address:
-                net_delta += value
-
-        return net_delta

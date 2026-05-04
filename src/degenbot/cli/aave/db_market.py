@@ -1,7 +1,7 @@
 """
 Market-level database operations for Aave V3.
 
-Functions for managing market state, eMode categories, and Asset configurations.
+Functions for managing market state, eMode categories, and asset configurations.
 """
 
 from sqlalchemy import select
@@ -64,7 +64,7 @@ def get_asset_config(
     asset_id: int,
 ) -> AaveV3AssetConfig | None:
     """
-    Get Asset configuration by Asset ID.
+    Get asset configuration by asset ID.
     """
 
     return session.scalar(
@@ -79,7 +79,7 @@ def get_or_create_asset_config(
     asset_id: int,
 ) -> AaveV3AssetConfig:
     """
-    Get existing Asset config or create new one with defaults.
+    Get existing asset config or create new one with defaults.
     """
 
     config = get_asset_config(session, asset_id)
@@ -155,15 +155,15 @@ def update_user_e_mode(
 
 def record_oracle_price(
     session: Session,  # noqa: ARG001
-    reserve: AaveV3Asset,
+    asset: AaveV3Asset,
     price: int,
     block_number: int,
 ) -> None:
     """
-    Record an oracle price for an Asset.
+    Record an oracle price for an asset.
 
-    Updates the Asset's last_known_price and last_price_block.
+    Updates the asset's last_known_price and last_price_block.
     """
 
-    reserve.last_known_price = price
-    reserve.last_price_block = block_number
+    asset.last_known_price = price
+    asset.last_price_block = block_number

@@ -1,5 +1,6 @@
 """Constants and enums for Aave V3 CLI processing."""
 
+from enum import Enum
 from typing import Protocol
 
 from degenbot.aave.events import (
@@ -27,6 +28,21 @@ LIQUIDATION_OPERATION_TYPES = {
     OperationType.LIQUIDATION,
     OperationType.GHO_LIQUIDATION,
 }
+
+
+class UserOperation(Enum):
+    """User operation types for Aave V3 token events."""
+
+    AAVE_REDEEM = "AAVE REDEEM"
+    AAVE_STAKED = "AAVE STAKED"
+    BORROW = "BORROW"
+    DEPOSIT = "DEPOSIT"
+    GHO_BORROW = "GHO BORROW"
+    GHO_INTEREST_ACCRUAL = "GHO INTEREST ACCRUAL"
+    GHO_REPAY = "GHO REPAY"
+    REPAY = "REPAY"
+    STKAAVE_TRANSFER = "stkAAVE TRANSFER"
+    WITHDRAW = "WITHDRAW"
 
 
 # Revision constants

@@ -2,12 +2,12 @@
 
 from typing import TYPE_CHECKING, Any
 
-import eth_abi.abi
 from eth_typing import ChecksumAddress
 from sqlalchemy.orm import Session
 
+from degenbot.aave.calculator import ScaledAmountCalculator
 from degenbot.aave.events import AaveV3PoolEvent, ScaledTokenEventType
-from degenbot.aave.libraries.token_math import TokenMathFactory
+from degenbot.aave.extraction import RawAmountExtractor
 from degenbot.aave.models import (
     EnrichedCollateralBurnEvent,
     EnrichedCollateralInterestBurnEvent,
@@ -33,94 +33,7 @@ from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.logging import logger
 
 if TYPE_CHECKING:
-    from web3.types import LogReceipt
-
-    from degenbot.aave.types import Operation, ScaledTokenEvent
-
-
-def _extract_supply_amount(event: "LogReceipt") -> int:
-    (_, supply_amount) = eth_abi.abi.decode(["address", "uint256"], event["data"])
-    return supply_amount
-
-
-def _extract_borrow_amount(event: "LogReceipt") -> int:
-    (_, borrow_amount, _, _) = eth_abi.abi.decode(
-        ["address", "uint256", "uint8", "uint256"], event["data"]
-    )
-    return borrow_amount
-
-
-def _extract_repay_amount(event: "LogReceipt") -> int:
-    repay_amount, _ = eth_abi.abi.decode(["uint256", "bool"], event["data"])
-    return repay_amount
-
-
-def _extract_withdraw_amount(event: "LogReceipt") -> int:
-    (withdraw_amount,) = eth_abi.abi.decode(["uint256"], event["data"])
-    return withdraw_amount
-
-
-def _extract_liquidation_debt(event: "LogReceipt") -> int:
-    debt_to_cover, _, _, _ = eth_abi.abi.decode(
-        ["uint256", "uint256", "address", "bool"], event["data"]
-    )
-    return debt_to_cover
-
-
-def _extract_liquidation_collateral(event: "LogReceipt") -> int:
-    _, liquidated_collateral, _, _ = eth_abi.abi.decode(
-        ["uint256", "uint256", "address", "bool"], event["data"]
-    )
-    return liquidated_collateral
-
-
-_POOL_EVENT_EXTRACTORS: dict["AaveV3PoolEvent", "type"] = {}
-
-
-def _extract_pool_event_amount(event: "LogReceipt") -> int:
-    topic0 = event["topics"][0]
-    event_type: AaveV3PoolEvent | None = None
-    for pool_event in AaveV3PoolEvent:
-        if pool_event.value == topic0:
-            event_type = pool_event
-            break
-    if event_type is None:
-        msg = f"Unknown Pool event topic: {topic0.hex()}"
-        raise EnrichmentError(msg)
-    extractor = _POOL_EVENT_EXTRACTORS.get(event_type)
-    if extractor is None:
-        msg = f"No extractor for Pool event type: {event_type.name}"
-        raise EnrichmentError(msg)
-    return extractor(event)
-
-
-_POOL_EVENT_EXTRACTORS[AaveV3PoolEvent.SUPPLY] = _extract_supply_amount
-_POOL_EVENT_EXTRACTORS[AaveV3PoolEvent.WITHDRAW] = _extract_withdraw_amount
-_POOL_EVENT_EXTRACTORS[AaveV3PoolEvent.BORROW] = _extract_borrow_amount
-_POOL_EVENT_EXTRACTORS[AaveV3PoolEvent.REPAY] = _extract_repay_amount
-
-
-def _calculate_scaled_amount(
-    event_type: ScaledTokenEventType,
-    raw_amount: int,
-    index: int,
-    token_revision: int,
-) -> int:
-    token_math = TokenMathFactory.get_token_math_for_token_revision(token_revision)
-    method_map = {
-        ScaledTokenEventType.COLLATERAL_MINT: token_math.get_collateral_mint_scaled_amount,
-        ScaledTokenEventType.COLLATERAL_BURN: token_math.get_collateral_burn_scaled_amount,
-        ScaledTokenEventType.COLLATERAL_TRANSFER: token_math.get_collateral_transfer_scaled_amount,
-        ScaledTokenEventType.DEBT_MINT: token_math.get_debt_mint_scaled_amount,
-        ScaledTokenEventType.DEBT_BURN: token_math.get_debt_burn_scaled_amount,
-        ScaledTokenEventType.GHO_DEBT_MINT: token_math.get_debt_mint_scaled_amount,
-        ScaledTokenEventType.GHO_DEBT_BURN: token_math.get_debt_burn_scaled_amount,
-    }
-    method = method_map.get(event_type)
-    if method is None:
-        msg = f"No TokenMath method for event type: {event_type}"
-        raise EnrichmentError(msg)
-    return method(raw_amount, index)
+    from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
 
 
 class ScaledEventEnricher:
@@ -168,7 +81,7 @@ class ScaledEventEnricher:
         token_address = ChecksumAddress(scaled_event.event["address"])
         token_revision = self._get_token_revision(token_address)
 
-        # 2. Get underlying Asset address
+        # 2. Get underlying asset address
         underlying_asset = self._get_underlying_asset(token_address)
 
         # Track calculation type to detect overrides for validation skipping
@@ -218,7 +131,9 @@ class ScaledEventEnricher:
                         ScaledTokenEventType.ERC20_DEBT_TRANSFER,
                     }:
                         # Debt events use debtToCover
-                        raw_amount = _extract_liquidation_debt(operation.pool_event)
+                        raw_amount = RawAmountExtractor.extract_liquidation_debt(
+                            operation.pool_event
+                        )
                         # Pool Revision 9+ passes pre-scaled amounts to token contracts
                         # The Pool calculates scaledAmount = debtToCover.rayDivFloor(index)
                         # and passes it to vToken.burn(). We must calculate this ourselves.
@@ -228,11 +143,14 @@ class ScaledEventEnricher:
                             # from the burn event: scaledAmount = debtToCover / index
                             # (floor division)
                             assert scaled_event.index is not None
-                            scaled_amount = _calculate_scaled_amount(
+                            calculator = ScaledAmountCalculator(
+                                pool_revision=self.pool_revision,
+                                token_revision=token_revision,
+                            )
+                            scaled_amount = calculator.calculate(
                                 event_type=ScaledTokenEventType.DEBT_BURN,
                                 raw_amount=raw_amount,
                                 index=scaled_event.index,
-                                token_revision=token_revision,
                             )
                             logger.debug(
                                 f"ENRICHMENT: Pool Rev {self.pool_revision} LIQUIDATION "
@@ -256,12 +174,20 @@ class ScaledEventEnricher:
                         ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
                     }:
                         # Collateral events use liquidatedCollateralAmount
-                        raw_amount = _extract_liquidation_collateral(operation.pool_event)
+                        raw_amount = RawAmountExtractor.extract_liquidation_collateral(
+                            operation.pool_event
+                        )
                     else:
                         # Default to debt amount for unknown event types
-                        raw_amount = _extract_liquidation_debt(operation.pool_event)
+                        raw_amount = RawAmountExtractor.extract_liquidation_debt(
+                            operation.pool_event
+                        )
                 else:
-                    raw_amount = _extract_pool_event_amount(operation.pool_event)
+                    extractor = RawAmountExtractor(
+                        pool_event=operation.pool_event,
+                        pool_revision=self.pool_revision,
+                    )
+                    raw_amount = extractor.extract()
             elif (
                 # Special case: When interest exceeds withdrawal, the Mint event's amount
                 # represents the net interest (interest - withdrawal), not the actual withdrawal.
@@ -275,7 +201,11 @@ class ScaledEventEnricher:
                 and scaled_event.amount < scaled_event.balance_increase
             ):
                 # Interest exceeds withdrawal - extract the actual withdrawal amount
-                raw_amount = _extract_pool_event_amount(operation.pool_event)
+                extractor = RawAmountExtractor(
+                    pool_event=operation.pool_event,
+                    pool_revision=self.pool_revision,
+                )
+                raw_amount = extractor.extract()
                 logger.debug(
                     f"ENRICHMENT: Interest exceeds withdrawal - using withdraw amount "
                     f"{raw_amount} for burn calculation"
@@ -290,15 +220,28 @@ class ScaledEventEnricher:
                 and scaled_event.balance_increase is not None
             ):
                 # Interest exceeds repayment - extract the actual repay amount
-                raw_amount = _extract_pool_event_amount(operation.pool_event)
+                extractor = RawAmountExtractor(
+                    pool_event=operation.pool_event,
+                    pool_revision=self.pool_revision,
+                )
+                raw_amount = extractor.extract()
                 logger.debug(
                     f"ENRICHMENT: Interest exceeds repayment - using repay amount "
                     f"{raw_amount} for burn calculation"
                 )
             else:
                 # Non-liquidation operations use standard extraction
-                raw_amount = _extract_pool_event_amount(operation.pool_event)
+                extractor = RawAmountExtractor(
+                    pool_event=operation.pool_event,
+                    pool_revision=self.pool_revision,
+                )
+                raw_amount = extractor.extract()
             # Calculate scaled amount using TokenMath
+            calculator = ScaledAmountCalculator(
+                pool_revision=self.pool_revision,
+                token_revision=token_revision,
+            )
+
             if scaled_event.index is None:
                 msg = f"Scaled event has no index: {scaled_event}"
                 raise EnrichmentError(msg)
@@ -385,11 +328,10 @@ class ScaledEventEnricher:
                 calculation_event_type = scaled_event.event_type
 
             # Calculate scaled amount using the appropriate method
-            scaled_amount = _calculate_scaled_amount(
+            scaled_amount = calculator.calculate(
                 event_type=calculation_event_type,
                 raw_amount=raw_amount,
                 index=scaled_event.index,
-                token_revision=token_revision,
             )
 
             # Special case: When enrichment overrides the calculation type
@@ -464,14 +406,14 @@ class ScaledEventEnricher:
         if v_token_asset is not None:
             return v_token_asset.v_token_revision
 
-        msg = f"Could not find Asset for token {token_address}"
+        msg = f"Could not find asset for token {token_address}"
         raise EnrichmentError(msg)
 
     def _get_underlying_asset(
         self,
         token_address: ChecksumAddress,
     ) -> ChecksumAddress:
-        """Get underlying Asset address for a token."""
+        """Get underlying asset address for a token."""
 
         # Query by joining with a_token or v_token
         asset = (
@@ -492,7 +434,7 @@ class ScaledEventEnricher:
             )
 
         if asset is None:
-            msg = f"Could not find underlying Asset for token {token_address}"
+            msg = f"Could not find underlying asset for token {token_address}"
             raise EnrichmentError(msg)
 
         return ChecksumAddress(asset.underlying_token.address)
