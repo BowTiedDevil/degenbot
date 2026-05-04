@@ -181,9 +181,7 @@ class EventPipeline:
             scaled_delta=scaled_amount,
         )
 
-        user_op = (
-            UserOperation.WITHDRAW if result.is_repay else UserOperation.DEPOSIT
-        )
+        user_op = UserOperation.WITHDRAW if result.is_repay else UserOperation.DEPOSIT
         return PositionDelta(
             balance_delta=result.balance_delta,
             new_index=result.new_index,
@@ -221,9 +219,7 @@ class EventPipeline:
                 previous_index=position.previous_index,
                 scaled_delta=scaled_amount,
             )
-            user_op = (
-                UserOperation.WITHDRAW if result.is_repay else UserOperation.DEPOSIT
-            )
+            user_op = UserOperation.WITHDRAW if result.is_repay else UserOperation.DEPOSIT
             return PositionDelta(
                 balance_delta=result.balance_delta,
                 new_index=result.new_index,
@@ -277,15 +273,11 @@ class EventPipeline:
             and self.pool_revision >= 9  # noqa: PLR2004
         ):
             assert scaled_event.index is not None
-            token_revision = self.token_revisions.get(
-                scaled_event.event["address"], 0
-            )
+            token_revision = self.token_revisions.get(scaled_event.event["address"], 0)
             token_math = TokenMathFactory.get_token_math_for_token_revision(
                 token_revision,
             )
-            scaled = token_math.get_debt_burn_scaled_amount(
-                raw_amount, scaled_event.index
-            )
+            scaled = token_math.get_debt_burn_scaled_amount(raw_amount, scaled_event.index)
             return raw_amount, scaled, ScaledTokenEventType.DEBT_BURN
 
         # Interest exceeds withdrawal
@@ -569,9 +561,7 @@ class EventPipeline:
             previous_index=position.previous_index,
             scaled_delta=scaled_amount,
         )
-        user_op = (
-            UserOperation.WITHDRAW if result.is_repay else UserOperation.DEPOSIT
-        )
+        user_op = UserOperation.WITHDRAW if result.is_repay else UserOperation.DEPOSIT
         return PositionDelta(
             balance_delta=result.balance_delta,
             new_index=result.new_index,
@@ -696,9 +686,7 @@ class EventPipeline:
             previous_index=position.previous_index,
             scaled_delta=scaled_amount,
         )
-        user_op = (
-            UserOperation.REPAY if result.is_repay else UserOperation.BORROW
-        )
+        user_op = UserOperation.REPAY if result.is_repay else UserOperation.BORROW
         return PositionDelta(
             balance_delta=result.balance_delta,
             new_index=result.new_index,
@@ -769,9 +757,7 @@ class EventPipeline:
             previous_discount=position.previous_discount,
             actual_repay_amount=actual_repay_amount,
         )
-        user_op = (
-            UserOperation.REPAY if result.is_repay else UserOperation.BORROW
-        )
+        user_op = UserOperation.REPAY if result.is_repay else UserOperation.BORROW
         return PositionDelta(
             balance_delta=result.balance_delta,
             new_index=result.new_index,

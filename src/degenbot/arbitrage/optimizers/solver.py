@@ -37,16 +37,13 @@ from degenbot.arbitrage.optimizers.newton_solver import NewtonSolver  # noqa: F4
 from degenbot.arbitrage.optimizers.piecewise_mobius_solver import (
     PiecewiseMobiusSolver,
 )
+from degenbot.arbitrage.optimizers.solidly_stable import (
+    SolidlyStableSolver,
+)
 from degenbot.arbitrage.optimizers.solver_hop_builders import (  # noqa: F401
     pool_state_to_hop,
     pool_to_hop,
     pools_to_solve_input,
-)
-from degenbot.arbitrage.optimizers.solidly_stable import (
-    SolidlyStableSolver,
-    _simulate_mixed_path,
-    _simulate_mixed_path_int,
-    _solidly_swap_output_float,
 )
 from degenbot.degenbot_rs import mobius as _rs_mobius
 from degenbot.exceptions import OptimizationError

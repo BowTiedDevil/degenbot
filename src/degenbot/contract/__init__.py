@@ -107,6 +107,11 @@ class Contract:
         url = provider_url
         if provider is not None and hasattr(provider, "rpc_url"):
             url = provider.rpc_url
+        # Async providers expose get_chain_id, not chain_id property
+        elif provider is not None and hasattr(provider, "get_chain_id"):
+            # Rust AsyncAlloyProvider — url must come from somewhere else.
+            # If the caller provides a provider_url that will be used.
+            pass
         self._contract = _Contract(address, url)
 
     @property

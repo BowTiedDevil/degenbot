@@ -112,9 +112,7 @@ def calculate_swap(
             zero_for_one=zero_for_one,
         )
 
-    while not (
-        amount_specified_remaining == 0 or result.sqrt_price_x96 == sqrt_price_x96_limit
-    ):
+    while not (amount_specified_remaining == 0 or result.sqrt_price_x96 == sqrt_price_x96_limit):
         step.sqrt_price_start_x96 = result.sqrt_price_x96
 
         if not snapshot.sparse:
@@ -138,18 +136,16 @@ def calculate_swap(
 
         exact_input = amount_specified < 0
 
-        result.sqrt_price_x96, step.amount_in, step.amount_out, step.fee_amount = (
-            compute_swap_step(
-                sqrt_ratio_x96_current=result.sqrt_price_x96,
-                sqrt_ratio_x96_target=get_sqrt_price_target(
-                    zero_for_one=zero_for_one,
-                    sqrt_price_next_x96=step.sqrt_price_next_x96,
-                    sqrt_price_limit_x96=sqrt_price_x96_limit,
-                ),
-                liquidity=result.liquidity,
-                amount_remaining=amount_specified_remaining,
-                fee_pips=swap_fee,
-            )
+        result.sqrt_price_x96, step.amount_in, step.amount_out, step.fee_amount = compute_swap_step(
+            sqrt_ratio_x96_current=result.sqrt_price_x96,
+            sqrt_ratio_x96_target=get_sqrt_price_target(
+                zero_for_one=zero_for_one,
+                sqrt_price_next_x96=step.sqrt_price_next_x96,
+                sqrt_price_limit_x96=sqrt_price_x96_limit,
+            ),
+            liquidity=result.liquidity,
+            amount_remaining=amount_specified_remaining,
+            fee_pips=swap_fee,
         )
 
         if exact_input:

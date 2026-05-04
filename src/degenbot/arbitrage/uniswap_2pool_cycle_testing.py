@@ -283,10 +283,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 hops.append(hop)
 
                 # Advance to the next token in the path
-                if current_token == pool.token0:
-                    current_token = pool.token1
-                else:
-                    current_token = pool.token0
+                current_token = pool.token1 if current_token == pool.token0 else pool.token0
 
             solve_input = _SolveInput(hops=tuple(hops), max_input=max_input)
             solver = _UniswapTwoPoolCycleTesting._get_arb_solver()
@@ -309,9 +306,6 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 if isinstance(buy_pool, (UniswapV3Pool, UniswapV4Pool)):
                     # V3/V4 buy pool: use actual pool calculation for accuracy
                     try:
-                        forward_token = (
-                            buy_pool.token1 if input_token == buy_pool.token0 else buy_pool.token0
-                        )
                         # Type cast: buy_state_override matches the pool type via isinstance check
                         forward_token_amount = buy_pool.calculate_tokens_out_from_tokens_in(
                             token_in=input_token,

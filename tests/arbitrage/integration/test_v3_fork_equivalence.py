@@ -13,7 +13,6 @@ Status: RED — test asserts equivalence; if mainnet state is unprofitable,
 the test can be skipped or the logic can verify both systems reject.
 """
 
-from typing import TYPE_CHECKING
 
 import pytest
 from eth_typing import ChainId
@@ -27,9 +26,6 @@ from degenbot.connection import set_web3
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.erc20.manager import Erc20TokenManager
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-
-if TYPE_CHECKING:
-    pass
 
 # Mainnet V3 pool addresses
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"

@@ -1,12 +1,9 @@
 """Test CurveStableswapPool integration with ArbitragePath and solvers."""
 
-import pytest
 from fractions import Fraction
-from eth_typing import ChecksumAddress
-from web3 import Web3
 
-from degenbot.arbitrage.path.arbitrage_path import ArbitragePath
-from degenbot.arbitrage.optimizers.solver import BrentSolver
+import pytest
+
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.types.hop_types import CurveStableswapHop, PoolInvariant
 
@@ -104,5 +101,5 @@ def test_curve_hop_to_hop_state_signature():
     import inspect
     sig = inspect.signature(CurveStableswapPool.to_hop_state)
     params = list(sig.parameters.keys())
-    assert 'zero_for_one' in params
-    assert 'state_override' in params
+    assert "zero_for_one" in params
+    assert "state_override" in params

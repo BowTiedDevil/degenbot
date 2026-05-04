@@ -597,7 +597,7 @@ class _AsyncWeb3Adapter:
 
 
 class _AsyncAlloyAdapter:
-    """Adapter wrapping an AsyncAlloyProvider instance to satisfy _AsyncProviderBackend."""
+    """Adapter wrapping the Rust AsyncAlloyProvider directly."""
 
     def __init__(self, alloy: Any) -> None:  # noqa: ANN401
         self._alloy = alloy
@@ -692,8 +692,12 @@ class AsyncProviderAdapter:
 
     @classmethod
     def from_alloy(cls, async_alloy: Any) -> Self:  # noqa: ANN401
-        """Create an adapter wrapping an AsyncAlloyProvider instance."""
-        return cls(_AsyncAlloyAdapter(async_alloy), provider_type="alloy", raw_provider=async_alloy)
+        """Create an adapter wrapping a Rust AsyncAlloyProvider."""
+        return cls(
+            _AsyncAlloyAdapter(async_alloy),
+            provider_type="alloy",
+            raw_provider=async_alloy,
+        )
 
     @property
     def provider_type(self) -> Literal["web3", "alloy"]:

@@ -2,14 +2,15 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
 
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult
+from degenbot.arbitrage.path.pool_hop_adapter import extract_fee as _adapter_extract_fee
+from degenbot.arbitrage.path.pool_hop_adapter import to_hop_state as _adapter_to_hop_state
 from degenbot.arbitrage.path.swap_amount_builder import build_swap_amount
-from degenbot.arbitrage.path.pool_hop_adapter import extract_fee as _adapter_extract_fee, to_hop_state as _adapter_to_hop_state
 from degenbot.arbitrage.path.types import PathValidationError, PoolCompatibility, SwapVector
 from degenbot.arbitrage.types import (
     AbstractSwapAmounts,
@@ -30,7 +31,10 @@ from degenbot.types.concrete import (
     Subscriber,
 )
 from degenbot.types.hop_types import HopType
-from degenbot.types.pool_protocols import ArbitrageCapablePool
+
+if TYPE_CHECKING:
+    from degenbot.types.pool_protocols import ArbitrageCapablePool
+
 from degenbot.uniswap.v3_libraries.functions import (
     v3_virtual_reserves as _v3_virtual_reserves,  # noqa: F401 re-export for tests
 )

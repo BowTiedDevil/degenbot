@@ -14,13 +14,13 @@ from degenbot.arbitrage.optimizers.hop_types import SolveInput, SolveResult, Sol
 from degenbot.arbitrage.optimizers.mobius_solver import MobiusSolver
 from degenbot.arbitrage.optimizers.newton_solver import NewtonSolver
 from degenbot.arbitrage.optimizers.piecewise_mobius_solver import PiecewiseMobiusSolver
+from degenbot.arbitrage.optimizers.solidly_stable import SolidlyStableSolver
+from degenbot.arbitrage.optimizers.solver import ArbSolver
 from degenbot.arbitrage.optimizers.solver_hop_builders import (
     pool_state_to_hop,
     pool_to_hop,
     pools_to_solve_input,
 )
-from degenbot.arbitrage.optimizers.solidly_stable import SolidlyStableSolver
-from degenbot.arbitrage.optimizers.solver import ArbSolver
 from degenbot.types.hop_types import (
     BalancerMultiTokenHop,
     BoundedProductHop,

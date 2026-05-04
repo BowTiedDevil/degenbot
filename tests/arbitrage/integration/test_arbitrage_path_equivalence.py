@@ -11,35 +11,28 @@ Status:
 - Curve: skipped
 """
 
-from typing import TYPE_CHECKING
 
 import pytest
 from eth_typing import ChainId
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage import UniswapLpCycle
-from degenbot.exceptions.arbitrage import ArbitrageError, OptimizationError
-from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
+from degenbot.arbitrage.optimizers.solver import MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.arbitrage.types import (
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
 )
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import set_web3
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.erc20.manager import Erc20TokenManager
+from degenbot.exceptions.arbitrage import ArbitrageError, OptimizationError
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate, UniswapV2PoolState
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3PoolExternalUpdate,
     UniswapV3PoolState,
 )
-
-if TYPE_CHECKING:
-    from degenbot.arbitrage.uniswap_lp_cycle import Pool, PoolState
 
 WBTC_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"

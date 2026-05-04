@@ -225,7 +225,7 @@ class ChainRuleNewtonOptimizer:
 
         for pool in pools:
             # Accept both real and mock pools
-            if type(pool).__name__ not in ("UniswapV2Pool", "MockV2Pool"):
+            if type(pool).__name__ not in {"UniswapV2Pool", "MockV2Pool"}:
                 raise OptimizationError(
                     "All pools must be V2 pools",
                     iterations=0,
@@ -280,7 +280,7 @@ class ChainRuleNewtonOptimizer:
 
         # Verify profit with pool methods
         amount = optimal_input
-        for i, pool in enumerate(pools):
+        for i in range(len(pools)):
             ps = pool_states[i]
             gamma = 1.0 - ps.fee
             denom = ps.reserve_in + amount * gamma

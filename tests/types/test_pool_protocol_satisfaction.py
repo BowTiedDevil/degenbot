@@ -6,7 +6,6 @@ anvil forks) and verify isinstance checks against the runtime-checkable
 protocols.
 """
 
-import pytest
 
 from degenbot.types.pool_protocols import (
     ArbitrageCapablePool,

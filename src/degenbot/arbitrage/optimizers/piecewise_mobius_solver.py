@@ -809,16 +809,15 @@ class PiecewiseMobiusSolver(Solver):
         )
 
         if cache_key not in self._rust_hop_cache:
-            rust_hops = []
-            for hop in solve_input.hops:
-                if isinstance(hop, (ConstantProductHop, BoundedProductHop)):
-                    rust_hops.append(
-                        _rs_mobius.RustHopState(
-                            float(hop.reserve_in),
-                            float(hop.reserve_out),
-                            float(hop.fee),
-                        )
-                    )
+            rust_hops = [
+                _rs_mobius.RustHopState(
+                    float(hop.reserve_in),
+                    float(hop.reserve_out),
+                    float(hop.fee),
+                )
+                for hop in solve_input.hops
+                if isinstance(hop, (ConstantProductHop, BoundedProductHop))
+            ]
             self._rust_hop_cache[cache_key] = rust_hops
 
         return self._rust_hop_cache[cache_key]

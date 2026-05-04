@@ -190,7 +190,7 @@ class VectorizedNewtonSolver:
         best_profit = np.zeros_like(x)
 
         # Newton iterations - all paths run together
-        for i in range(self.max_iterations):
+        for _i in range(self.max_iterations):
             # Forward amount y = output from buy pool
             denominator_buy = buy_R0 + x * gamma_buy
             y = x * gamma_buy * buy_R1 / denominator_buy
@@ -225,7 +225,7 @@ class VectorizedNewtonSolver:
                 dprofit_dx / d2profit_dx2,
                 0.0,
             )
-            x = x - step
+            x -= step
 
             # Ensure positive
             x = np.maximum(x, 1.0)

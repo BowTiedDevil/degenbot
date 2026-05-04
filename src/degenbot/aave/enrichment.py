@@ -218,9 +218,7 @@ class ScaledEventEnricher:
                         ScaledTokenEventType.ERC20_DEBT_TRANSFER,
                     }:
                         # Debt events use debtToCover
-                        raw_amount = _extract_liquidation_debt(
-                            operation.pool_event
-                        )
+                        raw_amount = _extract_liquidation_debt(operation.pool_event)
                         # Pool Revision 9+ passes pre-scaled amounts to token contracts
                         # The Pool calculates scaledAmount = debtToCover.rayDivFloor(index)
                         # and passes it to vToken.burn(). We must calculate this ourselves.
@@ -258,14 +256,10 @@ class ScaledEventEnricher:
                         ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
                     }:
                         # Collateral events use liquidatedCollateralAmount
-                        raw_amount = _extract_liquidation_collateral(
-                            operation.pool_event
-                        )
+                        raw_amount = _extract_liquidation_collateral(operation.pool_event)
                     else:
                         # Default to debt amount for unknown event types
-                        raw_amount = _extract_liquidation_debt(
-                            operation.pool_event
-                        )
+                        raw_amount = _extract_liquidation_debt(operation.pool_event)
                 else:
                     raw_amount = _extract_pool_event_amount(operation.pool_event)
             elif (

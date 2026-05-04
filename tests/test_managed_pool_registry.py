@@ -1,7 +1,6 @@
 """Tests for the ManagedPoolRegistry (V4 pools keyed by pool manager + pool ID)."""
 
 import pytest
-from hexbytes import HexBytes
 
 from degenbot.exceptions import DegenbotValueError
 from degenbot.registry.pool import ManagedPoolRegistry
