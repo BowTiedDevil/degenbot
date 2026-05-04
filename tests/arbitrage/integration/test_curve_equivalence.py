@@ -11,12 +11,11 @@ import pytest
 from eth_typing import ChainId
 
 from degenbot.anvil_fork import AnvilFork
-from degenbot.arbitrage.optimizers.solver import (
-    BrentSolver,
+from degenbot.arbitrage.optimizers.solidly_stable import (
     _simulate_mixed_path,
     _simulate_mixed_path_int,
-    _simulate_path,
 )
+from degenbot.arbitrage.optimizers.solver import BrentSolver, _simulate_path
 from degenbot.arbitrage.uniswap_curve_cycle import UniswapCurveCycle
 from degenbot.connection import set_web3
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
@@ -35,7 +34,7 @@ CURVE_TRIPOOL_ADDRESS = "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7"
 
 class MockCurveSwapper:
     """Mock Curve-style swap calculation for testing.
-    
+
     Uses a simplified AMM formula similar to Curve's stableswap.
     """
 
@@ -137,7 +136,9 @@ def test_curve_simulation_functions():
 
     assert pytest.approx(result_path, rel=1e-6) == expected
     assert pytest.approx(result_mixed, rel=1e-6) == expected
-    assert result_mixed_int == int(expected) or result_mixed_int == int(expected) - 1  # Allow 1 wei rounding
+    assert (
+        result_mixed_int == int(expected) or result_mixed_int == int(expected) - 1
+    )  # Allow 1 wei rounding
 
 
 def test_curve_v2_mixed_path():
@@ -180,7 +181,9 @@ def test_curve_v2_mixed_path():
     after_curve = curve_swapper.get_dy(0, 1, input_amount)
     # V2 formula: y = (gamma * s * x) / (r + gamma * x)
     gamma = 1 - 0.0003
-    expected_v2 = (gamma * v2_hop.reserve_out * after_curve) / (v2_hop.reserve_in + gamma * after_curve)
+    expected_v2 = (gamma * v2_hop.reserve_out * after_curve) / (
+        v2_hop.reserve_in + gamma * after_curve
+    )
 
     assert pytest.approx(result, rel=1e-6) == expected_v2
 
@@ -212,7 +215,7 @@ def test_curve_hop_without_swap_fn():
 
 def test_brent_solver_with_curve():
     """Test that BrentSolver can optimize a path containing Curve hop.
-    
+
     Uses imbalanced pools to create an arbitrage opportunity.
     """
 

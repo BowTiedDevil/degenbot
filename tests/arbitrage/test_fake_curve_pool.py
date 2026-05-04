@@ -4,11 +4,11 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.arbitrage.optimizers.solver import (
+from degenbot.arbitrage.optimizers.solidly_stable import (
     _simulate_mixed_path,
     _simulate_mixed_path_int,
-    _simulate_path,
 )
+from degenbot.arbitrage.optimizers.solver import _simulate_path
 from degenbot.types.hop_types import CurveStableswapHop, PoolInvariant
 from tests.arbitrage.fake_curve_pool import (
     FakeCurvePoolState,
@@ -49,8 +49,8 @@ class TestFakeCurvePoolConstruction:
             tokens=(dai, usdc, usdt),
             balances=(
                 5_000_000 * 10**18,  # DAI
-                5_000_000 * 10**6,   # USDC
-                5_000_000 * 10**6,   # USDT
+                5_000_000 * 10**6,  # USDC
+                5_000_000 * 10**6,  # USDT
             ),
             a_coefficient=2000,
             fee=3_000_000,  # 0.03%
