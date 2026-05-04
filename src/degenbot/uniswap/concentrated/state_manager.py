@@ -8,8 +8,10 @@ Owns the mutable ``_state_cache`` deque and provides thin read/write helpers.
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, Protocol, TypeVar
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 from degenbot.exceptions.liquidity_pool import NoPoolStateAvailable
 from degenbot.uniswap.v3_libraries.tick_math import (
@@ -44,10 +46,10 @@ class _StateLike(Protocol):
     def tick_data(self) -> Mapping[int, object]: ...
 
 
-_StateT = TypeVar("_StateT", bound=_StateLike)
+StateT = TypeVar("StateT", bound=_StateLike)
 
 
-class ConcentratedLiquidityStateManager(Generic[_StateT]):
+class ConcentratedLiquidityStateManager[StateT: _StateLike]:
     """Unlocked data structure for a bounded history of pool states.
 
     Every public method is **non-blocking**; the caller (pool) must hold the
@@ -57,17 +59,17 @@ class ConcentratedLiquidityStateManager(Generic[_StateT]):
     def __init__(
         self,
         *,
-        initial_state: _StateT,
+        initial_state: StateT,
         state_cache_depth: int = 8,
     ) -> None:
-        self._state_cache: deque[_StateT] = deque(maxlen=max(1, state_cache_depth))
+        self._state_cache: deque[StateT] = deque(maxlen=max(1, state_cache_depth))
         self._state_cache.append(initial_state)
         self._initial_state_block: int | None = initial_state.block
 
     # --- read helpers ---
 
     @property
-    def state(self) -> _StateT:
+    def state(self) -> StateT:
         return self._state_cache[-1]
 
     @property
@@ -95,16 +97,16 @@ class ConcentratedLiquidityStateManager(Generic[_StateT]):
         return self.state.block
 
     @property
-    def state_cache(self) -> deque[_StateT]:
+    def state_cache(self) -> deque[StateT]:
         return self._state_cache
 
     @state_cache.setter
-    def state_cache(self, value: deque[_StateT]) -> None:
+    def state_cache(self, value: deque[StateT]) -> None:
         self._state_cache = value
 
     # --- write helpers ---
 
-    def push_state(self, new_state: _StateT) -> None:
+    def push_state(self, new_state: StateT) -> None:
         """Append *new_state*, replacing the entry at the same block if present."""
         if self._state_cache[-1].block == new_state.block:
             self._state_cache.pop()
@@ -121,7 +123,7 @@ class ConcentratedLiquidityStateManager(Generic[_StateT]):
         while (self._state_cache[0].block or 0) < block:
             self._state_cache.popleft()
 
-    def restore_state_before_block(self, block: BlockNumber) -> _StateT:
+    def restore_state_before_block(self, block: BlockNumber) -> StateT:
         """Rewind to the most recent state prior to *block*.
 
         Returns the restored state so the caller can emit an event or

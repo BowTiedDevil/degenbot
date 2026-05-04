@@ -25,7 +25,6 @@ from degenbot.arbitrage.optimizers.hop_types import SolverMethod
 from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
-
 from tests.arbitrage.test_path.conftest import FakeConcentratedLiquidityPool, FakeToken
 
 

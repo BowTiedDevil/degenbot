@@ -13,6 +13,7 @@ This module provides:
 """
 
 import math
+import operator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -367,7 +368,7 @@ def get_nearest_tick_ranges(
         distances.append((distance, tick_range))
 
     # Sort by distance and return top N
-    distances.sort(key=lambda x: x[0])
+    distances.sort(key=operator.itemgetter(0))
     return [tick_range for _, tick_range in distances[:n]]
 
 

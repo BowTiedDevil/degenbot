@@ -21,6 +21,8 @@ from degenbot.cli.aave.types import TokenType, TransactionContext
 from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
 
+_AAVE_V3_BURN_TOPIC = b"\x9c\x06\x93a\\\xaf\x1c\xa3\xd2\x13\xb5\xda\xe8\xd6\xf1\x90F\x0b\x89\xd0\x08J\x94\xb2\xc3\x13f\xa6\xdb\x19#"
+
 
 def _should_skip_collateral_transfer(
     scaled_event: ScaledTokenEvent,
@@ -78,10 +80,7 @@ def _should_skip_collateral_transfer(
     if scaled_event.index is None and scaled_event.target_address == ZERO_ADDRESS:
         gho_vtoken_address = tx_context.gho_vtoken_address
         for evt in tx_context.events:
-            if (
-                evt["topics"][0]
-                != b"\x9c\x06\x93a\\\xaf\x1c\xa3\xd2\x13\xb5\xda\xe8\xd6\xf1\x90F\x0b\x89\xd0\x08J\x94\xb2\xc3\x13f\xa6\xdb\x19#"
-            ):  # AaveV3ScaledTokenEvent.BURN.value
+            if evt["topics"][0] != _AAVE_V3_BURN_TOPIC:
                 continue
             # Skip GHO debt burns - collateral burns are all other burns
             if gho_vtoken_address is not None and evt["address"] == gho_vtoken_address:

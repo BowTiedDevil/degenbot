@@ -137,37 +137,59 @@ def evm_divide(numerator: int, denominator: int) -> int:
     return -(-numerator // denominator) if numerator < 0 else numerator // denominator
 
 
-def _increase_working_span(
-    working_span: int,
-    percent: int,
-    ceiling: int,
-) -> int:
+class _ChunkedLogFetcher:
     """
-    Increase the working span by the given percentage, not to exceed the given ceiling.
-    """
+    Internal: shared chunking and span-management logic for log fetching.
 
-    return min(
-        ceiling,
-        int(
-            working_span + working_span * (percent / 100),
-        ),
-    )
-
-
-def _reduce_working_span(
-    working_span: int,
-    percent: int,
-) -> int:
-    """
-    Reduce the working span by the given percentage, not to fall below 1.
+    Consolidates the formerly duplicated code in ``fetch_logs_retrying``
+    and ``fetch_logs_retrying_async``.
     """
 
-    return max(
-        1,
-        int(
-            working_span - working_span * (percent / 100),
-        ),
-    )
+    _DEFAULT_MAX_BLOCKS = 5_000
+    _SPAN_REDUCTION_PCT = 25
+    _SPAN_INCREASE_PCT = 5
+
+    def __init__(
+        self,
+        start_block: int,
+        end_block: int,
+        max_blocks_per_request: int | None,
+    ) -> None:
+        self.start_block = start_block
+        self.end_block = end_block
+        self.max_blocks: int = (
+            max_blocks_per_request
+            if max_blocks_per_request is not None
+            else self._DEFAULT_MAX_BLOCKS
+        )
+        self.working_span = self.max_blocks
+
+    @property
+    def chunk_end(self) -> int:
+        return min(self.end_block, self.start_block + self.working_span - 1)
+
+    @property
+    def is_complete(self) -> bool:
+        return self.start_block > self.end_block
+
+    @property
+    def chunk_size(self) -> int:
+        return self.chunk_end - self.start_block + 1
+
+    def on_timeout(self) -> None:
+        self.working_span = max(
+            1,
+            int(self.working_span - self.working_span * self._SPAN_REDUCTION_PCT / 100),
+        )
+
+    def on_success(self) -> None:
+        self.working_span = min(
+            self.max_blocks,
+            int(self.working_span + self.working_span * self._SPAN_INCREASE_PCT / 100),
+        )
+
+    def advance(self) -> None:
+        self.start_block = self.chunk_end + 1
 
 
 def fetch_logs_retrying(
@@ -209,12 +231,11 @@ def fetch_logs_retrying(
     if topic_signature is None:
         topic_signature = []
 
-    if max_blocks_per_request is None:
-        max_blocks_per_request = 5_000
-
-    # The working block span is dynamic. It will be reduced quickly if timeouts occur, and increased
-    # slowly following successful fetches
-    working_span = max_blocks_per_request
+    fetcher = _ChunkedLogFetcher(
+        start_block=start_block,
+        end_block=end_block,
+        max_blocks_per_request=max_blocks_per_request,
+    )
 
     retrier = Retrying(
         stop=stop_after_attempt(max_retries),
@@ -245,46 +266,38 @@ def fetch_logs_retrying(
             topics=topics_str or None,
         )
 
-    while True:
+    while not fetcher.is_complete:
         try:
             for attempt in retrier:
-                chunk_end = min(end_block, start_block + working_span - 1)
+                chunk_end = fetcher.chunk_end
 
                 with attempt:
                     try:
                         logger.debug(
-                            f"Fetching logs for range {start_block}-{chunk_end} "
-                            f" ({chunk_end - start_block + 1} blocks)"
+                            f"Fetching logs for range {fetcher.start_block}-{chunk_end} "
+                            f" ({fetcher.chunk_size} blocks)"
                         )
                         event_logs.extend(
-                            _get_logs(start_block, chunk_end, address, topic_signature)
+                            _get_logs(fetcher.start_block, chunk_end, address, topic_signature)
                         )
                     except Exception:
-                        old_working_span = working_span
-                        working_span = _reduce_working_span(
-                            working_span=working_span,
-                            percent=25,
-                        )
+                        old_working_span = fetcher.working_span
+                        fetcher.on_timeout()
                         logger.debug(
                             f"Attempt {attempt.retry_state.attempt_number} timed out "
                             f"fetching {old_working_span} blocks. "
-                            f"Reducing to {working_span}..."
+                            f"Reducing to {fetcher.working_span}..."
                         )
                         raise
                     else:
-                        working_span = _increase_working_span(
-                            working_span=working_span,
-                            percent=5,
-                            ceiling=max_blocks_per_request,
-                        )
+                        fetcher.on_success()
 
-            if chunk_end == end_block:
-                return event_logs
-
-            start_block = chunk_end + 1
+            fetcher.advance()
 
         except RetryError:
             raise LogFetchingTimeout(max_retries=max_retries) from None
+
+    return event_logs
 
 
 async def fetch_logs_retrying_async(
@@ -303,12 +316,11 @@ async def fetch_logs_retrying_async(
     if topic_signature is None:
         topic_signature = []
 
-    if max_blocks_per_request is None:
-        max_blocks_per_request = 5_000
-
-    # The working block span is dynamic. It will be reduced quickly if timeouts occur, and increased
-    # slowly following successful fetches
-    working_span = max_blocks_per_request
+    fetcher = _ChunkedLogFetcher(
+        start_block=start_block,
+        end_block=end_block,
+        max_blocks_per_request=max_blocks_per_request,
+    )
 
     event_logs: list[LogReceipt] = []
 
@@ -325,60 +337,55 @@ async def fetch_logs_retrying_async(
         leave=False,
     )
 
-    while True:
+    while not fetcher.is_complete:
         try:
             async for attempt in retrier:
-                chunk_end = min(end_block, start_block + working_span - 1)
+                chunk_end = fetcher.chunk_end
 
                 with attempt:
                     try:
                         logger.debug(
-                            f"Fetching logs for range {start_block}-{chunk_end} "
-                            f" ({chunk_end - start_block + 1} blocks)"
+                            f"Fetching logs for range {fetcher.start_block}-{chunk_end} "
+                            f" ({fetcher.chunk_size} blocks)"
                         )
                         logs = await w3.eth.get_logs(
                             FilterParams(
                                 address=address,
-                                fromBlock=start_block,
+                                fromBlock=fetcher.start_block,
                                 toBlock=chunk_end,
                                 topics=topic_signature,
                             )
                             if address is not None
                             else FilterParams(
-                                fromBlock=start_block,
+                                fromBlock=fetcher.start_block,
                                 toBlock=chunk_end,
                                 topics=topic_signature,
                             )
                         )
                         event_logs.extend(logs)
                     except (Timeout, Web3Exception):
-                        old_working_span = working_span
-                        working_span = _reduce_working_span(
-                            working_span=working_span,
-                            percent=25,
-                        )
+                        old_working_span = fetcher.working_span
+                        fetcher.on_timeout()
                         logger.debug(
                             f"Attempt {attempt.retry_state.attempt_number} timed out "
                             f"fetching {old_working_span} blocks. "
-                            f"Reducing to {working_span}..."
+                            f"Reducing to {fetcher.working_span}..."
                         )
                         raise
                     else:
-                        pbar.update(chunk_end - start_block + 1)
-                        working_span = _increase_working_span(
-                            working_span=working_span,
-                            percent=5,
-                            ceiling=max_blocks_per_request,
-                        )
+                        pbar.update(fetcher.chunk_size)
+                        fetcher.on_success()
 
-            if chunk_end == end_block:
+            fetcher.advance()
+            if fetcher.is_complete:
                 pbar.close()
                 return event_logs
 
-            start_block = chunk_end + 1
-
         except RetryError:
             raise LogFetchingTimeout(max_retries=max_retries) from None
+
+    # Explicit return silences lint that cannot prove loop termination.
+    return event_logs
 
 
 def get_number_for_block_identifier(

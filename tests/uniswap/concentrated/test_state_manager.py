@@ -10,7 +10,6 @@ It is **pure of I/O**: RPC fetching and event emission stay on the pool.
 """
 
 import dataclasses
-from collections import deque
 
 import pytest
 
@@ -124,8 +123,6 @@ class TestDiscardAndRestore:
         for s in states[1:]:
             mgr.push_state(s)
 
-        from degenbot.exceptions.liquidity_pool import NoPoolStateAvailable
-
         restored = mgr.restore_state_before_block(102)
         assert restored.block == 101
         assert mgr.state.block == 101
@@ -163,8 +160,8 @@ class TestSwapIsViable:
         assert not mgr.swap_is_viable(state=s, zero_for_one=True, sparse_liquidity_map=False)
 
     def test_viable_when_liquidity_beyond_price(self) -> None:
+
         from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
-        import math
 
         # Create a state with tick data on both sides of price
         tick_data = {-100: object(), 100: object()}

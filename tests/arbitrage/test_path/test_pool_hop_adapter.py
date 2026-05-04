@@ -11,7 +11,6 @@ import pytest
 
 from degenbot.arbitrage.path.pool_hop_adapter import extract_fee, to_hop_state
 from degenbot.types.hop_types import ConstantProductHop
-
 from tests.arbitrage.test_path.conftest import (
     FakeAerodromeV2Pool,
     FakeConcentratedLiquidityPool,

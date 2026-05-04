@@ -33,7 +33,6 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 from weakref import WeakSet
 
-from degenbot.curve.types import CurveStableswapPoolState
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.concrete import PublisherMixin
 from degenbot.types.hop_types import CurveStableswapHop, HopType, PoolInvariant
@@ -44,7 +43,6 @@ if TYPE_CHECKING:
 
     from eth_typing import ChecksumAddress
 
-    from degenbot.erc20 import Erc20Token
     from degenbot.types.concrete import Subscriber
 
 
@@ -128,16 +126,16 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         self.tokens: tuple[FakeCurveToken, ...] = tuple(tokens)
         self.address: ChecksumAddress = address  # type: ignore[assignment]
         self.name = f"FakeCurve({len(tokens)}coins)"
-        
+
         self.a_coefficient = a_coefficient
         self.fee = fee
         self.base_pool = base_pool
-        
+
         # Calculate precision multipliers (10^(18 - token.decimals))
         self.precision_multipliers = tuple(
             10 ** (self.PRECISION_DECIMALS - token.decimals) for token in self.tokens
         )
-        
+
         # Initialize state
         self._state = FakeCurvePoolState(
             address=self.address,
@@ -216,24 +214,24 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         """
         n_coins = self.n_coins
         d = self._get_d(xp, self.a_coefficient)
-        
+
         c = d
         s = 0
         ann = self.a_coefficient * n_coins
-        
+
         for k in range(n_coins):
             if k == j:
                 continue
             _x = x if k == i else xp[k]
             s += _x
             c = c * d // (_x * n_coins)
-        
+
         c = c * d // (ann * n_coins)
         b = s + d // ann
-        
+
         y_prev = 0
         y = d
-        
+
         # Newton's method for y
         for _ in range(255):
             y_prev = y
@@ -248,20 +246,20 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         Main swap calculation. Returns amount of token j received for dx of token i.
         """
         xp = self._xp(self._state.balances)
-        
+
         # Add input to x
         x = xp[i] + dx * self.precision_multipliers[i] // self.PRECISION
-        
+
         # Calculate y (output in precision-adjusted units)
         y = self._get_y(i, j, x, xp)
-        
+
         # Convert back to token j's decimals
         dy = xp[j] - y - 1  # -1 for rounding
-        
+
         # Apply fee
         fee = self.fee * dy // self.FEE_DENOMINATOR
         dy -= fee
-        
+
         # Convert from precision-adjusted to actual token amount
         return dy * self.PRECISION // self.precision_multipliers[j]
 
@@ -279,13 +277,13 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             if isinstance(state_override, FakeCurvePoolState)
             else self._state
         )
-        
+
         # For 2-token pools, map zero_for_one to token indices
         if zero_for_one:
             i, j = 0, 1
         else:
             i, j = 1, 0
-        
+
         # Verify indices valid
         if i >= len(state.balances) or j >= len(state.balances):
             raise ValueError(f"Invalid swap indices ({i}, {j}) for {len(state.balances)} tokens")
@@ -332,7 +330,7 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             if isinstance(state_override, FakeCurvePoolState)
             else self._state
         )
-        
+
         # Find token indices
         try:
             i = next(

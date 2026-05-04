@@ -500,8 +500,7 @@ def _process_operation(
 
         # Liquidation debt burns need pattern-based logic not in the pipeline
         if (
-            event_type
-            in {ScaledTokenEventType.DEBT_BURN, ScaledTokenEventType.GHO_DEBT_BURN}
+            event_type in {ScaledTokenEventType.DEBT_BURN, ScaledTokenEventType.GHO_DEBT_BURN}
             and operation.operation_type in LIQUIDATION_OPERATION_TYPES
         ):
             _process_debt_burn_with_match(
@@ -577,11 +576,10 @@ def _process_scaled_event_via_pipeline(
             asset_id=asset.id,
         )
         token_revision = asset.v_token_revision
-        is_bad_debt = (
-            operation.operation_type
-            in {OperationType.LIQUIDATION, OperationType.GHO_LIQUIDATION}
-            and _is_bad_debt_liquidation(user, tx_context)
-        )
+        is_bad_debt = operation.operation_type in {
+            OperationType.LIQUIDATION,
+            OperationType.GHO_LIQUIDATION,
+        } and _is_bad_debt_liquidation(user, tx_context)
 
     previous_discount = 0
     if is_gho:

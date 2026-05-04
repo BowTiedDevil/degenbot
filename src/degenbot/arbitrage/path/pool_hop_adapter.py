@@ -23,7 +23,7 @@ from degenbot.types.hop_types import (
 )
 
 
-def extract_fee(pool: Any, *, zero_for_one: bool) -> Fraction:  # noqa: FBT001
+def extract_fee(pool: Any, *, zero_for_one: bool) -> Fraction:
     """Extract the trading fee for a swap direction from any supported pool."""
     # Prefer duck-typing — allows test fakes and custom pools to work
     if hasattr(pool, "extract_fee") and callable(pool.extract_fee):
@@ -32,7 +32,7 @@ def extract_fee(pool: Any, *, zero_for_one: bool) -> Fraction:  # noqa: FBT001
     if (cls_name := type(pool).__name__) == "UniswapV2Pool":
         return pool.fee_token0 if zero_for_one else pool.fee_token1
 
-    if cls_name in ("UniswapV3Pool", "UniswapV4Pool", "AerodromeV2Pool"):
+    if cls_name in {"UniswapV3Pool", "UniswapV4Pool", "AerodromeV2Pool"}:
         return pool.fee
 
     if cls_name == "CurveStableswapPool":
@@ -145,7 +145,7 @@ def to_hop_state(
     state = state_override or pool.state
     cls_name = type(pool).__name__
 
-    if cls_name in ("UniswapV2Pool", "AerodromeV2Pool"):
+    if cls_name in {"UniswapV2Pool", "AerodromeV2Pool"}:
         if cls_name == "AerodromeV2Pool" and getattr(pool, "stable", False):
             return _solidly_stable_hop(pool, zero_for_one=zero_for_one, state=state)
         return _v2_like_hop(pool, zero_for_one=zero_for_one, state=state)
@@ -155,7 +155,7 @@ def to_hop_state(
             return _solidly_stable_hop(pool, zero_for_one=zero_for_one, state=state)
         return _v2_like_hop(pool, zero_for_one=zero_for_one, state=state)
 
-    if cls_name in ("UniswapV3Pool", "UniswapV4Pool"):
+    if cls_name in {"UniswapV3Pool", "UniswapV4Pool"}:
         return _v3_like_hop(pool, zero_for_one=zero_for_one, state=state)
 
     if cls_name == "CurveStableswapPool":

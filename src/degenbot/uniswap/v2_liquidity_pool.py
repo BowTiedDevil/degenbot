@@ -42,8 +42,8 @@ from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractArbitrage, AbstractUniswapV2Pool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import AbstractPublisherMessage, Publisher, PublisherMixin, Subscriber
-from degenbot.types.pool_protocols import SimulationResult
 from degenbot.types.hop_types import ConstantProductHop, HopType
+from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_functions import (

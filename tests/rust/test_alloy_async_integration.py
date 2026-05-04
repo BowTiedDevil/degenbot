@@ -1,13 +1,14 @@
 """
 Async integration tests for the Alloy-based Ethereum RPC provider.
 
-These tests use the async provider with proper tokio runtime support via pyo3-async-runtimes.
+These tests use the Rust async provider with proper tokio runtime support via
+pyo3-async-runtimes.
 """
 
 import pytest
+from degenbot.degenbot_rs import AsyncAlloyProvider
 from hexbytes import HexBytes
 
-from degenbot.provider.async_provider import AsyncAlloyProvider
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -41,8 +42,8 @@ class TestAsyncProviderWithLiveConnection:
         assert isinstance(logs, list)
         assert len(logs) > 0
 
-    async def test_async_provider_properties(self):
-        """Test async provider property access."""
+    async def test_async_provider_rpc_url(self):
+        """Test async provider exposes rpc_url getter."""
         provider = await AsyncAlloyProvider.create(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
         assert provider.rpc_url == ETHEREUM_ARCHIVE_NODE_HTTP_URI
 

@@ -51,8 +51,8 @@ from degenbot.types.concrete import (
     PublisherMixin,
     Subscriber,
 )
-from degenbot.types.pool_protocols import SimulationResult
 from degenbot.types.hop_types import CurveStableswapHop, HopType, PoolInvariant
+from degenbot.types.pool_protocols import SimulationResult
 
 
 class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):

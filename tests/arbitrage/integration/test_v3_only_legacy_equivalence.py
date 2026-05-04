@@ -16,7 +16,6 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.arbitrage.optimizers.hop_types import SolverMethod
 from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
@@ -24,12 +23,9 @@ from degenbot.erc20.erc20 import Erc20Token
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
 from degenbot.uniswap.v3_types import UniswapV3PoolState
-
-from tests.arbitrage.generator.fixtures import ArbitrageCycleFixture
 from tests.arbitrage.generator.pool_generator import PoolStateGenerator
 from tests.arbitrage.generator.types import V3PoolGenerationConfig
 from tests.arbitrage.mock_pools import MockErc20Token, cleanup_mock_patches
-
 
 # ---------------------------------------------------------------------------
 # FakeV3Pool: exact single-range V3 math matching ArbitragePath BoundedProductHop
@@ -87,8 +83,8 @@ class FakeV3Pool:
 
     @staticmethod
     def swap_is_viable(
-        state: UniswapV3PoolState,  # noqa: ARG004
-        vector: UniswapPoolSwapVector,  # noqa: ARG004
+        state: UniswapV3PoolState,
+        vector: UniswapPoolSwapVector,
     ) -> bool:
         return True
 
@@ -333,7 +329,7 @@ def _cleanup_patched_legacy_cycle() -> None:
     if hasattr(UniswapLpCycle, "_v3_equiv_patches"):
         for p in UniswapLpCycle._v3_equiv_patches:  # type:ignore[attr-defined]
             p.stop()
-        delattr(UniswapLpCycle, "_v3_equiv_patches")
+        del UniswapLpCycle._v3_equiv_patches
 
 
 # ---------------------------------------------------------------------------
@@ -376,7 +372,6 @@ def _make_profitable_v3_pair(
     Profitability = (price_a / price_b) * gamma²;  with price_a > price_b
     and low fees this is > 1.0.
     """
-    from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 
     generator = PoolStateGenerator()
 

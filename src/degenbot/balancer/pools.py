@@ -22,8 +22,8 @@ from degenbot.functions import encode_function_calldata
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin
+from degenbot.types.hop_types import HopType
 from degenbot.types.pool_protocols import SimulationResult
-from degenbot.types.hop_types import BalancerWeightedHop, HopType
 
 
 class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):

@@ -19,7 +19,7 @@ from degenbot.exceptions.liquidity_pool import (
     LiquidityPoolError,
     PossibleInaccurateResult,
 )
-from degenbot.registry import managed_pool_registry, pool_registry
+from degenbot.registry import managed_pool_registry
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 if TYPE_CHECKING:

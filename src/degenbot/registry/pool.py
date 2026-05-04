@@ -21,7 +21,6 @@ class ManagedPoolRegistry(AbstractRegistry):
     ``(chain_id, pool_manager_address, pool_id)`` rather than a simple address.
     """
 
-
     def __init__(self) -> None:
         self._all_v4_pools: dict[
             tuple[

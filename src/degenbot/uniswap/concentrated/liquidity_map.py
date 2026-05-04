@@ -9,15 +9,17 @@ The simulator consumes a *snapshot* so that:
 
 from __future__ import annotations
 
-from collections.abc import Generator, Mapping
 from dataclasses import dataclass
-from typing import Protocol, Self
+from typing import TYPE_CHECKING, Protocol, Self
 
 from degenbot.exceptions.liquidity_pool import LiquidityMapWordMissing
 from degenbot.uniswap.v3_libraries.tick_bitmap import (
     gen_ticks,
     next_initialized_tick_within_one_word,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Generator, Mapping
 
 
 class _HasPoolLiquidityMap(Protocol):

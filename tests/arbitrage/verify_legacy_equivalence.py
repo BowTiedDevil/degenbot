@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from degenbot.arbitrage.optimizers.hop_types import SolverMethod
-from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
+from degenbot.arbitrage.optimizers.solver import MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.arbitrage.path.swap_amount_builder import build_swap_amount
 from degenbot.arbitrage.path.types import SwapVector
@@ -25,7 +25,6 @@ from degenbot.arbitrage.types import (
     UniswapV3PoolSwapAmounts,
 )
 from tests.arbitrage.test_path.conftest import (
-    FakeConcentratedLiquidityPool,
     FakeToken,
     FakeUniswapV2Pool,
     FakeV2PoolState,

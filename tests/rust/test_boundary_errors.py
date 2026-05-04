@@ -6,7 +6,6 @@ These tests verify the mapping is correct for all boundary functions.
 """
 
 import pytest
-
 from degenbot.degenbot_rs import (
     decode,
     decode_single,

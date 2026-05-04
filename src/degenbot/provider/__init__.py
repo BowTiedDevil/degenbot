@@ -35,7 +35,6 @@ from typing import Any, Self, cast
 from hexbytes import HexBytes
 
 from degenbot.degenbot_rs import AlloyProvider as _AlloyProvider
-from degenbot.provider.async_provider import AsyncAlloyProvider
 from degenbot.provider.interface import AsyncProviderAdapter, EthereumProvider, ProviderAdapter
 from degenbot.provider.offline_provider import (
     BlockNotRecordedError,
@@ -371,24 +370,6 @@ class AlloyProvider:
         msg = "get_balance not implemented for AlloyProvider"
         raise NotImplementedError(msg)
 
-    def get_storage_at(
-        self,
-        address: str,
-        position: int,
-        block_number: int | None = None,
-    ) -> HexBytes:
-        """Get storage at a given position.
-
-        Args:
-            address: Contract address
-            position: Storage slot position (supports large values like mapping slots)
-            block_number: Block number to get storage at (default: latest)
-
-        Returns:
-            Storage value at the position as HexBytes (32 bytes)
-        """
-        return cast("HexBytes", self._provider.get_storage_at(address, position, block_number))
-
     def get_transaction_count(
         self,
         address: str,
@@ -417,7 +398,6 @@ class AlloyProvider:
 
 __all__ = [
     "AlloyProvider",
-    "AsyncAlloyProvider",
     "AsyncProviderAdapter",
     "BlockNotRecordedError",
     "EthereumProvider",
