@@ -36,11 +36,7 @@ from degenbot.cli.aave.event_handlers import (
 )
 from degenbot.cli.aave.extraction import extract_user_addresses_from_transaction
 from degenbot.cli.aave.transaction_processor import _process_transaction
-from degenbot.cli.aave.utils import (
-    _build_transaction_contexts,
-    _fetch_discount_token_from_contract,
-    _get_all_scaled_token_addresses,
-)
+from degenbot.cli.aave.utils import _build_transaction_contexts, _get_all_scaled_token_addresses
 from degenbot.cli.aave.verification import (
     cleanup_zero_balance_positions,
     verify_all_positions,
@@ -114,7 +110,7 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
     provider = get_web3_from_config(chain_id=chain_id)
 
     (market_name,) = raw_call(
-        provider,
+        provider=provider,
         address=pool_address_provider,
         calldata=encode_function_calldata(
             function_prototype="getMarketId()",
@@ -188,7 +184,7 @@ def deactivate() -> None:
 @deactivate.command("ethereum_aave_v3")
 def deactivate_mainnet_aave_v3(
     chain_id: ChainId = ChainId.ETH,
-    market_name: str = "aave_v3",
+    market_name: str = "Aave Ethereum Market",
 ) -> None:
     """
     Deactivate the Aave V3 Ethereum mainnet market.
@@ -363,7 +359,7 @@ def aave_update(
 
         if not active_chains:
             msg = "No active Aave markets found."
-            raise DegenbotValueError(msg)
+            raise DegenbotValueError(message=msg)
 
         for chain_id in active_chains:
             provider = get_web3_from_config(chain_id=chain_id)
@@ -402,12 +398,16 @@ def aave_update(
                     raise ValueError(msg)
 
                 last_block = (
-                    get_number_for_block_identifier(identifier=block_tag, provider=provider)
+                    get_number_for_block_identifier(
+                        identifier=block_tag,
+                        provider=provider,
+                    )
                     + block_offset
                 )
 
             current_block_number = get_number_for_block_identifier(
-                identifier="latest", provider=provider
+                identifier="latest",
+                provider=provider,
             )
             if last_block > current_block_number:
                 msg = f"{to_block} is ahead of the current chain tip."
@@ -881,10 +881,10 @@ def market_show(chain_id: int | None, name: str | None) -> None:
             asset_count = len(market_obj.assets) if market_obj.assets else 0
 
             click.echo(f"  Users: {user_count}")
-            click.echo(f"  Reserves: {asset_count}")
+            click.echo(f"  Assets: {asset_count}")
 
             if market_obj.assets:
-                click.echo("  Reserve List:")
+                click.echo("  Asset List:")
                 for asset in market_obj.assets:
                     token_symbol = (
                         asset.underlying_token.symbol if asset.underlying_token else "Unknown"
@@ -907,13 +907,10 @@ def update_aave_market(
     Update the Aave V3 market.
 
     Processes events in three phases:
-    1. Bootstrap:
-        Fetch and process proxy creation events to discover Pool contract and
-        PoolConfigurator contracts.
-    2. Reserve Discovery:
-        Fetch all targeted events and build transaction contexts
-    3. User Event Processing:
-        Process transactions with assertions that classifying events exist
+    1. Bootstrap: Fetch and process proxy creation events to discover Pool and PoolConfigurator
+       contracts.
+    2. Asset Discovery: Fetch all targeted events and build transaction contexts
+    3. User Event Processing: Process transactions with assertions that classifying events exist
     """
 
     logger.debug(
@@ -944,6 +941,7 @@ def update_aave_market(
         if topic == AaveV3PoolConfigEvent.PROXY_CREATED.value:
             _process_proxy_creation_event(
                 provider=provider,
+                session=session,
                 market=market,
                 event=event,
                 proxy_name="POOL",
@@ -952,6 +950,7 @@ def update_aave_market(
             )
             _process_proxy_creation_event(
                 provider=provider,
+                session=session,
                 market=market,
                 event=event,
                 proxy_name="POOL_CONFIGURATOR",
@@ -1035,8 +1034,8 @@ def update_aave_market(
         contract_name="POOL",
     )
     if pool is None:
-        # Pool contract not initialized yet, skip to next chunk
-        logger.warning(f"Pool contract not initialized for market {market.id}, skipping")
+        # Pool not initialized yet, skip to next chunk
+        logger.warning(f"Pool not initialized for market {market.id}, skipping")
         return
 
     pool_events = fetch_pool_events(
@@ -1087,47 +1086,24 @@ def update_aave_market(
     all_events.extend(discount_config_events)
 
     gho_asset = get_gho_asset(session=session, market=market)
+    assert gho_asset is not None
 
-    # ---
-    # TODO: check and refactor this whole block, may not be necessary
-    # ---
-    # Process discount config events BEFORE fetching stkAAVE events
-    # This ensures gho_asset.v_gho_discount_token is set correctly
-    if gho_asset is not None:
-        for event in discount_config_events:
-            topic = event["topics"][0]
-            if topic == AaveV3GhoDebtTokenEvent.DISCOUNT_TOKEN_UPDATED.value:
-                _process_discount_token_updated_event(
-                    event=event,
-                    gho_asset=gho_asset,
-                )
-
-        # If v_gho_discount_token is still None, try to fetch it from the contract
-        # This handles the case where we're processing blocks before any
-        # DISCOUNT_TOKEN_UPDATED event or when the database hasn't been initialized
-        if gho_asset.v_gho_discount_token is None:
-            try:
-                discount_token_from_contract = _fetch_discount_token_from_contract(
-                    provider=provider,
-                    gho_asset=gho_asset,
-                    block_number=start_block,
-                )
-                if discount_token_from_contract:
-                    gho_asset.v_gho_discount_token = discount_token_from_contract
-                    logger.info(
-                        f"Fetched discount token from contract: {discount_token_from_contract}"
-                    )
-            except Exception as e:  # noqa:BLE001
-                logger.debug(f"Could not fetch discount token from contract: {e}")
-
-        all_events.extend(
-            fetch_stk_aave_events(
-                provider=provider,
-                discount_token=gho_asset.v_gho_discount_token,
-                start_block=start_block,
-                end_block=end_block,
+    for event in discount_config_events:
+        topic = event["topics"][0]
+        if topic == AaveV3GhoDebtTokenEvent.DISCOUNT_TOKEN_UPDATED.value:
+            _process_discount_token_updated_event(
+                event=event,
+                gho_asset=gho_asset,
             )
+
+    all_events.extend(
+        fetch_stk_aave_events(
+            provider=provider,
+            discount_token=gho_asset.v_gho_discount_token,
+            start_block=start_block,
+            end_block=end_block,
         )
+    )
 
     # Group the events into transaction bundles with a shared context
     tx_contexts = _build_transaction_contexts(

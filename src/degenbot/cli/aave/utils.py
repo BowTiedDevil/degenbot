@@ -6,30 +6,19 @@ Aave CLI modules.
 """
 
 import operator
-from typing import assert_never
 
-import eth_abi.exceptions
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from web3.exceptions import ContractLogicError
 from web3.types import LogReceipt
 
 from degenbot.aave.events import ERC20Event
-from degenbot.checksum_cache import get_checksum_address
-from degenbot.cli.aave.constants import AAVE_EVENT_TOPIC_TO_CATEGORY
 from degenbot.cli.aave.types import TransactionContext
 from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.database.models.aave import (
-    AaveGhoToken,
-    AaveV3Asset,
-    AaveV3Contract,
-    AaveV3Market,
-)
+from degenbot.database.models.aave import AaveGhoToken, AaveV3Asset, AaveV3Contract, AaveV3Market
 from degenbot.database.models.erc20 import Erc20TokenTable
-from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
 from degenbot.provider.interface import ProviderAdapter
 
@@ -39,7 +28,7 @@ def _get_v_token_for_underlying(
     market: AaveV3Market,
     underlying_address: ChecksumAddress,
 ) -> ChecksumAddress | None:
-    """Get vToken address for an underlying Token."""
+    """Get vToken address for an underlying asset."""
     asset = session.scalar(
         select(AaveV3Asset).where(
             AaveV3Asset.market_id == market.id,
@@ -82,33 +71,6 @@ def _get_all_scaled_token_addresses(
     )
 
     return a_token_addresses + v_token_addresses
-
-
-def _log_event_categorization(
-    *,
-    topic: HexBytes,
-    event_address: ChecksumAddress,
-    gho_asset: AaveGhoToken,
-) -> None:
-    """
-    Validate event topic is recognized and log its categorization.
-
-    Raises:
-        ValueError: If the topic is not recognized.
-    """
-
-    # Check module-level cache for Aave events
-    if topic in AAVE_EVENT_TOPIC_TO_CATEGORY:
-        category = AAVE_EVENT_TOPIC_TO_CATEGORY[topic]
-    elif topic == ERC20Event.TRANSFER.value:
-        if event_address == (gho_asset.v_gho_discount_token if gho_asset else None):
-            category = "stkAAVE_TRANSFER"
-        else:
-            category = "ERC20_TRANSFER"
-    else:
-        assert_never(topic)
-
-    logger.debug(f"_build_transaction_contexts: categorized as {category} event")
 
 
 def _build_transaction_contexts(
@@ -169,51 +131,4 @@ def _build_transaction_contexts(
             if to_addr != ZERO_ADDRESS:
                 ctx.stk_aave_transfer_users.add(to_addr)
 
-        # Validate and log event categorization
-        _log_event_categorization(
-            topic=topic,
-            event_address=event_address,
-            gho_asset=gho_asset,
-        )
-
     return contexts
-
-
-def _fetch_discount_token_from_contract(
-    provider: ProviderAdapter,
-    gho_asset: AaveGhoToken,
-    block_number: int,
-) -> ChecksumAddress | None:
-    """
-    Fetch the discount token address from the GHO vToken contract.
-
-    This is used to initialize v_gho_discount_token when it's not set in the database
-    and no DISCOUNT_TOKEN_UPDATED events exist in the current block range.
-    """
-
-    # vToken not deployed yet
-    if gho_asset.v_token is None:
-        return None
-
-    try:
-        # GHO vToken has a getDiscountToken() function
-        discount_token: str
-        (discount_token,) = raw_call(
-            provider=provider,
-            address=gho_asset.v_token.address,
-            calldata=encode_function_calldata(
-                function_prototype="getDiscountToken()",
-                function_arguments=[],
-            ),
-            return_types=["address"],
-            block_identifier=block_number,
-        )
-        return get_checksum_address(discount_token)
-    except (
-        ValueError,
-        RuntimeError,
-        eth_abi.exceptions.DecodingError,
-        ContractLogicError,
-    ):
-        # Function may not exist in older revisions or other errors
-        return None

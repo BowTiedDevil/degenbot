@@ -48,22 +48,6 @@ def get_or_init_stk_aave_balance(
         user.stk_aave_balance = balance
 
     assert user.stk_aave_balance is not None
-
-    # Check if we need to account for pending transfers due to reentrancy
-    # This happens when stkAAVE is transferred during GHO discount updates,
-    # and the GHO contract sees the post-transfer balance before the Transfer event
-    if log_index is not None and user.address in tx_context.stk_aave_transfer_users:
-        pending_delta = tx_context.get_pending_stk_aave_delta_at_log_index(
-            user_address=user.address,
-            log_index=log_index,
-            discount_token=discount_token,
-        )
-
-        assert (
-            pending_delta == 0
-        )  # TODO: remove `get_pending_stk_aave_delta_at_log_index` if this runs without error
-        return user.stk_aave_balance + pending_delta
-
     return user.stk_aave_balance
 
 

@@ -25,7 +25,7 @@ def get_gho_vtoken_revision(
     """
     Get the GHO vToken revision for the given market.
 
-    Queries the AaveV3Asset table to get the v_token_revision for the GHO Asset.
+    Queries the AaveV3Asset table to get the v_token_revision for the GHO asset.
     """
 
     gho_asset = session.scalar(
@@ -59,23 +59,6 @@ def is_discount_supported(
 
     revision = get_gho_vtoken_revision(session, market)
     return revision is not None and revision < GHO_DISCOUNT_DEPRECATION_REVISION
-
-
-def get_user_by_address(
-    session: Session,
-    market: AaveV3Market,
-    user_address: ChecksumAddress,
-) -> AaveV3User | None:
-    """
-    Get existing user by address.
-    """
-
-    return session.scalar(
-        select(AaveV3User).where(
-            AaveV3User.address == user_address,
-            AaveV3User.market_id == market.id,
-        )
-    )
 
 
 def get_or_create_user(

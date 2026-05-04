@@ -76,30 +76,6 @@ class TokenMath(Protocol):
         """
         ...
 
-    # TODO: remove this after confirming it is unnecessary
-    @abstractmethod
-    def get_scaled_from_underlying_collateral(
-        self, underlying_amount: int, liquidity_index: int
-    ) -> int:
-        """Convert underlying amount to scaled collateral amount.
-
-        This is the inverse of get_collateral_balance:
-        - get_collateral_balance(scaled, index) -> balance
-        - get_scaled_from_underlying_collateral(balance, index) -> scaled
-        """
-        ...
-
-    # TODO: remove this after confirming it is unnecessary
-    @abstractmethod
-    def get_scaled_from_underlying_debt(self, underlying_amount: int, borrow_index: int) -> int:
-        """Convert underlying amount to scaled debt amount.
-
-        This is the inverse of get_debt_balance:
-        - get_debt_balance(scaled, index) -> balance
-        - get_scaled_from_underlying_debt(balance, index) -> scaled
-        """
-        ...
-
 
 class HalfUpRoundingMath:
     """Standard half-up rounding for pool revisions 1-3.
@@ -143,18 +119,6 @@ class HalfUpRoundingMath:
     def get_debt_balance(scaled_amount: int, borrow_index: int) -> int:
         """Standard half-up rounding for debt balance."""
         return wad_ray_math.ray_mul(scaled_amount, borrow_index)
-
-    # TODO: remove this after confirming it is unnecessary
-    @staticmethod
-    def get_scaled_from_underlying_collateral(underlying_amount: int, liquidity_index: int) -> int:
-        """Reverse of ray_mul (half-up) = ray_div (half-up)."""
-        return wad_ray_math.ray_div(underlying_amount, liquidity_index)
-
-    # TODO: remove this after confirming it is unnecessary
-    @staticmethod
-    def get_scaled_from_underlying_debt(underlying_amount: int, borrow_index: int) -> int:
-        """Reverse of ray_mul (half-up) = ray_div (half-up)."""
-        return wad_ray_math.ray_div(underlying_amount, borrow_index)
 
 
 class ExplicitRoundingMath:
@@ -203,18 +167,6 @@ class ExplicitRoundingMath:
     def get_debt_balance(scaled_amount: int, borrow_index: int) -> int:
         """Ceil rounding: prevent under-accounting."""
         return wad_ray_math.ray_mul_ceil(scaled_amount, borrow_index)
-
-    # TODO: remove this after confirming it is unnecessary
-    @staticmethod
-    def get_scaled_from_underlying_collateral(underlying_amount: int, liquidity_index: int) -> int:
-        """Reverse of ray_mul_floor = ray_div_ceil."""
-        return wad_ray_math.ray_div_ceil(underlying_amount, liquidity_index)
-
-    # TODO: remove this after confirming it is unnecessary
-    @staticmethod
-    def get_scaled_from_underlying_debt(underlying_amount: int, borrow_index: int) -> int:
-        """Reverse of ray_mul_ceil = ray_div_floor."""
-        return wad_ray_math.ray_div_floor(underlying_amount, borrow_index)
 
 
 class TokenMathFactory:

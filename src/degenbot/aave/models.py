@@ -108,7 +108,7 @@ class BaseEnrichedScaledTokenEvent(BaseModel):
 
     # Token contract addresses for debugging
     token_address: ChecksumAddress = Field(description="Address of the scaled token contract")
-    underlying_asset: ChecksumAddress = Field(description="Address of the underlying Asset")
+    underlying_asset: ChecksumAddress = Field(description="Address of the underlying asset")
 
     COLLATERAL_TYPES: ClassVar[set[ScaledTokenEventType]] = {
         ScaledTokenEventType.COLLATERAL_MINT,
@@ -330,7 +330,7 @@ class EnrichedCollateralBurnEvent(IndexScaledEvent):
     event_type: ScaledTokenEventType = ScaledTokenEventType.COLLATERAL_BURN
     from_address: ChecksumAddress
     target_address: ChecksumAddress | None = Field(
-        default=None, description="Address receiving underlying Asset"
+        default=None, description="Address receiving underlying asset"
     )
 
 

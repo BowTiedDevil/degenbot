@@ -34,13 +34,13 @@ def get_current_borrow_index_from_pool(
     """
     Fetch the current borrow index from the Aave Pool contract.
 
-    This is used when the Asset's cached borrow_index is 0 (not yet updated
+    This is used when the asset's cached borrow_index is 0 (not yet updated
     by a ReserveDataUpdated event) to get the current global index.
 
     Args:
         provider: ProviderAdapter for blockchain calls
         pool_address: The Aave Pool contract address
-        underlying_asset_address: The underlying Asset address (e.g., GHO token)
+        underlying_asset_address: The underlying asset address (e.g., GHO token)
         block_number: The block number to query at
 
     Returns:
@@ -64,7 +64,7 @@ def get_current_borrow_index_from_pool(
 def update_debt_position_index(
     *,
     tx_context: TransactionContext,
-    debt_reserve: AaveV3Asset,
+    debt_asset: AaveV3Asset,
     debt_position: AaveV3DebtPosition,
     event_index: int,
     event_block_number: int,
@@ -86,7 +86,7 @@ def update_debt_position_index(
     fetched_index = get_current_borrow_index_from_pool(
         provider=tx_context.provider,
         pool_address=get_checksum_address(pool_contract.address),
-        underlying_asset_address=get_checksum_address(debt_reserve.underlying_token.address),
+        underlying_asset_address=get_checksum_address(debt_asset.underlying_token.address),
         block_number=event_block_number,
     )
     # Use fetched index if available, otherwise fall back to event index
