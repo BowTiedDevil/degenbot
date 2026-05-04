@@ -55,15 +55,16 @@ exclude_also = [
     "def __repr__",
     "def __str__",
     "logger.debug",
-    "case _:", # exclude catch-all
+    "assert_never",
+    "case _",
 ]
 
 [tool.coverage.run]
 source = ["src/degenbot"]
+parallel = true
+branch = true
 omit = [
-    "**/exceptions/**/*.py",
     "**/migrations/**/*.py",
-    "**/cli/**/*.py",
 ]
 
 [tool.mypy]
@@ -80,7 +81,8 @@ strict = true
 [[tool.mypy.overrides]]
 module=[
     "scipy.*",
-    "tqdm.*",    
+    "tqdm.*",
+    "networkx.*",
 ]
 ignore_missing_imports = true
 
@@ -160,21 +162,11 @@ allow-star-arg-any = true
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
     "ANN",      # type annotations for tests are low priority
-    "ARG001",   # mock/test overrides must match the interface they stub
-    "ARG002",   # pytest fixtures may be unused but must stay for injection
-    "ARG004",   # static method signatures match the protocol they implement
     "C90",      # high complexity tests are acceptable
-    "N806",     # mathematical notation (L, R0, R1, K, M, N) is conventional
-    "PLC0415",  # lazy imports avoid circular deps and optional dependency issues
     "PLC2701",  # tests may need to import private modules
-    "PLC2801",  # monkeypatching uses dunder __enter__ calls
     "PLR0904",  # don't restrict the number of methods for class-based patterns
-    "PLR0917",  # test helper constructors accept many positional args for readability
     "PLR2004",  # many tests compare results against arbitrary values — transforming to named constants is not worthwhile
     "PLR6301",  # allow tests using class-based patterns 
-    "RUF002",   # Greek letters (α, β, γ) in docstrings are standard math notation
-    "RUF003",   # Greek letters (α, β, γ) in comments are standard math notation
-    "RUF069",   # tests intentionally compare exact float values
     "S",        # asserts are expected for testing
     "SLF",      # tests may need to access private attributes to test implementation
     "T20",      # many tests use print
