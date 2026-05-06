@@ -13,8 +13,8 @@ from degenbot.connection import connection_manager
 from degenbot.exceptions import DegenbotValueError
 from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.registry import managed_pool_registry, pool_registry, token_registry
-from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from tests.fakes.pools import FakeUniswapV4Pool
 
 CHAIN_DATA_PATH = Path(__file__).parent / "fixtures" / "chain_data"
 UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
@@ -41,23 +41,6 @@ def _get_offline_v2_pool() -> UniswapV2Pool:
         init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
         silent=True,
     )
-
-
-class FakeUniswapV4Pool(AbstractLiquidityPool):
-    """Minimal fake Uniswap V4 pool for testing."""
-
-    def __init__(self, address: str, pool_id: str) -> None:
-        self.address = address
-        self.pool_id = pool_id
-        self.name = f"FakeUniswapV4Pool-{address}"
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, FakeUniswapV4Pool):
-            return self.address == other.address and self.pool_id == other.pool_id
-        return False
-
-    def __hash__(self) -> int:
-        return hash(self.address + self.pool_id)
 
 
 def test_singleton():

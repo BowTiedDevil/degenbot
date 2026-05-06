@@ -75,11 +75,16 @@ class Publisher(Protocol):
         Stop receiving messages from this `Publisher`
         """
 
+    def _notify_subscribers(self, message: AbstractPublisherMessage) -> None:
+        """
+        Send a message to all subscribers
+        """
+
 
 class PublisherMixin:
     """
-    A set of default methods to accept subscribe & unsubscribe requests. Classes using this mixin
-    meet the `Publisher` protocol requirements.
+    A set of default methods to accept subscribe & unsubscribe requests, and notify all
+    subscribers of a message. Classes using this mixin meet the `Publisher` protocol requirements.
     """
 
     def subscribe(self: Publisher, subscriber: "Subscriber") -> None:
@@ -87,6 +92,10 @@ class PublisherMixin:
 
     def unsubscribe(self: Publisher, subscriber: "Subscriber") -> None:
         self._subscribers.discard(subscriber)
+
+    def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
+        for subscriber in self._subscribers:
+            subscriber.notify(publisher=self, message=message)
 
 
 class Subscriber(Protocol):

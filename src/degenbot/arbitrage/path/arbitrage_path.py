@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
@@ -33,7 +35,8 @@ from degenbot.types.concrete import (
 from degenbot.types.hop_types import HopType
 
 if TYPE_CHECKING:
-    from degenbot.types.pool_protocols import ArbitrageCapablePool
+    from degenbot.types.hop_types import HopType
+    from degenbot.types.pool_protocols import ArbitragePathPool
 
 from degenbot.uniswap.v3_libraries.functions import (
     v3_virtual_reserves as _v3_virtual_reserves,  # noqa: F401 re-export for tests
@@ -42,21 +45,21 @@ from degenbot.uniswap.v3_libraries.functions import (
 _MIN_POOLS_FOR_ARBITRAGE_PATH = 2
 
 
-def _check_pool_compatibility(pool: object) -> PoolCompatibility:
+def _check_pool_compatibility(pool: ArbitragePathPool) -> PoolCompatibility:
     try:
         _adapter_to_hop_state(pool, zero_for_one=True)
-    except (IncompatiblePoolInvariant, TypeError, AttributeError):
+    except (IncompatiblePoolInvariant, AttributeError):
         return PoolCompatibility.INCOMPATIBLE_INVARIANT
     else:
         return PoolCompatibility.COMPATIBLE
 
 
-def _extract_fee(pool: object, zero_for_one: bool) -> Fraction:  # noqa: FBT001
+def _extract_fee(pool: ArbitragePathPool, zero_for_one: bool) -> Fraction:  # noqa: FBT001
     return _adapter_extract_fee(pool, zero_for_one=zero_for_one)
 
 
 def _pool_to_hop_state(
-    pool: object,
+    pool: ArbitragePathPool,
     zero_for_one: bool,  # noqa: FBT001
     state_override: AbstractPoolState | None = None,
 ) -> HopType:
@@ -66,7 +69,7 @@ def _pool_to_hop_state(
 class _ProfitableStateDiscovered(AbstractPublisherMessage):
     __slots__ = ("path", "result")
 
-    def __init__(self, result: SolveResult, path: "ArbitragePath") -> None:
+    def __init__(self, result: SolveResult, path: ArbitragePath) -> None:
         self.result = result
         self.path = path
 
@@ -74,7 +77,7 @@ class _ProfitableStateDiscovered(AbstractPublisherMessage):
 class _StateUpdatedNoProfit(AbstractPublisherMessage):
     __slots__ = ("path",)
 
-    def __init__(self, path: "ArbitragePath") -> None:
+    def __init__(self, path: ArbitragePath) -> None:
         self.path = path
 
 
@@ -89,7 +92,7 @@ class ArbitragePath(PublisherMixin):
 
     def __init__(
         self,
-        pools: Sequence[Any],
+        pools: Sequence[ArbitragePathPool],
         input_token: Erc20Token,
         solver: Solver,
         max_input: int | None = None,
@@ -99,7 +102,7 @@ class ArbitragePath(PublisherMixin):
             msg = f"Arbitrage path requires at least {_MIN_POOLS_FOR_ARBITRAGE_PATH} pools"
             raise PathValidationError(msg)
 
-        self._pools: tuple[Any, ...] = tuple(pools)
+        self._pools: tuple[ArbitragePathPool, ...] = tuple(pools)
         self._input_token = input_token
         self._solver = solver
         self._max_input = max_input
@@ -109,7 +112,7 @@ class ArbitragePath(PublisherMixin):
 
         self._validate_pools()
         self._swap_vectors = self._build_swap_vectors()
-        self._pool_index: dict[Any, int] = {pool: i for i, pool in enumerate(self._pools)}
+        self._pool_index: dict[ArbitragePathPool, int] = {pool: i for i, pool in enumerate(self._pools)}
         self._hop_states: list[HopType] = [
             _pool_to_hop_state(pool, self._swap_vectors[i].zero_for_one)
             for i, pool in enumerate(self._pools)
@@ -171,7 +174,7 @@ class ArbitragePath(PublisherMixin):
         return tuple(vectors)
 
     @property
-    def pools(self) -> tuple[Any, ...]:
+    def pools(self) -> tuple[ArbitragePathPool, ...]:
         return self._pools
 
     @property
@@ -341,10 +344,6 @@ class ArbitragePath(PublisherMixin):
             self._notify_subscribers(_ProfitableStateDiscovered(result, self))
         except OptimizationError:
             self._notify_subscribers(_StateUpdatedNoProfit(self))
-
-    def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
-        for subscriber in self._subscribers:
-            subscriber.notify(publisher=self, message=message)
 
 
 def _extract_amount_in(swap: AbstractSwapAmounts) -> int:

@@ -11,7 +11,6 @@ Status:
 - Curve: skipped
 """
 
-
 import pytest
 from eth_typing import ChainId
 
@@ -134,14 +133,16 @@ class TestV2V3MixedEquivalence:
 
         # Relative profit tolerance: 0.001% (the solvers use different
         # float-to-integer conversion strategies)
-        relative_profit_diff = abs(
-            legacy_result.profit_amount - new_result.profit_amount
-        ) / legacy_result.profit_amount
+        relative_profit_diff = (
+            abs(legacy_result.profit_amount - new_result.profit_amount)
+            / legacy_result.profit_amount
+        )
         assert relative_profit_diff < 0.00001  # 0.001%
 
     @pytest.mark.xfail(
         reason="V2+V3 mixed path equivalence: legacy and new system disagree on "
         "state override handling. See module docstring (V2+V3 mixed: RED).",
+        strict=True,
     )
     def test_state_override_equivalence(
         self,
@@ -204,9 +205,10 @@ class TestV2V3MixedEquivalence:
         assert new_result.profit_amount > 0
 
         # Relative profit tolerance: 0.001%
-        relative_profit_diff = abs(
-            legacy_result.profit_amount - new_result.profit_amount
-        ) / legacy_result.profit_amount
+        relative_profit_diff = (
+            abs(legacy_result.profit_amount - new_result.profit_amount)
+            / legacy_result.profit_amount
+        )
         assert relative_profit_diff < 0.00001
 
 

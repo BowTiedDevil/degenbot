@@ -4,25 +4,7 @@ import pytest
 
 from degenbot.exceptions import DegenbotValueError
 from degenbot.registry.pool import ManagedPoolRegistry
-from degenbot.types.abstract import AbstractLiquidityPool
-
-
-class FakeUniswapV4Pool(AbstractLiquidityPool):
-    """Minimal fake V4 pool for registry tests."""
-
-    def __init__(self, address: str, pool_id: str) -> None:
-        self.address = address
-        self.pool_id = pool_id
-        self.name = f"FakeV4Pool-{address[:8]}"
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, FakeUniswapV4Pool):
-            return self.address == other.address and self.pool_id == other.pool_id
-        return False
-
-    def __hash__(self) -> int:
-        return hash(self.address + self.pool_id)
-
+from tests.fakes.pools import FakeUniswapV4Pool
 
 FAKE_POOL_MANAGER = "0x1234567890123456789012345678901234567890"
 FAKE_POOL_ID = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"

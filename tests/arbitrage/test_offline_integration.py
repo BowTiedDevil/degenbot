@@ -48,7 +48,7 @@ from degenbot.uniswap.v3_types import (
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolState,
 )
-from tests.conftest import FakeSubscriber
+from tests.fakes.subscribers import FakeSubscriber
 
 # ==============================================================================
 # Offline Pool Classes
@@ -76,11 +76,11 @@ class OfflineV2Pool(UniswapV2Pool):
     ) -> None:
         # Bypass parent __init__ (which requires RPC)
         self.address = address
-        self.token0 = token0
-        self.token1 = token1
-        # tokens is a property derived from token0/token1, no need to set
-        self.fee_token0 = fee
-        self.fee_token1 = fee
+        self._token0 = token0
+        self._token1 = token1
+        # tokens is a property derived from _token0/_token1, no need to set
+        self._fee_token0 = fee
+        self._fee_token1 = fee
         self.name = name
         self.factory = factory
         self._chain_id = 1
@@ -137,14 +137,14 @@ class OfflineV3Pool(UniswapV3Pool):
     ) -> None:
         # Bypass parent __init__ (which requires RPC)
         self.address = address
-        self.token0 = token0
-        self.token1 = token1
-        # tokens is a property derived from token0/token1, no need to set
-        self.fee = fee
-        self.tick_spacing = tick_spacing
+        self._token0 = token0
+        self._token1 = token1
+        # tokens is a property derived from _token0/_token1, no need to set
+        self._fee = fee
+        self._tick_spacing = tick_spacing
         self.name = name
         self.factory = factory
-        self.sparse_liquidity_map = False
+        self._sparse_liquidity_map = False
         self._chain_id = 1
         self._initial_state_block = 0
         self._state_cache: deque[UniswapV3PoolState] = deque(maxlen=8)

@@ -23,11 +23,6 @@ class UniswapSimulationResult(AbstractSimulationResult):
     Common attributes for Uniswap V2 & V3 simulations
     """
 
-    amount0_delta: int
-    amount1_delta: int
-    initial_state: AbstractPoolState
-    final_state: AbstractPoolState
-
 
 class UniswapV3BitmapAtWord(pydantic.BaseModel, frozen=True):
     bitmap: ValidatedUint256

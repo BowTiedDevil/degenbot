@@ -13,8 +13,8 @@ from degenbot.types.hop_types import CurveStableswapHop, PoolInvariant
 from tests.arbitrage.fake_curve_pool import (
     FakeCurvePoolState,
     FakeCurveStableswapPool,
-    FakeCurveToken,
 )
+from tests.fakes.tokens import FakeToken
 
 
 class TestFakeCurvePoolConstruction:
@@ -22,8 +22,8 @@ class TestFakeCurvePoolConstruction:
 
     def test_two_coin_pool_construction(self):
         """Create a standard 2-coin Curve pool (e.g., USDC/USDT)."""
-        token0 = FakeCurveToken("0xUSDC", 6, "USDC")
-        token1 = FakeCurveToken("0xUSDT", 6, "USDT")
+        token0 = FakeToken(address="0xUSDC", decimals=6, symbol="USDC")
+        token1 = FakeToken(address="0xUSDT", decimals=6, symbol="USDT")
 
         pool = FakeCurveStableswapPool(
             tokens=(token0, token1),
@@ -41,9 +41,9 @@ class TestFakeCurvePoolConstruction:
 
     def test_three_coin_pool_construction(self):
         """Create a 3-coin Curve pool (e.g., TriPool: DAI/USDC/USDT)."""
-        dai = FakeCurveToken("0xDAI", 18, "DAI")
-        usdc = FakeCurveToken("0xUSDC", 6, "USDC")
-        usdt = FakeCurveToken("0xUSDT", 6, "USDT")
+        dai = FakeToken(address="0xDAI", decimals=18, symbol="DAI")
+        usdc = FakeToken(address="0xUSDC", decimals=6, symbol="USDC")
+        usdt = FakeToken(address="0xUSDT", decimals=6, symbol="USDT")
 
         pool = FakeCurveStableswapPool(
             tokens=(dai, usdc, usdt),
@@ -63,8 +63,8 @@ class TestFakeCurvePoolConstruction:
 
     def test_invalid_token_balance_mismatch(self):
         """Should raise if token count doesn't match balance count."""
-        token0 = FakeCurveToken("0xA", 18)
-        token1 = FakeCurveToken("0xB", 18)
+        token0 = FakeToken(address="0xA", decimals=18)
+        token1 = FakeToken(address="0xB", decimals=18)
 
         with pytest.raises(ValueError, match="Token count .* must match balance count"):
             FakeCurveStableswapPool(
@@ -76,7 +76,7 @@ class TestFakeCurvePoolConstruction:
         """Should raise if fewer than 2 or more than 8 tokens."""
         with pytest.raises(ValueError, match="Curve pools require 2-8 tokens"):
             FakeCurveStableswapPool(
-                tokens=(FakeCurveToken("0xA", 18),),  # Only 1 token
+                tokens=(FakeToken(address="0xA", decimals=18),),  # Only 1 token
                 balances=(10**18,),
             )
 
@@ -89,8 +89,8 @@ class TestCurveMath:
         """A balanced 2-coin pool with 1:1 peg."""
         return FakeCurveStableswapPool(
             tokens=(
-                FakeCurveToken("0xDAI", 18, "DAI"),
-                FakeCurveToken("0xUSDC", 6, "USDC"),
+                FakeToken(address="0xDAI", decimals=18, symbol="DAI"),
+                FakeToken(address="0xUSDC", decimals=6, symbol="USDC"),
             ),
             balances=(1_000_000 * 10**18, 1_000_000 * 10**6),
             a_coefficient=1000,
@@ -162,8 +162,8 @@ class TestHopStateGeneration:
     def two_coin_pool(self):
         return FakeCurveStableswapPool(
             tokens=(
-                FakeCurveToken("0xA", 18, "TKA"),
-                FakeCurveToken("0xB", 18, "TKB"),
+                FakeToken(address="0xA", decimals=18, symbol="TKA"),
+                FakeToken(address="0xB", decimals=18, symbol="TKB"),
             ),
             balances=(10**21, 10**21),
             a_coefficient=1000,
@@ -229,8 +229,8 @@ class TestSimulationFunctions:
         """Standard 2-coin pool for simulation tests."""
         return FakeCurveStableswapPool(
             tokens=(
-                FakeCurveToken("0xDAI", 18, "DAI"),
-                FakeCurveToken("0xUSDC", 6, "USDC"),
+                FakeToken(address="0xDAI", decimals=18, symbol="DAI"),
+                FakeToken(address="0xUSDC", decimals=6, symbol="USDC"),
             ),
             balances=(10_000_000 * 10**18, 10_000_000 * 10**6),
             a_coefficient=1000,
@@ -274,8 +274,8 @@ class TestSimulationResult:
 
     def test_simulate_swap_by_address(self):
         """Find tokens by address and calculate swap."""
-        token0 = FakeCurveToken("0x1111111111111111111111111111111111111111", 18, "TK0")
-        token1 = FakeCurveToken("0x2222222222222222222222222222222222222222", 18, "TK1")
+        token0 = FakeToken(address="0x1111111111111111111111111111111111111111", decimals=18, symbol="TK0")
+        token1 = FakeToken(address="0x2222222222222222222222222222222222222222", decimals=18, symbol="TK1")
 
         pool = FakeCurveStableswapPool(
             tokens=(token0, token1),
@@ -300,8 +300,8 @@ class TestSimulationResult:
         """Should raise for tokens not in pool."""
         pool = FakeCurveStableswapPool(
             tokens=(
-                FakeCurveToken("0xA", 18),
-                FakeCurveToken("0xB", 18),
+                FakeToken(address="0xA", decimals=18),
+                FakeToken(address="0xB", decimals=18),
             ),
             balances=(10**18, 10**18),
         )
@@ -321,8 +321,8 @@ class TestImbalancedPools:
         """Pool with 2:1 imbalance should still calculate correctly."""
         pool = FakeCurveStableswapPool(
             tokens=(
-                FakeCurveToken("0xA", 18, "A"),
-                FakeCurveToken("0xB", 18, "B"),
+                FakeToken(address="0xA", decimals=18, symbol="A"),
+                FakeToken(address="0xB", decimals=18, symbol="B"),
             ),
             balances=(2_000_000 * 10**18, 1_000_000 * 10**18),  # 2:1
             a_coefficient=1000,
@@ -353,9 +353,9 @@ class TestMetapoolSupport:
         """Create a metapool with base pool."""
         # Base pool (e.g., 3Crv: USDC/USDT/DAI)
         base_tokens = (
-            FakeCurveToken("0xUSDC", 6, "USDC"),
-            FakeCurveToken("0xUSDT", 6, "USDT"),
-            FakeCurveToken("0xDAI", 18, "DAI"),
+            FakeToken(address="0xUSDC", decimals=6, symbol="USDC"),
+            FakeToken(address="0xUSDT", decimals=6, symbol="USDT"),
+            FakeToken(address="0xDAI", decimals=18, symbol="DAI"),
         )
         base_pool = FakeCurveStableswapPool(
             tokens=base_tokens,
@@ -368,8 +368,8 @@ class TestMetapoolSupport:
         # Metapool (e.g., FRAX/3Crv where 3Crv is token1)
         metapool = FakeCurveStableswapPool(
             tokens=(
-                FakeCurveToken("0xFRAX", 18, "FRAX"),
-                FakeCurveToken("0x3CRV", 18, "3CRV"),  # LP token
+                FakeToken(address="0xFRAX", decimals=18, symbol="FRAX"),
+                FakeToken(address="0x3CRV", decimals=18, symbol="3CRV"),  # LP token
             ),
             balances=(5_000_000 * 10**18, 5_000_000 * 10**18),
             a_coefficient=1000,
@@ -388,8 +388,8 @@ class TestStateOverride:
         """Should use overridden state when provided."""
         pool = FakeCurveStableswapPool(
             tokens=(
-                FakeCurveToken("0xA", 18, "A"),
-                FakeCurveToken("0xB", 18, "B"),
+                FakeToken(address="0xA", decimals=18, symbol="A"),
+                FakeToken(address="0xB", decimals=18, symbol="B"),
             ),
             balances=(10**21, 10**21),
         )

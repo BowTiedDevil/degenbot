@@ -1,5 +1,7 @@
 from fractions import Fraction
 from threading import Lock
+from typing import Any, ClassVar
+from weakref import WeakSet
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -23,12 +25,22 @@ from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin
 from degenbot.types.hop_types import HopType
+from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 
 
-class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
+class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
     type PoolState = BalancerV2PoolState
     FEE_DENOMINATOR = 1 * 10**18
+
+    _pickle_drops: ClassVar[frozenset[str]] = frozenset({
+        "_state_lock",
+        "_subscribers",
+    })
+    _pickle_reconstructs: ClassVar[dict[str, Any]] = {
+        "_state_lock": Lock,
+        "_subscribers": WeakSet,
+    }
 
     def __init__(
         self,
@@ -99,14 +111,14 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
 
         token_manager = Erc20TokenManager(chain_id=self.chain_id)
-        self.tokens = tuple(
+        self._tokens = tuple(
             token_manager.get_erc20token(
                 address=get_checksum_address(token),
                 silent=silent,
             )
             for token in tokens
         )
-        self.scaling_factors = tuple(_compute_scaling_factor(token) for token in self.tokens)
+        self.scaling_factors = tuple(_compute_scaling_factor(token) for token in self._tokens)
 
         self._state_lock = Lock()
         self._state = BalancerV2PoolState(
@@ -157,15 +169,19 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
     def state(self) -> PoolState:
         return self._state
 
+    @property
+    def tokens(self) -> tuple[Erc20Token, ...]:
+        return self._tokens
+
     def calculate_tokens_out_from_tokens_in(
         self,
         token_in: Erc20Token,
-        token_in_quantity: int,
         token_out: Erc20Token,
+        token_in_quantity: int,
         override_state: PoolState | None = None,
     ) -> int:
-        token_in_index = self.tokens.index(token_in)
-        token_out_index = self.tokens.index(token_out)
+        token_in_index = self._tokens.index(token_in)
+        token_out_index = self._tokens.index(token_out)
 
         fee_amount = mul_up(token_in_quantity, self.fee * self.FEE_DENOMINATOR)
 
@@ -203,11 +219,11 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         token_out: ChecksumAddress,
         state_override: BalancerV2PoolState | None = None,
     ) -> SimulationResult:
-        token_in_obj = next((t for t in self.tokens if t.address == token_in), None)
+        token_in_obj = next((t for t in self._tokens if t.address == token_in), None)
         if token_in_obj is None:
             raise DegenbotValueError(message=f"token_in {token_in} not in pool")
 
-        token_out_obj = next((t for t in self.tokens if t.address == token_out), None)
+        token_out_obj = next((t for t in self._tokens if t.address == token_out), None)
         if token_out_obj is None:
             raise DegenbotValueError(message=f"token_out {token_out} not in pool")
 

@@ -10,9 +10,10 @@ from fractions import Fraction
 import pytest
 
 from degenbot.arbitrage.path.pool_hop_adapter import extract_fee, to_hop_state
-from degenbot.types.hop_types import ConstantProductHop
+from degenbot.types.hop_types import ConstantProductHop, SolidlyStableHop
 from tests.arbitrage.test_path.conftest import (
     FakeAerodromeV2Pool,
+    FakeCamelotPool,
     FakeConcentratedLiquidityPool,
     FakeToken,
     FakeUniswapV2Pool,
@@ -28,7 +29,7 @@ class _NoAttrsPool:
 
 
 def _make_token(address: str, decimals: int = 18) -> FakeToken:
-    return FakeToken(address, decimals)
+    return FakeToken(address=address, decimals=decimals)
 
 
 class TestExtractFee:
@@ -56,9 +57,9 @@ class TestExtractFee:
         pool = FakeAerodromeV2Pool(t0, t1, fee=Fraction(5, 1000))
         assert extract_fee(pool, zero_for_one=True) == Fraction(5, 1000)
 
-    def test_unknown_type_raises_typeerror(self):
+    def test_unknown_type_raises_attributeerror(self):
         pool = _NoAttrsPool()
-        with pytest.raises(TypeError):
+        with pytest.raises(AttributeError):
             extract_fee(pool, zero_for_one=True)
 
 
@@ -95,9 +96,9 @@ class TestToHopState:
         assert hop.reserve_in == 500
         assert hop.reserve_out == 1500
 
-    def test_unknown_type_raises_typeerror(self):
+    def test_unknown_type_raises_attributeerror(self):
         pool = _NoAttrsPool()
-        with pytest.raises(TypeError):
+        with pytest.raises(AttributeError):
             to_hop_state(pool, zero_for_one=True)
 
     def test_duck_typing_calls_pool_method(self):
@@ -138,11 +139,147 @@ class TestToHopState:
         assert extract_fee(FeePool(), zero_for_one=False) == Fraction(42, 1000)
         assert called_with["zfo"] is False
 
-    def test_aerodrome_stable_incompatible(self):
+    def test_aerodrome_stable_returns_solidly_hop(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         pool = FakeAerodromeV2Pool(t0, t1, stable=True)
-        from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
 
-        with pytest.raises(IncompatiblePoolInvariant):
-            to_hop_state(pool, zero_for_one=True)
+        hop = to_hop_state(pool, zero_for_one=True)
+        assert isinstance(hop, SolidlyStableHop)
+        assert hop.reserve_in == pool.state.reserves_token0
+        assert hop.reserve_out == pool.state.reserves_token1
+        assert hop.decimals_in == t0.decimals
+        assert hop.decimals_out == t1.decimals
+
+    def test_aerodrome_stable_one_for_zero(self):
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeAerodromeV2Pool(t0, t1, stable=True)
+
+        hop = to_hop_state(pool, zero_for_one=False)
+        assert isinstance(hop, SolidlyStableHop)
+        assert hop.reserve_in == pool.state.reserves_token1
+        assert hop.reserve_out == pool.state.reserves_token0
+        assert hop.decimals_in == t1.decimals
+        assert hop.decimals_out == t0.decimals
+
+    def test_aerodrome_stable_with_state_override(self):
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeAerodromeV2Pool(t0, t1, stable=True, reserve0=1000, reserve1=2000)
+        override = FakeV2PoolState(
+            address=pool.address,
+            block=None,
+            reserves_token0=500,
+            reserves_token1=1500,
+        )
+        hop = to_hop_state(pool, zero_for_one=True, state_override=override)
+        assert isinstance(hop, SolidlyStableHop)
+        assert hop.reserve_in == 500
+        assert hop.reserve_out == 1500
+
+    def test_aerodrome_volatile_returns_constant_product(self):
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeAerodromeV2Pool(t0, t1, stable=False, reserve0=1000, reserve1=2000)
+        hop = to_hop_state(pool, zero_for_one=True)
+        assert isinstance(hop, ConstantProductHop)
+        assert hop.reserve_in == 1000
+        assert hop.reserve_out == 2000
+
+
+class TestDirectPoolMethods:
+    """Tests that to_hop_state and extract_fee on pool objects produce correct results."""
+
+    def test_v2_pool_to_hop_state_delegation(self):
+        """Adapter delegates to the pool's own to_hop_state method."""
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeUniswapV2Pool(t0, t1, reserve0=3000, reserve1=6000)
+        # Call the adapter
+        hop_via_adapter = to_hop_state(pool, zero_for_one=True)
+        # Call the pool directly
+        hop_direct = pool.to_hop_state(zero_for_one=True)
+        assert hop_via_adapter == hop_direct
+
+    def test_v2_pool_extract_fee_delegation(self):
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeUniswapV2Pool(t0, t1, fee=Fraction(7, 1000))
+        assert extract_fee(pool, zero_for_one=True) == pool.extract_fee(zero_for_one=True)
+        assert extract_fee(pool, zero_for_one=False) == pool.extract_fee(zero_for_one=False)
+
+    def test_aerodrome_stable_extract_fee(self):
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeAerodromeV2Pool(t0, t1, fee=Fraction(5, 1000), stable=True)
+        assert extract_fee(pool, zero_for_one=True) == Fraction(5, 1000)
+        assert extract_fee(pool, zero_for_one=False) == Fraction(5, 1000)
+
+    def test_cl_pool_extract_fee(self):
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeConcentratedLiquidityPool(t0, t1, fee=3000)
+        assert extract_fee(pool, zero_for_one=True) == Fraction(3000, 1_000_000)
+        assert extract_fee(pool, zero_for_one=False) == Fraction(3000, 1_000_000)
+
+
+class TestCamelotPool:
+    def test_camelot_volatile_to_hop_state(self):
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeCamelotPool(t0, t1, reserve0=1000, reserve1=2000, stable_swap=False)
+        hop = to_hop_state(pool, zero_for_one=True)
+        assert isinstance(hop, ConstantProductHop)
+        assert hop.reserve_in == 1000
+        assert hop.reserve_out == 2000
+
+    def test_camelot_volatile_has_fee_out(self):
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeCamelotPool(t0, t1, stable_swap=False)
+        hop = to_hop_state(pool, zero_for_one=True)
+        assert isinstance(hop, ConstantProductHop)
+        assert hop.fee_out is not None
+
+    def test_camelot_stable_to_hop_state(self):
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeCamelotPool(t0, t1, reserve0=1000, reserve1=2000, stable_swap=True)
+        hop = to_hop_state(pool, zero_for_one=True)
+        assert isinstance(hop, SolidlyStableHop)
+        assert hop.reserve_in == 1000
+        assert hop.reserve_out == 2000
+        assert hop.decimals_in == t0.decimals
+        assert hop.decimals_out == t1.decimals
+
+    def test_camelot_stable_one_for_zero(self):
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeCamelotPool(t0, t1, reserve0=1000, reserve1=2000, stable_swap=True)
+        hop = to_hop_state(pool, zero_for_one=False)
+        assert isinstance(hop, SolidlyStableHop)
+        assert hop.reserve_in == 2000
+        assert hop.reserve_out == 1000
+
+    def test_camelot_extract_fee(self):
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeCamelotPool(t0, t1)
+        assert extract_fee(pool, zero_for_one=True) == pool.fee_token0
+        assert extract_fee(pool, zero_for_one=False) == pool.fee_token1
+
+    def test_camelot_stable_with_state_override(self):
+        t0 = _make_token("0xt0")
+        t1 = _make_token("0xt1")
+        pool = FakeCamelotPool(t0, t1, reserve0=1000, reserve1=2000, stable_swap=True)
+        override = FakeV2PoolState(
+            address=pool.address,
+            block=None,
+            reserves_token0=500,
+            reserves_token1=1500,
+        )
+        hop = to_hop_state(pool, zero_for_one=True, state_override=override)
+        assert isinstance(hop, SolidlyStableHop)
+        assert hop.reserve_in == 500
+        assert hop.reserve_out == 1500

@@ -8,7 +8,9 @@ from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
+from degenbot.solidly.solidly_functions import general_calc_exact_in_stable
 from degenbot.types.aliases import ChainId
+from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 
@@ -142,6 +144,70 @@ class CamelotLiquidityPool(UniswapV2Pool):
                 else precision_multiplier_token0
             )
             // 10**18
+        )
+
+    def to_hop_state(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        state_override: UniswapV2PoolState | None = None,
+    ) -> HopType:
+        state = state_override or self.state
+        fee_in = self.extract_fee(zero_for_one=zero_for_one)
+
+        if zero_for_one:
+            reserve_in = state.reserves_token0
+            reserve_out = state.reserves_token1
+            decimals_in = self.token0.decimals
+            decimals_out = self.token1.decimals
+        else:
+            reserve_in = state.reserves_token1
+            reserve_out = state.reserves_token0
+            decimals_in = self.token1.decimals
+            decimals_out = self.token0.decimals
+
+        if self.stable_swap:
+            reserves0 = state.reserves_token0
+            reserves1 = state.reserves_token1
+            decimals0 = 10**self.token0.decimals
+            decimals1 = 10**self.token1.decimals
+            token_in = 0 if zero_for_one else 1
+
+            def _camelot_stable_swap_fn(
+                amount_in: int,
+                __reserves0: int = reserves0,
+                __reserves1: int = reserves1,
+                __decimals0: int = decimals0,
+                __decimals1: int = decimals1,
+                __fee: Fraction = fee_in,
+                __token_in: int = token_in,
+            ) -> int:
+                return general_calc_exact_in_stable(
+                    amount_in=amount_in,
+                    token_in=__token_in,  # type: ignore[arg-type]
+                    reserves0=__reserves0,
+                    reserves1=__reserves1,
+                    decimals0=__decimals0,
+                    decimals1=__decimals1,
+                    fee=__fee,
+                    k_func=k_camelot,
+                    get_y_func=get_y_camelot,  # type: ignore[arg-type]
+                )
+
+            return SolidlyStableHop(
+                reserve_in=reserve_in,
+                reserve_out=reserve_out,
+                fee=fee_in,
+                decimals_in=decimals_in,
+                decimals_out=decimals_out,
+                swap_fn=_camelot_stable_swap_fn,
+            )
+
+        fee_out = self.fee_token1 if zero_for_one else self.fee_token0
+        return ConstantProductHop(
+            reserve_in=reserve_in,
+            reserve_out=reserve_out,
+            fee=fee_in,
+            fee_out=fee_out,
         )
 
     def calculate_tokens_out_from_tokens_in(

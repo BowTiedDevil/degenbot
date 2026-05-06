@@ -5,7 +5,7 @@ import dataclasses
 from collections import deque
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Self, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Self, TypedDict, cast
 from weakref import WeakSet
 
 import eth_abi.abi
@@ -36,8 +36,9 @@ from degenbot.provider import ProviderAdapter
 from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractArbitrage, AbstractConcentratedLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
-from degenbot.types.concrete import AbstractPublisherMessage, Publisher, PublisherMixin, Subscriber
+from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
+from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot, MissingLiquidityData
 from degenbot.uniswap.concentrated.state_manager import (
@@ -107,7 +108,7 @@ def get_pool_from_database(
     )  # type: ignore[return-value]
 
 
-class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
+class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidityPool):
     type PoolState = UniswapV3PoolState
     _state: PoolState
     _state_mgr: ConcentratedLiquidityStateManager[UniswapV3PoolState]
@@ -137,6 +138,18 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
 
     FEE_DENOMINATOR = 1_000_000
 
+    _pickle_drops: ClassVar[frozenset[str]] = frozenset({
+        "_provider",
+        "_provider_from_connection_manager",
+        "_state_lock",
+        "_subscribers",
+    })
+    _pickle_reconstructs: ClassVar[dict[str, Any]] = {
+        "_state_lock": Lock,
+        "_provider_from_connection_manager": lambda: True,
+        "_subscribers": WeakSet,
+    }
+
     @classmethod
     def from_exchange(
         cls,
@@ -164,10 +177,6 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
             init_hash=exchange.factory.pool_init_hash,
             **kwargs,
         )
-
-    def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
-        for subscriber in self._subscribers:
-            subscriber.notify(publisher=self, message=message)
 
     def __init__(
         self,
@@ -220,12 +229,12 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
             deployer_address = pool_from_db.exchange.deployer
 
             assert pool_from_db.fee_token0 == pool_from_db.fee_token1
-            self.fee = pool_from_db.fee_token0
+            self._fee = pool_from_db.fee_token0
 
-            self.tick_spacing = pool_from_db.tick_spacing
+            self._tick_spacing = pool_from_db.tick_spacing
         else:
             try:
-                factory_address, (token0_address, token1_address), self.fee, self.tick_spacing = (
+                factory_address, (token0_address, token1_address), self._fee, self._tick_spacing = (
                     self.get_immutable_pool_values(self._provider)
                 )
 
@@ -263,7 +272,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
 
         token_manager = Erc20TokenManager(chain_id=self.chain_id, provider=self._provider)
         try:
-            self.token0, self.token1 = (
+            self._token0, self._token1 = (
                 token_manager.get_erc20token(
                     address=token0_address,
                     silent=silent,
@@ -279,13 +288,13 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         if verify_address and self.address != self._verified_address():  # pragma: no branch
             raise AddressMismatch
 
-        self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, {100 * self.fee / self.FEE_DENOMINATOR:.2f}%)"  # noqa: E501
+        self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee / self.FEE_DENOMINATOR:.2f}%)"  # noqa: E501
 
         if (tick_bitmap is not None) != (tick_data is not None):
             raise DegenbotValueError(message="Provide both tick_bitmap and tick_data.")
 
         # If liquidity info was not provided, treat the mapping as sparse
-        self.sparse_liquidity_map = tick_bitmap is None or tick_data is None
+        self._sparse_liquidity_map = tick_bitmap is None or tick_data is None
 
         working_tick_bitmap = (
             {}
@@ -313,7 +322,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         )
 
         if tick_bitmap is None and tick_data is None:
-            word, _ = get_tick_word_and_bit_position(tick=tick, tick_spacing=self.tick_spacing)
+            word, _ = get_tick_word_and_bit_position(tick=tick, tick_spacing=self._tick_spacing)
             self._fetch_and_populate_initialized_ticks(
                 word_position=word,
                 tick_bitmap=working_tick_bitmap,
@@ -347,37 +356,13 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         if not silent:  # pragma: no branch
             logger.info(self.name)
             logger.info(f"• Address: {self.address}")
-            logger.info(f"• Token 0: {self.token0}")
-            logger.info(f"• Token 1: {self.token1}")
-            logger.info(f"• Fee: {self.fee}")
+            logger.info(f"• Token 0: {self._token0}")
+            logger.info(f"• Token 1: {self._token1}")
+            logger.info(f"• Fee: {self._fee}")
             logger.info(f"• Liquidity: {self.liquidity}")
             logger.info(f"• SqrtPrice: {self.sqrt_price_x96}")
             logger.info(f"• Tick: {self.tick}")
             logger.info(f"• State Block (Initial): {self._initial_state_block}")
-
-    def __getstate__(self) -> dict[str, Any]:
-        # Remove, copy, or substitute attributes that will be available to the reconstructed object
-        # after pickling/unpickling
-        copied_attributes: set[str] = set()
-        dropped_attributes = {
-            "_provider",
-            "_provider_from_connection_manager",
-            "_state_lock",
-            "_subscribers",
-        }
-
-        with self._state_lock:
-            return {
-                k: (v.copy() if k in copied_attributes else v)
-                for k, v in self.__dict__.items()
-                if k not in dropped_attributes
-            }
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        state["_state_lock"] = Lock()
-        # After unpickling, provider must be re-acquired from connection_manager
-        state["_provider_from_connection_manager"] = True
-        self.__dict__ = state
 
     def __getnewargs_ex__(self) -> tuple[tuple[()], dict[str, Any]]:
         """
@@ -387,7 +372,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         return (), {}
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1}, fee={100 * self.fee / self.FEE_DENOMINATOR:.2f}%, tick spacing={self.tick_spacing})"  # noqa:E501
+        return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1}, fee={100 * self._fee / self.FEE_DENOMINATOR:.2f}%, tick spacing={self._tick_spacing})"  # noqa:E501
 
     def __str__(self) -> str:
         return self.name
@@ -416,8 +401,8 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         if override_state is not None:
             snapshot = LiquidityMapSnapshot.from_state(
                 override_state,
-                tick_spacing=self.tick_spacing,
-                sparse=self.sparse_liquidity_map,
+                tick_spacing=self._tick_spacing,
+                sparse=self._sparse_liquidity_map,
             )
             liquidity_start = override_state.liquidity
             sqrt_price_x96_start = override_state.sqrt_price_x96
@@ -428,14 +413,14 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
             snapshot = LiquidityMapSnapshot(
                 tick_data=self.tick_data,
                 tick_bitmap=self.tick_bitmap,
-                tick_spacing=self.tick_spacing,
-                sparse=self.sparse_liquidity_map,
+                tick_spacing=self._tick_spacing,
+                sparse=self._sparse_liquidity_map,
             )
             liquidity_start = self.liquidity
             sqrt_price_x96_start = self.sqrt_price_x96
             tick_start = self.tick
 
-        if self.sparse_liquidity_map:
+        if self._sparse_liquidity_map:
             # Sparse map may raise MissingLiquidityData. Fetch missing data and retry.
             while True:
                 try:
@@ -444,7 +429,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
                         zero_for_one=zero_for_one,
                         amount_specified=amount_specified,
                         sqrt_price_limit_x96=sqrt_price_limit_x96,
-                        fee=self.fee,
+                        fee=self._fee,
                         liquidity_start=liquidity_start,
                         sqrt_price_x96_start=sqrt_price_x96_start,
                         tick_start=tick_start,
@@ -462,7 +447,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
                     snapshot = LiquidityMapSnapshot(
                         tick_data=working_data,
                         tick_bitmap=working_bitmap,
-                        tick_spacing=self.tick_spacing,
+                        tick_spacing=self._tick_spacing,
                         sparse=True,
                     )
                 else:
@@ -479,7 +464,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
                 zero_for_one=zero_for_one,
                 amount_specified=amount_specified,
                 sqrt_price_limit_x96=sqrt_price_limit_x96,
-                fee=self.fee,
+                fee=self._fee,
                 liquidity_start=liquidity_start,
                 sqrt_price_x96_start=sqrt_price_x96_start,
                 tick_start=tick_start,
@@ -523,7 +508,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         )
 
         active_ticks = [
-            ((word_position << 8) + i) * self.tick_spacing
+            ((word_position << 8) + i) * self._tick_spacing
             for i in range(256)
             if bitmap_at_word & (1 << i) > 0
         ]
@@ -594,8 +579,8 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
     def _verified_address(self) -> ChecksumAddress:
         return generate_v3_pool_address(
             deployer_address=self.deployer_address,
-            token_addresses=(self.token0.address, self.token1.address),
-            fee=self.fee,
+            token_addresses=(self._token0.address, self._token1.address),
+            fee=self._fee,
             init_hash=self.init_hash,
         )
 
@@ -707,6 +692,26 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         return self._chain_id
 
     @property
+    def token0(self) -> Erc20Token:
+        return self._token0
+
+    @property
+    def token1(self) -> Erc20Token:
+        return self._token1
+
+    @property
+    def fee(self) -> int:
+        return self._fee
+
+    @property
+    def tick_spacing(self) -> int:
+        return self._tick_spacing
+
+    @property
+    def sparse_liquidity_map(self) -> bool:
+        return self._sparse_liquidity_map
+
+    @property
     def liquidity(self) -> int:
         return self._state_mgr.liquidity
 
@@ -744,7 +749,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
 
     @property
     def tokens(self) -> tuple[Erc20Token, Erc20Token]:
-        return self.token0, self.token1
+        return self._token0, self._token1
 
     @property
     def update_block(self) -> BlockNumber:
@@ -760,7 +765,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         return self._state_mgr.swap_is_viable(
             state=state,
             zero_for_one=vector.zero_for_one,
-            sparse_liquidity_map=self.sparse_liquidity_map,
+            sparse_liquidity_map=self._sparse_liquidity_map,
         )
 
     def _get_provider_for_chain(self) -> ProviderAdapter:
@@ -881,7 +886,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         if token_in not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_in not found!")
 
-        zero_for_one = token_in == self.token0
+        zero_for_one = token_in == self._token0
 
         try:
             amount0_delta, amount1_delta, *_ = self._calculate_swap(
@@ -930,7 +935,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         if token_out not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_out not found!")
 
-        is_zero_for_one = token_out == self.token1
+        is_zero_for_one = token_out == self._token1
 
         try:
             amount0_delta, amount1_delta, *_ = self._calculate_swap(
@@ -1044,9 +1049,9 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
                 )
 
             for tick in (update.tick_lower, update.tick_upper):
-                tick_word, _ = get_tick_word_and_bit_position(tick, self.tick_spacing)
+                tick_word, _ = get_tick_word_and_bit_position(tick, self._tick_spacing)
 
-                if self.sparse_liquidity_map and tick_word not in working_tick_bitmap:
+                if self._sparse_liquidity_map and tick_word not in working_tick_bitmap:
                     # The liquidity map at the affected word must be complete prior to changing the
                     # status of any tick
                     self._fetch_and_populate_initialized_ticks(
@@ -1070,9 +1075,9 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
                     )
                     flip_tick(
                         tick_bitmap=working_tick_bitmap,
-                        sparse=self.sparse_liquidity_map,
+                        sparse=self._sparse_liquidity_map,
                         tick=tick,
-                        tick_spacing=self.tick_spacing,
+                        tick_spacing=self._tick_spacing,
                         update_block=state_block,
                     )
 
@@ -1090,9 +1095,9 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
                     del working_tick_data[tick]
                     flip_tick(
                         tick_bitmap=working_tick_bitmap,
-                        sparse=self.sparse_liquidity_map,
+                        sparse=self._sparse_liquidity_map,
                         tick=tick,
-                        tick_spacing=self.tick_spacing,
+                        tick_spacing=self._tick_spacing,
                         update_block=state_block,
                     )
                     continue
@@ -1171,7 +1176,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
 
         return (
             exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
-            if token == self.token1
+            if token == self._token1
             else 1 / exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
         )
 
@@ -1198,9 +1203,9 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         """
 
         return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
-            Fraction(10**self.token1.decimals, 10**self.token0.decimals)
-            if token == self.token0
-            else Fraction(10**self.token0.decimals, 10**self.token1.decimals)
+            Fraction(10**self._token1.decimals, 10**self._token0.decimals)
+            if token == self._token0
+            else Fraction(10**self._token0.decimals, 10**self._token1.decimals)
         )
 
     def discard_states_before_block(self, block: BlockNumber) -> None:
@@ -1228,7 +1233,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         if token_in not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message=f"Unknown token {token_in}")
 
-        zero_for_one = token_in == self.token0
+        zero_for_one = token_in == self._token0
 
         try:
             amount0_delta, amount1_delta, end_sqrt_price_x96, end_liquidity, end_tick = (
@@ -1273,7 +1278,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         if token_out not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message=f"Unknown token {token_out}")
 
-        zero_for_one = token_out == self.token1
+        zero_for_one = token_out == self._token1
 
         try:
             amount0_delta, amount1_delta, end_sqrtprice, end_liquidity, end_tick = (
@@ -1311,10 +1316,10 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         token_out: ChecksumAddress,  # noqa: ARG002
         state_override: UniswapV3PoolState | None = None,
     ) -> SimulationResult:
-        if token_in == self.token0.address:
-            token_in_obj = self.token0
-        elif token_in == self.token1.address:
-            token_in_obj = self.token1
+        if token_in == self._token0.address:
+            token_in_obj = self._token0
+        elif token_in == self._token1.address:
+            token_in_obj = self._token1
         else:
             raise DegenbotValueError(message=f"token_in {token_in} not in pool")
 
@@ -1323,7 +1328,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
             token_in_quantity=amount_in,
             override_state=state_override,
         )
-        zero_for_one = token_in_obj == self.token0
+        zero_for_one = token_in_obj == self._token0
         amount_out = -result.amount1_delta if zero_for_one else -result.amount0_delta
         return SimulationResult(
             amount_in=amount_in,
@@ -1339,10 +1344,10 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         amount_out: int,
         state_override: UniswapV3PoolState | None = None,
     ) -> SimulationResult:
-        if token_out == self.token0.address:
-            token_out_obj = self.token0
-        elif token_out == self.token1.address:
-            token_out_obj = self.token1
+        if token_out == self._token0.address:
+            token_out_obj = self._token0
+        elif token_out == self._token1.address:
+            token_out_obj = self._token1
         else:
             raise DegenbotValueError(message=f"token_out {token_out} not in pool")
 
@@ -1351,7 +1356,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
             token_out_quantity=amount_out,
             override_state=state_override,
         )
-        zero_for_one = token_out_obj == self.token1
+        zero_for_one = token_out_obj == self._token1
         amount_in = result.amount0_delta if zero_for_one else result.amount1_delta
         return SimulationResult(
             amount_in=amount_in,
@@ -1361,7 +1366,7 @@ class UniswapV3Pool(PublisherMixin, AbstractConcentratedLiquidityPool):
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
-        return Fraction(self.fee, self.FEE_DENOMINATOR)
+        return Fraction(self._fee, self.FEE_DENOMINATOR)
 
     _TICK_RANGE_CACHE: dict[tuple[str, int, bool], tuple[tuple[V3TickRangeInfo, ...], int] | None]
     _MAX_TICK_RANGE_CACHE_SIZE: int = 128

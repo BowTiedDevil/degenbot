@@ -6,7 +6,6 @@ fixture states for calculations.
 """
 
 import unittest.mock
-from dataclasses import dataclass
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Self, override
 
@@ -21,37 +20,14 @@ from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_types import UniswapV3PoolState
 from degenbot.uniswap.v4_types import UniswapV4PoolState
 from tests.arbitrage.generator.fixtures import ArbitrageCycleFixture
+from tests.fakes.tokens import FakeToken
 
 if TYPE_CHECKING:
     from degenbot.types.concrete import Subscriber
 
 
-@dataclass(frozen=True, slots=True)
-class MockErc20Token:
-    """
-    Minimal ERC20 token for testing.
-
-    Frozen dataclass to ensure hashability and equality by address.
-    """
-
-    address: ChecksumAddress
-    symbol: str = "TKN"
-    decimals: int = 18
-    chain_id: int = 1
-
-    def __hash__(self) -> int:
-        return hash(self.address)
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, MockErc20Token | Erc20Token):
-            return self.address == other.address
-        return False
-
-    def __str__(self) -> str:
-        return f"{self.symbol} ({self.address[:10]}...)"
-
-    def __repr__(self) -> str:
-        return f"MockErc20Token({self.address}, symbol={self.symbol!r})"
+MockErc20Token = FakeToken
+"""Backward-compatible alias: MockErc20Token is now FakeToken."""
 
 
 class MockV2Pool:
