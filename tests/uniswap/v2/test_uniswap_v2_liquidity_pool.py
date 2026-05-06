@@ -238,9 +238,6 @@ def test_pickle_camelot_v2_pool(fork_arbitrum_full: AnvilFork):
     pickle.dumps(lp)
 
 
-@pytest.mark.xfail(
-    reason="Will fail until tests are converted to use an in-mem or test-only database"
-)
 def test_create_nonstandard_pools(fork_mainnet_full: AnvilFork):
     set_web3(fork_mainnet_full.w3)
 

@@ -420,6 +420,7 @@ def test_cached_calculations(
         assert amount_in == quoter_amount_in
 
 
+@pytest.mark.slow
 def test_first_200_pools(
     fork_mainnet_full: AnvilFork,
     testing_pools,

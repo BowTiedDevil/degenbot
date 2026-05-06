@@ -2,11 +2,13 @@
 Compare SciPy minimize_scalar methods using the simple_v2_arb_profitable fixture.
 """
 
+import time
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import pytest
 from eth_typing import ChecksumAddress
+from scipy.optimize import minimize_scalar
 
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from tests.arbitrage.generator import FixtureFactory
@@ -129,7 +131,6 @@ class TestOptimizerMethodComparison:
         """
         Test that both Brent (with bracket) and Bounded methods find same optimum.
         """
-        from scipy.optimize import minimize_scalar
 
         # Brent: use bracket (initial search interval: a, b, c where f(b) < f(a), f(c))
         result_brent = minimize_scalar(
@@ -167,7 +168,6 @@ class TestOptimizerMethodComparison:
         """
         Test that both Golden (with bracket) and Bounded methods find same optimum.
         """
-        from scipy.optimize import minimize_scalar
 
         # Golden: use bracket (like Brent but simpler algorithm)
         result_golden = minimize_scalar(
@@ -210,9 +210,6 @@ class TestOptimizerMethodComparison:
         Benchmark test: Brent should typically be faster than Golden.
         Both use bracket method.
         """
-        import time
-
-        from scipy.optimize import minimize_scalar
 
         bracket = (1.0, 1_000_000.0, 100_000_000_000.0)
         iterations = 100
@@ -263,7 +260,6 @@ class TestOptimizerMethodComparison:
         """
         Test that Brent uses fewer function evaluations than Golden.
         """
-        from scipy.optimize import minimize_scalar
 
         bracket = (1.0, 1_000_000.0, 100_000_000_000.0)
 
@@ -291,7 +287,6 @@ class TestOptimizerMethodComparison:
         """
         Test that Brent, Golden, and Bounded achieve similar profit accuracy.
         """
-        from scipy.optimize import minimize_scalar
 
         bracket = (1.0, 1_000_000.0, 100_000_000_000.0)
         bounds = (1.0, 1_000_000_000_000.0)
@@ -340,7 +335,6 @@ class TestOptimizerMethodComparison:
         Verify that the optimal input found produces positive arbitrage profit.
         Uses MockV2Pool.calculate_tokens_out_from_tokens_in() for swap calculations.
         """
-        from scipy.optimize import minimize_scalar
 
         pool_a, pool_b, usdc = mock_pools
 

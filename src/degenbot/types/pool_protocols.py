@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
     from eth_typing import ChecksumAddress
 
+    from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types.abstract import AbstractPoolState
     from degenbot.types.concrete import Subscriber
     from degenbot.types.hop_types import HopType
@@ -100,6 +101,73 @@ class ArbitrageCapablePool(PoolSimulation, Protocol):
     Extends PoolSimulation with hop state conversion and fee extraction,
     absorbing the old PoolAdapter protocol.
     """
+
+    def to_hop_state(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        state_override: AbstractPoolState | None = None,
+    ) -> HopType: ...
+
+    def extract_fee(self, zero_for_one: bool) -> Fraction: ...  # noqa: FBT001
+
+
+@runtime_checkable
+class TwoTokenSwapCalculation(Protocol):
+    """
+    A 2-token pool that can calculate output from input.
+
+    token_out is implied by token_in since there are exactly two tokens.
+    """
+
+    def calculate_tokens_out_from_tokens_in(
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+        override_state: AbstractPoolState | None = None,
+    ) -> int: ...
+
+
+@runtime_checkable
+class MultiTokenSwapCalculation(Protocol):
+    """
+    An N-token pool requiring explicit token_out for swap calculation.
+
+    Curve and Balancer pools need token_out specified because they have
+    more than two tokens.
+    """
+
+    def calculate_tokens_out_from_tokens_in(
+        self,
+        token_in: Erc20Token,
+        token_out: Erc20Token,
+        token_in_quantity: int,
+        override_state: AbstractPoolState | None = None,
+    ) -> int: ...
+
+
+@runtime_checkable
+class ArbitragePathPool(PoolSimulation, Protocol):
+    """
+    A pool that can participate in a cyclic arbitrage path.
+
+    Extends PoolSimulation with directional token access, swap calculation,
+    hop state conversion, and fee extraction. Intentionally excludes
+    multi-token pools (Curve, Balancer) whose calculate_tokens_out_from_tokens_in
+    signature requires an explicit token_out parameter.
+    """
+
+    @property
+    def token0(self) -> Erc20Token: ...
+
+    @property
+    def token1(self) -> Erc20Token: ...
+
+    def calculate_tokens_out_from_tokens_in(
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+        override_state: AbstractPoolState | None = None,
+    ) -> int: ...
 
     def to_hop_state(
         self,

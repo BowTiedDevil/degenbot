@@ -11,8 +11,8 @@ Key features:
 - Compatible with ArbitrageCapablePool protocol
 
 Usage:
-    token0 = FakeToken("0x6B175474E89094C44Da98b954EedeAC495271d0F", 18)  # DAI
-    token1 = FakeToken("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", 6)   # USDC
+    token0 = FakeToken(address="0x6B175474E89094C44Da98b954EedeAC495271d0F", decimals=18, symbol="DAI")
+    token1 = FakeToken(address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals=6, symbol="USDC")
     
     pool = FakeCurveStableswapPool(
         tokens=(token0, token1),
@@ -37,6 +37,7 @@ from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.concrete import PublisherMixin
 from degenbot.types.hop_types import CurveStableswapHop, HopType, PoolInvariant
 from degenbot.types.pool_protocols import SimulationResult
+from tests.fakes.tokens import FakeToken  # noqa: TC001
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -44,30 +45,6 @@ if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
     from degenbot.types.concrete import Subscriber
-
-
-class FakeCurveToken:
-    """Lightweight token stand-in for Curve pools.
-    
-    Compatible with FakeToken from test_path.conftest for interoperability.
-    """
-
-    def __init__(self, address: str, decimals: int = 18, symbol: str = "") -> None:
-        self.address: ChecksumAddress = address  # type: ignore[assignment]
-        self.decimals = decimals
-        self.symbol = symbol or f"TKN{decimals}"
-
-    def __eq__(self, other: object) -> bool:
-        # Check for any object with 'address' attribute (interoperable with FakeToken)
-        if hasattr(other, "address"):
-            return self.address.lower() == other.address.lower()
-        return NotImplemented
-
-    def __hash__(self) -> int:
-        return hash(self.address.lower())
-
-    def __repr__(self) -> str:
-        return f"FakeCurveToken({self.symbol})"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -100,7 +77,7 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
     def __init__(
         self,
-        tokens: Sequence[FakeCurveToken],
+        tokens: Sequence[FakeToken],
         balances: Sequence[int],
         *,
         a_coefficient: int = 1000,
@@ -123,7 +100,7 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         if len(tokens) < 2 or len(tokens) > self.MAX_COINS:
             raise ValueError(f"Curve pools require 2-{self.MAX_COINS} tokens, got {len(tokens)}")
 
-        self.tokens: tuple[FakeCurveToken, ...] = tuple(tokens)
+        self._tokens: tuple[FakeToken, ...] = tuple(tokens)
         self.address: ChecksumAddress = address  # type: ignore[assignment]
         self.name = f"FakeCurve({len(tokens)}coins)"
 
@@ -133,7 +110,7 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         # Calculate precision multipliers (10^(18 - token.decimals))
         self.precision_multipliers = tuple(
-            10 ** (self.PRECISION_DECIMALS - token.decimals) for token in self.tokens
+            10 ** (self.PRECISION_DECIMALS - token.decimals) for token in self._tokens
         )
 
         # Initialize state
@@ -150,6 +127,11 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         return self._state
 
     @property
+    def tokens(self) -> tuple[FakeToken, ...]:
+        """Tokens in the pool."""
+        return self._tokens
+
+    @property
     def balances(self) -> tuple[int, ...]:
         """Current balances for all tokens."""
         return self._state.balances
@@ -157,20 +139,20 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
     @property
     def n_coins(self) -> int:
         """Number of coins in pool."""
-        return len(self.tokens)
+        return len(self._tokens)
 
     # Compatibility properties for ArbitragePath (2-coin pools only)
     @property
-    def token0(self) -> FakeCurveToken:
+    def token0(self) -> FakeToken:
         """First token (compatibility with V2/V3-style pools)."""
-        return self.tokens[0]
+        return self._tokens[0]
 
     @property
-    def token1(self) -> FakeCurveToken:
+    def token1(self) -> FakeToken:
         """Second token (compatibility with V2/V3-style pools)."""
-        if len(self.tokens) < 2:
+        if len(self._tokens) < 2:
             raise AttributeError("Pool has fewer than 2 tokens")
-        return self.tokens[1]
+        return self._tokens[1]
 
     def _xp(self, balances: Sequence[int]) -> tuple[int, ...]:
         """Convert balances to precision-adjusted balances.
@@ -301,7 +283,7 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             reserve_out=state.balances[j],
             fee=Fraction(self.fee, self.FEE_DENOMINATOR),
             curve_a=self.a_coefficient,
-            curve_n_coins=len(self.tokens),
+            curve_n_coins=len(self._tokens),
             curve_d=d,
             token_index_in=i,
             token_index_out=j,
@@ -334,11 +316,11 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         # Find token indices
         try:
             i = next(
-                idx for idx, t in enumerate(self.tokens)
+                idx for idx, t in enumerate(self._tokens)
                 if t.address.lower() == token_in.lower()
             )
             j = next(
-                idx for idx, t in enumerate(self.tokens)
+                idx for idx, t in enumerate(self._tokens)
                 if t.address.lower() == token_out.lower()
             )
         except StopIteration as e:
@@ -361,7 +343,7 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         self._subscribers.discard(subscriber)
 
     def __repr__(self) -> str:
-        tokens_str = "-".join(t.symbol for t in self.tokens)
+        tokens_str = "-".join(t.symbol for t in self._tokens)
         return (
             f"{self.__class__.__name__}("
             f"address={self.address}, "

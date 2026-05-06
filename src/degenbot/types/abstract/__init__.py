@@ -1,3 +1,5 @@
+import dataclasses
+
 from .arbitrage import AbstractArbitrage
 from .deployment import AbstractExchangeDeployment
 from .erc20_token import AbstractErc20Token
@@ -11,22 +13,15 @@ from .pool_manager import AbstractPoolManager
 from .pool_state import AbstractPoolState
 
 
-class AbstractSimulationResult: ...
-
-
-class AbstractPoolUpdate: ...
-
-
-class AbstractManager:
-    """
-    Base class for managers that generate, track and distribute various helper classes
-    """
+@dataclasses.dataclass(slots=True, frozen=True)
+class AbstractSimulationResult:
+    amount0_delta: int
+    amount1_delta: int
+    initial_state: AbstractPoolState
+    final_state: AbstractPoolState
 
 
 class AbstractRegistry: ...
-
-
-class AbstractTransaction: ...
 
 
 __all__ = (
@@ -36,12 +31,9 @@ __all__ = (
     "AbstractErc20Token",
     "AbstractExchangeDeployment",
     "AbstractLiquidityPool",
-    "AbstractManager",
     "AbstractPoolManager",
     "AbstractPoolState",
-    "AbstractPoolUpdate",
     "AbstractRegistry",
     "AbstractSimulationResult",
-    "AbstractTransaction",
     "AbstractUniswapV2Pool",
 )

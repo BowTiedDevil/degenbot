@@ -1,6 +1,5 @@
 import logging
 from collections.abc import Generator
-from typing import Any
 
 import dotenv
 import pytest
@@ -12,7 +11,6 @@ from degenbot.connection import connection_manager
 from degenbot.logging import logger
 from degenbot.registry import managed_pool_registry, pool_registry, token_registry
 from degenbot.types.abstract.pool_manager import AbstractPoolManager
-from degenbot.types.concrete import AbstractPublisherMessage, Publisher
 
 env_file = dotenv.find_dotenv("tests.env")
 env_values = dotenv.dotenv_values(env_file)
@@ -198,25 +196,3 @@ def fork_mainnet_full() -> Generator[AnvilFork, None, None]:
     )
     yield fork
     fork.close()
-
-
-class FakeSubscriber:
-    """
-    This subscriber class provides a record of received messages, and can be used to test that
-    publisher/subscriber methods operate as expected.
-    """
-
-    def __init__(self) -> None:
-        self.inbox: list[dict[str, Any]] = []
-
-    def notify(self, publisher: Publisher, message: AbstractPublisherMessage) -> None:
-        self.inbox.append({
-            "from": publisher,
-            "message": message,
-        })
-
-    def subscribe(self, publisher: Publisher) -> None:
-        publisher.subscribe(self)
-
-    def unsubscribe(self, publisher: Publisher) -> None:
-        publisher.unsubscribe(self)

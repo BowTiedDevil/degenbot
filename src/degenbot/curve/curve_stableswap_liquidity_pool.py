@@ -11,7 +11,7 @@ import contextlib
 from collections.abc import Iterable, Sequence
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from weakref import WeakSet
 
 import eth_abi.abi
@@ -45,19 +45,31 @@ from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import (
-    AbstractPublisherMessage,
     BoundedCache,
-    Publisher,
     PublisherMixin,
     Subscriber,
 )
 from degenbot.types.hop_types import CurveStableswapHop, HopType, PoolInvariant
+from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 
 
-class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
+class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
     type PoolState = CurveStableswapPoolState
     _state_cache: BoundedCache[BlockNumber, PoolState]
+
+    _pickle_drops: ClassVar[frozenset[str]] = frozenset({
+        "_provider",
+        "_provider_from_connection_manager",
+        "_state_lock",
+        "_subscribers",
+    })
+    _pickle_reconstructs: ClassVar[dict[str, Any]] = {
+        "_state_lock": Lock,
+        "_provider_from_connection_manager": lambda: True,
+        "_provider": lambda: None,
+        "_subscribers": WeakSet,
+    }
 
     # Constants from contract
     # ref: https://github.com/curvefi/curve-contract/blob/master/contracts/pool-templates/base/SwapTemplateBase.vy
@@ -167,10 +179,6 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             "0xf253f83AcA21aAbD2A20553AE0BF7F65C755A07F",
         )
     )
-
-    def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
-        for subscriber in self._subscribers:
-            subscriber.notify(publisher=self, message=message)
 
     def __init__(
         self,
@@ -583,7 +591,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             address=get_lp_token_address(),
             silent=silent,
         )
-        self.tokens: tuple[Erc20Token, ...] = tuple(
+        self._tokens: tuple[Erc20Token, ...] = tuple(
             token_manager.get_erc20token(
                 address=token_address,
                 silent=silent,
@@ -595,7 +603,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         self.base_pool: CurveStableswapPool | None = None
         if is_metapool():
             # Curve metapools hold the LP token for the base pool at index 1
-            base_pool_address = get_pool_from_lp_token(self.tokens[1].address)
+            base_pool_address = get_pool_from_lp_token(self._tokens[1].address)
 
             if (
                 base_pool := pool_registry.get(
@@ -609,7 +617,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 assert isinstance(base_pool, CurveStableswapPool)
 
             self.base_pool = base_pool
-            self.tokens_underlying = (self.tokens[0], *self.base_pool.tokens)
+            self.tokens_underlying = (self._tokens[0], *self.base_pool.tokens)
 
             self.base_cache_updated: int | None = None
             with contextlib.suppress(web3.exceptions.ContractLogicError):
@@ -620,7 +628,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 self.base_virtual_price = self._get_base_virtual_price(block_number=state_block)
 
         balances: list[int] = []
-        for token_id, _ in enumerate(self.tokens):
+        for token_id, _ in enumerate(self._tokens):
             token_balance: int
             (token_balance,) = eth_abi.abi.decode(
                 types=[self._coin_index_type],
@@ -642,10 +650,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         ]
         """
         self.rate_multipliers = tuple(
-            10 ** (2 * self.PRECISION_DECIMALS - token.decimals) for token in self.tokens
+            10 ** (2 * self.PRECISION_DECIMALS - token.decimals) for token in self._tokens
         )
         self.precision_multipliers = tuple(
-            cast("int", 10 ** (self.PRECISION_DECIMALS - token.decimals)) for token in self.tokens
+            cast("int", 10 ** (self.PRECISION_DECIMALS - token.decimals)) for token in self._tokens
         )
 
         self._state = CurveStableswapPoolState(
@@ -663,7 +671,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         set_pool_specific_attributes()
 
         fee_string = f"{100 * self.fee / self.FEE_DENOMINATOR:.2f}"
-        token_string = "-".join([token.symbol for token in self.tokens])
+        token_string = "-".join([token.symbol for token in self._tokens])
         self.name = f"{token_string} ({self.__class__.__name__}, {fee_string}%)"
 
         self._subscribers: WeakSet[Subscriber] = WeakSet()
@@ -675,33 +683,12 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 f"{self.name} @ {self.address}, A={self.a_coefficient}, fee={100 * self.fee / self.FEE_DENOMINATOR:.2f}%"  # noqa:E501
             )
             for token_id, (token, balance) in enumerate(
-                zip(self.tokens, self.balances, strict=True)
+                zip(self._tokens, self.balances, strict=True)
             ):
                 logger.info(f"• Token {token_id}: {token} - Reserves: {balance}")
 
-    def __getstate__(self) -> dict[str, Any]:
-        # Remove objects that cannot be pickled and are unnecessary to perform
-        # the calculation
-        dropped_attributes = (
-            "_provider",
-            "_provider_from_connection_manager",
-            "_state_lock",
-            "_subscribers",
-        )
-
-        with self._state_lock:
-            return {k: v for k, v in self.__dict__.items() if k not in dropped_attributes}
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        state["_state_lock"] = Lock()
-        # After unpickling, provider must be re-acquired from connection_manager
-        state["_provider_from_connection_manager"] = True
-        # Provider will be fetched from connection_manager when needed
-        state["_provider"] = None
-        self.__dict__ = state
-
     def __repr__(self) -> str:  # pragma: no cover
-        token_string = "-".join([token.symbol for token in self.tokens])
+        token_string = "-".join([token.symbol for token in self._tokens])
         return f"{self.__class__.__name__}(address={self.address}, tokens={token_string}, fee={100 * self.fee / self.FEE_DENOMINATOR:.2f}%, A={self.a_coefficient})"  # noqa:E501
 
     @property
@@ -715,6 +702,10 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
     @property
     def state(self) -> CurveStableswapPoolState:
         return self._state
+
+    @property
+    def tokens(self) -> tuple[Erc20Token, ...]:
+        return self._tokens
 
     @property
     def update_block(self) -> BlockNumber:
@@ -779,7 +770,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         Needed to prevent front-running, not for precise calculations!
         """
 
-        n_coins = len(self.tokens)
+        n_coins = len(self._tokens)
 
         pool_balances = (
             list(override_state.balances) if override_state is not None else list(self.balances)
@@ -824,7 +815,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             )
         )
 
-        n_coins = len(self.tokens)
+        n_coins = len(self._tokens)
         amp = self._a(timestamp=self._block_timestamps[block_number])
         total_supply = self.lp_token.get_total_supply(block_identifier=block_number)
         precisions = self.precision_multipliers
@@ -951,7 +942,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         }:
             live_balances = [
                 token.get_balance(self.address, block_identifier=block_number)
-                for token in self.tokens
+                for token in self._tokens
             ]
             admin_balances = self._get_admin_balances(block_number=block_number)
 
@@ -1005,7 +996,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 with contextlib.suppress(KeyError):
                     return self._cached_price_scale[block_number]
 
-                n_coins = len(self.tokens)
+                n_coins = len(self._tokens)
 
                 price_scale = [0] * (n_coins - 1)
                 for token_index in range(n_coins - 1):
@@ -1027,7 +1018,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 _ann = A * N**N
                 """
 
-                n_coins = len(self.tokens)
+                n_coins = len(self._tokens)
                 a_multiplier = self.A_PRECISION
 
                 # Safety checks
@@ -1120,7 +1111,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                     k = fee_gamma * 10**18 // (fee_gamma + 10**18 - k)
                 return k
 
-            n_coins = len(self.tokens)
+            n_coins = len(self._tokens)
 
             assert i != j, "coin index out of range"
             assert i < n_coins, "coin index out of range"
@@ -1237,7 +1228,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         }:
             live_balances = [
                 token.get_balance(self.address, block_identifier=block_number)
-                for token in self.tokens
+                for token in self._tokens
             ]
             admin_balances = self._get_admin_balances(block_number=block_number)
             balances = [
@@ -1315,7 +1306,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         if self.address == "0xEB16Ae0052ed37f479f7fe63849198Df1765a733":
             live_balances = [
                 token.get_balance(self.address, block_identifier=block_number)
-                for token in self.tokens
+                for token in self._tokens
             ]
             admin_balances = self._get_admin_balances(block_number=block_number)
 
@@ -1341,7 +1332,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         if self.address == "0xDeBF20617708857ebe4F679508E7b7863a8A8EeE":
             live_balances = [
                 token.get_balance(self.address, block_identifier=block_number)
-                for token in self.tokens
+                for token in self._tokens
             ]
             admin_balances = self._get_admin_balances(block_number=block_number)
             balances = [
@@ -1402,7 +1393,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         if self.address == "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d":
             base_n_coins = len(self.base_pool.tokens)
-            max_coin = len(self.tokens) - 1
+            max_coin = len(self._tokens) - 1
             redemption_coin = 0
 
             # dx and dy in underlying units
@@ -1485,7 +1476,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             "0x4606326b4Db89373F5377C316d3b0F6e55Bc6A20",
         }:
             base_n_coins = len(self.base_pool.tokens)
-            max_coin = len(self.tokens) - 1
+            max_coin = len(self._tokens) - 1
 
             rates = (self.PRECISION, self._get_virtual_price(block_number=block_number))
             xp = self._xp(rates=rates, balances=pool_balances)
@@ -1564,7 +1555,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         precisions = self.precision_multipliers
 
         base_n_coins = len(self.base_pool.tokens)
-        max_coin = len(self.tokens) - 1
+        max_coin = len(self._tokens) - 1
 
         # Use base_i or base_j if they are >= 0
         base_i = i - max_coin
@@ -1705,7 +1696,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             return self._cached_admin_balances[block_number]
 
         admin_balances: list[int] = []
-        for token_index, _ in enumerate(self.tokens):
+        for token_index, _ in enumerate(self._tokens):
             admin_balance: int
             (admin_balance,) = raw_call(
                 connection_manager.get_provider(chain_id=self.chain_id),
@@ -1810,7 +1801,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         d = s = sum(_xp)
         if s == 0:
             return 0
-        n_coins = len(self.tokens)
+        n_coins = len(self._tokens)
         a_nn = _amp * n_coins
 
         for _ in range(255):  # pragma: no branch
@@ -1840,7 +1831,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         # x in the input is converted to the same price/precision
 
-        n_coins = len(self.tokens)
+        n_coins = len(self._tokens)
 
         assert i != j, "same coin"
         assert j >= 0, "j below zero"
@@ -1888,7 +1879,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         raise EVMRevertError(error="y calculation did not converge.")  # pragma: no cover
 
     def _get_y_d(self, a: int, i: int, xp: Sequence[int], d: int) -> int:
-        n_coins = len(self.tokens)
+        n_coins = len(self._tokens)
 
         assert i >= 0  # dev: i below zero
         assert i < n_coins  # dev: i above N_COINS
@@ -1945,7 +1936,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         result: list[int] = []
         rate: int
         for token, use_lending, multiplier in zip(
-            self.tokens,
+            self._tokens,
             self.use_lending,
             self.precision_multipliers,
             strict=True,
@@ -1998,7 +1989,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         result: list[int] = []
         for token, multiplier, use_lending in zip(
-            self.tokens,
+            self._tokens,
             self.precision_multipliers,
             self.use_lending,
             strict=True,
@@ -2030,7 +2021,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         result: list[int] = []
         for token, precision_multiplier in zip(
-            self.tokens, self.precision_multipliers, strict=True
+            self._tokens, self.precision_multipliers, strict=True
         ):
             rate: int
             (rate,) = eth_abi.abi.decode(
@@ -2080,7 +2071,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         (ratio,) = eth_abi.abi.decode(
             types=["uint256"],
             data=provider.call(
-                to=self.tokens[1].address,
+                to=self._tokens[1].address,
                 data=Web3.keccak(text="getExchangeRate()")[:4],
                 block=block_number,
             ),
@@ -2105,7 +2096,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         (ratio,) = eth_abi.abi.decode(
             types=["uint256"],
             data=provider.call(
-                to=self.tokens[1].address,
+                to=self._tokens[1].address,
                 data=Web3.keccak(text="ratio()")[:4],
                 block=block_number,
             ),
@@ -2169,7 +2160,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
             token_balances = []
             token_balance: int
-            for token_id, _ in enumerate(self.tokens):
+            for token_id, _ in enumerate(self._tokens):
                 (token_balance,) = eth_abi.abi.decode(
                     types=[self._coin_index_type],
                     data=provider.call(
@@ -2261,8 +2252,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             logger.debug(f"Balances: {override_state.balances}")
 
         tokens_used_this_pool = [
-            token_in in self.tokens,
-            token_out in self.tokens,
+            token_in in self._tokens,
+            token_out in self._tokens,
         ]
 
         tokens_used_in_base_pool = []
@@ -2277,8 +2268,8 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 raise NoLiquidity(message="One or more of the tokens has a zero balance.")
 
             return self.get_dy(
-                i=self.tokens.index(token_in),
-                j=self.tokens.index(token_out),
+                i=self._tokens.index(token_in),
+                j=self._tokens.index(token_out),
                 dx=token_in_quantity,
                 block_identifier=block_number,
                 override_state=override_state,
@@ -2293,13 +2284,13 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             if any(balance == 0 for balance in self.balances):
                 raise NoLiquidity(message="One or more of the tokens has a zero balance.")
 
-            token_in_from_metapool = token_in in self.tokens
-            token_out_from_metapool = token_out in self.tokens
+            token_in_from_metapool = token_in in self._tokens
+            token_out_from_metapool = token_out in self._tokens
             assert token_in_from_metapool or token_out_from_metapool
 
-            if token_in_from_metapool and self.balances[self.tokens.index(token_in)] == 0:
+            if token_in_from_metapool and self.balances[self._tokens.index(token_in)] == 0:
                 raise NoLiquidity(message=f"{token_in} has a zero balance.")
-            if token_out_from_metapool and self.balances[self.tokens.index(token_out)] == 0:
+            if token_out_from_metapool and self.balances[self._tokens.index(token_out)] == 0:
                 raise NoLiquidity(message=f"{token_out} has a zero balance.")
 
             token_in_from_basepool = token_in in self.base_pool.tokens
@@ -2319,12 +2310,12 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
             return self._get_dy_underlying(
                 i=(
-                    self.tokens.index(token_in)
+                    self._tokens.index(token_in)
                     if token_in_from_metapool
                     else self.tokens_underlying.index(token_in)
                 ),
                 j=(
-                    self.tokens.index(token_out)
+                    self._tokens.index(token_out)
                     if token_out_from_metapool
                     else self.tokens_underlying.index(token_out)
                 ),
@@ -2363,17 +2354,17 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         token_out: ChecksumAddress,
         state_override: CurveStableswapPoolState | None = None,
     ) -> SimulationResult:
-        token_in_obj = next((t for t in self.tokens if t.address == token_in), None)
+        token_in_obj = next((t for t in self._tokens if t.address == token_in), None)
         if token_in_obj is None:
-            all_tokens = list(self.tokens)
+            all_tokens = list(self._tokens)
             if self.base_pool is not None:
                 all_tokens.extend(self.base_pool.tokens)
             if token_in not in {t.address for t in all_tokens}:
                 raise DegenbotValueError(message=f"token_in {token_in} not in pool")
 
-        token_out_obj = next((t for t in self.tokens if t.address == token_out), None)
+        token_out_obj = next((t for t in self._tokens if t.address == token_out), None)
         if token_out_obj is None:
-            all_tokens = list(self.tokens)
+            all_tokens = list(self._tokens)
             if self.base_pool is not None:
                 all_tokens.extend(self.base_pool.tokens)
             if token_out not in {t.address for t in all_tokens}:
@@ -2438,7 +2429,7 @@ class CurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             reserve_out=balances[j],
             fee=Fraction(self.fee, self.FEE_DENOMINATOR),
             curve_a=self.a_coefficient,
-            curve_n_coins=len(self.tokens),
+            curve_n_coins=len(self._tokens),
             curve_d=0,  # D is computed dynamically in get_dy via _get_y
             token_index_in=i,
             token_index_out=j,

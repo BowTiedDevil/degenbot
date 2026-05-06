@@ -10,34 +10,17 @@ from degenbot.types.abstract import (
     AbstractUniswapV2Pool,
 )
 from degenbot.types.concrete import PublisherMixin
-from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop, HopType
+from degenbot.types.hop_types import (
+    BoundedProductHop,
+    ConstantProductHop,
+    HopType,
+    SolidlyStableHop,
+)
 from degenbot.types.pool_protocols import SimulationResult
+from tests.fakes.tokens import FakeToken
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
-
-
-class FakeToken:
-    """Lightweight token stand-in for V2/V3 pools.
-    
-    Compatible with FakeCurveToken from fake_curve_pool for interoperability.
-    """
-
-    def __init__(self, address: str, decimals: int = 18) -> None:
-        self.address = address
-        self.decimals = decimals
-
-    def __eq__(self, other: object) -> bool:
-        # Check for any object with 'address' attribute (interoperable with FakeCurveToken)
-        if hasattr(other, "address"):
-            return self.address.lower() == other.address.lower()
-        return NotImplemented
-
-    def __hash__(self) -> int:
-        return hash(self.address.lower())
-
-    def __repr__(self) -> str:
-        return f"FakeToken({self.address})"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -56,12 +39,12 @@ class FakeUniswapV2Pool(AbstractUniswapV2Pool, PublisherMixin):
         fee: Fraction = Fraction(3, 1000),
         address: str = "0xpool",
     ) -> None:
-        self.token0 = token0
-        self.token1 = token1
+        self._token0 = token0
+        self._token1 = token1
         self.address: ChecksumAddress = address  # type: ignore[assignment]
         self.name = f"FakeV2({address})"
-        self.fee_token0 = fee
-        self.fee_token1 = fee
+        self._fee_token0 = fee
+        self._fee_token1 = fee
         self._state = FakeV2PoolState(
             address=self.address,
             block=None,
@@ -73,6 +56,34 @@ class FakeUniswapV2Pool(AbstractUniswapV2Pool, PublisherMixin):
     @property
     def state(self) -> FakeV2PoolState:
         return self._state
+
+    @property
+    def token0(self) -> FakeToken:
+        return self._token0
+
+    @property
+    def token1(self) -> FakeToken:
+        return self._token1
+
+    @property
+    def fee_token0(self) -> Fraction:
+        return self._fee_token0
+
+    @property
+    def fee_token1(self) -> Fraction:
+        return self._fee_token1
+
+    @property
+    def reserves_token0(self) -> int:
+        return self._state.reserves_token0
+
+    @property
+    def reserves_token1(self) -> int:
+        return self._state.reserves_token1
+
+    @property
+    def tokens(self) -> tuple[FakeToken, FakeToken]:
+        return self._token0, self._token1
 
     def to_hop_state(
         self, zero_for_one: bool,  # noqa: FBT001
@@ -151,15 +162,15 @@ class FakeConcentratedLiquidityPool(AbstractConcentratedLiquidityPool, Publisher
         tick_spacing: int = 60,
         address: str = "0xpool_cl",
     ) -> None:
-        self.token0 = token0
-        self.token1 = token1
+        self._token0 = token0
+        self._token1 = token1
         self.address: ChecksumAddress = address  # type: ignore[assignment]
         self.name = f"FakeCL({address})"
-        self.fee = fee
-        self.tick_spacing = tick_spacing
-        self.tick_data: dict[str, object] = {}
-        self.tick_bitmap: dict[str, object] = {}
-        self.sparse_liquidity_map = True
+        self._fee = fee
+        self._tick_spacing = tick_spacing
+        self._tick_data: dict[str, object] = {}
+        self._tick_bitmap: dict[str, object] = {}
+        self._sparse_liquidity_map = True
         self._state = FakeCLPoolState(
             address=self.address,
             block=None,
@@ -174,6 +185,34 @@ class FakeConcentratedLiquidityPool(AbstractConcentratedLiquidityPool, Publisher
         return self._state
 
     @property
+    def token0(self) -> FakeToken:
+        return self._token0
+
+    @property
+    def token1(self) -> FakeToken:
+        return self._token1
+
+    @property
+    def fee(self) -> int:
+        return self._fee
+
+    @property
+    def tick_spacing(self) -> int:
+        return self._tick_spacing
+
+    @property
+    def tick_bitmap(self) -> dict[str, object]:
+        return self._tick_bitmap
+
+    @property
+    def tick_data(self) -> dict[str, object]:
+        return self._tick_data
+
+    @property
+    def sparse_liquidity_map(self) -> bool:
+        return self._sparse_liquidity_map
+
+    @property
     def liquidity(self) -> int:
         return self._state.liquidity
 
@@ -184,6 +223,10 @@ class FakeConcentratedLiquidityPool(AbstractConcentratedLiquidityPool, Publisher
     @property
     def tick(self) -> int:
         return self._state.tick
+
+    @property
+    def tokens(self) -> tuple[FakeToken, FakeToken]:
+        return self._token0, self._token1
 
     def to_hop_state(
         self, zero_for_one: bool,  # noqa: FBT001
@@ -248,12 +291,12 @@ class FakeAerodromeV2Pool(AbstractAerodromeV2Pool, PublisherMixin):
         stable: bool = False,
         address: str = "0xpool_aero",
     ) -> None:
-        self.token0 = token0
-        self.token1 = token1
+        self._token0 = token0
+        self._token1 = token1
         self.address: ChecksumAddress = address  # type: ignore[assignment]
         self.name = f"FakeAero({address})"
-        self.fee = fee
-        self.stable = stable
+        self._fee = fee
+        self._stable = stable
         self._state = FakeV2PoolState(
             address=self.address,
             block=None,
@@ -266,34 +309,74 @@ class FakeAerodromeV2Pool(AbstractAerodromeV2Pool, PublisherMixin):
     def state(self) -> FakeV2PoolState:
         return self._state
 
+    @property
+    def token0(self) -> FakeToken:
+        return self._token0
+
+    @property
+    def token1(self) -> FakeToken:
+        return self._token1
+
+    @property
+    def fee(self) -> Fraction:
+        return self._fee
+
+    @property
+    def stable(self) -> bool:
+        return self._stable
+
+    @property
+    def reserves_token0(self) -> int:
+        return self._state.reserves_token0
+
+    @property
+    def reserves_token1(self) -> int:
+        return self._state.reserves_token1
+
+    @property
+    def tokens(self) -> tuple[FakeToken, FakeToken]:
+        return self._token0, self._token1
+
     def to_hop_state(
         self, zero_for_one: bool,  # noqa: FBT001
         state_override: AbstractPoolState | None = None,
     ) -> HopType:
-        from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
-
-        if self.stable:
-            raise IncompatiblePoolInvariant(message="Stable pools not supported")
-
         state = (
             state_override
             if isinstance(state_override, FakeV2PoolState)
             else self._state
         )
+
         if zero_for_one:
-            return ConstantProductHop(
-                reserve_in=state.reserves_token0,
-                reserve_out=state.reserves_token1,
+            reserve_in = state.reserves_token0
+            reserve_out = state.reserves_token1
+            decimals_in = self._token0.decimals
+            decimals_out = self._token1.decimals
+        else:
+            reserve_in = state.reserves_token1
+            reserve_out = state.reserves_token0
+            decimals_in = self._token1.decimals
+            decimals_out = self._token0.decimals
+
+        if self._stable:
+            from degenbot.types.hop_types import SolidlyStableHop
+
+            return SolidlyStableHop(
+                reserve_in=reserve_in,
+                reserve_out=reserve_out,
                 fee=self.fee,
+                decimals_in=decimals_in,
+                decimals_out=decimals_out,
             )
+
         return ConstantProductHop(
-            reserve_in=state.reserves_token1,
-            reserve_out=state.reserves_token0,
+            reserve_in=reserve_in,
+            reserve_out=reserve_out,
             fee=self.fee,
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
-        return self.fee
+        return self._fee
 
     def simulate_swap(
         self,
@@ -307,10 +390,10 @@ class FakeAerodromeV2Pool(AbstractAerodromeV2Pool, PublisherMixin):
             if isinstance(state_override, FakeV2PoolState)
             else self._state
         )
-        zfo = token_in == self.token0.address
+        zfo = token_in == self._token0.address
         r_in = state.reserves_token0 if zfo else state.reserves_token1
         r_out = state.reserves_token1 if zfo else state.reserves_token0
-        fee = self.fee
+        fee = self._fee
         amount_in_with_fee = amount_in - int(amount_in * fee)
         amount_out = r_out * amount_in_with_fee // (r_in + amount_in_with_fee)
         return SimulationResult(
@@ -327,16 +410,136 @@ class FakeAerodromeV2Pool(AbstractAerodromeV2Pool, PublisherMixin):
         self._subscribers.discard(subscriber)
 
 
-class FakeSubscriber:
-    def __init__(self) -> None:
-        self.notifications: list[tuple[object, object]] = []
+class FakeCamelotPool(AbstractUniswapV2Pool, PublisherMixin):
+    """Fake Camelot pool with split fees and optional stable_swap."""
 
-    def notify(self, publisher: object, message: object) -> None:
-        self.notifications.append((publisher, message))
+    def __init__(
+        self,
+        token0: FakeToken,
+        token1: FakeToken,
+        reserve0: int = 10**18,
+        reserve1: int = 2 * 10**18,
+        fee: Fraction = Fraction(3, 1000),
+        *,
+        stable_swap: bool = False,
+        address: str = "0xpool_camelot",
+    ) -> None:
+        self._token0 = token0
+        self._token1 = token1
+        self.address: ChecksumAddress = address  # type: ignore[assignment]
+        self.name = f"FakeCamelot({address})"
+        self._fee_token0 = fee
+        self._fee_token1 = fee
+        self.stable_swap = stable_swap
+        self._state = FakeV2PoolState(
+            address=self.address,
+            block=None,
+            reserves_token0=reserve0,
+            reserves_token1=reserve1,
+        )
+        self._subscribers: WeakSet[object] = WeakSet()
+
+    @property
+    def state(self) -> FakeV2PoolState:
+        return self._state
+
+    @property
+    def token0(self) -> FakeToken:
+        return self._token0
+
+    @property
+    def token1(self) -> FakeToken:
+        return self._token1
+
+    @property
+    def fee_token0(self) -> Fraction:
+        return self._fee_token0
+
+    @property
+    def fee_token1(self) -> Fraction:
+        return self._fee_token1
+
+    @property
+    def reserves_token0(self) -> int:
+        return self._state.reserves_token0
+
+    @property
+    def reserves_token1(self) -> int:
+        return self._state.reserves_token1
+
+    @property
+    def tokens(self) -> tuple[FakeToken, FakeToken]:
+        return self._token0, self._token1
+
+    def to_hop_state(
+        self, zero_for_one: bool,  # noqa: FBT001
+        state_override: AbstractPoolState | None = None,
+    ) -> HopType:
+        state = (
+            state_override
+            if isinstance(state_override, FakeV2PoolState)
+            else self._state
+        )
+
+        if zero_for_one:
+            reserve_in = state.reserves_token0
+            reserve_out = state.reserves_token1
+            decimals_in = self._token0.decimals
+            decimals_out = self._token1.decimals
+        else:
+            reserve_in = state.reserves_token1
+            reserve_out = state.reserves_token0
+            decimals_in = self._token1.decimals
+            decimals_out = self._token0.decimals
+
+        if self.stable_swap:
+            return SolidlyStableHop(
+                reserve_in=reserve_in,
+                reserve_out=reserve_out,
+                fee=self.fee_token0 if zero_for_one else self.fee_token1,
+                decimals_in=decimals_in,
+                decimals_out=decimals_out,
+            )
+
+        fee_out = self.fee_token1 if zero_for_one else self.fee_token0
+        return ConstantProductHop(
+            reserve_in=reserve_in,
+            reserve_out=reserve_out,
+            fee=self.fee_token0 if zero_for_one else self.fee_token1,
+            fee_out=fee_out,
+        )
+
+    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
+        return self.fee_token0 if zero_for_one else self.fee_token1
+
+    def simulate_swap(
+        self,
+        token_in: str,
+        amount_in: int,
+        token_out: str,
+        state_override: AbstractPoolState | None = None,
+    ) -> SimulationResult:
+        state = (
+            state_override
+            if isinstance(state_override, FakeV2PoolState)
+            else self._state
+        )
+        return SimulationResult(
+            amount_in=amount_in,
+            amount_out=0,
+            initial_state=state,
+            final_state=state,
+        )
+
+    def subscribe(self, subscriber: object) -> None:
+        self._subscribers.add(subscriber)
+
+    def unsubscribe(self, subscriber: object) -> None:
+        self._subscribers.discard(subscriber)
 
 
 def _make_token(address: str, decimals: int = 18) -> FakeToken:
-    return FakeToken(address, decimals)
+    return FakeToken(address=address, decimals=decimals)
 
 
 def _make_v2_pool(

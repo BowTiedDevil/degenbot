@@ -1,54 +1,36 @@
-from abc import ABC
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any
 
 from eth_typing import ChecksumAddress
-from hexbytes import HexBytes
+
+from degenbot.types.address_comparable import AddressComparable
+
+if TYPE_CHECKING:
+    from fractions import Fraction
+
+    from degenbot.erc20.erc20 import Erc20Token
+    from degenbot.types.abstract.pool_state import AbstractPoolState
+    from degenbot.types.pool_protocols import SimulationResult
 
 
-class AbstractLiquidityPool:
+class AbstractLiquidityPool(AddressComparable, ABC):
     address: ChecksumAddress
     name: str
 
-    def __eq__(self, other: object) -> bool:
-        match other:
-            case AbstractLiquidityPool():
-                return self.address == other.address
-            case HexBytes():
-                return self.address.lower() == other.to_0x_hex().lower()
-            case bytes():
-                return self.address.lower() == "0x" + other.hex().lower()
-            case str():
-                return self.address.lower() == other.lower()
-            case _:
-                return NotImplemented
+    @property
+    @abstractmethod
+    def tokens(self) -> tuple[Erc20Token, ...]: ...
 
-    def __lt__(self, other: object) -> bool:
-        match other:
-            case AbstractLiquidityPool():
-                return self.address < other.address
-            case HexBytes():
-                return self.address.lower() < other.to_0x_hex().lower()
-            case bytes():
-                return self.address.lower() < "0x" + other.hex().lower()
-            case str():
-                return self.address.lower() < other.lower()
-            case _:
-                return NotImplemented
-
-    def __gt__(self, other: object) -> bool:
-        match other:
-            case AbstractLiquidityPool():
-                return self.address > other.address
-            case HexBytes():
-                return self.address.lower() > other.to_0x_hex().lower()
-            case bytes():
-                return self.address.lower() > "0x" + other.hex().lower()
-            case str():
-                return self.address.lower() > other.lower()
-            case _:
-                return NotImplemented
-
-    def __hash__(self) -> int:
-        return hash(self.address)
+    @abstractmethod
+    def simulate_swap(
+        self,
+        token_in: ChecksumAddress,
+        amount_in: int,
+        token_out: ChecksumAddress,
+        state_override: AbstractPoolState | None = None,
+    ) -> SimulationResult: ...
 
     def __str__(self) -> str:
         return self.name
@@ -58,42 +40,121 @@ class AbstractUniswapV2Pool(AbstractLiquidityPool, ABC):
     """
     Abstract base class for Uniswap V2-like constant product pools with directional fees.
 
-    Expected attributes:
-        token0, token1: Token objects
-        fee_token0, fee_token1: Fraction
-        state: Object with reserves_token0, reserves_token1
-        address: ChecksumAddress
+    See abstract properties for the required interface.
     """
+
+    @property
+    @abstractmethod
+    def token0(self) -> Erc20Token: ...
+
+    @property
+    @abstractmethod
+    def token1(self) -> Erc20Token: ...
+
+    @property
+    @abstractmethod
+    def fee_token0(self) -> Fraction: ...
+
+    @property
+    @abstractmethod
+    def fee_token1(self) -> Fraction: ...
+
+    @property
+    @abstractmethod
+    def state(self) -> AbstractPoolState: ...
+
+    @property
+    @abstractmethod
+    def reserves_token0(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def reserves_token1(self) -> int: ...
 
 
 class AbstractConcentratedLiquidityPool(AbstractLiquidityPool, ABC):
     """
     Abstract base class for concentrated liquidity pools (Uniswap V3/V4).
 
-    Expected attributes:
-        token0, token1: Token objects
-        fee: int (numerator)
-        FEE_DENOMINATOR: int
-        liquidity: int
-        sqrt_price_x96: int
-        tick: int
-        tick_bitmap: dict
-        tick_data: dict
-        tick_spacing: int
-        sparse_liquidity_map: bool
-        state: Object with liquidity, sqrt_price_x96, tick
-        address: ChecksumAddress
+    See abstract properties for the required interface.
     """
+
+    @property
+    @abstractmethod
+    def token0(self) -> Erc20Token: ...
+
+    @property
+    @abstractmethod
+    def token1(self) -> Erc20Token: ...
+
+    @property
+    @abstractmethod
+    def fee(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def liquidity(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def sqrt_price_x96(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def tick(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def tick_spacing(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def tick_bitmap(self) -> dict[int, Any]: ...
+
+    @property
+    @abstractmethod
+    def tick_data(self) -> dict[int, Any]: ...
+
+    @property
+    @abstractmethod
+    def sparse_liquidity_map(self) -> bool: ...
+
+    @property
+    @abstractmethod
+    def state(self) -> AbstractPoolState: ...
 
 
 class AbstractAerodromeV2Pool(AbstractLiquidityPool, ABC):
     """
     Abstract base class for Aerodrome V2 pools.
 
-    Expected attributes:
-        token0, token1: Token objects
-        fee: Fraction
-        stable: bool
-        state: Object with reserves_token0, reserves_token1
-        address: ChecksumAddress
+    See abstract properties for the required interface.
     """
+
+    @property
+    @abstractmethod
+    def token0(self) -> Erc20Token: ...
+
+    @property
+    @abstractmethod
+    def token1(self) -> Erc20Token: ...
+
+    @property
+    @abstractmethod
+    def fee(self) -> Fraction: ...
+
+    @property
+    @abstractmethod
+    def stable(self) -> bool: ...
+
+    @property
+    @abstractmethod
+    def state(self) -> AbstractPoolState: ...
+
+    @property
+    @abstractmethod
+    def reserves_token0(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def reserves_token1(self) -> int: ...

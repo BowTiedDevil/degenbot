@@ -25,30 +25,11 @@ from degenbot.arbitrage.optimizers.v3_tick_predictor import (
     tick_range_to_bounded_product,
     tick_to_sqrt_price,
 )
+from tests.fakes.tokens import FakeToken
 
 # =============================================================================
 # MOCK CLASSES
 # =============================================================================
-
-
-class MockToken:
-    """Mock token for testing."""
-
-    def __init__(self, address: str, symbol: str, decimals: int = 18):
-        self.address = address
-        self.symbol = symbol
-        self.decimals = decimals
-
-    def __repr__(self):
-        return f"Token({self.symbol})"
-
-    def __hash__(self):
-        return hash(self.address)
-
-    def __eq__(self, other):
-        if isinstance(other, MockToken):
-            return self.address == other.address
-        return False
 
 
 @dataclass
@@ -64,8 +45,8 @@ class MockV2Pool:
 
     def __init__(
         self,
-        token0: MockToken,
-        token1: MockToken,
+        token0: FakeToken,
+        token1: FakeToken,
         reserve0: int,
         reserve1: int,
         fee: float = 0.003,
@@ -90,8 +71,8 @@ class MockV3Pool:
 
     def __init__(
         self,
-        token0: MockToken,
-        token1: MockToken,
+        token0: FakeToken,
+        token1: FakeToken,
         sqrt_price_x96: int,
         tick: int,
         liquidity: int,
@@ -112,12 +93,20 @@ class MockV3Pool:
 
 @pytest.fixture
 def usdc():
-    return MockToken("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "USDC", 6)
+    return FakeToken(
+        address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        symbol="USDC",
+        decimals=6,
+    )
 
 
 @pytest.fixture
 def weth():
-    return MockToken("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", "WETH", 18)
+    return FakeToken(
+        address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        symbol="WETH",
+        decimals=18,
+    )
 
 
 @pytest.fixture

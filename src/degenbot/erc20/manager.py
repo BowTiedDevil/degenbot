@@ -6,14 +6,13 @@ from degenbot.connection import connection_manager
 from degenbot.erc20 import Erc20Token, EtherPlaceholder
 from degenbot.provider.interface import ProviderAdapter
 from degenbot.registry import token_registry
-from degenbot.types.abstract import AbstractManager
 from degenbot.types.aliases import ChainId
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
 
-class Erc20TokenManager(AbstractManager):
+class Erc20TokenManager:
     def __init__(
         self,
         *,

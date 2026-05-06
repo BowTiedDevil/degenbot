@@ -3,10 +3,11 @@ from alembic.script import ScriptDirectory
 
 from degenbot.config import settings
 from degenbot.database.operations import get_alembic_config, get_scoped_sqlite_session
+from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.logging import logger
 from degenbot.version import __version__
 
-db_session = get_scoped_sqlite_session(database_path=settings.database.path)
+db_session = DatabaseSessionManager(get_scoped_sqlite_session(database_path=settings.database.path))
 
 with db_session() as session:
     current_database_version = MigrationContext.configure(

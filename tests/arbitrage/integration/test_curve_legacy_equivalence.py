@@ -20,17 +20,17 @@ from tests.arbitrage.test_path.conftest import FakeToken, FakeUniswapV2Pool
 
 @pytest.fixture
 def dai():
-    return FakeToken("0xDAI", 18)
+    return FakeToken("0xDAI", decimals=18)
 
 
 @pytest.fixture
 def usdc():
-    return FakeToken("0xUSDC", 6)
+    return FakeToken("0xUSDC", decimals=6)
 
 
 @pytest.fixture
 def weth():
-    return FakeToken("0xWETH", 18)
+    return FakeToken("0xWETH", decimals=18)
 
 
 class TestCurveEquivalenceBasics:

@@ -11,11 +11,6 @@ class UniswapSimulationResult(AbstractSimulationResult):
     Common attributes for Uniswap V2 & V3 simulations
     """
 
-    amount0_delta: int
-    amount1_delta: int
-    initial_state: AbstractPoolState
-    final_state: AbstractPoolState
-
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
 class UniswapV2PoolState(AbstractPoolState):

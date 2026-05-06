@@ -4,7 +4,7 @@ import dataclasses
 from collections import deque
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from weakref import WeakSet
 
 import eth_abi.abi
@@ -27,7 +27,6 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
 from degenbot.erc20 import Erc20Token, Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
 from degenbot.exceptions.liquidity_pool import (
     AddressMismatch,
     ExternalUpdateError,
@@ -43,8 +42,9 @@ from degenbot.registry import pool_registry
 from degenbot.solidly.solidly_functions import general_calc_exact_in_volatile
 from degenbot.types.abstract import AbstractAerodromeV2Pool
 from degenbot.types.aliases import BlockNumber, ChainId
-from degenbot.types.concrete import AbstractPublisherMessage, Publisher, PublisherMixin, Subscriber
-from degenbot.types.hop_types import ConstantProductHop, HopType
+from degenbot.types.concrete import PublisherMixin, Subscriber
+from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
+from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_functions import constant_product_calc_exact_out
@@ -54,13 +54,22 @@ if TYPE_CHECKING:
     from hexbytes import HexBytes
 
 
-class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
+class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
     type PoolState = AerodromeV2PoolState
 
     _state: PoolState
     _state_cache: deque[PoolState]
 
     FEE_DENOMINATOR = 10_000
+
+    _pickle_drops: ClassVar[frozenset[str]] = frozenset({
+        "_state_lock",
+        "_subscribers",
+    })
+    _pickle_reconstructs: ClassVar[dict[str, Any]] = {
+        "_state_lock": Lock,
+        "_subscribers": WeakSet,
+    }
 
     def __init__(
         self,
@@ -79,7 +88,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
         w3 = connection_manager.get_web3(self.chain_id)
         state_block = state_block if state_block is not None else w3.eth.block_number
 
-        self.factory, (token0, token1), self.stable, fee, (reserves0, reserves1) = (
+        self.factory, (token0, token1), self._stable, fee, (reserves0, reserves1) = (
             self.get_factory_tokens_stable_reserves_batched(w3=w3, state_block=state_block)
         )
         self.deployer_address = (
@@ -95,10 +104,10 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
             block=state_block,
         )
 
-        self.fee = self.fee_token0 = self.fee_token1 = Fraction(fee, type(self).FEE_DENOMINATOR)
+        self._fee = Fraction(fee, type(self).FEE_DENOMINATOR)
 
         token_manager = Erc20TokenManager(chain_id=self.chain_id)
-        self.token0, self.token1 = (
+        self._token0, self._token1 = (
             token_manager.get_erc20token(
                 address=token0,
                 silent=silent,
@@ -112,7 +121,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
         if verify_address and self.address != self._verified_address():  # pragma: no cover
             raise AddressMismatch
 
-        self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, {100 * self.fee.numerator / self.fee.denominator:.2f}%)"  # noqa:E501
+        self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee.numerator / self._fee.denominator:.2f}%)"  # noqa:E501
 
         self._state_cache = deque(maxlen=max(1, state_cache_depth))
         self._state_cache.append(initial_state)
@@ -123,30 +132,11 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
 
         if not silent:  # pragma: no cover
             logger.info(self.name)
-            logger.info(f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}")
-            logger.info(f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}")
-
-    def __getstate__(self) -> dict[str, Any]:
-        # Remove objects that either cannot be pickled or are unnecessary to perform the calculation
-        copied_attributes = ()
-        dropped_attributes = (
-            "_state_lock",
-            "_subscribers",
-        )
-
-        with self._state_lock:
-            return {
-                k: (v.copy() if k in copied_attributes else v)
-                for k, v in self.__dict__.items()
-                if k not in dropped_attributes
-            }
+            logger.info(f"• Token 0: {self._token0} - Reserves: {self.reserves_token0}")
+            logger.info(f"• Token 1: {self._token1} - Reserves: {self.reserves_token1}")
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1}, stable={self.stable})"  # noqa:E501
-
-    def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
-        for subscriber in self._subscribers:
-            subscriber.notify(publisher=self, message=message)
+        return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1}, stable={self._stable})"  # noqa:E501
 
     def _verified_address(self) -> ChecksumAddress:
         # The implementation address is hard-coded into the contract
@@ -156,14 +146,30 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
 
         return generate_aerodrome_v2_pool_address(
             deployer_address=self.deployer_address,
-            token_addresses=(self.token0.address, self.token1.address),
+            token_addresses=(self._token0.address, self._token1.address),
             implementation_address=implementation_address,
-            stable=self.stable,
+            stable=self._stable,
         )
 
     @property
     def chain_id(self) -> int:
         return self._chain_id
+
+    @property
+    def token0(self) -> Erc20Token:
+        return self._token0
+
+    @property
+    def token1(self) -> Erc20Token:
+        return self._token1
+
+    @property
+    def fee(self) -> Fraction:
+        return self._fee
+
+    @property
+    def stable(self) -> bool:
+        return self._stable
 
     @property
     def reserves_token0(self) -> int:
@@ -179,7 +185,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
 
     @property
     def tokens(self) -> tuple[Erc20Token, Erc20Token]:
-        return self.token0, self.token1
+        return self._token0, self._token1
 
     @property
     def update_block(self) -> BlockNumber:
@@ -245,8 +251,8 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
 
             if not silent:  # pragma: no cover
                 logger.info(f"[{self.name}]")
-                logger.info(f"{self.token0}: {self.reserves_token0}")
-                logger.info(f"{self.token1}: {self.reserves_token1}")
+                logger.info(f"{self._token0}: {self.reserves_token0}")
+                logger.info(f"{self._token1}: {self.reserves_token1}")
 
             self._notify_subscribers(
                 message=AerodromeV2PoolStateUpdated(self.state),
@@ -272,7 +278,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
         if override_state:  # pragma: no cover
             logger.debug(f"State overrides applied: {override_state}")
 
-        if token_out == self.token1:
+        if token_out == self._token1:
             reserves_in = (
                 override_state.reserves_token0
                 if override_state is not None
@@ -284,7 +290,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
                 else self.reserves_token1
             )
 
-        elif token_out == self.token0:
+        elif token_out == self._token0:
             reserves_in = (
                 override_state.reserves_token1
                 if override_state is not None
@@ -298,7 +304,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
 
         else:  # pragma: no cover
             raise DegenbotValueError(
-                message=f"Could not identify token_out: {token_out}! This pool holds: {self.token0} {self.token1}"  # noqa:E501
+                message=f"Could not identify token_out: {token_out}! This pool holds: {self._token0} {self._token1}"  # noqa:E501
             )
 
         # last token becomes infinitely expensive, so largest possible swap out is reserves - 1
@@ -307,14 +313,14 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
                 message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})"  # noqa:E501
             )
 
-        if self.stable:
+        if self._stable:
             raise NotImplementedError
 
         return constant_product_calc_exact_out(
             amount_out=token_out_quantity,
             reserves_in=reserves_in,
             reserves_out=reserves_out,
-            fee=self.fee,
+            fee=self._fee,
         )
 
     def calculate_tokens_out_from_tokens_in(
@@ -343,22 +349,22 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
             override_state.reserves_token1 if override_state is not None else self.reserves_token1
         )
 
-        if self.stable:
+        if self._stable:
             return calc_exact_in_stable(
                 amount_in=token_in_quantity,
-                token_in=0 if token_in == self.token0 else 1,
+                token_in=0 if token_in == self._token0 else 1,
                 reserves0=reserves_0,
                 reserves1=reserves_1,
-                decimals0=10**self.token0.decimals,
-                decimals1=10**self.token1.decimals,
-                fee=self.fee,
+                decimals0=10**self._token0.decimals,
+                decimals1=10**self._token1.decimals,
+                fee=self._fee,
             )
         return general_calc_exact_in_volatile(
             amount_in=token_in_quantity,
-            token_in=0 if token_in == self.token0 else 1,
+            token_in=0 if token_in == self._token0 else 1,
             reserves0=reserves_0,
             reserves1=reserves_1,
-            fee=self.fee,
+            fee=self._fee,
         )
 
     def external_update(
@@ -419,7 +425,7 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
 
         return (
             Fraction(state.reserves_token1, state.reserves_token0)
-            if token == self.token1
+            if token == self._token1
             else Fraction(state.reserves_token0, state.reserves_token1)
         )
 
@@ -446,9 +452,9 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
         """
 
         return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
-            Fraction(10**self.token1.decimals, 10**self.token0.decimals)
-            if token == self.token0
-            else Fraction(10**self.token0.decimals, 10**self.token1.decimals)
+            Fraction(10**self._token1.decimals, 10**self._token0.decimals)
+            if token == self._token0
+            else Fraction(10**self._token0.decimals, 10**self._token1.decimals)
         )
 
     def get_factory_tokens_stable_reserves_batched(
@@ -616,10 +622,10 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
         token_out: ChecksumAddress,
         state_override: AerodromeV2PoolState | None = None,
     ) -> SimulationResult:
-        if token_in == self.token0.address:
-            token_in_obj = self.token0
-        elif token_in == self.token1.address:
-            token_in_obj = self.token1
+        if token_in == self._token0.address:
+            token_in_obj = self._token0
+        elif token_in == self._token1.address:
+            token_in_obj = self._token1
         else:
             raise DegenbotValueError(message=f"token_in {token_in} not in pool")
 
@@ -643,10 +649,10 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
         amount_out: int,
         state_override: AerodromeV2PoolState | None = None,
     ) -> SimulationResult:
-        if token_out == self.token0.address:
-            token_out_obj = self.token0
-        elif token_out == self.token1.address:
-            token_out_obj = self.token1
+        if token_out == self._token0.address:
+            token_out_obj = self._token0
+        elif token_out == self._token1.address:
+            token_out_obj = self._token1
         else:
             raise DegenbotValueError(message=f"token_out {token_out} not in pool")
 
@@ -664,25 +670,62 @@ class AerodromeV2Pool(PublisherMixin, AbstractAerodromeV2Pool):
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
-        return self.fee
+        return self._fee
 
     def to_hop_state(
         self,
         zero_for_one: bool,  # noqa: FBT001
         state_override: AerodromeV2PoolState | None = None,
     ) -> HopType:
-        if self.stable:
-            msg = f"Aerodrome stable pool at {self.address} is not supported for arbitrage"
-            raise IncompatiblePoolInvariant(message=msg)
-
         state = state_override or self.state
         fee = self.extract_fee(zero_for_one=zero_for_one)
+
         if zero_for_one:
             reserve_in = state.reserves_token0
             reserve_out = state.reserves_token1
+            decimals_in = self._token0.decimals
+            decimals_out = self._token1.decimals
         else:
             reserve_in = state.reserves_token1
             reserve_out = state.reserves_token0
+            decimals_in = self._token1.decimals
+            decimals_out = self._token0.decimals
+
+        if self._stable:
+            reserves0 = state.reserves_token0
+            reserves1 = state.reserves_token1
+            decimals0 = 10**self._token0.decimals
+            decimals1 = 10**self._token1.decimals
+            token_in: Literal[0, 1] = 0 if zero_for_one else 1
+
+            def _stable_swap_fn(
+                amount_in: int,
+                __reserves0: int = reserves0,
+                __reserves1: int = reserves1,
+                __decimals0: int = decimals0,
+                __decimals1: int = decimals1,
+                __fee: Fraction = fee,
+                __token_in: Literal[0, 1] = token_in,
+            ) -> int:
+                return calc_exact_in_stable(
+                    amount_in=amount_in,
+                    token_in=__token_in,
+                    reserves0=__reserves0,
+                    reserves1=__reserves1,
+                    decimals0=__decimals0,
+                    decimals1=__decimals1,
+                    fee=__fee,
+                )
+
+            return SolidlyStableHop(
+                reserve_in=reserve_in,
+                reserve_out=reserve_out,
+                fee=fee,
+                decimals_in=decimals_in,
+                decimals_out=decimals_out,
+                swap_fn=_stable_swap_fn,
+            )
+
         return ConstantProductHop(
             reserve_in=reserve_in,
             reserve_out=reserve_out,
@@ -723,7 +766,7 @@ class AerodromeV3Pool(UniswapV3Pool):
 
         return generate_aerodrome_v3_pool_address(
             deployer_address=self.deployer_address,
-            token_addresses=(self.token0.address, self.token1.address),
+            token_addresses=(self._token0.address, self._token1.address),
             implementation_address=implementation_address,
             tick_spacing=self.tick_spacing,
         )

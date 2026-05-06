@@ -7,7 +7,7 @@ from collections import deque
 from collections.abc import Iterable
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 from weakref import WeakSet
 
 import eth_abi.abi
@@ -41,8 +41,9 @@ from degenbot.provider import ProviderAdapter
 from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractArbitrage, AbstractUniswapV2Pool
 from degenbot.types.aliases import BlockNumber, ChainId
-from degenbot.types.concrete import AbstractPublisherMessage, Publisher, PublisherMixin, Subscriber
+from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType
+from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
 from degenbot.uniswap.types import UniswapPoolSwapVector
@@ -72,7 +73,7 @@ def get_pool_from_database(
     )  # type: ignore[return-value]
 
 
-class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
+class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
     """
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
@@ -88,6 +89,18 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
     UNISWAP_V2_MAINNET_POOL_INIT_HASH = (
         "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
     )
+
+    _pickle_drops: ClassVar[frozenset[str]] = frozenset({
+        "_provider",
+        "_provider_from_connection_manager",
+        "_state_lock",
+        "_subscribers",
+    })
+    _pickle_reconstructs: ClassVar[dict[str, Any]] = {
+        "_state_lock": Lock,
+        "_provider_from_connection_manager": lambda: True,
+        "_subscribers": WeakSet,
+    }
 
     @classmethod
     def from_exchange(
@@ -106,10 +119,6 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
             init_hash=exchange.factory.pool_init_hash,
             **kwargs,
         )
-
-    def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
-        for subscriber in self._subscribers:
-            subscriber.notify(publisher=self, message=message)
 
     def __init__(
         self,
@@ -224,26 +233,26 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
 
             # Set the fees taken on swaps for both tokens
             if pool_from_db is not None:
-                self.fee_token0 = Fraction(pool_from_db.fee_token0, pool_from_db.fee_denominator)
-                self.fee_token1 = Fraction(pool_from_db.fee_token1, pool_from_db.fee_denominator)
+                self._fee_token0 = Fraction(pool_from_db.fee_token0, pool_from_db.fee_denominator)
+                self._fee_token1 = Fraction(pool_from_db.fee_token1, pool_from_db.fee_denominator)
             elif fee is not None:
                 match fee:
                     case Iterable():
-                        self.fee_token0, self.fee_token1 = fee
+                        self._fee_token0, self._fee_token1 = fee
                     case Fraction():
-                        self.fee_token0 = self.fee_token1 = fee
+                        self._fee_token0 = self._fee_token1 = fee
                     case _:
                         raise DegenbotValueError(message="Fees not passed correctly.")
             else:
-                self.fee_token0 = self.fee_token1 = self.FEE
+                self._fee_token0 = self._fee_token1 = self.FEE
 
         token_manager = Erc20TokenManager(chain_id=self.chain_id, provider=self._provider)
         try:
-            self.token0 = token_manager.get_erc20token(
+            self._token0 = token_manager.get_erc20token(
                 address=token0_address,
                 silent=silent,
             )
-            self.token1 = token_manager.get_erc20token(
+            self._token1 = token_manager.get_erc20token(
                 address=token1_address,
                 silent=silent,
             )
@@ -254,15 +263,15 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
             raise AddressMismatch
 
         fee_string = (
-            f"{100 * self.fee_token0.numerator / self.fee_token0.denominator:.2f}"
-            if self.fee_token0 == self.fee_token1
+            f"{100 * self._fee_token0.numerator / self._fee_token0.denominator:.2f}"
+            if self._fee_token0 == self._fee_token1
             else (
-                f"{100 * self.fee_token0.numerator / self.fee_token0.denominator:.2f}"
+                f"{100 * self._fee_token0.numerator / self._fee_token0.denominator:.2f}"
                 f"/"
-                f"{100 * self.fee_token1.numerator / self.fee_token1.denominator:.2f}"
+                f"{100 * self._fee_token1.numerator / self._fee_token1.denominator:.2f}"
             )
         )
-        self.name = f"{self.token0}-{self.token1} ({self.__class__.__name__}, {fee_string}%)"
+        self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {fee_string}%)"
 
         reserves0, reserves1 = self.get_reserves(self._provider, block_identifier=state_block)
 
@@ -278,8 +287,8 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
 
         if not silent:  # pragma: no cover
             logger.info(self.name)
-            logger.info(f"• Token 0: {self.token0} - Reserves: {self.reserves_token0}")
-            logger.info(f"• Token 1: {self.token1} - Reserves: {self.reserves_token1}")
+            logger.info(f"• Token 0: {self._token0} - Reserves: {self.reserves_token0}")
+            logger.info(f"• Token 1: {self._token1} - Reserves: {self.reserves_token1}")
 
         pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
 
@@ -289,36 +298,13 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
     def chain_id(self) -> int:
         return self._chain_id
 
-    def __getstate__(self) -> dict[str, Any]:
-        # Remove objects that either cannot be pickled or are unnecessary to perform the calculation
-        copied_attributes = ()
-        dropped_attributes = (
-            "_provider",
-            "_provider_from_connection_manager",
-            "_state_lock",
-            "_subscribers",
-        )
-
-        with self._state_lock:
-            return {
-                k: (v.copy() if k in copied_attributes else v)
-                for k, v in self.__dict__.items()
-                if k not in dropped_attributes
-            }
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        state["_state_lock"] = Lock()
-        # After unpickling, provider must be re-acquired from connection_manager
-        state["_provider_from_connection_manager"] = True
-        self.__dict__ = state
-
     def __repr__(self) -> str:  # pragma: no cover
-        return f"{self.__class__.__name__}(address={self.address}, token0={self.token0}, token1={self.token1})"  # noqa:E501
+        return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1})"  # noqa:E501
 
     def _verified_address(self) -> ChecksumAddress:
         return generate_v2_pool_address(
             deployer_address=self.deployer,
-            token_addresses=(self.token0.address, self.token1.address),
+            token_addresses=(self._token0.address, self._token1.address),
             init_hash=self.init_hash,
         )
 
@@ -367,6 +353,22 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
         return self.state.block
 
     @property
+    def token0(self) -> Erc20Token:
+        return self._token0
+
+    @property
+    def token1(self) -> Erc20Token:
+        return self._token1
+
+    @property
+    def fee_token0(self) -> Fraction:
+        return self._fee_token0
+
+    @property
+    def fee_token1(self) -> Fraction:
+        return self._fee_token1
+
+    @property
     def reserves_token0(self) -> int:
         return self.state.reserves_token0
 
@@ -380,7 +382,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
 
     @property
     def tokens(self) -> tuple[Erc20Token, Erc20Token]:
-        return self.token0, self.token1
+        return self._token0, self._token1
 
     @property
     def w3(self) -> ProviderAdapter:
@@ -454,8 +456,8 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
 
             if not silent:  # pragma: no cover
                 logger.info(f"[{self.name}]")
-                logger.info(f"{self.token0}: {self.reserves_token0}")
-                logger.info(f"{self.token1}: {self.reserves_token1}")
+                logger.info(f"{self._token0}: {self.reserves_token0}")
+                logger.info(f"{self._token1}: {self.reserves_token1}")
             self._notify_subscribers(
                 message=UniswapV2PoolStateUpdated(self.state),
             )
@@ -476,13 +478,13 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
         if token_in not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message=f"Token in {token_in} not held by this pool.")
 
-        if token_in == self.token0:
+        if token_in == self._token0:
             # formula: dx = y0/C - x0/(1-FEE), where C = token1/token0
             return max(
                 0,
                 int(
                     self.reserves_token1 / ratio_absolute
-                    - self.reserves_token0 / (1 - self.fee_token0)
+                    - self.reserves_token0 / (1 - self._fee_token0)
                 ),
             )
 
@@ -490,7 +492,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
         return max(
             0,
             int(
-                self.reserves_token0 / ratio_absolute - self.reserves_token1 / (1 - self.fee_token1)
+                self.reserves_token0 / ratio_absolute - self.reserves_token1 / (1 - self._fee_token1)
             ),
         )
 
@@ -514,7 +516,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
         if override_state:  # pragma: no cover
             logger.debug(f"State overrides applied: {override_state}")
 
-        if token_out == self.token1:
+        if token_out == self._token1:
             reserves_in = (
                 override_state.reserves_token0
                 if override_state is not None
@@ -525,8 +527,8 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
                 if override_state is not None
                 else self.reserves_token1
             )
-            fee = self.fee_token0
-        elif token_out == self.token0:
+            fee = self._fee_token0
+        elif token_out == self._token0:
             reserves_in = (
                 override_state.reserves_token1
                 if override_state is not None
@@ -537,10 +539,10 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
                 if override_state is not None
                 else self.reserves_token0
             )
-            fee = self.fee_token1
+            fee = self._fee_token1
         else:  # pragma: no cover
             raise DegenbotValueError(
-                message=f"Could not identify token_out: {token_out}! This pool holds: {self.token0} {self.token1}"  # noqa:E501
+                message=f"Could not identify token_out: {token_out}! This pool holds: {self._token0} {self._token1}"  # noqa:E501
             )
 
         # last token becomes infinitely expensive, so largest possible swap out is reserves - 1
@@ -572,7 +574,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
         if override_state:  # pragma: no cover
             logger.debug(f"State overrides applied: {override_state}")
 
-        if token_in == self.token0:
+        if token_in == self._token0:
             reserves_in = (
                 override_state.reserves_token0
                 if override_state is not None
@@ -583,8 +585,8 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
                 if override_state is not None
                 else self.reserves_token1
             )
-            fee = self.fee_token0
-        elif token_in == self.token1:
+            fee = self._fee_token0
+        elif token_in == self._token1:
             reserves_in = (
                 override_state.reserves_token1
                 if override_state is not None
@@ -595,10 +597,10 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
                 if override_state is not None
                 else self.reserves_token0
             )
-            fee = self.fee_token1
+            fee = self._fee_token1
         else:  # pragma: no cover
             raise DegenbotValueError(
-                message=f"Could not identify token_in: {token_in}! Pool holds: {self.token0} {self.token1}"  # noqa:E501
+                message=f"Could not identify token_in: {token_in}! Pool holds: {self._token0} {self._token1}"  # noqa:E501
             )
 
         return constant_product_calc_exact_in(
@@ -677,7 +679,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
 
         return (
             Fraction(state.reserves_token1, state.reserves_token0)
-            if token == self.token1
+            if token == self._token1
             else Fraction(state.reserves_token0, state.reserves_token1)
         )
 
@@ -704,9 +706,9 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
         """
 
         return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
-            Fraction(10**self.token1.decimals, 10**self.token0.decimals)
-            if token == self.token0
-            else Fraction(10**self.token0.decimals, 10**self.token1.decimals)
+            Fraction(10**self._token1.decimals, 10**self._token0.decimals)
+            if token == self._token0
+            else Fraction(10**self._token0.decimals, 10**self._token1.decimals)
         )
 
     def get_reserves(
@@ -846,7 +848,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
         if token_in not in self.tokens:
             raise DegenbotValueError(message="token_in is unknown.")
 
-        zero_for_one = token_in == self.token0
+        zero_for_one = token_in == self._token0
         token_out_quantity = self.calculate_tokens_out_from_tokens_in(
             token_in=token_in,
             token_in_quantity=token_in_quantity,
@@ -876,7 +878,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
         if token_out not in self.tokens:
             raise DegenbotValueError(message="token_out is unknown.")
 
-        zero_for_one = token_out == self.token1
+        zero_for_one = token_out == self._token1
 
         token_in_quantity = self.calculate_tokens_in_from_tokens_out(
             token_out=token_out,
@@ -905,10 +907,10 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
         token_out: ChecksumAddress,
         state_override: UniswapV2PoolState | None = None,
     ) -> SimulationResult:
-        if token_in == self.token0.address:
-            token_in_obj = self.token0
-        elif token_in == self.token1.address:
-            token_in_obj = self.token1
+        if token_in == self._token0.address:
+            token_in_obj = self._token0
+        elif token_in == self._token1.address:
+            token_in_obj = self._token1
         else:
             raise DegenbotValueError(message=f"token_in {token_in} not in pool")
 
@@ -917,7 +919,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
             token_in_quantity=amount_in,
             override_state=state_override,
         )
-        zero_for_one = token_in_obj == self.token0
+        zero_for_one = token_in_obj == self._token0
         amount_out = -result.amount1_delta if zero_for_one else -result.amount0_delta
         return SimulationResult(
             amount_in=amount_in,
@@ -933,10 +935,10 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
         amount_out: int,
         state_override: UniswapV2PoolState | None = None,
     ) -> SimulationResult:
-        if token_out == self.token0.address:
-            token_out_obj = self.token0
-        elif token_out == self.token1.address:
-            token_out_obj = self.token1
+        if token_out == self._token0.address:
+            token_out_obj = self._token0
+        elif token_out == self._token1.address:
+            token_out_obj = self._token1
         else:
             raise DegenbotValueError(message=f"token_out {token_out} not in pool")
 
@@ -945,7 +947,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
             token_out_quantity=amount_out,
             override_state=state_override,
         )
-        zero_for_one = token_out_obj == self.token1
+        zero_for_one = token_out_obj == self._token1
         amount_in = result.amount0_delta if zero_for_one else result.amount1_delta
         return SimulationResult(
             amount_in=amount_in,
@@ -962,7 +964,7 @@ class UniswapV2Pool(PublisherMixin, AbstractUniswapV2Pool):
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
-        return self.fee_token0 if zero_for_one else self.fee_token1
+        return self._fee_token0 if zero_for_one else self._fee_token1
 
     def to_hop_state(
         self,

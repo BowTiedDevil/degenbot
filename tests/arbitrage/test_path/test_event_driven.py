@@ -18,8 +18,9 @@ from degenbot.arbitrage.path.arbitrage_path import (
     _StateUpdatedNoProfit,
 )
 from degenbot.types.concrete import PoolStateMessage
+from tests.fakes.subscribers import FakeSubscriber
 
-from .conftest import FakeSubscriber, FakeToken, FakeV2PoolState, _make_v2_pool
+from .conftest import FakeToken, FakeV2PoolState, _make_v2_pool
 
 FEE_03 = Fraction(3, 1000)
 

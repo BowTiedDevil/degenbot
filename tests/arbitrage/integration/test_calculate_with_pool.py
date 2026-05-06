@@ -202,7 +202,7 @@ class TestCalculateWithPool:
             max_input=1_000_000,
         )
         # Mark a pool as sparse to simulate the legacy failure mode
-        v3_profitable_pair[0].sparse_liquidity_map = True
+        v3_profitable_pair[0]._sparse_liquidity_map = True
 
         sync_result = path.calculate()
 

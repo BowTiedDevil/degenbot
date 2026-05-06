@@ -149,6 +149,7 @@ def convert_unsigned_integer_to_signed(num: int):
     return int.from_bytes(HexBytes(num), byteorder="big", signed=True)
 
 
+@pytest.mark.slow
 def test_first_200_pools(
     fork_mainnet_full: AnvilFork,
     testing_pools,

@@ -19,11 +19,11 @@ from degenbot.arbitrage.path.arbitrage_path import (
     _v3_virtual_reserves,
 )
 from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop
+from tests.fakes.subscribers import FakeSubscriber
 
 from .conftest import (
     FakeAerodromeV2Pool,
     FakeConcentratedLiquidityPool,
-    FakeSubscriber,
     FakeUniswapV2Pool,
     FakeV2PoolState,
     _make_token,
@@ -84,11 +84,11 @@ class TestPoolCompatibility:
         pool = FakeAerodromeV2Pool(t0, t1, stable=False)
         assert _check_pool_compatibility(pool) == PoolCompatibility.COMPATIBLE
 
-    def test_aerodrome_stable_incompatible(self):
+    def test_aerodrome_stable_compatible(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         pool = FakeAerodromeV2Pool(t0, t1, stable=True)
-        assert _check_pool_compatibility(pool) == PoolCompatibility.INCOMPATIBLE_INVARIANT
+        assert _check_pool_compatibility(pool) == PoolCompatibility.COMPATIBLE
 
     def test_unknown_incompatible(self):
 
@@ -109,18 +109,16 @@ class TestFeeExtraction:
     def test_v2_fee_zero_for_one(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
-        pool = FakeUniswapV2Pool(t0, t1)
-        pool.fee_token0 = Fraction(3, 1000)
-        pool.fee_token1 = Fraction(5, 1000)
+        pool = FakeUniswapV2Pool(t0, t1, fee=Fraction(3, 1000))
+        pool._fee_token1 = Fraction(5, 1000)
         fee = _extract_fee(pool, zero_for_one=True)
         assert fee == Fraction(3, 1000)
 
     def test_v2_fee_one_for_zero(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
-        pool = FakeUniswapV2Pool(t0, t1)
-        pool.fee_token0 = Fraction(3, 1000)
-        pool.fee_token1 = Fraction(5, 1000)
+        pool = FakeUniswapV2Pool(t0, t1, fee=Fraction(3, 1000))
+        pool._fee_token1 = Fraction(5, 1000)
         fee = _extract_fee(pool, zero_for_one=False)
         assert fee == Fraction(5, 1000)
 
