@@ -23,5 +23,3 @@ pub mod value;
 pub use cached::{get_cached_types, value_to_alloy_for_type, CachedAbiTypes};
 pub use type_::{parse_type_list, AbiType, AbiTypeError};
 pub use value::{AbiValue, ParseIntError};
-#[allow(deprecated)]
-pub use value::{ParseI256Error, ParseU256Error};

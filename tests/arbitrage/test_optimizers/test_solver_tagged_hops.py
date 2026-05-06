@@ -11,6 +11,7 @@ Validates:
 
 import pytest
 
+from degenbot.arbitrage.optimizers import Hop as OldHop
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, SolverMethod
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
@@ -481,7 +482,6 @@ class TestBackwardCompatibility:
     tagged union types. Old code that creates Hop() should not break."""
 
     def test_old_hop_still_importable(self):
-        from degenbot.arbitrage.optimizers import Hop as OldHop
 
         # If we keep the old Hop, it should still work
         # (We may alias it to ConstantProductHop)

@@ -4,6 +4,7 @@ Fixtures for Uniswap V3 offline tests.
 These fixtures provide offline-compatible V3 pool objects with complete tick data.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from degenbot.connection import connection_manager
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
 
 # Path to recorded chain data
 CHAIN_DATA_PATH = Path(__file__).parent.parent.parent / "fixtures" / "chain_data"
@@ -33,8 +35,6 @@ def load_v3_liquidity_data(data_file: Path, pool_address: str) -> dict | None:
         return None
 
     with Path(data_file).open(encoding="utf-8") as f:
-        import json
-
         data = json.load(f)
 
     # New flattened format: keys are at top level with pool-specific prefixes
@@ -98,9 +98,6 @@ def offline_wbtc_weth_v3_pool(offline_adapter: ProviderAdapter) -> UniswapV3Pool
         }
         for k, v in tick_data.items()
     }
-
-    # Import the types needed for tick data
-    from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
 
     # Convert to the format expected by UniswapV3Pool
     tick_bitmap_for_pool = {

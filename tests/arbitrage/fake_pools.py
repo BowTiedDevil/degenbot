@@ -13,10 +13,11 @@ from typing import TYPE_CHECKING
 
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 from degenbot.uniswap.v3_types import (
+    UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
     UniswapV3PoolState,
 )
-from tests.arbitrage.mock_pools import MockErc20Token, MockV3Pool
+from tests.arbitrage.mock_pools import FakeToken, MockV3Pool
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
@@ -102,8 +103,8 @@ class FakeV3PoolWithTicks(MockV3Pool):
     def __init__(
         self,
         address: ChecksumAddress,
-        token0: MockErc20Token | Erc20Token,
-        token1: MockErc20Token | Erc20Token,
+        token0: FakeToken | Erc20Token,
+        token1: FakeToken | Erc20Token,
         tick_spacing: int,
         fee: int,
         current_tick: int,
@@ -118,9 +119,9 @@ class FakeV3PoolWithTicks(MockV3Pool):
         ----------
         address : ChecksumAddress
             Pool address
-        token0 : MockErc20Token | Erc20Token
+        token0 : FakeToken | Erc20Token
             Token0
-        token1 : MockErc20Token | Erc20Token
+        token1 : FakeToken | Erc20Token
             Token1
         tick_spacing : int
             Tick spacing (e.g., 60 for 0.3% pool)
@@ -148,8 +149,6 @@ class FakeV3PoolWithTicks(MockV3Pool):
         self._build_tick_data()
 
         # Convert tick_bitmap to proper format
-        from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord
-
         tick_bitmap_typed: dict[int, UniswapV3BitmapAtWord] = {}
         for word_pos, bitmap in self.tick_bitmap.items():
             tick_bitmap_typed[word_pos] = UniswapV3BitmapAtWord(
@@ -276,8 +275,8 @@ class FakeV3PoolWithTicks(MockV3Pool):
 
 def create_two_range_v3_pool(
     address: ChecksumAddress,
-    token0: MockErc20Token | Erc20Token,
-    token1: MockErc20Token | Erc20Token,
+    token0: FakeToken | Erc20Token,
+    token1: FakeToken | Erc20Token,
     current_tick: int,
     lower_liquidity: int,
     upper_liquidity: int,
@@ -295,9 +294,9 @@ def create_two_range_v3_pool(
     ----------
     address : ChecksumAddress
         Pool address
-    token0 : MockErc20Token | Erc20Token
+    token0 : FakeToken | Erc20Token
         Token0
-    token1 : MockErc20Token | Erc20Token
+    token1 : FakeToken | Erc20Token
         Token1
     current_tick : int
         Current tick (determines which range contains current price)

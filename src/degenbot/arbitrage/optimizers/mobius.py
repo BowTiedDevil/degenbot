@@ -1031,7 +1031,3 @@ class MobiusOptimizer:
             iterations=0,
             method="mobius",
         )
-
-
-# Backward-compatible alias
-MobiusV2Optimizer = MobiusOptimizer

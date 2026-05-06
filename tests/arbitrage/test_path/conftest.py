@@ -17,6 +17,8 @@ from degenbot.types.hop_types import (
     SolidlyStableHop,
 )
 from degenbot.types.pool_protocols import SimulationResult
+from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
+from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK
 from tests.fakes.tokens import FakeToken
 
 if TYPE_CHECKING:
@@ -86,14 +88,11 @@ class FakeUniswapV2Pool(AbstractUniswapV2Pool, PublisherMixin):
         return self._token0, self._token1
 
     def to_hop_state(
-        self, zero_for_one: bool,  # noqa: FBT001
+        self,
+        zero_for_one: bool,  # noqa: FBT001
         state_override: AbstractPoolState | None = None,
     ) -> HopType:
-        state = (
-            state_override
-            if isinstance(state_override, FakeV2PoolState)
-            else self._state
-        )
+        state = state_override if isinstance(state_override, FakeV2PoolState) else self._state
         if zero_for_one:
             return ConstantProductHop(
                 reserve_in=state.reserves_token0,
@@ -116,11 +115,7 @@ class FakeUniswapV2Pool(AbstractUniswapV2Pool, PublisherMixin):
         token_out: str,
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
-        state = (
-            state_override
-            if isinstance(state_override, FakeV2PoolState)
-            else self._state
-        )
+        state = state_override if isinstance(state_override, FakeV2PoolState) else self._state
         zfo = token_in == self.token0.address
         r_in = state.reserves_token0 if zfo else state.reserves_token1
         r_out = state.reserves_token1 if zfo else state.reserves_token0
@@ -229,17 +224,12 @@ class FakeConcentratedLiquidityPool(AbstractConcentratedLiquidityPool, Publisher
         return self._token0, self._token1
 
     def to_hop_state(
-        self, zero_for_one: bool,  # noqa: FBT001
+        self,
+        zero_for_one: bool,  # noqa: FBT001
         state_override: AbstractPoolState | None = None,
     ) -> HopType:
-        from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
-        from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK
 
-        state = (
-            state_override
-            if isinstance(state_override, FakeCLPoolState)
-            else self._state
-        )
+        state = state_override if isinstance(state_override, FakeCLPoolState) else self._state
         reserve_in, reserve_out = v3_virtual_reserves(
             state.liquidity,
             state.sqrt_price_x96,
@@ -338,14 +328,11 @@ class FakeAerodromeV2Pool(AbstractAerodromeV2Pool, PublisherMixin):
         return self._token0, self._token1
 
     def to_hop_state(
-        self, zero_for_one: bool,  # noqa: FBT001
+        self,
+        zero_for_one: bool,  # noqa: FBT001
         state_override: AbstractPoolState | None = None,
     ) -> HopType:
-        state = (
-            state_override
-            if isinstance(state_override, FakeV2PoolState)
-            else self._state
-        )
+        state = state_override if isinstance(state_override, FakeV2PoolState) else self._state
 
         if zero_for_one:
             reserve_in = state.reserves_token0
@@ -359,8 +346,6 @@ class FakeAerodromeV2Pool(AbstractAerodromeV2Pool, PublisherMixin):
             decimals_out = self._token0.decimals
 
         if self._stable:
-            from degenbot.types.hop_types import SolidlyStableHop
-
             return SolidlyStableHop(
                 reserve_in=reserve_in,
                 reserve_out=reserve_out,
@@ -385,11 +370,7 @@ class FakeAerodromeV2Pool(AbstractAerodromeV2Pool, PublisherMixin):
         token_out: str,
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
-        state = (
-            state_override
-            if isinstance(state_override, FakeV2PoolState)
-            else self._state
-        )
+        state = state_override if isinstance(state_override, FakeV2PoolState) else self._state
         zfo = token_in == self._token0.address
         r_in = state.reserves_token0 if zfo else state.reserves_token1
         r_out = state.reserves_token1 if zfo else state.reserves_token0
@@ -472,14 +453,11 @@ class FakeCamelotPool(AbstractUniswapV2Pool, PublisherMixin):
         return self._token0, self._token1
 
     def to_hop_state(
-        self, zero_for_one: bool,  # noqa: FBT001
+        self,
+        zero_for_one: bool,  # noqa: FBT001
         state_override: AbstractPoolState | None = None,
     ) -> HopType:
-        state = (
-            state_override
-            if isinstance(state_override, FakeV2PoolState)
-            else self._state
-        )
+        state = state_override if isinstance(state_override, FakeV2PoolState) else self._state
 
         if zero_for_one:
             reserve_in = state.reserves_token0
@@ -519,11 +497,7 @@ class FakeCamelotPool(AbstractUniswapV2Pool, PublisherMixin):
         token_out: str,
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
-        state = (
-            state_override
-            if isinstance(state_override, FakeV2PoolState)
-            else self._state
-        )
+        state = state_override if isinstance(state_override, FakeV2PoolState) else self._state
         return SimulationResult(
             amount_in=amount_in,
             amount_out=0,

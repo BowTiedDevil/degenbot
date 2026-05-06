@@ -16,14 +16,13 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from degenbot.arbitrage.optimizers.base import (
-    OptimizerType,
-)
+from degenbot.arbitrage.optimizers.base import OptimizerType
 from degenbot.arbitrage.optimizers.v3_tick_predictor import (
     BoundedProductCFMM,
     TickRange,
     V3PoolState,
     estimate_price_impact,
+    extract_v3_pool_state,
     tick_range_to_bounded_product,
     tick_to_sqrt_price,
 )
@@ -563,8 +562,6 @@ class V2V3Optimizer:
             token0_address=v2_pool.token0.address,
             token1_address=v2_pool.token1.address,
         )
-
-        from degenbot.arbitrage.optimizers.v3_tick_predictor import extract_v3_pool_state
 
         v3_state = extract_v3_pool_state(v3_pool)
 

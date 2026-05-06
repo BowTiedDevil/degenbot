@@ -24,6 +24,7 @@ from degenbot.arbitrage.optimizers.base import (
     OptimizerResult,
     OptimizerType,
 )
+from degenbot.arbitrage.optimizers.newton import NewtonV2Optimizer
 
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
@@ -347,7 +348,6 @@ class BatchNewtonOptimizer:
 
         if len(pool_pairs) < self.min_paths_for_batch:
             # Use serial solver for small batches
-            from degenbot.arbitrage.optimizers.newton import NewtonV2Optimizer
 
             serial_solver = NewtonV2Optimizer()
             results = []

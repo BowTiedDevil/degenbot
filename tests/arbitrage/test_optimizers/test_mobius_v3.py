@@ -7,17 +7,14 @@ Verifies that:
 3. Mixed V2+V3 paths produce correct Möbius compositions
 4. Range validation catches tick-crossing solutions
 5. solve_v3_candidates checks multiple tick ranges
-6. Backward compatibility: MobiusV2Optimizer alias works
-7. Performance: V3 Möbius is orders of magnitude faster than iterative V2V3Optimizer
+6. Performance: V3 Möbius is orders of magnitude faster than iterative V2V3Optimizer
 """
 
 import pytest
 
-from degenbot.arbitrage.optimizers.base import OptimizerType
 from degenbot.arbitrage.optimizers.mobius import (
     MobiusFloatHop,
     MobiusOptimizer,
-    MobiusV2Optimizer,
     V3TickRangeHop,
     compute_mobius_coefficients,
     estimate_v3_final_sqrt_price,
@@ -520,24 +517,6 @@ class TestMixedV2V3Composition:
             mobius_output = coeffs.path_output(x)
             sim_output = simulate_path(x, hops)
             assert mobius_output == pytest.approx(sim_output, rel=1e-10)
-
-
-# ==============================================================================
-# Backward Compatibility Tests
-# ==============================================================================
-
-
-class TestBackwardCompatibility:
-    """Ensure MobiusV2Optimizer alias still works."""
-
-    def test_mobius_v2_optimizer_alias(self):
-        """MobiusV2Optimizer should be an alias for MobiusOptimizer."""
-        assert MobiusV2Optimizer is MobiusOptimizer
-
-    def test_mobius_v2_optimizer_instantiation(self):
-        """Can create a MobiusV2Optimizer and use it."""
-        optimizer = MobiusV2Optimizer()
-        assert optimizer.optimizer_type == OptimizerType.MOBIUS
 
 
 # ==============================================================================

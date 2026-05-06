@@ -12,6 +12,7 @@ from hexbytes import HexBytes
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
 from degenbot.provider import OfflineProvider, ProviderAdapter
+from degenbot.registry import pool_registry, token_registry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 CHAIN_DATA_PATH = Path(__file__).parent / "fixtures" / "chain_data"
@@ -24,7 +25,7 @@ UNISWAP_V2_FACTORY_POOL_INIT_HASH = (
 @pytest.fixture(autouse=True)
 def _reset_registries():
     """Reset singletons before each test so pools/tokens can be recreated."""
-    from degenbot.registry import pool_registry, token_registry
+
     pool_registry._reset()
     token_registry._reset()
     connection_manager._reset()
@@ -44,7 +45,7 @@ def offline_adapter():
 @pytest.fixture
 def offline_v2_pool(offline_adapter):
     """Construct a V2 pool using offline data."""
-    from degenbot.registry import pool_registry, token_registry
+
     pool_registry._reset()
     token_registry._reset()
     return UniswapV2Pool(

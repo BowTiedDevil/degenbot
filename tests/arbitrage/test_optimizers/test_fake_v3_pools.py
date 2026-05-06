@@ -22,7 +22,7 @@ from tests.arbitrage.fake_pools import (
     TickRangeDefinition,
     create_two_range_v3_pool,
 )
-from tests.arbitrage.mock_pools import MockErc20Token
+from tests.arbitrage.mock_pools import FakeToken
 
 # Test constants
 USDC_ADDRESS: ChecksumAddress = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
@@ -30,21 +30,21 @@ WETH_ADDRESS: ChecksumAddress = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
 
 @pytest.fixture
-def usdc() -> MockErc20Token:
+def usdc() -> FakeToken:
     """USDC token fixture."""
-    return MockErc20Token(address=USDC_ADDRESS, symbol="USDC", decimals=6)
+    return FakeToken(address=USDC_ADDRESS, symbol="USDC", decimals=6)
 
 
 @pytest.fixture
-def weth() -> MockErc20Token:
+def weth() -> FakeToken:
     """WETH token fixture."""
-    return MockErc20Token(address=WETH_ADDRESS, symbol="WETH", decimals=18)
+    return FakeToken(address=WETH_ADDRESS, symbol="WETH", decimals=18)
 
 
 class TestFakeV3PoolWithTicks:
     """Tests for FakeV3PoolWithTicks initialization and tick data."""
 
-    def test_initialization_with_two_ranges(self, usdc: MockErc20Token, weth: MockErc20Token):
+    def test_initialization_with_two_ranges(self, usdc: FakeToken, weth: FakeToken):
         """Test creating a pool with two adjacent liquidity ranges."""
         pool = create_two_range_v3_pool(
             address="0x1234567890123456789012345678901234567890",
@@ -69,7 +69,7 @@ class TestFakeV3PoolWithTicks:
         assert 0 in pool.tick_data
         assert 180 in pool.tick_data
 
-    def test_tick_liquidity_net_calculation(self, usdc: MockErc20Token, weth: MockErc20Token):
+    def test_tick_liquidity_net_calculation(self, usdc: FakeToken, weth: FakeToken):
         """Test that liquidity_net is correctly calculated at tick boundaries."""
         pool = create_two_range_v3_pool(
             address="0x1234567890123456789012345678901234567890",
@@ -90,7 +90,7 @@ class TestFakeV3PoolWithTicks:
         # Tick 180: end of second range, liquidity_net = -20_000_000
         assert pool.get_tick_liquidity(180) == -20_000_000
 
-    def test_tick_bitmap_construction(self, usdc: MockErc20Token, weth: MockErc20Token):
+    def test_tick_bitmap_construction(self, usdc: FakeToken, weth: FakeToken):
         """Test that tick_bitmap is correctly built from initialized ticks."""
         pool = create_two_range_v3_pool(
             address="0x1234567890123456789012345678901234567890",
@@ -116,7 +116,7 @@ class TestFakeV3PoolWithTicks:
             assert word_0 & (1 << 0)  # Tick 0
             assert word_0 & (1 << 180)  # Tick 180
 
-    def test_current_tick_validation(self, usdc: MockErc20Token, weth: MockErc20Token):
+    def test_current_tick_validation(self, usdc: FakeToken, weth: FakeToken):
         """Test that current_tick must align with tick_spacing."""
         with pytest.raises(ValueError, match="must be multiple of tick_spacing"):
             create_two_range_v3_pool(
@@ -128,7 +128,7 @@ class TestFakeV3PoolWithTicks:
                 upper_liquidity=20_000_000,
             )
 
-    def test_get_current_range(self, usdc: MockErc20Token, weth: MockErc20Token):
+    def test_get_current_range(self, usdc: FakeToken, weth: FakeToken):
         """Test get_current_range() returns correct range."""
         pool = create_two_range_v3_pool(
             address="0x1234567890123456789012345678901234567890",
@@ -149,7 +149,7 @@ class TestFakeV3PoolWithTicks:
 class TestGetCachedTickRanges:
     """Tests for _get_cached_tick_ranges() with fake pools."""
 
-    def test_returns_tick_ranges_for_fake_pool(self, usdc: MockErc20Token, weth: MockErc20Token):
+    def test_returns_tick_ranges_for_fake_pool(self, usdc: FakeToken, weth: FakeToken):
         """Test that _get_cached_tick_ranges works with FakeV3PoolWithTicks."""
         pool = create_two_range_v3_pool(
             address="0x1234567890123456789012345678901234567890",
@@ -180,7 +180,7 @@ class TestGetCachedTickRanges:
         assert isinstance(range_0.tick_lower, int)
         assert isinstance(range_0.tick_upper, int)
 
-    def test_respects_max_ranges(self, usdc: MockErc20Token, weth: MockErc20Token):
+    def test_respects_max_ranges(self, usdc: FakeToken, weth: FakeToken):
         """Test that max_ranges parameter limits returned ranges."""
         # Create pool with more ranges than max_ranges
         pool = FakeV3PoolWithTicks(
@@ -210,7 +210,7 @@ class TestGetCachedTickRanges:
         tick_ranges, _ = result
         assert len(tick_ranges) <= 3  # max_ranges + 1 for boundaries
 
-    def test_cache_hit_returns_same_result(self, usdc: MockErc20Token, weth: MockErc20Token):
+    def test_cache_hit_returns_same_result(self, usdc: FakeToken, weth: FakeToken):
         """Test that cache returns consistent results for same pool state."""
         pool = create_two_range_v3_pool(
             address="0x1234567890123456789012345678901234567890",
@@ -248,7 +248,7 @@ class TestPoolStateToHopIntegration:
     and other tick-related functions directly.
     """
 
-    def test_fake_pool_has_required_attributes(self, usdc: MockErc20Token, weth: MockErc20Token):
+    def test_fake_pool_has_required_attributes(self, usdc: FakeToken, weth: FakeToken):
         """Test that fake pools have the attributes needed by tick functions."""
         pool = create_two_range_v3_pool(
             address="0x1234567890123456789012345678901234567890",
@@ -272,7 +272,7 @@ class TestPoolStateToHopIntegration:
         assert isinstance(pool.tick_bitmap, dict)
         assert pool.sparse_liquidity_map is False
 
-    def test_sparse_flag_causes_early_return(self, usdc: MockErc20Token, weth: MockErc20Token):
+    def test_sparse_flag_causes_early_return(self, usdc: FakeToken, weth: FakeToken):
         """Test that sparse_liquidity_map flag causes immediate None return."""
         pool = create_two_range_v3_pool(
             address="0x1234567890123456789012345678901234567890",

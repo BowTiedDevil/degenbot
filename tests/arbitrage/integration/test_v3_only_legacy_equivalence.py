@@ -18,14 +18,25 @@ import pytest
 
 from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
+from degenbot.arbitrage.types import UniswapV3PoolSwapAmounts
 from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
 from degenbot.erc20.erc20 import Erc20Token
+from degenbot.exceptions.arbitrage import ArbitrageError, OptimizationError
+from degenbot.types.hop_types import BoundedProductHop
+from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.types import UniswapPoolSwapVector
+from degenbot.uniswap.v3_libraries.constants import Q96
 from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
+from degenbot.uniswap.v3_libraries.tick_math import (
+    MAX_SQRT_RATIO,
+    MAX_TICK,
+    MIN_SQRT_RATIO,
+    MIN_TICK,
+)
 from degenbot.uniswap.v3_types import UniswapV3PoolState
 from tests.arbitrage.generator.pool_generator import PoolStateGenerator
 from tests.arbitrage.generator.types import V3PoolGenerationConfig
-from tests.arbitrage.mock_pools import MockErc20Token, cleanup_mock_patches
+from tests.arbitrage.mock_pools import FakeToken, cleanup_mock_patches
 
 # ---------------------------------------------------------------------------
 # FakeV3Pool: exact single-range V3 math matching ArbitragePath BoundedProductHop
@@ -48,8 +59,8 @@ class FakeV3Pool:
     def __init__(
         self,
         address: str,
-        token0: MockErc20Token | Erc20Token,
-        token1: MockErc20Token | Erc20Token,
+        token0: FakeToken | Erc20Token,
+        token1: FakeToken | Erc20Token,
         state: UniswapV3PoolState,
         fee: int = 3000,
         tick_spacing: int = 60,
@@ -90,7 +101,7 @@ class FakeV3Pool:
 
     def calculate_tokens_out_from_tokens_in(
         self,
-        token_in: MockErc20Token | Erc20Token,
+        token_in: FakeToken | Erc20Token,
         token_in_quantity: int,
         override_state: UniswapV3PoolState | None = None,
     ) -> int:
@@ -110,11 +121,10 @@ class FakeV3Pool:
 
     def get_absolute_exchange_rate(
         self,
-        token: MockErc20Token | Erc20Token,
+        token: FakeToken | Erc20Token,
         override_state: UniswapV3PoolState | None = None,
     ) -> Fraction:
         state = override_state if override_state is not None else self._state
-        from degenbot.uniswap.v3_libraries.constants import Q96
 
         sqrt_p = state.sqrt_price_x96
         price = Fraction(sqrt_p, Q96) * Fraction(sqrt_p, Q96)
@@ -138,8 +148,6 @@ class FakeV3Pool:
         zero_for_one: bool,  # noqa: FBT001
         state_override: UniswapV3PoolState | None = None,
     ):
-        from degenbot.types.hop_types import BoundedProductHop
-        from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK
 
         state = state_override if state_override is not None else self._state
         reserve_in, reserve_out = v3_virtual_reserves(
@@ -166,7 +174,6 @@ class FakeV3Pool:
         token_out: str,
         state_override: UniswapV3PoolState | None = None,
     ):
-        from degenbot.types.pool_protocols import SimulationResult
 
         state = state_override if state_override is not None else self._state
         token_in_obj = self.token0 if token_in == self.token0.address else self.token1
@@ -193,7 +200,7 @@ class FakeV3Pool:
 
 def _make_patched_legacy_cycle(
     pools: list[FakeV3Pool],
-    input_token: MockErc20Token | Erc20Token,
+    input_token: FakeToken | Erc20Token,
     max_input: int = 10 * 10**18,
     cycle_id: str = "v3_legacy",
 ) -> UniswapLpCycle:
@@ -245,9 +252,6 @@ def _make_patched_legacy_cycle(
     ) -> tuple:
         if state_overrides is None:
             state_overrides = {}
-        from degenbot.arbitrage.types import UniswapV3PoolSwapAmounts
-        from degenbot.exceptions.arbitrage import ArbitrageError
-        from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 
         token_out_quantity = 0
         swap_amounts: list = []
@@ -299,10 +303,16 @@ def _make_patched_legacy_cycle(
 
     patches = [
         unittest.mock.patch.object(UniswapLpCycle, "_validate_pools", return_value=None),
-        unittest.mock.patch.object(UniswapLpCycle, "_pool_is_viable", staticmethod(patched_pool_is_viable)),
-        unittest.mock.patch.object(UniswapLpCycle, "_pre_calculation_check", patched_pre_calculation_check),
+        unittest.mock.patch.object(
+            UniswapLpCycle, "_pool_is_viable", staticmethod(patched_pool_is_viable)
+        ),
+        unittest.mock.patch.object(
+            UniswapLpCycle, "_pre_calculation_check", patched_pre_calculation_check
+        ),
         unittest.mock.patch.object(UniswapLpCycle, "_arb_profit", patched_arb_profit),
-        unittest.mock.patch.object(UniswapLpCycle, "_build_swap_amounts", patched_build_swap_amounts),
+        unittest.mock.patch.object(
+            UniswapLpCycle, "_build_swap_amounts", patched_build_swap_amounts
+        ),
     ]
 
     UniswapLpCycle._v3_equiv_patches = patches  # type:ignore[attr-defined]
@@ -338,8 +348,8 @@ def _cleanup_patched_legacy_cycle() -> None:
 
 
 @pytest.fixture
-def usdc() -> MockErc20Token:
-    return MockErc20Token(
+def usdc() -> FakeToken:
+    return FakeToken(
         address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         symbol="USDC",
         decimals=6,
@@ -347,8 +357,8 @@ def usdc() -> MockErc20Token:
 
 
 @pytest.fixture
-def weth() -> MockErc20Token:
-    return MockErc20Token(
+def weth() -> FakeToken:
+    return FakeToken(
         address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
         symbol="WETH",
         decimals=18,
@@ -356,8 +366,8 @@ def weth() -> MockErc20Token:
 
 
 def _make_profitable_v3_pair(
-    t0: MockErc20Token,
-    t1: MockErc20Token,
+    t0: FakeToken,
+    t1: FakeToken,
     price_a: float = 2200.0,
     price_b: float = 2000.0,
     liquidity: int = 10**18,
@@ -408,28 +418,28 @@ class TestV3OnlyLegacyVsNew:
     computationally equivalent results on the exact same V3-only pool states.
     """
 
-    def test_2hop_v3_agreement_profitable(self, usdc: MockErc20Token, weth: MockErc20Token):
+    def test_2hop_v3_agreement_profitable(self, usdc: FakeToken, weth: FakeToken):
         """
         Both legacy and new systems find profit for a V3-only 2-hop cycle.
-        
+
         Pool A: USDC/WETH at price 2200 (high USDC per WETH → cheap WETH)
         Pool B: USDC/WETH at price 2000 (low USDC per WETH → expensive WETH)
-        
+
         Cycle: USDC → WETH (pool A, get 1/2200 WETH per USDC)
                WETH → USDC (pool B, get 2000 USDC per WETH)
-        
+
         Wait, let's re-check. For zfo=True on pool A (price=2200 = token1/token0):
         - token_in = token0 (USDC), token_out = token1 (WETH)
         - reserve_in = x_virtual, reserve_out = y_virtual
         - output ≈ amount_in * gamma * (y/x) = amount_in * gamma * price = amount_in * 2200 * gamma
-        
+
         For zfo=False on pool B (price=2000):
         - token_in = token1 (WETH), token_out = token0 (USDC)
         - reserve_in = y_virtual, reserve_out = x_virtual
         - output ≈ amount_in * gamma * (x/y) = amount_in * gamma / price = amount_in * gamma / 2000
-        
+
         Cycle output = input * 2200*gamma * (1/2000)*gamma = input * (2200/2000) * gamma²
-        
+
         With gamma = 0.9995 (fee=0.05%), factor = 1.1 * 0.999 ≈ 1.099 → PROFIT ✓
         """
         pool_a, pool_b = _make_profitable_v3_pair(usdc, weth, price_a=2200.0, price_b=2000.0)
@@ -468,11 +478,9 @@ class TestV3OnlyLegacyVsNew:
             f"legacy profit={legacy_result.profit_amount}, new profit={new_result.profit}"
         )
 
-    def test_2hop_v3_agreement_unprofitable(self, usdc: MockErc20Token, weth: MockErc20Token):
+    def test_2hop_v3_agreement_unprofitable(self, usdc: FakeToken, weth: FakeToken):
         """When prices are symmetric, both systems reject the path."""
-        pool_a, pool_b = _make_profitable_v3_pair(
-            usdc, weth, price_a=2000.0, price_b=2000.0
-        )
+        pool_a, pool_b = _make_profitable_v3_pair(usdc, weth, price_a=2000.0, price_b=2000.0)
 
         max_input = 1_000_000
 
@@ -492,11 +500,11 @@ class TestV3OnlyLegacyVsNew:
             solver=MobiusSolver(),
             max_input=max_input,
         )
-        from degenbot.exceptions import OptimizationError
+
         with pytest.raises(OptimizationError, match="Not profitable"):
             path.calculate()
 
-    def test_2hop_v3_mobius_and_brent_agree(self, usdc: MockErc20Token, weth: MockErc20Token):
+    def test_2hop_v3_mobius_and_brent_agree(self, usdc: FakeToken, weth: FakeToken):
         """MobiusSolver (closed-form) and BrentSolver (scipy) should agree."""
         pool_a, pool_b = _make_profitable_v3_pair(usdc, weth)
 
@@ -521,7 +529,7 @@ class TestV3OnlyLegacyVsNew:
         assert abs(result_mobius.optimal_input - result_brent.optimal_input) <= 1
         assert abs(result_mobius.profit - result_brent.profit) <= 1
 
-    def test_3hop_v3_agreement(self, usdc: MockErc20Token, weth: MockErc20Token):
+    def test_3hop_v3_agreement(self, usdc: FakeToken, weth: FakeToken):
         """A 3-hop V3-only path with alternating prices must agree."""
         # Three pools with asymmetric prices
         pool_0, _ = _make_profitable_v3_pair(usdc, weth, price_a=2200.0, price_b=2000.0)

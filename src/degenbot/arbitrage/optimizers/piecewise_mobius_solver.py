@@ -9,11 +9,10 @@ from typing import Any, override
 
 import numpy as np
 
-from degenbot.arbitrage.optimizers._solver_utils import (
-    _infer_zero_for_one,
-)
+from degenbot.arbitrage.optimizers._solver_utils import _infer_zero_for_one
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult, SolverMethod
 from degenbot.arbitrage.optimizers.mobius import (
+    MobiusFloatHop,
     V3TickRangeHop,
     V3TickRangeSequence,
     mobius_solve,
@@ -453,8 +452,6 @@ class PiecewiseMobiusSolver(Solver):
             ) from e
 
         # Convert hops before/after V3 to MobiusFloatHop (float-space for mobius.py functions)
-        from degenbot.arbitrage.optimizers.mobius import MobiusFloatHop
-
         hops_before: list[MobiusFloatHop] = [
             MobiusFloatHop(
                 reserve_in=float(hop.reserve_in),

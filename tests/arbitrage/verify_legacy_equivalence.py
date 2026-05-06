@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from degenbot.arbitrage.optimizers.hop_types import SolverMethod
-from degenbot.arbitrage.optimizers.solver import MobiusSolver
+from degenbot.arbitrage.optimizers.solver import MobiusSolver, NewtonSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.arbitrage.path.swap_amount_builder import build_swap_amount
 from degenbot.arbitrage.path.types import SwapVector
@@ -24,11 +24,8 @@ from degenbot.arbitrage.types import (
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
 )
-from tests.arbitrage.test_path.conftest import (
-    FakeToken,
-    FakeUniswapV2Pool,
-    FakeV2PoolState,
-)
+from degenbot.exceptions.arbitrage import OptimizationError
+from tests.arbitrage.test_path.conftest import FakeToken, FakeUniswapV2Pool, FakeV2PoolState
 
 # ---------------------------------------------------------------------------
 # Helpers: manual calculation that mirrors what legacy UniswapLpCycle does
@@ -381,8 +378,6 @@ class TestV2OnlyEquivalence:
             address="0xunprof1",
         )
 
-        from degenbot.exceptions import OptimizationError
-
         path = ArbitragePath(
             pools=[pool_0, pool_1],
             input_token=t0,
@@ -492,8 +487,6 @@ class TestTwoHopEquivalence:
             fee=Fraction(3, 1000),
             address="0xhop1",
         )
-
-        from degenbot.arbitrage.optimizers.solver import NewtonSolver
 
         path_mobius = ArbitragePath(
             pools=[pool_0, pool_1],

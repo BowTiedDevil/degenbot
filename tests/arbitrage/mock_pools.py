@@ -26,10 +26,6 @@ if TYPE_CHECKING:
     from degenbot.types.concrete import Subscriber
 
 
-MockErc20Token = FakeToken
-"""Backward-compatible alias: MockErc20Token is now FakeToken."""
-
-
 class MockV2Pool:
     """
     Mock V2 pool that satisfies UniswapLpCycle requirements.
@@ -38,8 +34,8 @@ class MockV2Pool:
 
     Example
     -------
-    >>> token0 = MockErc20Token(usdc_address, "USDC", 6)
-    >>> token1 = MockErc20Token(weth_address, "WETH", 18)
+    >>> token0 = FakeToken(usdc_address, "USDC", 6)
+    >>> token1 = FakeToken(weth_address, "WETH", 18)
     >>> state = UniswapV2PoolState(address=pool_address, block=0,
     ...                            reserves_token0=2000000000, reserves_token1=10**18)
     >>> pool = MockV2Pool(pool_address, token0, token1, state)
@@ -49,15 +45,15 @@ class MockV2Pool:
     def __init__(
         self,
         address: ChecksumAddress,
-        token0: MockErc20Token | Erc20Token,
-        token1: MockErc20Token | Erc20Token,
+        token0: FakeToken | Erc20Token,
+        token1: FakeToken | Erc20Token,
         initial_state: UniswapV2PoolState,
         fee: Fraction = Fraction(3, 1000),
     ) -> None:
         self.address = address
         self.token0 = token0
         self.token1 = token1
-        self.tokens: tuple[MockErc20Token | Erc20Token, MockErc20Token | Erc20Token] = (
+        self.tokens: tuple[FakeToken | Erc20Token, FakeToken | Erc20Token] = (
             token0,
             token1,
         )
@@ -101,7 +97,7 @@ class MockV2Pool:
 
     def calculate_tokens_out_from_tokens_in(
         self,
-        token_in: MockErc20Token | Erc20Token,
+        token_in: FakeToken | Erc20Token,
         token_in_quantity: int,
         override_state: UniswapV2PoolState | None = None,
     ) -> int:
@@ -110,7 +106,7 @@ class MockV2Pool:
 
         Parameters
         ----------
-        token_in : MockErc20Token | Erc20Token
+        token_in : FakeToken | Erc20Token
             The input token.
         token_in_quantity : int
             Amount of input tokens.
@@ -148,7 +144,7 @@ class MockV2Pool:
 
     def calculate_tokens_in_from_tokens_out(
         self,
-        token_out: MockErc20Token | Erc20Token,
+        token_out: FakeToken | Erc20Token,
         token_out_quantity: int,
         override_state: UniswapV2PoolState | None = None,
     ) -> int:
@@ -173,7 +169,7 @@ class MockV2Pool:
 
     def get_absolute_exchange_rate(
         self,
-        token: MockErc20Token | Erc20Token,
+        token: FakeToken | Erc20Token,
         override_state: UniswapV2PoolState | None = None,
     ) -> Fraction:
         """
@@ -181,7 +177,7 @@ class MockV2Pool:
 
         Parameters
         ----------
-        token : MockErc20Token | Erc20Token
+        token : FakeToken | Erc20Token
             Token to get exchange rate for.
         override_state : UniswapV2PoolState | None
             Optional state override.
@@ -233,8 +229,8 @@ class MockV3Pool:
     def __init__(
         self,
         address: ChecksumAddress,
-        token0: MockErc20Token | Erc20Token,
-        token1: MockErc20Token | Erc20Token,
+        token0: FakeToken | Erc20Token,
+        token1: FakeToken | Erc20Token,
         initial_state: UniswapV3PoolState,
         tick_spacing: int = 60,
         fee: int = 3000,  # 0.3% in V3 format
@@ -242,7 +238,7 @@ class MockV3Pool:
         self.address = address
         self.token0 = token0
         self.token1 = token1
-        self.tokens: tuple[MockErc20Token | Erc20Token, MockErc20Token | Erc20Token] = (
+        self.tokens: tuple[FakeToken | Erc20Token, FakeToken | Erc20Token] = (
             token0,
             token1,
         )
@@ -286,7 +282,7 @@ class MockV3Pool:
 
     def calculate_tokens_out_from_tokens_in(
         self,
-        token_in: MockErc20Token | Erc20Token,
+        token_in: FakeToken | Erc20Token,
         token_in_quantity: int,
         override_state: UniswapV3PoolState | None = None,
     ) -> int:
@@ -298,7 +294,7 @@ class MockV3Pool:
 
         Parameters
         ----------
-        token_in : MockErc20Token | Erc20Token
+        token_in : FakeToken | Erc20Token
             The input token.
         token_in_quantity : int
             Amount of input tokens.
@@ -333,7 +329,7 @@ class MockV3Pool:
 
     def get_absolute_exchange_rate(
         self,
-        token: MockErc20Token | Erc20Token,
+        token: FakeToken | Erc20Token,
         override_state: UniswapV3PoolState | None = None,
     ) -> Fraction:
         """
@@ -373,8 +369,8 @@ class MockV4Pool(MockV3Pool):
         self,
         address: ChecksumAddress,
         pool_id: bytes,
-        token0: MockErc20Token | Erc20Token,
-        token1: MockErc20Token | Erc20Token,
+        token0: FakeToken | Erc20Token,
+        token1: FakeToken | Erc20Token,
         initial_state: UniswapV4PoolState,
         tick_spacing: int = 60,
     ) -> None:
@@ -405,8 +401,8 @@ class MockV4Pool(MockV3Pool):
 def build_mock_pool_from_state(
     address: ChecksumAddress,
     state: UniswapV2PoolState | UniswapV3PoolState | UniswapV4PoolState,
-    token0: MockErc20Token | Erc20Token,
-    token1: MockErc20Token | Erc20Token,
+    token0: FakeToken | Erc20Token,
+    token1: FakeToken | Erc20Token,
     pool_id: bytes | None = None,
 ) -> MockV2Pool | MockV3Pool | MockV4Pool:
     """
@@ -418,9 +414,9 @@ def build_mock_pool_from_state(
         Pool address (pool manager for V4).
     state : UniswapV2PoolState | UniswapV3PoolState | UniswapV4PoolState
         Pool state from fixture.
-    token0 : MockErc20Token | Erc20Token
+    token0 : FakeToken | Erc20Token
         Token0 for the pool.
-    token1 : MockErc20Token | Erc20Token
+    token1 : FakeToken | Erc20Token
         Token1 for the pool.
     pool_id : bytes | None
         Pool ID for V4 pools.
@@ -446,9 +442,9 @@ def build_mock_pool_from_state(
 
 def build_mock_pools_from_fixture(
     fixture: ArbitrageCycleFixture,
-    token0: MockErc20Token | Erc20Token,
-    token1: MockErc20Token | Erc20Token,
-) -> tuple[list[MockV2Pool | MockV3Pool | MockV4Pool], MockErc20Token | Erc20Token]:
+    token0: FakeToken | Erc20Token,
+    token1: FakeToken | Erc20Token,
+) -> tuple[list[MockV2Pool | MockV3Pool | MockV4Pool], FakeToken | Erc20Token]:
     """
     Build mock pools from a fixture.
 
@@ -456,18 +452,18 @@ def build_mock_pools_from_fixture(
     ----------
     fixture : ArbitrageCycleFixture
         The fixture containing pool states.
-    token0 : MockErc20Token | Erc20Token
+    token0 : FakeToken | Erc20Token
         Token0 (e.g., USDC).
-    token1 : MockErc20Token | Erc20Token
+    token1 : FakeToken | Erc20Token
         Token1 (e.g., WETH).
 
     Returns
     -------
-    tuple[list[MockV2Pool | MockV3Pool | MockV4Pool], MockErc20Token | Erc20Token]
+    tuple[list[MockV2Pool | MockV3Pool | MockV4Pool], FakeToken | Erc20Token]
         List of mock pools and the input token.
     """
     pools: list[MockV2Pool | MockV3Pool | MockV4Pool] = []
-    input_token: MockErc20Token | Erc20Token | None = None
+    input_token: FakeToken | Erc20Token | None = None
 
     for address, state in fixture.pool_states.items():
         # Build mock pool from state
@@ -495,8 +491,8 @@ def build_mock_pools_from_fixture(
 
 def create_cycle_with_mocks(
     fixture: ArbitrageCycleFixture,
-    token0: MockErc20Token | Erc20Token,
-    token1: MockErc20Token | Erc20Token,
+    token0: FakeToken | Erc20Token,
+    token1: FakeToken | Erc20Token,
     cycle_id: str = "test_cycle",
     max_input: int = 10**21,
 ) -> "tuple[UniswapLpCycle, list[MockV2Pool | MockV3Pool | MockV4Pool]]":
@@ -509,9 +505,9 @@ def create_cycle_with_mocks(
     ----------
     fixture : ArbitrageCycleFixture
         The fixture to use.
-    token0 : MockErc20Token | Erc20Token
+    token0 : FakeToken | Erc20Token
         Token0 for pools.
-    token1 : MockErc20Token | Erc20Token
+    token1 : FakeToken | Erc20Token
         Token1 for pools.
     cycle_id : str
         ID for the cycle.
@@ -613,10 +609,10 @@ def create_cycle_with_mocks(
     )
 
     # Start patches
-    UniswapLpCycle._mock_patch_validate.__enter__()
-    UniswapLpCycle._mock_patch_viable.__enter__()
-    UniswapLpCycle._mock_patch_pre_calc.__enter__()
-    UniswapLpCycle._mock_patch_build_swap.__enter__()
+    UniswapLpCycle._mock_patch_validate.start()
+    UniswapLpCycle._mock_patch_viable.start()
+    UniswapLpCycle._mock_patch_pre_calc.start()
+    UniswapLpCycle._mock_patch_build_swap.start()
 
     try:
         cycle = UniswapLpCycle(
@@ -627,10 +623,10 @@ def create_cycle_with_mocks(
         )
     except Exception:
         # Clean up patches on error
-        UniswapLpCycle._mock_patch_validate.__exit__(None, None, None)
-        UniswapLpCycle._mock_patch_viable.__exit__(None, None, None)
-        UniswapLpCycle._mock_patch_pre_calc.__exit__(None, None, None)
-        UniswapLpCycle._mock_patch_build_swap.__exit__(None, None, None)
+        UniswapLpCycle._mock_patch_validate.stop()
+        UniswapLpCycle._mock_patch_viable.stop()
+        UniswapLpCycle._mock_patch_pre_calc.stop()
+        UniswapLpCycle._mock_patch_build_swap.stop()
         raise
 
     return cycle, pools
@@ -646,5 +642,5 @@ def cleanup_mock_patches() -> None:
         "_mock_patch_build_swap",
     ]:
         if hasattr(UniswapLpCycle, attr):
-            getattr(UniswapLpCycle, attr).__exit__(None, None, None)
+            getattr(UniswapLpCycle, attr).stop()
             delattr(UniswapLpCycle, attr)

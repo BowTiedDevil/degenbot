@@ -79,6 +79,7 @@ class FakeAsyncW3Eth(FakeW3Eth):
     def chain_id(self):  # type: ignore[override]
         async def _inner() -> int:  # noqa: RUF029
             return 1
+
         return _inner()
 
     async def get_block_number(self) -> int:

@@ -42,7 +42,7 @@ from degenbot.cli.aave.verification import (
     verify_all_positions,
     verify_positions_for_users,
 )
-from degenbot.cli.utils import get_web3_from_config
+from degenbot.cli.utils import get_provider_from_config
 from degenbot.database import db_session
 from degenbot.database.models.aave import (
     AaveGhoToken,
@@ -107,7 +107,7 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
 
     pool_address_provider = EthereumMainnetAaveV3.pool_address_provider
 
-    provider = get_web3_from_config(chain_id=chain_id)
+    provider = get_provider_from_config(chain_id=chain_id)
 
     (market_name,) = raw_call(
         provider=provider,
@@ -362,7 +362,7 @@ def aave_update(
             raise DegenbotValueError(message=msg)
 
         for chain_id in active_chains:
-            provider = get_web3_from_config(chain_id=chain_id)
+            provider = get_provider_from_config(chain_id=chain_id)
 
             with db_session() as session:
                 active_markets = session.scalars(
@@ -711,7 +711,7 @@ def position_risk(  # noqa: PLR0917
     """
 
     # Get provider for price fetching
-    provider = None if skip_prices else get_web3_from_config(chain_id=chain_id)
+    provider = None if skip_prices else get_provider_from_config(chain_id=chain_id)
 
     with db_session() as session:
         # Find the market

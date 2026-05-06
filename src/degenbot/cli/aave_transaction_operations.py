@@ -23,7 +23,7 @@ from degenbot.aave.events import (
 )
 from degenbot.aave.operation_types import OperationType
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.cli.aave_types import TokenType
+from degenbot.cli.aave.types import TokenType
 from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.database.models.aave import AaveGhoToken, AaveV3Asset, AaveV3Contract, AaveV3Market

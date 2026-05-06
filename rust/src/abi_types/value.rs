@@ -294,14 +294,6 @@ pub enum ParseIntError {
     InvalidDecimal,
 }
 
-/// Deprecated alias for `ParseIntError`.
-#[deprecated(note = "Use `ParseIntError` instead")]
-pub type ParseU256Error = ParseIntError;
-
-/// Deprecated alias for `ParseIntError`.
-#[deprecated(note = "Use `ParseIntError` instead")]
-pub type ParseI256Error = ParseIntError;
-
 /// Parse a JSON array string into individual element strings.
 ///
 /// Accepts `["elem1", "elem2"]` format with optional whitespace.

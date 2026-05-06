@@ -3,7 +3,6 @@
 Replaces the previous ad hoc token fakes:
 - FakeToken (from tests/arbitrage/test_path/conftest.py)
 - FakeCurveToken (from tests/arbitrage/fake_curve_pool.py)
-- MockErc20Token (from tests/arbitrage/mock_pools.py)
 - MockToken (from tests/arbitrage/test_optimizers/test_v2_v3_optimizer.py)
 
 The consolidated FakeToken is a frozen dataclass with address-based equality

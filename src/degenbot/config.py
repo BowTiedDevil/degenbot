@@ -1,6 +1,6 @@
 import tomllib
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import tomlkit
 from pydantic import BaseModel, HttpUrl, PlainSerializer, WebsocketUrl, field_validator
@@ -104,11 +104,18 @@ def _reset_settings() -> None:
 
 
 class _SettingsProxy:
-    def __getattr__(self, name: str) -> object:
+    """
+    Lazy proxy that defers settings initialization until first attribute access.
+
+    Avoids import-time side effects (directory creation, config file writing,
+    database initialization) by wrapping the singleton Settings instance.
+    """
+
+    def __getattr__(self, name: str) -> Any:  # noqa: ANN401
         return getattr(_load_settings(), name)
 
     def __repr__(self) -> str:
         return repr(_load_settings())
 
 
-settings = _SettingsProxy()
+settings: Settings = _SettingsProxy()  # type: ignore[assignment]

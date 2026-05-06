@@ -11,7 +11,7 @@ from fractions import Fraction
 import pytest
 
 from degenbot.arbitrage.optimizers.hop_types import SolveInput
-from degenbot.arbitrage.optimizers.solver import ArbSolver, BrentSolver
+from degenbot.arbitrage.optimizers.solver import ArbSolver, BrentSolver, _simulate_path
 from degenbot.arbitrage.path.arbitrage_path import ArbitragePath
 from degenbot.exceptions.arbitrage import OptimizationError
 from tests.arbitrage.fake_curve_pool import FakeCurveStableswapPool
@@ -344,8 +344,6 @@ class TestEquivalenceSummary:
         assert result1 == sim.amount_out
 
         # 3. Works with solver simulation
-        from degenbot.arbitrage.optimizers.solver import _simulate_path
-
         result2 = _simulate_path(1000 * 10**18, (hop,))
         assert int(result2) == result1
 
