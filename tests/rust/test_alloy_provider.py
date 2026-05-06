@@ -8,6 +8,7 @@ interface with correct method signatures and default values.
 import inspect
 
 import pytest
+from hexbytes import HexBytes
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.provider import AlloyProvider
@@ -136,23 +137,19 @@ class TestAlloyProviderReturnTypes:
 
     def test_get_storage_at_returns_hexbytes(self, alloy_provider: AlloyProvider):
         """get_storage_at should return HexBytes (functional, not stub)."""
-        from hexbytes import HexBytes
-        result = alloy_provider.get_storage_at(
-            "0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", 0
-        )
+
+        result = alloy_provider.get_storage_at("0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", 0)
         assert isinstance(result, HexBytes)
         assert len(result) == 32
 
     def test_get_transaction_returns_dict_or_none(self, alloy_provider: AlloyProvider):
         """get_transaction should return dict or None for missing tx."""
-        result = alloy_provider.get_transaction(
-            "0x" + "00" * 32
-        )
+        result = alloy_provider.get_transaction("0x" + "00" * 32)
         assert result is None or isinstance(result, dict)
 
     def test_estimate_gas_returns_int(self, alloy_provider: AlloyProvider):
         """estimate_gas should return int."""
-        from hexbytes import HexBytes
+
         result = alloy_provider.estimate_gas(
             to="0x742d35Cc6634C0532925a3b8D4C9db96590d6B75",
             data=HexBytes(b""),

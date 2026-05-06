@@ -13,10 +13,18 @@ import dataclasses
 
 import pytest
 
+from degenbot.exceptions.liquidity_pool import NoPoolStateAvailable
 from degenbot.uniswap.concentrated.state_manager import ConcentratedLiquidityStateManager
+from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 
 
-def _make_state(*, block: int, liquidity: int = 1000, sqrt_price_x96: int = 79228162514264337593543950336, tick: int = 0) -> object:
+def _make_state(
+    *,
+    block: int,
+    liquidity: int = 1000,
+    sqrt_price_x96: int = 79228162514264337593543950336,
+    tick: int = 0,
+) -> object:
     """Minimal fake state object for testing."""
     return dataclasses.make_dataclass(
         "FakeState",
@@ -109,7 +117,6 @@ class TestDiscardAndRestore:
     def test_discard_raises_if_all_too_old(self) -> None:
         s = _make_state(block=100)
         mgr = ConcentratedLiquidityStateManager(initial_state=s, state_cache_depth=4)
-        from degenbot.exceptions.liquidity_pool import NoPoolStateAvailable
 
         with pytest.raises(NoPoolStateAvailable):
             mgr.discard_states_before_block(101)
@@ -137,7 +144,6 @@ class TestDiscardAndRestore:
     def test_restore_raises_if_earliest_too_new(self) -> None:
         s = _make_state(block=100)
         mgr = ConcentratedLiquidityStateManager(initial_state=s, state_cache_depth=4)
-        from degenbot.exceptions.liquidity_pool import NoPoolStateAvailable
 
         with pytest.raises(NoPoolStateAvailable):
             mgr.restore_state_before_block(50)
@@ -160,8 +166,6 @@ class TestSwapIsViable:
         assert not mgr.swap_is_viable(state=s, zero_for_one=True, sparse_liquidity_map=False)
 
     def test_viable_when_liquidity_beyond_price(self) -> None:
-
-        from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 
         # Create a state with tick data on both sides of price
         tick_data = {-100: object(), 100: object()}

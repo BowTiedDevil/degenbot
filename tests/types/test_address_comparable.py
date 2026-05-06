@@ -2,6 +2,7 @@
 Tests verifying AddressComparable mixin provides address-based comparison and hashing.
 """
 
+import pytest
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 
@@ -46,9 +47,9 @@ class TestAddressComparableEquality:
         assert a == bytes.fromhex(addr[2:])
 
     def test_not_equal_to_unrelated_type(self):
-        """Comparison with an unrelated type returns NotImplemented."""
+        """An AddressComparable is not equal to an unrelated type."""
         a = _FakeOnChainEntity("0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B", "A")
-        assert a.__eq__(42) is NotImplemented
+        assert a != 42
 
 
 class TestAddressComparableOrdering:
@@ -71,10 +72,11 @@ class TestAddressComparableOrdering:
         a = _FakeOnChainEntity("0x0000000000000000000000000000000000000001", "A")
         assert a < "0x0000000000000000000000000000000000000002"
 
-    def test_lt_unrelated_type_returns_not_implemented(self):
-        """Comparison with an unrelated type returns NotImplemented."""
+    def test_lt_unrelated_type_raises_type_error(self):
+        """Ordering comparison with an unrelated type raises TypeError."""
         a = _FakeOnChainEntity("0x0000000000000000000000000000000000000001", "A")
-        assert a.__lt__(42) is NotImplemented
+        with pytest.raises(TypeError):
+            _ = a < 42
 
 
 class TestAddressComparableHashing:

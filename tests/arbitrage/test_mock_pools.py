@@ -19,7 +19,7 @@ from degenbot.uniswap.v3_types import (
 from degenbot.uniswap.v4_types import UniswapV4PoolState
 from tests.arbitrage.generator import FixtureFactory
 from tests.arbitrage.mock_pools import (
-    MockErc20Token,
+    FakeToken,
     MockV2Pool,
     MockV3Pool,
     MockV4Pool,
@@ -30,12 +30,12 @@ from tests.arbitrage.mock_pools import (
 )
 
 
-class TestMockErc20Token:
-    """Tests for MockErc20Token."""
+class TestFakeToken:
+    """Tests for FakeToken."""
 
     def test_create_token(self) -> None:
         """Test creating a mock token."""
-        token = MockErc20Token(
+        token = FakeToken(
             ChecksumAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
             "USDC",
             6,
@@ -46,16 +46,16 @@ class TestMockErc20Token:
     def test_token_equality(self) -> None:
         """Test token equality by address."""
         addr = ChecksumAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
-        token1 = MockErc20Token(addr, "USDC", 6)
-        token2 = MockErc20Token(addr, "USDC", 6)
+        token1 = FakeToken(addr, "USDC", 6)
+        token2 = FakeToken(addr, "USDC", 6)
 
         assert token1 == token2
 
     def test_token_hashable(self) -> None:
         """Test that tokens are hashable."""
         addr = ChecksumAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
-        token1 = MockErc20Token(addr, "USDC", 6)
-        token2 = MockErc20Token(addr, "USDC", 6)
+        token1 = FakeToken(addr, "USDC", 6)
+        token2 = FakeToken(addr, "USDC", 6)
 
         assert hash(token1) == hash(token2)
         assert token1 == token2
@@ -65,16 +65,16 @@ class TestMockV2Pool:
     """Tests for MockV2Pool."""
 
     @pytest.fixture
-    def usdc(self) -> MockErc20Token:
-        return MockErc20Token(
+    def usdc(self) -> FakeToken:
+        return FakeToken(
             ChecksumAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
             "USDC",
             6,
         )
 
     @pytest.fixture
-    def weth(self) -> MockErc20Token:
-        return MockErc20Token(
+    def weth(self) -> FakeToken:
+        return FakeToken(
             ChecksumAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
             "WETH",
             18,
@@ -91,8 +91,8 @@ class TestMockV2Pool:
 
     def test_create_pool(
         self,
-        usdc: MockErc20Token,
-        weth: MockErc20Token,
+        usdc: FakeToken,
+        weth: FakeToken,
         pool_state: UniswapV2PoolState,
     ) -> None:
         """Test creating a mock V2 pool."""
@@ -109,8 +109,8 @@ class TestMockV2Pool:
 
     def test_pool_hashable(
         self,
-        usdc: MockErc20Token,
-        weth: MockErc20Token,
+        usdc: FakeToken,
+        weth: FakeToken,
         pool_state: UniswapV2PoolState,
     ) -> None:
         """Test that pools are hashable."""
@@ -123,8 +123,8 @@ class TestMockV2Pool:
 
     def test_calculate_tokens_out(
         self,
-        usdc: MockErc20Token,
-        weth: MockErc20Token,
+        usdc: FakeToken,
+        weth: FakeToken,
         pool_state: UniswapV2PoolState,
     ) -> None:
         """Test V2 swap calculation."""
@@ -153,8 +153,8 @@ class TestMockV2Pool:
 
     def test_calculate_with_override_state(
         self,
-        usdc: MockErc20Token,
-        weth: MockErc20Token,
+        usdc: FakeToken,
+        weth: FakeToken,
         pool_state: UniswapV2PoolState,
     ) -> None:
         """Test calculation with state override produces different output."""
@@ -188,8 +188,8 @@ class TestMockV2Pool:
 
     def test_swap_is_viable(
         self,
-        usdc: MockErc20Token,
-        weth: MockErc20Token,
+        usdc: FakeToken,
+        weth: FakeToken,
         pool_state: UniswapV2PoolState,
     ) -> None:
         """Test swap viability check."""
@@ -219,16 +219,16 @@ class TestMockV3Pool:
     """Tests for MockV3Pool."""
 
     @pytest.fixture
-    def usdc(self) -> MockErc20Token:
-        return MockErc20Token(
+    def usdc(self) -> FakeToken:
+        return FakeToken(
             ChecksumAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
             "USDC",
             6,
         )
 
     @pytest.fixture
-    def weth(self) -> MockErc20Token:
-        return MockErc20Token(
+    def weth(self) -> FakeToken:
+        return FakeToken(
             ChecksumAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
             "WETH",
             18,
@@ -248,8 +248,8 @@ class TestMockV3Pool:
 
     def test_create_v3_pool(
         self,
-        usdc: MockErc20Token,
-        weth: MockErc20Token,
+        usdc: FakeToken,
+        weth: FakeToken,
         v3_state: UniswapV3PoolState,
     ) -> None:
         """Test creating a mock V3 pool."""
@@ -265,8 +265,8 @@ class TestMockV3Pool:
 
     def test_v3_pool_hashable(
         self,
-        usdc: MockErc20Token,
-        weth: MockErc20Token,
+        usdc: FakeToken,
+        weth: FakeToken,
         v3_state: UniswapV3PoolState,
     ) -> None:
         """Test that V3 pools are hashable."""
@@ -280,16 +280,16 @@ class TestMockV4Pool:
     """Tests for MockV4Pool."""
 
     @pytest.fixture
-    def usdc(self) -> MockErc20Token:
-        return MockErc20Token(
+    def usdc(self) -> FakeToken:
+        return FakeToken(
             ChecksumAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
             "USDC",
             6,
         )
 
     @pytest.fixture
-    def weth(self) -> MockErc20Token:
-        return MockErc20Token(
+    def weth(self) -> FakeToken:
+        return FakeToken(
             ChecksumAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
             "WETH",
             18,
@@ -310,8 +310,8 @@ class TestMockV4Pool:
 
     def test_create_v4_pool(
         self,
-        usdc: MockErc20Token,
-        weth: MockErc20Token,
+        usdc: FakeToken,
+        weth: FakeToken,
         v4_state: UniswapV4PoolState,
     ) -> None:
         """Test creating a mock V4 pool."""
@@ -328,8 +328,8 @@ class TestMockV4Pool:
 
     def test_v4_pool_hashable(
         self,
-        usdc: MockErc20Token,
-        weth: MockErc20Token,
+        usdc: FakeToken,
+        weth: FakeToken,
         v4_state: UniswapV4PoolState,
     ) -> None:
         """Test that V4 pools are hashable."""
@@ -345,12 +345,12 @@ class TestBuildMockPoolFromState:
 
     def test_build_v2_pool(self) -> None:
         """Test building V2 pool from state."""
-        token0 = MockErc20Token(
+        token0 = FakeToken(
             ChecksumAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
             "USDC",
             6,
         )
-        token1 = MockErc20Token(
+        token1 = FakeToken(
             ChecksumAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
             "WETH",
             18,
@@ -373,12 +373,12 @@ class TestBuildMockPoolFromState:
 
     def test_build_v3_pool(self) -> None:
         """Test building V3 pool from state."""
-        token0 = MockErc20Token(
+        token0 = FakeToken(
             ChecksumAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
             "USDC",
             6,
         )
-        token1 = MockErc20Token(
+        token1 = FakeToken(
             ChecksumAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
             "WETH",
             18,
@@ -404,12 +404,12 @@ class TestBuildMockPoolFromState:
 
     def test_build_v4_pool_requires_pool_id(self) -> None:
         """Test that V4 pool requires pool_id."""
-        token0 = MockErc20Token(
+        token0 = FakeToken(
             ChecksumAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
             "USDC",
             6,
         )
-        token1 = MockErc20Token(
+        token1 = FakeToken(
             ChecksumAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
             "WETH",
             18,
@@ -454,12 +454,12 @@ class TestBuildMockPoolsFromFixture:
         factory = FixtureFactory()
         fixture = factory.simple_v2_arb_profitable()
 
-        token0 = MockErc20Token(
+        token0 = FakeToken(
             ChecksumAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
             "USDC",
             6,
         )
-        token1 = MockErc20Token(
+        token1 = FakeToken(
             ChecksumAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
             "WETH",
             18,
@@ -477,12 +477,12 @@ class TestBuildMockPoolsFromFixture:
         factory = FixtureFactory()
         fixture = factory.simple_v3_arb_same_tick_spacing()
 
-        token0 = MockErc20Token(
+        token0 = FakeToken(
             ChecksumAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
             "USDC",
             6,
         )
-        token1 = MockErc20Token(
+        token1 = FakeToken(
             ChecksumAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
             "WETH",
             18,
@@ -507,12 +507,12 @@ class TestUniswapLpCycleIntegration:
         factory = FixtureFactory()
         fixture = factory.simple_v2_arb_profitable()
 
-        token0 = MockErc20Token(
+        token0 = FakeToken(
             ChecksumAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
             "USDC",
             6,
         )
-        token1 = MockErc20Token(
+        token1 = FakeToken(
             ChecksumAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
             "WETH",
             18,
@@ -529,12 +529,12 @@ class TestUniswapLpCycleIntegration:
         factory = FixtureFactory()
         fixture = factory.simple_v2_arb_profitable()
 
-        token0 = MockErc20Token(
+        token0 = FakeToken(
             ChecksumAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
             "USDC",
             6,
         )
-        token1 = MockErc20Token(
+        token1 = FakeToken(
             ChecksumAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
             "WETH",
             18,

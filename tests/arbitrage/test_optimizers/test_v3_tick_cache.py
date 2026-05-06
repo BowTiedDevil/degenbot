@@ -11,14 +11,14 @@ The cache provides:
 """
 
 import dataclasses
+import math
+import time
 
+import numpy as np
 import pytest
 from eth_typing import ChecksumAddress
 
-from degenbot.uniswap.v3_types import (
-    UniswapV3LiquidityAtTick,
-    UniswapV3PoolState,
-)
+from degenbot.uniswap.v3_types import UniswapV3LiquidityAtTick, UniswapV3PoolState
 
 # ==============================================================================
 # TICK RANGE CACHE TYPES
@@ -187,7 +187,6 @@ class V3TickRangeCache:
     @staticmethod
     def _tick_to_sqrt_price_x96(tick: int) -> int:
         """Convert tick to sqrt price in X96 format."""
-        import math
 
         return int(math.sqrt(1.0001**tick) * (2**96))
 
@@ -516,9 +515,6 @@ class TestTickCachePerformance:
 
     def test_lookup_performance(self) -> None:
         """Benchmark tick range lookup."""
-        import time
-
-        import numpy as np
 
         # Create cache with 100 tick ranges
         tick_data = {}
@@ -550,9 +546,6 @@ class TestTickCachePerformance:
 
     def test_rebuild_performance(self) -> None:
         """Benchmark cache rebuild."""
-        import time
-
-        import numpy as np
 
         # Create large tick data
         tick_data = {}

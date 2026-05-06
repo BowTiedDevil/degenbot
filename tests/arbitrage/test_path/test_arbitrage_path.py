@@ -9,7 +9,12 @@ from fractions import Fraction
 import pytest
 
 from degenbot.arbitrage.optimizers.hop_types import SolveResult
-from degenbot.arbitrage.optimizers.solver import MobiusSolver
+from degenbot.arbitrage.optimizers.solver import (
+    ArbSolver,
+    ConstantProductHop,
+    MobiusSolver,
+    SolveInput,
+)
 from degenbot.arbitrage.path import ArbitragePath, PathValidationError, SwapVector
 from degenbot.arbitrage.path.arbitrage_path import (
     PoolCompatibility,
@@ -18,7 +23,8 @@ from degenbot.arbitrage.path.arbitrage_path import (
     _pool_to_hop_state,
     _v3_virtual_reserves,
 )
-from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop
+from degenbot.types.hop_types import BoundedProductHop
+from degenbot.uniswap.v3_libraries.constants import Q96
 from tests.fakes.subscribers import FakeSubscriber
 
 from .conftest import (
@@ -323,11 +329,6 @@ class TestArbitragePathValidation:
 
 class TestArbitragePathCalculate:
     def test_cross_validates_vs_arb_solver(self):
-        from degenbot.arbitrage.optimizers.solver import (
-            ArbSolver,
-            ConstantProductHop,
-            SolveInput,
-        )
 
         t0, _t1, pool0, pool1 = TestArbitragePathConstruction._make_cyclic_v2_pools(self)
         solver = MobiusSolver()
@@ -386,26 +387,26 @@ class TestArbitragePathCalculate:
 
 class TestV3VirtualReservesIntegerMath:
     def test_price_one_symmetric(self):
-        Q96 = 2**96
+
         x, y = _v3_virtual_reserves(liquidity=10**18, sqrt_price_x96=Q96, zero_for_one=True)
         assert x == 10**18 * Q96
         assert y == 10**18 * Q96
 
     def test_price_one_reversed(self):
-        Q96 = 2**96
+
         x, y = _v3_virtual_reserves(liquidity=10**18, sqrt_price_x96=Q96, zero_for_one=False)
         assert x == 10**18 * Q96
         assert y == 10**18 * Q96
 
     def test_price_four(self):
-        Q96 = 2**96
+
         sqrt_p = 2 * Q96
         x, y = _v3_virtual_reserves(liquidity=10**18, sqrt_price_x96=sqrt_p, zero_for_one=True)
         assert x == 10**18 * Q96 * Q96 // (2 * Q96)
         assert y == 10**18 * 2 * Q96
 
     def test_direction_swap(self):
-        Q96 = 2**96
+
         sqrt_p = 2 * Q96
         x_zfo, y_zfo = _v3_virtual_reserves(10**18, sqrt_p, zero_for_one=True)
         x_ofz, y_ofz = _v3_virtual_reserves(10**18, sqrt_p, zero_for_one=False)
@@ -413,30 +414,30 @@ class TestV3VirtualReservesIntegerMath:
         assert y_zfo == x_ofz
 
     def test_product_equals_liquidity_squared_scaled(self):
-        Q96 = 2**96
-        L = 10**18
+
+        liquidity = 10**18
         sqrt_p = 79228162514264337593543950336
-        x, y = _v3_virtual_reserves(L, sqrt_p, zero_for_one=True)
-        assert x * y == L * L * Q96 * Q96
+        x, y = _v3_virtual_reserves(liquidity, sqrt_p, zero_for_one=True)
+        assert x * y == liquidity * liquidity * Q96 * Q96
 
     def test_large_liquidity_no_precision_loss(self):
-        Q96 = 2**96
-        L = 2**100
+
+        liquidity = 2**100
         sqrt_p = Q96
-        x, y = _v3_virtual_reserves(L, sqrt_p, zero_for_one=True)
-        assert x == L * Q96
-        assert y == L * Q96
+        x, y = _v3_virtual_reserves(liquidity, sqrt_p, zero_for_one=True)
+        assert x == liquidity * Q96
+        assert y == liquidity * Q96
 
     def test_matches_float_for_typical_values(self):
-        Q96 = 2**96
-        L = 10**18
+
+        liquidity = 10**18
         sqrt_price_x96 = 79228162514264337593543950336
 
-        x_int, y_int = _v3_virtual_reserves(L, sqrt_price_x96, zero_for_one=True)
+        x_int, y_int = _v3_virtual_reserves(liquidity, sqrt_price_x96, zero_for_one=True)
 
         sqrt_price = sqrt_price_x96 / Q96
-        x_float = round(L / sqrt_price * Q96)
-        y_float = round(L * sqrt_price * Q96)
+        x_float = round(liquidity / sqrt_price * Q96)
+        y_float = round(liquidity * sqrt_price * Q96)
 
         assert abs(x_int - x_float) <= 1
         assert abs(y_int - y_float) <= 1

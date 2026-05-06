@@ -11,6 +11,7 @@ import pytest
 from eth_typing import ChainId
 
 from degenbot.anvil_fork import AnvilFork
+from degenbot.arbitrage.optimizers.hop_types import SolveInput
 from degenbot.arbitrage.optimizers.solidly_stable import (
     _simulate_mixed_path,
     _simulate_mixed_path_int,
@@ -259,8 +260,6 @@ def test_brent_solver_with_curve():
         reserve_out=12_000_000_000_000,  # More token1 = cheaper token1
         fee=Fraction(3, 10000),
     )
-
-    from degenbot.arbitrage.optimizers.hop_types import SolveInput
 
     solve_input = SolveInput(hops=(v2_in, curve_hop, v2_out))
 

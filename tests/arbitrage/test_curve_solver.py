@@ -1,15 +1,18 @@
 """Test CurveStableswapPool integration with ArbitragePath and solvers."""
 
+import inspect
 from fractions import Fraction
 
 import pytest
 
+from degenbot.arbitrage.optimizers.solver import _simulate_path
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from degenbot.types.hop_types import CurveStableswapHop, PoolInvariant
+from degenbot.types.hop_types import ConstantProductHop, CurveStableswapHop, PoolInvariant
 
 
 def test_curve_hop_dataclass_with_swap_fn():
     """Test that CurveStableswapHop can be created with swap_fn."""
+
     def mock_swap(dx: int) -> int:
         return dx * 995 // 1000  # 0.5% fee
 
@@ -32,7 +35,6 @@ def test_curve_hop_dataclass_with_swap_fn():
 
 def test_simulate_path_with_curve_swap_fn():
     """Test that _simulate_path respects Curve swap_fn."""
-    from degenbot.arbitrage.optimizers.solver import _simulate_path
 
     def curve_swap(dx: int) -> int:
         # Mock Curve swap: exact 1:1 minus 0.3% fee
@@ -58,8 +60,6 @@ def test_simulate_path_with_curve_swap_fn():
 
 def test_simulate_path_with_mixed_hops():
     """Test _simulate_path with Curve and V2 hops mixed."""
-    from degenbot.arbitrage.optimizers.solver import _simulate_path
-    from degenbot.types.hop_types import ConstantProductHop
 
     def curve_swap(dx: int) -> int:
         return dx * 997 // 1000
@@ -90,7 +90,9 @@ def test_simulate_path_with_mixed_hops():
     # Second hop: 99700 * 0.997 * 10B / (10B + 99700 * 0.997)
     expected_after_curve = 100000 * 0.997
     g = 1 - 0.0003  # gamma
-    expected_after_v2 = expected_after_curve * g * 10_000_000_000 / (10_000_000_000 + expected_after_curve * g)
+    expected_after_v2 = (
+        expected_after_curve * g * 10_000_000_000 / (10_000_000_000 + expected_after_curve * g)
+    )
     assert pytest.approx(result, rel=1e-6) == expected_after_v2
 
 
@@ -98,7 +100,7 @@ def test_curve_hop_to_hop_state_signature():
     """Test that CurveStableswapPool.to_hop_state accepts the expected signature."""
     # We can't easily construct a CurveStableswapPool without a fork,
     # but we can verify the method signature
-    import inspect
+
     sig = inspect.signature(CurveStableswapPool.to_hop_state)
     params = list(sig.parameters.keys())
     assert "zero_for_one" in params

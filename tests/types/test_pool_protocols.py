@@ -6,8 +6,14 @@ protocols once they implement the required methods (simulate_swap,
 to_hop_state, extract_fee).
 """
 
-import pytest
+from fractions import Fraction
 
+import pytest
+from eth_typing import ChecksumAddress
+from web3 import Web3
+
+from degenbot.types.abstract import AbstractPoolState
+from degenbot.types.hop_types import ConstantProductHop, HopType
 from degenbot.types.pool_protocols import (
     ArbitrageCapablePool,
     PoolSimulation,
@@ -21,8 +27,6 @@ class FakePoolSimulation:
     """Minimal class satisfying PoolSimulation."""
 
     def __init__(self, address: str = "0x" + "a" * 40) -> None:
-        from eth_typing import ChecksumAddress
-        from web3 import Web3
 
         self._address = ChecksumAddress(Web3.to_checksum_address(address))
         self._subscribers: set[object] = set()
@@ -32,7 +36,6 @@ class FakePoolSimulation:
         return self._address
 
     def simulate_swap(self, token_in, amount_in, token_out, state_override=None):
-        from degenbot.types.abstract import AbstractPoolState
 
         return SimulationResult(
             amount_in=amount_in,
@@ -52,9 +55,6 @@ class FakeArbitragePool(FakePoolSimulation):
     """Extends FakePoolSimulation with arbitrage capability."""
 
     def to_hop_state(self, zero_for_one, state_override=None):
-        from fractions import Fraction
-
-        from degenbot.types.hop_types import ConstantProductHop
 
         return ConstantProductHop(
             reserve_in=1000,
@@ -63,7 +63,6 @@ class FakeArbitragePool(FakePoolSimulation):
         )
 
     def extract_fee(self, zero_for_one):
-        from fractions import Fraction
 
         return Fraction(3, 1000)
 
@@ -101,14 +100,12 @@ class TestArbitrageCapablePool:
     def test_to_hop_state_returns_hop_type(self):
         pool = FakeArbitragePool()
         hop = pool.to_hop_state(zero_for_one=True)
-        from degenbot.types.hop_types import ConstantProductHop, HopType
 
         assert isinstance(hop, HopType)
         assert isinstance(hop, ConstantProductHop)
 
     def test_extract_fee_returns_fraction(self):
         pool = FakeArbitragePool()
-        from fractions import Fraction
 
         fee = pool.extract_fee(zero_for_one=True)
         assert isinstance(fee, Fraction)
@@ -155,7 +152,6 @@ class TestStateManageablePool:
 
 class TestSimulationResult:
     def test_frozen(self):
-        from degenbot.types.abstract import AbstractPoolState
 
         result = SimulationResult(
             amount_in=100,
@@ -167,7 +163,6 @@ class TestSimulationResult:
             result.amount_in = 999  # type: ignore[misc]
 
     def test_fields(self):
-        from degenbot.types.abstract import AbstractPoolState
 
         addr = "0x" + "a" * 40
         result = SimulationResult(

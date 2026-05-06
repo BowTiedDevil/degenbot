@@ -2,10 +2,10 @@
 Tests verifying swap calculation protocol declarations and normalization.
 """
 
-from degenbot.types.pool_protocols import (
-    MultiTokenSwapCalculation,
-    TwoTokenSwapCalculation,
-)
+import inspect
+
+from degenbot.balancer.pools import BalancerV2Pool
+from degenbot.types.pool_protocols import MultiTokenSwapCalculation, TwoTokenSwapCalculation
 
 
 class TestSwapCalculationProtocols:
@@ -23,9 +23,6 @@ class TestSwapCalculationProtocols:
 class TestBalancerParameterOrder:
     def test_balancer_accepts_token_out_before_quantity(self):
         """Balancer's calculate_tokens_out_from_tokens_in has token_out before token_in_quantity."""
-        import inspect
-
-        from degenbot.balancer.pools import BalancerV2Pool
 
         sig = inspect.signature(BalancerV2Pool.calculate_tokens_out_from_tokens_in)
         params = list(sig.parameters.keys())

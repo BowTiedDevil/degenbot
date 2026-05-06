@@ -12,7 +12,7 @@ from scipy.optimize import minimize_scalar
 
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from tests.arbitrage.generator import FixtureFactory
-from tests.arbitrage.mock_pools import MockErc20Token, MockV2Pool
+from tests.arbitrage.mock_pools import FakeToken, MockV2Pool
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -28,7 +28,7 @@ WETH_ADDRESS: ChecksumAddress = ChecksumAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD
 
 def build_mock_pools_from_fixture(
     fixture,
-) -> tuple[MockV2Pool, MockV2Pool, MockErc20Token]:
+) -> tuple[MockV2Pool, MockV2Pool, FakeToken]:
     """
     Build MockV2Pool objects from a V2 arbitrage fixture.
 
@@ -41,8 +41,8 @@ def build_mock_pools_from_fixture(
     assert all(isinstance(s, UniswapV2PoolState) for s in pool_states)
 
     # Create mock tokens
-    usdc = MockErc20Token(USDC_ADDRESS, "USDC", 6)
-    weth = MockErc20Token(WETH_ADDRESS, "WETH", 18)
+    usdc = FakeToken(USDC_ADDRESS, "USDC", 6)
+    weth = FakeToken(WETH_ADDRESS, "WETH", 18)
 
     # Create mock pools with the proper fee
     pool_a = MockV2Pool(
@@ -80,7 +80,7 @@ class TestOptimizerMethodComparison:
         return factory.simple_v2_arb_profitable()
 
     @pytest.fixture
-    def mock_pools(self, v2_fixture) -> tuple[MockV2Pool, MockV2Pool, MockErc20Token]:
+    def mock_pools(self, v2_fixture) -> tuple[MockV2Pool, MockV2Pool, FakeToken]:
         """Build mock pools from the fixture."""
         return build_mock_pools_from_fixture(v2_fixture)
 

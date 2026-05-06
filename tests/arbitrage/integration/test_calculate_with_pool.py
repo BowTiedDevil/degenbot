@@ -9,6 +9,7 @@ of full pool objects.
 """
 
 import asyncio
+import math
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
 
@@ -16,11 +17,13 @@ import pytest
 
 from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
+from degenbot.exceptions.arbitrage import OptimizationError
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 from tests.arbitrage.test_path.conftest import (
     FakeConcentratedLiquidityPool,
     FakeToken,
     FakeUniswapV2Pool,
+    FakeV2PoolState,
 )
 
 # ---------------------------------------------------------------------------
@@ -59,25 +62,36 @@ def t2() -> FakeToken:
 
 
 @pytest.fixture
-def v2_v2_v2_pools(t0: FakeToken, t1: FakeToken, t2: FakeToken) -> tuple[FakeUniswapV2Pool, FakeUniswapV2Pool, FakeUniswapV2Pool]:
+def v2_v2_v2_pools(
+    t0: FakeToken, t1: FakeToken, t2: FakeToken
+) -> tuple[FakeUniswapV2Pool, FakeUniswapV2Pool, FakeUniswapV2Pool]:
     """3-hop V2 cycle: t0 -> t1 -> t2 -> t0.
 
     Same reserve ratios as verify_legacy_equivalence.py, known profitable.
     """
     pool_0 = FakeUniswapV2Pool(
-        token0=t0, token1=t1,
-        reserve0=100 * 10**18, reserve1=200 * 10**18,
-        fee=Fraction(3, 1000), address="0xpool0",
+        token0=t0,
+        token1=t1,
+        reserve0=100 * 10**18,
+        reserve1=200 * 10**18,
+        fee=Fraction(3, 1000),
+        address="0xpool0",
     )
     pool_1 = FakeUniswapV2Pool(
-        token0=t1, token1=t2,
-        reserve0=150 * 10**18, reserve1=300 * 10**18,
-        fee=Fraction(3, 1000), address="0xpool1",
+        token0=t1,
+        token1=t2,
+        reserve0=150 * 10**18,
+        reserve1=300 * 10**18,
+        fee=Fraction(3, 1000),
+        address="0xpool1",
     )
     pool_2 = FakeUniswapV2Pool(
-        token0=t2, token1=t0,
-        reserve0=250 * 10**18, reserve1=500 * 10**18,
-        fee=Fraction(3, 1000), address="0xpool2",
+        token0=t2,
+        token1=t0,
+        reserve0=250 * 10**18,
+        reserve1=500 * 10**18,
+        fee=Fraction(3, 1000),
+        address="0xpool2",
     )
     return (pool_0, pool_1, pool_2)
 
@@ -85,7 +99,6 @@ def v2_v2_v2_pools(t0: FakeToken, t1: FakeToken, t2: FakeToken) -> tuple[FakeUni
 @pytest.fixture
 def v3_profitable_pair(usdc: FakeToken, weth: FakeToken) -> list[FakeConcentratedLiquidityPool]:
     """A 2-hop single-range V3 cycle with 10% price spread."""
-    import math
 
     tick_2200 = round(math.log(2200.0) / math.log(1.0001))
     tick_2000 = round(math.log(2000.0) / math.log(1.0001))
@@ -218,7 +231,6 @@ class TestCalculateWithPool:
 
     def test_state_override_with_pool(self, t0, v2_v2_v2_pools):
         """calculate_with_pool respects state_overrides."""
-        from tests.arbitrage.test_path.conftest import FakeV2PoolState
 
         path = ArbitragePath(
             pools=v2_v2_v2_pools,
@@ -281,6 +293,5 @@ class TestCalculateWithPool:
                 future = path.calculate_with_pool(executor)
                 return await future
 
-        from degenbot.exceptions import OptimizationError
         with pytest.raises(OptimizationError):
             asyncio.run(_run())

@@ -9,6 +9,8 @@ import time
 import pytest
 
 from degenbot.arbitrage.optimizers import Hop, SolveInput, SolveResult, SolverMethod
+from degenbot.arbitrage.optimizers.brent_solver import BrentSolver
+from degenbot.arbitrage.optimizers.newton_solver import NewtonSolver
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
     _compute_mobius_coefficients,
@@ -59,7 +61,6 @@ class TestSolverFastPathV2V2:
 
     def test_solver_matches_brent_profit(self, solver, v2_v2_hops):
         """Solver profit should match Brent profit within 1 wei."""
-        from degenbot.arbitrage.optimizers.solver import BrentSolver
 
         solver_result = solver.solve(SolveInput(hops=v2_v2_hops))
         brent_solver = BrentSolver()
@@ -188,7 +189,6 @@ class TestSolverTimingComparison:
 
     @pytest.fixture
     def brent_solver(self):
-        from degenbot.arbitrage.optimizers.solver import BrentSolver
 
         return BrentSolver()
 
@@ -240,7 +240,6 @@ class TestSolverTimingComparison:
         Möbius's advantage is zero iterations and multi-hop support.
         Both should be much faster than Brent.
         """
-        from degenbot.arbitrage.optimizers.solver import NewtonSolver
 
         newton_solver = NewtonSolver()
         newton_times = self._benchmark(newton_solver.solve, v2_v2_input)
@@ -260,8 +259,6 @@ class TestSolverTimingComparison:
         )
 
         # Both should be at least 5x faster than Brent
-        from degenbot.arbitrage.optimizers.solver import BrentSolver
-
         brent_solver = BrentSolver()
         brent_times = self._benchmark(brent_solver.solve, v2_v2_input)
         brent_median = sorted(brent_times)[len(brent_times) // 2]
@@ -279,7 +276,6 @@ class TestSolverTimingComparison:
     )
     def test_mobius_consistent_profit_across_fees(self, solver, fee):
         """Profit should be consistent across fee tiers for the same reserves."""
-        from degenbot.arbitrage.optimizers.solver import BrentSolver
 
         hops = (
             Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=fee),
@@ -504,7 +500,6 @@ class TestArbSolverMultiHop:
 
     def test_multi_hop_matches_brent(self, solver):
         """Multi-hop Möbius should match Brent for profitable paths."""
-        from degenbot.arbitrage.optimizers.solver import BrentSolver
 
         # Set up a 3-hop path with clear arbitrage
         hops = (

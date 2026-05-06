@@ -17,7 +17,7 @@ from degenbot.arbitrage.path.arbitrage_path import (
     _ProfitableStateDiscovered,
     _StateUpdatedNoProfit,
 )
-from degenbot.types.concrete import PoolStateMessage
+from degenbot.types.concrete import PoolStateMessage, TextMessage
 from tests.fakes.subscribers import FakeSubscriber
 
 from .conftest import FakeToken, FakeV2PoolState, _make_v2_pool
@@ -171,7 +171,6 @@ class TestEventDrivenAutoSolve:
         assert len(subscriber.notifications) == 0
 
     def test_ignore_non_state_message(self, token_a, token_b):
-        from degenbot.types.concrete import TextMessage
 
         path, pool0, _pool1, _t0, _t1 = _make_cyclic_path(token_a, token_b)
         subscriber = FakeSubscriber()

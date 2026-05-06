@@ -1,15 +1,16 @@
 """Tests for the Rust Möbius optimizer Python bindings."""
 
-
 from itertools import starmap
 
 from degenbot.degenbot_rs import mobius as rs_mobius
+
+from degenbot.arbitrage.optimizers.mobius import MobiusFloatHop
+from degenbot.arbitrage.optimizers.mobius import mobius_solve as py_solve
 
 # Reserve pairs that are profitable after fees.
 # For 2-hop arbitrage: K = γ²·s₁·s₂, M = r₁·r₂. Need K > M.
 # With same-product pools, K/M = γ² < 1 (never profitable).
 # Need pools with different product constants (asymmetric reserves).
-
 PROFIT_HOPS_2 = [
     rs_mobius.RustHopState(1_000_000.0, 5_000_000.0, 0.003),  # pool A: token1 cheap
     rs_mobius.RustHopState(1_500_000.0, 3_000_000.0, 0.003),  # pool B: token0 cheaper
@@ -62,8 +63,6 @@ class TestRustMobiusSolve:
 
     def test_matches_python(self):
         """Rust solver should produce identical results to Python solver."""
-        from degenbot.arbitrage.optimizers.mobius import MobiusFloatHop
-        from degenbot.arbitrage.optimizers.mobius import mobius_solve as py_solve
 
         hops_data = [
             (1_000_000.0, 5_000_000.0, 0.003),
@@ -188,10 +187,18 @@ class TestRustMobiusOptimizer:
         optimizer = rs_mobius.RustMobiusOptimizer()
         # 2 paths × 2 hops
         hops_array = [
-            1_000_000.0, 5_000_000.0, 0.003,  # path 0, hop 0
-            1_500_000.0, 3_000_000.0, 0.003,  # path 0, hop 1
-            2_000_000.0, 10_000_000.0, 0.003,  # path 1, hop 0
-            3_000_000.0, 6_000_000.0, 0.003,  # path 1, hop 1
+            1_000_000.0,
+            5_000_000.0,
+            0.003,  # path 0, hop 0
+            1_500_000.0,
+            3_000_000.0,
+            0.003,  # path 0, hop 1
+            2_000_000.0,
+            10_000_000.0,
+            0.003,  # path 1, hop 0
+            3_000_000.0,
+            6_000_000.0,
+            0.003,  # path 1, hop 1
         ]
         max_inputs = [float("inf"), float("inf")]
         result = optimizer.solve_batch(hops_array, 2, max_inputs)
@@ -213,4 +220,4 @@ class TestRustMobiusOptimizer:
         # Use a small amount so it stays in range
         final_price = optimizer.estimate_v3_final_sqrt_price(1e10, v3)
         assert final_price < 1000.0  # Price decreases for zero_for_one
-        assert final_price > 900.0   # Should stay in range for small input
+        assert final_price > 900.0  # Should stay in range for small input

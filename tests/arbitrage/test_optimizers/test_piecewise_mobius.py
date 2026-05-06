@@ -6,10 +6,8 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.arbitrage.optimizers.mobius import (
-    V3TickRangeHop,
-    V3TickRangeSequence,
-)
+from degenbot.arbitrage.optimizers.mobius import V3TickRangeHop, V3TickRangeSequence
+from degenbot.arbitrage.optimizers.mobius_solver import MobiusSolver
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
     BoundedProductHop,
@@ -18,6 +16,7 @@ from degenbot.arbitrage.optimizers.solver import (
     SolveInput,
     SolverMethod,
     V3TickRangeInfo,
+    _tick_range_cache,
 )
 
 # Test constants
@@ -492,9 +491,6 @@ def test_tick_range_caching():
     Note: We can't easily test cache hits without a real pool,
     but we can verify the cache infrastructure exists.
     """
-    from degenbot.arbitrage.optimizers.solver import (
-        _tick_range_cache,
-    )
 
     # Verify cache infrastructure exists
     assert isinstance(_tick_range_cache, dict)
@@ -515,7 +511,6 @@ def test_mobius_solver_rejects_multi_range_v3():
 
     Multi-range V3 paths should be handled by PiecewiseMobiusSolver.
     """
-    from degenbot.arbitrage.optimizers.solver import MobiusSolver
 
     mobius_solver = MobiusSolver()
 
@@ -566,7 +561,6 @@ def test_arb_solver_dispatches_multi_range_to_piecewise():
     2. PiecewiseMobiusSolver.supports() returns True
     3. ArbSolver attempts PiecewiseMobiusSolver (may fall back to Brent if not profitable)
     """
-    from degenbot.arbitrage.optimizers.solver import MobiusSolver, PiecewiseMobiusSolver
 
     mobius_solver = MobiusSolver()
     piecewise_solver = PiecewiseMobiusSolver()
@@ -662,8 +656,6 @@ def test_single_range_v3_uses_mobius():
     input_data = SolveInput(hops=(single_range_v3_hop, v2_hop))
 
     # First verify MobiusSolver supports this
-    from degenbot.arbitrage.optimizers.solver import MobiusSolver
-
     mobius_solver = MobiusSolver()
     assert mobius_solver.supports(input_data) is True
 

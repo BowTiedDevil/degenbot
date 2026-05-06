@@ -22,8 +22,9 @@ import math
 import pytest
 
 from degenbot.arbitrage.optimizers.hop_types import SolverMethod
-from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
+from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver, _simulate_path
 from degenbot.arbitrage.path import ArbitragePath
+from degenbot.exceptions import OptimizationError
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 from tests.arbitrage.test_path.conftest import FakeConcentratedLiquidityPool, FakeToken
 
@@ -166,8 +167,6 @@ class TestV3OnlyEquivalance:
         t0, t1 = tokens
         pool_a, pool_b = _make_profitable_v3_v3_cycle(t0, t1, price_a=2000.0, price_b=2000.0)
 
-        from degenbot.exceptions import OptimizationError
-
         path = ArbitragePath(
             pools=[pool_a, pool_b],
             input_token=t0,
@@ -182,7 +181,6 @@ class TestV3OnlyEquivalance:
         MobiusSolver's optimal input must maximize profit as verified
         by manual simulation using the same BoundedProductHop math.
         """
-        from degenbot.arbitrage.optimizers.solver import _simulate_path
 
         t0, t1 = tokens
         pool_a, pool_b = _make_profitable_v3_v3_cycle(t0, t1)
