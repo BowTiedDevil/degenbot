@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database import db_session
+from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.pools import LiquidityPoolTable, PoolManagerTable, UniswapV4PoolTable
 from degenbot.exceptions.base import DegenbotValueError
@@ -365,6 +366,7 @@ def find_paths(
     min_depth: int = 2,
     max_depth: int | None = None,
     pool_types: Sequence[type] = (LiquidityPoolTable, UniswapV4PoolTable),
+    db: DatabaseSessionManager | None = None,
 ) -> Iterator[Sequence[PathStep]]:
     """
     Find paths from each of the given start tokens to each of the given end tokens using a
@@ -394,7 +396,8 @@ def find_paths(
 
     start = time.perf_counter()
 
-    with db_session() as session:
+    _db = db or db_session
+    with _db() as session:
         graph = _prepare_graph(
             chain_id=chain_id,
             pool_types=pool_types,
@@ -461,6 +464,7 @@ async def find_paths_async(
     min_depth: int = 2,
     max_depth: int | None = None,
     pool_types: Sequence[type] = [LiquidityPoolTable, UniswapV4PoolTable],
+    db: DatabaseSessionManager | None = None,
 ) -> AsyncIterator[Sequence[PathStep]]:
     """
     An async version of `find_paths`.
@@ -468,7 +472,8 @@ async def find_paths_async(
 
     start = time.perf_counter()
 
-    with db_session() as session:
+    _db = db or db_session
+    with _db() as session:
         graph = _prepare_graph(
             chain_id=chain_id,
             pool_types=pool_types,

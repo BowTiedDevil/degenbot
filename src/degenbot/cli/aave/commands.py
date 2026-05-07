@@ -43,7 +43,7 @@ from degenbot.cli.aave.verification import (
     verify_positions_for_users,
 )
 from degenbot.cli.utils import get_provider_from_config
-from degenbot.database import db_session
+from degenbot.bot import Bot
 from degenbot.database.models.aave import (
     AaveGhoToken,
     AaveV3CollateralPosition,
@@ -97,7 +97,8 @@ def activate() -> None:
 
 
 @activate.command("ethereum_aave_v3")
-def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
+@click.pass_obj
+def activate_ethereum_aave_v3(bot: Bot, chain_id: ChainId = ChainId.ETH) -> None:
     """
     Activate Aave V3 on Ethereum mainnet.
     """
@@ -119,7 +120,7 @@ def activate_ethereum_aave_v3(chain_id: ChainId = ChainId.ETH) -> None:
         return_types=["string"],
     )
 
-    with db_session() as session:
+    with bot.db() as session:
         market = session.scalar(
             select(AaveV3Market).where(
                 AaveV3Market.chain_id == chain_id,
@@ -182,7 +183,9 @@ def deactivate() -> None:
 
 
 @deactivate.command("ethereum_aave_v3")
+@click.pass_obj
 def deactivate_mainnet_aave_v3(
+    bot: Bot,
     chain_id: ChainId = ChainId.ETH,
     market_name: str = "Aave Ethereum Market",
 ) -> None:
@@ -190,7 +193,7 @@ def deactivate_mainnet_aave_v3(
     Deactivate the Aave V3 Ethereum mainnet market.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         market = session.scalar(
             select(AaveV3Market).where(
                 AaveV3Market.chain_id == chain_id,
@@ -310,7 +313,9 @@ def deactivate_mainnet_aave_v3(
     envvar="DEGENBOT_BACKUP_INTERVAL",
     show_envvar=True,
 )
+@click.pass_obj
 def aave_update(
+    bot: Bot,
     *,
     chunk_size: int,
     to_block: str,
@@ -347,7 +352,7 @@ def aave_update(
             loggers=[logger],
         ),
     ):
-        with db_session() as session:
+        with bot.db() as session:
             active_chains = set(
                 session.scalars(
                     select(AaveV3Market.chain_id).where(
@@ -364,7 +369,7 @@ def aave_update(
         for chain_id in active_chains:
             provider = get_provider_from_config(chain_id=chain_id)
 
-            with db_session() as session:
+            with bot.db() as session:
                 active_markets = session.scalars(
                     select(AaveV3Market).where(
                         AaveV3Market.active,
@@ -430,7 +435,7 @@ def aave_update(
             block_pbar.n = working_start_block - initial_start_block
 
             while True:
-                with db_session() as session:
+                with bot.db() as session:
                     active_markets = session.scalars(
                         select(AaveV3Market).where(
                             AaveV3Market.active,
@@ -522,7 +527,7 @@ def aave_update(
                                 logger.info(
                                     f"Created database backup at block {working_end_block:,}"
                                 )
-                            db_session.remove()
+                            bot.db.remove()
                         else:
                             session.commit()
 
@@ -543,6 +548,7 @@ def position() -> None:
 
 
 @position.command("show")
+@click.pass_obj
 @click.argument("address", type=str)
 @click.option(
     "--market",
@@ -558,7 +564,7 @@ def position() -> None:
     show_default=True,
     help="Chain ID to query (default: 1 for Ethereum mainnet).",
 )
-def position_show(address: str, market: str, chain_id: int) -> None:
+def position_show(bot: Bot, address: str, market: str, chain_id: int) -> None:
     """
     Display current Aave positions for a user.
 
@@ -571,7 +577,7 @@ def position_show(address: str, market: str, chain_id: int) -> None:
         click.echo(f"Invalid address: {address}")
         raise click.Abort from exc
 
-    with db_session() as session:
+    with bot.db() as session:
         # Find the market first
         market_obj = session.scalar(
             select(AaveV3Market).where(
@@ -649,6 +655,7 @@ def position_show(address: str, market: str, chain_id: int) -> None:
 
 
 @position.command("risk")
+@click.pass_obj
 @click.option(
     "--market",
     type=str,
@@ -689,6 +696,7 @@ def position_show(address: str, market: str, chain_id: int) -> None:
     help="Skip fetching prices from oracle (faster, but HF values are relative).",
 )
 def position_risk(  # noqa: PLR0917
+    bot: Bot,
     market: str,
     chain_id: int,
     threshold: float,
@@ -713,7 +721,7 @@ def position_risk(  # noqa: PLR0917
     # Get provider for price fetching
     provider = None if skip_prices else get_provider_from_config(chain_id=chain_id)
 
-    with db_session() as session:
+    with bot.db() as session:
         # Find the market
         market_obj = session.scalar(
             select(AaveV3Market).where(
@@ -820,6 +828,7 @@ def market() -> None:
 
 
 @market.command("show")
+@click.pass_obj
 @click.option(
     "--chain-id",
     type=int,
@@ -833,14 +842,14 @@ def market() -> None:
     default=None,
     help="Filter by market name (default: show all markets).",
 )
-def market_show(chain_id: int | None, name: str | None) -> None:
+def market_show(bot: Bot, chain_id: int | None, name: str | None) -> None:
     """
     Display Aave market information.
 
     Shows all markets or filters by chain ID and/or market name.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         query = select(AaveV3Market)
 
         if chain_id is not None:

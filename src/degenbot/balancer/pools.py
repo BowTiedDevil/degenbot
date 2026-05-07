@@ -1,3 +1,5 @@
+import warnings
+from collections.abc import Sequence
 from fractions import Fraction
 from threading import Lock
 from typing import Any, ClassVar
@@ -50,8 +52,54 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         state_block: BlockNumber | None = None,
         verify_address: bool = False,
         silent: bool = False,
+        # I/O-free path params
+        pool_id: bytes | None = None,
+        vault: str | None = None,
+        tokens: Sequence[Erc20Token] | None = None,
+        balances: Sequence[int] | None = None,
+        fee: Fraction | None = None,
+        weights: Sequence[int] | None = None,
     ) -> None:
         self.address = get_checksum_address(address)
+
+        # ── I/O-free path ──
+        if all(
+            [
+                pool_id is not None,
+                vault is not None,
+                tokens is not None,
+                balances is not None,
+                fee is not None,
+                weights is not None,
+            ],
+        ):
+            self._chain_id = chain_id if chain_id is not None else tokens[0].chain_id
+            state_block = state_block if state_block is not None else 0
+
+            self.pool_id = pool_id
+            self.pool_specialization = int.from_bytes(self.pool_id[20:22], byteorder="big")
+            self.vault = get_checksum_address(vault)
+            self._tokens = tuple(tokens)
+            self.scaling_factors = tuple(_compute_scaling_factor(token) for token in self._tokens)
+            self.fee = fee
+            self.weights = tuple(weights)
+
+            self._state_lock = Lock()
+            self._state = BalancerV2PoolState(
+                address=self.address,
+                block=state_block,
+                balances=tuple(balances),
+            )
+            self._subscribers: WeakSet = WeakSet()
+            return
+
+        # ── Legacy I/O path ──
+        warnings.warn(
+            "Constructing BalancerV2Pool without pre-fetched data is deprecated. "
+            "Use Bot.build_balancer_pool() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
         if verify_address:
             # TODO: add functionality
@@ -94,9 +142,9 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         )
         self.vault = get_checksum_address(vault_address)
 
-        tokens: list[str]
-        balances: list[int]
-        tokens, balances, _ = eth_abi.abi.decode(
+        pool_tokens: list[str]
+        pool_token_balances: list[int]
+        pool_tokens, pool_token_balances, _ = eth_abi.abi.decode(
             types=["address[]", "uint256[]", "uint256"],
             data=w3.eth.call(
                 transaction=TxParams(
@@ -116,7 +164,7 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
                 address=get_checksum_address(token),
                 silent=silent,
             )
-            for token in tokens
+            for token in pool_tokens
         )
         self.scaling_factors = tuple(_compute_scaling_factor(token) for token in self._tokens)
 
@@ -124,10 +172,10 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         self._state = BalancerV2PoolState(
             address=self.address,
             block=state_block,
-            balances=tuple(balances),
+            balances=tuple(pool_token_balances),
         )
 
-        (fee,) = eth_abi.abi.decode(
+        (swap_fee,) = eth_abi.abi.decode(
             types=["uint256"],
             data=w3.eth.call(
                 transaction=TxParams(
@@ -140,9 +188,9 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
                 block_identifier=state_block,
             ),
         )
-        self.fee = Fraction(fee, self.FEE_DENOMINATOR)
+        self.fee = Fraction(swap_fee, self.FEE_DENOMINATOR)
 
-        (weights,) = eth_abi.abi.decode(
+        (normalized_weights,) = eth_abi.abi.decode(
             types=["uint256[]"],
             data=w3.eth.call(
                 transaction=TxParams(
@@ -155,7 +203,7 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
                 block_identifier=state_block,
             ),
         )
-        self.weights = tuple(weights)
+        self.weights = tuple(normalized_weights)
 
     @property
     def balances(self) -> tuple[int, ...]:
@@ -249,7 +297,9 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         zero_for_one: bool,  # noqa: FBT001
         state_override: BalancerV2PoolState | None = None,
     ) -> HopType:
-        raise NotImplementedError(
+
+        msg = (
             "Balancer pool to_hop_state is not yet implemented. "
             "Pair-wise hop state extraction from N-token pools is not straightforward."
         )
+        raise NotImplementedError(msg)

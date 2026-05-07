@@ -10,7 +10,6 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.connection import connection_manager
 from degenbot.logging import logger
 from degenbot.registry import managed_pool_registry, pool_registry, token_registry
-from degenbot.types.abstract.pool_manager import AbstractPoolManager
 
 env_file = dotenv.find_dotenv("tests.env")
 env_values = dotenv.dotenv_values(env_file)
@@ -89,7 +88,6 @@ def _initialize_and_reset_after_each_test():
     Before each test, clear/reset global values and singletons
     """
     connection_manager._reset()
-    AbstractPoolManager.instances.clear()
     pool_registry._reset()
     managed_pool_registry._reset()
     token_registry._reset()

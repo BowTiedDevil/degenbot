@@ -14,12 +14,13 @@ from web3 import Web3
 from web3.types import LogReceipt
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.config import settings
+from degenbot.config import config
 from degenbot.connection import async_connection_manager, connection_manager
 from degenbot.database import db_session
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.pools import UniswapV4PoolTable
 from degenbot.database.operations import get_scoped_sqlite_session
+from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.liquidity_pool import UnknownPoolId
 from degenbot.functions import fetch_logs_retrying, fetch_logs_retrying_async
 from degenbot.logging import logger
@@ -137,20 +138,26 @@ class DatabaseSnapshot:
     """
     Snapshot source backed by built-in SQLite database using the ORM abstractions defined
     in `degenbot.database`.
-
-    If a path to an SQLite database is not provided, the default location specified in
-    `degenbot.settings` will be used.
     """
 
     storage_kind = "db"
 
-    def __init__(self, chain_id: ChainId, database_path: pathlib.Path | None = None) -> None:
-        if database_path is None:
-            self.session = db_session
-            self.database_path = settings.database.path
-        else:
+    def __init__(
+        self,
+        chain_id: ChainId,
+        *,
+        db: DatabaseSessionManager | None = None,
+        database_path: pathlib.Path | None = None,
+    ) -> None:
+        if db is not None:
+            self.session = db
+            self.database_path = database_path or pathlib.Path("")
+        elif database_path is not None:
             self.session = get_scoped_sqlite_session(database_path)
             self.database_path = database_path
+        else:
+            self.session = db_session
+            self.database_path = config.database.path
 
         self.chain_id = chain_id
 
@@ -291,6 +298,8 @@ class UniswapV4LiquiditySnapshot:
         self,
         to_block: BlockNumber,
         blocks_per_request: int | None = None,
+        *,
+        provider: Any | None = None,
     ) -> None:
         """
         Fetch liquidity events from the block following the last-known event to the target block
@@ -299,8 +308,10 @@ class UniswapV4LiquiditySnapshot:
 
         logger.info(f"Updating Uniswap V4 snapshot from block {self.newest_block} to {to_block}")
 
+        _provider = provider or connection_manager.get_provider(self.chain_id)
+
         event_logs = fetch_logs_retrying(
-            provider=connection_manager.get_provider(self.chain_id),
+            provider=_provider,
             start_block=self.newest_block + 1,
             end_block=to_block,
             max_blocks_per_request=blocks_per_request,
@@ -331,6 +342,8 @@ class UniswapV4LiquiditySnapshot:
         self,
         to_block: BlockNumber,
         blocks_per_request: int | None = None,
+        *,
+        w3: Any | None = None,
     ) -> None:
         """
         Async version of fetch_new_events.
@@ -342,8 +355,10 @@ class UniswapV4LiquiditySnapshot:
 
         logger.info(f"Updating Uniswap V4 snapshot from block {self.newest_block} to {to_block}")
 
+        _w3 = w3 or async_connection_manager.get_web3(self.chain_id)
+
         event_logs = await fetch_logs_retrying_async(
-            w3=async_connection_manager.get_web3(self.chain_id),
+            w3=_w3,
             start_block=self.newest_block + 1,
             end_block=to_block,
             max_blocks_per_request=blocks_per_request,

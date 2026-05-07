@@ -1,6 +1,7 @@
 # ruff: noqa: PLR0904
 
 import dataclasses
+import warnings
 from collections import deque
 from fractions import Fraction
 from threading import Lock
@@ -81,15 +82,73 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
         verify_address: bool = True,
         silent: bool = False,
         state_cache_depth: int = 8,
+        # I/O-free path params
+        token0: Erc20Token | None = None,
+        token1: Erc20Token | None = None,
+        factory: str | None = None,
+        fee: Fraction | None = None,
+        stable: bool | None = None,
+        reserves_token0: int | None = None,
+        reserves_token1: int | None = None,
     ) -> None:
         self.address = get_checksum_address(address)
+
+        # ── I/O-free path ──
+        if all([
+            token0 is not None,
+            token1 is not None,
+            factory is not None,
+            fee is not None,
+            stable is not None,
+            reserves_token0 is not None,
+            reserves_token1 is not None,
+        ]):
+            self._chain_id = chain_id if chain_id is not None else token0.chain_id
+            state_block = state_block if state_block is not None else 0
+            self._initial_state_block = state_block
+
+            self.factory = get_checksum_address(factory)
+            self.deployer_address = (
+                get_checksum_address(deployer_address)
+                if deployer_address is not None
+                else self.factory
+            )
+            self._stable = stable
+            self._fee = fee
+            self._token0 = token0
+            self._token1 = token1
+
+            self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee.numerator / self._fee.denominator:.2f}%)"  # noqa:E501
+
+            self._state_lock = Lock()
+
+            initial_state = self.PoolState.__value__(
+                address=self.address,
+                reserves_token0=reserves_token0,
+                reserves_token1=reserves_token1,
+                block=state_block,
+            )
+
+            self._state_cache = deque(maxlen=max(1, state_cache_depth))
+            self._state_cache.append(initial_state)
+
+            self._subscribers: WeakSet[Subscriber] = WeakSet()
+            return
+
+        # ── Legacy I/O path ──
+        warnings.warn(
+            "Constructing AerodromeV2Pool without pre-fetched data is deprecated. "
+            "Use Bot.build_aerodrome_v2_pool() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         w3 = connection_manager.get_web3(self.chain_id)
         state_block = state_block if state_block is not None else w3.eth.block_number
 
-        self.factory, (token0, token1), self._stable, fee, (reserves0, reserves1) = (
-            self.get_factory_tokens_stable_reserves_batched(w3=w3, state_block=state_block)
+        self.factory, (token0, token1), self._stable, swap_fee, (reserves0, reserves1) = (
+            self.get_pool_identity_values(w3=w3, state_block=state_block)
         )
         self.deployer_address = (
             get_checksum_address(deployer_address) if deployer_address is not None else self.factory
@@ -104,7 +163,7 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
             block=state_block,
         )
 
-        self._fee = Fraction(fee, type(self).FEE_DENOMINATOR)
+        self._fee = Fraction(swap_fee, type(self).FEE_DENOMINATOR)
 
         token_manager = Erc20TokenManager(chain_id=self.chain_id)
         self._token0, self._token1 = (
@@ -457,7 +516,7 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
             else Fraction(10**self._token0.decimals, 10**self._token1.decimals)
         )
 
-    def get_factory_tokens_stable_reserves_batched(
+    def get_pool_identity_values(
         self,
         w3: Web3,
         state_block: BlockNumber,

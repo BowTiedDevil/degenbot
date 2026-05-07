@@ -3,7 +3,7 @@ import eth_typing
 from sqlalchemy import select
 
 from degenbot.cli import cli
-from degenbot.database import db_session
+from degenbot.bot import Bot
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.pools import PoolManagerTable
 from degenbot.uniswap.deployments import (
@@ -51,7 +51,8 @@ def deactivate() -> None:
 
 
 @activate.command("base_aerodrome_v2")
-def activate_base_aerodrome_v2(
+@click.pass_obj
+def activate_base_aerodrome_v2(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "aerodrome_v2",
 ) -> None:
@@ -59,7 +60,7 @@ def activate_base_aerodrome_v2(
     Activate Aerodrome V2 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -88,7 +89,8 @@ def activate_base_aerodrome_v2(
 
 
 @activate.command("base_aerodrome_v3")
-def activate_base_aerodrome_v3(
+@click.pass_obj
+def activate_base_aerodrome_v3(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "aerodrome_v3",
 ) -> None:
@@ -96,7 +98,7 @@ def activate_base_aerodrome_v3(
     Activate Aerodrome V3 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -125,7 +127,8 @@ def activate_base_aerodrome_v3(
 
 
 @activate.command("base_pancakeswap_v2")
-def activate_base_pancakeswap_v2(
+@click.pass_obj
+def activate_base_pancakeswap_v2(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "pancakeswap_v2",
 ) -> None:
@@ -133,7 +136,7 @@ def activate_base_pancakeswap_v2(
     Activate Pancakeswap V2 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -162,7 +165,8 @@ def activate_base_pancakeswap_v2(
 
 
 @activate.command("base_pancakeswap_v3")
-def activate_base_pancakeswap_v3(
+@click.pass_obj
+def activate_base_pancakeswap_v3(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "pancakeswap_v3",
 ) -> None:
@@ -170,7 +174,7 @@ def activate_base_pancakeswap_v3(
     Activate Pancakeswap V3 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -200,7 +204,8 @@ def activate_base_pancakeswap_v3(
 
 
 @activate.command("base_swapbased_v2")
-def activate_base_swapbased_v2(
+@click.pass_obj
+def activate_base_swapbased_v2(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "swapbased_v2",
 ) -> None:
@@ -208,7 +213,7 @@ def activate_base_swapbased_v2(
     Activate SwapBased V2 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -237,7 +242,8 @@ def activate_base_swapbased_v2(
 
 
 @activate.command("base_sushiswap_v2")
-def activate_base_sushiswap_v2(
+@click.pass_obj
+def activate_base_sushiswap_v2(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "sushiswap_v2",
 ) -> None:
@@ -245,7 +251,7 @@ def activate_base_sushiswap_v2(
     Activate Sushiswap V2 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -274,7 +280,8 @@ def activate_base_sushiswap_v2(
 
 
 @activate.command("base_sushiswap_v3")
-def activate_base_sushiswap_v3(
+@click.pass_obj
+def activate_base_sushiswap_v3(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "sushiswap_v3",
 ) -> None:
@@ -282,7 +289,7 @@ def activate_base_sushiswap_v3(
     Activate Sushiswap V3 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -311,7 +318,8 @@ def activate_base_sushiswap_v3(
 
 
 @activate.command("base_uniswap_v2")
-def activate_base_uniswap_v2(
+@click.pass_obj
+def activate_base_uniswap_v2(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "uniswap_v2",
 ) -> None:
@@ -319,7 +327,7 @@ def activate_base_uniswap_v2(
     Activate Uniswap V2 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -348,7 +356,8 @@ def activate_base_uniswap_v2(
 
 
 @activate.command("base_uniswap_v3")
-def activate_base_uniswap_v3(
+@click.pass_obj
+def activate_base_uniswap_v3(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "uniswap_v3",
 ) -> None:
@@ -356,7 +365,7 @@ def activate_base_uniswap_v3(
     Activate Uniswap V3 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -385,7 +394,8 @@ def activate_base_uniswap_v3(
 
 
 @activate.command("base_uniswap_v4")
-def activate_base_uniswap_v4(
+@click.pass_obj
+def activate_base_uniswap_v4(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "uniswap_v4",
 ) -> None:
@@ -395,7 +405,7 @@ def activate_base_uniswap_v4(
 
     exchange_kind = "uniswap_v4"
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -442,7 +452,8 @@ def activate_base_uniswap_v4(
 
 
 @activate.command("ethereum_pancakeswap_v2")
-def activate_ethereum_pancakeswap_v2(
+@click.pass_obj
+def activate_ethereum_pancakeswap_v2(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "pancakeswap_v2",
 ) -> None:
@@ -450,7 +461,7 @@ def activate_ethereum_pancakeswap_v2(
     Activate Pancakeswap V2 on Ethereum mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -479,7 +490,8 @@ def activate_ethereum_pancakeswap_v2(
 
 
 @activate.command("ethereum_pancakeswap_v3")
-def activate_ethereum_pancakeswap_v3(
+@click.pass_obj
+def activate_ethereum_pancakeswap_v3(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "pancakeswap_v3",
 ) -> None:
@@ -487,7 +499,7 @@ def activate_ethereum_pancakeswap_v3(
     Activate Pancakeswap V3 on Ethereum mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -517,7 +529,8 @@ def activate_ethereum_pancakeswap_v3(
 
 
 @activate.command("ethereum_sushiswap_v2")
-def activate_ethereum_sushiswap_v2(
+@click.pass_obj
+def activate_ethereum_sushiswap_v2(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "sushiswap_v2",
 ) -> None:
@@ -525,7 +538,7 @@ def activate_ethereum_sushiswap_v2(
     Activate Sushiswap V2 on Ethereum mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -554,7 +567,8 @@ def activate_ethereum_sushiswap_v2(
 
 
 @activate.command("ethereum_sushiswap_v3")
-def activate_ethereum_sushiswap_v3(
+@click.pass_obj
+def activate_ethereum_sushiswap_v3(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "sushiswap_v3",
 ) -> None:
@@ -562,7 +576,7 @@ def activate_ethereum_sushiswap_v3(
     Activate Sushiswap V3 on Ethereum mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -591,7 +605,8 @@ def activate_ethereum_sushiswap_v3(
 
 
 @activate.command("ethereum_uniswap_v2")
-def activate_ethereum_uniswap_v2(
+@click.pass_obj
+def activate_ethereum_uniswap_v2(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "uniswap_v2",
 ) -> None:
@@ -599,7 +614,7 @@ def activate_ethereum_uniswap_v2(
     Activate Uniswap V2 on Ethereum mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -628,7 +643,8 @@ def activate_ethereum_uniswap_v2(
 
 
 @activate.command("ethereum_uniswap_v3")
-def activate_ethereum_uniswap_v3(
+@click.pass_obj
+def activate_ethereum_uniswap_v3(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "uniswap_v3",
 ) -> None:
@@ -636,7 +652,7 @@ def activate_ethereum_uniswap_v3(
     Activate Uniswap V3 on Ethereum mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -665,7 +681,8 @@ def activate_ethereum_uniswap_v3(
 
 
 @activate.command("ethereum_uniswap_v4")
-def activate_ethereum_uniswap_v4(
+@click.pass_obj
+def activate_ethereum_uniswap_v4(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "uniswap_v4",
 ) -> None:
@@ -675,7 +692,7 @@ def activate_ethereum_uniswap_v4(
 
     exchange_kind = "uniswap_v4"
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -722,7 +739,8 @@ def activate_ethereum_uniswap_v4(
 
 
 @deactivate.command("base_aerodrome_v2")
-def deactivate_base_aerodrome_v2(
+@click.pass_obj
+def deactivate_base_aerodrome_v2(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "aerodrome_v2",
 ) -> None:
@@ -730,7 +748,7 @@ def deactivate_base_aerodrome_v2(
     Deactivate Aerodrome V2 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -752,7 +770,8 @@ def deactivate_base_aerodrome_v2(
 
 
 @deactivate.command("base_aerodrome_v3")
-def deactivate_base_aerodrome_v3(
+@click.pass_obj
+def deactivate_base_aerodrome_v3(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "aerodrome_v3",
 ) -> None:
@@ -760,7 +779,7 @@ def deactivate_base_aerodrome_v3(
     Deactivate Aerodrome V3 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -782,7 +801,8 @@ def deactivate_base_aerodrome_v3(
 
 
 @deactivate.command("base_pancakeswap_v2")
-def deactivate_base_pancakeswap_v2(
+@click.pass_obj
+def deactivate_base_pancakeswap_v2(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "pancakeswap_v2",
 ) -> None:
@@ -790,7 +810,7 @@ def deactivate_base_pancakeswap_v2(
     Deactivate Pancakeswap V2 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -814,7 +834,8 @@ def deactivate_base_pancakeswap_v2(
 
 
 @deactivate.command("base_pancakeswap_v3")
-def deactivate_base_pancakeswap_v3(
+@click.pass_obj
+def deactivate_base_pancakeswap_v3(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "pancakeswap_v3",
 ) -> None:
@@ -822,7 +843,7 @@ def deactivate_base_pancakeswap_v3(
     Deactivate Pancakeswap V3 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -846,7 +867,8 @@ def deactivate_base_pancakeswap_v3(
 
 
 @deactivate.command("base_sushiswap_v2")
-def deactivate_base_sushiswap_v2(
+@click.pass_obj
+def deactivate_base_sushiswap_v2(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "sushiswap_v2",
 ) -> None:
@@ -854,7 +876,7 @@ def deactivate_base_sushiswap_v2(
     Deactivate Sushiswap V2 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -876,7 +898,8 @@ def deactivate_base_sushiswap_v2(
 
 
 @deactivate.command("base_sushiswap_v3")
-def deactivate_base_sushiswap_v3(
+@click.pass_obj
+def deactivate_base_sushiswap_v3(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "sushiswap_v3",
 ) -> None:
@@ -884,7 +907,7 @@ def deactivate_base_sushiswap_v3(
     Deactivate Sushiswap V3 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -906,7 +929,8 @@ def deactivate_base_sushiswap_v3(
 
 
 @deactivate.command("base_swapbased_v2")
-def deactivate_base_swapbased_v2(
+@click.pass_obj
+def deactivate_base_swapbased_v2(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "swapbased_v2",
 ) -> None:
@@ -914,7 +938,7 @@ def deactivate_base_swapbased_v2(
     Deactivate SwapBased V2 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -936,7 +960,8 @@ def deactivate_base_swapbased_v2(
 
 
 @deactivate.command("base_uniswap_v2")
-def deactivate_base_uniswap_v2(
+@click.pass_obj
+def deactivate_base_uniswap_v2(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "uniswap_v2",
 ) -> None:
@@ -944,7 +969,7 @@ def deactivate_base_uniswap_v2(
     Deactivate Uniswap V2 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -966,7 +991,8 @@ def deactivate_base_uniswap_v2(
 
 
 @deactivate.command("base_uniswap_v3")
-def deactivate_base_uniswap_v3(
+@click.pass_obj
+def deactivate_base_uniswap_v3(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "uniswap_v3",
 ) -> None:
@@ -974,7 +1000,7 @@ def deactivate_base_uniswap_v3(
     Deactivate Uniswap V3 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -996,7 +1022,8 @@ def deactivate_base_uniswap_v3(
 
 
 @deactivate.command("base_uniswap_v4")
-def deactivate_base_uniswap_v4(
+@click.pass_obj
+def deactivate_base_uniswap_v4(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "uniswap_v4",
 ) -> None:
@@ -1004,7 +1031,7 @@ def deactivate_base_uniswap_v4(
     Deactivate Uniswap V4 on Base mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -1026,7 +1053,8 @@ def deactivate_base_uniswap_v4(
 
 
 @deactivate.command("ethereum_pancakeswap_v2")
-def deactivate_ethereum_pancakeswap_v2(
+@click.pass_obj
+def deactivate_ethereum_pancakeswap_v2(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "pancakeswap_v2",
 ) -> None:
@@ -1034,7 +1062,7 @@ def deactivate_ethereum_pancakeswap_v2(
     Deactivate Pancakeswap V2 on Ethereum mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -1058,7 +1086,8 @@ def deactivate_ethereum_pancakeswap_v2(
 
 
 @deactivate.command("ethereum_pancakeswap_v3")
-def deactivate_ethereum_pancakeswap_v3(
+@click.pass_obj
+def deactivate_ethereum_pancakeswap_v3(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "pancakeswap_v3",
 ) -> None:
@@ -1066,7 +1095,7 @@ def deactivate_ethereum_pancakeswap_v3(
     Deactivate Pancakeswap V3 on Ethereum mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -1090,7 +1119,8 @@ def deactivate_ethereum_pancakeswap_v3(
 
 
 @deactivate.command("ethereum_sushiswap_v2")
-def deactivate_ethereum_sushiswap_v2(
+@click.pass_obj
+def deactivate_ethereum_sushiswap_v2(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "sushiswap_v2",
 ) -> None:
@@ -1098,7 +1128,7 @@ def deactivate_ethereum_sushiswap_v2(
     Deactivate Sushiswap V2 on Ethereum mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -1122,7 +1152,8 @@ def deactivate_ethereum_sushiswap_v2(
 
 
 @deactivate.command("ethereum_sushiswap_v3")
-def deactivate_ethereum_sushiswap_v3(
+@click.pass_obj
+def deactivate_ethereum_sushiswap_v3(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "sushiswap_v3",
 ) -> None:
@@ -1130,7 +1161,7 @@ def deactivate_ethereum_sushiswap_v3(
     Deactivate Sushiswap V3 on Ethereum mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -1152,7 +1183,8 @@ def deactivate_ethereum_sushiswap_v3(
 
 
 @deactivate.command("ethereum_uniswap_v2")
-def deactivate_ethereum_uniswap_v2(
+@click.pass_obj
+def deactivate_ethereum_uniswap_v2(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "uniswap_v2",
 ) -> None:
@@ -1160,7 +1192,7 @@ def deactivate_ethereum_uniswap_v2(
     Deactivate Uniswap V2 on Ethereum mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -1184,7 +1216,8 @@ def deactivate_ethereum_uniswap_v2(
 
 
 @deactivate.command("ethereum_uniswap_v3")
-def deactivate_ethereum_uniswap_v3(
+@click.pass_obj
+def deactivate_ethereum_uniswap_v3(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "uniswap_v3",
 ) -> None:
@@ -1192,7 +1225,7 @@ def deactivate_ethereum_uniswap_v3(
     Deactivate Uniswap V3 on Ethereum mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
@@ -1216,7 +1249,8 @@ def deactivate_ethereum_uniswap_v3(
 
 
 @deactivate.command("ethereum_uniswap_v4")
-def deactivate_ethereum_uniswap_v4(
+@click.pass_obj
+def deactivate_ethereum_uniswap_v4(bot: Bot, 
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "uniswap_v4",
 ) -> None:
@@ -1224,7 +1258,7 @@ def deactivate_ethereum_uniswap_v4(
     Deactivate Uniswap V4 on Ethereum mainnet.
     """
 
-    with db_session() as session:
+    with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,

@@ -1,4 +1,5 @@
 import contextlib
+import warnings
 from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
@@ -11,7 +12,6 @@ from web3 import AsyncBaseProvider, AsyncWeb3, Web3
 from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
 
-from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import async_connection_manager, connection_manager
 from degenbot.database import db_session
@@ -51,6 +51,13 @@ def get_token_from_database(
 class Erc20Token(AbstractErc20Token):
     """
     An ERC-20 token contract.
+
+    Supports two construction modes:
+    - **I/O-free mode** (preferred): pass ``name``, ``symbol``, ``decimals`` explicitly.
+      No provider, database, or registry access occurs.
+    - **Legacy I/O mode** (deprecated): pass ``provider`` and omit ``name``/``symbol``/``decimals``.
+      Token metadata is fetched from the database or on-chain. This mode will be removed in a
+      future release — use ``Bot.build_erc20token()`` instead.
     """
 
     UNKNOWN_NAME = "Unknown"
@@ -62,12 +69,41 @@ class Erc20Token(AbstractErc20Token):
         address: str,
         *,
         chain_id: ChainId | None = None,
+        name: str | None = None,
+        symbol: str | None = None,
+        decimals: int | None = None,
         oracle_address: str | None = None,
         provider: ProviderAdapter | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
     ) -> None:
         self.address = get_checksum_address(address)
+
+        # Shared state (both paths)
+        self._state_cache_depth = state_cache_depth
+        self._cached_approval: dict[tuple[int, ChecksumAddress, ChecksumAddress], int] = {}
+        self._cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]] = {}
+        self._cached_total_supply: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=state_cache_depth,
+        )
+
+        if name is not None and symbol is not None and decimals is not None:
+            # ── I/O-free path ──
+            self._chain_id = chain_id  # type: ignore[assignment]
+            self.name = name
+            self.symbol = symbol
+            self.decimals = decimals
+            self._price_oracle = None
+            return
+
+        # ── Legacy I/O path (deprecated) ──
+        warnings.warn(
+            "Constructing Erc20Token without pre-fetched name/symbol/decimals is deprecated. "
+            "Use Bot.build_erc20token() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
 
         # Use injected provider, or fall back to global connection_manager
@@ -97,19 +133,21 @@ class Erc20Token(AbstractErc20Token):
             and self.name == self.UNKNOWN_NAME
             and self.symbol == self.UNKNOWN_SYMBOL
         ):
-            provider = self._provider
+            prov = self._provider
 
-            if not provider.get_code(self.address):
+            if not prov.get_code(self.address):
                 raise DegenbotValueError(message="No contract deployed at this address")
 
             try:
-                self.name, self.symbol, self.decimals = self.get_name_symbol_decimals_batched(
-                    provider=provider
+                self.name, self.symbol, self.decimals = self.fetch_name_symbol_decimals_batched(
+                    address=self.address, provider=prov
                 )
             except (Web3Exception, DecodingError):
                 for func_prototype in ("name()", "NAME()"):
                     try:
-                        self.name = self.get_name(provider, func_prototype=func_prototype)
+                        self.name = self.fetch_name(
+                            address=self.address, provider=prov, func_prototype=func_prototype
+                        )
                     except (Web3Exception, DecodingError):
                         continue
                     else:
@@ -117,7 +155,9 @@ class Erc20Token(AbstractErc20Token):
 
                 for func_prototype in ("symbol()", "SYMBOL()"):
                     try:
-                        self.symbol = self.get_symbol(provider, func_prototype=func_prototype)
+                        self.symbol = self.fetch_symbol(
+                            address=self.address, provider=prov, func_prototype=func_prototype
+                        )
                     except (Web3Exception, DecodingError):
                         continue
                     else:
@@ -125,7 +165,9 @@ class Erc20Token(AbstractErc20Token):
 
                 for func_prototype in ("decimals()", "DECIMALS()"):
                     try:
-                        self.decimals = self.get_decimals(provider, func_prototype=func_prototype)
+                        self.decimals = self.fetch_decimals(
+                            address=self.address, provider=prov, func_prototype=func_prototype
+                        )
                     except (Web3Exception, DecodingError):
                         continue
                     else:
@@ -143,28 +185,50 @@ class Erc20Token(AbstractErc20Token):
                     token_from_db.symbol = self.symbol
                     session.commit()
 
-        self._price_oracle = (
-            ChainlinkPriceContract(address=oracle_address, chain_id=self.chain_id)
-            if oracle_address
-            else None
-        )
+        self._price_oracle = None
+        if oracle_address:
+            from degenbot.chainlink import ChainlinkPriceContract
+
+            self._price_oracle = ChainlinkPriceContract(address=oracle_address, chain_id=self.chain_id)
 
         token_registry.add(token_address=self.address, chain_id=self.chain_id, token=self)
-
-        self._state_cache_depth = state_cache_depth
-        self._cached_approval: dict[tuple[int, ChecksumAddress, ChecksumAddress], int] = {}
-        self._cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]] = {}
-        self._cached_total_supply: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth,
-        )
 
         if not silent:  # pragma: no cover
             logger.info(f"• {self.symbol} ({self.name})")
 
-    def __repr__(self) -> str:  # pragma: no cover
-        return f"{self.__class__.__name__}(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"  # noqa:E501
+    # -- Cache accessors (dictionary operations, no I/O) --
 
-    def get_name_symbol_decimals_batched(self, provider: ProviderAdapter) -> tuple[str, str, int]:
+    def get_cached_balance(self, address: ChecksumAddress, block_number: int) -> int | None:
+        return self._cached_balance.get(address, {}).get(block_number)
+
+    def set_cached_balance(self, address: ChecksumAddress, block_number: int, balance: int) -> None:
+        if address not in self._cached_balance:
+            self._cached_balance[address] = BoundedCache(max_items=self._state_cache_depth)
+        self._cached_balance[address][block_number] = balance
+
+    def get_cached_approval(
+        self, block_number: int, owner: ChecksumAddress, spender: ChecksumAddress
+    ) -> int | None:
+        return self._cached_approval.get((block_number, owner, spender))
+
+    def set_cached_approval(
+        self, block_number: int, owner: ChecksumAddress, spender: ChecksumAddress, amount: int
+    ) -> None:
+        self._cached_approval[block_number, owner, spender] = amount
+
+    def get_cached_total_supply(self, block_number: int) -> int | None:
+        return self._cached_total_supply.get(block_number)
+
+    def set_cached_total_supply(self, block_number: int, total_supply: int) -> None:
+        self._cached_total_supply[block_number] = total_supply
+
+    # -- RPC static methods (used by Bot.build_erc20token) --
+
+    @staticmethod
+    def fetch_name_symbol_decimals_batched(
+        address: ChecksumAddress, provider: ProviderAdapter
+    ) -> tuple[str, str, int]:
+        """Fetch token name, symbol, and decimals via batched RPC calls."""
         name_calldata = encode_function_calldata(
             function_prototype="name()",
             function_arguments=None,
@@ -178,9 +242,9 @@ class Erc20Token(AbstractErc20Token):
             function_arguments=None,
         )
 
-        name_result = provider.call(to=self.address, data=name_calldata)
-        symbol_result = provider.call(to=self.address, data=symbol_calldata)
-        decimals_result = provider.call(to=self.address, data=decimals_calldata)
+        name_result = provider.call(to=address, data=name_calldata)
+        symbol_result = provider.call(to=address, data=symbol_calldata)
+        decimals_result = provider.call(to=address, data=decimals_calldata)
 
         (name,) = eth_abi.abi.decode(types=["string"], data=name_result)
         (symbol,) = eth_abi.abi.decode(types=["string"], data=symbol_result)
@@ -188,9 +252,13 @@ class Erc20Token(AbstractErc20Token):
 
         return cast("str", name), cast("str", symbol), cast("int", decimals)
 
-    def get_name(self, provider: ProviderAdapter, func_prototype: str) -> str:
+    @staticmethod
+    def fetch_name(
+        address: ChecksumAddress, provider: ProviderAdapter, func_prototype: str = "name()"
+    ) -> str:
+        """Fetch token name via RPC call."""
         result = provider.call(
-            to=self.address,
+            to=address,
             data=encode_function_calldata(
                 function_prototype=func_prototype,
                 function_arguments=None,
@@ -204,9 +272,13 @@ class Erc20Token(AbstractErc20Token):
             (name,) = eth_abi.abi.decode(types=["bytes32"], data=result)
             return cast("HexBytes", name).decode("utf-8", errors="ignore").strip("\x00")
 
-    def get_symbol(self, provider: ProviderAdapter, func_prototype: str) -> str:
+    @staticmethod
+    def fetch_symbol(
+        address: ChecksumAddress, provider: ProviderAdapter, func_prototype: str = "symbol()"
+    ) -> str:
+        """Fetch token symbol via RPC call."""
         result = provider.call(
-            to=self.address,
+            to=address,
             data=encode_function_calldata(
                 function_prototype=func_prototype,
                 function_arguments=None,
@@ -220,10 +292,14 @@ class Erc20Token(AbstractErc20Token):
             (symbol,) = eth_abi.abi.decode(types=["bytes32"], data=result)
             return cast("HexBytes", symbol).decode("utf-8", errors="ignore").strip("\x00")
 
-    def get_decimals(self, provider: ProviderAdapter, func_prototype: str) -> int:
+    @staticmethod
+    def fetch_decimals(
+        address: ChecksumAddress, provider: ProviderAdapter, func_prototype: str = "decimals()"
+    ) -> int:
+        """Fetch token decimals via RPC call."""
         (result,) = raw_call(
             provider,
-            address=self.address,
+            address=address,
             calldata=encode_function_calldata(
                 function_prototype=func_prototype,
                 function_arguments=None,
@@ -232,16 +308,16 @@ class Erc20Token(AbstractErc20Token):
         )
         return cast("int", result)
 
+    # -- Legacy I/O methods (deprecated, kept for backward compat) --
+
     def get_approval(
         self,
         owner: str,
         spender: str,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
+        """Retrieve the amount that can be spent by `spender` on behalf of `owner`.\n\n        .. deprecated:: Use Bot.get_token_approval() instead.
         """
-        Retrieve the amount that can be spent by `spender` on behalf of `owner`.
-        """
-
         owner = get_checksum_address(owner)
         spender = get_checksum_address(spender)
 
@@ -276,10 +352,8 @@ class Erc20Token(AbstractErc20Token):
         spender: str,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
+        """Retrieve the amount that can be spent by `spender` on behalf of `owner`.\n\n        .. deprecated:: Use AsyncBot.get_token_approval() instead.
         """
-        Retrieve the amount that can be spent by `spender` on behalf of `owner`.
-        """
-
         owner = get_checksum_address(owner)
         spender = get_checksum_address(spender)
 
@@ -313,10 +387,8 @@ class Erc20Token(AbstractErc20Token):
         address: str,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
+        """Retrieve the ERC-20 balance for the given address.\n\n        .. deprecated:: Use Bot.get_token_balance() instead.
         """
-        Retrieve the ERC-20 balance for the given address.
-        """
-
         address = get_checksum_address(address)
 
         block_number = (
@@ -353,10 +425,8 @@ class Erc20Token(AbstractErc20Token):
         address: str,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
+        """Retrieve the ERC-20 balance for the given address.\n\n        .. deprecated:: Use AsyncBot.get_token_balance() instead.
         """
-        Retrieve the ERC-20 balance for the given address.
-        """
-
         address = get_checksum_address(address)
 
         block_number = (
@@ -389,10 +459,8 @@ class Erc20Token(AbstractErc20Token):
         return balance
 
     def get_total_supply(self, block_identifier: BlockIdentifier | None = None) -> int:
+        """Retrieve the total supply for this token.\n\n        .. deprecated:: Use Bot.get_token_total_supply() instead.
         """
-        Retrieve the total supply for this token.
-        """
-
         block_number = (
             block_identifier
             if isinstance(block_identifier, int)
@@ -418,10 +486,8 @@ class Erc20Token(AbstractErc20Token):
         return total_supply
 
     async def get_total_supply_async(self, block_identifier: BlockIdentifier | None = None) -> int:
+        """Retrieve the total supply for this token.\n\n        .. deprecated:: Use AsyncBot.get_token_total_supply() instead.
         """
-        Retrieve the total supply for this token.
-        """
-
         block_number = (
             block_identifier
             if isinstance(block_identifier, int)
@@ -445,6 +511,9 @@ class Erc20Token(AbstractErc20Token):
         )
         self._cached_total_supply[block_number] = total_supply
         return total_supply
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"{self.__class__.__name__}(address={self.address}, symbol='{self.symbol}', name='{self.name}', decimals={self.decimals})"  # noqa:E501
 
     @property
     def chain_id(self) -> int:

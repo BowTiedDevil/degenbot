@@ -8,6 +8,7 @@
 # low           investigate providing overrides for live-lookup contracts
 
 import contextlib
+import warnings
 from collections.abc import Iterable, Sequence
 from fractions import Fraction
 from threading import Lock
@@ -189,6 +190,12 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         state_block: BlockNumber | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
+        # I/O-free path params
+        tokens: Sequence[Erc20Token] | None = None,
+        a_coefficient: int | None = None,
+        fee: int | None = None,
+        admin_fee: int | None = None,
+        balances: Sequence[int] | None = None,
     ) -> None:
         """
         A Curve V1 (StableSwap) pool.
@@ -210,6 +217,110 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         state_cache_depth:
             How many states to hold in the cache.
         """
+
+        self.address = get_checksum_address(address)
+
+        # ── I/O-free path ──
+        if all([
+            tokens is not None,
+            a_coefficient is not None,
+            fee is not None,
+            admin_fee is not None,
+            balances is not None,
+        ]):
+            self._chain_id = chain_id if chain_id is not None else tokens[0].chain_id
+            state_block = state_block if state_block is not None else 0
+
+            self._tokens: tuple[Erc20Token, ...] = tuple(tokens)
+            self.a_coefficient = a_coefficient
+            self.fee = fee
+            self.admin_fee = admin_fee
+
+            # Derive rate/precision multipliers from token decimals
+            self.rate_multipliers = tuple(
+                10 ** (2 * self.PRECISION_DECIMALS - token.decimals) for token in self._tokens
+            )
+            self.precision_multipliers = tuple(
+                cast("int", 10 ** (self.PRECISION_DECIMALS - token.decimals))
+                for token in self._tokens
+            )
+
+            # Set defaults for optional/variant attributes
+            self.fee_gamma = 0
+            self.mid_fee = 0
+            self.offpeg_fee_multiplier = 0
+            self.out_fee = 0
+            self.use_lending = tuple(False for _ in self._tokens)
+            self.oracle_method = None
+            self.initial_a_coefficient = None
+            self.initial_a_coefficient_time = None
+            self.future_a_coefficient = None
+            self.future_a_coefficient_time = None
+            self.base_pool = None
+            self.tokens_underlying = None
+            self.base_cache_updated = None
+            self.base_virtual_price = 0
+
+            # LP token defaults to first token if not a metapool
+            self.lp_token = self._tokens[0]
+            self._coin_index_type = "uint256"
+            self._create_timestamp: int | None = None
+
+            # State caches
+            self._state_cache: BoundedCache[BlockNumber, CurveStableswapPoolState] = BoundedCache(
+                max_items=state_cache_depth
+            )
+            self._state = CurveStableswapPoolState(
+                address=self.address,
+                balances=tuple(balances),
+                block=state_block,
+            )
+            self._state_cache[state_block] = self._state
+            self._state_lock = Lock()
+
+            self._block_timestamps: dict[BlockNumber, int] = {}
+            self._cached_rates: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
+                max_items=state_cache_depth
+            )
+            self._cached_rates_from_aeth: BoundedCache[BlockNumber, int] = BoundedCache(
+                max_items=state_cache_depth
+            )
+            self._cached_rates_from_ctokens: BoundedCache[BlockNumber, tuple[int, ...]] = (
+                BoundedCache(max_items=state_cache_depth)
+            )
+            self._cached_rates_from_cytokens: BoundedCache[BlockNumber, tuple[int, ...]] = (
+                BoundedCache(max_items=state_cache_depth)
+            )
+            self._cached_rates_from_oracle: BoundedCache[BlockNumber, tuple[int, ...]] = (
+                BoundedCache(max_items=state_cache_depth)
+            )
+            self._cached_rates_from_reth: BoundedCache[BlockNumber, int] = BoundedCache(
+                max_items=state_cache_depth
+            )
+            self._cached_rates_from_ytokens: BoundedCache[BlockNumber, tuple[int, ...]] = (
+                BoundedCache(max_items=state_cache_depth)
+            )
+            self._cached_scaled_redemption_price: BoundedCache[BlockNumber, int] = BoundedCache(
+                max_items=state_cache_depth
+            )
+            self._cached_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
+                max_items=state_cache_depth
+            )
+
+            fee_string = f"{100 * self.fee / self.FEE_DENOMINATOR:.2f}"
+            token_string = "-".join([token.symbol for token in self._tokens])
+            self.name = f"{token_string} ({self.__class__.__name__}, {fee_string}%)"
+
+            self._subscribers: WeakSet[Subscriber] = WeakSet()
+            return
+
+        # ── Legacy I/O path ──
+        warnings.warn(
+            "Constructing CurveStableswapPool without pre-fetched data is deprecated. "
+            "Use Bot.build_curve_pool() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         self._provider = (

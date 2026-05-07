@@ -6,7 +6,7 @@ from alembic.config import Config
 from sqlalchemy import URL, Engine, create_engine, text
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
-from degenbot.config import settings
+from degenbot.config import config
 from degenbot.database.models import Base
 from degenbot.exceptions.database import BackupExists
 from degenbot.logging import logger
@@ -105,7 +105,7 @@ def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Ses
 
 def get_alembic_config() -> Config:
     cfg = Config()
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{settings.database.path.absolute()}")
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{config.database.path.absolute()}")
     cfg.set_main_option("script_location", "degenbot:migrations")
 
     return cfg

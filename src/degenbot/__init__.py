@@ -10,8 +10,10 @@ from .abi_adapter import (
 from .abi_adapter import decode as abi_decode
 from .abi_adapter import decode_single as abi_decode_single
 from .abi_adapter import encode as abi_encode
+from .async_bot import AsyncBot
+from .bot import Bot
 from .checksum_cache import get_checksum_address
-from .config import settings
+from .config import config
 from .connection import (
     async_connection_manager,
     connection_manager,
@@ -90,6 +92,8 @@ __all__ = (
     "AbiDecodeError",
     "AbiEncodeError",
     "AbiUnsupportedOperation",
+    "AsyncBot",
+    "Bot",
     "AerodromeV2Pool",
     "AerodromeV2PoolManager",
     "AerodromeV2PoolState",
@@ -139,6 +143,7 @@ __all__ = (
     "abi_decode_single",
     "abi_encode",
     "async_connection_manager",
+    "config",
     "connection_manager",
     "decode_return_data",
     "encode_function_call",
@@ -155,7 +160,6 @@ __all__ = (
     "pool_registry",
     "set_async_web3",
     "set_web3",
-    "settings",
     "to_checksum_address",
     "token_registry",
 )

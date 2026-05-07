@@ -528,3 +528,22 @@ def raw_call(
         types=return_types,
         data=provider.call(to=address, data=calldata, block=block_num),
     )
+
+
+async def async_raw_call(
+    provider: Any,
+    address: ChecksumAddress,
+    calldata: bytes,
+    return_types: list[str],
+    block_identifier: BlockIdentifier | None = None,
+) -> tuple[Any, ...]:
+    """
+    Perform an async eth_call at the given address and return the decoded response.
+
+    Same as raw_call but uses await provider.call().
+    """
+    block_num = block_identifier if isinstance(block_identifier, int) else None
+    return eth_abi.abi.decode(
+        types=return_types,
+        data=await provider.call(to=address, data=calldata, block=block_num),
+    )
