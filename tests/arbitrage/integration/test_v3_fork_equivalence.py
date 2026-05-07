@@ -15,17 +15,16 @@ the test can be skipped or the logic can verify both systems reject.
 
 
 import pytest
-from eth_typing import ChainId
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage import UniswapLpCycle
 from degenbot.arbitrage.optimizers.solver import BrentSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.arbitrage.types import UniswapV3PoolSwapAmounts
-from degenbot.connection import set_web3
 from degenbot.erc20.erc20 import Erc20Token
-from degenbot.erc20.manager import Erc20TokenManager
+from degenbot.provider import ProviderAdapter
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from tests.helpers.bot_factory import make_bot_with_provider
 
 # Mainnet V3 pool addresses
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -38,39 +37,38 @@ WETH_USDT_030_POOL = "0x4e68Ccd3E89f51C3074ca5072bbAC773960dFa36"
 
 
 @pytest.fixture
-def weth_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
-    return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WETH_ADDRESS)
+def _bot(fork_mainnet_full: AnvilFork):
+    return make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
 
 
 @pytest.fixture
-def usdc_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
-    return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(USDC_ADDRESS)
+def weth_token(_bot) -> Erc20Token:
+    return _bot.build_erc20token(WETH_ADDRESS)
 
 
 @pytest.fixture
-def usdt_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
-    return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(USDT_ADDRESS)
+def usdc_token(_bot) -> Erc20Token:
+    return _bot.build_erc20token(USDC_ADDRESS)
 
 
 @pytest.fixture
-def weth_usdc_005_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
-    set_web3(fork_mainnet_full.w3)
-    return UniswapV3Pool(WETH_USDC_005_POOL)
+def usdt_token(_bot) -> Erc20Token:
+    return _bot.build_erc20token(USDT_ADDRESS)
 
 
 @pytest.fixture
-def usdc_usdt_001_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
-    set_web3(fork_mainnet_full.w3)
-    return UniswapV3Pool(USDC_USDT_001_POOL)
+def weth_usdc_005_lp(_bot) -> UniswapV3Pool:
+    return _bot.build_v3_pool(WETH_USDC_005_POOL)
 
 
 @pytest.fixture
-def weth_usdt_030_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
-    set_web3(fork_mainnet_full.w3)
-    return UniswapV3Pool(WETH_USDT_030_POOL)
+def usdc_usdt_001_lp(_bot) -> UniswapV3Pool:
+    return _bot.build_v3_pool(USDC_USDT_001_POOL)
+
+
+@pytest.fixture
+def weth_usdt_030_lp(_bot) -> UniswapV3Pool:
+    return _bot.build_v3_pool(WETH_USDT_030_POOL)
 
 
 class TestV3OnlyForkEquivalence:

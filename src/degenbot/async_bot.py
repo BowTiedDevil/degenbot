@@ -7,11 +7,11 @@ Returns the same I/O-free domain objects as Bot.
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Sequence
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import Any
 
 import eth_abi.abi
-import sqlalchemy.exc
 from eth_abi.exceptions import DecodingError
 from hexbytes import HexBytes
 from web3 import Web3
@@ -25,16 +25,13 @@ from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.erc20.ether_placeholder import EtherPlaceholder
-from degenbot.exceptions.manager import ManagerAlreadyInitialized
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.functions import encode_function_calldata, async_raw_call
+from degenbot.exceptions.manager import ManagerAlreadyInitialized
+from degenbot.functions import async_raw_call, encode_function_calldata
 from degenbot.logging import logger
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.types.abstract import AbstractPoolManager
 from degenbot.types.aliases import ChainId
-
-if TYPE_CHECKING:
-    pass
 
 
 class AsyncBot:
@@ -98,7 +95,6 @@ class AsyncBot:
         silent: bool = False,
     ) -> Erc20Token:
         """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token."""
-        from degenbot.database.models.erc20 import Erc20TokenTable
         from degenbot.erc20.erc20 import get_token_from_database
 
         address = get_checksum_address(address)
@@ -476,7 +472,7 @@ class AsyncBot:
         )
 
         _tick_bitmap_arg = working_tick_bitmap if working_tick_data else None
-        _tick_data_arg = working_tick_data if working_tick_data else None
+        _tick_data_arg = working_tick_data or None
 
         # Determine deployer/init_hash
         _deployer = factory
@@ -538,7 +534,7 @@ class AsyncBot:
         from degenbot.database.models.pools import PoolManagerTable, UniswapV4PoolTable
         from degenbot.exceptions.liquidity_pool import LiquidityPoolError
         from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
-        from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, Slot0, UniswapV4Pool
+        from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
         from degenbot.uniswap.v4_types import UniswapV4BitmapAtWord, UniswapV4LiquidityAtTick
 
         pool_manager_address = get_checksum_address(pool_manager_address)
@@ -676,7 +672,7 @@ class AsyncBot:
         )
 
         _tick_bitmap_arg = working_tick_bitmap if working_tick_data else None
-        _tick_data_arg = working_tick_data if working_tick_data else None
+        _tick_data_arg = working_tick_data or None
 
         pool = UniswapV4Pool(
             pool_id=pool_id_bytes,
@@ -696,7 +692,6 @@ class AsyncBot:
             state_block=_state_block,
             tick_bitmap=_tick_bitmap_arg,
             tick_data=_tick_data_arg,
-            silent=silent,
         )
 
         self.managed_pools.add(

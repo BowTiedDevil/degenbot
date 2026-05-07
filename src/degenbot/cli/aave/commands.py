@@ -12,6 +12,7 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from degenbot.aave.deployments import EthereumMainnetAaveV3
 from degenbot.aave.events import AaveV3GhoDebtTokenEvent, AaveV3PoolConfigEvent
 from degenbot.aave.position_analysis import UserPositionSummary, analyze_positions_for_market
+from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
 from degenbot.cli.aave.constants import POSITION_RISK_DISPLAY_LIMIT
@@ -43,7 +44,6 @@ from degenbot.cli.aave.verification import (
     verify_positions_for_users,
 )
 from degenbot.cli.utils import get_provider_from_config
-from degenbot.bot import Bot
 from degenbot.database.models.aave import (
     AaveGhoToken,
     AaveV3CollateralPosition,

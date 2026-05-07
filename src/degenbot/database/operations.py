@@ -103,9 +103,10 @@ def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Ses
     )
 
 
-def get_alembic_config() -> Config:
+def get_alembic_config(database_path: pathlib.Path | None = None) -> Config:
     cfg = Config()
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{config.database.path.absolute()}")
+    db_path = database_path or config.database.path
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path.absolute()}")
     cfg.set_main_option("script_location", "degenbot:migrations")
 
     return cfg

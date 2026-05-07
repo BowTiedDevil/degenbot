@@ -5,9 +5,7 @@ accept explicit dependencies instead of importing module-level singletons.
 """
 
 import pathlib
-from unittest.mock import MagicMock, AsyncMock
-
-import pytest
+from unittest.mock import MagicMock
 
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.uniswap.v3_snapshot import (

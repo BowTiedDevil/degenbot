@@ -8,41 +8,28 @@
 # low           investigate providing overrides for live-lookup contracts
 
 import contextlib
-import warnings
 from collections.abc import Iterable, Sequence
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 from weakref import WeakSet
 
 import eth_abi.abi
-import web3.exceptions
-from eth_abi.exceptions import DecodingError, InsufficientDataBytes
-from eth_typing import AnyAddress, ChecksumAddress
+from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from web3 import Web3
-from web3.exceptions import Web3Exception
 from web3.types import BlockIdentifier
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
-from degenbot.constants import ZERO_ADDRESS
-from degenbot.curve.deployments import (
-    BROKEN_CURVE_V1_POOLS,
-    CURVE_V1_FACTORY_ADDRESS,
-    CURVE_V1_METAREGISTRY_ADDRESS,
-    CURVE_V1_REGISTRY_ADDRESS,
-)
-from degenbot.curve.types import CurveStableswapPoolState, CurveStableSwapPoolStateUpdated
-from degenbot.erc20 import Erc20Token, Erc20TokenManager
+from degenbot.curve.types import CurveStableswapPoolState
+from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import NoLiquidity
 from degenbot.exceptions.evm import EVMRevertError
-from degenbot.exceptions.liquidity_pool import BrokenPool, InvalidSwapInputAmount
+from degenbot.exceptions.liquidity_pool import InvalidSwapInputAmount
 from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from degenbot.logging import logger
-from degenbot.provider import ProviderAdapter
-from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import (
@@ -185,507 +172,93 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         self,
         address: ChecksumAddress | str,
         *,
+        tokens: Sequence[Erc20Token],
+        a_coefficient: int,
+        fee: int,
+        admin_fee: int,
+        balances: Sequence[int],
         chain_id: ChainId | None = None,
-        provider: ProviderAdapter | None = None,
         state_block: BlockNumber | None = None,
-        silent: bool = False,
         state_cache_depth: int = 8,
-        # I/O-free path params
-        tokens: Sequence[Erc20Token] | None = None,
-        a_coefficient: int | None = None,
-        fee: int | None = None,
-        admin_fee: int | None = None,
-        balances: Sequence[int] | None = None,
     ) -> None:
         """
         A Curve V1 (StableSwap) pool.
 
-        Arguments
-        ---------
-        address:
-            Address for the deployed pool contract.
-        chain_id:
-            The chain ID where the pool contract is deployed.
-        provider:
-            A ProviderAdapter instance for blockchain calls. Uses the default provider if not
-            provided.
-        state_block:
-            Fetch initial state values from the chain at a particular block height. Defaults to the
-            latest block if omitted.
-        silent:
-            Suppress status output.
-        state_cache_depth:
-            How many states to hold in the cache.
+        Constructed from pre-fetched data only. Use Bot.build_curve_pool() to fetch from chain.
         """
 
         self.address = get_checksum_address(address)
+        self._chain_id = chain_id if chain_id is not None else tokens[0].chain_id
+        state_block = state_block if state_block is not None else 0
 
-        # ── I/O-free path ──
-        if all([
-            tokens is not None,
-            a_coefficient is not None,
-            fee is not None,
-            admin_fee is not None,
-            balances is not None,
-        ]):
-            self._chain_id = chain_id if chain_id is not None else tokens[0].chain_id
-            state_block = state_block if state_block is not None else 0
+        self._tokens: tuple[Erc20Token, ...] = tuple(tokens)
+        self.a_coefficient = a_coefficient
+        self.fee = fee
+        self.admin_fee = admin_fee
 
-            self._tokens: tuple[Erc20Token, ...] = tuple(tokens)
-            self.a_coefficient = a_coefficient
-            self.fee = fee
-            self.admin_fee = admin_fee
-
-            # Derive rate/precision multipliers from token decimals
-            self.rate_multipliers = tuple(
-                10 ** (2 * self.PRECISION_DECIMALS - token.decimals) for token in self._tokens
-            )
-            self.precision_multipliers = tuple(
-                cast("int", 10 ** (self.PRECISION_DECIMALS - token.decimals))
-                for token in self._tokens
-            )
-
-            # Set defaults for optional/variant attributes
-            self.fee_gamma = 0
-            self.mid_fee = 0
-            self.offpeg_fee_multiplier = 0
-            self.out_fee = 0
-            self.use_lending = tuple(False for _ in self._tokens)
-            self.oracle_method = None
-            self.initial_a_coefficient = None
-            self.initial_a_coefficient_time = None
-            self.future_a_coefficient = None
-            self.future_a_coefficient_time = None
-            self.base_pool = None
-            self.tokens_underlying = None
-            self.base_cache_updated = None
-            self.base_virtual_price = 0
-
-            # LP token defaults to first token if not a metapool
-            self.lp_token = self._tokens[0]
-            self._coin_index_type = "uint256"
-            self._create_timestamp: int | None = None
-
-            # State caches
-            self._state_cache: BoundedCache[BlockNumber, CurveStableswapPoolState] = BoundedCache(
-                max_items=state_cache_depth
-            )
-            self._state = CurveStableswapPoolState(
-                address=self.address,
-                balances=tuple(balances),
-                block=state_block,
-            )
-            self._state_cache[state_block] = self._state
-            self._state_lock = Lock()
-
-            self._block_timestamps: dict[BlockNumber, int] = {}
-            self._cached_rates: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-                max_items=state_cache_depth
-            )
-            self._cached_rates_from_aeth: BoundedCache[BlockNumber, int] = BoundedCache(
-                max_items=state_cache_depth
-            )
-            self._cached_rates_from_ctokens: BoundedCache[BlockNumber, tuple[int, ...]] = (
-                BoundedCache(max_items=state_cache_depth)
-            )
-            self._cached_rates_from_cytokens: BoundedCache[BlockNumber, tuple[int, ...]] = (
-                BoundedCache(max_items=state_cache_depth)
-            )
-            self._cached_rates_from_oracle: BoundedCache[BlockNumber, tuple[int, ...]] = (
-                BoundedCache(max_items=state_cache_depth)
-            )
-            self._cached_rates_from_reth: BoundedCache[BlockNumber, int] = BoundedCache(
-                max_items=state_cache_depth
-            )
-            self._cached_rates_from_ytokens: BoundedCache[BlockNumber, tuple[int, ...]] = (
-                BoundedCache(max_items=state_cache_depth)
-            )
-            self._cached_scaled_redemption_price: BoundedCache[BlockNumber, int] = BoundedCache(
-                max_items=state_cache_depth
-            )
-            self._cached_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
-                max_items=state_cache_depth
-            )
-
-            fee_string = f"{100 * self.fee / self.FEE_DENOMINATOR:.2f}"
-            token_string = "-".join([token.symbol for token in self._tokens])
-            self.name = f"{token_string} ({self.__class__.__name__}, {fee_string}%)"
-
-            self._subscribers: WeakSet[Subscriber] = WeakSet()
-            return
-
-        # ── Legacy I/O path ──
-        warnings.warn(
-            "Constructing CurveStableswapPool without pre-fetched data is deprecated. "
-            "Use Bot.build_curve_pool() instead.",
-            DeprecationWarning,
-            stacklevel=2,
+        # Derive rate/precision multipliers from token decimals
+        self.rate_multipliers = tuple(
+            10 ** (2 * self.PRECISION_DECIMALS - token.decimals) for token in self._tokens
+        )
+        self.precision_multipliers = tuple(
+            cast("int", 10 ** (self.PRECISION_DECIMALS - token.decimals))
+            for token in self._tokens
         )
 
-        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        self._provider = (
-            provider if provider is not None else connection_manager.get_provider(self._chain_id)
-        )
-        # Track whether provider was fetched from connection_manager (True) or passed in (False)
-        # This is used to determine whether to refresh the provider from connection_manager
-        self._provider_from_connection_manager = provider is None
-        provider = self._provider
-        w3: web3.Web3 = connection_manager.get_web3(self.chain_id)
-        if state_block is None:
-            state_block = self._provider.get_block_number()
+        # Set defaults for optional/variant attributes
+        self.fee_gamma = 0
+        self.mid_fee = 0
+        self.offpeg_fee_multiplier = 0
+        self.out_fee = 0
+        self.use_lending = tuple(False for _ in self._tokens)
+        self.oracle_method = None
+        self.initial_a_coefficient = None
+        self.initial_a_coefficient_time = None
+        self.future_a_coefficient = None
+        self.future_a_coefficient_time = None
+        self.base_pool = None
+        self.tokens_underlying = None
+        self.base_cache_updated = None
+        self.base_virtual_price = 0
 
-        self.fee_gamma: int
-        self.mid_fee: int
-        self.offpeg_fee_multiplier: int
-        self.out_fee: int
-        self.precision_multipliers: tuple[int, ...]
-        self.rate_multipliers: tuple[int, ...]
-        self.use_lending: tuple[bool, ...]
-        self.oracle_method: int | None
+        # LP token defaults to first token if not a metapool
+        self.lp_token = self._tokens[0]
+        self._coin_index_type = "uint256"
+        self._create_timestamp: int | None = None
 
-        self.initial_a_coefficient: int | None = None
-        self.initial_a_coefficient_time: int | None = None
-        self.future_a_coefficient: int | None = None
-        self.future_a_coefficient_time: int | None = None
-
-        def get_a_scaling_values() -> None:
-            with (
-                contextlib.suppress(Web3Exception, DecodingError),
-                w3.batch_requests() as batch,
-            ):
-                batch.add(
-                    provider.call(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="initial_A()",
-                            function_arguments=None,
-                        ),
-                        block=self.update_block,
-                    )
-                )
-                batch.add(
-                    provider.call(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="initial_A_time()",
-                            function_arguments=None,
-                        ),
-                        block=self.update_block,
-                    )
-                )
-                batch.add(
-                    provider.call(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="future_A()",
-                            function_arguments=None,
-                        ),
-                        block=self.update_block,
-                    )
-                )
-                batch.add(
-                    provider.call(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="future_A_time()",
-                            function_arguments=None,
-                        ),
-                        block=self.update_block,
-                    )
-                )
-
-                initial_a, initial_a_time, future_a, future_a_time = batch.execute()
-
-                (initial_a,) = eth_abi.abi.decode(
-                    types=["uint256"], data=cast("HexBytes", initial_a)
-                )
-                (initial_a_time,) = eth_abi.abi.decode(
-                    types=["uint256"], data=cast("HexBytes", initial_a_time)
-                )
-                (future_a,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", future_a))
-                (future_a_time,) = eth_abi.abi.decode(
-                    types=["uint256"], data=cast("HexBytes", future_a_time)
-                )
-
-                self.initial_a_coefficient = cast("int", initial_a)
-                self.initial_a_coefficient_time = cast("int", initial_a_time)
-                self.future_a_coefficient = cast("int", future_a)
-                self.future_a_coefficient_time = cast("int", future_a_time)
-
-        self.a_coefficient: int
-        self.fee: int
-        self.admin_fee: int
-
-        def get_coefficient_and_fees() -> None:
-            with w3.batch_requests() as batch:
-                batch.add(
-                    provider.call(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="A()",
-                            function_arguments=None,
-                        ),
-                        block=self.update_block,
-                    )
-                )
-                batch.add(
-                    provider.call(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="fee()",
-                            function_arguments=None,
-                        ),
-                        block=self.update_block,
-                    )
-                )
-                batch.add(
-                    provider.call(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="admin_fee()",
-                            function_arguments=None,
-                        ),
-                        block=self.update_block,
-                    )
-                )
-
-                a_coefficient, pool_fee, admin_fee = batch.execute()
-
-                (a_coefficient,) = eth_abi.abi.decode(
-                    types=["uint256"], data=cast("HexBytes", a_coefficient)
-                )
-                (pool_fee,) = eth_abi.abi.decode(types=["uint256"], data=cast("HexBytes", pool_fee))
-                (admin_fee,) = eth_abi.abi.decode(
-                    types=["uint256"], data=cast("HexBytes", admin_fee)
-                )
-
-                self.a_coefficient = cast("int", a_coefficient)
-                self.fee = cast("int", pool_fee)
-                self.admin_fee = cast("int", admin_fee)
-
-        def get_coin_index_type() -> Literal["uint256", "int128"]:
-            """
-            Identify the type used for the `index` argument to the `coins` contract call.
-
-            Several different ABIs were used for Curve pool contracts, so this function provides for
-            dynamic discovery of input types without hard-coding.
-            """
-
-            for coin_type in ("uint256", "int128"):
-                try:
-                    eth_abi.abi.decode(
-                        types=["address"],
-                        data=provider.call(
-                            to=self.address,
-                            data=Web3.keccak(text=f"coins({coin_type})")[:4]
-                            + eth_abi.abi.encode(types=[coin_type], args=[0]),
-                            block=state_block,
-                        ),
-                    )
-                except (InsufficientDataBytes, web3.exceptions.ContractLogicError):
-                    continue
-                else:
-                    return coin_type
-
-            raise DegenbotValueError(
-                message="Could not determine input type for pool"
-            )  # pragma: no cover
-
-        def get_token_addresses() -> tuple[ChecksumAddress, ...]:
-            token_addresses = []
-            for token_id in range(self.MAX_COINS):  # pragma: no branch
-                try:
-                    token_address: str
-                    (token_address,) = raw_call(
-                        provider,
-                        address=self.address,
-                        calldata=encode_function_calldata(
-                            function_prototype=f"coins({self._coin_index_type})",
-                            function_arguments=[token_id],
-                        ),
-                        return_types=["address"],
-                        block_identifier=state_block,
-                    )
-                except web3.exceptions.ContractLogicError:
-                    break
-                else:
-                    token_addresses.append(get_checksum_address(token_address))
-
-            return tuple(token_addresses)
-
-        def get_lp_token_address() -> ChecksumAddress:
-            for contract_address in (
-                CURVE_V1_METAREGISTRY_ADDRESS,
-                CURVE_V1_REGISTRY_ADDRESS,
-                CURVE_V1_FACTORY_ADDRESS,
-            ):
-                with contextlib.suppress(Web3Exception, DecodingError):
-                    (lp_token_address,) = raw_call(
-                        connection_manager.get_provider(chain_id=self.chain_id),
-                        address=contract_address,
-                        calldata=encode_function_calldata(
-                            function_prototype="get_lp_token(address)",
-                            function_arguments=[self.address],
-                        ),
-                        return_types=["address"],
-                        block_identifier=state_block,
-                    )
-                    if lp_token_address == ZERO_ADDRESS:
-                        continue
-                    return get_checksum_address(lp_token_address)
-
-            raise DegenbotValueError(
-                message=f"Could not identify LP token for pool {self.address}"
-            )  # pragma: no cover
-
-        def get_pool_from_lp_token(token: AnyAddress) -> ChecksumAddress:
-            for contract_address in (
-                CURVE_V1_METAREGISTRY_ADDRESS,
-                CURVE_V1_REGISTRY_ADDRESS,
-                CURVE_V1_FACTORY_ADDRESS,
-            ):
-                with contextlib.suppress(Web3Exception, DecodingError):
-                    (pool_address,) = raw_call(
-                        connection_manager.get_provider(chain_id=self.chain_id),
-                        address=contract_address,
-                        calldata=encode_function_calldata(
-                            function_prototype="get_pool_from_lp_token(address)",
-                            function_arguments=[get_checksum_address(token)],
-                        ),
-                        return_types=["address"],
-                        block_identifier=state_block,
-                    )
-                    return get_checksum_address(pool_address)
-
-            raise DegenbotValueError(
-                message=f"Could not identify base pool from LP token for {self.address}"
-            )  # pragma: no cover
-
-        def is_metapool() -> bool:
-            """
-            Check if the registry contract and the factory contract report that this is registered
-            as a metapool. Some metapools are not correctly marked in one of the contracts, so this
-            function checks both.
-            """
-            is_meta_results = [False]
-
-            for contract_address in (
-                CURVE_V1_METAREGISTRY_ADDRESS,
-                CURVE_V1_REGISTRY_ADDRESS,
-                CURVE_V1_FACTORY_ADDRESS,
-            ):
-                with contextlib.suppress(Web3Exception, DecodingError):
-                    (result,) = raw_call(
-                        provider,
-                        address=contract_address,
-                        calldata=encode_function_calldata(
-                            function_prototype="is_meta(address)",
-                            function_arguments=[self.address],
-                        ),
-                        return_types=["bool"],
-                        block_identifier=state_block,
-                    )
-                    is_meta_results.append(cast("bool", result))
-
-            return any(is_meta_results)
-
-        def set_pool_specific_attributes() -> None:
-            match self.address:
-                case "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56":
-                    self.use_lending = (True, True)
-                    self.precision_multipliers = (1, 10**12)
-                case "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5":
-                    self.fee_gamma = 10000000000000000
-                    self.mid_fee = 4000000
-                    self.out_fee = 40000000
-                case "0xDcEF968d416a41Cdac0ED8702fAC8128A64241A2":
-                    self.precision_multipliers = (1, 1000000000000)
-                case "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C":
-                    self.use_lending = (True, True, False)
-                    self.precision_multipliers = (1, 10**12, 10**12)
-                case "0x06364f10B501e868329afBc005b3492902d6C763":
-                    self.use_lending = (True, True, True, False)
-                case "0xDeBF20617708857ebe4F679508E7b7863a8A8EeE":
-                    self.precision_multipliers = (1, 10**12, 10**12)
-                    (self.offpeg_fee_multiplier,) = eth_abi.abi.decode(
-                        types=["uint256"],
-                        data=provider.call(
-                            to=self.address,
-                            data=Web3.keccak(text="offpeg_fee_multiplier()")[:4],
-                            block=state_block,
-                        ),
-                    )
-                case "0x2dded6Da1BF5DBdF597C45fcFaa3194e53EcfeAF":
-                    self.precision_multipliers = (1, 10**12, 10**12)
-                case "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27":
-                    self.precision_multipliers = (1, 10**12, 10**12, 1)
-                    self.use_lending = (True, True, True, True)
-                case "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51":
-                    self.precision_multipliers = (1, 10**12, 10**12, 1)
-                    self.use_lending = (True, True, True, True)
-                case "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD":
-                    self.use_lending = (False, False, False, False)
-                case (
-                    "0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492"
-                    | "0xBfAb6FA95E0091ed66058ad493189D2cB29385E6"
-                ):
-                    self._set_oracle_method(block_number=state_block)
-                case "0xEB16Ae0052ed37f479f7fe63849198Df1765a733":
-                    (self.offpeg_fee_multiplier,) = eth_abi.abi.decode(
-                        types=["uint256"],
-                        data=provider.call(
-                            to=self.address,
-                            data=Web3.keccak(text="offpeg_fee_multiplier()")[:4],
-                            block=state_block,
-                        ),
-                    )
-
-        self.address = get_checksum_address(address)
-        if self.address in BROKEN_CURVE_V1_POOLS:
-            raise BrokenPool
-
-        block = provider.get_block(state_block)
-
-        self._create_timestamp = block["timestamp"]
-
-        self._block_timestamps: BoundedCache[BlockNumber, int] = BoundedCache(
+        # State caches
+        self._state_cache: BoundedCache[BlockNumber, CurveStableswapPoolState] = BoundedCache(
             max_items=state_cache_depth
         )
-        self._cached_admin_balances: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
+        self._state = CurveStableswapPoolState(
+            address=self.address,
+            balances=tuple(balances),
+            block=state_block,
         )
-        self._cached_base_cache_updated: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_base_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_contract_D: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_gamma: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_price_scale: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
+        self._state_cache[state_block] = self._state
+        self._state_lock = Lock()
+
+        self._block_timestamps: dict[BlockNumber, int] = {}
+        self._cached_rates: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
             max_items=state_cache_depth
         )
         self._cached_rates_from_aeth: BoundedCache[BlockNumber, int] = BoundedCache(
             max_items=state_cache_depth
         )
-        self._cached_rates_from_ctokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
+        self._cached_rates_from_ctokens: BoundedCache[BlockNumber, tuple[int, ...]] = (
+            BoundedCache(max_items=state_cache_depth)
         )
-        self._cached_rates_from_cytokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
+        self._cached_rates_from_cytokens: BoundedCache[BlockNumber, tuple[int, ...]] = (
+            BoundedCache(max_items=state_cache_depth)
         )
-        self._cached_rates_from_oracle: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
+        self._cached_rates_from_oracle: BoundedCache[BlockNumber, tuple[int, ...]] = (
+            BoundedCache(max_items=state_cache_depth)
         )
         self._cached_rates_from_reth: BoundedCache[BlockNumber, int] = BoundedCache(
             max_items=state_cache_depth
         )
-        self._cached_rates_from_ytokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
+        self._cached_rates_from_ytokens: BoundedCache[BlockNumber, tuple[int, ...]] = (
+            BoundedCache(max_items=state_cache_depth)
         )
         self._cached_scaled_redemption_price: BoundedCache[BlockNumber, int] = BoundedCache(
             max_items=state_cache_depth
@@ -694,109 +267,11 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             max_items=state_cache_depth
         )
 
-        # token setup
-        self._coin_index_type = get_coin_index_type()
-
-        token_manager = Erc20TokenManager(chain_id=self.chain_id)
-        self.lp_token = token_manager.get_erc20token(
-            address=get_lp_token_address(),
-            silent=silent,
-        )
-        self._tokens: tuple[Erc20Token, ...] = tuple(
-            token_manager.get_erc20token(
-                address=token_address,
-                silent=silent,
-            )
-            for token_address in get_token_addresses()
-        )
-
-        # metapool setup
-        self.base_pool: CurveStableswapPool | None = None
-        if is_metapool():
-            # Curve metapools hold the LP token for the base pool at index 1
-            base_pool_address = get_pool_from_lp_token(self._tokens[1].address)
-
-            if (
-                base_pool := pool_registry.get(
-                    pool_address=base_pool_address, chain_id=self.chain_id
-                )
-            ) is None:
-                base_pool = CurveStableswapPool(
-                    base_pool_address, state_block=state_block, silent=silent
-                )
-            if TYPE_CHECKING:
-                assert isinstance(base_pool, CurveStableswapPool)
-
-            self.base_pool = base_pool
-            self.tokens_underlying = (self._tokens[0], *self.base_pool.tokens)
-
-            self.base_cache_updated: int | None = None
-            with contextlib.suppress(web3.exceptions.ContractLogicError):
-                self.base_cache_updated = self._get_base_cache_updated(block_number=state_block)
-
-            self.base_virtual_price: int
-            with contextlib.suppress(web3.exceptions.ContractLogicError):
-                self.base_virtual_price = self._get_base_virtual_price(block_number=state_block)
-
-        balances: list[int] = []
-        for token_id, _ in enumerate(self._tokens):
-            token_balance: int
-            (token_balance,) = eth_abi.abi.decode(
-                types=[self._coin_index_type],
-                data=provider.call(
-                    to=self.address,
-                    data=Web3.keccak(text=f"balances({self._coin_index_type})")[:4]
-                    + eth_abi.abi.encode(types=[self._coin_index_type], args=[token_id]),
-                    block=state_block,
-                ),
-            )
-            balances.append(token_balance)
-
-        """
-        3pool example
-        rate_multipliers = [
-          10**12000000,             <------ 10**18 == 10**(18 + 18 - 18)
-          10**12000000000000000000, <------ 10**30 == 10**(18 + 18 - 6)
-          10**12000000000000000000, <------ 10**30 == 10**(18 + 18 - 6)
-        ]
-        """
-        self.rate_multipliers = tuple(
-            10 ** (2 * self.PRECISION_DECIMALS - token.decimals) for token in self._tokens
-        )
-        self.precision_multipliers = tuple(
-            cast("int", 10 ** (self.PRECISION_DECIMALS - token.decimals)) for token in self._tokens
-        )
-
-        self._state = CurveStableswapPoolState(
-            address=self.address,
-            balances=tuple(balances),
-            block=state_block,
-        )
-        self._state_cache = BoundedCache(max_items=state_cache_depth)
-        self._state_cache[state_block] = self._state
-        self._state_lock = Lock()
-        self._block_timestamps[state_block] = block["timestamp"]
-
-        get_a_scaling_values()
-        get_coefficient_and_fees()
-        set_pool_specific_attributes()
-
         fee_string = f"{100 * self.fee / self.FEE_DENOMINATOR:.2f}"
         token_string = "-".join([token.symbol for token in self._tokens])
         self.name = f"{token_string} ({self.__class__.__name__}, {fee_string}%)"
 
         self._subscribers: WeakSet[Subscriber] = WeakSet()
-
-        pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
-
-        if not silent:
-            logger.info(
-                f"{self.name} @ {self.address}, A={self.a_coefficient}, fee={100 * self.fee / self.FEE_DENOMINATOR:.2f}%"  # noqa:E501
-            )
-            for token_id, (token, balance) in enumerate(
-                zip(self._tokens, self.balances, strict=True)
-            ):
-                logger.info(f"• Token {token_id}: {token} - Reserves: {balance}")
 
     def __repr__(self) -> str:  # pragma: no cover
         token_string = "-".join([token.symbol for token in self._tokens])
@@ -2257,81 +1732,6 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         return tuple(
             rate * balance // self.PRECISION for rate, balance in zip(rates, balances, strict=True)
         )
-
-    def auto_update(self, block_number: BlockNumber | None = None) -> bool:
-        """
-        Retrieve and set updated balances from the contract
-        """
-
-        with self._state_lock:
-            provider = self._get_provider_for_chain()
-
-            state_block = provider.get_block("latest" if block_number is None else block_number)
-            block_number = state_block["number"]
-
-            token_balances = []
-            token_balance: int
-            for token_id, _ in enumerate(self._tokens):
-                (token_balance,) = eth_abi.abi.decode(
-                    types=[self._coin_index_type],
-                    data=provider.call(
-                        to=self.address,
-                        data=Web3.keccak(text=f"balances({self._coin_index_type})")[:4]
-                        + eth_abi.abi.encode(types=[self._coin_index_type], args=[token_id]),
-                        block=block_number,
-                    ),
-                )
-                token_balances.append(token_balance)
-
-            if self.base_pool is not None:
-                self.base_pool.auto_update(block_number=block_number)
-                if self.base_cache_updated is not None:
-                    self.base_cache_updated = self._get_base_cache_updated(
-                        block_number=block_number
-                    )
-
-            found_updates = tuple(token_balances) != self.balances
-
-            state = (
-                CurveStableswapPoolState(
-                    address=self.address,
-                    balances=tuple(token_balances),
-                    base=self.base_pool.state,
-                    block=block_number,
-                )
-                if self.base_pool is not None
-                else CurveStableswapPoolState(
-                    address=self.address,
-                    balances=tuple(token_balances),
-                    block=block_number,
-                )
-            )
-            self._state_cache[block_number] = state
-            self._state = state
-            self._block_timestamps[block_number] = state_block["timestamp"]
-
-            if found_updates:
-                self._notify_subscribers(
-                    message=CurveStableSwapPoolStateUpdated(state),
-                )
-
-            return found_updates
-
-    def _get_provider_for_chain(self) -> ProviderAdapter | None:
-        """Get the provider for this pool's chain.
-
-        If the provider was passed in explicitly during construction, use the cached provider.
-        Otherwise, fetch from connection_manager to handle provider updates.
-        Returns None if no provider is available (e.g., in multiprocessing context).
-        """
-        if self._provider_from_connection_manager:
-            try:
-                return connection_manager.get_provider(self._chain_id)
-            except Exception:  # noqa: BLE001
-                # No provider available from connection_manager (e.g., multiprocessing)
-                pass
-        # Use cached provider if available
-        return self._provider
 
     def calculate_tokens_out_from_tokens_in(
         self,

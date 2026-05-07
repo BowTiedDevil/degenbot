@@ -12,15 +12,16 @@ from web3.exceptions import ContractLogicError
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
 from degenbot.constants import MAX_INT128, ZERO_ADDRESS
 from degenbot.exceptions.liquidity_pool import (
     IncompleteSwap,
     LiquidityPoolError,
     PossibleInaccurateResult,
 )
+from degenbot.provider import ProviderAdapter
 from degenbot.registry import managed_pool_registry
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from tests.helpers.bot_factory import make_bot_with_provider
 
 if TYPE_CHECKING:
     from eth_typing import HexStr
@@ -58,26 +59,15 @@ SNAPSHOT_BLOCK = 21883665
 
 @pytest.fixture
 def eth_usdc_v4(fork_mainnet_full: AnvilFork) -> UniswapV4Pool:
-    set_web3(fork_mainnet_full.w3)
-
-    if (
-        pool := managed_pool_registry.get(
-            chain_id=fork_mainnet_full.w3.eth.chain_id,
-            pool_manager_address=V4_POOL_MANAGER_ADDRESS,
-            pool_id=ETH_USDC_V4_POOL_ID,
-        )
-    ) is None:
-        return UniswapV4Pool(
-            pool_id=ETH_USDC_V4_POOL_ID,
-            pool_manager_address=V4_POOL_MANAGER_ADDRESS,
-            state_view_address=STATE_VIEW_ADDRESS,
-            tokens=[USDC_CONTRACT_ADDRESS, NATIVE_CURRENCY_ADDRESS],
-            fee=ETH_USDC_V4_POOL_FEE,
-            tick_spacing=ETH_USDC_V4_POOL_TICK_SPACING,
-        )
-
-    assert isinstance(pool, UniswapV4Pool)
-    return pool
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    return bot.build_v4_pool(
+        pool_id=ETH_USDC_V4_POOL_ID,
+        pool_manager_address=V4_POOL_MANAGER_ADDRESS,
+        state_view_address=STATE_VIEW_ADDRESS,
+        fee=ETH_USDC_V4_POOL_FEE,
+        tick_spacing=ETH_USDC_V4_POOL_TICK_SPACING,
+        tokens=[USDC_CONTRACT_ADDRESS, NATIVE_CURRENCY_ADDRESS],
+    )
 
 
 @pytest.fixture
@@ -104,6 +94,7 @@ def _test_pool_exact_input(
     quoter: Contract,
     snapshot: dict[str, Any] | None = None,
 ):
+
     pool_id: HexStr = pool["pool_id"]
 
     lp = managed_pool_registry.get(
@@ -113,17 +104,15 @@ def _test_pool_exact_input(
     )
     if lp is None:
         try:
-            lp = UniswapV4Pool(
+            bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
+            lp = bot.build_v4_pool(
                 pool_id=pool_id,
                 pool_manager_address=V4_POOL_MANAGER_ADDRESS,
-                tokens=(
-                    pool["token0"],
-                    pool["token1"],
-                ),
+                state_view_address=STATE_VIEW_ADDRESS,
+                tokens=[pool["token0"], pool["token1"]],
                 fee=pool["fee"],
                 tick_spacing=pool["tick_spacing"],
                 hook_address=pool["hooks"],
-                state_view_address=STATE_VIEW_ADDRESS,
                 tick_bitmap=snapshot[pool_id]["tick_bitmap"]
                 if snapshot is not None and pool_id in snapshot
                 else None,
@@ -233,17 +222,15 @@ def _test_pool_exact_output(
     )
     if lp is None:
         try:
-            lp = UniswapV4Pool(
+            bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
+            lp = bot.build_v4_pool(
                 pool_id=pool_id,
                 pool_manager_address=V4_POOL_MANAGER_ADDRESS,
-                tokens=(
-                    pool["token0"],
-                    pool["token1"],
-                ),
+                state_view_address=STATE_VIEW_ADDRESS,
+                tokens=[pool["token0"], pool["token1"]],
                 fee=pool["fee"],
                 tick_spacing=pool["tick_spacing"],
                 hook_address=pool["hooks"],
-                state_view_address=STATE_VIEW_ADDRESS,
                 tick_bitmap=snapshot[pool_id]["tick_bitmap"]
                 if snapshot is not None and pool_id in snapshot
                 else None,
@@ -425,8 +412,6 @@ def test_first_200_pools(
     fork_mainnet_full: AnvilFork,
     testing_pools,
 ):
-    set_web3(fork_mainnet_full.w3)
-
     quoter = fork_mainnet_full.w3.eth.contract(
         address=UNISWAP_V4_QUOTER_ADDRESS,
         abi=UNISWAP_V4_QUOTER_ABI,
@@ -455,8 +440,6 @@ def test_first_200_pools_with_snapshot(
     testing_pools,
     liquidity_snapshot,
 ):
-    set_web3(fork_mainnet_archive.w3)
-
     quoter = fork_mainnet_archive.w3.eth.contract(
         address=UNISWAP_V4_QUOTER_ADDRESS,
         abi=UNISWAP_V4_QUOTER_ABI,

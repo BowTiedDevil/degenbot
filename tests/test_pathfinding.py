@@ -2,6 +2,7 @@ import pytest
 from eth_typing import ChainId
 
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
+from degenbot.database import db_session
 from degenbot.database.models.pools import (
     SwapbasedV2PoolTable,
     UniswapV2PoolTable,
@@ -21,9 +22,16 @@ def path_step_identifiers(path: list[PathStep]) -> tuple[str, ...]:
     return [(step.hash or step.address) for step in path]
 
 
+@pytest.fixture
+def db():
+    """Provide the module-level database session manager."""
+    return db_session
+
+
 def test_two_pool_pathfinding_cycling_weth():
     paths = list(
         find_paths(
+            db=db,
             chain_id=BASE_CHAIN_ID,
             start_tokens=[WETH_BASE_ADDRESS],
             end_tokens=[WETH_BASE_ADDRESS],
@@ -42,6 +50,7 @@ async def test_two_pool_pathfinding_cycling_weth_async():
     paths = [
         path
         async for path in find_paths_async(
+            db=db,
             chain_id=BASE_CHAIN_ID,
             start_tokens=[WETH_BASE_ADDRESS],
             end_tokens=[WETH_BASE_ADDRESS],
@@ -65,6 +74,7 @@ def test_generic_algo_multiple_tokens():
 
     generic_paths_weth_to_weth = list(
         find_paths(
+            db=db,
             chain_id=BASE_CHAIN_ID,
             start_tokens=[WETH_BASE_ADDRESS],
             end_tokens=[WETH_BASE_ADDRESS],
@@ -75,6 +85,7 @@ def test_generic_algo_multiple_tokens():
     assert generic_paths_weth_to_weth
     generic_paths_weth_to_native = list(
         find_paths(
+            db=db,
             chain_id=BASE_CHAIN_ID,
             start_tokens=[WETH_BASE_ADDRESS],
             end_tokens=[ZERO_ADDRESS],
@@ -85,6 +96,7 @@ def test_generic_algo_multiple_tokens():
     assert generic_paths_weth_to_native
     generic_paths_weth_to_weth_or_native = list(
         find_paths(
+            db=db,
             chain_id=BASE_CHAIN_ID,
             start_tokens=[WETH_BASE_ADDRESS],
             end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
@@ -107,6 +119,7 @@ def test_generic_algo_multiple_tokens():
 
     generic_paths_native_to_weth = list(
         find_paths(
+            db=db,
             chain_id=BASE_CHAIN_ID,
             start_tokens=[ZERO_ADDRESS],
             end_tokens=[WETH_BASE_ADDRESS],
@@ -117,6 +130,7 @@ def test_generic_algo_multiple_tokens():
     assert generic_paths_native_to_weth
     generic_paths_native_to_native = list(
         find_paths(
+            db=db,
             chain_id=BASE_CHAIN_ID,
             start_tokens=[ZERO_ADDRESS],
             end_tokens=[ZERO_ADDRESS],
@@ -127,6 +141,7 @@ def test_generic_algo_multiple_tokens():
     assert generic_paths_native_to_native
     generic_paths_native_to_weth_or_native = list(
         find_paths(
+            db=db,
             chain_id=BASE_CHAIN_ID,
             start_tokens=[ZERO_ADDRESS],
             end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
@@ -148,6 +163,7 @@ def test_generic_algo_multiple_tokens():
 
     generic_paths_weth_or_native_to_weth_or_native = list(
         find_paths(
+            db=db,
             chain_id=BASE_CHAIN_ID,
             start_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
             end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
@@ -175,6 +191,7 @@ def test_three_pool_pathfinding_cycling_weth_generic_with_limited_types():
     paths_found = 0
     for i, _ in enumerate(
         find_paths(
+            db=db,
             chain_id=BASE_CHAIN_ID,
             start_tokens=[WETH_BASE_ADDRESS],
             end_tokens=[WETH_BASE_ADDRESS],
@@ -197,6 +214,7 @@ def test_three_pool_pathfinding_cycling_weth_native_with_limited_types():
     paths_found = 0
     for i, _ in enumerate(
         find_paths(
+            db=db,
             chain_id=BASE_CHAIN_ID,
             start_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
             end_tokens=[WETH_BASE_ADDRESS, ZERO_ADDRESS],
@@ -214,6 +232,7 @@ def test_three_pool_pathfinding_cycling_weth_native_with_limited_types():
 def test_three_pool_pathfinding_cycling_weth():
     paths = list(
         find_paths(
+            db=db,
             chain_id=BASE_CHAIN_ID,
             start_tokens=[WETH_BASE_ADDRESS],
             end_tokens=[WETH_BASE_ADDRESS],
@@ -227,6 +246,7 @@ def test_three_pool_pathfinding_cycling_weth():
 def test_four_pool_pathfinding_cycling_weth_with_limited_types():
     paths = list(
         find_paths(
+            db=db,
             chain_id=BASE_CHAIN_ID,
             start_tokens=[WETH_BASE_ADDRESS],
             end_tokens=[WETH_BASE_ADDRESS],

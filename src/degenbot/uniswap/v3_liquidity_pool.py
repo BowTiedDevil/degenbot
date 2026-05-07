@@ -3,39 +3,30 @@
 # TODO: add event prototype exporter method and handler for callbacks
 import contextlib
 import dataclasses
-import warnings
 from collections import deque
+from collections.abc import Callable
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any, ClassVar, Self, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
 from weakref import WeakSet
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
 from eth_typing import ChecksumAddress
-from sqlalchemy import select
-from sqlalchemy.orm import Session, scoped_session
 from web3.exceptions import ContractLogicError
 from web3.types import BlockIdentifier
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import connection_manager
-from degenbot.database import db_session
-from degenbot.database.models.pools import LiquidityPoolTable, UniswapV3PoolTableBase
-from degenbot.erc20 import Erc20Token, Erc20TokenManager
+from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.liquidity_pool import (
-    AddressMismatch,
     ExternalUpdateError,
     IncompleteSwap,
-    LateUpdateError,
     LiquidityPoolError,
 )
 from degenbot.functions import encode_function_calldata, raw_call
-from degenbot.logging import logger
 from degenbot.provider import ProviderAdapter
-from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractArbitrage, AbstractConcentratedLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
@@ -47,7 +38,6 @@ from degenbot.uniswap.concentrated.state_manager import (
     ConcentratedLiquidityStateManager,
 )
 from degenbot.uniswap.concentrated.v3_simulator import calculate_swap as _v3_swap
-from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV3ExchangeDeployment
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import (
     exchange_rate_from_sqrt_price_x96,
@@ -65,9 +55,7 @@ from degenbot.uniswap.v3_libraries.tick_math import (
 from degenbot.uniswap.v3_types import (
     InitializedTickMap,
     Liquidity,
-    LiquidityGross,
     LiquidityMap,
-    LiquidityNet,
     SqrtPriceX96,
     Tick,
     UniswapV3BitmapAtWord,
@@ -95,19 +83,6 @@ class UniswapV3LiquidityAtTickAsDict(TypedDict):
 class UniswapV3BitmapAtWordAsDict(TypedDict):
     bitmap: int
     block: int
-
-
-def get_pool_from_database(
-    address: ChecksumAddress,
-    chain_id: int,
-    session: Session | scoped_session[Session] = db_session,
-) -> UniswapV3PoolTableBase | None:
-    return session.scalar(
-        select(LiquidityPoolTable).where(
-            LiquidityPoolTable.address == address,
-            LiquidityPoolTable.chain == chain_id,
-        )
-    )  # type: ignore[return-value]
 
 
 class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidityPool):
@@ -141,44 +116,14 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
     FEE_DENOMINATOR = 1_000_000
 
     _pickle_drops: ClassVar[frozenset[str]] = frozenset({
-        "_provider",
-        "_provider_from_connection_manager",
         "_state_lock",
         "_subscribers",
+        "_tick_data_fetcher",
     })
     _pickle_reconstructs: ClassVar[dict[str, Any]] = {
         "_state_lock": Lock,
-        "_provider_from_connection_manager": lambda: True,
         "_subscribers": WeakSet,
     }
-
-    @classmethod
-    def from_exchange(
-        cls,
-        address: str,
-        exchange: UniswapV3ExchangeDeployment,
-        **kwargs: Any,
-    ) -> Self:
-        """
-        Create a new `UniswapV3Pool` with exchange information taken from the provided deployment.
-        """
-
-        for key in [
-            "deployer_address",
-            "init_hash",
-        ]:  # pragma: no cover
-            if key in kwargs:
-                logger.warning(
-                    f"Ignoring keyword argument {key}={kwargs[key]} in favor of value in exchange deployment."  # noqa: E501
-                )
-                kwargs.pop(key)
-
-        return cls(
-            address=address,
-            deployer_address=exchange.factory.deployer,
-            init_hash=exchange.factory.pool_init_hash,
-            **kwargs,
-        )
 
     def __init__(
         self,
@@ -201,210 +146,51 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             | dict[str, UniswapV3LiquidityAtTickAsDict]
             | None
         ) = None,
-        provider: ProviderAdapter | None = None,
         state_block: BlockNumber | None = None,
-        verify_address: bool = True,
-        silent: bool = False,
         state_cache_depth: int = 8,
-        # I/O-free path params
-        token0: Erc20Token | None = None,
-        token1: Erc20Token | None = None,
-        factory: str | None = None,
-        fee: int | None = None,
-        tick_spacing: int | None = None,
-        sqrt_price_x96: int | None = None,
-        tick: int | None = None,
-        liquidity: int | None = None,
+        token0: Erc20Token = ...,
+        token1: Erc20Token = ...,
+        factory: str = ...,
+        fee: int = ...,
+        tick_spacing: int = ...,
+        sqrt_price_x96: int = ...,
+        tick: int = ...,
+        liquidity: int = ...,
+        tick_data_fetcher: Callable[[int, int], None] | None = None,
     ) -> None:
         self.address = get_checksum_address(address)
+        self._chain_id = chain_id if chain_id is not None else token0.chain_id
+        self._token0 = token0
+        self._token1 = token1
+        self.factory = get_checksum_address(factory)
+        self._fee = fee
+        self._tick_spacing = tick_spacing
 
-        # ── I/O-free path ──
-        if (
-            token0 is not None
-            and token1 is not None
-            and factory is not None
-            and fee is not None
-            and tick_spacing is not None
-            and sqrt_price_x96 is not None
-            and tick is not None
-            and liquidity is not None
-        ):
-            self._chain_id = chain_id if chain_id is not None else token0.chain_id
-            self._token0 = token0
-            self._token1 = token1
-            self.factory = get_checksum_address(factory)
-            self._fee = fee
-            self._tick_spacing = tick_spacing
+        _state_block = state_block if state_block is not None else 0
+        self._initial_state_block = _state_block
 
-            _state_block = state_block if state_block is not None else 0
-            self._initial_state_block = _state_block
-
-            # Derive deployer/init_hash from factory deployments or fallback
-            self.deployer_address = (
-                get_checksum_address(deployer_address) if deployer_address is not None
-                else self.factory
-            )
-            self.init_hash = (
-                init_hash if init_hash is not None else self.UNISWAP_V3_MAINNET_POOL_INIT_HASH
-            )
-
-            from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
-
-            with contextlib.suppress(KeyError):
-                factory_deployment = _FACTORY_DEPLOYMENTS[self._chain_id][self.factory]
-                self.init_hash = factory_deployment.pool_init_hash
-                if factory_deployment.deployer is not None:
-                    self.deployer_address = factory_deployment.deployer
-
-            self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee / self.FEE_DENOMINATOR:.2f}%)"
-
-            if (tick_bitmap is not None) != (tick_data is not None):
-                raise DegenbotValueError(message="Provide both tick_bitmap and tick_data.")
-
-            self._sparse_liquidity_map = tick_bitmap is None or tick_data is None
-
-            working_tick_bitmap = (
-                {}
-                if tick_bitmap is None
-                else {
-                    int(word): (
-                        bitmap_at_word
-                        if isinstance(bitmap_at_word, UniswapV3BitmapAtWord)
-                        else UniswapV3BitmapAtWord(**bitmap_at_word)
-                    )
-                    for word, bitmap_at_word in tick_bitmap.items()
-                }
-            )
-            working_tick_data = (
-                {}
-                if tick_data is None
-                else {
-                    int(tick): (
-                        liquidity_at_tick
-                        if isinstance(liquidity_at_tick, UniswapV3LiquidityAtTick)
-                        else UniswapV3LiquidityAtTick(**liquidity_at_tick)
-                    )
-                    for tick, liquidity_at_tick in tick_data.items()
-                }
-            )
-
-            # I/O-free path: no tick fetching from chain
-            # If tick_bitmap/tick_data not provided, pool uses sparse mode
-            # (tick data fetched on-demand during swap calculations)
-
-            initial_state = self.PoolState.__value__(
-                address=self.address,
-                liquidity=liquidity,
-                sqrt_price_x96=sqrt_price_x96,
-                tick=tick,
-                tick_bitmap=working_tick_bitmap,
-                tick_data=working_tick_data,
-                block=_state_block,
-            )
-            self._state_lock = Lock()
-            self._state_mgr = ConcentratedLiquidityStateManager(
-                initial_state=initial_state,
-                state_cache_depth=state_cache_depth,
-            )
-            self._subscribers: WeakSet[Subscriber] = WeakSet()
-            return
-
-        # ── Legacy I/O path ──
-        warnings.warn(
-            "Constructing UniswapV3Pool without pre-fetched data is deprecated. "
-            "Use Bot.build_v3_pool() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        self._provider = (
-            provider if provider is not None else connection_manager.get_provider(self.chain_id)
-        )
-        # Track whether provider was fetched from connection_manager (True) or passed in (False)
-        self._provider_from_connection_manager = provider is None
-        state_block = state_block if state_block is not None else self._provider.get_block_number()
-        self._initial_state_block = state_block
-
-        pool_from_db = get_pool_from_database(address=self.address, chain_id=self.chain_id)
-
-        token0_address: ChecksumAddress | str
-        token1_address: ChecksumAddress | str
-        factory_address: ChecksumAddress | str
-
-        if pool_from_db is not None:
-            token0_address = pool_from_db.token0.address
-            token1_address = pool_from_db.token1.address
-
-            factory_address = pool_from_db.exchange.factory
-            deployer_address = pool_from_db.exchange.deployer
-
-            assert pool_from_db.fee_token0 == pool_from_db.fee_token1
-            self._fee = pool_from_db.fee_token0
-
-            self._tick_spacing = pool_from_db.tick_spacing
-        else:
-            try:
-                factory_address, (token0_address, token1_address), self._fee, self._tick_spacing = (
-                    self.get_immutable_pool_values(self._provider)
-                )
-
-            except (ContractLogicError, DecodingError) as exc:
-                # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch
-                # this here and raise as a pool-specific exception
-                raise LiquidityPoolError(message="Could not decode contract data") from exc
-
-        try:
-            sqrt_price_x96, tick, liquidity = self.get_mutable_pool_values(
-                self._provider, state_block=state_block
-            )
-        except (ContractLogicError, DecodingError) as exc:
-            # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch this
-            # here and raise as a pool-specific exception
-            raise LiquidityPoolError(message="Could not decode contract data") from exc
-
-        self.factory = get_checksum_address(factory_address)
+        # Derive deployer/init_hash from factory deployments or fallback
         self.deployer_address = (
-            get_checksum_address(deployer_address) if deployer_address is not None else self.factory
+            get_checksum_address(deployer_address) if deployer_address is not None
+            else self.factory
+        )
+        self.init_hash = (
+            init_hash if init_hash is not None else self.UNISWAP_V3_MAINNET_POOL_INIT_HASH
         )
 
-        try:
-            # Use degenbot deployment values if available
-            factory_deployment = FACTORY_DEPLOYMENTS[self.chain_id][self.factory]
+        from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
+
+        with contextlib.suppress(KeyError):
+            factory_deployment = _FACTORY_DEPLOYMENTS[self._chain_id][self.factory]
             self.init_hash = factory_deployment.pool_init_hash
             if factory_deployment.deployer is not None:
                 self.deployer_address = factory_deployment.deployer
-        except KeyError:
-            # Deployment is unknown. Uses any inputs provided, otherwise use default values from
-            # original Uniswap contracts
-            self.init_hash = (
-                init_hash if init_hash is not None else self.UNISWAP_V3_MAINNET_POOL_INIT_HASH
-            )
 
-        token_manager = Erc20TokenManager(chain_id=self.chain_id, provider=self._provider)
-        try:
-            self._token0, self._token1 = (
-                token_manager.get_erc20token(
-                    address=token0_address,
-                    silent=silent,
-                ),
-                token_manager.get_erc20token(
-                    address=token1_address,
-                    silent=silent,
-                ),
-            )
-        except DegenbotValueError as e:
-            raise LiquidityPoolError(message="Could not build one or more tokens.") from e
-
-        if verify_address and self.address != self._verified_address():  # pragma: no branch
-            raise AddressMismatch
-
-        self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee / self.FEE_DENOMINATOR:.2f}%)"  # noqa: E501
+        self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee / self.FEE_DENOMINATOR:.2f}%)"
 
         if (tick_bitmap is not None) != (tick_data is not None):
             raise DegenbotValueError(message="Provide both tick_bitmap and tick_data.")
 
-        # If liquidity info was not provided, treat the mapping as sparse
         self._sparse_liquidity_map = tick_bitmap is None or tick_data is None
 
         working_tick_bitmap = (
@@ -432,14 +218,9 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             }
         )
 
-        if tick_bitmap is None and tick_data is None:
-            word, _ = get_tick_word_and_bit_position(tick=tick, tick_spacing=self._tick_spacing)
-            self._fetch_and_populate_initialized_ticks(
-                word_position=word,
-                tick_bitmap=working_tick_bitmap,
-                tick_data=working_tick_data,
-                block_number=state_block,
-            )
+        # Tick data fetcher for sparse liquidity maps
+        # Set by Bot.build_v3_pool() to delegate on-chain tick fetching
+        self._tick_data_fetcher = tick_data_fetcher
 
         initial_state = self.PoolState.__value__(
             address=self.address,
@@ -448,32 +229,14 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             tick=tick,
             tick_bitmap=working_tick_bitmap,
             tick_data=working_tick_data,
-            block=state_block,
+            block=_state_block,
         )
         self._state_lock = Lock()
         self._state_mgr = ConcentratedLiquidityStateManager(
             initial_state=initial_state,
             state_cache_depth=state_cache_depth,
         )
-
-        pool_registry.add(
-            pool=self,
-            chain_id=self.chain_id,
-            pool_address=self.address,
-        )
-
         self._subscribers: WeakSet[Subscriber] = WeakSet()
-
-        if not silent:  # pragma: no branch
-            logger.info(self.name)
-            logger.info(f"• Address: {self.address}")
-            logger.info(f"• Token 0: {self._token0}")
-            logger.info(f"• Token 1: {self._token1}")
-            logger.info(f"• Fee: {self._fee}")
-            logger.info(f"• Liquidity: {self.liquidity}")
-            logger.info(f"• SqrtPrice: {self.sqrt_price_x96}")
-            logger.info(f"• Tick: {self.tick}")
-            logger.info(f"• State Block (Initial): {self._initial_state_block}")
 
     def __getnewargs_ex__(self) -> tuple[tuple[()], dict[str, Any]]:
         """
@@ -546,21 +309,17 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
                         tick_start=tick_start,
                     )
                 except MissingLiquidityData as exc:
-                    # Fetch missing word into mutable copies, then rebuild snapshot
-                    working_bitmap = dict(snapshot.tick_bitmap)
-                    working_data = dict(snapshot.tick_data)
-                    self._fetch_and_populate_initialized_ticks(
-                        word_position=exc.word,
-                        tick_bitmap=cast("InitializedTickMap", working_bitmap),
-                        tick_data=cast("LiquidityMap", working_data),
-                        block_number=self.update_block,
-                    )
-                    snapshot = LiquidityMapSnapshot(
-                        tick_data=working_data,
-                        tick_bitmap=working_bitmap,
-                        tick_spacing=self._tick_spacing,
-                        sparse=True,
-                    )
+                    if self._tick_data_fetcher is not None:
+                        # Fetch missing word via the injected fetcher (typically from Bot)
+                        self._tick_data_fetcher(exc.word, self.update_block)
+                        # Rebuild snapshot from updated tick data
+                        snapshot = LiquidityMapSnapshot.from_state(
+                            self.state,
+                            tick_spacing=self._tick_spacing,
+                            sparse=True,
+                        )
+                    else:
+                        raise
                 else:
                     return (
                         result.amount0,
@@ -646,46 +405,6 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             populated_ticks.append((tick, liquidity_gross, liquidity_net))
 
         return populated_ticks
-
-    def _fetch_and_populate_initialized_ticks(
-        self,
-        *,
-        word_position: int,
-        tick_bitmap: InitializedTickMap,
-        tick_data: LiquidityMap,
-        block_number: BlockNumber | None = None,
-    ) -> None:
-        """
-        Update the supplied tick bitmap with initialized tick values within a specified word
-        position. A word is divided into 256 ticks, spaced at a fixed interval.
-        """
-
-        if block_number is None:
-            block_number = self._provider.get_block_number()
-
-        working_tick_data: list[tuple[Tick, LiquidityGross, LiquidityNet]] = []
-        working_tick_bitmap = self.get_tick_bitmap_at_word(
-            self._provider,
-            word_position=word_position,
-            block_identifier=block_number,
-        )
-        if working_tick_bitmap != 0:
-            working_tick_data = self.get_populated_ticks_in_word(
-                self._provider,
-                word_position=word_position,
-                block_identifier=block_number,
-            )
-
-        tick_bitmap[word_position] = UniswapV3BitmapAtWord(
-            bitmap=working_tick_bitmap,
-            block=block_number,
-        )
-        for tick, liquidity_gross, liquidity_net in working_tick_data:
-            tick_data[tick] = UniswapV3LiquidityAtTick(
-                liquidity_net=liquidity_net,
-                liquidity_gross=liquidity_gross,
-                block=block_number,
-            )
 
     def _verified_address(self) -> ChecksumAddress:
         return generate_v3_pool_address(
@@ -878,94 +597,6 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             zero_for_one=vector.zero_for_one,
             sparse_liquidity_map=self._sparse_liquidity_map,
         )
-
-    def _get_provider_for_chain(self) -> ProviderAdapter:
-        """Get the provider for this pool's chain.
-
-        If the provider was passed in explicitly during construction, use the cached provider.
-        Otherwise, fetch from connection_manager to handle provider updates.
-        """
-        if self._provider_from_connection_manager:
-            try:
-                return connection_manager.get_provider(self._chain_id)
-            except Exception:  # noqa: BLE001
-                # Fall back to cached provider if connection_manager doesn't have one
-                # (e.g., in multiprocessing context)
-                return self._provider
-        return self._provider
-
-    def auto_update(
-        self,
-        *,
-        block_number: BlockNumber | None = None,
-        silent: bool = True,
-    ) -> None:
-        """
-        Retrieves and records the current slot0 and liquidity state from the pool at the provided
-        block number, or the latest block if not provided.
-
-        @dev this method uses a lock to guard state-modifying methods that might cause race
-        conditions when used with threads.
-        """
-
-        with self._state_lock:
-            if block_number is not None and block_number < self.update_block:
-                raise LateUpdateError
-
-            provider = self._get_provider_for_chain()
-            block_number = block_number if block_number is not None else provider.get_block_number()
-
-            slot0_result = provider.call(
-                to=self.address,
-                data=encode_function_calldata(
-                    function_prototype="slot0()",
-                    function_arguments=None,
-                ),
-                block=block_number,
-            )
-            liquidity_result = provider.call(
-                to=self.address,
-                data=encode_function_calldata(
-                    function_prototype="liquidity()",
-                    function_arguments=None,
-                ),
-                block=block_number,
-            )
-
-            sqrt_price_x96: int
-            tick: int
-            liquidity: int
-
-            sqrt_price_x96, tick, *_ = eth_abi.abi.decode(
-                types=self.SLOT0_STRUCT_TYPES, data=slot0_result
-            )
-            (liquidity,) = eth_abi.abi.decode(types=["uint256"], data=liquidity_result)
-
-            if (
-                sqrt_price_x96 == self.sqrt_price_x96
-                and liquidity == self.liquidity
-                and self.tick == tick
-            ):
-                return
-
-            working_state = dataclasses.replace(
-                self.state,
-                liquidity=liquidity,
-                sqrt_price_x96=sqrt_price_x96,
-                tick=tick,
-                block=block_number,
-            )
-
-            self._state_mgr.push_state(working_state)
-
-            self._notify_subscribers(
-                message=UniswapV3PoolStateUpdated(working_state),
-            )
-
-            if not silent:  # pragma: no cover
-                logger.info(f"Liquidity: {self.liquidity}")
-                logger.info(f"SqrtPriceX96: {self.sqrt_price_x96}")
-                logger.info(f"Tick: {self.tick}")
 
     def calculate_tokens_out_from_tokens_in(
         self,
@@ -1162,18 +793,16 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             for tick in (update.tick_lower, update.tick_upper):
                 tick_word, _ = get_tick_word_and_bit_position(tick, self._tick_spacing)
 
-                if self._sparse_liquidity_map and tick_word not in working_tick_bitmap:
+                if tick_word not in working_tick_bitmap:
                     # The liquidity map at the affected word must be complete prior to changing the
                     # status of any tick
-                    self._fetch_and_populate_initialized_ticks(
-                        word_position=tick_word,
-                        tick_bitmap=working_tick_bitmap,
-                        tick_data=working_tick_data,
-                        block_number=(
-                            # Populate the liquidity data from the previous block
-                            state_block - 1
-                        ),
-                    )
+                    if self._tick_data_fetcher is not None:
+                        self._tick_data_fetcher(tick_word, state_block - 1)
+                        # Refresh working copies from updated pool state
+                        working_tick_bitmap = self.tick_bitmap
+                        working_tick_data = self.tick_data
+                    elif self._sparse_liquidity_map:
+                        raise MissingLiquidityData(tick_word)
 
                 # Get the liquidity info for this tick. If the mapping is empty at this tick, it is
                 # uninitialized and must be flipped in the bitmap and initialized as empty in the

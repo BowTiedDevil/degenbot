@@ -8,7 +8,8 @@ from hexbytes import HexBytes
 from degenbot.anvil_fork import AnvilFork
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
+from degenbot.provider import ProviderAdapter
+from tests.helpers.bot_factory import make_bot_with_provider
 
 BALANCER_V2_WETH_BAL_POOL_ADDRESS = get_checksum_address(
     "0x5c6Ee304399DBdB9C8Ef030aB642B10820DB8F56"
@@ -44,9 +45,36 @@ VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA960
 def ethereum_balancer_v2_weth_bal_pool(
     fork_mainnet_full: AnvilFork,
 ) -> BalancerV2Pool:
-    set_web3(fork_mainnet_full.w3)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+
+    # Fetch pool data from chain
+    pool_contract = fork_mainnet_full.w3.eth.contract(
+        address=BALANCER_V2_WETH_BAL_POOL_ADDRESS,
+        abi=BALANCER_V2_WETH_BAL_POOL_ABI,
+    )
+    vault_contract = fork_mainnet_full.w3.eth.contract(
+        address=BALANCER_V2_VAULT_ADDRESS,
+        abi=BALANCER_V2_VAULT_ABI,
+    )
+
+    pool_id = pool_contract.functions.getPoolId().call()
+    vault = pool_contract.functions.getVault().call()
+    swap_fee = pool_contract.functions.getSwapFeePercentage().call()
+    weights = pool_contract.functions.getNormalizedWeights().call()
+    tokens_addresses, balances, _ = vault_contract.functions.getPoolTokens(pool_id).call()
+
+    # Build tokens via Bot
+    tokens = [bot.build_erc20token(addr) for addr in tokens_addresses]
+
     return BalancerV2Pool(
         address=BALANCER_V2_WETH_BAL_POOL_ADDRESS,
+        pool_id=pool_id,
+        vault=vault,
+        tokens=tokens,
+        balances=balances,
+        fee=Fraction(swap_fee, 10**18),
+        weights=weights,
+        chain_id=1,
     )
 
 
@@ -75,8 +103,6 @@ def test_calculations(
     fork_mainnet_full: AnvilFork,
     ethereum_balancer_v2_weth_bal_pool: BalancerV2Pool,
 ):
-    set_web3(fork_mainnet_full.w3)
-
     lp = ethereum_balancer_v2_weth_bal_pool
 
     query_contract = fork_mainnet_full.w3.eth.contract(

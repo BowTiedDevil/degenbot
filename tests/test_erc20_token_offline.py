@@ -1,71 +1,45 @@
 """
 Offline tests for ERC20 token comparisons and cache behavior.
 
-Uses offline pools to get real Erc20Token instances without requiring a live RPC.
+Uses I/O-free token construction without requiring a live RPC.
 """
-
-from pathlib import Path
 
 import pytest
 from hexbytes import HexBytes
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import connection_manager
-from degenbot.provider import OfflineProvider, ProviderAdapter
-from degenbot.registry import pool_registry, token_registry
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.erc20.erc20 import Erc20Token
+from degenbot.registry import token_registry
 
-CHAIN_DATA_PATH = Path(__file__).parent / "fixtures" / "chain_data"
-UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
-UNISWAP_V2_FACTORY_POOL_INIT_HASH = (
-    "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
-)
+WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+WBTC_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 
 
 @pytest.fixture(autouse=True)
 def _reset_registries():
-    """Reset singletons before each test so pools/tokens can be recreated."""
-
-    pool_registry._reset()
     token_registry._reset()
-    connection_manager._reset()
 
 
 @pytest.fixture
-def offline_adapter():
-    """Provide a ProviderAdapter wrapping offline chain data."""
-    data_file = CHAIN_DATA_PATH / "1" / "block_24945920.json"
-    provider = OfflineProvider.from_json_file(data_file)
-    adapter = ProviderAdapter.from_offline(provider)
-    connection_manager.register_provider(adapter)
-    connection_manager._default_chain_id = 1
-    return adapter
-
-
-@pytest.fixture
-def offline_v2_pool(offline_adapter):
-    """Construct a V2 pool using offline data."""
-
-    pool_registry._reset()
-    token_registry._reset()
-    return UniswapV2Pool(
-        address=UNISWAP_V2_WBTC_WETH_POOL,
+def offline_wbtc():
+    return Erc20Token(
+        WBTC_ADDRESS,
+        name="Wrapped BTC",
+        symbol="WBTC",
+        decimals=8,
         chain_id=1,
-        provider=offline_adapter,
-        state_block=24945920,
-        init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
-        silent=True,
     )
 
 
 @pytest.fixture
-def offline_wbtc(offline_v2_pool):
-    return offline_v2_pool.token0
-
-
-@pytest.fixture
-def offline_weth(offline_v2_pool):
-    return offline_v2_pool.token1
+def offline_weth():
+    return Erc20Token(
+        WETH_ADDRESS,
+        name="Wrapped Ether",
+        symbol="WETH",
+        decimals=18,
+        chain_id=1,
+    )
 
 
 class TestErc20TokenComparisons:
@@ -121,23 +95,22 @@ class TestErc20TokenCaches:
     """ERC20Token cache manipulation tests (no RPC calls needed)."""
 
     def test_cached_total_supply(self, offline_wbtc):
-        """Total supply cache hit and miss behave correctly."""
-        # use cached_total_supply heavily, since totalSupply is already recorded
+        """Total supply cache round-trips through accessors."""
         wbtc = offline_wbtc
 
-        # First call primes the cache
-        current_total_supply = wbtc.get_total_supply(24945920)
-        assert current_total_supply > 0
+        # Cache is empty initially
+        assert wbtc.get_cached_total_supply(block_number=100) is None
 
+        # Set and retrieve
         fake_supply = 69_420_000_000
-        wbtc._cached_total_supply[24945920] = fake_supply
-        assert wbtc.get_total_supply(24945920) == fake_supply
+        wbtc.set_cached_total_supply(block_number=100, total_supply=fake_supply)
+        assert wbtc.get_cached_total_supply(block_number=100) == fake_supply
 
-        wbtc._cached_total_supply.clear()
-        assert wbtc.get_total_supply(24945920) == current_total_supply
+        # Different block is still empty
+        assert wbtc.get_cached_total_supply(block_number=200) is None
 
     def test_cached_name_and_symbol(self, offline_wbtc):
-        """Name and symbol are loaded once and reused."""
+        """Name and symbol are stored from construction."""
         wbtc = offline_wbtc
         assert wbtc.name == "Wrapped BTC"
         assert wbtc.symbol == "WBTC"

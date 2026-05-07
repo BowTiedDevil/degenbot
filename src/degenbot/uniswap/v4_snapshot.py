@@ -14,9 +14,6 @@ from web3 import Web3
 from web3.types import LogReceipt
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.config import config
-from degenbot.connection import async_connection_manager, connection_manager
-from degenbot.database import db_session
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.pools import UniswapV4PoolTable
 from degenbot.database.operations import get_scoped_sqlite_session
@@ -151,13 +148,12 @@ class DatabaseSnapshot:
     ) -> None:
         if db is not None:
             self.session = db
-            self.database_path = database_path or pathlib.Path("")
-        elif database_path is not None:
+            self.database_path = database_path or pathlib.Path()
+        else:
+            if database_path is None:
+                raise ValueError("Either db or database_path must be provided")
             self.session = get_scoped_sqlite_session(database_path)
             self.database_path = database_path
-        else:
-            self.session = db_session
-            self.database_path = config.database.path
 
         self.chain_id = chain_id
 
@@ -297,9 +293,9 @@ class UniswapV4LiquiditySnapshot:
     def fetch_new_events(
         self,
         to_block: BlockNumber,
-        blocks_per_request: int | None = None,
         *,
-        provider: Any | None = None,
+        provider: Any,
+        blocks_per_request: int | None = None,
     ) -> None:
         """
         Fetch liquidity events from the block following the last-known event to the target block
@@ -308,10 +304,8 @@ class UniswapV4LiquiditySnapshot:
 
         logger.info(f"Updating Uniswap V4 snapshot from block {self.newest_block} to {to_block}")
 
-        _provider = provider or connection_manager.get_provider(self.chain_id)
-
         event_logs = fetch_logs_retrying(
-            provider=_provider,
+            provider=provider,
             start_block=self.newest_block + 1,
             end_block=to_block,
             max_blocks_per_request=blocks_per_request,
@@ -341,9 +335,9 @@ class UniswapV4LiquiditySnapshot:
     async def fetch_new_events_async(
         self,
         to_block: BlockNumber,
-        blocks_per_request: int | None = None,
         *,
-        w3: Any | None = None,
+        w3: Any,
+        blocks_per_request: int | None = None,
     ) -> None:
         """
         Async version of fetch_new_events.
@@ -355,10 +349,8 @@ class UniswapV4LiquiditySnapshot:
 
         logger.info(f"Updating Uniswap V4 snapshot from block {self.newest_block} to {to_block}")
 
-        _w3 = w3 or async_connection_manager.get_web3(self.chain_id)
-
         event_logs = await fetch_logs_retrying_async(
-            w3=_w3,
+            w3=w3,
             start_block=self.newest_block + 1,
             end_block=to_block,
             max_blocks_per_request=blocks_per_request,

@@ -1,21 +1,16 @@
 import pytest
 
-from degenbot.anvil_fork import AnvilFork
+from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
-from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.registry import managed_pool_registry, pool_registry, token_registry
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.fakes.pools import FakeUniswapV4Pool
 
 UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
 
-def test_singleton(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
-
+def test_singleton(fork_mainnet_full):
     new_pool_registry = type(pool_registry)()
     new_token_registry = type(token_registry)()
 
@@ -23,56 +18,48 @@ def test_singleton(fork_mainnet_full: AnvilFork):
     assert new_token_registry is not token_registry
 
 
-def test_adding_pool(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
-    lp = UniswapV2Pool(UNISWAP_V2_WBTC_WETH_POOL)
-    assert (
-        pool_registry.get(pool_address=lp.address, chain_id=fork_mainnet_full.w3.eth.chain_id) is lp
-    )
+def test_adding_pool(bot_mainnet_full: Bot):
+    pool = bot_mainnet_full.build_v2_pool(UNISWAP_V2_WBTC_WETH_POOL)
+    assert bot_mainnet_full.pools.get(pool_address=pool.address, chain_id=bot_mainnet_full.chain_id) is pool
 
     with pytest.raises(DegenbotValueError):
-        pool_registry.add(
-            pool_address=lp.address, chain_id=fork_mainnet_full.w3.eth.chain_id, pool=lp
+        bot_mainnet_full.pools.add(
+            pool_address=pool.address, chain_id=bot_mainnet_full.chain_id, pool=pool
         )
 
 
-def test_deleting_pool(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
-    lp = UniswapV2Pool(UNISWAP_V2_WBTC_WETH_POOL)
+def test_deleting_pool(bot_mainnet_full: Bot):
+    pool = bot_mainnet_full.build_v2_pool(UNISWAP_V2_WBTC_WETH_POOL)
+    assert bot_mainnet_full.pools.get(pool_address=pool.address, chain_id=bot_mainnet_full.chain_id) is pool
+    bot_mainnet_full.pools.remove(pool_address=pool.address, chain_id=bot_mainnet_full.chain_id)
     assert (
-        pool_registry.get(pool_address=lp.address, chain_id=fork_mainnet_full.w3.eth.chain_id) is lp
-    )
-    pool_registry.remove(pool_address=lp.address, chain_id=fork_mainnet_full.w3.eth.chain_id)
-    assert (
-        pool_registry.get(pool_address=lp.address, chain_id=fork_mainnet_full.w3.eth.chain_id)
+        bot_mainnet_full.pools.get(pool_address=pool.address, chain_id=bot_mainnet_full.chain_id)
         is None
     )
 
 
-def test_adding_token(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
-    weth = Erc20Token(WETH_ADDRESS)
+def test_adding_token(bot_mainnet_full: Bot):
+    token = bot_mainnet_full.build_erc20token(WETH_ADDRESS)
     assert (
-        token_registry.get(token_address=weth.address, chain_id=fork_mainnet_full.w3.eth.chain_id)
-        is weth
+        bot_mainnet_full.tokens.get(token_address=token.address, chain_id=bot_mainnet_full.chain_id)
+        is token
     )
 
     with pytest.raises(DegenbotValueError):
-        token_registry.add(
-            token_address=weth.address, chain_id=fork_mainnet_full.w3.eth.chain_id, token=weth
+        bot_mainnet_full.tokens.add(
+            token_address=token.address, chain_id=bot_mainnet_full.chain_id, token=token
         )
 
 
-def test_deleting_token(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
-    weth = Erc20Token(WETH_ADDRESS)
+def test_deleting_token(bot_mainnet_full: Bot):
+    token = bot_mainnet_full.build_erc20token(WETH_ADDRESS)
     assert (
-        token_registry.get(token_address=weth.address, chain_id=fork_mainnet_full.w3.eth.chain_id)
-        is weth
+        bot_mainnet_full.tokens.get(token_address=token.address, chain_id=bot_mainnet_full.chain_id)
+        is token
     )
-    token_registry.remove(token_address=weth.address, chain_id=fork_mainnet_full.w3.eth.chain_id)
+    bot_mainnet_full.tokens.remove(token_address=token.address, chain_id=bot_mainnet_full.chain_id)
     assert (
-        token_registry.get(token_address=weth.address, chain_id=fork_mainnet_full.w3.eth.chain_id)
+        bot_mainnet_full.tokens.get(token_address=token.address, chain_id=bot_mainnet_full.chain_id)
         is None
     )
 
