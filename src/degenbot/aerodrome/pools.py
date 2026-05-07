@@ -1,7 +1,6 @@
 # ruff: noqa: PLR0904
 
 import dataclasses
-import warnings
 from collections import deque
 from fractions import Fraction
 from threading import Lock
@@ -15,8 +14,6 @@ from web3.types import BlockIdentifier, TxParams
 
 from degenbot.aerodrome.functions import (
     calc_exact_in_stable,
-    generate_aerodrome_v2_pool_address,
-    generate_aerodrome_v3_pool_address,
 )
 from degenbot.aerodrome.types import (
     AerodromeV2PoolExternalUpdate,
@@ -25,21 +22,17 @@ from degenbot.aerodrome.types import (
     AerodromeV3PoolState,
 )
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import connection_manager
-from degenbot.erc20 import Erc20Token, Erc20TokenManager
+from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.liquidity_pool import (
-    AddressMismatch,
     ExternalUpdateError,
     InvalidSwapInputAmount,
-    LateUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
 from degenbot.provider import ProviderAdapter
-from degenbot.registry import pool_registry
 from degenbot.solidly.solidly_functions import general_calc_exact_in_volatile
 from degenbot.types.abstract import AbstractAerodromeV2Pool
 from degenbot.types.aliases import BlockNumber, ChainId
@@ -76,139 +69,53 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
         self,
         address: ChecksumAddress | str,
         *,
+        token0: Erc20Token,
+        token1: Erc20Token,
+        factory: str,
+        fee: Fraction,
+        stable: bool,
+        reserves_token0: int,
+        reserves_token1: int,
         chain_id: ChainId | None = None,
         deployer_address: str | None = None,
         state_block: BlockNumber | None = None,
-        verify_address: bool = True,
-        silent: bool = False,
         state_cache_depth: int = 8,
-        # I/O-free path params
-        token0: Erc20Token | None = None,
-        token1: Erc20Token | None = None,
-        factory: str | None = None,
-        fee: Fraction | None = None,
-        stable: bool | None = None,
-        reserves_token0: int | None = None,
-        reserves_token1: int | None = None,
     ) -> None:
         self.address = get_checksum_address(address)
 
-        # ── I/O-free path ──
-        if all([
-            token0 is not None,
-            token1 is not None,
-            factory is not None,
-            fee is not None,
-            stable is not None,
-            reserves_token0 is not None,
-            reserves_token1 is not None,
-        ]):
-            self._chain_id = chain_id if chain_id is not None else token0.chain_id
-            state_block = state_block if state_block is not None else 0
-            self._initial_state_block = state_block
+        self._chain_id = chain_id if chain_id is not None else token0.chain_id
+        state_block = state_block if state_block is not None else 0
+        self._initial_state_block = state_block
 
-            self.factory = get_checksum_address(factory)
-            self.deployer_address = (
-                get_checksum_address(deployer_address)
-                if deployer_address is not None
-                else self.factory
-            )
-            self._stable = stable
-            self._fee = fee
-            self._token0 = token0
-            self._token1 = token1
-
-            self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee.numerator / self._fee.denominator:.2f}%)"  # noqa:E501
-
-            self._state_lock = Lock()
-
-            initial_state = self.PoolState.__value__(
-                address=self.address,
-                reserves_token0=reserves_token0,
-                reserves_token1=reserves_token1,
-                block=state_block,
-            )
-
-            self._state_cache = deque(maxlen=max(1, state_cache_depth))
-            self._state_cache.append(initial_state)
-
-            self._subscribers: WeakSet[Subscriber] = WeakSet()
-            return
-
-        # ── Legacy I/O path ──
-        warnings.warn(
-            "Constructing AerodromeV2Pool without pre-fetched data is deprecated. "
-            "Use Bot.build_aerodrome_v2_pool() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        w3 = connection_manager.get_web3(self.chain_id)
-        state_block = state_block if state_block is not None else w3.eth.block_number
-
-        self.factory, (token0, token1), self._stable, swap_fee, (reserves0, reserves1) = (
-            self.get_pool_identity_values(w3=w3, state_block=state_block)
-        )
+        self.factory = get_checksum_address(factory)
         self.deployer_address = (
-            get_checksum_address(deployer_address) if deployer_address is not None else self.factory
+            get_checksum_address(deployer_address)
+            if deployer_address is not None
+            else self.factory
         )
+        self._stable = stable
+        self._fee = fee
+        self._token0 = token0
+        self._token1 = token1
+
+        self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee.numerator / self._fee.denominator:.2f}%)"  # noqa:E501
 
         self._state_lock = Lock()
 
         initial_state = self.PoolState.__value__(
             address=self.address,
-            reserves_token0=reserves0,
-            reserves_token1=reserves1,
+            reserves_token0=reserves_token0,
+            reserves_token1=reserves_token1,
             block=state_block,
         )
-
-        self._fee = Fraction(swap_fee, type(self).FEE_DENOMINATOR)
-
-        token_manager = Erc20TokenManager(chain_id=self.chain_id)
-        self._token0, self._token1 = (
-            token_manager.get_erc20token(
-                address=token0,
-                silent=silent,
-            ),
-            token_manager.get_erc20token(
-                address=token1,
-                silent=silent,
-            ),
-        )
-
-        if verify_address and self.address != self._verified_address():  # pragma: no cover
-            raise AddressMismatch
-
-        self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee.numerator / self._fee.denominator:.2f}%)"  # noqa:E501
 
         self._state_cache = deque(maxlen=max(1, state_cache_depth))
         self._state_cache.append(initial_state)
 
-        pool_registry.add(pool_address=self.address, chain_id=self.chain_id, pool=self)
-
         self._subscribers: WeakSet[Subscriber] = WeakSet()
-
-        if not silent:  # pragma: no cover
-            logger.info(self.name)
-            logger.info(f"• Token 0: {self._token0} - Reserves: {self.reserves_token0}")
-            logger.info(f"• Token 1: {self._token1} - Reserves: {self.reserves_token1}")
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1}, stable={self._stable})"  # noqa:E501
-
-    def _verified_address(self) -> ChecksumAddress:
-        # The implementation address is hard-coded into the contract
-        implementation_address = get_checksum_address(
-            connection_manager.get_web3(self.chain_id).eth.get_code(self.address)[10:30]
-        )
-
-        return generate_aerodrome_v2_pool_address(
-            deployer_address=self.deployer_address,
-            token_addresses=(self._token0.address, self._token1.address),
-            implementation_address=implementation_address,
-            stable=self._stable,
-        )
 
     @property
     def chain_id(self) -> int:
@@ -252,10 +159,6 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
             assert self.state.block is not None
         return self.state.block
 
-    @property
-    def w3(self) -> ProviderAdapter:
-        return connection_manager.get_provider(self.chain_id)
-
     @staticmethod
     def swap_is_viable(
         state: PoolState,
@@ -264,58 +167,6 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
         if state.reserves_token0 == 0 or state.reserves_token1 == 0:
             return False
         return state.reserves_token1 > 1 if vector.zero_for_one else state.reserves_token0 > 1
-
-    def auto_update(
-        self,
-        *,
-        block_number: BlockNumber | None = None,
-        silent: bool = True,
-    ) -> None:
-        """
-        Retrieves and records the current state from the pool at the provided block number, or the
-        latest block if not provided.
-
-        @dev this method uses a lock to guard state-modifying methods that might cause race
-        conditions when used with threads.
-        """
-        with self._state_lock:
-            if block_number is not None and block_number < self.update_block:
-                raise LateUpdateError
-
-            provider = self.w3
-            block_number = block_number if block_number is not None else provider.get_block_number()
-            reserves0, reserves1 = self.get_reserves(
-                provider=provider, block_identifier=block_number
-            )
-
-            if (
-                self.reserves_token0,
-                self.reserves_token1,
-            ) == (
-                reserves0,
-                reserves1,
-            ):
-                return
-
-            working_state = dataclasses.replace(
-                self.state,
-                reserves_token0=reserves0,
-                reserves_token1=reserves1,
-                block=block_number,
-            )
-
-            if self.state.block == block_number:
-                self._state_cache.pop()
-            self._state_cache.append(working_state)
-
-            if not silent:  # pragma: no cover
-                logger.info(f"[{self.name}]")
-                logger.info(f"{self._token0}: {self.reserves_token0}")
-                logger.info(f"{self._token1}: {self.reserves_token1}")
-
-            self._notify_subscribers(
-                message=AerodromeV2PoolStateUpdated(self.state),
-            )
 
     def calculate_tokens_in_from_tokens_out(
         self,
@@ -816,16 +667,3 @@ class AerodromeV3Pool(UniswapV3Pool):
         "uint16",
         "bool",
     )  # type:ignore[assignment]
-
-    def _verified_address(self) -> ChecksumAddress:
-        # The implementation address is hard-coded into the contract
-        implementation_address = get_checksum_address(
-            connection_manager.get_web3(self.chain_id).eth.get_code(self.address)[10:30]
-        )
-
-        return generate_aerodrome_v3_pool_address(
-            deployer_address=self.deployer_address,
-            token_addresses=(self._token0.address, self._token1.address),
-            implementation_address=implementation_address,
-            tick_spacing=self.tick_spacing,
-        )

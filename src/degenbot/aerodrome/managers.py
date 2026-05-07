@@ -12,7 +12,6 @@ from degenbot.aerodrome.functions import (
 )
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import connection_manager
 from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.exceptions.manager import (
     PoolCreationFailed,
@@ -111,20 +110,17 @@ class AerodromeV2PoolManager(
         self,
         *,
         factory_address: str,
+        bot: Bot,
         chain_id: ChainId | None = None,
         deployer_address: ChecksumAddress | str | None = None,
         pool_init_hash: str | None = None,
-        bot: Bot | None = None,
     ) -> None:
         factory_address = get_checksum_address(factory_address)
 
         self._bot = bot
 
         if chain_id is None:
-            if bot is not None:
-                chain_id = bot.connections.default_chain_id
-            else:
-                chain_id = connection_manager.default_chain_id
+            chain_id = bot.connections.default_chain_id
 
         try:
             factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]

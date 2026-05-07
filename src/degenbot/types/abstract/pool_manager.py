@@ -22,7 +22,7 @@ class AbstractPoolManager[Pool: AbstractLiquidityPool]:
     pool_factory: type[Pool]  # this class attribute is set by __init_subclass__ at import time
 
     # Instance variables
-    _bot: Bot | None
+    _bot: Bot
     _chain_id: ChainId
     _deployer_address: ChecksumAddress
     _factory_address: ChecksumAddress

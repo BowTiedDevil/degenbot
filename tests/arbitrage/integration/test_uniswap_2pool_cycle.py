@@ -9,10 +9,12 @@ from degenbot.connection import set_web3
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.erc20.ether_placeholder import EtherPlaceholder
 from degenbot.exceptions.arbitrage import RateOfExchangeBelowMinimum
-from degenbot.registry import pool_registry, token_registry
+from degenbot.provider import ProviderAdapter
+from degenbot.registry import token_registry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from tests.helpers.bot_factory import make_bot_with_provider
 
 # Token addresses
 NATIVE_ADDRESS = get_checksum_address("0x0000000000000000000000000000000000000000")
@@ -36,28 +38,14 @@ WBTC_ETH_V4_POOL_HOOKS = "0x0000000000000000000000000000000000000000"
 
 @pytest.fixture
 def wbtc(fork_mainnet_full: AnvilFork) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
-
-    token = token_registry.get(
-        chain_id=fork_mainnet_full.w3.eth.chain_id,
-        token_address=WBTC_ADDRESS,
-    )
-    if token is None:
-        token = Erc20Token(WBTC_ADDRESS)
-    return token
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    return bot.build_erc20token(WBTC_ADDRESS)
 
 
 @pytest.fixture
 def weth(fork_mainnet_full: AnvilFork) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
-
-    token = token_registry.get(
-        chain_id=fork_mainnet_full.w3.eth.chain_id,
-        token_address=WETH_ADDRESS,
-    )
-    if token is None:
-        token = Erc20Token(WETH_ADDRESS)
-    return token
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    return bot.build_erc20token(WETH_ADDRESS)
 
 
 @pytest.fixture
@@ -75,52 +63,27 @@ def ether_placeholder(fork_mainnet_full: AnvilFork) -> Erc20Token:
 
 @pytest.fixture
 def wbtc_weth_v2_lp(fork_mainnet_full: AnvilFork) -> UniswapV2Pool:
-    set_web3(fork_mainnet_full.w3)
-
-    pool = pool_registry.get(
-        chain_id=fork_mainnet_full.w3.eth.chain_id,
-        pool_address=WBTC_WETH_V2_POOL_ADDRESS,
-    )
-    if pool is None:
-        pool = UniswapV2Pool(WBTC_WETH_V2_POOL_ADDRESS)
-    assert isinstance(pool, UniswapV2Pool)
-    return pool
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    return bot.build_v2_pool(WBTC_WETH_V2_POOL_ADDRESS)
 
 
 @pytest.fixture
 def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
-    set_web3(fork_mainnet_full.w3)
-
-    pool = pool_registry.get(
-        chain_id=fork_mainnet_full.w3.eth.chain_id,
-        pool_address=WBTC_WETH_V3_POOL_ADDRESS,
-    )
-    if pool is None:
-        pool = UniswapV3Pool(WBTC_WETH_V3_POOL_ADDRESS)
-    assert isinstance(pool, UniswapV3Pool)
-    return pool
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    return bot.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
 @pytest.fixture
 def wbtc_ether_v4_lp(fork_mainnet_full: AnvilFork) -> UniswapV4Pool:
-    set_web3(fork_mainnet_full.w3)
-
-    pool = pool_registry.get(
-        chain_id=fork_mainnet_full.w3.eth.chain_id,
-        pool_address=V4_POOL_MANAGER,
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    return bot.build_v4_pool(
         pool_id=WBTC_ETH_V4_POOL_ID,
+        pool_manager_address=V4_POOL_MANAGER,
+        state_view_address=V4_STATE_VIEW_ADDRESS,
+        tokens=[WBTC_ADDRESS, NATIVE_ADDRESS],
+        fee=WBTC_ETH_V4_POOL_FEE,
+        tick_spacing=WBTC_ETH_V4_POOL_TICK_SPACING,
     )
-    if pool is None:
-        pool = UniswapV4Pool(
-            pool_id=WBTC_ETH_V4_POOL_ID,
-            pool_manager_address=V4_POOL_MANAGER,
-            state_view_address=V4_STATE_VIEW_ADDRESS,
-            tokens=(WBTC_ADDRESS, NATIVE_ADDRESS),
-            fee=WBTC_ETH_V4_POOL_FEE,
-            tick_spacing=WBTC_ETH_V4_POOL_TICK_SPACING,
-        )
-    assert isinstance(pool, UniswapV4Pool)
-    return pool
 
 
 @pytest.fixture

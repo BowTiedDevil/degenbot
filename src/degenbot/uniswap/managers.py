@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, Self
 from eth_typing import ChecksumAddress
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import connection_manager
 from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.exceptions.manager import (
     PoolCreationFailed,
@@ -36,21 +35,18 @@ class AbstractUniswapV2PoolManager[Pool: UniswapV2Pool](AbstractPoolManager[Pool
     def __init__(
         self,
         factory_address: str,
+        bot: Bot,
         *,
         chain_id: ChainId | None = None,
         deployer_address: ChecksumAddress | str | None = None,
         pool_init_hash: str | None = None,
-        bot: Bot | None = None,
     ) -> None:
         factory_address = get_checksum_address(factory_address)
 
         self._bot = bot
 
         if chain_id is None:
-            if bot is not None:
-                chain_id = bot.connections.default_chain_id
-            else:
-                chain_id = connection_manager.default_chain_id
+            chain_id = bot.connections.default_chain_id
 
         try:
             factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]
@@ -205,19 +201,16 @@ class AbstractUniswapV3PoolManager[Pool: UniswapV3Pool](AbstractPoolManager[Pool
     def __init__(
         self,
         factory_address: ChecksumAddress | str,
+        bot: Bot,
         deployer_address: ChecksumAddress | str | None = None,
         chain_id: ChainId | None = None,
         pool_init_hash: str | None = None,
         snapshot: UniswapV3LiquiditySnapshot | None = None,
-        bot: Bot | None = None,
     ) -> None:
         self._bot = bot
 
         if chain_id is None:
-            if bot is not None:
-                chain_id = bot.connections.default_chain_id
-            else:
-                chain_id = connection_manager.default_chain_id
+            chain_id = bot.connections.default_chain_id
 
         factory_address = get_checksum_address(factory_address)
 

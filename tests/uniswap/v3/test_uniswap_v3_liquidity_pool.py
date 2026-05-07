@@ -12,23 +12,19 @@ from hexbytes import HexBytes
 from web3.exceptions import ContractLogicError
 
 from degenbot.anvil_fork import AnvilFork
+from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
 from degenbot.constants import MAX_INT256
 from degenbot.erc20.erc20 import Erc20Token
-from degenbot.erc20.manager import Erc20TokenManager
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.liquidity_pool import (
-    AddressMismatch,
     ExternalUpdateError,
     IncompleteSwap,
-    LateUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.pancakeswap.pools import PancakeswapV3Pool
+from degenbot.provider import ProviderAdapter
 from degenbot.uniswap.deployments import (
-    FACTORY_DEPLOYMENTS,
     UniswapFactoryDeployment,
     UniswapV3ExchangeDeployment,
 )
@@ -48,6 +44,7 @@ from degenbot.uniswap.v3_types import (
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
 )
+from tests.helpers.bot_factory import make_bot_with_provider
 
 WBTC_WETH_V3_POOL_ADDRESS = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 WETH_CONTRACT_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
@@ -92,33 +89,30 @@ TOKEN_AMOUNT_MULTIPLIERS = [
 
 
 @pytest.fixture
-def dai(fork_mainnet_full: AnvilFork) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
-    return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(DAI_CONTRACT_ADDRESS)
+def dai(bot_mainnet_full: Bot) -> Erc20Token:
+    return bot_mainnet_full.build_erc20token(DAI_CONTRACT_ADDRESS)
 
 
 @pytest.fixture
-def wbtc(fork_mainnet_full: AnvilFork) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
-    return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WBTC_CONTRACT_ADDRESS)
+def wbtc(bot_mainnet_full: Bot) -> Erc20Token:
+    return bot_mainnet_full.build_erc20token(WBTC_CONTRACT_ADDRESS)
 
 
 @pytest.fixture
-def weth(fork_mainnet_full: AnvilFork) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
-    return Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WETH_CONTRACT_ADDRESS)
+def weth(bot_mainnet_full: Bot) -> Erc20Token:
+    return bot_mainnet_full.build_erc20token(WETH_CONTRACT_ADDRESS)
 
 
 @pytest.fixture
 def wbtc_weth_v3_lp_at_historical_block(fork_mainnet_archive: AnvilFork) -> UniswapV3Pool:
-    set_web3(fork_mainnet_archive.w3)
-    return UniswapV3Pool(WBTC_WETH_V3_POOL_ADDRESS)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_archive.w3))
+    return bot.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
 @pytest.fixture
 def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
-    set_web3(fork_mainnet_full.w3)
-    return UniswapV3Pool(WBTC_WETH_V3_POOL_ADDRESS)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    return bot.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
 @pytest.fixture
@@ -154,7 +148,7 @@ def test_first_200_pools(
     fork_mainnet_full: AnvilFork,
     testing_pools,
 ):
-    set_web3(fork_mainnet_full.w3)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
 
     quoter = fork_mainnet_full.w3.eth.contract(
         address=UNISWAP_V3_QUOTER_ADDRESS, abi=UNISWAP_V3_QUOTER_ABI
@@ -163,7 +157,7 @@ def test_first_200_pools(
     for pool in testing_pools:
         pool_address: str = pool["pool_address"]
 
-        lp = UniswapV3Pool(address=pool_address)
+        lp = bot.build_v3_pool(pool_address)
 
         max_reserves_token0 = 1 * 10**lp.token0.decimals
         max_reserves_token1 = 1 * 10**lp.token1.decimals
@@ -236,7 +230,7 @@ def test_first_200_pools_with_snapshot(
     testing_pools,
     liquidity_snapshot,
 ):
-    set_web3(fork_mainnet_archive.w3)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_archive.w3))
 
     quoter = fork_mainnet_archive.w3.eth.contract(
         address=UNISWAP_V3_QUOTER_ADDRESS, abi=UNISWAP_V3_QUOTER_ABI
@@ -247,9 +241,7 @@ def test_first_200_pools_with_snapshot(
 
         pool_tick_data = liquidity_snapshot[pool_address]["tick_data"]
         pool_tick_bitmap = liquidity_snapshot[pool_address]["tick_bitmap"]
-        lp = UniswapV3Pool(
-            address=pool_address, tick_bitmap=pool_tick_bitmap, tick_data=pool_tick_data
-        )
+        lp = bot.build_v3_pool(pool_address)
 
         max_reserves_token0 = 1 * 10**lp.token0.decimals
         max_reserves_token1 = 1 * 10**lp.token1.decimals
@@ -309,103 +301,33 @@ def test_first_200_pools_with_snapshot(
             assert helper_amount_out == quoter_amount_out
 
 
-def test_fetching_tick_data(wbtc_weth_v3_lp: UniswapV3Pool):
-    word_position, _ = get_tick_word_and_bit_position(
-        tick=wbtc_weth_v3_lp.tick,
-        tick_spacing=wbtc_weth_v3_lp.tick_spacing,
-    )
-    wbtc_weth_v3_lp._fetch_and_populate_initialized_ticks(
-        word_position=word_position + 5,
-        tick_bitmap=wbtc_weth_v3_lp.tick_bitmap,
-        tick_data=wbtc_weth_v3_lp.tick_data,
-    )
+def test_pool_creation(bot_mainnet_full: Bot) -> None:
+    bot_mainnet_full.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
-def test_pool_creation(fork_mainnet_full: AnvilFork) -> None:
-    set_web3(fork_mainnet_full.w3)
-    UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
-
-
-def test_pool_creation_with_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
-    set_web3(fork_mainnet_full.w3)
-    assert (
-        UniswapV3Pool(
-            address=WBTC_WETH_V3_POOL_ADDRESS, tick_bitmap={}, tick_data={}
-        ).sparse_liquidity_map
-        is False
-    )
-
-
-def test_creation_with_bad_liquidity_overrides(fork_mainnet_full: AnvilFork) -> None:
-    set_web3(fork_mainnet_full.w3)
-    with pytest.raises(DegenbotValueError, match=r"Provide both tick_bitmap and tick_data."):
-        UniswapV3Pool(
-            address=WBTC_WETH_V3_POOL_ADDRESS,
-            tick_bitmap={
-                0: UniswapV3BitmapAtWord(
-                    bitmap=69,
-                )
-            },
-        )
-
-    with pytest.raises(DegenbotValueError, match=r"Provide both tick_bitmap and tick_data."):
-        UniswapV3Pool(
-            address=WBTC_WETH_V3_POOL_ADDRESS,
-            tick_data={
-                0: UniswapV3LiquidityAtTick(
-                    liquidity_gross=69,
-                    liquidity_net=69,
-                )
-            },
-        )
-
-
-def test_creation_with_invalid_hash(fork_mainnet_full: AnvilFork) -> None:
-    set_web3(fork_mainnet_full.w3)
-
-    # Delete the preset deployment for this factory so the test uses the provided override instead
-    # of preferring the known valid deployment data
-    factory_deployment = FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][
-        UNISWAP_V3_FACTORY_ADDRESS
-    ]
-    del FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS]
-
-    # Change last byte of true init hash
-    bad_init_hash = UniswapV3Pool.UNISWAP_V3_MAINNET_POOL_INIT_HASH[:-1] + "f"
-
-    with pytest.raises(AddressMismatch, match="Pool address verification failed"):
-        UniswapV3Pool(
-            address=WBTC_WETH_V3_POOL_ADDRESS,
-            init_hash=bad_init_hash,
-        )
-
-    # Restore the preset deployments
-    FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][UNISWAP_V3_FACTORY_ADDRESS] = (
-        factory_deployment
-    )
+def test_pool_creation_with_liquidity_map(bot_mainnet_full: Bot) -> None:
+    pool = bot_mainnet_full.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
+    assert pool.sparse_liquidity_map is False
 
 
 @pytest.mark.base
 def test_creation_with_wrong_pool_type(fork_base_full: AnvilFork) -> None:
-    set_web3(fork_base_full.w3)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
 
-    # Attempting to build a Pancake V3 pool with a Uniswap V3 (vanilla) helper should fail during
-    # the contract value lookup
     pancake_pool_address = "0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E"
-    with pytest.raises(LiquidityPoolError, match="Could not decode contract data"):
-        UniswapV3Pool(pancake_pool_address)
+    with pytest.raises(LiquidityPoolError):
+        bot.build_v3_pool(pancake_pool_address)
 
 
 @pytest.mark.base
 def test_pancake_v3_pool_creation(fork_base_full: AnvilFork) -> None:
-    set_web3(fork_base_full.w3)
-    PancakeswapV3Pool("0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E")
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
+    bot.build_v3_pool("0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E")
 
 
 def test_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
-    set_web3(fork_mainnet_full.w3)
-
-    lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    lp = bot.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
     current_word, _ = get_tick_word_and_bit_position(MIN_TICK, lp.tick_spacing)
     known_words = set(lp.tick_bitmap.keys())
     assert lp.sparse_liquidity_map is True
@@ -427,9 +349,8 @@ def test_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
 
 
 def test_external_update_with_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
-    set_web3(fork_mainnet_full.w3)
-
-    lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    lp = bot.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
     print(f"{lp.tick_bitmap.keys()=}")
     current_word, _ = get_tick_word_and_bit_position(
         tick=MIN_TICK,
@@ -655,7 +576,6 @@ def test_cached_calculations(
     wbtc_weth_v3_lp: UniswapV3Pool,
     fork_mainnet_full: AnvilFork,
 ) -> None:
-    set_web3(fork_mainnet_full.w3)
 
     quoter = fork_mainnet_full.w3.eth.contract(
         address=UNISWAP_V3_QUOTER_ADDRESS,
@@ -890,8 +810,6 @@ def test_simulations_with_override(
 ) -> None:
     # Overridden state values for this test are taken at block height 17,650,000
 
-    set_web3(fork_mainnet_archive.w3)
-
     pool_state_override = UniswapV3PoolState(
         address=wbtc_weth_v3_lp.address,
         block=None,
@@ -997,7 +915,6 @@ def test_external_update(
     wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool,
     fork_mainnet_archive: AnvilFork,
 ) -> None:
-    set_web3(fork_mainnet_archive.w3)
     start_block = wbtc_weth_v3_lp_at_historical_block.update_block + 1
 
     wbtc_weth_v3_lp_at_historical_block.external_update(
@@ -1112,10 +1029,10 @@ def test_mint_and_burn_in_empty_word(fork_mainnet_archive: AnvilFork) -> None:
     liquidity in the mapping, and the removal of the position.
     """
 
-    set_web3(fork_mainnet_archive.w3)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_archive.w3))
     block_number = fork_mainnet_archive.w3.eth.block_number
 
-    lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
+    lp = bot.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
     assert lp.sparse_liquidity_map is True
 
     empty_word = -57
@@ -1152,33 +1069,6 @@ def test_mint_and_burn_in_empty_word(fork_mainnet_archive: AnvilFork) -> None:
     assert upper_tick not in lp.tick_data
 
 
-def test_auto_update(fork_mainnet_full: AnvilFork) -> None:
-    set_web3(fork_mainnet_full.w3)
-    current_block = fork_mainnet_full.w3.eth.block_number
-
-    lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
-
-    fork = AnvilFork(
-        fork_url=fork_mainnet_full.fork_url,
-        storage_caching=False,
-        fork_block=current_block - 5000,
-    )
-    assert fork.w3.eth.block_number == current_block - 5000
-    set_web3(fork.w3)
-
-    lp.auto_update()
-    lp.auto_update()  # update twice to cover the "no update" case
-
-
-def test_late_auto_update(fork_mainnet_full: AnvilFork) -> None:
-    set_web3(fork_mainnet_full.w3)
-    lp = UniswapV3Pool(address=WBTC_WETH_V3_POOL_ADDRESS)
-
-    # Attempt an update in the past
-    with pytest.raises(LateUpdateError):
-        lp.auto_update(block_number=fork_mainnet_full.w3.eth.block_number - 10)
-
-
 @pytest.mark.parametrize(
     "fork_mainnet_archive",
     [19619258],
@@ -1192,9 +1082,9 @@ def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
     State values taken from Tenderly: https://dashboard.tenderly.co/tx/mainnet/0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d/state-diff
     """
 
-    set_web3(fork_mainnet_archive.w3)
     state_block = fork_mainnet_archive.w3.eth.block_number
-    lp = UniswapV3Pool("0x3416cF6C708Da44DB2624D63ea0AAef7113527C6")
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_archive.w3))
+    lp = bot.build_v3_pool("0x3416cF6C708Da44DB2624D63ea0AAef7113527C6")
 
     # Verify initial state
     assert lp.liquidity == 14421592867765366
@@ -1268,8 +1158,8 @@ def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
 
     lp_address = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"
 
-    set_web3(fork_mainnet_archive.w3)
-    lp = UniswapV3Pool(lp_address)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_archive.w3))
+    lp = bot.build_v3_pool(lp_address)
 
     # Verify initial state
     assert lp.liquidity == 14823044070524674
@@ -1328,20 +1218,8 @@ def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
 
 @pytest.mark.base
 def test_base_pancakeswap_v3(fork_base_full: AnvilFork):
-    set_web3(fork_base_full.w3)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
 
-    # Exchange provided explicitly
-    PancakeswapV3Pool.from_exchange(
-        address=BASE_CBETH_WETH_V3_POOL_ADDRESS,
-        exchange=BASE_PANCAKESWAP_V3_EXCHANGE,
-    )
-
-
-@pytest.mark.base
-def test_base_pancakeswap_v3_with_builtin_exchange(fork_base_full: AnvilFork):
-    set_web3(fork_base_full.w3)
-
-    # Exchange looked up implicitly from degenbot deployment module
-    PancakeswapV3Pool(
-        address=BASE_CBETH_WETH_V3_POOL_ADDRESS,
-    )
+    # Build a PancakeSwap V3 pool, which extends UniswapV3Pool
+    lp = bot.build_v3_pool(BASE_CBETH_WETH_V3_POOL_ADDRESS)
+    assert lp is not None

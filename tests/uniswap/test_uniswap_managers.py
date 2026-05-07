@@ -3,21 +3,18 @@ from eth_typing import ChainId
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
 from degenbot.exceptions.manager import ManagerAlreadyInitialized, ManagerError, PoolNotAssociated
 from degenbot.pancakeswap.managers import PancakeswapV3PoolManager
+from degenbot.provider import ProviderAdapter
 from degenbot.registry import pool_registry
 from degenbot.sushiswap.managers import SushiswapV2PoolManager, SushiswapV3PoolManager
 from degenbot.uniswap.deployments import (
-    EthereumMainnetSushiswapV2,
-    EthereumMainnetSushiswapV3,
-    EthereumMainnetUniswapV2,
-    EthereumMainnetUniswapV3,
     UniswapFactoryDeployment,
     UniswapV3ExchangeDeployment,
 )
 from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
 from degenbot.uniswap.v2_functions import get_v2_pools_from_token_path
+from tests.helpers.bot_factory import make_bot_with_provider
 
 MAINNET_UNISWAP_V2_FACTORY_ADDRESS = get_checksum_address(
     "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
@@ -76,12 +73,12 @@ BASE_PANCAKESWAP_V3_EXCHANGE = UniswapV3ExchangeDeployment(
 
 @pytest.mark.base
 def test_create_base_chain_managers(fork_base_full: AnvilFork):
-    set_web3(fork_base_full.w3)
 
-    uniswap_v2_pool_manager = UniswapV2PoolManager(factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
+    uniswap_v2_pool_manager = UniswapV2PoolManager(factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS, bot=bot)
     assert uniswap_v2_pool_manager._factory_address == BASE_UNISWAP_V2_FACTORY_ADDRESS
 
-    uniswap_v3_pool_manager = UniswapV3PoolManager(factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS)
+    uniswap_v3_pool_manager = UniswapV3PoolManager(factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS, bot=bot)
     assert uniswap_v3_pool_manager._factory_address == BASE_UNISWAP_V3_FACTORY_ADDRESS
 
     # Get known pairs
@@ -97,14 +94,14 @@ def test_create_base_chain_managers(fork_base_full: AnvilFork):
     assert uniswap_v3_lp.address == BASE_UNISWAP_V3_WETH_DEGEN_ADDRESS
 
     with pytest.raises(ManagerAlreadyInitialized):
-        UniswapV2PoolManager(factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS)
+        UniswapV2PoolManager(factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS, bot=bot)
     with pytest.raises(ManagerAlreadyInitialized):
-        UniswapV3PoolManager(factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS)
+        UniswapV3PoolManager(factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS, bot=bot)
 
 
 @pytest.mark.base
 def test_base_pancake_v3_pool_manager(fork_base_full: AnvilFork):
-    set_web3(fork_base_full.w3)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
     pancakev3_lp_manager = PancakeswapV3PoolManager(
         factory_address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
         deployer_address=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,
@@ -122,29 +119,16 @@ def test_base_pancake_v3_pool_manager(fork_base_full: AnvilFork):
 
 
 @pytest.mark.base
-def test_base_pancake_v3_pool_manager_from_exchange(fork_base_full: AnvilFork):
-    set_web3(fork_base_full.w3)
-    PancakeswapV3PoolManager.from_exchange(BASE_PANCAKESWAP_V3_EXCHANGE)
-
-
-def test_create_mainnet_managers_from_exchange(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
-
-    UniswapV2PoolManager.from_exchange(EthereumMainnetUniswapV2)
-    SushiswapV2PoolManager.from_exchange(EthereumMainnetSushiswapV2)
-
-    UniswapV3PoolManager.from_exchange(EthereumMainnetUniswapV3)
-    SushiswapV3PoolManager.from_exchange(EthereumMainnetSushiswapV3)
-
-
 def test_create_mainnet_managers(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
 
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     uniswap_v2_pool_manager = UniswapV2PoolManager(
-        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
+        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS,
+        bot=bot,
     )
     sushiswap_v2_pool_manager = SushiswapV2PoolManager(
-        factory_address=MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS
+        factory_address=MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS,
+        bot=bot,
     )
 
     assert uniswap_v2_pool_manager._factory_address == MAINNET_UNISWAP_V2_FACTORY_ADDRESS
@@ -158,7 +142,8 @@ def test_create_mainnet_managers(fork_mainnet_full: AnvilFork):
     )
 
     uniswap_v3_pool_manager = UniswapV3PoolManager(
-        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS
+        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS,
+        bot=bot,
     )
 
     # Get known pairs
@@ -208,13 +193,15 @@ def test_create_mainnet_managers(fork_mainnet_full: AnvilFork):
 
 
 def test_manager_behavior_for_unassociated_pools(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
 
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     uniswap_v3_pool_manager = UniswapV3PoolManager(
-        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS
+        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS,
+        bot=bot,
     )
     sushiswap_v3_pool_manager = SushiswapV3PoolManager(
-        factory_address=MAINNET_SUSHISWAP_V3_FACTORY_ADDRESS
+        factory_address=MAINNET_SUSHISWAP_V3_FACTORY_ADDRESS,
+        bot=bot,
     )
 
     uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
@@ -233,10 +220,11 @@ def test_manager_behavior_for_unassociated_pools(fork_mainnet_full: AnvilFork):
 
 
 def test_pool_remove_and_recreate(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
 
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     uniswap_v2_pool_manager = UniswapV2PoolManager(
-        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
+        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS,
+        bot=bot,
     )
 
     v2_weth_wbtc_lp = uniswap_v2_pool_manager.get_pool_from_tokens(
@@ -256,9 +244,13 @@ def test_pool_remove_and_recreate(fork_mainnet_full: AnvilFork):
     # The pool manager should have found the original pool in AllPools and re-used it
     assert v2_weth_wbtc_lp is new_v2_weth_wbtc_lp
 
-    # Remove from the pool manager and the registry
+    # Remove from the pool manager and the registries
     uniswap_v2_pool_manager.remove(pool_address=new_v2_weth_wbtc_lp.address)
     pool_registry.remove(
+        pool_address=new_v2_weth_wbtc_lp.address,
+        chain_id=1,
+    )
+    bot.pools.remove(
         pool_address=new_v2_weth_wbtc_lp.address,
         chain_id=1,
     )
@@ -274,20 +266,20 @@ def test_pool_remove_and_recreate(fork_mainnet_full: AnvilFork):
     assert super_new_v2_weth_wbtc_lp is not v2_weth_wbtc_lp
 
     assert (
-        pool_registry.get(
+        bot.pools.get(
             pool_address=v2_weth_wbtc_lp.address,
             chain_id=1,
         )
         is super_new_v2_weth_wbtc_lp
     )
 
-    pool_registry.remove(
+    bot.pools.remove(
         pool_address=v2_weth_wbtc_lp.address,
         chain_id=1,
     )
 
     assert (
-        pool_registry.get(
+        bot.pools.get(
             pool_address=v2_weth_wbtc_lp.address,
             chain_id=1,
         )
@@ -295,22 +287,24 @@ def test_pool_remove_and_recreate(fork_mainnet_full: AnvilFork):
     )
 
     uniswap_v3_pool_manager = UniswapV3PoolManager(
-        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS
+        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS,
+        bot=bot,
     )
     v3_pool = uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
     assert uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS) is v3_pool
 
-    pool_registry.remove(pool_address=v3_pool.address, chain_id=uniswap_v3_pool_manager.chain_id)
+    bot.pools.remove(pool_address=v3_pool.address, chain_id=uniswap_v3_pool_manager.chain_id)
     uniswap_v3_pool_manager.remove(v3_pool.address)
 
     assert uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS) is not v3_pool
 
 
 def test_get_already_registered_pool(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
 
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     uniswap_v2_pool_manager = UniswapV2PoolManager(
-        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
+        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS,
+        bot=bot,
     )
     v2_pool = uniswap_v2_pool_manager.get_pool(MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS)
     # Remove from the pool manager, but not the registry
@@ -319,7 +313,8 @@ def test_get_already_registered_pool(fork_mainnet_full: AnvilFork):
     assert v2_pool is new_v2_pool
 
     uniswap_v3_pool_manager = UniswapV3PoolManager(
-        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS
+        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS,
+        bot=bot,
     )
     v3_pool = uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
     # Remove from the pool manager, but not the registry
@@ -329,24 +324,27 @@ def test_get_already_registered_pool(fork_mainnet_full: AnvilFork):
 
 
 def test_get_pool_with_kwargs(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
 
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     uniswap_v2_pool_manager = UniswapV2PoolManager(
-        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
+        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS,
+        bot=bot,
     )
     uniswap_v2_pool_manager.get_pool(MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS, pool_class_kwargs={})
 
     uniswap_v3_pool_manager = UniswapV3PoolManager(
-        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS
+        factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS,
+        bot=bot,
     )
     uniswap_v3_pool_manager.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS, pool_class_kwargs={})
 
 
 def test_pools_from_token_path(fork_mainnet_full: AnvilFork) -> None:
-    set_web3(fork_mainnet_full.w3)
 
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     uniswap_v2_pool_manager = UniswapV2PoolManager(
-        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS
+        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS,
+        bot=bot,
     )
 
     assert get_v2_pools_from_token_path(

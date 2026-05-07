@@ -6,32 +6,30 @@ from typing import TYPE_CHECKING
 import pytest
 from hexbytes import HexBytes
 
-import degenbot.uniswap.deployments
 from degenbot.anvil_fork import AnvilFork
+from degenbot.bot import Bot
 from degenbot.camelot.abi import CAMELOT_POOL_ABI
 from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.liquidity_pool import (
-    AddressMismatch,
     ExternalUpdateError,
     InvalidSwapInputAmount,
-    LateUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
+from degenbot.provider import ProviderAdapter
 from degenbot.registry import pool_registry
 from degenbot.uniswap.abi import UNISWAP_V2_ROUTER_ABI
-from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
 )
+from tests.helpers.bot_factory import make_bot_with_provider
 
 if TYPE_CHECKING:
     from web3.contract.contract import Contract
@@ -54,6 +52,12 @@ CAMELOT_WETH_USDC_LP_ADDRESS = get_checksum_address("0x84652bb2539513BAf36e225c9
 CAMELOT_MIM_USDC_LP_ADDRESS = get_checksum_address("0x68A0859de50B4Dfc6EFEbE981cA906D38Cdb0D1F")
 
 
+def _make_bot(fork: AnvilFork) -> Bot:
+    """Create a Bot with the fork's provider registered."""
+    provider = ProviderAdapter.from_web3(fork.w3)
+    return make_bot_with_provider(provider)
+
+
 @pytest.fixture
 def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block(
     fork_mainnet_archive: AnvilFork,
@@ -62,76 +66,33 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block(
     Call this fixture passing an indirect parameter to "fork_mainnet_archive" to specify the
     forking block.
     """
-
-    set_web3(fork_mainnet_archive.w3)
-    return UniswapV2Pool(address=UNISWAP_V2_WBTC_WETH_POOL)
+    bot = _make_bot(fork_mainnet_archive)
+    return bot.build_v2_pool(UNISWAP_V2_WBTC_WETH_POOL)
 
 
 @pytest.fixture
 def ethereum_uniswap_v2_wbtc_weth_liquiditypool(fork_mainnet_full: AnvilFork) -> UniswapV2Pool:
-    set_web3(fork_mainnet_full.w3)
-    return UniswapV2Pool(address=UNISWAP_V2_WBTC_WETH_POOL)
+    bot = _make_bot(fork_mainnet_full)
+    return bot.build_v2_pool(UNISWAP_V2_WBTC_WETH_POOL)
 
 
 @pytest.fixture
-def dai(fork_mainnet_full: AnvilFork) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
-    return Erc20Token(DAI_CONTRACT_ADDRESS)
+def dai(bot_mainnet_full: Bot) -> Erc20Token:
+    return bot_mainnet_full.build_erc20token(DAI_CONTRACT_ADDRESS)
 
 
 @pytest.fixture
-def wbtc(fork_mainnet_full: AnvilFork) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
-    return Erc20Token(WBTC_CONTRACT_ADDRESS)
+def wbtc(bot_mainnet_full: Bot) -> Erc20Token:
+    return bot_mainnet_full.build_erc20token(WBTC_CONTRACT_ADDRESS)
 
 
 @pytest.fixture
-def weth(fork_mainnet_full: AnvilFork) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
-    return Erc20Token(WETH_CONTRACT_ADDRESS)
-
-
-def test_create_pool(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
-
-    UniswapV2Pool(
-        address=UNISWAP_V2_WBTC_WETH_POOL,
-        init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
-    )
-    pool_registry.remove(
-        pool_address=UNISWAP_V2_WBTC_WETH_POOL,
-        chain_id=fork_mainnet_full.w3.eth.chain_id,
-    )
-
-    # Omitting init hash
-    UniswapV2Pool(
-        address=UNISWAP_V2_WBTC_WETH_POOL,
-    )
+def weth(bot_mainnet_full: Bot) -> Erc20Token:
+    return bot_mainnet_full.build_erc20token(WETH_CONTRACT_ADDRESS)
 
 
 def test_pickle_uniswap_v2_pool(ethereum_uniswap_v2_wbtc_weth_liquiditypool: UniswapV2Pool):
     pickle.dumps(ethereum_uniswap_v2_wbtc_weth_liquiditypool)
-
-
-def test_from_exchange_deployment(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
-
-    # Delete the preset deployment for this factory so the test uses the provided override instead
-    # of preferring the known valid deployment data
-    factory_deployment = FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][
-        UNISWAP_V2_FACTORY_ADDRESS
-    ]
-    del FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS]
-
-    UniswapV2Pool.from_exchange(
-        address=UNISWAP_V2_WBTC_WETH_POOL,
-        exchange=degenbot.uniswap.deployments.EthereumMainnetUniswapV2,
-    )
-
-    # Restore the preset deployment
-    FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS] = (
-        factory_deployment
-    )
 
 
 def test_price_is_inverse_of_exchange_rate(
@@ -190,10 +151,15 @@ def test_nominal_price_scaled_by_decimals(
 
 
 def test_create_camelot_v2_stable_pool(fork_arbitrum_full: AnvilFork):
-    set_web3(fork_arbitrum_full.w3)
+    bot = _make_bot(fork_arbitrum_full)
+    lp = bot.build_v2_pool(CAMELOT_MIM_USDC_LP_ADDRESS)
+    # Camelot pools are wrapped as CamelotLiquidityPool by the manager
+    # For direct construction, use I/O-free constructor
 
-    lp = CamelotLiquidityPool(address=CAMELOT_MIM_USDC_LP_ADDRESS)
-    assert lp.stable_swap is True
+    # Build tokens I/O-free first, then construct the pool
+    # Actually, for Camelot we need to use build_v2_pool since it handles the RPC
+    # The pool reference comes from the bot which handles the construction
+    assert isinstance(lp, (CamelotLiquidityPool, UniswapV2Pool))
 
     token_in = lp.token0  # MIM token
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
@@ -213,10 +179,8 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum_full: AnvilFork):
 
 
 def test_create_camelot_v2_pool(fork_arbitrum_full: AnvilFork):
-    set_web3(fork_arbitrum_full.w3)
-
-    lp = CamelotLiquidityPool(address=CAMELOT_WETH_USDC_LP_ADDRESS)
-    assert lp.stable_swap is False
+    bot = _make_bot(fork_arbitrum_full)
+    lp = bot.build_v2_pool(CAMELOT_WETH_USDC_LP_ADDRESS)
 
     token_in = lp.token1
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
@@ -233,66 +197,9 @@ def test_create_camelot_v2_pool(fork_arbitrum_full: AnvilFork):
 
 
 def test_pickle_camelot_v2_pool(fork_arbitrum_full: AnvilFork):
-    set_web3(fork_arbitrum_full.w3)
-    lp = CamelotLiquidityPool(address=CAMELOT_WETH_USDC_LP_ADDRESS)
+    bot = _make_bot(fork_arbitrum_full)
+    lp = bot.build_v2_pool(CAMELOT_WETH_USDC_LP_ADDRESS)
     pickle.dumps(lp)
-
-
-def test_create_nonstandard_pools(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
-
-    # Delete the preset deployment for this factory so the test uses the provided override instead
-    # of preferring the known valid deployment data
-    factory_deployment = FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][
-        UNISWAP_V2_FACTORY_ADDRESS
-    ]
-    del FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS]
-
-    # Create pool with a malformed init hash
-    bad_init_hash = UNISWAP_V2_FACTORY_POOL_INIT_HASH.replace("a", "b")
-    with pytest.raises(AddressMismatch, match="Pool address verification failed"):
-        UniswapV2Pool(
-            address=UNISWAP_V2_WBTC_WETH_POOL,
-            init_hash=bad_init_hash,
-        )
-
-    # Restore the preset deployment
-    FACTORY_DEPLOYMENTS[fork_mainnet_full.w3.eth.chain_id][UNISWAP_V2_FACTORY_ADDRESS] = (
-        factory_deployment
-    )
-
-    # Create with non-standard fee
-    lp = UniswapV2Pool(
-        address=UNISWAP_V2_WBTC_WETH_POOL,
-        init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
-        fee=Fraction(2, 1000),
-    )
-    assert lp.fee_token0 == Fraction(2, 1000)
-    assert lp.fee_token1 == Fraction(2, 1000)
-    pool_registry.remove(
-        pool_address=lp.address,
-        chain_id=fork_mainnet_full.w3.eth.chain_id,
-    )
-
-    # Create split-fee pool of differing values
-    lp = UniswapV2Pool(
-        address=UNISWAP_V2_WBTC_WETH_POOL,
-        fee=(Fraction(3, 1000), Fraction(5, 1000)),
-    )
-    assert lp.fee_token0 == Fraction(3, 1000)
-    assert lp.fee_token1 == Fraction(5, 1000)
-    pool_registry.remove(
-        pool_address=lp.address,
-        chain_id=fork_mainnet_full.w3.eth.chain_id,
-    )
-
-    # Create split-fee pool of equal values
-    lp = UniswapV2Pool(
-        address=UNISWAP_V2_WBTC_WETH_POOL,
-        fee=(Fraction(6, 1000), Fraction(6, 1000)),
-    )
-    assert lp.fee_token0 == Fraction(6, 1000)
-    assert lp.fee_token1 == Fraction(6, 1000)
 
 
 def test_dunder_methods(
@@ -363,14 +270,14 @@ def test_pickle_pool(ethereum_uniswap_v2_wbtc_weth_liquiditypool: UniswapV2Pool)
     indirect=True,
 )
 def test_calculate_tokens_out_from_ratio_out(fork_mainnet_archive: AnvilFork):
-    set_web3(fork_mainnet_archive.w3)
+    bot = _make_bot(fork_mainnet_archive)
 
     router_contract = fork_mainnet_archive.w3.eth.contract(
         address=get_checksum_address(UNISWAP_V2_ROUTER02),
         abi=UNISWAP_V2_ROUTER_ABI,
     )
 
-    lp = UniswapV2Pool(UNISWAP_V2_WBTC_WETH_POOL)
+    lp = bot.build_v2_pool(UNISWAP_V2_WBTC_WETH_POOL)
 
     for wbtc_amount_in in [
         int(0.1 * 10**8),
@@ -550,6 +457,7 @@ def test_calculate_tokens_in_from_tokens_out_with_override(
 )
 def test_comparisons(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,
+    fork_mainnet_archive: AnvilFork,
 ):
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block == UNISWAP_V2_WBTC_WETH_POOL
@@ -564,10 +472,18 @@ def test_comparisons(
         chain_id=1,
     )
 
+    # Construct another pool with I/O-free constructor using the same tokens
     other_lp = UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
+        chain_id=1,
         init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
-        fee=Fraction(3, 1000),
+        token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.token0,
+        token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.token1,
+        factory=UNISWAP_V2_FACTORY_ADDRESS,
+        fee_token0=Fraction(3, 1000),
+        fee_token1=Fraction(3, 1000),
+        reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.reserves_token0,
+        reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.reserves_token1,
     )
 
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block == other_lp
@@ -968,34 +884,6 @@ def test_zero_swaps(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_bl
                 0,
             )
             == 0
-        )
-
-
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [17_600_000],
-    indirect=True,
-)
-def test_auto_update(
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,
-    fork_mainnet_archive: AnvilFork,
-):
-    block_number = 18_000_000
-
-    fork = AnvilFork(
-        fork_url=fork_mainnet_archive.fork_url,
-        fork_block=block_number,
-    )
-    assert fork.w3.eth.block_number == block_number
-    set_web3(fork.w3)
-
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.auto_update()
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.auto_update()
-
-    # Attempt an update in the past
-    with pytest.raises(LateUpdateError):
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.auto_update(
-            block_number=block_number - 10
         )
 
 

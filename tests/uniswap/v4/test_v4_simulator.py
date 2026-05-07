@@ -10,12 +10,12 @@ from hexbytes import HexBytes
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.registry import managed_pool_registry
+from degenbot.provider import ProviderAdapter
 from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot
 from degenbot.uniswap.concentrated.v4_simulator import calculate_swap
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from tests.helpers.bot_factory import make_bot_with_provider
 
 USDC_CONTRACT_ADDRESS = get_checksum_address("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
 NATIVE_CURRENCY_ADDRESS = ZERO_ADDRESS
@@ -29,24 +29,15 @@ STATE_VIEW_ADDRESS = get_checksum_address("0x7fFE42C4a5DEeA5b0feC41C94C136Cf1155
 @pytest.fixture
 def eth_usdc_v4(fork_mainnet_full: AnvilFork) -> UniswapV4Pool:
     """Same fixture as test_uniswap_v4_liquidity_pool.py."""
-    set_web3(fork_mainnet_full.w3)
-    if (
-        pool := managed_pool_registry.get(
-            chain_id=fork_mainnet_full.w3.eth.chain_id,
-            pool_manager_address=V4_POOL_MANAGER_ADDRESS,
-            pool_id=ETH_USDC_V4_POOL_ID,
-        )
-    ) is None:
-        return UniswapV4Pool(
-            pool_id=HexBytes(ETH_USDC_V4_POOL_ID),
-            pool_manager_address=V4_POOL_MANAGER_ADDRESS,
-            state_view_address=STATE_VIEW_ADDRESS,
-            tokens=[USDC_CONTRACT_ADDRESS, NATIVE_CURRENCY_ADDRESS],
-            fee=ETH_USDC_V4_POOL_FEE,
-            tick_spacing=ETH_USDC_V4_POOL_TICK_SPACING,
-        )
-    assert isinstance(pool, UniswapV4Pool)
-    return pool
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    return bot.build_v4_pool(
+        pool_id=HexBytes(ETH_USDC_V4_POOL_ID),
+        pool_manager_address=V4_POOL_MANAGER_ADDRESS,
+        state_view_address=STATE_VIEW_ADDRESS,
+        tokens=[USDC_CONTRACT_ADDRESS, NATIVE_CURRENCY_ADDRESS],
+        fee=ETH_USDC_V4_POOL_FEE,
+        tick_spacing=ETH_USDC_V4_POOL_TICK_SPACING,
+    )
 
 
 class TestV4SimulatorMatchesPool:

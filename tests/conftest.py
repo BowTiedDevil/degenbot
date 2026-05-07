@@ -7,7 +7,8 @@ from _pytest.config import Config, Parser
 from _pytest.nodes import Item
 
 from degenbot.anvil_fork import AnvilFork
-from degenbot.connection import connection_manager
+from degenbot.bot import Bot
+from degenbot.connection import ProviderAdapter, connection_manager
 from degenbot.logging import logger
 from degenbot.registry import managed_pool_registry, pool_registry, token_registry
 
@@ -194,3 +195,21 @@ def fork_mainnet_full() -> Generator[AnvilFork, None, None]:
     )
     yield fork
     fork.close()
+
+
+@pytest.fixture
+def bot_mainnet_full(fork_mainnet_full: AnvilFork) -> Bot:
+    """Provide a Bot with the mainnet full fork's provider registered."""
+    from tests.helpers.bot_factory import make_bot_with_provider
+
+    provider = ProviderAdapter.from_web3(fork_mainnet_full.w3)
+    return make_bot_with_provider(provider)
+
+
+@pytest.fixture
+def bot_mainnet_archive(fork_mainnet_archive: AnvilFork) -> Bot:
+    """Provide a Bot with the mainnet archive fork's provider registered."""
+    from tests.helpers.bot_factory import make_bot_with_provider
+
+    provider = ProviderAdapter.from_web3(fork_mainnet_archive.w3)
+    return make_bot_with_provider(provider)

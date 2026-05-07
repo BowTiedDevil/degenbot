@@ -26,12 +26,14 @@ from degenbot.connection import set_web3
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.erc20.manager import Erc20TokenManager
 from degenbot.exceptions.arbitrage import ArbitrageError, OptimizationError
+from degenbot.provider import ProviderAdapter
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate, UniswapV2PoolState
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
     UniswapV3PoolState,
 )
+from tests.helpers.bot_factory import make_bot_with_provider
 
 WBTC_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -53,8 +55,8 @@ def weth_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
 
 @pytest.fixture
 def wbtc_weth_v2_lp(fork_mainnet_full: AnvilFork) -> UniswapV2Pool:
-    set_web3(fork_mainnet_full.w3)
-    pool = UniswapV2Pool(WBTC_WETH_V2_POOL_ADDRESS)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    pool = bot.build_v2_pool(WBTC_WETH_V2_POOL_ADDRESS)
     pool.external_update(
         UniswapV2PoolExternalUpdate(
             block_number=pool.update_block,
@@ -67,10 +69,10 @@ def wbtc_weth_v2_lp(fork_mainnet_full: AnvilFork) -> UniswapV2Pool:
 
 @pytest.fixture
 def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
-    set_web3(fork_mainnet_full.w3)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     # Initialize from chain with auto-fetched tick data. This is simpler
     # than duplicating the hardcoded bitmap from test_uniswap_lp_cycle.py.
-    pool = UniswapV3Pool(WBTC_WETH_V3_POOL_ADDRESS)
+    pool = bot.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
     return pool
 
 

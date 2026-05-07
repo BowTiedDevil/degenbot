@@ -1,15 +1,23 @@
+import os
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from degenbot.config import config as degenbot_config
 from degenbot.database.models import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
-config.set_main_option("sqlalchemy.url", f"sqlite:///{degenbot_config.database.path.absolute()}")
+
+# Database path: prefer explicit DEGENBOT_DATABASE_PATH env var,
+# fall back to the global config singleton
+database_path = os.environ.get("DEGENBOT_DATABASE_PATH")
+if database_path:
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+else:
+    from degenbot.config import config as degenbot_config
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{degenbot_config.database.path.absolute()}")
 
 
 # Interpret the config file for Python logging.

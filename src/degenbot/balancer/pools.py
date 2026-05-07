@@ -1,13 +1,10 @@
-import warnings
 from collections.abc import Sequence
 from fractions import Fraction
 from threading import Lock
 from typing import Any, ClassVar
 from weakref import WeakSet
 
-import eth_abi.abi
 from eth_typing import ChecksumAddress
-from web3.types import TxParams
 
 from degenbot.balancer.libraries.fixed_point import mul_up
 from degenbot.balancer.libraries.scaling_helpers import (
@@ -19,10 +16,8 @@ from degenbot.balancer.libraries.scaling_helpers import (
 from degenbot.balancer.libraries.weighted_math import _calc_out_given_in, _subtract_swap_fee_amount
 from degenbot.balancer.types import BalancerV2PoolState
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import connection_manager
-from degenbot.erc20 import Erc20Token, Erc20TokenManager
+from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.functions import encode_function_calldata
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin
@@ -48,162 +43,35 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         self,
         address: ChecksumAddress | str,
         *,
+        pool_id: bytes,
+        vault: str,
+        tokens: Sequence[Erc20Token],
+        balances: Sequence[int],
+        fee: Fraction,
+        weights: Sequence[int],
         chain_id: ChainId | None = None,
         state_block: BlockNumber | None = None,
-        verify_address: bool = False,
-        silent: bool = False,
-        # I/O-free path params
-        pool_id: bytes | None = None,
-        vault: str | None = None,
-        tokens: Sequence[Erc20Token] | None = None,
-        balances: Sequence[int] | None = None,
-        fee: Fraction | None = None,
-        weights: Sequence[int] | None = None,
     ) -> None:
         self.address = get_checksum_address(address)
 
-        # ── I/O-free path ──
-        if all(
-            [
-                pool_id is not None,
-                vault is not None,
-                tokens is not None,
-                balances is not None,
-                fee is not None,
-                weights is not None,
-            ],
-        ):
-            self._chain_id = chain_id if chain_id is not None else tokens[0].chain_id
-            state_block = state_block if state_block is not None else 0
+        self._chain_id = chain_id if chain_id is not None else tokens[0].chain_id
+        state_block = state_block if state_block is not None else 0
 
-            self.pool_id = pool_id
-            self.pool_specialization = int.from_bytes(self.pool_id[20:22], byteorder="big")
-            self.vault = get_checksum_address(vault)
-            self._tokens = tuple(tokens)
-            self.scaling_factors = tuple(_compute_scaling_factor(token) for token in self._tokens)
-            self.fee = fee
-            self.weights = tuple(weights)
-
-            self._state_lock = Lock()
-            self._state = BalancerV2PoolState(
-                address=self.address,
-                block=state_block,
-                balances=tuple(balances),
-            )
-            self._subscribers: WeakSet = WeakSet()
-            return
-
-        # ── Legacy I/O path ──
-        warnings.warn(
-            "Constructing BalancerV2Pool without pre-fetched data is deprecated. "
-            "Use Bot.build_balancer_pool() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        if verify_address:
-            # TODO: add functionality
-            raise NotImplementedError
-
-        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        w3 = connection_manager.get_web3(self.chain_id)
-        state_block = state_block if state_block is not None else w3.eth.block_number
-
-        pool_id: bytes
-        (pool_id,) = eth_abi.abi.decode(
-            types=["bytes32"],
-            data=w3.eth.call(
-                transaction=TxParams(
-                    to=self.address,
-                    data=encode_function_calldata(
-                        function_prototype="getPoolId()",
-                        function_arguments=None,
-                    ),
-                ),
-                block_identifier=state_block,
-            ),
-        )
         self.pool_id = pool_id
         self.pool_specialization = int.from_bytes(self.pool_id[20:22], byteorder="big")
-
-        vault_address: str
-        (vault_address,) = eth_abi.abi.decode(
-            types=["address"],
-            data=w3.eth.call(
-                transaction=TxParams(
-                    to=self.address,
-                    data=encode_function_calldata(
-                        function_prototype="getVault()",
-                        function_arguments=None,
-                    ),
-                ),
-                block_identifier=state_block,
-            ),
-        )
-        self.vault = get_checksum_address(vault_address)
-
-        pool_tokens: list[str]
-        pool_token_balances: list[int]
-        pool_tokens, pool_token_balances, _ = eth_abi.abi.decode(
-            types=["address[]", "uint256[]", "uint256"],
-            data=w3.eth.call(
-                transaction=TxParams(
-                    to=self.vault,
-                    data=encode_function_calldata(
-                        function_prototype="getPoolTokens(bytes32)",
-                        function_arguments=[self.pool_id],
-                    ),
-                ),
-                block_identifier=state_block,
-            ),
-        )
-
-        token_manager = Erc20TokenManager(chain_id=self.chain_id)
-        self._tokens = tuple(
-            token_manager.get_erc20token(
-                address=get_checksum_address(token),
-                silent=silent,
-            )
-            for token in pool_tokens
-        )
+        self.vault = get_checksum_address(vault)
+        self._tokens = tuple(tokens)
         self.scaling_factors = tuple(_compute_scaling_factor(token) for token in self._tokens)
+        self.fee = fee
+        self.weights = tuple(weights)
 
         self._state_lock = Lock()
         self._state = BalancerV2PoolState(
             address=self.address,
             block=state_block,
-            balances=tuple(pool_token_balances),
+            balances=tuple(balances),
         )
-
-        (swap_fee,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=w3.eth.call(
-                transaction=TxParams(
-                    to=self.address,
-                    data=encode_function_calldata(
-                        function_prototype="getSwapFeePercentage()",
-                        function_arguments=None,
-                    ),
-                ),
-                block_identifier=state_block,
-            ),
-        )
-        self.fee = Fraction(swap_fee, self.FEE_DENOMINATOR)
-
-        (normalized_weights,) = eth_abi.abi.decode(
-            types=["uint256[]"],
-            data=w3.eth.call(
-                transaction=TxParams(
-                    to=self.address,
-                    data=encode_function_calldata(
-                        function_prototype="getNormalizedWeights()",
-                        function_arguments=None,
-                    ),
-                ),
-                block_identifier=state_block,
-            ),
-        )
-        self.weights = tuple(normalized_weights)
+        self._subscribers: WeakSet = WeakSet()
 
     @property
     def balances(self) -> tuple[int, ...]:

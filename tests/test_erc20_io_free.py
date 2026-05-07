@@ -1,15 +1,12 @@
 """Tests for I/O-free Erc20Token extraction (Phase 2)."""
 
 import pathlib
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from degenbot.bot import Bot
-from degenbot.config import DegenbotConfig, DatabaseSettings
+from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.erc20 import Erc20Token, EtherPlaceholder
 from degenbot.registry import TokenRegistry
-from degenbot.types.aliases import ChainId
 
 
 def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
@@ -152,9 +149,9 @@ class TestBotBuildErc20Token:
         def mock_call(*, to, data, block=None):
             if data[:4] == b"\x06\xfd\xde\x03":  # name()
                 return eth_abi_encode(["string"], ["Wrapped Ether"])
-            elif data[:4] == b"\x95\xd8\x9b\x41":  # symbol()
+            if data[:4] == b"\x95\xd8\x9b\x41":  # symbol()
                 return eth_abi_encode(["string"], ["WETH"])
-            elif data[:4] == b"\x31\x3c\xe5\x67":  # decimals()
+            if data[:4] == b"\x31\x3c\xe5\x67":  # decimals()
                 return eth_abi_encode(["uint256"], [18])
             return b""
 

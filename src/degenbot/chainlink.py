@@ -1,8 +1,8 @@
+from typing import Any
+
 import pydantic_core
-from web3.contract.contract import Contract
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import connection_manager
 from degenbot.types.aliases import ChainId
 
 CHAINLINK_PRICE_FEED_ABI = pydantic_core.from_json(
@@ -15,8 +15,12 @@ CHAINLINK_PRICE_FEED_ABI = pydantic_core.from_json(
 class ChainlinkPriceContract:
     """
     Represents an on-chain Chainlink price oracle.
-    Attribute `price` is decimal-corrected and represents the nominal token
-    price in USD (e.g. 1 DAI = 1.0 USD)
+
+    Constructed with the oracle address and chain_id. The ``price`` property fetches
+    the current price and decimals on access.
+
+    The ``price`` property returns the decimal-corrected nominal token price in USD
+    (e.g. 1 DAI = 1.0 USD).
     """
 
     def __init__(
@@ -24,22 +28,44 @@ class ChainlinkPriceContract:
         address: str,
         *,
         chain_id: ChainId | None = None,
+        decimals: int | None = None,
+        bot: Any | None = None,
     ) -> None:
         self.address = get_checksum_address(address)
-        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
-        self.decimals: int = self.w3_contract.functions.decimals().call()
+        self._chain_id = chain_id
+        self._decimals = decimals
+        self._bot = bot
 
     @property
-    def chain_id(self) -> ChainId:
+    def chain_id(self) -> ChainId | None:
         return self._chain_id
 
     @property
-    def w3_contract(self) -> Contract:
-        return connection_manager.get_web3(self.chain_id).eth.contract(
-            address=self.address,
-            abi=CHAINLINK_PRICE_FEED_ABI,
-        )
+    def decimals(self) -> int:
+        if self._decimals is None:
+            if self._bot is not None:
+                chain_id = self._chain_id or self._bot.connections.default_chain_id
+                w3 = self._bot.connections.get_provider(chain_id).underlying
+            else:
+                from degenbot.connection import connection_manager
+                w3 = connection_manager.get_web3(self._chain_id)
+            contract = w3.eth.contract(
+                address=self.address,
+                abi=CHAINLINK_PRICE_FEED_ABI,
+            )
+            self._decimals = contract.functions.decimals().call()
+        return self._decimals
 
     @property
     def price(self) -> float:
-        return float(self.w3_contract.functions.latestRoundData().call()[1] / (10**self.decimals))
+        if self._bot is not None:
+            chain_id = self._chain_id or self._bot.connections.default_chain_id
+            w3 = self._bot.connections.get_provider(chain_id).underlying
+        else:
+            from degenbot.connection import connection_manager
+            w3 = connection_manager.get_web3(self._chain_id)
+        contract = w3.eth.contract(
+            address=self.address,
+            abi=CHAINLINK_PRICE_FEED_ABI,
+        )
+        return float(contract.functions.latestRoundData().call()[1] / (10**self.decimals))

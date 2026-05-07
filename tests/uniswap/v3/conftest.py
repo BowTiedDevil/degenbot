@@ -10,7 +10,6 @@ from pathlib import Path
 import pytest
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import connection_manager
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -27,6 +26,9 @@ UNISWAP_V3_WBTC_WETH_BLOCK = 24947230
 # Token addresses
 WBTC_CONTRACT_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 WETH_CONTRACT_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+
+# Factory address for Uniswap V3 on Ethereum mainnet
+UNISWAP_V3_FACTORY = get_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
 
 
 def load_v3_liquidity_data(data_file: Path, pool_address: str) -> dict | None:
@@ -74,8 +76,6 @@ def offline_wbtc_weth_v3_pool(offline_adapter: ProviderAdapter) -> UniswapV3Pool
     """
     Provide WBTC-WETH V3 pool using offline provider with complete tick data.
     """
-    connection_manager._default_chain_id = 1
-
     # Load tick data from recorded file
     data_file = CHAIN_DATA_PATH / "1" / f"block_{UNISWAP_V3_WBTC_WETH_BLOCK}.json"
     liquidity_data = load_v3_liquidity_data(data_file, UNISWAP_V3_WBTC_WETH_POOL)
@@ -113,14 +113,62 @@ def offline_wbtc_weth_v3_pool(offline_adapter: ProviderAdapter) -> UniswapV3Pool
         for k, v in tick_data_int.items()
     }
 
+    # Construct I/O-free tokens
+    wbtc = Erc20Token(
+        WBTC_CONTRACT_ADDRESS,
+        name="Wrapped BTC",
+        symbol="WBTC",
+        decimals=8,
+        chain_id=1,
+    )
+    weth = Erc20Token(
+        WETH_CONTRACT_ADDRESS,
+        name="Wrapped Ether",
+        symbol="WETH",
+        decimals=18,
+        chain_id=1,
+    )
+
+    # Fetch pool state from offline provider
+    from degenbot.functions import encode_function_calldata, raw_call
+
+    slot0_result = raw_call(
+        offline_adapter,
+        address=UNISWAP_V3_WBTC_WETH_POOL,
+        calldata=encode_function_calldata(
+            function_prototype="slot0()",
+            function_arguments=None,
+        ),
+        return_types=UniswapV3Pool.SLOT0_STRUCT_TYPES,
+        block_identifier=UNISWAP_V3_WBTC_WETH_BLOCK,
+    )
+    sqrt_price_x96, tick, *_ = slot0_result
+
+    (liquidity,) = raw_call(
+        offline_adapter,
+        address=UNISWAP_V3_WBTC_WETH_POOL,
+        calldata=encode_function_calldata(
+            function_prototype="liquidity()",
+            function_arguments=None,
+        ),
+        return_types=["uint256"],
+        block_identifier=UNISWAP_V3_WBTC_WETH_BLOCK,
+    )
+
     return UniswapV3Pool(
         address=UNISWAP_V3_WBTC_WETH_POOL,
         chain_id=1,
-        provider=offline_adapter,
         state_block=UNISWAP_V3_WBTC_WETH_BLOCK,
+        token0=wbtc,
+        token1=weth,
+        factory=UNISWAP_V3_FACTORY,
+        fee=3000,
+        tick_spacing=UNISWAP_V3_WBTC_WETH_TICK_SPACING,
+        sqrt_price_x96=sqrt_price_x96,
+        tick=tick,
+        liquidity=liquidity,
         tick_bitmap=tick_bitmap_for_pool,
         tick_data=tick_data_for_pool,
-        silent=True,
     )
 
 

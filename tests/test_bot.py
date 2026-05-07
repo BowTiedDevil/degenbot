@@ -7,7 +7,7 @@ import pytest
 
 from degenbot.async_bot import AsyncBot
 from degenbot.bot import Bot
-from degenbot.config import DegenbotConfig, DatabaseSettings
+from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.connection.async_connection_manager import AsyncConnectionManager
 from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.database.session_manager import DatabaseSessionManager

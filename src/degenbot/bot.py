@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
+from collections.abc import Callable
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
 import sqlalchemy.exc
@@ -16,7 +18,11 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
 from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
-from degenbot.database.models.pools import LiquidityPoolTable, PoolManagerTable, UniswapV4PoolTable
+from degenbot.database.models.pools import (
+    LiquidityPoolTable,
+    PoolManagerTable,
+    UniswapV4PoolTable,
+)
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.erc20 import Erc20Token, EtherPlaceholder
@@ -70,6 +76,11 @@ class Bot:
         self.tokens = TokenRegistry()
         self.managed_pools = ManagedPoolRegistry()
         self._managers: dict[tuple[ChainId, str], AbstractPoolManager] = {}
+
+    @property
+    def chain_id(self) -> ChainId:
+        """Return the default chain ID from the connection manager."""
+        return self.connections.default_chain_id
 
     @classmethod
     def from_config_file(cls) -> Bot:
@@ -128,7 +139,8 @@ class Bot:
             return token
 
         # Try DB first
-        with self.db() as session:
+        token_from_db = None
+        with contextlib.suppress(Exception), self.db() as session:
             token_from_db = get_token_from_database(
                 token=address,
                 chain_id=chain_id,
@@ -470,6 +482,104 @@ class Bot:
         # For string identifiers like 'latest', 'earliest', 'pending'
         return provider.get_block_number()
 
+    def _make_tick_data_fetcher_v3(
+        self, pool_address: ChecksumAddress, chain_id: int
+    ) -> Callable[[int, int], None]:
+        """Create a tick data fetcher callback for a V3 pool."""
+        from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+        from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
+
+        def fetcher(word_position: int, block_number: int) -> None:
+            pool = self.pools.get(pool_address=pool_address, chain_id=chain_id)
+            if pool is None:
+                return
+            assert isinstance(pool, UniswapV3Pool)
+
+            provider = self.connections.get_provider(chain_id)
+            working_tick_bitmap = dict(pool.tick_bitmap)
+            working_tick_data = dict(pool.tick_data)
+
+            bitmap_value = pool.get_tick_bitmap_at_word(
+                provider, word_position=word_position, block_identifier=block_number
+            )
+            working_tick_bitmap[word_position] = UniswapV3BitmapAtWord(
+                bitmap=bitmap_value, block=block_number
+            )
+
+            if bitmap_value != 0:
+                populated_ticks = pool.get_populated_ticks_in_word(
+                    provider, word_position=word_position, block_identifier=block_number
+                )
+                for tick, liquidity_gross, liquidity_net in populated_ticks:
+                    working_tick_data[tick] = UniswapV3LiquidityAtTick(
+                        liquidity_net=liquidity_net,
+                        liquidity_gross=liquidity_gross,
+                        block=block_number,
+                    )
+
+            new_state = dataclasses.replace(
+                pool.state,
+                tick_bitmap=working_tick_bitmap,
+                tick_data=working_tick_data,
+                block=max(pool.update_block, block_number),
+            )
+            pool._state_mgr.push_state(new_state)
+
+        return fetcher
+
+    def _make_tick_data_fetcher_v4(
+        self, pool_id: HexBytes, pool_manager_address: str, state_view_address: str, chain_id: int
+    ) -> Callable[[int, int], None]:
+        """Create a tick data fetcher callback for a V4 pool."""
+        from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+        from degenbot.uniswap.v4_types import UniswapV4BitmapAtWord, UniswapV4LiquidityAtTick
+
+        def fetcher(word_position: int, block_number: int) -> None:
+            pool = self.managed_pools.get(
+                chain_id=chain_id,
+                pool_manager_address=pool_manager_address,
+                pool_id=pool_id,
+            )
+            if pool is None:
+                return
+            assert isinstance(pool, UniswapV4Pool)
+
+            provider = self.connections.get_provider(chain_id)
+            working_tick_bitmap = dict(pool.tick_bitmap)
+            working_tick_data = dict(pool.tick_data)
+
+            bitmap_value = pool.get_tick_bitmap_at_word(
+                provider,
+                word_position=word_position,
+                block_identifier=block_number,
+            )
+            working_tick_bitmap[word_position] = UniswapV4BitmapAtWord(
+                bitmap=bitmap_value, block=block_number
+            )
+
+            if bitmap_value != 0:
+                populated_ticks = pool.get_populated_ticks_in_word(
+                    provider,
+                    word_position=word_position,
+                    block_identifier=block_number,
+                )
+                for tick, liquidity_gross, liquidity_net in populated_ticks:
+                    working_tick_data[tick] = UniswapV4LiquidityAtTick(
+                        liquidity_net=liquidity_net,
+                        liquidity_gross=liquidity_gross,
+                        block=block_number,
+                    )
+
+            new_state = dataclasses.replace(
+                pool.state,
+                tick_bitmap=working_tick_bitmap,
+                tick_data=working_tick_data,
+                block=max(pool.update_block, block_number),
+            )
+            pool._state_mgr.push_state(new_state)
+
+        return fetcher
+
     def build_v3_pool(
         self,
         pool_address: str,
@@ -478,6 +588,8 @@ class Bot:
         deployer_address: str | None = None,
         init_hash: str | None = None,
         state_block: int | None = None,
+        tick_bitmap: dict[int, UniswapV3BitmapAtWord] | None = None,
+        tick_data: dict[int, UniswapV3LiquidityAtTick] | None = None,
         silent: bool = False,
     ) -> UniswapV3Pool:
         """Fetch pool data from DB/RPC and construct an I/O-free UniswapV3Pool."""
@@ -570,58 +682,86 @@ class Bot:
         )
         (liquidity,) = eth_abi.abi.decode(types=["uint128"], data=liquidity_result)
 
-        # Fetch initial tick bitmap and tick data (sparse)
+        # Fetch initial tick bitmap and tick data
         working_tick_bitmap: dict[int, Any] = {}
         working_tick_data: dict[int, Any] = {}
 
-        word, _ = get_tick_word_and_bit_position(tick=int(tick), tick_spacing=tick_spacing_for_pool)
+        # Use provided tick data if given (snapshot or test fixtures)
+        if tick_bitmap is not None and tick_data is not None:
+            working_tick_bitmap = dict(tick_bitmap)
+            working_tick_data = dict(tick_data)
+        elif tick_bitmap is not None or tick_data is not None:
+            raise DegenbotValueError(message="Provide both tick_bitmap and tick_data, or neither.")
+        else:
+            # Try DB snapshot tables first
+            db_snapshot_loaded = False
+            if pool_from_db is not None and hasattr(pool_from_db, "liquidity_positions"):
+                with contextlib.suppress(Exception), self.db() as session:
+                    if hasattr(pool_from_db, "pool_id"):
+                        # Reload to access relationships in a fresh session
+                        pool_with_data = session.scalar(
+                            select(type(pool_from_db)).where(  # type: ignore[arg-type]
+                                LiquidityPoolTable.id == pool_from_db.id
+                            )
+                        )
+                        if pool_with_data is not None:
+                            init_maps = pool_with_data.initialization_maps
+                            liq_positions = pool_with_data.liquidity_positions
+                            if init_maps and liq_positions:
+                                for init_map in init_maps:
+                                    working_tick_bitmap[int(init_map.word)] = UniswapV3BitmapAtWord(
+                                        bitmap=int(init_map.bitmap),
+                                        block=pool_with_data.liquidity_update_block or 0,
+                                    )
+                                for pos in liq_positions:
+                                    working_tick_data[int(pos.tick)] = UniswapV3LiquidityAtTick(
+                                        liquidity_net=int(pos.liquidity_net),
+                                        liquidity_gross=int(pos.liquidity_gross),
+                                        block=pool_with_data.liquidity_update_block or 0,
+                                    )
+                                db_snapshot_loaded = True
 
-        (bitmap_at_word,) = raw_call(
-            provider,
-            address=pool_address,
-            calldata=encode_function_calldata("tickBitmap(int16)", [word]),
-            return_types=["uint256"],
-            block_identifier=state_block,
-        )
+            if not db_snapshot_loaded:
+                word, _ = get_tick_word_and_bit_position(
+                    tick=int(tick), tick_spacing=tick_spacing_for_pool
+                )
 
-        if bitmap_at_word != 0:
-            # Fetch initialized ticks in this word
+                (bitmap_at_word,) = raw_call(
+                    provider,
+                    address=pool_address,
+                    calldata=encode_function_calldata("tickBitmap(int16)", [word]),
+                    return_types=["uint256"],
+                    block_identifier=state_block,
+                )
 
-            active_ticks = [
-                ((word << 8) + i) * tick_spacing_for_pool
-                for i in range(256)
-                if bitmap_at_word & (1 << i) > 0
-            ]
+                if bitmap_at_word != 0:
+                    # Fetch initialized ticks in this word
+                    active_ticks = [
+                        ((word << 8) + i) * tick_spacing_for_pool
+                        for i in range(256)
+                        if bitmap_at_word & (1 << i) > 0
+                    ]
 
-            for active_tick in active_ticks:
-                result = provider.call(
-                    to=pool_address,
-                    data=encode_function_calldata("ticks(int24)", [active_tick]),
+                    for active_tick in active_ticks:
+                        result = provider.call(
+                            to=pool_address,
+                            data=encode_function_calldata("ticks(int24)", [active_tick]),
+                            block=state_block,
+                        )
+                        liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
+                            types=["uint128", "int128", "uint256", "uint256", "int56", "uint160", "uint32", "bool"],
+                            data=result,
+                        )
+                        working_tick_data[active_tick] = UniswapV3LiquidityAtTick(
+                            liquidity_net=int(liquidity_net),
+                            liquidity_gross=int(liquidity_gross),
+                            block=state_block,
+                        )
+
+                working_tick_bitmap[word] = UniswapV3BitmapAtWord(
+                    bitmap=bitmap_at_word,
                     block=state_block,
                 )
-                liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
-                    types=[
-                        "uint128",
-                        "int128",
-                        "uint256",
-                        "uint256",
-                        "int56",
-                        "uint160",
-                        "uint32",
-                        "bool",
-                    ],
-                    data=result,
-                )
-                working_tick_data[active_tick] = UniswapV3LiquidityAtTick(
-                    liquidity_net=int(liquidity_net),
-                    liquidity_gross=int(liquidity_gross),
-                    block=state_block,
-                )
-
-        working_tick_bitmap[word] = UniswapV3BitmapAtWord(
-            bitmap=bitmap_at_word,
-            block=state_block,
-        )
 
         # Determine deployer and init_hash
         deployer = factory
@@ -655,6 +795,7 @@ class Bot:
             tick_data=tick_data_arg,
             deployer_address=deployer,
             init_hash=init_hash,
+            tick_data_fetcher=self._make_tick_data_fetcher_v3(pool_address, chain_id),
         )
 
         # Register pool
@@ -685,6 +826,8 @@ class Bot:
         hook_address: str | None = None,
         chain_id: ChainId | None = None,
         state_block: int | None = None,
+        tick_bitmap: dict[int, UniswapV4BitmapAtWord] | None = None,
+        tick_data: dict[int, UniswapV4LiquidityAtTick] | None = None,
         silent: bool = False,
     ) -> UniswapV4Pool:  # UniswapV4Pool — return type deferred to avoid circular import
         """Fetch pool data from DB/RPC and construct an I/O-free UniswapV4Pool."""
@@ -791,56 +934,90 @@ class Bot:
         protocol_fee_one_to_zero = protocol_fee_val >> 12
         protocol_fee_zero_to_one = protocol_fee_val & 0xFFF
 
-        # Fetch initial tick bitmap and tick data (sparse)
+        # Fetch initial tick bitmap and tick data
         working_tick_bitmap: dict[int, Any] = {}
         working_tick_data: dict[int, Any] = {}
 
-        word, _ = get_tick_word_and_bit_position(
-            tick=int(tick_val),
-            tick_spacing=tick_spacing_for_pool,
-        )
+        # Use provided tick data if given (snapshot or test fixtures)
+        if tick_bitmap is not None and tick_data is not None:
+            working_tick_bitmap = dict(tick_bitmap)
+            working_tick_data = dict(tick_data)
+        elif tick_bitmap is not None or tick_data is not None:
+            raise DegenbotValueError(message="Provide both tick_bitmap and tick_data, or neither.")
+        else:
+            # Try DB snapshot tables first
+            db_snapshot_loaded = False
+            if pool_from_db is not None and hasattr(pool_from_db, "liquidity_positions"):
+                with contextlib.suppress(Exception), self.db() as session:
+                    if hasattr(pool_from_db, "managed_pool_id"):
+                        pool_with_data = session.scalar(
+                            select(type(pool_from_db)).where(  # type: ignore[arg-type]
+                                UniswapV4PoolTable.id == pool_from_db.id
+                            )
+                        )
+                        if pool_with_data is not None:
+                            init_maps = pool_with_data.initialization_maps
+                            liq_positions = pool_with_data.liquidity_positions
+                            if init_maps and liq_positions:
+                                for init_map in init_maps:
+                                    working_tick_bitmap[int(init_map.word)] = UniswapV4BitmapAtWord(
+                                        bitmap=int(init_map.bitmap),
+                                        block=pool_with_data.liquidity_update_block or 0,
+                                    )
+                                for pos in liq_positions:
+                                    working_tick_data[int(pos.tick)] = UniswapV4LiquidityAtTick(
+                                        liquidity_net=int(pos.liquidity_net),
+                                        liquidity_gross=int(pos.liquidity_gross),
+                                        block=pool_with_data.liquidity_update_block or 0,
+                                    )
+                                db_snapshot_loaded = True
 
-        (bitmap_at_word,) = raw_call(
-            provider,
-            address=state_view_address,
-            calldata=encode_function_calldata(
-                "getTickBitmap(bytes32,int16)",
-                [pool_id_bytes, word],
-            ),
-            return_types=["uint256"],
-            block_identifier=state_block,
-        )
+            if not db_snapshot_loaded:
+                word, _ = get_tick_word_and_bit_position(
+                    tick=int(tick_val), tick_spacing=tick_spacing_for_pool
+                )
 
-        if bitmap_at_word != 0:
-            active_ticks = [
-                ((word << 8) + i) * tick_spacing_for_pool
-                for i in range(256)
-                if bitmap_at_word & (1 << i) > 0
-            ]
-
-            for active_tick in active_ticks:
-                result = provider.call(
-                    to=state_view_address,
-                    data=encode_function_calldata(
-                        "getTickLiquidity(bytes32,int24)",
-                        [pool_id_bytes, active_tick],
+                (bitmap_at_word,) = raw_call(
+                    provider,
+                    address=state_view_address,
+                    calldata=encode_function_calldata(
+                        "getTickBitmap(bytes32,int16)",
+                        [pool_id_bytes, word],
                     ),
-                    block=state_block,
-                )
-                liquidity_gross, liquidity_net = eth_abi.abi.decode(
-                    types=["uint128", "int128"],
-                    data=result,
-                )
-                working_tick_data[active_tick] = UniswapV4LiquidityAtTick(
-                    liquidity_net=int(liquidity_net),
-                    liquidity_gross=int(liquidity_gross),
-                    block=state_block,
+                    return_types=["uint256"],
+                    block_identifier=state_block,
                 )
 
-        working_tick_bitmap[word] = UniswapV4BitmapAtWord(
-            bitmap=bitmap_at_word,
-            block=state_block,
-        )
+                if bitmap_at_word != 0:
+                    active_ticks = [
+                        ((word << 8) + i) * tick_spacing_for_pool
+                        for i in range(256)
+                        if bitmap_at_word & (1 << i) > 0
+                    ]
+
+                    for active_tick in active_ticks:
+                        result = provider.call(
+                            to=state_view_address,
+                            data=encode_function_calldata(
+                                "getTickLiquidity(bytes32,int24)",
+                                [pool_id_bytes, active_tick],
+                            ),
+                            block=state_block,
+                        )
+                        liquidity_gross, liquidity_net = eth_abi.abi.decode(
+                            types=["uint128", "int128"],
+                            data=result,
+                        )
+                        working_tick_data[active_tick] = UniswapV4LiquidityAtTick(
+                            liquidity_net=int(liquidity_net),
+                            liquidity_gross=int(liquidity_gross),
+                            block=state_block,
+                        )
+
+                working_tick_bitmap[word] = UniswapV4BitmapAtWord(
+                    bitmap=bitmap_at_word,
+                    block=state_block,
+                )
 
         # If tick data was populated, pass both. Otherwise pass None (sparse mode).
         tick_bitmap_arg = working_tick_bitmap if working_tick_data else None
@@ -864,7 +1041,7 @@ class Bot:
             state_block=state_block,
             tick_bitmap=tick_bitmap_arg,
             tick_data=tick_data_arg,
-            silent=silent,
+            tick_data_fetcher=self._make_tick_data_fetcher_v4(pool_id_bytes, pool_manager_address, state_view_address, chain_id),
         )
 
         # Register pool in managed pool registry
@@ -891,3 +1068,156 @@ class Bot:
 
     def get_web3(self, *, chain_id: ChainId) -> Any:
         return self.connections.get_web3(chain_id)
+
+    def update(self, pool: Any, *, block_number: BlockIdentifier | None = None) -> bool:
+        """
+        Fetch the current state of a pool from the chain and apply it via
+        ``pool.external_update()``.
+
+        Returns True if the state changed, False if unchanged.
+        """
+        from degenbot.aerodrome.pools import AerodromeV2Pool
+        from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+        from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+        from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+
+        provider = self.connections.get_provider(pool.chain_id)
+
+        if isinstance(pool, UniswapV2Pool) and not isinstance(pool, AerodromeV2Pool):
+            return self._update_v2_pool(pool, provider=provider, block_number=block_number)
+        if isinstance(pool, AerodromeV2Pool):
+            return self._update_aerodrome_v2_pool(pool, provider=provider, block_number=block_number)
+        if isinstance(pool, UniswapV3Pool) and not isinstance(pool, UniswapV4Pool):
+            return self._update_v3_pool(pool, provider=provider, block_number=block_number)
+        if isinstance(pool, UniswapV4Pool):
+            return self._update_v4_pool(pool, provider=provider, block_number=block_number)
+        raise TypeError(f"update() not implemented for pool type {type(pool).__name__}")
+
+    def _update_v2_pool(
+        self, pool: Any, *, provider: Any, block_number: BlockIdentifier | None
+    ) -> bool:
+        from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+        from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
+
+        assert isinstance(pool, UniswapV2Pool)
+        _block_number = block_number if block_number is not None else provider.get_block_number()
+        reserves0, reserves1 = pool.get_reserves(provider, block_identifier=_block_number)
+
+        if pool.reserves_token0 == reserves0 and pool.reserves_token1 == reserves1:
+            return False
+
+        update = UniswapV2PoolExternalUpdate(
+            block_number=_block_number,
+            reserves_token0=reserves0,
+            reserves_token1=reserves1,
+        )
+        pool.external_update(update)
+        return True
+
+    def _update_aerodrome_v2_pool(
+        self, pool: Any, *, provider: Any, block_number: BlockIdentifier | None
+    ) -> bool:
+        from degenbot.aerodrome.pools import AerodromeV2Pool
+        from degenbot.aerodrome.types import AerodromeV2PoolExternalUpdate
+
+        assert isinstance(pool, AerodromeV2Pool)
+        _block_number = block_number if block_number is not None else provider.get_block_number()
+        reserves0, reserves1 = pool.get_reserves(provider, block_identifier=_block_number)
+
+        if pool.reserves_token0 == reserves0 and pool.reserves_token1 == reserves1:
+            return False
+
+        update = AerodromeV2PoolExternalUpdate(
+            block_number=_block_number,
+            reserves_token0=reserves0,
+            reserves_token1=reserves1,
+        )
+        pool.external_update(update)
+        return True
+
+    def _update_v3_pool(
+        self, pool: Any, *, provider: Any, block_number: BlockIdentifier | None
+    ) -> bool:
+        from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+        from degenbot.uniswap.v3_types import UniswapV3PoolExternalUpdate
+
+        assert isinstance(pool, UniswapV3Pool)
+        _block_number = block_number if block_number is not None else provider.get_block_number()
+
+        slot0_result = provider.call(
+            to=pool.address,
+            data=encode_function_calldata("slot0()", None),
+            block=_block_number,
+        )
+        sqrt_price_x96, tick, *_ = cast(
+            "tuple[int, ...]",
+            eth_abi.abi.decode(types=["uint160", "int24", "uint16", "uint16", "uint16"], data=slot0_result),
+        )
+        (liquidity,) = cast(
+            "tuple[int]",
+            eth_abi.abi.decode(
+                types=["uint256"],
+                data=provider.call(
+                    to=pool.address,
+                    data=encode_function_calldata("liquidity()", None),
+                    block=_block_number,
+                ),
+            ),
+        )
+
+        if pool.sqrt_price_x96 == sqrt_price_x96 and pool.liquidity == liquidity and pool.tick == tick:
+            return False
+
+        update = UniswapV3PoolExternalUpdate(
+            block_number=_block_number,
+            sqrt_price_x96=sqrt_price_x96,
+            tick=tick,
+            liquidity=liquidity,
+        )
+        pool.external_update(update)
+        return True
+
+    def _update_v4_pool(
+        self, pool: Any, *, provider: Any, block_number: BlockIdentifier | None
+    ) -> bool:
+        from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+        from degenbot.uniswap.v4_types import UniswapV4PoolExternalUpdate
+
+        assert isinstance(pool, UniswapV4Pool)
+        _block_number = block_number if block_number is not None else provider.get_block_number()
+
+        slot0_calldata = encode_function_calldata("getSlot0(bytes32)", [pool.pool_id])
+        slot0_result = provider.call(
+            to=pool._state_view_address,
+            data=slot0_calldata,
+            block=_block_number,
+        )
+        price, tick, protocol_fee, lp_fee = cast(
+            "tuple[int, ...]",
+            eth_abi.abi.decode(types=["uint160", "int24", "uint24", "uint24"], data=slot0_result),
+        )
+
+        liquidity_calldata = encode_function_calldata("getLiquidity(bytes32)", [pool.pool_id])
+        (liquidity_val,) = cast(
+            "tuple[int]",
+            eth_abi.abi.decode(
+                types=["uint256"],
+                data=provider.call(
+                    to=pool._state_view_address,
+                    data=liquidity_calldata,
+                    block=_block_number,
+                ),
+            ),
+        )
+
+        if pool.sqrt_price_x96 == price and pool.liquidity == liquidity_val and pool.tick == tick:
+            return False
+
+        update = UniswapV4PoolExternalUpdate(
+            block_number=_block_number,
+            sqrt_price_x96=price,
+            tick=tick,
+            liquidity=liquidity_val,
+        )
+        pool.external_update(update)
+        return True

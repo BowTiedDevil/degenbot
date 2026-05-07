@@ -17,8 +17,8 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from web3.types import LogReceipt
 
 from degenbot import abi_decode
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.bot import Bot
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
 from degenbot.cli.utils import get_provider_from_config
 from degenbot.constants import MAX_UINT256

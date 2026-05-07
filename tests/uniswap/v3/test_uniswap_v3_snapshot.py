@@ -44,12 +44,19 @@ def empty_mainnet_snapshot_from_file(fork_mainnet_full: AnvilFork) -> UniswapV3L
 def empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870(
     fork_mainnet_full: AnvilFork,
 ) -> UniswapV3LiquiditySnapshot:
+    from degenbot.provider import ProviderAdapter
+
     set_web3(fork_mainnet_full.w3)
+    provider = ProviderAdapter.from_web3(fork_mainnet_full.w3)
 
     snapshot = UniswapV3LiquiditySnapshot(
         source=MonolithicJsonFileSnapshot(EMPTY_SNAPSHOT_FILENAME),
     )
-    snapshot.fetch_new_events(to_block=EMPTY_SNAPSHOT_BLOCK + 250, blocks_per_request=50)
+    snapshot.fetch_new_events(
+        to_block=EMPTY_SNAPSHOT_BLOCK + 250,
+        provider=provider,
+        blocks_per_request=50,
+    )
     return snapshot
 
 
@@ -266,9 +273,12 @@ def test_apply_update_to_snapshot(
     empty_mainnet_snapshot_from_file: UniswapV3LiquiditySnapshot,
     fork_mainnet_full: AnvilFork,
 ):
+    from degenbot.provider import ProviderAdapter
+    from tests.helpers.bot_factory import make_bot_with_provider
+
     pool_address = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 
-    set_web3(fork_mainnet_full.w3)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
 
     tick_data = {
         253320: UniswapV3LiquidityAtTick(
@@ -298,7 +308,7 @@ def test_apply_update_to_snapshot(
 
     pool_manager = UniswapV3PoolManager(
         factory_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
-        chain_id=1,
+        bot=bot,
         snapshot=empty_mainnet_snapshot_from_file,
     )
     pool = pool_manager.get_pool(pool_address)
@@ -687,9 +697,14 @@ def test_pools_property(
 
 
 def test_fetch_large_range(
+    fork_mainnet_full: AnvilFork,
     mainnet_snapshot_at_block_12_369_870_from_dir: UniswapV3LiquiditySnapshot,
 ):
+    from degenbot.provider import ProviderAdapter
+
+    provider = ProviderAdapter.from_web3(fork_mainnet_full.w3)
     # First 250 blocks only have Mint events, so fetch extra to cover Burn event logic
     mainnet_snapshot_at_block_12_369_870_from_dir.fetch_new_events(
-        to_block=EMPTY_SNAPSHOT_BLOCK + 1_000
+        to_block=EMPTY_SNAPSHOT_BLOCK + 1_000,
+        provider=provider,
     )

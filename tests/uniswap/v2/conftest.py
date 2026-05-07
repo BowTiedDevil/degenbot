@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import connection_manager
 from degenbot.erc20.erc20 import Erc20Token
+from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
@@ -19,6 +19,7 @@ from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 CHAIN_DATA_PATH = Path(__file__).parent.parent.parent / "fixtures" / "chain_data"
 
 UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
+UNISWAP_V2_FACTORY_ADDRESS = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
 UNISWAP_V2_FACTORY_POOL_INIT_HASH = (
     "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
 )
@@ -27,11 +28,13 @@ UNISWAP_V2_FACTORY_POOL_INIT_HASH = (
 WBTC_CONTRACT_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 WETH_CONTRACT_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
+V2_BLOCK_NUMBER = 24945920
+
 
 @pytest.fixture
 def offline_provider() -> OfflineProvider:
     """Provide an offline provider with recorded chain data."""
-    data_file = CHAIN_DATA_PATH / "1" / "block_24945920.json"
+    data_file = CHAIN_DATA_PATH / "1" / f"block_{V2_BLOCK_NUMBER}.json"
     if not data_file.exists():
         pytest.skip(f"Offline data file not found: {data_file}")
 
@@ -59,12 +62,44 @@ def offline_weth(offline_wbtc_weth_v2_pool: UniswapV2Pool) -> Erc20Token:
 @pytest.fixture
 def offline_wbtc_weth_v2_pool(offline_adapter: ProviderAdapter) -> UniswapV2Pool:
     """Provide WBTC-WETH V2 pool using offline provider."""
-    connection_manager._default_chain_id = 1
+    # Construct I/O-free tokens
+    wbtc = Erc20Token(
+        WBTC_CONTRACT_ADDRESS,
+        name="Wrapped BTC",
+        symbol="WBTC",
+        decimals=8,
+        chain_id=1,
+    )
+    weth = Erc20Token(
+        WETH_CONTRACT_ADDRESS,
+        name="Wrapped Ether",
+        symbol="WETH",
+        decimals=18,
+        chain_id=1,
+    )
+
+    # Fetch reserves from offline provider
+    (reserves0, reserves1, *_) = raw_call(
+        offline_adapter,
+        address=UNISWAP_V2_WBTC_WETH_POOL,
+        calldata=encode_function_calldata(
+            function_prototype="getReserves()",
+            function_arguments=None,
+        ),
+        return_types=["uint112", "uint112", "uint32"],
+        block_identifier=V2_BLOCK_NUMBER,
+    )
+
     return UniswapV2Pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         chain_id=1,
-        provider=offline_adapter,
-        state_block=24945920,
+        state_block=V2_BLOCK_NUMBER,
         init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
-        silent=True,
+        token0=wbtc,
+        token1=weth,
+        factory=UNISWAP_V2_FACTORY_ADDRESS,
+        fee_token0=UniswapV2Pool.FEE,
+        fee_token1=UniswapV2Pool.FEE,
+        reserves_token0=reserves0,
+        reserves_token1=reserves1,
     )
