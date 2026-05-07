@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import contextlib
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Never, Self
@@ -13,7 +15,6 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
 from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.exceptions.manager import (
-    ManagerAlreadyInitialized,
     PoolCreationFailed,
     PoolNotAssociated,
 )
@@ -24,6 +25,9 @@ from degenbot.types.aliases import ChainId
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
 from degenbot.uniswap.managers import AbstractUniswapV3PoolManager
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+
+if TYPE_CHECKING:
+    from degenbot.bot import Bot
 
 
 class _AbstractAerodromeV2PoolManager[Pool: AerodromeV2Pool](AbstractPoolManager[Pool]):
@@ -110,17 +114,17 @@ class AerodromeV2PoolManager(
         chain_id: ChainId | None = None,
         deployer_address: ChecksumAddress | str | None = None,
         pool_init_hash: str | None = None,
+        bot: Bot | None = None,
     ) -> None:
         factory_address = get_checksum_address(factory_address)
 
-        if chain_id is None:
-            chain_id = connection_manager.default_chain_id
+        self._bot = bot
 
-        if (chain_id, factory_address) in self.instances:
-            raise ManagerAlreadyInitialized(
-                message="A manager has already been initialized for this address. Access it using the get_instance() class method"  # noqa:E501
-            )
-        self.instances[chain_id, factory_address] = self
+        if chain_id is None:
+            if bot is not None:
+                chain_id = bot.connections.default_chain_id
+            else:
+                chain_id = connection_manager.default_chain_id
 
         try:
             factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]

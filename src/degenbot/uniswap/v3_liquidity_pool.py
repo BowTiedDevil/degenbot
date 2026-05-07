@@ -1,7 +1,9 @@
 # ruff: noqa: PLR0904
 
 # TODO: add event prototype exporter method and handler for callbacks
+import contextlib
 import dataclasses
+import warnings
 from collections import deque
 from fractions import Fraction
 from threading import Lock
@@ -204,8 +206,117 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
         verify_address: bool = True,
         silent: bool = False,
         state_cache_depth: int = 8,
+        # I/O-free path params
+        token0: Erc20Token | None = None,
+        token1: Erc20Token | None = None,
+        factory: str | None = None,
+        fee: int | None = None,
+        tick_spacing: int | None = None,
+        sqrt_price_x96: int | None = None,
+        tick: int | None = None,
+        liquidity: int | None = None,
     ) -> None:
         self.address = get_checksum_address(address)
+
+        # ── I/O-free path ──
+        if (
+            token0 is not None
+            and token1 is not None
+            and factory is not None
+            and fee is not None
+            and tick_spacing is not None
+            and sqrt_price_x96 is not None
+            and tick is not None
+            and liquidity is not None
+        ):
+            self._chain_id = chain_id if chain_id is not None else token0.chain_id
+            self._token0 = token0
+            self._token1 = token1
+            self.factory = get_checksum_address(factory)
+            self._fee = fee
+            self._tick_spacing = tick_spacing
+
+            _state_block = state_block if state_block is not None else 0
+            self._initial_state_block = _state_block
+
+            # Derive deployer/init_hash from factory deployments or fallback
+            self.deployer_address = (
+                get_checksum_address(deployer_address) if deployer_address is not None
+                else self.factory
+            )
+            self.init_hash = (
+                init_hash if init_hash is not None else self.UNISWAP_V3_MAINNET_POOL_INIT_HASH
+            )
+
+            from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
+
+            with contextlib.suppress(KeyError):
+                factory_deployment = _FACTORY_DEPLOYMENTS[self._chain_id][self.factory]
+                self.init_hash = factory_deployment.pool_init_hash
+                if factory_deployment.deployer is not None:
+                    self.deployer_address = factory_deployment.deployer
+
+            self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee / self.FEE_DENOMINATOR:.2f}%)"
+
+            if (tick_bitmap is not None) != (tick_data is not None):
+                raise DegenbotValueError(message="Provide both tick_bitmap and tick_data.")
+
+            self._sparse_liquidity_map = tick_bitmap is None or tick_data is None
+
+            working_tick_bitmap = (
+                {}
+                if tick_bitmap is None
+                else {
+                    int(word): (
+                        bitmap_at_word
+                        if isinstance(bitmap_at_word, UniswapV3BitmapAtWord)
+                        else UniswapV3BitmapAtWord(**bitmap_at_word)
+                    )
+                    for word, bitmap_at_word in tick_bitmap.items()
+                }
+            )
+            working_tick_data = (
+                {}
+                if tick_data is None
+                else {
+                    int(tick): (
+                        liquidity_at_tick
+                        if isinstance(liquidity_at_tick, UniswapV3LiquidityAtTick)
+                        else UniswapV3LiquidityAtTick(**liquidity_at_tick)
+                    )
+                    for tick, liquidity_at_tick in tick_data.items()
+                }
+            )
+
+            # I/O-free path: no tick fetching from chain
+            # If tick_bitmap/tick_data not provided, pool uses sparse mode
+            # (tick data fetched on-demand during swap calculations)
+
+            initial_state = self.PoolState.__value__(
+                address=self.address,
+                liquidity=liquidity,
+                sqrt_price_x96=sqrt_price_x96,
+                tick=tick,
+                tick_bitmap=working_tick_bitmap,
+                tick_data=working_tick_data,
+                block=_state_block,
+            )
+            self._state_lock = Lock()
+            self._state_mgr = ConcentratedLiquidityStateManager(
+                initial_state=initial_state,
+                state_cache_depth=state_cache_depth,
+            )
+            self._subscribers: WeakSet[Subscriber] = WeakSet()
+            return
+
+        # ── Legacy I/O path ──
+        warnings.warn(
+            "Constructing UniswapV3Pool without pre-fetched data is deprecated. "
+            "Use Bot.build_v3_pool() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         self._provider = (
             provider if provider is not None else connection_manager.get_provider(self.chain_id)

@@ -1,8 +1,8 @@
 import click
 
+from degenbot.bot import Bot
 from degenbot.cli import cli
-from degenbot.config import settings
-from degenbot.database import current_database_version, db_session, latest_database_version
+from degenbot.database import current_database_version, latest_database_version
 from degenbot.database.operations import (
     backup_sqlite_database,
     compact_sqlite_database,
@@ -21,11 +21,12 @@ def database() -> None:
 
 
 @database.command("backup")
-def database_backup() -> None:
+@click.pass_obj
+def database_backup(bot: Bot) -> None:
     """Back up the database."""
 
     try:
-        with db_session() as session:
+        with bot.db() as session:
             backup_sqlite_database(
                 session=session,
             )
@@ -36,7 +37,7 @@ def database_backup() -> None:
         )
         if user_confirm:
             exc.path.unlink(missing_ok=True)
-            with db_session() as session:
+            with bot.db() as session:
                 backup_sqlite_database(
                     session=session,
                 )
@@ -50,17 +51,18 @@ def database_backup() -> None:
     is_flag=True,
     help="Skip confirmation prompt",
 )
-def database_reset(*, force: bool) -> None:
+@click.pass_obj
+def database_reset(bot: Bot, *, force: bool) -> None:
     """
     Remove and recreate the database.
     """
 
     if force or click.confirm(
-        f"The existing database at {settings.database.path} will be removed and a new, empty database will be created and initialized using the schema included in {__package__} version {__version__}. Do you want to proceed?",  # noqa: E501
+        f"The existing database at {bot.config.database.path} will be removed and a new, empty database will be created and initialized using the schema included in {__package__} version {__version__}. Do you want to proceed?",  # noqa: E501
         default=False,
     ):
-        settings.database.path.unlink(missing_ok=True)
-        create_new_sqlite_database(settings.database.path)
+        bot.config.database.path.unlink(missing_ok=True)
+        create_new_sqlite_database(bot.config.database.path)
     else:
         raise click.Abort
 
@@ -71,13 +73,14 @@ def database_reset(*, force: bool) -> None:
     is_flag=True,
     help="Skip confirmation prompt",
 )
-def database_upgrade(*, force: bool) -> None:
+@click.pass_obj
+def database_upgrade(bot: Bot, *, force: bool) -> None:
     """
     Upgrade the database to the latest schema.
     """
 
     if force or click.confirm(
-        f"The database at {settings.database.path} will be upgraded from version {current_database_version} to {latest_database_version}. Do you want to proceed?",  # noqa:E501
+        f"The database at {bot.config.database.path} will be upgraded from version {current_database_version} to {latest_database_version}. Do you want to proceed?",  # noqa:E501
         default=False,
     ):
         upgrade_existing_sqlite_database()
@@ -86,8 +89,9 @@ def database_upgrade(*, force: bool) -> None:
 
 
 @database.command("compact")
-def database_compact() -> None:
+@click.pass_obj
+def database_compact(bot: Bot) -> None:
     """
     Compact the database.
     """
-    compact_sqlite_database(settings.database.path)
+    compact_sqlite_database(bot.config.database.path)

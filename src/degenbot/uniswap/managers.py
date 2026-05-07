@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import contextlib
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Self
@@ -8,7 +10,6 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
 from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.exceptions.manager import (
-    ManagerAlreadyInitialized,
     PoolCreationFailed,
     PoolNotAssociated,
 )
@@ -27,6 +28,9 @@ from degenbot.uniswap.v3_functions import generate_v3_pool_address
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 
+if TYPE_CHECKING:
+    from degenbot.bot import Bot
+
 
 class AbstractUniswapV2PoolManager[Pool: UniswapV2Pool](AbstractPoolManager[Pool]):
     def __init__(
@@ -36,17 +40,17 @@ class AbstractUniswapV2PoolManager[Pool: UniswapV2Pool](AbstractPoolManager[Pool
         chain_id: ChainId | None = None,
         deployer_address: ChecksumAddress | str | None = None,
         pool_init_hash: str | None = None,
+        bot: Bot | None = None,
     ) -> None:
         factory_address = get_checksum_address(factory_address)
 
-        if chain_id is None:
-            chain_id = connection_manager.default_chain_id
+        self._bot = bot
 
-        if (chain_id, factory_address) in self.instances:
-            raise ManagerAlreadyInitialized(
-                message="A manager has already been initialized for this address. Access it using the get_instance() class method"  # noqa:E501
-            )
-        self.instances[chain_id, factory_address] = self
+        if chain_id is None:
+            if bot is not None:
+                chain_id = bot.connections.default_chain_id
+            else:
+                chain_id = connection_manager.default_chain_id
 
         try:
             factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]
@@ -95,12 +99,19 @@ class AbstractUniswapV2PoolManager[Pool: UniswapV2Pool](AbstractPoolManager[Pool
             raise PoolNotAssociated(pool_address)
 
         # Check if the pool registry already has this pool
-        if (
-            pool_from_registry := pool_registry.get(
+        pool_from_registry: Pool | None = None
+        if self._bot is not None:
+            pool_from_registry = self._bot.pools.get(
                 pool_address=pool_address,
                 chain_id=self.chain_id,
             )
-        ) is not None:
+        else:
+            pool_from_registry = pool_registry.get(
+                pool_address=pool_address,
+                chain_id=self.chain_id,
+            )
+
+        if pool_from_registry is not None:
             if TYPE_CHECKING:
                 assert isinstance(pool_from_registry, self.pool_factory)
             if pool_from_registry.factory == self._factory_address:
@@ -110,11 +121,20 @@ class AbstractUniswapV2PoolManager[Pool: UniswapV2Pool](AbstractPoolManager[Pool
             raise PoolNotAssociated(pool_address)
 
         try:
-            new_pool = self.pool_factory(
-                address=pool_address,
-                silent=silent,
-                **(pool_class_kwargs or {}),
-            )
+            if self._bot is not None:
+                new_pool = self._bot.build_v2_pool(
+                    pool_address=pool_address,
+                    chain_id=self.chain_id,
+                    deployer_address=self._deployer_address,
+                    init_hash=self._pool_init_hash,
+                    silent=silent,
+                )
+            else:
+                new_pool = self.pool_factory(
+                    address=pool_address,
+                    silent=silent,
+                    **(pool_class_kwargs or {}),
+                )
         except LiquidityPoolError as exc:
             raise PoolCreationFailed(
                 message=f"Could not build V2 pool {pool_address}: {exc}"
@@ -189,17 +209,17 @@ class AbstractUniswapV3PoolManager[Pool: UniswapV3Pool](AbstractPoolManager[Pool
         chain_id: ChainId | None = None,
         pool_init_hash: str | None = None,
         snapshot: UniswapV3LiquiditySnapshot | None = None,
+        bot: Bot | None = None,
     ) -> None:
+        self._bot = bot
+
         if chain_id is None:
-            chain_id = connection_manager.default_chain_id
+            if bot is not None:
+                chain_id = bot.connections.default_chain_id
+            else:
+                chain_id = connection_manager.default_chain_id
 
         factory_address = get_checksum_address(factory_address)
-
-        if (chain_id, factory_address) in self.instances:
-            raise ManagerAlreadyInitialized(
-                message="A manager has already been initialized for this address. Access it using the get_instance() class method"  # noqa:E501
-            )
-        self.instances[chain_id, factory_address] = self
 
         try:
             factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]
@@ -388,10 +408,18 @@ class UniswapV3PoolManager(AbstractUniswapV3PoolManager[UniswapV3Pool], pool_fac
             raise PoolNotAssociated(pool_address)
 
         # Check if the pool registry already has this pool
-        pool_from_registry = pool_registry.get(
-            pool_address=pool_address,
-            chain_id=self.chain_id,
-        )
+        pool_from_registry: UniswapV3Pool | None = None
+        if self._bot is not None:
+            pool_from_registry = self._bot.pools.get(
+                pool_address=pool_address,
+                chain_id=self.chain_id,
+            )
+        else:
+            pool_from_registry = pool_registry.get(
+                pool_address=pool_address,
+                chain_id=self.chain_id,
+            )
+
         if pool_from_registry is not None:
             if TYPE_CHECKING:
                 assert isinstance(pool_from_registry, UniswapV3Pool)
@@ -402,11 +430,20 @@ class UniswapV3PoolManager(AbstractUniswapV3PoolManager[UniswapV3Pool], pool_fac
             raise PoolNotAssociated(pool_address)
 
         try:
-            new_pool = self._build_pool(
-                pool_address=pool_address,
-                silent=silent,
-                pool_class_kwargs=pool_class_kwargs,
-            )
+            if self._bot is not None:
+                new_pool = self._bot.build_v3_pool(
+                    pool_address=pool_address,
+                    chain_id=self.chain_id,
+                    deployer_address=self._deployer_address,
+                    init_hash=self._pool_init_hash,
+                    silent=silent,
+                )
+            else:
+                new_pool = self._build_pool(
+                    pool_address=pool_address,
+                    silent=silent,
+                    pool_class_kwargs=pool_class_kwargs,
+                )
         except LiquidityPoolError as exc:  # pragma: no cover
             raise PoolCreationFailed(
                 message=f"Could not build V3 pool {pool_address}: {exc}"

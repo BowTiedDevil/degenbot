@@ -1,6 +1,7 @@
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import tomlkit
 from pydantic import BaseModel, HttpUrl, PlainSerializer, WebsocketUrl, field_validator
@@ -22,7 +23,7 @@ class DatabaseSettings(BaseModel):
     ]
 
 
-class Settings(BaseSettings):
+class DegenbotConfig(BaseSettings):
     model_config = SettingsConfigDict()
 
     database: DatabaseSettings
@@ -48,15 +49,15 @@ class Settings(BaseSettings):
         }
 
 
-def load_config_from_file(config_path: Path) -> Settings:
-    return Settings.model_validate(
+def load_config_from_file(config_path: Path) -> DegenbotConfig:
+    return DegenbotConfig.model_validate(
         tomllib.loads(
             config_path.read_text(encoding="utf-8"),
         ),
     )
 
 
-def save_config_to_file(config: Settings) -> None:
+def save_config_to_file(config: DegenbotConfig) -> None:
     CONFIG_FILE.write_text(
         tomlkit.dumps(
             config.model_dump(),
@@ -64,7 +65,7 @@ def save_config_to_file(config: Settings) -> None:
     )
 
 
-def _init_settings() -> Settings:
+def _init_config() -> DegenbotConfig:
     if not CONFIG_DIR.exists():
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         logger.info(f"Created a configuration directory at {CONFIG_DIR}.")
@@ -72,50 +73,53 @@ def _init_settings() -> Settings:
     if CONFIG_FILE.exists():
         return load_config_from_file(CONFIG_FILE)
 
-    settings = Settings(
+    config = DegenbotConfig(
         database=DatabaseSettings(
             path=DB_PATH,
         ),
         rpc={},
     )
 
-    save_config_to_file(settings)
+    save_config_to_file(config)
     logger.info(f"Created a configuration file at {CONFIG_FILE}.")
 
-    if not settings.database.path.exists():
+    if not config.database.path.exists():
         from degenbot.database.operations import create_new_sqlite_database  # noqa: PLC0415
 
-        create_new_sqlite_database(db_path=settings.database.path)
+        create_new_sqlite_database(db_path=config.database.path)
 
-    return settings
-
-
-_settings: list[Settings] = []
+    return config
 
 
-def _load_settings() -> Settings:
-    if not _settings:
-        _settings.append(_init_settings())
-    return _settings[0]
-
-
-def _reset_settings() -> None:
-    _settings.clear()
-
-
-class _SettingsProxy:
+class _LazyConfig[T: BaseSettings]:
     """
-    Lazy proxy that defers settings initialization until first attribute access.
+    Lazy proxy that defers configuration initialization until first attribute access.
 
     Avoids import-time side effects (directory creation, config file writing,
-    database initialization) by wrapping the singleton Settings instance.
+    database initialization) by wrapping the singleton instance.
     """
 
+    def __init__(self, factory: Callable[[], T]) -> None:
+        self._factory = factory
+        self._instance: T | None = None
+
+    @property
+    def _proxied(self) -> T:
+        if self._instance is None:
+            self._instance = self._factory()
+        return self._instance
+
+    def _reset(self) -> None:
+        self._instance = None
+
     def __getattr__(self, name: str) -> Any:  # noqa: ANN401
-        return getattr(_load_settings(), name)
+        return getattr(self._proxied, name)
 
     def __repr__(self) -> str:
-        return repr(_load_settings())
+        return repr(self._proxied)
 
 
-settings: Settings = _SettingsProxy()  # type: ignore[assignment]
+if TYPE_CHECKING:
+    config: DegenbotConfig
+else:
+    config = _LazyConfig(_init_config)

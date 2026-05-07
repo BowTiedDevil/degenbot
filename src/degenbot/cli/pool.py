@@ -18,10 +18,10 @@ from web3.types import LogReceipt
 
 from degenbot import abi_decode
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.bot import Bot
 from degenbot.cli import cli
 from degenbot.cli.utils import get_provider_from_config
 from degenbot.constants import MAX_UINT256
-from degenbot.database import db_session
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.pools import (
@@ -1664,12 +1664,13 @@ def pool() -> None:
         "'safe:128' stops 128 blocks after the last 'safe' block."
     ),
 )
-def pool_update(chunk_size: int, to_block: str) -> None:
+@click.pass_obj
+def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
     """
     Update liquidity pool information for activated exchanges.
     """
 
-    with db_session() as session, logging_redirect_tqdm(loggers=[logger]):
+    with bot.db() as session, logging_redirect_tqdm(loggers=[logger]):
         active_chains = set(
             session.scalars(select(ExchangeTable.chain_id).where(ExchangeTable.active)).all()
         )

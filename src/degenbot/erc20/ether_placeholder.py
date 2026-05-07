@@ -39,51 +39,17 @@ class EtherPlaceholder(Erc20Token):
         provider: ProviderAdapter | None = None,
         state_cache_depth: int = 8,
     ) -> None:
-        self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
+        super().__init__(
+            address,
+            chain_id=chain_id,
+            name=self.name,
+            symbol=self.symbol,
+            decimals=self.decimals,
+            state_cache_depth=state_cache_depth,
+        )
         self._provider = provider
-        self._cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]] = {}
-        self.address = get_checksum_address(address)
+        # Legacy: self-register in token_registry when not going through Bot
         degenbot.registry.token_registry.add(
             token_address=self.address, chain_id=self._chain_id, token=self
         )
         self._state_cache_depth = state_cache_depth
-
-    def get_balance(
-        self,
-        address: str,
-        block_identifier: BlockIdentifier | None = None,
-    ) -> int:
-        address = get_checksum_address(address)
-
-        provider = (
-            self._provider
-            if self._provider is not None
-            else connection_manager.get_provider(self.chain_id)
-        )
-
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                block_identifier,
-                provider,
-            )
-        )
-
-        with contextlib.suppress(KeyError):
-            return self._cached_balance[address][block_number]
-
-        balance = provider.get_balance(
-            address,
-            block=block_number,
-        )
-
-        balance_cache_at_address: BoundedCache[BlockNumber, int]
-        try:
-            balance_cache_at_address = self._cached_balance[address]
-        except KeyError:
-            balance_cache_at_address = BoundedCache(max_items=self._state_cache_depth)
-
-        balance_cache_at_address[block_number] = balance
-        self._cached_balance[address] = balance_cache_at_address
-        return balance

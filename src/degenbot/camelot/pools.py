@@ -1,3 +1,4 @@
+import warnings
 from fractions import Fraction
 
 from degenbot.camelot.functions import get_y_camelot, k_camelot
@@ -28,14 +29,66 @@ class CamelotLiquidityPool(UniswapV2Pool):
         *,
         chain_id: ChainId | None = None,
         silent: bool = False,
+        state_block: int | None = None,
+        # I/O-free path params
+        token0: Erc20Token | None = None,
+        token1: Erc20Token | None = None,
+        factory: str | None = None,
+        fee_token0: int | None = None,
+        fee_token1: int | None = None,
+        fee_denominator: int | None = None,
+        reserves_token0: int | None = None,
+        reserves_token1: int | None = None,
+        stable_swap: bool | None = None,
     ) -> None:
         address = get_checksum_address(address)
+
+        # ── I/O-free path ──
+        if all(
+            [
+                token0 is not None,
+                token1 is not None,
+                factory is not None,
+                fee_token0 is not None,
+                fee_token1 is not None,
+                fee_denominator is not None,
+                reserves_token0 is not None,
+                reserves_token1 is not None,
+                stable_swap is not None,
+            ],
+        ):
+            self.fee_denominator = fee_denominator
+            self.stable_swap = stable_swap
+
+            super().__init__(
+                address=address,
+                chain_id=chain_id if chain_id is not None else token0.chain_id,
+                init_hash=self.CAMELOT_ARBITRUM_POOL_INIT_HASH,
+                token0=token0,
+                token1=token1,
+                factory=factory,
+                fee_token0=Fraction(fee_token0, fee_denominator),
+                fee_token1=Fraction(fee_token1, fee_denominator),
+                reserves_token0=reserves_token0,
+                reserves_token1=reserves_token1,
+                state_block=state_block,
+                silent=silent,
+            )
+            return
+
+        # ── Legacy I/O path ──
+        warnings.warn(
+            "Constructing CamelotLiquidityPool without pre-fetched data is deprecated. "
+            "Use Bot.build_camelot_pool() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
         if chain_id is None:  # pragma: no branch
             chain_id = connection_manager.default_chain_id
 
         provider = connection_manager.get_provider(chain_id)
-        state_block = provider.get_block_number()
+        state_block = state_block if state_block is not None else provider.get_block_number()
 
         fee_token0: int
         fee_token1: int

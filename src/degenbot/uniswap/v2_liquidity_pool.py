@@ -3,6 +3,7 @@
 
 import contextlib
 import dataclasses
+import warnings
 from collections import deque
 from collections.abc import Iterable
 from fractions import Fraction
@@ -133,6 +134,14 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
         verify_address: bool = True,
         silent: bool = False,
         state_cache_depth: int = 8,
+        # I/O-free path params
+        token0: Erc20Token | None = None,
+        token1: Erc20Token | None = None,
+        factory: str | None = None,
+        fee_token0: Fraction | None = None,
+        fee_token1: Fraction | None = None,
+        reserves_token0: int | None = None,
+        reserves_token1: int | None = None,
     ) -> None:
         """
         An abstract representation of an x*y=k invariant automatic matchmaker, based on Uniswap V2.
@@ -166,9 +175,78 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
             Suppress status output.
         state_cache_depth:
             How many unique block-state pairs to hold in the state cache.
+
+        I/O-free path arguments
+        -----------------------
+        When `token0`, `token1`, `factory`, `fee_token0`, `fee_token1`, `reserves_token0`,
+        and `reserves_token1` are all provided, the pool is constructed from pre-fetched data
+        with no I/O. Use `Bot.build_v2_pool()` instead of calling this directly.
         """
 
         self.address = get_checksum_address(address)
+
+        # ── I/O-free path ──
+        if (
+            token0 is not None
+            and token1 is not None
+            and factory is not None
+            and fee_token0 is not None
+            and fee_token1 is not None
+            and reserves_token0 is not None
+            and reserves_token1 is not None
+        ):
+            self._chain_id = chain_id if chain_id is not None else token0.chain_id
+            self._token0 = token0
+            self._token1 = token1
+            self.factory = get_checksum_address(factory)
+            self._fee_token0 = fee_token0
+            self._fee_token1 = fee_token1
+
+            # Derive deployer/init_hash from factory deployments or fallback
+            self.init_hash = (
+                init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
+            )
+            self.deployer = get_checksum_address(deployer_address or self.factory)
+
+            with contextlib.suppress(KeyError):
+                factory_deployment = FACTORY_DEPLOYMENTS[self._chain_id][self.factory]
+                self.init_hash = factory_deployment.pool_init_hash
+                if factory_deployment.deployer is not None:
+                    self.deployer = factory_deployment.deployer
+
+            _state_block = state_block if state_block is not None else 0
+
+            fee_string = (
+                f"{100 * self._fee_token0.numerator / self._fee_token0.denominator:.2f}"
+                if self._fee_token0 == self._fee_token1
+                else (
+                    f"{100 * self._fee_token0.numerator / self._fee_token0.denominator:.2f}"
+                    f"/"
+                    f"{100 * self._fee_token1.numerator / self._fee_token1.denominator:.2f}"
+                )
+            )
+            self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {fee_string}%)"
+
+            initial_state = self.PoolState.__value__(
+                address=self.address,
+                reserves_token0=reserves_token0,
+                reserves_token1=reserves_token1,
+                block=_state_block,
+            )
+            self._state_cache: deque[UniswapV2PoolState] = deque(maxlen=max(1, state_cache_depth))
+            self._state_cache.append(initial_state)
+            self._state_lock = Lock()
+            self._subscribers: WeakSet[Subscriber] = WeakSet()
+            return
+
+        # ── Legacy I/O path ──
+        warnings.warn(
+            "Constructing UniswapV2Pool without pre-fetched data is deprecated. "
+            "Use Bot.build_v2_pool() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         self._chain_id = chain_id if chain_id is not None else connection_manager.default_chain_id
         self._provider = (
             provider if provider is not None else connection_manager.get_provider(self.chain_id)
