@@ -2,14 +2,13 @@
 Fixtures for database tests.
 
 Provides an in-memory SQLite database seeded with minimal test data,
-patched into the module-level ``db_session`` via ``DatabaseSessionManager._reset``.
+wrapped in a ``DatabaseSessionManager`` for each test.
 """
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import scoped_session, sessionmaker
 
-from degenbot.database import db_session
 from degenbot.database.models import Base
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.erc20 import Erc20TokenTable
@@ -18,6 +17,7 @@ from degenbot.database.models.pools import (
     PoolManagerTable,
     UniswapV4PoolTable,
 )
+from degenbot.database.session_manager import DatabaseSessionManager
 
 
 def _seed_test_data(session: scoped_session) -> None:
@@ -194,23 +194,17 @@ def _seed_test_data(session: scoped_session) -> None:
 @pytest.fixture
 def test_db():
     """
-    Provide an in-memory SQLite database seeded with test data.
-
-    Swaps the module-level ``db_session`` to point at the in-memory
-    database for the duration of the test, then restores the production
-    session afterward.
+    Provide an in-memory SQLite database seeded with test data,
+    wrapped in a ``DatabaseSessionManager``.
     """
-    production_session = db_session._session
-
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     test_session = scoped_session(sessionmaker(bind=engine))
 
     _seed_test_data(test_session)
-    db_session._reset(test_session)
 
-    yield test_session
+    db_mgr = DatabaseSessionManager(test_session)
+    yield db_mgr
 
-    db_session._reset(production_session)
     test_session.remove()
     engine.dispose()

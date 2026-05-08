@@ -4,7 +4,6 @@ import os
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from degenbot.config import config as degenbot_config
 from degenbot.database.models import Base
 from degenbot.database.operations import _get_sqlite_db_string
 
@@ -12,8 +11,8 @@ from degenbot.database.operations import _get_sqlite_db_string
 # access to the values within the .ini file in use.
 config = context.config
 
-# Database path: prefer explicit DEGENBOT_DATABASE_PATH env var,
-# fall back to the global config singleton
+# Database path: requires explicit DEGENBOT_DATABASE_PATH env var
+# (the global config singleton has been removed)
 database_path = os.environ.get("DEGENBOT_DATABASE_PATH")
 if database_path:
     config.set_main_option(
@@ -21,6 +20,9 @@ if database_path:
         f"sqlite:///{database_path}",
     )
 else:
+    from degenbot.config import _init_config
+
+    degenbot_config = _init_config()
     config.set_main_option(
         "sqlalchemy.url",
         f"sqlite:///{_get_sqlite_db_string(degenbot_config.database.path)}",

@@ -4,7 +4,7 @@ from hexbytes import HexBytes
 from sqlalchemy import case, distinct, func, or_, select
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database import db_session
+from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.pools import (
     AerodromeV2PoolTable,
@@ -16,7 +16,7 @@ from degenbot.database.models.pools import (
 
 def test_query_base_class(test_db):
     start = time.perf_counter()
-    with db_session() as session:
+    with test_db() as session:
         num_pools = session.scalar(select(func.count()).select_from(LiquidityPoolTable))
     elapsed = time.perf_counter() - start
     print(f"Found {num_pools} pools (base table select) in {elapsed:.2f}s")
@@ -24,7 +24,7 @@ def test_query_base_class(test_db):
 
 
 def test_get_pool_from_base_table(test_db):
-    with db_session() as session:
+    with test_db() as session:
         pool = session.scalar(
             select(LiquidityPoolTable).where(
                 LiquidityPoolTable.address == "0x723AEf6543aecE026a15662Be4D3fb3424D502A9"
@@ -38,7 +38,7 @@ def test_get_pool_from_base_table(test_db):
 def test_filter_by_token_id(test_db):
     start = time.perf_counter()
 
-    with db_session() as session:
+    with test_db() as session:
         weth = session.scalar(
             select(Erc20TokenTable).where(
                 Erc20TokenTable.address == "0x4200000000000000000000000000000000000006",
@@ -66,7 +66,7 @@ def test_filter_by_token_id(test_db):
 def test_filter_by_token_relationship(test_db):
     start = time.perf_counter()
 
-    with db_session() as session:
+    with test_db() as session:
         weth = session.scalar(
             select(Erc20TokenTable).where(
                 Erc20TokenTable.address == "0x4200000000000000000000000000000000000006",
@@ -97,7 +97,7 @@ def test_find_unique_tokens_paired_with_weth(test_db):
 
     min_pairs = 2
 
-    with db_session() as session:
+    with test_db() as session:
         weth = session.scalar(
             select(Erc20TokenTable).where(
                 Erc20TokenTable.address == "0x4200000000000000000000000000000000000006",
@@ -107,7 +107,7 @@ def test_find_unique_tokens_paired_with_weth(test_db):
         paired_tokens = session.scalars(
             select(
                 distinct(
-                    db_session
+                    test_db
                     .query(
                         case(
                             (LiquidityPoolTable.token0_id == weth.id, LiquidityPoolTable.token1_id),
@@ -141,7 +141,7 @@ def test_get_uniswap_v4_pool(test_db):
 
     start = time.perf_counter()
 
-    with db_session() as session:
+    with test_db() as session:
         pool_manager_in_db = session.scalar(
             select(PoolManagerTable).where(
                 PoolManagerTable.address == pool_manager_address,

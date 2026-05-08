@@ -13,7 +13,6 @@ from .abi_adapter import encode as abi_encode
 from .async_bot import AsyncBot
 from .bot import Bot
 from .checksum_cache import get_checksum_address
-from .config import config
 from .connection import (
     AsyncConnectionManager,
     ConnectionManager,
@@ -143,7 +142,6 @@ __all__ = (
     "abi_decode",
     "abi_decode_single",
     "abi_encode",
-    "config",
     "decode_return_data",
     "encode_function_call",
     "get_checksum_address",
