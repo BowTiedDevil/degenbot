@@ -143,13 +143,13 @@ class PoolRegistry(AbstractRegistry):
                 pool_manager_address=get_checksum_address(pool_address),
                 pool_id=pool_id,
             )
-        elif self.get(
-            chain_id=chain_id,
-            pool_address=get_checksum_address(pool_address),
-        ):
-            raise degenbot.exceptions.DegenbotValueError(message="Pool is already registered")
-
-        self._all_pools[chain_id, get_checksum_address(pool_address)] = pool
+        else:
+            if self.get(
+                chain_id=chain_id,
+                pool_address=get_checksum_address(pool_address),
+            ):
+                raise degenbot.exceptions.DegenbotValueError(message="Pool is already registered")
+            self._all_pools[chain_id, get_checksum_address(pool_address)] = pool
 
     def remove(
         self,

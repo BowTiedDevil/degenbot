@@ -172,3 +172,64 @@ def test_v4_pool_add_and_removal():
         pool_address="0x0000000000000000000000000000000000000000",
         pool_id="0x0000000000000000000000000000000000000000000000000000000000000000",
     )
+
+
+def test_v4_add_does_not_pollute_main_registry():
+    """
+    A V4 pool registration must write to the V4 sub-registry only — never to ``_all_pools``.
+
+    The V4 ``PoolManager`` is a singleton on-chain; many V4 pools share the same contract
+    address and are distinguished only by ``pool_id``. Writing the manager address into
+    ``_all_pools`` (which is keyed only by chain+address) collapses them to a single slot
+    and the last registered pool overwrites all earlier entries.
+    """
+    fake_pool_manager_address = "0x1234567890123456789012345678901234567890"
+    fake_pool_id = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+    chain_id = 1
+
+    fake_pool = FakeUniswapV4Pool(
+        address=fake_pool_manager_address,
+        pool_id=fake_pool_id,
+    )
+
+    pool_registry.add(
+        pool=fake_pool,
+        chain_id=chain_id,
+        pool_address=fake_pool_manager_address,
+        pool_id=fake_pool_id,
+    )
+
+    # Lookup without pool_id must not see V4 pools.
+    assert (
+        pool_registry.get(
+            chain_id=chain_id,
+            pool_address=fake_pool_manager_address,
+        )
+        is None
+    )
+
+    # _all_pools must not be polluted by the V4 registration.
+    assert (
+        chain_id,
+        get_checksum_address(fake_pool_manager_address),
+    ) not in pool_registry._all_pools
+
+
+def test_v4_pools_with_same_manager_distinct_ids_coexist():
+    """
+    Two V4 pools sharing one ``PoolManager`` but with distinct ``pool_id``s must both
+    remain accessible after registration.
+    """
+    manager = "0x1234567890123456789012345678901234567890"
+    pool_id_a = "0x" + "a" * 64
+    pool_id_b = "0x" + "b" * 64
+    chain_id = 1
+
+    pool_a = FakeUniswapV4Pool(address=manager, pool_id=pool_id_a)
+    pool_b = FakeUniswapV4Pool(address=manager, pool_id=pool_id_b)
+
+    pool_registry.add(pool=pool_a, chain_id=chain_id, pool_address=manager, pool_id=pool_id_a)
+    pool_registry.add(pool=pool_b, chain_id=chain_id, pool_address=manager, pool_id=pool_id_b)
+
+    assert pool_registry.get(chain_id=chain_id, pool_address=manager, pool_id=pool_id_a) is pool_a
+    assert pool_registry.get(chain_id=chain_id, pool_address=manager, pool_id=pool_id_b) is pool_b
