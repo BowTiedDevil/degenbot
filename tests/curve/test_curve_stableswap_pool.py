@@ -11,7 +11,6 @@ from web3.types import TxParams
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions.arbitrage import NoLiquidity
@@ -34,7 +33,6 @@ TRIPOOL_ADDRESS = get_checksum_address("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1
 def _build_pool(fork: AnvilFork, address: str) -> CurveStableswapPool:
     """Helper to build a Curve pool using the Bot builder."""
     # Schedule set_web3 for any code that still relies on the legacy singleton
-    set_web3(fork.w3)
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
     return bot.build_curve_pool(address)
 

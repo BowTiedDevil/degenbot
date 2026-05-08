@@ -18,7 +18,6 @@ from degenbot.arbitrage.types import (
     UniswapV3PoolSwapAmounts,
 )
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import connection_manager
 from degenbot.constants import MAX_UINT256
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.types import CurveStableswapPoolState
@@ -68,7 +67,9 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
         swap_pools: Iterable[CurveOrUniswapPool],
         id: str,  # noqa:A002
         max_input: int | None = None,
+        bot: Any | None = None,
     ) -> None:
+        self._bot = bot
         for swap_pool in swap_pools:
             if not isinstance(swap_pool, CurveOrUniswapPool.__value__):
                 raise DegenbotValueError(
@@ -173,7 +174,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
     def __getstate__(self) -> dict[str, Any]:
         # Remove objects that cannot be pickled and are unnecessary to perform
         # the calculation
-        dropped_attributes = ("_subscribers",)
+        dropped_attributes = ("_subscribers", "_bot")
 
         return {key: value for key, value in self.__dict__.items() if key not in dropped_attributes}
 
@@ -292,14 +293,16 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
 
         return tuple(swap_amounts)
 
-    @staticmethod
     def _get_token_approval(
+        self,
         token: Erc20Token,
         owner: ChecksumAddress,
         spender: ChecksumAddress,
     ) -> int:
         """Fetch the ERC-20 approval for `spender` on behalf of `owner`."""
-        provider = connection_manager.get_provider(token.chain_id)
+        if self._bot is None:
+            raise ValueError("A Bot instance is required for token approval lookups")
+        provider = self._bot.connections.get_provider(token.chain_id)
         (approval,) = eth_abi.abi.decode(
             types=["uint256"],
             data=provider.call(
@@ -585,7 +588,9 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
             assert isinstance(curve_pool, CurveStableswapPool)
             assert isinstance(curve_swap_vector, CurveStableSwapPoolVector)
 
-        block_number = connection_manager.get_web3(curve_pool.chain_id).eth.get_block_number()
+        if self._bot is None:
+            raise ValueError("A Bot instance is required for async calculations")
+        block_number = self._bot.connections.get_web3(chain_id=curve_pool.chain_id).eth.get_block_number()
 
         # Some Curve pools utilize on-chain lookups in their calc, so do a simple pre-calc to
         # cache those values for a given block since the pool will be disconnected once sent

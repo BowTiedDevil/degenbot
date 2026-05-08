@@ -43,12 +43,10 @@ class ChainlinkPriceContract:
     @property
     def decimals(self) -> int:
         if self._decimals is None:
-            if self._bot is not None:
-                chain_id = self._chain_id or self._bot.connections.default_chain_id
-                w3 = self._bot.connections.get_provider(chain_id).underlying
-            else:
-                from degenbot.connection import connection_manager
-                w3 = connection_manager.get_web3(self._chain_id)
+            if self._bot is None:
+                raise ValueError("ChainlinkPriceContract requires a `bot` to fetch decimals")
+            chain_id = self._chain_id or self._bot.connections.default_chain_id
+            w3 = self._bot.connections.get_provider(chain_id).underlying
             contract = w3.eth.contract(
                 address=self.address,
                 abi=CHAINLINK_PRICE_FEED_ABI,
@@ -58,12 +56,10 @@ class ChainlinkPriceContract:
 
     @property
     def price(self) -> float:
-        if self._bot is not None:
-            chain_id = self._chain_id or self._bot.connections.default_chain_id
-            w3 = self._bot.connections.get_provider(chain_id).underlying
-        else:
-            from degenbot.connection import connection_manager
-            w3 = connection_manager.get_web3(self._chain_id)
+        if self._bot is None:
+            raise ValueError("ChainlinkPriceContract requires a `bot` to fetch price")
+        chain_id = self._chain_id or self._bot.connections.default_chain_id
+        w3 = self._bot.connections.get_provider(chain_id).underlying
         contract = w3.eth.contract(
             address=self.address,
             abi=CHAINLINK_PRICE_FEED_ABI,

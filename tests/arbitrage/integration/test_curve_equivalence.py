@@ -17,7 +17,6 @@ from degenbot.arbitrage.optimizers.solidly_stable import (
 )
 from degenbot.arbitrage.optimizers.solver import BrentSolver, _simulate_path
 from degenbot.arbitrage.uniswap_curve_cycle import UniswapCurveCycle
-from degenbot.connection import set_web3
 from degenbot.provider import ProviderAdapter
 from degenbot.types.hop_types import ConstantProductHop, CurveStableswapHop
 from degenbot.uniswap.v2_types import UniswapV2PoolState
@@ -283,7 +282,6 @@ def test_curve_fork_equivalence(fork_mainnet_full: AnvilFork) -> None:
     # CurveStableswapPool still accesses the global connection_manager for
     # on-chain data (e.g. block number during swap calculations), so register
     # the provider globally too.
-    set_web3(fork_mainnet_full.w3)
 
     weth = bot.build_erc20token(WETH_ADDRESS)
     dai = bot.build_erc20token(DAI_ADDRESS)

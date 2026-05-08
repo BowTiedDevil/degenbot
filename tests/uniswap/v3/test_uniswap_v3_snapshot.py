@@ -4,7 +4,6 @@ import pytest
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions.liquidity_pool import UnknownPool
 from degenbot.uniswap.managers import UniswapV3PoolManager
@@ -33,7 +32,6 @@ SNAPSHOT_AT_BLOCK_12_369_870_DIR = "tests/uniswap/v3/snapshot"
 
 @pytest.fixture
 def empty_mainnet_snapshot_from_file(fork_mainnet_full: AnvilFork) -> UniswapV3LiquiditySnapshot:
-    set_web3(fork_mainnet_full.w3)
 
     return UniswapV3LiquiditySnapshot(
         source=MonolithicJsonFileSnapshot(EMPTY_SNAPSHOT_FILENAME),
@@ -46,7 +44,6 @@ def empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870(
 ) -> UniswapV3LiquiditySnapshot:
     from degenbot.provider import ProviderAdapter
 
-    set_web3(fork_mainnet_full.w3)
     provider = ProviderAdapter.from_web3(fork_mainnet_full.w3)
 
     snapshot = UniswapV3LiquiditySnapshot(
@@ -64,7 +61,6 @@ def empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870(
 def mainnet_snapshot_at_block_12_369_870_from_file(
     fork_mainnet_full: AnvilFork,
 ) -> UniswapV3LiquiditySnapshot:
-    set_web3(fork_mainnet_full.w3)
     return UniswapV3LiquiditySnapshot(
         source=MonolithicJsonFileSnapshot(SNAPSHOT_AT_BLOCK_12_369_870_FILENAME),
     )
@@ -74,7 +70,6 @@ def mainnet_snapshot_at_block_12_369_870_from_file(
 def mainnet_snapshot_at_block_12_369_870_from_dir(
     fork_mainnet_full: AnvilFork,
 ) -> UniswapV3LiquiditySnapshot:
-    set_web3(fork_mainnet_full.w3)
     return UniswapV3LiquiditySnapshot(
         source=IndividualJsonFileSnapshot(SNAPSHOT_AT_BLOCK_12_369_870_DIR),
     )
@@ -84,7 +79,6 @@ def mainnet_snapshot_at_block_12_369_870_from_dir(
 def base_snapshot_from_database(
     fork_base_full: AnvilFork,
 ) -> UniswapV3LiquiditySnapshot:
-    set_web3(fork_base_full.w3)
     return UniswapV3LiquiditySnapshot(
         source=DatabaseSnapshot(chain_id=8453),
     )
@@ -105,7 +99,6 @@ def test_fetch_pool_from_database_snapshot(
     base_snapshot_from_database: UniswapV3LiquiditySnapshot,
     fork_base_full: AnvilFork,
 ):
-    set_web3(fork_base_full.w3)
 
     # TODO: improve test by constructing standalone database and testing against it
     # TODO: make sure that test database is upgraded with alembic
@@ -121,7 +114,6 @@ def test_fetch_liquidity_events_first_250_blocks(
     empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,  # noqa: E501
     fork_mainnet_full: AnvilFork,
 ):
-    set_web3(fork_mainnet_full.w3)
 
     # Liquidity snapshots for each pool will be empty, since they only reflect the starting
     # liquidity at the initial snapshot block
@@ -234,7 +226,6 @@ def test_get_new_liquidity_updates(
     empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,  # noqa: E501
     fork_mainnet_full: AnvilFork,
 ):
-    set_web3(fork_mainnet_full.w3)
 
     for pool_address in [
         "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801",
@@ -259,7 +250,6 @@ def test_apply_update_to_unknown_pool(
     empty_mainnet_snapshot_from_file: UniswapV3LiquiditySnapshot,
     fork_mainnet_full: AnvilFork,
 ):
-    set_web3(fork_mainnet_full.w3)
 
     with pytest.raises(UnknownPool):
         empty_mainnet_snapshot_from_file.update(
@@ -365,7 +355,6 @@ def test_pool_manager_applies_snapshot_from_file(
     from degenbot.provider import ProviderAdapter
     from tests.helpers.bot_factory import make_bot_with_provider
 
-    set_web3(fork_mainnet_full.w3)
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
 
     # Build a pool manager to inject the liquidity events into the new pools as they are created
@@ -538,7 +527,6 @@ def test_pool_manager_applies_snapshot_from_dir(
     from degenbot.provider import ProviderAdapter
     from tests.helpers.bot_factory import make_bot_with_provider
 
-    set_web3(fork_mainnet_full.w3)
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
 
     # Build a pool manager to inject the liquidity events into the new pools as they are created

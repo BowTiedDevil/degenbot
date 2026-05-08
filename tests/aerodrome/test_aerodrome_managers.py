@@ -3,7 +3,6 @@ import pytest
 from degenbot.aerodrome.managers import AerodromeV2PoolManager, AerodromeV3PoolManager
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
 
 BASE_AERODROME_V2_FACTORY = get_checksum_address("0x420DD381b31aEf6683db6B902084cB0FFECe40Da")
 BASE_AERODROME_V3_FACTORY = get_checksum_address("0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A")
@@ -19,7 +18,6 @@ pytestmark = pytest.mark.base
 
 
 def test_create_base_chain_aerodrome_managers(fork_base_full: AnvilFork):
-    set_web3(fork_base_full.w3)
 
     aerodrome_v2_pool_manager = AerodromeV2PoolManager(factory_address=BASE_AERODROME_V2_FACTORY)
     assert aerodrome_v2_pool_manager._factory_address == BASE_AERODROME_V2_FACTORY

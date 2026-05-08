@@ -7,7 +7,6 @@ from pydantic import ValidationError
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions.base import DegenbotError, DegenbotValueError
 
@@ -296,4 +295,3 @@ def test_injecting_middleware():
             (web3.middleware.ExtraDataToPOAMiddleware, 0),
         ],
     )
-    set_web3(fork.w3)
