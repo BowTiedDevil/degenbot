@@ -745,7 +745,7 @@ class Bot:
         working_tick_data: dict[int, Any] = {}
 
         # Use provided tick data if given (snapshot or test fixtures)
-        if tick_bitmap is not None and tick_data is not None:
+        if tick_bitmap is not None and tick_data is not None:  # noqa:PLR1702
             working_tick_bitmap = dict(tick_bitmap)
             working_tick_data = dict(tick_data)
             # Assume provided tick data is complete
@@ -1028,7 +1028,7 @@ class Bot:
         working_tick_data: dict[int, Any] = {}
 
         # Use provided tick data if given (snapshot or test fixtures)
-        if tick_bitmap is not None and tick_data is not None:
+        if tick_bitmap is not None and tick_data is not None:  # noqa:PLR1702
             working_tick_bitmap = dict(tick_bitmap)
             working_tick_data = dict(tick_data)
         elif tick_bitmap is not None or tick_data is not None:
