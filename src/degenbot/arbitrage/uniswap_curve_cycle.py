@@ -292,6 +292,27 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
 
         return tuple(swap_amounts)
 
+    @staticmethod
+    def _get_token_approval(
+        token: Erc20Token,
+        owner: ChecksumAddress,
+        spender: ChecksumAddress,
+    ) -> int:
+        """Fetch the ERC-20 approval for `spender` on behalf of `owner`."""
+        provider = connection_manager.get_provider(token.chain_id)
+        (approval,) = eth_abi.abi.decode(
+            types=["uint256"],
+            data=provider.call(
+                to=token.address,
+                data=Web3.keccak(text="allowance(address,address)")[:4]
+                + eth_abi.abi.encode(
+                    types=["address", "address"],
+                    args=[owner, spender],
+                ),
+            ),
+        )
+        return int(approval)
+
     def _pre_calculation_check(
         self,
         state_overrides: Mapping[ChecksumAddress, CurveOrUniswapPoolState],
@@ -340,7 +361,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
                         raise NoLiquidity(
                             message=f"V3 pool {pool.address} has no liquidity (not initialized)"
                         )
-                    if pool_state.tick_bitmap == {}:
+                    if pool_state.tick_bitmap == {} and not pool.sparse_liquidity_map:
                         raise NoLiquidity(
                             message=f"V3 pool {pool.address} has no liquidity (empty bitmap)"
                         )
@@ -754,8 +775,10 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
                     logger.debug(f"PAYLOAD: token out = {amounts.token_out}")
                     logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
 
-                    current_approval = amounts.token_in.get_approval(
-                        from_address, swap_pool.address
+                    current_approval = self._get_token_approval(
+                        amounts.token_in,
+                        get_checksum_address(from_address),
+                        swap_pool.address,
                     )
                     amount_to_approve: int | None = None
                     if infinite_approval is True and current_approval != MAX_UINT256:

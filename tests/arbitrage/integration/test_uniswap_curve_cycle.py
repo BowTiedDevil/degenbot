@@ -5,6 +5,7 @@ import multiprocessing
 import pickle
 import time
 
+import eth_abi.abi
 import pytest
 from eth_typing import ChainId
 
@@ -16,11 +17,19 @@ from degenbot.erc20.erc20 import Erc20Token
 from degenbot.erc20.manager import Erc20TokenManager
 from degenbot.exceptions.arbitrage import ArbitrageError, NoLiquidity
 from degenbot.exceptions.base import DegenbotValueError
+from degenbot.functions import encode_function_calldata
+from degenbot.provider import ProviderAdapter
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
+from degenbot.uniswap.v3_libraries.tick_bitmap import position
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_types import UniswapV3PoolState
+from degenbot.uniswap.v3_types import (
+    UniswapV3BitmapAtWord,
+    UniswapV3LiquidityAtTick,
+    UniswapV3PoolState,
+)
+from tests.helpers.bot_factory import make_bot_with_provider
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 DAI_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
@@ -36,6 +45,98 @@ UNISWAP_V3_WETH_USDT_ADDRESS = "0x4e68Ccd3E89f51C3074ca5072bbAC773960dFa36"
 FAKE_ADDRESS = "0x6942000000000000000000000000000000000000"
 
 
+def _build_v2_pool(fork: AnvilFork, address: str) -> UniswapV2Pool:
+    set_web3(fork.w3)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
+    return bot.build_v2_pool(address)
+
+
+def _build_v3_pool(fork: AnvilFork, address: str) -> UniswapV3Pool:
+    set_web3(fork.w3)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
+    return bot.build_v3_pool(address)
+
+
+def _build_v3_pool_with_tick_data(fork: AnvilFork, address: str) -> UniswapV3Pool:
+    """Build a V3 pool with full tick data (non-sparse mode).
+
+    This is needed for tests that check the pre-calculation liquidity
+    guard, which inspects the tick_bitmap. Sparse-mode pools have an
+    empty tick_bitmap by default.
+    """
+    set_web3(fork.w3)
+    w3 = fork.w3
+
+    slot0_result = w3.eth.call(
+        {"to": address, "data": encode_function_calldata("slot0()", None)}
+    )
+    _sqrt_price, tick, *_ = eth_abi.abi.decode(
+        ["uint160", "int24", "uint16", "uint16", "uint16", "uint8", "bool"],
+        slot0_result,
+    )
+    tick_spacing_result = w3.eth.call(
+        {"to": address, "data": encode_function_calldata("tickSpacing()", None)}
+    )
+    (tick_spacing,) = eth_abi.abi.decode(["int24"], tick_spacing_result)
+
+    compressed = int(tick) // int(tick_spacing)
+    if int(tick) < 0 and int(tick) % int(tick_spacing) != 0:
+        compressed -= 1
+    word_pos, _bit_pos = position(compressed)
+
+    bitmap_result = w3.eth.call(
+        {
+            "to": address,
+            "data": encode_function_calldata("tickBitmap(int16)", [word_pos]),
+        }
+    )
+    (bitmap_value,) = eth_abi.abi.decode(["uint256"], bitmap_result)
+
+    tick_bitmap_data = {
+        word_pos: UniswapV3BitmapAtWord(bitmap=int(bitmap_value), block=0)
+    }
+    tick_data: dict[int, UniswapV3LiquidityAtTick] = {}
+
+    for i in range(256):
+        if bitmap_value & (1 << i) > 0:
+            active_tick = (word_pos * 256 + i) * int(tick_spacing)
+            result = w3.eth.call(
+                {
+                    "to": address,
+                    "data": encode_function_calldata("ticks(int24)", [active_tick]),
+                }
+            )
+            lg, ln, *_ = eth_abi.abi.decode(
+                [
+                    "uint128",
+                    "int128",
+                    "uint256",
+                    "uint256",
+                    "int56",
+                    "uint160",
+                    "uint32",
+                    "bool",
+                ],
+                result,
+            )
+            tick_data[active_tick] = UniswapV3LiquidityAtTick(
+                liquidity_net=int(ln),
+                liquidity_gross=int(lg),
+                block=0,
+            )
+
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
+    return bot.build_v3_pool(
+        address, tick_bitmap=tick_bitmap_data, tick_data=tick_data
+    )
+
+
+def _build_curve_pool(fork: AnvilFork, address: str) -> CurveStableswapPool:
+    set_web3(fork.w3)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
+    return bot.build_curve_pool(address)
+
+
 @pytest.fixture
 def weth(fork_mainnet_full: AnvilFork) -> Erc20Token:
     set_web3(fork_mainnet_full.w3)
@@ -49,10 +150,9 @@ def dai(fork_mainnet_full: AnvilFork) -> Erc20Token:
 
 
 def test_create_arb(fork_mainnet_full: AnvilFork, weth: Erc20Token, dai: Erc20Token):
-    set_web3(fork_mainnet_full.w3)
-    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
-    curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_dai_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_DAI_ADDRESS)
+    curve_tripool = _build_curve_pool(fork_mainnet_full, CURVE_TRIPOOL_ADDRESS)
+    uniswap_v2_weth_usdc_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_USDC_ADDRESS)
 
     UniswapCurveCycle(
         input_token=weth,
@@ -95,10 +195,9 @@ def test_create_arb(fork_mainnet_full: AnvilFork, weth: Erc20Token, dai: Erc20To
 
 
 def test_pickle_arb(fork_mainnet_full: AnvilFork, weth: Erc20Token):
-    set_web3(fork_mainnet_full.w3)
-    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
-    curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_dai_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_DAI_ADDRESS)
+    curve_tripool = _build_curve_pool(fork_mainnet_full, CURVE_TRIPOOL_ADDRESS)
+    uniswap_v2_weth_usdc_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_USDC_ADDRESS)
 
     arb = UniswapCurveCycle(
         input_token=weth,
@@ -110,14 +209,13 @@ def test_pickle_arb(fork_mainnet_full: AnvilFork, weth: Erc20Token):
 
 
 def test_arb_calculation(fork_mainnet_full: AnvilFork, weth: Erc20Token):
-    set_web3(fork_mainnet_full.w3)
-    curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
-    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
-    uniswap_v2_weth_usdt_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDT_ADDRESS)
-    uniswap_v3_weth_dai_lp = UniswapV3Pool(UNISWAP_V3_WETH_DAI_ADDRESS)
-    uniswap_v3_weth_usdc_lp = UniswapV3Pool(UNISWAP_V3_WETH_USDC_ADDRESS)
-    uniswap_v3_weth_usdt_lp = UniswapV3Pool(UNISWAP_V3_WETH_USDT_ADDRESS)
+    curve_tripool = _build_curve_pool(fork_mainnet_full, CURVE_TRIPOOL_ADDRESS)
+    uniswap_v2_weth_dai_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_DAI_ADDRESS)
+    uniswap_v2_weth_usdc_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_usdt_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_USDT_ADDRESS)
+    uniswap_v3_weth_dai_lp = _build_v3_pool(fork_mainnet_full, UNISWAP_V3_WETH_DAI_ADDRESS)
+    uniswap_v3_weth_usdc_lp = _build_v3_pool(fork_mainnet_full, UNISWAP_V3_WETH_USDC_ADDRESS)
+    uniswap_v3_weth_usdt_lp = _build_v3_pool(fork_mainnet_full, UNISWAP_V3_WETH_USDT_ADDRESS)
 
     for swap_pools in [
         (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
@@ -144,10 +242,9 @@ def test_arb_calculation(fork_mainnet_full: AnvilFork, weth: Erc20Token):
 
 
 def test_arb_calculation_pre_checks_v2(fork_mainnet_full: AnvilFork, weth: Erc20Token):
-    set_web3(fork_mainnet_full.w3)
-    curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
-    uniswap_v2_weth_usdt_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDT_ADDRESS)
+    curve_tripool = _build_curve_pool(fork_mainnet_full, CURVE_TRIPOOL_ADDRESS)
+    uniswap_v2_weth_usdc_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_usdt_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_USDT_ADDRESS)
 
     arb = UniswapCurveCycle(
         input_token=weth,
@@ -226,10 +323,13 @@ def test_arb_calculation_pre_checks_v2(fork_mainnet_full: AnvilFork, weth: Erc20
 
 
 def test_arb_calculation_pre_checks_v3(fork_mainnet_full: AnvilFork, weth: Erc20Token):
-    set_web3(fork_mainnet_full.w3)
-    curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v3_weth_usdc_lp = UniswapV3Pool(UNISWAP_V3_WETH_USDC_ADDRESS)
-    uniswap_v3_weth_usdt_lp = UniswapV3Pool(UNISWAP_V3_WETH_USDT_ADDRESS)
+    curve_tripool = _build_curve_pool(fork_mainnet_full, CURVE_TRIPOOL_ADDRESS)
+    uniswap_v3_weth_usdc_lp = _build_v3_pool_with_tick_data(
+        fork_mainnet_full, UNISWAP_V3_WETH_USDC_ADDRESS
+    )
+    uniswap_v3_weth_usdt_lp = _build_v3_pool_with_tick_data(
+        fork_mainnet_full, UNISWAP_V3_WETH_USDT_ADDRESS
+    )
 
     arb = UniswapCurveCycle(
         input_token=weth,
@@ -326,11 +426,10 @@ def test_arb_calculation_pre_checks_v3(fork_mainnet_full: AnvilFork, weth: Erc20
 
 
 def test_arb_payload_encoding(fork_mainnet_full: AnvilFork, weth: Erc20Token):
-    set_web3(fork_mainnet_full.w3)
-    curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
-    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
-    uniswap_v2_weth_usdt_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDT_ADDRESS)
+    curve_tripool = _build_curve_pool(fork_mainnet_full, CURVE_TRIPOOL_ADDRESS)
+    uniswap_v2_weth_dai_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_DAI_ADDRESS)
+    uniswap_v2_weth_usdc_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_usdt_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_USDT_ADDRESS)
 
     # set up overrides for a profitable arbitrage condition
     v2_weth_dai_state_override = UniswapV2PoolState(
@@ -378,13 +477,12 @@ def test_arb_payload_encoding(fork_mainnet_full: AnvilFork, weth: Erc20Token):
 
 
 async def test_process_pool_calculation(fork_mainnet_full: AnvilFork, weth: Erc20Token) -> None:
-    set_web3(fork_mainnet_full.w3)
     start = time.perf_counter()
 
-    curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
-    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
-    uniswap_v2_weth_usdt_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDT_ADDRESS)
+    curve_tripool = _build_curve_pool(fork_mainnet_full, CURVE_TRIPOOL_ADDRESS)
+    uniswap_v2_weth_dai_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_DAI_ADDRESS)
+    uniswap_v2_weth_usdc_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_usdt_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_USDT_ADDRESS)
 
     # Reserves taken from block 19050173
     # ---
@@ -473,10 +571,8 @@ async def test_process_pool_calculation(fork_mainnet_full: AnvilFork, weth: Erc2
 
 
 def test_bad_pool_in_constructor(fork_mainnet_full: AnvilFork, weth: Erc20Token):
-    set_web3(fork_mainnet_full.w3)
-
-    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
-    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_dai_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_DAI_ADDRESS)
+    uniswap_v2_weth_usdc_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_USDC_ADDRESS)
 
     with pytest.raises(
         DegenbotValueError, match=f"Incompatible pool type \\({type(None)}\\) provided."
@@ -490,11 +586,9 @@ def test_bad_pool_in_constructor(fork_mainnet_full: AnvilFork, weth: Erc20Token)
 
 
 def test_no_max_input(fork_mainnet_full: AnvilFork, weth: Erc20Token):
-    set_web3(fork_mainnet_full.w3)
-
-    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
-    curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_dai_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_DAI_ADDRESS)
+    curve_tripool = _build_curve_pool(fork_mainnet_full, CURVE_TRIPOOL_ADDRESS)
+    uniswap_v2_weth_usdc_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_USDC_ADDRESS)
 
     UniswapCurveCycle(
         id="test_arb",
@@ -504,11 +598,9 @@ def test_no_max_input(fork_mainnet_full: AnvilFork, weth: Erc20Token):
 
 
 def test_zero_max_input(fork_mainnet_full: AnvilFork, weth: Erc20Token):
-    set_web3(fork_mainnet_full.w3)
-
-    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
-    curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    uniswap_v2_weth_dai_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_DAI_ADDRESS)
+    curve_tripool = _build_curve_pool(fork_mainnet_full, CURVE_TRIPOOL_ADDRESS)
+    uniswap_v2_weth_usdc_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_USDC_ADDRESS)
 
     with pytest.raises(DegenbotValueError, match=r"Maximum input must be positive."):
         UniswapCurveCycle(
