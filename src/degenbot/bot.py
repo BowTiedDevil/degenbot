@@ -14,6 +14,8 @@ from sqlalchemy import select
 from web3 import Web3
 from web3.exceptions import Web3Exception
 
+# Import pool variants for factory-based construction
+from degenbot.aerodrome.pools import AerodromeV3Pool
 from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
@@ -33,7 +35,9 @@ from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.exceptions.manager import ManagerAlreadyInitialized
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
+from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
+from degenbot.sushiswap.pools import SushiswapV3Pool
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -385,19 +389,19 @@ class Bot:
         except Exception:
             # Not a Camelot pool, use standard UniswapV2Pool
             pool = UniswapV2Pool(
-            address=pool_address,
-            chain_id=chain_id,
-            token0=token0,
-            token1=token1,
-            factory=factory,
-            fee_token0=fee_token0,
-            fee_token1=fee_token1,
-            reserves_token0=reserves0,
-            reserves_token1=reserves1,
-            state_block=state_block,
-            deployer_address=deployer,
-            init_hash=init_hash,
-        )
+                address=pool_address,
+                chain_id=chain_id,
+                token0=token0,
+                token1=token1,
+                factory=factory,
+                fee_token0=fee_token0,
+                fee_token1=fee_token1,
+                reserves_token0=reserves0,
+                reserves_token1=reserves1,
+                state_block=state_block,
+                deployer_address=deployer,
+                init_hash=init_hash,
+            )
 
         # Register pool
         self.pools.add(pool_address=pool.address, chain_id=chain_id, pool=pool)
@@ -803,7 +807,16 @@ class Bot:
                             block=state_block,
                         )
                         liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
-                            types=["uint128", "int128", "uint256", "uint256", "int56", "uint160", "uint32", "bool"],
+                            types=[
+                                "uint128",
+                                "int128",
+                                "uint256",
+                                "uint256",
+                                "int56",
+                                "uint160",
+                                "uint32",
+                                "bool",
+                            ],
                             data=result,
                         )
                         working_tick_data[active_tick] = UniswapV3LiquidityAtTick(
@@ -839,7 +852,21 @@ class Bot:
             tick_bitmap_arg = None
             tick_data_arg = None
 
-        pool = UniswapV3Pool(
+        # Map factory addresses to pool classes for V3 variants
+        v3_pool_class_map: dict[tuple[int, str], type[UniswapV3Pool]] = {
+            # Sushiswap V3
+            (1, "0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F"): SushiswapV3Pool,
+            (42161, "0x1af415a1EbA07a4986a52B6f2e7dE7003D82231e"): SushiswapV3Pool,
+            # Aerodrome V3
+            (8453, "0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A"): AerodromeV3Pool,
+            # Pancakeswap V3
+            (1, "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"): PancakeswapV3Pool,
+            (8453, "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"): PancakeswapV3Pool,
+        }
+
+        pool_class = v3_pool_class_map.get((chain_id, factory), UniswapV3Pool)
+
+        pool = pool_class(
             address=pool_address,
             chain_id=chain_id,
             token0=token0,
@@ -1101,7 +1128,9 @@ class Bot:
             state_block=state_block,
             tick_bitmap=tick_bitmap_arg,
             tick_data=tick_data_arg,
-            tick_data_fetcher=self._make_tick_data_fetcher_v4(pool_id_bytes, pool_manager_address, state_view_address, chain_id),
+            tick_data_fetcher=self._make_tick_data_fetcher_v4(
+                pool_id_bytes, pool_manager_address, state_view_address, chain_id
+            ),
         )
 
         # Register pool in managed pool registry
@@ -1146,7 +1175,9 @@ class Bot:
         if isinstance(pool, UniswapV2Pool) and not isinstance(pool, AerodromeV2Pool):
             return self._update_v2_pool(pool, provider=provider, block_number=block_number)
         if isinstance(pool, AerodromeV2Pool):
-            return self._update_aerodrome_v2_pool(pool, provider=provider, block_number=block_number)
+            return self._update_aerodrome_v2_pool(
+                pool, provider=provider, block_number=block_number
+            )
         if isinstance(pool, UniswapV3Pool) and not isinstance(pool, UniswapV4Pool):
             return self._update_v3_pool(pool, provider=provider, block_number=block_number)
         if isinstance(pool, UniswapV4Pool):
@@ -1211,7 +1242,9 @@ class Bot:
         )
         sqrt_price_x96, tick, *_ = cast(
             "tuple[int, ...]",
-            eth_abi.abi.decode(types=["uint160", "int24", "uint16", "uint16", "uint16"], data=slot0_result),
+            eth_abi.abi.decode(
+                types=["uint160", "int24", "uint16", "uint16", "uint16"], data=slot0_result
+            ),
         )
         (liquidity,) = cast(
             "tuple[int]",
@@ -1225,7 +1258,11 @@ class Bot:
             ),
         )
 
-        if pool.sqrt_price_x96 == sqrt_price_x96 and pool.liquidity == liquidity and pool.tick == tick:
+        if (
+            pool.sqrt_price_x96 == sqrt_price_x96
+            and pool.liquidity == liquidity
+            and pool.tick == tick
+        ):
             return False
 
         update = UniswapV3PoolExternalUpdate(
