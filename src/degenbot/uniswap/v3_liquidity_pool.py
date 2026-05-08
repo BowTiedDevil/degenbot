@@ -38,6 +38,7 @@ from degenbot.uniswap.concentrated.state_manager import (
     ConcentratedLiquidityStateManager,
 )
 from degenbot.uniswap.concentrated.v3_simulator import calculate_swap as _v3_swap
+from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import (
     exchange_rate_from_sqrt_price_x96,
@@ -171,14 +172,11 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
 
         # Derive deployer/init_hash from factory deployments or fallback
         self.deployer_address = (
-            get_checksum_address(deployer_address) if deployer_address is not None
-            else self.factory
+            get_checksum_address(deployer_address) if deployer_address is not None else self.factory
         )
         self.init_hash = (
             init_hash if init_hash is not None else self.UNISWAP_V3_MAINNET_POOL_INIT_HASH
         )
-
-        from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
 
         with contextlib.suppress(KeyError):
             factory_deployment = _FACTORY_DEPLOYMENTS[self._chain_id][self.factory]
@@ -186,7 +184,10 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             if factory_deployment.deployer is not None:
                 self.deployer_address = factory_deployment.deployer
 
-        self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee / self.FEE_DENOMINATOR:.2f}%)"
+        self.name = (
+            f"{self._token0}-{self._token1} ({self.__class__.__name__}, "
+            f"{100 * self._fee / self.FEE_DENOMINATOR:.2f}%)"
+        )
 
         if (tick_bitmap is not None) != (tick_data is not None):
             raise DegenbotValueError(message="Provide both tick_bitmap and tick_data.")
@@ -761,7 +762,7 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
         conditions when used with threads.
         """
 
-        with self._state_lock:
+        with self._state_lock:  # noqa:PLR1702
             state_block = update.block_number
 
             # The tick bitmap and tick data dictionaries accessed through the attribute are copies,
@@ -798,13 +799,21 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
                     # status of any tick
                     if self._tick_data_fetcher is not None:
                         self._tick_data_fetcher(tick_word, state_block - 1)
-                        # Refresh working bitmap from updated pool state
-                        working_tick_bitmap = self.tick_bitmap
-                        # Merge newly fetched ticks into working_tick_data without overwriting
-                        # existing entries (which may have been modified in earlier iterations)
-                        for fetched_tick, fetched_liquidity in self.tick_data.items():
-                            if fetched_tick not in working_tick_data:
-                                working_tick_data[fetched_tick] = fetched_liquidity
+                        # Refresh working bitmap from updated pool state ONLY if the fetcher
+                        # successfully added the word
+                        if tick_word in self.tick_bitmap:
+                            working_tick_bitmap = self.tick_bitmap
+                            # Merge newly fetched ticks into working_tick_data without overwriting
+                            # existing entries (which may have been modified in earlier iterations)
+                            for fetched_tick, fetched_liquidity in self.tick_data.items():
+                                if fetched_tick not in working_tick_data:
+                                    working_tick_data[fetched_tick] = fetched_liquidity
+                        else:
+                            # Fetcher failed to add the word (e.g., historical block unavailable)
+                            # Create an empty entry so flip_tick can work
+                            working_tick_bitmap[tick_word] = UniswapV3BitmapAtWord(
+                                bitmap=0, block=state_block
+                            )
                     elif self._sparse_liquidity_map:
                         raise MissingLiquidityData(tick_word)
 
@@ -977,6 +986,9 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
         if token_in not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message=f"Unknown token {token_in}")
 
+        # Capture initial state before any potential modifications (e.g., tick data fetching)
+        initial_state = override_state if override_state is not None else self.state
+
         zero_for_one = token_in == self._token0
 
         try:
@@ -998,13 +1010,13 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             return UniswapV3PoolSimulationResult(
                 amount0_delta=amount0_delta,
                 amount1_delta=amount1_delta,
-                initial_state=override_state if override_state is not None else self.state,
+                initial_state=initial_state,
                 final_state=dataclasses.replace(
-                    self.state,
+                    initial_state,
                     liquidity=end_liquidity,
                     sqrt_price_x96=end_sqrt_price_x96,
                     tick=end_tick,
-                    block=self.update_block if override_state is None else None,
+                    block=self.update_block if override_state is None else initial_state.block,
                 ),
             )
 
@@ -1021,6 +1033,9 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
 
         if token_out not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message=f"Unknown token {token_out}")
+
+        # Capture initial state before any potential modifications (e.g., tick data fetching)
+        initial_state = override_state if override_state is not None else self.state
 
         zero_for_one = token_out == self._token1
 
@@ -1043,13 +1058,13 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             return UniswapV3PoolSimulationResult(
                 amount0_delta=amount0_delta,
                 amount1_delta=amount1_delta,
-                initial_state=override_state if override_state is not None else self.state,
+                initial_state=initial_state,
                 final_state=dataclasses.replace(
-                    self.state,
+                    initial_state,
                     liquidity=end_liquidity,
                     sqrt_price_x96=end_sqrtprice,
                     tick=end_tick,
-                    block=self.update_block if override_state is None else None,
+                    block=self.update_block if override_state is None else initial_state.block,
                 ),
             )
 

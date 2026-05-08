@@ -4,8 +4,6 @@ import contextlib
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Self
 
-from eth_typing import ChecksumAddress
-
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.exceptions.manager import (
@@ -15,7 +13,6 @@ from degenbot.exceptions.manager import (
 from degenbot.logging import logger
 from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractPoolManager
-from degenbot.types.aliases import ChainId
 from degenbot.uniswap.deployments import (
     FACTORY_DEPLOYMENTS,
     UniswapV2ExchangeDeployment,
@@ -25,10 +22,13 @@ from degenbot.uniswap.v2_functions import generate_v2_pool_address
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_functions import generate_v3_pool_address
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 
 if TYPE_CHECKING:
+    from eth_typing import ChecksumAddress
+
     from degenbot.bot import Bot
+    from degenbot.types.aliases import ChainId
+    from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 
 
 class AbstractUniswapV2PoolManager[Pool: UniswapV2Pool](AbstractPoolManager[Pool]):
@@ -430,6 +430,10 @@ class UniswapV3PoolManager(AbstractUniswapV3PoolManager[UniswapV3Pool], pool_fac
                     deployer_address=self._deployer_address,
                     init_hash=self._pool_init_hash,
                     silent=silent,
+                    tick_bitmap=self._snapshot.tick_bitmap(pool_address)
+                    if self._snapshot
+                    else None,
+                    tick_data=self._snapshot.tick_data(pool_address) if self._snapshot else None,
                 )
             else:
                 new_pool = self._build_pool(
