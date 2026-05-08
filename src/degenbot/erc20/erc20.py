@@ -5,15 +5,14 @@ from eth_abi.exceptions import DecodingError
 from eth_typing import ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session, scoped_session
+from web3.types import BlockIdentifier
 
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.connection import connection_manager
 from degenbot.database import db_session
 from degenbot.database.models import Erc20TokenTable
 from degenbot.exceptions.erc20 import NoPriceOracle
-from degenbot.functions import (
-    encode_function_calldata,
-    raw_call,
-)
+from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.provider import ProviderAdapter
 from degenbot.types.abstract import AbstractErc20Token
 from degenbot.types.aliases import BlockNumber, ChainId
@@ -43,6 +42,10 @@ class Erc20Token(AbstractErc20Token):
     Constructed from pre-fetched data only. Use ``Bot.build_erc20token()`` to fetch from chain.
     """
 
+    UNKNOWN_NAME = "Unknown Token"
+    UNKNOWN_SYMBOL = "UNKNOWN"
+    UNKNOWN_DECIMALS = 18
+
     def __init__(
         self,
         address: str,
@@ -71,7 +74,9 @@ class Erc20Token(AbstractErc20Token):
         if oracle_address:
             from degenbot.chainlink import ChainlinkPriceContract
 
-            self._price_oracle = ChainlinkPriceContract(address=oracle_address, chain_id=self.chain_id)
+            self._price_oracle = ChainlinkPriceContract(
+                address=oracle_address, chain_id=self.chain_id
+            )
 
     # -- Cache accessors (dictionary operations, no I/O) --
 
@@ -82,6 +87,36 @@ class Erc20Token(AbstractErc20Token):
         if address not in self._cached_balance:
             self._cached_balance[address] = BoundedCache(max_items=self._state_cache_depth)
         self._cached_balance[address][block_number] = balance
+
+    def get_balance(self, address: ChecksumAddress, block_identifier: int | None = None) -> int:
+        """Fetch ERC20 token balance for an address.
+
+        Uses cached balance if available, otherwise fetches from chain.
+        """
+        if block_identifier is None:
+            block_identifier = self._state_block
+
+        # Check cache first
+        cached = self.get_cached_balance(address, block_identifier)
+        if cached is not None:
+            return cached
+
+        # Fetch from chain
+        provider = connection_manager.get_provider(self.chain_id)
+        (balance,) = raw_call(
+            provider,
+            address=self.address,
+            calldata=encode_function_calldata(
+                function_prototype="balanceOf(address)",
+                function_arguments=[address],
+            ),
+            return_types=["uint256"],
+            block_identifier=block_identifier,
+        )
+
+        # Cache the result
+        self.set_cached_balance(address, block_identifier, balance)
+        return balance
 
     def get_cached_approval(
         self, block_number: int, owner: ChecksumAddress, spender: ChecksumAddress
@@ -184,6 +219,41 @@ class Erc20Token(AbstractErc20Token):
             return_types=["uint256"],
         )
         return cast("int", result)
+
+    @staticmethod
+    def fetch_total_supply(
+        address: ChecksumAddress,
+        provider: ProviderAdapter,
+        block_identifier: BlockIdentifier | None = None,
+    ) -> int:
+        """Fetch total supply via RPC call."""
+        result = provider.call(
+            to=address,
+            data=encode_function_calldata(
+                function_prototype="totalSupply()",
+                function_arguments=None,
+            ),
+            block=block_identifier,
+        )
+        (total_supply,) = eth_abi.abi.decode(types=["uint256"], data=result)
+        return cast("int", total_supply)
+
+    def get_total_supply(self, block_identifier: BlockIdentifier | None = None) -> int:
+        """Get total supply at a given block, fetching from chain if not cached."""
+        from degenbot.connection import connection_manager
+
+        provider = connection_manager.get_provider(self._chain_id)
+        block_number = (
+            block_identifier if isinstance(block_identifier, int) else provider.get_block_number()
+        )
+
+        cached = self.get_cached_total_supply(block_number)
+        if cached is not None:
+            return cached
+
+        total_supply = self.fetch_total_supply(self.address, provider, block_identifier)
+        self.set_cached_total_supply(block_number, total_supply)
+        return total_supply
 
     @property
     def price(self) -> float:

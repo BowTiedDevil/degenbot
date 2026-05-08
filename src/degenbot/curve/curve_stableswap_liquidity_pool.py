@@ -22,10 +22,18 @@ from web3.types import BlockIdentifier
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
-from degenbot.curve.types import CurveStableswapPoolState
+from degenbot.curve.types import (
+    AdminBalancesFetcher,
+    CurveStableswapPoolState,
+    RateFetcher,
+    RedemptionPriceFetcher,
+    TimestampFetcher,
+    VirtualPriceFetcher,
+)
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import NoLiquidity
+from degenbot.exceptions.curve import MissingCurveData
 from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.liquidity_pool import InvalidSwapInputAmount
 from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
@@ -51,12 +59,24 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         "_provider_from_connection_manager",
         "_state_lock",
         "_subscribers",
+        # Fetchers (can't pickle closures)
+        "_rate_fetcher",
+        "_virtual_price_fetcher",
+        "_timestamp_fetcher",
+        "_redemption_price_fetcher",
+        "_admin_balances_fetcher",
     })
     _pickle_reconstructs: ClassVar[dict[str, Any]] = {
         "_state_lock": Lock,
         "_provider_from_connection_manager": lambda: True,
         "_provider": lambda: None,
         "_subscribers": WeakSet,
+        # Fetchers default to None after unpickle
+        "_rate_fetcher": lambda: None,
+        "_virtual_price_fetcher": lambda: None,
+        "_timestamp_fetcher": lambda: None,
+        "_redemption_price_fetcher": lambda: None,
+        "_admin_balances_fetcher": lambda: None,
     }
 
     # Constants from contract
@@ -180,6 +200,29 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         chain_id: ChainId | None = None,
         state_block: BlockNumber | None = None,
         state_cache_depth: int = 8,
+        # Optional fetchers for on-demand data
+        rate_fetcher: RateFetcher | None = None,
+        virtual_price_fetcher: VirtualPriceFetcher | None = None,
+        timestamp_fetcher: TimestampFetcher | None = None,
+        redemption_price_fetcher: RedemptionPriceFetcher | None = None,
+        admin_balances_fetcher: AdminBalancesFetcher | None = None,
+        # Pool configuration
+        base_pool: "CurveStableswapPool | None" = None,
+        tokens_underlying: Sequence[Erc20Token] | None = None,
+        lp_token: Erc20Token | None = None,
+        use_lending: Sequence[bool] | None = None,
+        precision_multipliers: Sequence[int] | None = None,
+        # A ramping configuration
+        initial_a_coefficient: int | None = None,
+        future_a_coefficient: int | None = None,
+        initial_a_coefficient_time: int | None = None,
+        future_a_coefficient_time: int | None = None,
+        create_timestamp: int | None = None,
+        # Crypto pool parameters
+        fee_gamma: int | None = None,
+        mid_fee: int | None = None,
+        out_fee: int | None = None,
+        gamma: int | None = None,
     ) -> None:
         """
         A Curve V1 (StableSwap) pool.
@@ -200,31 +243,49 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         self.rate_multipliers = tuple(
             10 ** (2 * self.PRECISION_DECIMALS - token.decimals) for token in self._tokens
         )
-        self.precision_multipliers = tuple(
-            cast("int", 10 ** (self.PRECISION_DECIMALS - token.decimals))
-            for token in self._tokens
-        )
+        if precision_multipliers is not None:
+            self.precision_multipliers = tuple(precision_multipliers)
+            # Recompute rate_multipliers to be consistent
+            self.rate_multipliers = tuple(
+                pm * 10**self.PRECISION_DECIMALS for pm in self.precision_multipliers
+            )
+        else:
+            self.precision_multipliers = tuple(
+                cast("int", 10 ** (self.PRECISION_DECIMALS - token.decimals))
+                for token in self._tokens
+            )
 
         # Set defaults for optional/variant attributes
-        self.fee_gamma = 0
-        self.mid_fee = 0
+        self.fee_gamma = fee_gamma if fee_gamma is not None else 0
+        self.mid_fee = mid_fee if mid_fee is not None else 0
         self.offpeg_fee_multiplier = 0
-        self.out_fee = 0
-        self.use_lending = tuple(False for _ in self._tokens)
+        self.out_fee = out_fee if out_fee is not None else 0
+        self.gamma = gamma if gamma is not None else 0
         self.oracle_method = None
-        self.initial_a_coefficient = None
-        self.initial_a_coefficient_time = None
-        self.future_a_coefficient = None
-        self.future_a_coefficient_time = None
-        self.base_pool = None
-        self.tokens_underlying = None
+
+        # Pool configuration
+        self.base_pool = base_pool
+        self.tokens_underlying = tuple(tokens_underlying) if tokens_underlying else None
+        self.lp_token = lp_token if lp_token is not None else self._tokens[0]
+        self.use_lending = tuple(use_lending) if use_lending else tuple(False for _ in self._tokens)
+
+        # A ramping configuration
+        self.initial_a_coefficient = initial_a_coefficient
+        self.initial_a_coefficient_time = initial_a_coefficient_time
+        self.future_a_coefficient = future_a_coefficient
+        self.future_a_coefficient_time = future_a_coefficient_time
+        self._create_timestamp = create_timestamp
+
+        # Fetchers for on-demand data
+        self._rate_fetcher = rate_fetcher
+        self._virtual_price_fetcher = virtual_price_fetcher
+        self._timestamp_fetcher = timestamp_fetcher
+        self._redemption_price_fetcher = redemption_price_fetcher
+        self._admin_balances_fetcher = admin_balances_fetcher
+
         self.base_cache_updated = None
         self.base_virtual_price = 0
-
-        # LP token defaults to first token if not a metapool
-        self.lp_token = self._tokens[0]
         self._coin_index_type = "uint256"
-        self._create_timestamp: int | None = None
 
         # State caches
         self._state_cache: BoundedCache[BlockNumber, CurveStableswapPoolState] = BoundedCache(
@@ -266,12 +327,35 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         self._cached_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
             max_items=state_cache_depth
         )
+        self._cached_admin_balances: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
+            max_items=state_cache_depth
+        )
+        self._cached_base_cache_updated: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=state_cache_depth
+        )
+        self._cached_base_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=state_cache_depth
+        )
+        self._cached_price_scale: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
+            max_items=state_cache_depth
+        )
+        self._cached_contract_D: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=state_cache_depth
+        )
+        self._cached_gamma: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=state_cache_depth
+        )
 
         fee_string = f"{100 * self.fee / self.FEE_DENOMINATOR:.2f}"
         token_string = "-".join([token.symbol for token in self._tokens])
         self.name = f"{token_string} ({self.__class__.__name__}, {fee_string}%)"
 
         self._subscribers: WeakSet[Subscriber] = WeakSet()
+
+        # Provider access for on-chain data fetching
+        # These will be removed in the full I/O-free migration
+        self._provider: Any = None
+        self._provider_from_connection_manager = True
 
     def __repr__(self) -> str:  # pragma: no cover
         token_string = "-".join([token.symbol for token in self._tokens])
@@ -298,6 +382,20 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         if TYPE_CHECKING:
             assert self.state.block is not None
         return self.state.block
+
+    def _get_provider_for_chain(self) -> Any:
+        """Get the provider for this pool's chain.
+
+        This is a temporary method to unblock tests during the I/O-free migration.
+        It will be removed once fetcher callbacks are fully implemented.
+        """
+        if self._provider_from_connection_manager:
+            try:
+                return connection_manager.get_provider(self._chain_id)
+            except Exception:  # noqa: BLE001
+                # No provider available from connection_manager (e.g., multiprocessing)
+                pass
+        return self._provider
 
     def _a(self, timestamp: int | None = None) -> int:
         """
@@ -356,6 +454,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         Needed to prevent front-running, not for precise calculations!
         """
 
+        provider = self._get_provider_for_chain()
         n_coins = len(self._tokens)
 
         pool_balances = (
@@ -367,9 +466,15 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
-                self._provider,
+                provider,
             )
         )
+
+        # Fetch and cache block timestamp for A ramping calculations
+        if block_number not in self._block_timestamps:
+            self._block_timestamps[block_number] = provider.get_block(
+                block_identifier=block_number
+            )["timestamp"]
 
         xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
         amp = self._a(timestamp=self._block_timestamps[block_number])
@@ -392,14 +497,21 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
     def calc_withdraw_one_coin(
         self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
     ) -> tuple[int, ...]:
+        provider = self._get_provider_for_chain()
         block_number = (
             block_identifier
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 block_identifier,
-                self._provider,
+                provider,
             )
         )
+
+        # Fetch and cache block timestamp for A ramping calculations
+        if block_number not in self._block_timestamps:
+            self._block_timestamps[block_number] = provider.get_block(
+                block_identifier=block_number
+            )["timestamp"]
 
         n_coins = len(self._tokens)
         amp = self._a(timestamp=self._block_timestamps[block_number])
@@ -494,6 +606,12 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
                 provider,
             )
         )
+
+        # Fetch and cache block timestamp for A ramping calculations
+        if block_number not in self._block_timestamps:
+            self._block_timestamps[block_number] = provider.get_block(
+                block_identifier=block_number
+            )["timestamp"]
 
         if self.base_pool is not None:
             if self.address == "0xC61557C5d177bd7DC889A3b621eEC333e168f68A":
