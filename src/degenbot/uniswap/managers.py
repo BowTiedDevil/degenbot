@@ -11,7 +11,6 @@ from degenbot.exceptions.manager import (
     PoolNotAssociated,
 )
 from degenbot.logging import logger
-from degenbot.registry import pool_registry
 from degenbot.types.abstract import AbstractPoolManager
 from degenbot.uniswap.deployments import (
     FACTORY_DEPLOYMENTS,
@@ -95,17 +94,10 @@ class AbstractUniswapV2PoolManager[Pool: UniswapV2Pool](AbstractPoolManager[Pool
             raise PoolNotAssociated(pool_address)
 
         # Check if the pool registry already has this pool
-        pool_from_registry: Pool | None = None
-        if self._bot is not None:
-            pool_from_registry = self._bot.pools.get(
-                pool_address=pool_address,
-                chain_id=self.chain_id,
-            )
-        else:
-            pool_from_registry = pool_registry.get(
-                pool_address=pool_address,
-                chain_id=self.chain_id,
-            )
+        pool_from_registry = self._bot.pools.get(
+            pool_address=pool_address,
+            chain_id=self.chain_id,
+        )
 
         if pool_from_registry is not None:
             if TYPE_CHECKING:
@@ -117,20 +109,13 @@ class AbstractUniswapV2PoolManager[Pool: UniswapV2Pool](AbstractPoolManager[Pool
             raise PoolNotAssociated(pool_address)
 
         try:
-            if self._bot is not None:
-                new_pool = self._bot.build_v2_pool(
-                    pool_address=pool_address,
-                    chain_id=self.chain_id,
-                    deployer_address=self._deployer_address,
-                    init_hash=self._pool_init_hash,
-                    silent=silent,
-                )
-            else:
-                new_pool = self.pool_factory(
-                    address=pool_address,
-                    silent=silent,
-                    **(pool_class_kwargs or {}),
-                )
+            new_pool = self._bot.build_v2_pool(
+                pool_address=pool_address,
+                chain_id=self.chain_id,
+                deployer_address=self._deployer_address,
+                init_hash=self._pool_init_hash,
+                silent=silent,
+            )
         except LiquidityPoolError as exc:
             raise PoolCreationFailed(
                 message=f"Could not build V2 pool {pool_address}: {exc}"
@@ -299,7 +284,7 @@ class AbstractUniswapV3PoolManager[Pool: UniswapV3Pool](AbstractPoolManager[Pool
             raise PoolNotAssociated(pool_address)
 
         # Check if the pool registry already has this pool
-        pool_from_registry = pool_registry.get(
+        pool_from_registry = self._bot.pools.get(
             pool_address=pool_address,
             chain_id=self.chain_id,
         )
@@ -401,17 +386,10 @@ class UniswapV3PoolManager(AbstractUniswapV3PoolManager[UniswapV3Pool], pool_fac
             raise PoolNotAssociated(pool_address)
 
         # Check if the pool registry already has this pool
-        pool_from_registry: UniswapV3Pool | None = None
-        if self._bot is not None:
-            pool_from_registry = self._bot.pools.get(
-                pool_address=pool_address,
-                chain_id=self.chain_id,
-            )
-        else:
-            pool_from_registry = pool_registry.get(
-                pool_address=pool_address,
-                chain_id=self.chain_id,
-            )
+        pool_from_registry = self._bot.pools.get(
+            pool_address=pool_address,
+            chain_id=self.chain_id,
+        )
 
         if pool_from_registry is not None:
             if TYPE_CHECKING:
@@ -423,24 +401,17 @@ class UniswapV3PoolManager(AbstractUniswapV3PoolManager[UniswapV3Pool], pool_fac
             raise PoolNotAssociated(pool_address)
 
         try:
-            if self._bot is not None:
-                new_pool = self._bot.build_v3_pool(
-                    pool_address=pool_address,
-                    chain_id=self.chain_id,
-                    deployer_address=self._deployer_address,
-                    init_hash=self._pool_init_hash,
-                    silent=silent,
-                    tick_bitmap=self._snapshot.tick_bitmap(pool_address)
-                    if self._snapshot
-                    else None,
-                    tick_data=self._snapshot.tick_data(pool_address) if self._snapshot else None,
-                )
-            else:
-                new_pool = self._build_pool(
-                    pool_address=pool_address,
-                    silent=silent,
-                    pool_class_kwargs=pool_class_kwargs,
-                )
+            new_pool = self._bot.build_v3_pool(
+                pool_address=pool_address,
+                chain_id=self.chain_id,
+                deployer_address=self._deployer_address,
+                init_hash=self._pool_init_hash,
+                silent=silent,
+                tick_bitmap=self._snapshot.tick_bitmap(pool_address)
+                if self._snapshot
+                else None,
+                tick_data=self._snapshot.tick_data(pool_address) if self._snapshot else None,
+            )
         except LiquidityPoolError as exc:  # pragma: no cover
             raise PoolCreationFailed(
                 message=f"Could not build V3 pool {pool_address}: {exc}"

@@ -9,15 +9,11 @@ from hexbytes import HexBytes
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
-from degenbot.registry import token_registry
 
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 WBTC_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 
 
-@pytest.fixture(autouse=True)
-def _reset_registries():
-    token_registry._reset()
 
 
 @pytest.fixture

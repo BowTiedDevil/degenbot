@@ -21,7 +21,7 @@ from degenbot.exceptions.liquidity_pool import (
     NoPoolStateAvailable,
 )
 from degenbot.provider import ProviderAdapter
-from degenbot.registry import pool_registry
+from degenbot.registry import PoolRegistry
 from degenbot.uniswap.abi import UNISWAP_V2_ROUTER_ABI
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import (
@@ -465,11 +465,6 @@ def test_comparisons(
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block
         == UNISWAP_V2_WBTC_WETH_POOL.lower()
-    )
-
-    pool_registry.remove(
-        pool_address=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.address,
-        chain_id=1,
     )
 
     # Construct another pool with I/O-free constructor using the same tokens

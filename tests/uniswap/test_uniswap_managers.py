@@ -6,7 +6,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.manager import ManagerAlreadyInitialized, ManagerError, PoolNotAssociated
 from degenbot.pancakeswap.managers import PancakeswapV3PoolManager
 from degenbot.provider import ProviderAdapter
-from degenbot.registry import pool_registry
+from degenbot.registry import PoolRegistry
 from degenbot.sushiswap.managers import SushiswapV2PoolManager, SushiswapV3PoolManager
 from degenbot.uniswap.deployments import (
     UniswapFactoryDeployment,
@@ -244,12 +244,8 @@ def test_pool_remove_and_recreate(fork_mainnet_full: AnvilFork):
     # The pool manager should have found the original pool in AllPools and re-used it
     assert v2_weth_wbtc_lp is new_v2_weth_wbtc_lp
 
-    # Remove from the pool manager and the registries
+    # Remove from the pool manager and the bot's registry
     uniswap_v2_pool_manager.remove(pool_address=new_v2_weth_wbtc_lp.address)
-    pool_registry.remove(
-        pool_address=new_v2_weth_wbtc_lp.address,
-        chain_id=1,
-    )
     bot.pools.remove(
         pool_address=new_v2_weth_wbtc_lp.address,
         chain_id=1,

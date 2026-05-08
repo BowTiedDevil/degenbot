@@ -1,11 +1,12 @@
 import pytest
 
 from degenbot.anvil_fork import AnvilFork
+from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
 from degenbot.erc20.manager import Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
-from degenbot.registry import token_registry
+from degenbot.provider import ProviderAdapter
+from tests.helpers.bot_factory import make_bot_with_provider
 
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 WBTC_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
@@ -13,8 +14,8 @@ ETHER_PLACEHOLDER_ADDRESS = get_checksum_address("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEE
 
 
 def test_get_erc20tokens(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
-    token_manager = Erc20TokenManager(chain_id=fork_mainnet_full.w3.eth.chain_id)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    token_manager = Erc20TokenManager(chain_id=fork_mainnet_full.w3.eth.chain_id, bot=bot)
 
     weth = token_manager.get_erc20token(address=WETH_ADDRESS)
     assert weth.symbol == "WETH"
@@ -22,10 +23,7 @@ def test_get_erc20tokens(fork_mainnet_full: AnvilFork):
     assert token_manager.get_erc20token(WETH_ADDRESS) is weth
     assert token_manager.get_erc20token(WETH_ADDRESS.lower()) is weth
     assert token_manager.get_erc20token(WETH_ADDRESS.upper()) is weth
-    assert (
-        token_registry.get(token_address=WETH_ADDRESS, chain_id=fork_mainnet_full.w3.eth.chain_id)
-        is weth
-    )
+    assert bot.tokens.get(token_address=WETH_ADDRESS, chain_id=bot.connections.default_chain_id) is weth
 
     wbtc = token_manager.get_erc20token(address=WBTC_ADDRESS)
     assert wbtc.symbol == "WBTC"
@@ -33,23 +31,20 @@ def test_get_erc20tokens(fork_mainnet_full: AnvilFork):
     assert token_manager.get_erc20token(WBTC_ADDRESS) is wbtc
     assert token_manager.get_erc20token(WBTC_ADDRESS.lower()) is wbtc
     assert token_manager.get_erc20token(WBTC_ADDRESS.upper()) is wbtc
-    assert (
-        token_registry.get(token_address=WBTC_ADDRESS, chain_id=fork_mainnet_full.w3.eth.chain_id)
-        is wbtc
-    )
+    assert bot.tokens.get(token_address=WBTC_ADDRESS, chain_id=bot.connections.default_chain_id) is wbtc
 
 
 def test_get_bad_token(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
-    token_manager = Erc20TokenManager(chain_id=fork_mainnet_full.w3.eth.chain_id)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    token_manager = Erc20TokenManager(chain_id=fork_mainnet_full.w3.eth.chain_id, bot=bot)
     bad_token_address = "0x0000000000000000000000000000000000000001"
     with pytest.raises(DegenbotValueError):
         token_manager.get_erc20token(address=bad_token_address)
 
 
 def test_get_ether_placeholder(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
-    token_manager = Erc20TokenManager(chain_id=fork_mainnet_full.w3.eth.chain_id)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    token_manager = Erc20TokenManager(chain_id=fork_mainnet_full.w3.eth.chain_id, bot=bot)
 
     ether_placeholder = token_manager.get_erc20token(address=ETHER_PLACEHOLDER_ADDRESS)
     assert ether_placeholder.symbol == "ETH"
@@ -58,24 +53,9 @@ def test_get_ether_placeholder(fork_mainnet_full: AnvilFork):
     assert token_manager.get_erc20token(ETHER_PLACEHOLDER_ADDRESS.lower()) is ether_placeholder
     assert token_manager.get_erc20token(ETHER_PLACEHOLDER_ADDRESS.upper()) is ether_placeholder
     assert (
-        token_registry.get(
+        bot.tokens.get(
             token_address=ETHER_PLACEHOLDER_ADDRESS,
-            chain_id=fork_mainnet_full.w3.eth.chain_id,
-        )
-        is ether_placeholder
-    )
-
-    assert (
-        token_registry.get(
-            token_address=ETHER_PLACEHOLDER_ADDRESS.lower(),
-            chain_id=fork_mainnet_full.w3.eth.chain_id,
-        )
-        is ether_placeholder
-    )
-    assert (
-        token_registry.get(
-            token_address=ETHER_PLACEHOLDER_ADDRESS.upper(),
-            chain_id=fork_mainnet_full.w3.eth.chain_id,
+            chain_id=bot.connections.default_chain_id,
         )
         is ether_placeholder
     )

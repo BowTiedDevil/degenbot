@@ -8,7 +8,6 @@ to avoid external dependencies.
 from fractions import Fraction
 
 import pytest
-from eth_typing import ChainId
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage.optimizers.hop_types import SolveInput
@@ -19,11 +18,10 @@ from degenbot.arbitrage.optimizers.solidly_stable import (
 from degenbot.arbitrage.optimizers.solver import BrentSolver, _simulate_path
 from degenbot.arbitrage.uniswap_curve_cycle import UniswapCurveCycle
 from degenbot.connection import set_web3
-from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from degenbot.erc20.manager import Erc20TokenManager
+from degenbot.provider import ProviderAdapter
 from degenbot.types.hop_types import ConstantProductHop, CurveStableswapHop
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
+from tests.helpers.bot_factory import make_bot_with_provider
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 DAI_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
@@ -281,14 +279,18 @@ def test_curve_fork_equivalence(fork_mainnet_full: AnvilFork) -> None:
     Compares ArbitragePath with Curve hops against legacy UniswapCurveCycle
     using real mainnet Curve pools.
     """
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    # CurveStableswapPool still accesses the global connection_manager for
+    # on-chain data (e.g. block number during swap calculations), so register
+    # the provider globally too.
     set_web3(fork_mainnet_full.w3)
 
-    weth = Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(WETH_ADDRESS)
-    dai = Erc20TokenManager(chain_id=ChainId.ETH).get_erc20token(DAI_ADDRESS)
+    weth = bot.build_erc20token(WETH_ADDRESS)
+    dai = bot.build_erc20token(DAI_ADDRESS)
 
-    curve_tripool = CurveStableswapPool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_dai_lp = UniswapV2Pool(UNISWAP_V2_WETH_DAI_ADDRESS)
-    uniswap_v2_weth_usdc_lp = UniswapV2Pool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    curve_tripool = bot.build_curve_pool(CURVE_TRIPOOL_ADDRESS)
+    uniswap_v2_weth_dai_lp = bot.build_v2_pool(UNISWAP_V2_WETH_DAI_ADDRESS)
+    uniswap_v2_weth_usdc_lp = bot.build_v2_pool(UNISWAP_V2_WETH_USDC_ADDRESS)
 
     # Override V2 pool state to create a profitable arbitrage condition
     v2_weth_dai_override = UniswapV2PoolState(

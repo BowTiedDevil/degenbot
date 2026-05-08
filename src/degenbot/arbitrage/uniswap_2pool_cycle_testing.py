@@ -2677,7 +2677,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     )
                     v4_input_token = self.input_token
                     forward_token = (
-                        v4_pool.token1 if v4_input_token is v4_pool.token0 else v4_pool.token0
+                        v4_pool.token1 if v4_input_token == v4_pool.token0 else v4_pool.token0
                     )
                 elif self.input_token == wrapped_currency_address:
                     v4_input_token = (
@@ -2687,7 +2687,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     )
                     v3_input_token = self.input_token
                     forward_token = (
-                        v3_pool.token1 if v3_input_token is v3_pool.token0 else v3_pool.token0
+                        v3_pool.token1 if v3_input_token == v3_pool.token0 else v3_pool.token0
                     )
                 else:
                     raise DegenbotValueError(message="Cannot identify input and forward tokens")
@@ -2770,7 +2770,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     )
                     v4_input_token = self.input_token
                     forward_token = (
-                        v4_pool.token1 if v4_input_token is v4_pool.token0 else v4_pool.token0
+                        v4_pool.token1 if v4_input_token == v4_pool.token0 else v4_pool.token0
                     )
                 elif self.input_token == wrapped_currency_address:
                     v4_input_token = (
@@ -2780,7 +2780,7 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                     )
                     v2_input_token = self.input_token
                     forward_token = (
-                        v2_pool.token1 if v2_input_token is v2_pool.token0 else v2_pool.token0
+                        v2_pool.token1 if v2_input_token == v2_pool.token0 else v2_pool.token0
                     )
                 else:
                     raise DegenbotValueError(message="Cannot identify input and forward tokens")

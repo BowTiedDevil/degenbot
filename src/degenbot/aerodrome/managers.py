@@ -18,7 +18,6 @@ from degenbot.exceptions.manager import (
     PoolNotAssociated,
 )
 from degenbot.logging import logger
-from degenbot.registry import pool_registry
 from degenbot.types.abstract.pool_manager import AbstractPoolManager
 from degenbot.types.aliases import ChainId
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
@@ -56,12 +55,11 @@ class _AbstractAerodromeV2PoolManager[Pool: AerodromeV2Pool](AbstractPoolManager
             raise PoolNotAssociated(pool_address)
 
         # Check if the pool registry already has this pool
-        if (
-            pool_from_registry := pool_registry.get(
-                pool_address=pool_address,
-                chain_id=self.chain_id,
-            )
-        ) is not None:
+        pool_from_registry = self._bot.pools.get(
+            pool_address=pool_address,
+            chain_id=self.chain_id,
+        )
+        if pool_from_registry is not None:
             if TYPE_CHECKING:
                 assert isinstance(pool_from_registry, self.pool_factory)
             if pool_from_registry.factory == self._factory_address:

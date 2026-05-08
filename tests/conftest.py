@@ -10,7 +10,7 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.bot import Bot
 from degenbot.connection import ProviderAdapter, connection_manager
 from degenbot.logging import logger
-from degenbot.registry import managed_pool_registry, pool_registry, token_registry
+from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 
 env_file = dotenv.find_dotenv("tests.env")
 env_values = dotenv.dotenv_values(env_file)
@@ -89,9 +89,10 @@ def _initialize_and_reset_after_each_test():
     Before each test, clear/reset global values and singletons
     """
     connection_manager._reset()
-    pool_registry._reset()
-    managed_pool_registry._reset()
-    token_registry._reset()
+
+    # Reset global registry singletons if they exist
+    # (removed singletons are no longer available, but Bot-owned registries
+    # are scoped to each Bot instance)
 
 
 @pytest.fixture(scope="session", autouse=True)
