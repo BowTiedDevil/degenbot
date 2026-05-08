@@ -241,7 +241,11 @@ def test_first_200_pools_with_snapshot(
 
         pool_tick_data = liquidity_snapshot[pool_address]["tick_data"]
         pool_tick_bitmap = liquidity_snapshot[pool_address]["tick_bitmap"]
-        lp = bot.build_v3_pool(pool_address)
+        lp = bot.build_v3_pool(
+            pool_address,
+            tick_bitmap=pool_tick_bitmap,
+            tick_data=pool_tick_data,
+        )
 
         max_reserves_token0 = 1 * 10**lp.token0.decimals
         max_reserves_token1 = 1 * 10**lp.token1.decimals
@@ -306,8 +310,9 @@ def test_pool_creation(bot_mainnet_full: Bot) -> None:
 
 
 def test_pool_creation_with_liquidity_map(bot_mainnet_full: Bot) -> None:
+    # Pools built without explicit tick data have sparse liquidity maps
     pool = bot_mainnet_full.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
-    assert pool.sparse_liquidity_map is False
+    assert pool.sparse_liquidity_map is True
 
 
 @pytest.mark.base
@@ -329,20 +334,11 @@ def test_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     lp = bot.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
     current_word, _ = get_tick_word_and_bit_position(MIN_TICK, lp.tick_spacing)
-    known_words = set(lp.tick_bitmap.keys())
     assert lp.sparse_liquidity_map is True
     assert current_word + 1 not in lp.tick_bitmap
 
-    tick_bitmap = lp.tick_bitmap
-    tick_data = lp.tick_data
-
-    lp._fetch_and_populate_initialized_ticks(
-        word_position=current_word + 1, tick_bitmap=tick_bitmap, tick_data=tick_data
-    )
-    assert lp.sparse_liquidity_map is True
-    assert current_word + 1 in tick_bitmap
-    assert set(tick_bitmap.keys()) == known_words.union([current_word + 1])
-
+    # Pools built without tick data can still perform swaps
+    # The tick data fetcher will fetch missing data on-demand
     lp.calculate_tokens_out_from_tokens_in(
         token_in=lp.token0, token_in_quantity=100000 * 10**lp.token0.decimals
     )
@@ -806,9 +802,12 @@ def test_simulation_input_validation(
 
 def test_simulations_with_override(
     wbtc_weth_v3_lp: UniswapV3Pool,
-    fork_mainnet_archive: AnvilFork,
 ) -> None:
     # Overridden state values for this test are taken at block height 17,650,000
+
+    # Capture tick data before the simulation to use in the expected result
+    tick_bitmap_before = wbtc_weth_v3_lp.tick_bitmap
+    tick_data_before = wbtc_weth_v3_lp.tick_data
 
     pool_state_override = UniswapV3PoolState(
         address=wbtc_weth_v3_lp.address,
@@ -816,8 +815,8 @@ def test_simulations_with_override(
         liquidity=1533143241938066251,
         sqrt_price_x96=31881290961944305252140777263703426,
         tick=258116,
-        tick_bitmap=wbtc_weth_v3_lp.tick_bitmap,
-        tick_data=wbtc_weth_v3_lp.tick_data,
+        tick_bitmap=tick_bitmap_before,
+        tick_data=tick_data_before,
     )
 
     assert wbtc_weth_v3_lp.simulate_exact_input_swap(
@@ -834,8 +833,8 @@ def test_simulations_with_override(
             sqrt_price_x96=31881342483860761583159860586051776,
             liquidity=1533143241938066251,
             tick=258116,
-            tick_bitmap=wbtc_weth_v3_lp.tick_bitmap,
-            tick_data=wbtc_weth_v3_lp.tick_data,
+            tick_bitmap=tick_bitmap_before,
+            tick_data=tick_data_before,
         ),
     )
 
@@ -853,8 +852,8 @@ def test_simulations_with_override(
             sqrt_price_x96=31881342483855216967760245337454994,
             liquidity=1533143241938066251,
             tick=258116,
-            tick_bitmap=wbtc_weth_v3_lp.tick_bitmap,
-            tick_data=wbtc_weth_v3_lp.tick_data,
+            tick_bitmap=tick_bitmap_before,
+            tick_data=tick_data_before,
         ),
     )
 
@@ -988,6 +987,8 @@ def test_external_update(
 
     # Now repeat the liquidity change for a newer block and check that the in-range liquidity was
     # adjusted
+    # Mine a block so the fork has block 17600001 (required for tick data fetcher)
+    fork_mainnet_archive.mine()
 
     wbtc_weth_v3_lp_at_historical_block.update_liquidity_map(
         update=UniswapV3PoolLiquidityMappingUpdate(

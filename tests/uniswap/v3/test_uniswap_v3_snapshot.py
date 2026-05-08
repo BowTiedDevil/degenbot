@@ -362,12 +362,16 @@ def test_pool_manager_applies_snapshot_from_file(
     empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,  # noqa: E501
     fork_mainnet_full: AnvilFork,
 ):
+    from degenbot.provider import ProviderAdapter
+    from tests.helpers.bot_factory import make_bot_with_provider
+
     set_web3(fork_mainnet_full.w3)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
 
     # Build a pool manager to inject the liquidity events into the new pools as they are created
     pool_manager = UniswapV3PoolManager(
         factory_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
-        chain_id=1,
+        bot=bot,
         snapshot=empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870,
     )
 
@@ -531,12 +535,16 @@ def test_pool_manager_applies_snapshot_from_dir(
     mainnet_snapshot_at_block_12_369_870_from_dir: UniswapV3LiquiditySnapshot,
     fork_mainnet_full: AnvilFork,
 ):
+    from degenbot.provider import ProviderAdapter
+    from tests.helpers.bot_factory import make_bot_with_provider
+
     set_web3(fork_mainnet_full.w3)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
 
     # Build a pool manager to inject the liquidity events into the new pools as they are created
     pool_manager = UniswapV3PoolManager(
         factory_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
-        chain_id=1,
+        bot=bot,
         snapshot=mainnet_snapshot_at_block_12_369_870_from_dir,
     )
 
