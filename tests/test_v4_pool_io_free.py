@@ -16,7 +16,7 @@ from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.functions import encode_function_calldata
-from degenbot.registry import managed_pool_registry
+from degenbot.registry import ManagedPoolRegistry
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.uniswap.v4_types import (
     UniswapV4BitmapAtWord,
@@ -136,8 +136,7 @@ class TestV4PoolIOFreeConstructor:
 
     def test_io_free_no_self_registration(self, tmp_path: pathlib.Path) -> None:
         """I/O-free pool should not self-register in managed_pool_registry."""
-        # Clear registry to ensure clean state
-        managed_pool_registry._reset()
+        registry = ManagedPoolRegistry()
 
         native_eth = _make_native_eth()
         usdc = _make_usdc()
@@ -159,8 +158,8 @@ class TestV4PoolIOFreeConstructor:
             state_block=18_000_000,
         )
 
-        # Pool should NOT be in managed_pool_registry
-        found = managed_pool_registry.get(
+        # Pool should NOT be in registry
+        found = registry.get(
             chain_id=1,
             pool_manager_address=V4_POOL_MANAGER,
             pool_id=V4_POOL_ID,

@@ -3,16 +3,19 @@ import pytest
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
-from degenbot.registry import managed_pool_registry, pool_registry, token_registry
+from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from tests.fakes.pools import FakeUniswapV4Pool
 
 UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
 
-def test_singleton(fork_mainnet_full):
-    new_pool_registry = type(pool_registry)()
-    new_token_registry = type(token_registry)()
+def test_distinct_registry_instances():
+    pool_registry = PoolRegistry()
+    token_registry = TokenRegistry()
+
+    new_pool_registry = PoolRegistry()
+    new_token_registry = TokenRegistry()
 
     assert new_pool_registry is not pool_registry
     assert new_token_registry is not token_registry
@@ -77,6 +80,8 @@ def test_v4_pool_add_and_removal():
     # Define V4 pool parameters
     chain_id = 1
     pool_id = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+
+    managed_pool_registry = ManagedPoolRegistry()
 
     # Add the V4 pool to the managed pool registry
     managed_pool_registry.add(

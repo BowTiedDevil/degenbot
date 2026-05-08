@@ -14,7 +14,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.functions import encode_function_calldata
-from degenbot.registry import pool_registry
+from degenbot.registry import PoolRegistry
 from degenbot.uniswap.managers import UniswapV3PoolManager
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
@@ -133,7 +133,8 @@ class TestV3PoolIOFreeConstructor:
             state_block=18_000_000,
         )
 
-        assert pool_registry.get(pool_address=pool.address, chain_id=1) is None
+        # Pool should NOT be in any user-created registry
+        assert PoolRegistry().get(pool_address=pool.address, chain_id=1) is None
 
     def test_io_free_constructor_with_tick_data(self) -> None:
         """I/O-free constructor accepts pre-fetched tick_bitmap and tick_data."""

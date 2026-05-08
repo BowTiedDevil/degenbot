@@ -19,7 +19,7 @@ from degenbot.exceptions.liquidity_pool import (
     PossibleInaccurateResult,
 )
 from degenbot.provider import ProviderAdapter
-from degenbot.registry import managed_pool_registry
+from degenbot.registry import ManagedPoolRegistry
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from tests.helpers.bot_factory import make_bot_with_provider
 
@@ -97,14 +97,14 @@ def _test_pool_exact_input(
 
     pool_id: HexStr = pool["pool_id"]
 
-    lp = managed_pool_registry.get(
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
+    lp = bot.managed_pools.get(
         chain_id=fork.w3.eth.chain_id,
         pool_manager_address=V4_POOL_MANAGER_ADDRESS,
         pool_id=pool_id,
     )
     if lp is None:
         try:
-            bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
             lp = bot.build_v4_pool(
                 pool_id=pool_id,
                 pool_manager_address=V4_POOL_MANAGER_ADDRESS,
@@ -215,14 +215,14 @@ def _test_pool_exact_output(
 ):
     pool_id: HexStr = pool["pool_id"]
 
-    lp = managed_pool_registry.get(
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
+    lp = bot.managed_pools.get(
         chain_id=fork.w3.eth.chain_id,
         pool_manager_address=V4_POOL_MANAGER_ADDRESS,
         pool_id=pool_id,
     )
     if lp is None:
         try:
-            bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
             lp = bot.build_v4_pool(
                 pool_id=pool_id,
                 pool_manager_address=V4_POOL_MANAGER_ADDRESS,

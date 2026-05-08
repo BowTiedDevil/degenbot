@@ -14,7 +14,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.functions import encode_function_calldata
-from degenbot.registry import pool_registry
+from degenbot.registry import PoolRegistry
 from degenbot.uniswap.managers import UniswapV2PoolManager
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
@@ -181,8 +181,8 @@ class TestV2PoolIOFreeConstructor:
             state_block=18_000_000,
         )
 
-        # Pool should NOT be in the global registry
-        assert pool_registry.get(pool_address=pool.address, chain_id=1) is None
+        # Pool should NOT be in any user-created registry
+        assert PoolRegistry().get(pool_address=pool.address, chain_id=1) is None
 
     def test_io_free_pool_pickle(self) -> None:
         """I/O-free pools can be pickled and unpickled."""

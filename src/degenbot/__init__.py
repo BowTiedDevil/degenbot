@@ -60,7 +60,7 @@ from .pancakeswap import (
     PancakeswapV3Pool,
     PancakeswapV3PoolManager,
 )
-from .registry import managed_pool_registry, pool_registry, token_registry
+from .registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from .sushiswap import (
     SushiswapV2Pool,
     SushiswapV2PoolManager,
@@ -137,6 +137,9 @@ __all__ = (
     "UniswapV4LiquiditySnapshot",
     "UniswapV4Pool",
     "UniswapV4PoolExternalUpdate",
+    "ManagedPoolRegistry",
+    "PoolRegistry",
+    "TokenRegistry",
     "UniswapV4PoolState",
     "__version__",
     "abi_decode",
@@ -156,10 +159,7 @@ __all__ = (
     "get_tick_at_sqrt_ratio",
     "get_web3",
     "logger",
-    "managed_pool_registry",
-    "pool_registry",
     "set_async_web3",
     "set_web3",
     "to_checksum_address",
-    "token_registry",
 )

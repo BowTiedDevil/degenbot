@@ -11,7 +11,7 @@ import pytest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
 from degenbot.provider import OfflineProvider, ProviderAdapter
-from degenbot.registry import managed_pool_registry, pool_registry, token_registry
+from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.fakes.pools import FakeUniswapV4Pool
 
@@ -71,13 +71,15 @@ def _get_offline_v2_pool() -> UniswapV2Pool:
     )
 
 
-def test_singleton():
+def test_distinct_registry_instances():
     """
     Constructing a new registry instance returns a distinct object.
-    (The global singletons are checked, not the class-level one.)
     """
-    new_pool_registry = type(pool_registry)()
-    new_token_registry = type(token_registry)()
+    pool_registry = PoolRegistry()
+    token_registry = TokenRegistry()
+
+    new_pool_registry = PoolRegistry()
+    new_token_registry = TokenRegistry()
 
     assert new_pool_registry is not pool_registry
     assert new_token_registry is not token_registry
@@ -85,7 +87,7 @@ def test_singleton():
 
 def test_adding_pool():
     """Adding a pool to the registry makes it retrievable; double-add is an error."""
-    pool_registry._reset()
+    pool_registry = PoolRegistry()
     lp = _get_offline_v2_pool()
     pool_registry.add(pool_address=lp.address, chain_id=1, pool=lp)
     assert pool_registry.get(pool_address=lp.address, chain_id=1) is lp
@@ -96,7 +98,7 @@ def test_adding_pool():
 
 def test_deleting_pool():
     """Removing a pool from the registry makes it unretrievable."""
-    pool_registry._reset()
+    pool_registry = PoolRegistry()
     lp = _get_offline_v2_pool()
     pool_registry.add(pool_address=lp.address, chain_id=1, pool=lp)
     assert pool_registry.get(pool_address=lp.address, chain_id=1) is lp
@@ -106,8 +108,7 @@ def test_deleting_pool():
 
 def test_adding_token():
     """Adding a token to the registry makes it retrievable; double-add is an error."""
-    pool_registry._reset()
-    token_registry._reset()
+    token_registry = TokenRegistry()
     lp = _get_offline_v2_pool()
     weth = lp.token1
     token_registry.add(token_address=weth.address, chain_id=1, token=weth)
@@ -119,8 +120,7 @@ def test_adding_token():
 
 def test_deleting_token():
     """Removing a token from the registry makes it unretrievable."""
-    pool_registry._reset()
-    token_registry._reset()
+    token_registry = TokenRegistry()
     lp = _get_offline_v2_pool()
     weth = lp.token1
     token_registry.add(token_address=weth.address, chain_id=1, token=weth)
@@ -131,6 +131,7 @@ def test_deleting_token():
 
 def test_v4_pool_add_and_removal():
     """Managed pool registry supports V4-style pools with pool_manager_address + pool_id."""
+    managed_pool_registry = ManagedPoolRegistry()
     fake_pool_manager_address = "0x1234567890123456789012345678901234567890"
     fake_pool_id = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 

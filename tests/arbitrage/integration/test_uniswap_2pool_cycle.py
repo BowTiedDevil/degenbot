@@ -10,7 +10,7 @@ from degenbot.erc20.erc20 import Erc20Token
 from degenbot.erc20.ether_placeholder import EtherPlaceholder
 from degenbot.exceptions.arbitrage import RateOfExchangeBelowMinimum
 from degenbot.provider import ProviderAdapter
-from degenbot.registry import token_registry
+from degenbot.registry import TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
@@ -52,7 +52,7 @@ def weth(fork_mainnet_full: AnvilFork) -> Erc20Token:
 def ether_placeholder(fork_mainnet_full: AnvilFork) -> Erc20Token:
     set_web3(fork_mainnet_full.w3)
 
-    token = token_registry.get(
+    token = TokenRegistry().get(
         chain_id=fork_mainnet_full.w3.eth.chain_id,
         token_address=NATIVE_ADDRESS,
     )
