@@ -8,7 +8,7 @@ from _pytest.nodes import Item
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.bot import Bot
-from degenbot.connection import ProviderAdapter, connection_manager
+from degenbot.connection import ProviderAdapter
 from degenbot.logging import logger
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 
@@ -88,11 +88,8 @@ def _initialize_and_reset_after_each_test():
     """
     Before each test, clear/reset global values and singletons
     """
-    connection_manager._reset()
-
-    # Reset global registry singletons if they exist
-    # (removed singletons are no longer available, but Bot-owned registries
-    # are scoped to each Bot instance)
+    # Global singletons have been removed. Bot-owned connections and registries
+    # are scoped to each Bot instance and do not need inter-test resets.
 
 
 @pytest.fixture(scope="session", autouse=True)

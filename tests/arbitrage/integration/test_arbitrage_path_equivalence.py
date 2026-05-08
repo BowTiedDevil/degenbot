@@ -22,7 +22,6 @@ from degenbot.arbitrage.types import (
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
 )
-from degenbot.connection import set_web3
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.arbitrage import ArbitrageError, OptimizationError
 from degenbot.provider import ProviderAdapter
@@ -42,14 +41,12 @@ WBTC_WETH_V3_POOL_ADDRESS = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
 
 @pytest.fixture
 def wbtc_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     return bot.build_erc20token(WBTC_ADDRESS, chain_id=ChainId.ETH)
 
 
 @pytest.fixture
 def weth_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     return bot.build_erc20token(WETH_ADDRESS, chain_id=ChainId.ETH)
 

@@ -15,7 +15,6 @@ from degenbot.aerodrome.types import (
 )
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
 from degenbot.exceptions import DegenbotError
 from degenbot.exceptions.liquidity_pool import ExternalUpdateError, LateUpdateError
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
@@ -75,7 +74,6 @@ def test_aerodrome_v2_address_generator():
 def test_pickle_pool(
     fork_base_full: AnvilFork,
 ):
-    set_web3(fork_base_full.w3)
 
     lp = AerodromeV2Pool(
         address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
@@ -86,7 +84,6 @@ def test_pickle_pool(
 def test_auto_update(
     fork_base_full: AnvilFork,
 ):
-    set_web3(fork_base_full.w3)
     lp = AerodromeV2Pool(
         address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
     )
@@ -108,7 +105,6 @@ def test_auto_update(
 def test_external_update(
     fork_base_full: AnvilFork,
 ):
-    set_web3(fork_base_full.w3)
     lp = AerodromeV2Pool(
         address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
     )
@@ -145,7 +141,6 @@ def test_external_update(
 
 
 def test_create_pool(fork_base_full: AnvilFork):
-    set_web3(fork_base_full.w3)
 
     lp = AerodromeV2Pool(
         address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
@@ -156,7 +151,6 @@ def test_create_pool(fork_base_full: AnvilFork):
 
 
 def test_calculation_volatile(fork_base_full: AnvilFork, test_pools: list[Any]):
-    set_web3(fork_base_full.w3)
 
     token_amount_multipliers = [
         0.000000001,
@@ -229,7 +223,6 @@ def test_calculation_volatile(fork_base_full: AnvilFork, test_pools: list[Any]):
 
 
 def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
-    set_web3(fork_base_full.w3)
 
     token_amount_multipliers = [
         0.000000001,
@@ -299,19 +292,16 @@ def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
 
 
 def test_aerodrome_v3_pool_creation(fork_base_full: AnvilFork) -> None:
-    set_web3(fork_base_full.w3)
     AerodromeV3Pool(address=AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
 
 
 def test_aerodrome_v3_state(fork_base_full: AnvilFork) -> None:
-    set_web3(fork_base_full.w3)
 
     lp = AerodromeV3Pool(address=AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
     assert isinstance(lp.state, AerodromeV3PoolState), f"{type(lp.state)=}"
 
 
 def test_aerodrome_v3_pool_calculation(fork_base_full: AnvilFork) -> None:
-    set_web3(fork_base_full.w3)
 
     quoter = fork_base_full.w3.eth.contract(
         address=AERODROME_V3_QUOTER_ADDRESS, abi=AERODROME_V3_QUOTER_ABI

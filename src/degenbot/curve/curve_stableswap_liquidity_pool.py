@@ -21,7 +21,6 @@ from web3 import Web3
 from web3.types import BlockIdentifier
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import connection_manager
 from degenbot.curve.types import (
     AdminBalancesFetcher,
     CurveStableswapPoolState,
@@ -56,7 +55,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
 
     _pickle_drops: ClassVar[frozenset[str]] = frozenset({
         "_provider",
-        "_provider_from_connection_manager",
+        "_bot",
         "_state_lock",
         "_subscribers",
         # Fetchers (can't pickle closures)
@@ -68,7 +67,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
     })
     _pickle_reconstructs: ClassVar[dict[str, Any]] = {
         "_state_lock": Lock,
-        "_provider_from_connection_manager": lambda: True,
+        "_bot": lambda: None,
         "_provider": lambda: None,
         "_subscribers": WeakSet,
         # Fetchers default to None after unpickle
@@ -224,6 +223,9 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         out_fee: int | None = None,
         gamma: int | None = None,
         offpeg_fee_multiplier: int | None = None,
+        # I/O access
+        bot: Any | None = None,
+        provider: Any | None = None,
     ) -> None:
         """
         A Curve V1 (StableSwap) pool.
@@ -355,10 +357,9 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
 
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
-        # Provider access for on-chain data fetching
-        # These will be removed in the full I/O-free migration
-        self._provider: Any = None
-        self._provider_from_connection_manager = True
+        # I/O access for on-chain data fetching
+        self._bot = bot
+        self._provider: Any = provider
 
     def __repr__(self) -> str:  # pragma: no cover
         token_string = "-".join([token.symbol for token in self._tokens])
@@ -389,16 +390,54 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
     def _get_provider_for_chain(self) -> Any:
         """Get the provider for this pool's chain.
 
-        This is a temporary method to unblock tests during the I/O-free migration.
-        It will be removed once fetcher callbacks are fully implemented.
+        Uses the bot's connection manager if available, otherwise falls back to
+        the explicit provider. Returns None if neither is available (e.g., after
+        unpickling in a subprocess where cached values are used instead of I/O).
         """
-        if self._provider_from_connection_manager:
+        if self._bot is not None:
             try:
-                return connection_manager.get_provider(self._chain_id)
+                return self._bot.connections.get_provider(self._chain_id)
             except Exception:  # noqa: BLE001
-                # No provider available from connection_manager (e.g., multiprocessing)
                 pass
-        return self._provider
+        if self._provider is not None:
+            return self._provider
+        return None
+
+    def _fetch_token_balance(
+        self, token: Erc20Token, address: ChecksumAddress, *, block_identifier: int | None = None
+    ) -> int:
+        """Fetch token balance using the bot's provider if available."""
+        if self._bot is not None:
+            return self._bot.get_token_balance(token, address, block_identifier=block_identifier)
+        provider = self._get_provider_for_chain()
+        (balance,) = raw_call(
+            provider,
+            address=token.address,
+            calldata=encode_function_calldata(
+                function_prototype="balanceOf(address)",
+                function_arguments=[address],
+            ),
+            return_types=["uint256"],
+            block_identifier=block_identifier,
+        )
+        return balance
+
+    def _fetch_token_total_supply(
+        self, token: Erc20Token, *, block_identifier: int | None = None
+    ) -> int:
+        """Fetch token total supply using the bot's provider if available."""
+        if self._bot is not None:
+            return self._bot.get_token_total_supply(token, block_identifier=block_identifier)
+        return Erc20Token.fetch_total_supply(token.address, self._get_provider_for_chain(), block_identifier)
+
+    def _resolve_block_number(self, block_identifier: BlockIdentifier | None) -> int:
+        """Resolve a block identifier to an integer, lazily fetching provider only if needed."""
+        if isinstance(block_identifier, int):
+            return block_identifier
+        return get_number_for_block_identifier(
+            block_identifier,
+            self._get_provider_for_chain(),
+        )
 
     def _a(self, timestamp: int | None = None) -> int:
         """
@@ -421,7 +460,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             return self.future_a_coefficient
 
         if timestamp is None:
-            timestamp = connection_manager.get_web3(self.chain_id).eth.get_block("latest")[
+            timestamp = self._get_provider_for_chain().underlying.eth.get_block("latest")[
                 "timestamp"
             ]
 
@@ -491,7 +530,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
 
         xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
         d_1 = self._get_d(xp, amp)
-        token_amount: int = self.lp_token.get_total_supply(block_identifier=block_number)
+        token_amount: int = self._fetch_token_total_supply(self.lp_token, block_identifier=block_number)
 
         diff = d_1 - d_0 if deposit else d_0 - d_1
 
@@ -501,14 +540,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
     ) -> tuple[int, ...]:
         provider = self._get_provider_for_chain()
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                block_identifier,
-                provider,
-            )
-        )
+        block_number = self._resolve_block_number(block_identifier)
 
         # Fetch and cache block timestamp for A ramping calculations
         if block_number not in self._block_timestamps:
@@ -518,7 +550,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
 
         n_coins = len(self._tokens)
         amp = self._a(timestamp=self._block_timestamps[block_number])
-        total_supply = self.lp_token.get_total_supply(block_identifier=block_number)
+        total_supply = self._fetch_token_total_supply(self.lp_token, block_identifier=block_number)
         precisions = self.precision_multipliers
         xp = self._xp(rates=self.rate_multipliers, balances=self.balances)
         d_0 = self._get_d(xp, amp)
@@ -601,14 +633,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
 
         # Fetch current provider from connection manager to handle provider updates
         provider = self._get_provider_for_chain()
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                block_identifier,
-                provider,
-            )
-        )
+        block_number = self._resolve_block_number(block_identifier)
 
         # Fetch and cache block timestamp for A ramping calculations
         if block_number not in self._block_timestamps:
@@ -648,7 +673,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             "0x3Fb78e61784C9c637D560eDE23Ad57CA1294c14a",
         }:
             live_balances = [
-                token.get_balance(self.address, block_identifier=block_number)
+                self._fetch_token_balance(token, self.address, block_identifier=block_number)
                 for token in self._tokens
             ]
             admin_balances = self._get_admin_balances(block_number=block_number)
@@ -934,7 +959,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             "0xBfAb6FA95E0091ed66058ad493189D2cB29385E6",
         }:
             live_balances = [
-                token.get_balance(self.address, block_identifier=block_number)
+                self._fetch_token_balance(token, self.address, block_identifier=block_number)
                 for token in self._tokens
             ]
             admin_balances = self._get_admin_balances(block_number=block_number)
@@ -1012,7 +1037,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
 
         if self.address == "0xEB16Ae0052ed37f479f7fe63849198Df1765a733":
             live_balances = [
-                token.get_balance(self.address, block_identifier=block_number)
+                self._fetch_token_balance(token, self.address, block_identifier=block_number)
                 for token in self._tokens
             ]
             admin_balances = self._get_admin_balances(block_number=block_number)
@@ -1038,7 +1063,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
 
         if self.address == "0xDeBF20617708857ebe4F679508E7b7863a8A8EeE":
             live_balances = [
-                token.get_balance(self.address, block_identifier=block_number)
+                self._fetch_token_balance(token, self.address, block_identifier=block_number)
                 for token in self._tokens
             ]
             admin_balances = self._get_admin_balances(block_number=block_number)
@@ -1094,7 +1119,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             if isinstance(block_identifier, int)
             else get_number_for_block_identifier(
                 identifier=block_identifier,
-                provider=self._provider,
+                provider=self._get_provider_for_chain(),
             )
         )
 
@@ -1406,7 +1431,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         for token_index, _ in enumerate(self._tokens):
             admin_balance: int
             (admin_balance,) = raw_call(
-                connection_manager.get_provider(chain_id=self.chain_id),
+                self._get_provider_for_chain(),
                 address=self.address,
                 calldata=encode_function_calldata(
                     function_prototype="admin_balances(uint256)",
@@ -1866,15 +1891,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
         """
 
-        provider = self._get_provider_for_chain()
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                block_identifier,
-                provider,
-            )
-        )
+        block_number = self._resolve_block_number(block_identifier)
 
         if token_in_quantity <= 0:
             raise InvalidSwapInputAmount

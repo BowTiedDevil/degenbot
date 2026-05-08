@@ -6,7 +6,6 @@ import pytest
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
 from degenbot.pancakeswap.pools import PancakeswapV2Pool
 
 PANCAKE_V2_ROUTER = get_checksum_address("0x8cFe327CEc66d1C090Dd72bd0FF11d690C33a2Eb")
@@ -27,12 +26,10 @@ def test_pools() -> Any:
 
 
 def test_create_pool(fork_base_full: AnvilFork):
-    set_web3(fork_base_full.w3)
     PancakeswapV2Pool("0x92363F9817f92a7ae0592A4cb29959A88d885cc8")
 
 
 def test_pancakeswap_calculations(fork_base_full: AnvilFork, test_pools: list[Any]):
-    set_web3(fork_base_full.w3)
 
     token_amount_multipliers = [
         0.000000001,

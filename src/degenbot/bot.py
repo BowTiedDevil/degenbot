@@ -32,9 +32,9 @@ from degenbot.exceptions.liquidity_pool import BrokenPool, LiquidityPoolError
 from degenbot.exceptions.manager import ManagerAlreadyInitialized
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
-from degenbot.pancakeswap.pools import PancakeswapV3Pool
+from degenbot.pancakeswap.pools import PancakeswapV2Pool, PancakeswapV3Pool
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
-from degenbot.sushiswap.pools import SushiswapV3Pool
+from degenbot.sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -394,8 +394,23 @@ class Bot:
                 state_block=state_block,
             )
         except Exception:
-            # Not a Camelot pool, use standard UniswapV2Pool
-            pool = UniswapV2Pool(
+            # Not a Camelot pool, select the appropriate V2 pool subclass
+            v2_pool_class_map: dict[tuple[int, str], type[UniswapV2Pool]] = {
+                # Sushiswap V2
+                (1, "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"): SushiswapV2Pool,
+                (8453, "0x71524B4f93c58fcbF659783284E38825f0622859"): SushiswapV2Pool,
+                (42161, "0xc35DADB65012eC5796536bD9864eD8773aBc74C4"): SushiswapV2Pool,
+                # Pancakeswap V2
+                (1, "0x1097053Fd2ea711dad45caCcc45EfF7548fCB362"): PancakeswapV2Pool,
+                (8453, "0x02a84c1b3BBD7401a5f7fa98a384EBC70bB5749E"): PancakeswapV2Pool,
+                # Note: AerodromeV2Pool is NOT included here because:
+                # 1. It has a different constructor signature (stable, fee)
+                # 2. AerodromeV2PoolManager already creates AerodromeV2Pool correctly
+            }
+
+            pool_class = v2_pool_class_map.get((chain_id, factory), UniswapV2Pool)
+
+            pool = pool_class(
                 address=pool_address,
                 chain_id=chain_id,
                 token0=token0,
@@ -1740,6 +1755,8 @@ class Bot:
             out_fee=pool_out_fee,
             gamma=pool_gamma,
             offpeg_fee_multiplier=pool_offpeg_fee_multiplier,
+            # I/O access
+            bot=self,
         )
 
         # Register pool

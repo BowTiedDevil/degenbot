@@ -5,7 +5,6 @@ import pytest
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage.uniswap_2pool_cycle_testing import _UniswapTwoPoolCycleTesting
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.erc20.ether_placeholder import EtherPlaceholder
 from degenbot.exceptions.arbitrage import RateOfExchangeBelowMinimum
@@ -50,7 +49,6 @@ def weth(fork_mainnet_full: AnvilFork) -> Erc20Token:
 
 @pytest.fixture
 def ether_placeholder(fork_mainnet_full: AnvilFork) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
 
     token = TokenRegistry().get(
         chain_id=fork_mainnet_full.w3.eth.chain_id,

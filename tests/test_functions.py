@@ -5,8 +5,9 @@ from hexbytes import HexBytes
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import get_provider, set_web3
+from degenbot.connection import ConnectionManager
 from degenbot.exceptions import DegenbotValueError
+from degenbot.provider import ProviderAdapter
 from degenbot.functions import (
     create2_address,
     encode_function_calldata,
@@ -56,8 +57,8 @@ def test_encode_function_calldata():
 
 
 def test_low_level_call_for_factory_address(fork_mainnet_full: AnvilFork):
-    set_web3(fork_mainnet_full.w3)
-    provider = get_provider()
+    cm = ConnectionManager(); cm.register_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    cm.set_default_chain(fork_mainnet_full.w3.eth.chain_id); provider = cm.get_provider(fork_mainnet_full.w3.eth.chain_id)
 
     pool_address = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 
@@ -141,8 +142,8 @@ def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
     """
 
     w3 = fork_mainnet_full.w3
-    set_web3(w3)
-    provider = get_provider()
+    cm = ConnectionManager(); cm.register_provider(ProviderAdapter.from_web3(w3))
+    cm.set_default_chain(fork_mainnet_full.w3.eth.chain_id); provider = cm.get_provider(fork_mainnet_full.w3.eth.chain_id)
 
     # Known string literals
     latest_block = get_number_for_block_identifier("latest", provider)

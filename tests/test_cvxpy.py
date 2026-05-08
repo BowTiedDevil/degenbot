@@ -17,7 +17,6 @@ from degenbot.arbitrage.uniswap_multipool_cycle_testing import (
     _UniswapMultiPoolCycleTesting,
 )
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection import set_web3
 from degenbot.bot import Bot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import ProviderAdapter
@@ -52,37 +51,31 @@ def bot_base_full(fork_base_full: AnvilFork) -> Bot:
 
 @pytest.fixture
 def wbtc_token(fork_mainnet_full: AnvilFork, bot_mainnet_full: Bot) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
     return bot_mainnet_full.build_erc20token(WBTC_ADDRESS)
 
 
 @pytest.fixture
 def weth_token(fork_mainnet_full: AnvilFork, bot_mainnet_full: Bot) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
     return bot_mainnet_full.build_erc20token(WETH_ADDRESS)
 
 
 @pytest.fixture
 def link_token(fork_mainnet_full: AnvilFork, bot_mainnet_full: Bot) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
     return bot_mainnet_full.build_erc20token(LINK_ADDRESS)
 
 
 @pytest.fixture
 def usdc_token(fork_mainnet_full: AnvilFork, bot_mainnet_full: Bot) -> Erc20Token:
-    set_web3(fork_mainnet_full.w3)
     return bot_mainnet_full.build_erc20token(USDC_ADDRESS)
 
 
 @pytest.fixture
 def weth_base_token(fork_base_full: AnvilFork, bot_base_full: Bot) -> Erc20Token:
-    set_web3(fork_base_full.w3)
     return bot_base_full.build_erc20token("0x4200000000000000000000000000000000000006")
 
 
 @pytest.fixture
 def xxx_base_token(fork_base_full: AnvilFork, bot_base_full: Bot) -> Erc20Token:
-    set_web3(fork_base_full.w3)
     return bot_base_full.build_erc20token("0x09C07E80bFeEd81130498516F5C07aA0715794Bb")
 
 
