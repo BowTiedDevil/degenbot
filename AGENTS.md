@@ -65,6 +65,33 @@ class SomeClass:
 
 Each module has a `CONTEXT.md` defining domain terms, aliases to avoid, and resolved ambiguities. The root [`CONTEXT-MAP.md`](CONTEXT-MAP.md) indexes all modules and holds cross-cutting content (relationships, ambiguity rulings). Read the relevant module context before naming variables, classes, or docstrings in that area.
 
+## Architecture Patterns
+
+### The Bot Session Pattern
+
+All pool and token creation flows through the `Bot` class. `Bot` owns registries (`pools`, `tokens`, `managed_pools`) and connection managers.
+
+```python
+# Correct: Bot handles I/O and injects data into I/O-free pools
+bot = degenbot.Bot.from_config_file()
+pool = bot.build_v3_pool("0x...")  # Fetches data, returns ready-to-use pool
+token = bot.build_erc20token("0x...")  # Fetches metadata, registers in token registry
+```
+
+**Don't** instantiate pools directly from classes in new code — that's the **deprecated singleton pattern**.
+
+### Fetcher Protocols (Curve)
+
+Curve pools use **fetcher callbacks** for I/O-free operation. The `Bot` creates these closures and injects them at pool construction:
+
+```python
+# Bot creates fetcher closures (handles I/O internally)
+# Pool calls fetchers on-demand via RateFetcher, VirtualPriceFetcher protocols
+pool = bot.build_curve_pool("0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7")
+```
+
+See `docs/architecture/io-free-pools.md` and `src/degenbot/curve/CONTEXT.md` for details.
+
 ## Agent skills
 
 ### Issue tracker
