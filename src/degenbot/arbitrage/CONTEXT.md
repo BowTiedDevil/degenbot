@@ -1,4 +1,4 @@
-# Ubiquitous Language — Arbitrage, Solvers & Adapters
+# Context — Arbitrage, Solvers & Adapters
 
 ## Arbitrage
 

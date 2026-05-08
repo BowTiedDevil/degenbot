@@ -1,4 +1,4 @@
-# Ubiquitous Language — Pool Registries
+# Context — Pool Registries
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |

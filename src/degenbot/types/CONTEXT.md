@@ -1,4 +1,4 @@
-# Ubiquitous Language — Pool Types & Managers
+# Context — Pool Types & Managers
 
 ## Liquidity Pools
 
