@@ -83,10 +83,15 @@ class TestV2PoolCalculations:
             override_state=override_state,
         )
 
-        # With 1000:20000 reserves, 1 WBTC should give ~19.9 WETH minus fees
-        expected_output = 19_900_000_000_000_000_000  # ~19.9 WETH
-        tolerance = 1_000_000_000_000_000_000  # 1 WETH tolerance
-        assert abs(amount_out - expected_output) < tolerance
+        # With 1000:20000 reserves, 1 WBTC should give the exact V2 constant-product result
+        fee = Fraction(3, 1000)
+        amount_in_with_fee = amount_in * (fee.denominator - fee.numerator)
+        expected_output = (
+            amount_in_with_fee * override_state.reserves_token1
+        ) // (
+            override_state.reserves_token0 * fee.denominator + amount_in_with_fee
+        )
+        assert amount_out == expected_output
 
     def test_calculate_tokens_in_with_override(
         self,
@@ -111,9 +116,15 @@ class TestV2PoolCalculations:
             override_state=override_state,
         )
 
-        # Should require slightly more than 0.5 WBTC (accounting for fees)
-        assert amount_in > 0.5 * 10**8
-        assert amount_in < 0.6 * 10**8
+        # With 1000:20000 reserves, the exact V2 constant-product result
+        fee = Fraction(3, 1000)
+        expected_input = 1 + (
+            override_state.reserves_token0 * amount_out * fee.denominator
+        ) // (
+            (override_state.reserves_token1 - amount_out)
+            * (fee.denominator - fee.numerator)
+        )
+        assert amount_in == expected_input
 
     def test_simulate_exact_input(
         self,
