@@ -4,16 +4,19 @@ Verifies that DatabaseSnapshot and fetch_new_events/fetch_new_events_async
 accept explicit dependencies instead of importing module-level singletons.
 """
 
+import inspect
 import pathlib
 from unittest.mock import MagicMock
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import scoped_session, sessionmaker
+
+from degenbot.database.models.base import Base, ExchangeTable
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.uniswap.v3_snapshot import (
-    DatabaseSnapshot as V3DatabaseSnapshot,
-)
-from degenbot.uniswap.v4_snapshot import (
-    DatabaseSnapshot as V4DatabaseSnapshot,
-)
+from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
+from degenbot.uniswap.v3_snapshot import MonolithicJsonFileSnapshot, UniswapV3LiquiditySnapshot
+from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
+from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
 
 
 class TestV3DatabaseSnapshotExplicitDeps:
@@ -39,11 +42,8 @@ class TestV3DatabaseSnapshotExplicitDeps:
 
     def test_get_newest_block_uses_self_session(self, tmp_path: pathlib.Path) -> None:
         """get_newest_block uses self.session() instead of module-level db_session."""
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import scoped_session, sessionmaker
 
         engine = create_engine("sqlite:///:memory:")
-        from degenbot.database.models.base import Base
 
         Base.metadata.create_all(engine)
 
@@ -51,8 +51,6 @@ class TestV3DatabaseSnapshotExplicitDeps:
         session = SessionLocal()
 
         # Insert a test exchange with a last_update_block
-        from degenbot.database.models.base import ExchangeTable
-
         exchange = ExchangeTable(
             chain_id=1,
             name="uniswap_v3",
@@ -102,10 +100,6 @@ class TestV3FetchNewEventsExplicitProvider:
 
     def test_fetch_new_events_accepts_provider_kwarg(self) -> None:
         """fetch_new_events should accept provider= instead of using connection_manager."""
-        from degenbot.uniswap.v3_snapshot import (
-            MonolithicJsonFileSnapshot,
-            UniswapV3LiquiditySnapshot,
-        )
 
         snapshot = UniswapV3LiquiditySnapshot(
             source=MonolithicJsonFileSnapshot(
@@ -114,8 +108,6 @@ class TestV3FetchNewEventsExplicitProvider:
         )
 
         # Verify the method signature accepts provider=
-        import inspect
-
         sig = inspect.signature(snapshot.fetch_new_events)
         assert "provider" in sig.parameters
 
@@ -125,36 +117,24 @@ class TestV4FetchNewEventsExplicitProvider:
 
     def test_fetch_new_events_accepts_provider_kwarg(self) -> None:
         """fetch_new_events should accept provider= instead of using connection_manager."""
-        from degenbot.uniswap.v4_snapshot import (
-            MonolithicJsonFileSnapshot,
-            UniswapV4LiquiditySnapshot,
-        )
 
         snapshot = UniswapV4LiquiditySnapshot(
             source=MonolithicJsonFileSnapshot(
                 "tests/uniswap/v3/empty_v3_liquidity_snapshot.json"
             ),
         )
-
-        import inspect
 
         sig = inspect.signature(snapshot.fetch_new_events)
         assert "provider" in sig.parameters
 
     def test_fetch_new_events_async_accepts_w3_kwarg(self) -> None:
         """fetch_new_events_async should accept w3= instead of using async_connection_manager."""
-        from degenbot.uniswap.v4_snapshot import (
-            MonolithicJsonFileSnapshot,
-            UniswapV4LiquiditySnapshot,
-        )
 
         snapshot = UniswapV4LiquiditySnapshot(
             source=MonolithicJsonFileSnapshot(
                 "tests/uniswap/v3/empty_v3_liquidity_snapshot.json"
             ),
         )
-
-        import inspect
 
         sig = inspect.signature(snapshot.fetch_new_events_async)
         assert "w3" in sig.parameters
