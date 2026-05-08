@@ -223,6 +223,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         mid_fee: int | None = None,
         out_fee: int | None = None,
         gamma: int | None = None,
+        offpeg_fee_multiplier: int | None = None,
     ) -> None:
         """
         A Curve V1 (StableSwap) pool.
@@ -258,7 +259,9 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         # Set defaults for optional/variant attributes
         self.fee_gamma = fee_gamma if fee_gamma is not None else 0
         self.mid_fee = mid_fee if mid_fee is not None else 0
-        self.offpeg_fee_multiplier = 0
+        self.offpeg_fee_multiplier = (
+            offpeg_fee_multiplier if offpeg_fee_multiplier is not None else 0
+        )
         self.out_fee = out_fee if out_fee is not None else 0
         self.gamma = gamma if gamma is not None else 0
         self.oracle_method = None
