@@ -47,8 +47,8 @@ class TestV3DatabaseSnapshotExplicitDeps:
 
         Base.metadata.create_all(engine)
 
-        SessionLocal = sessionmaker(bind=engine)
-        session = SessionLocal()
+        local_sessionmaker = sessionmaker(bind=engine)
+        session = local_sessionmaker()
 
         # Insert a test exchange with a last_update_block
         exchange = ExchangeTable(
@@ -61,7 +61,7 @@ class TestV3DatabaseSnapshotExplicitDeps:
         session.add(exchange)
         session.commit()
 
-        scoped = scoped_session(lambda: SessionLocal())
+        scoped = scoped_session(local_sessionmaker)
         db = DatabaseSessionManager(scoped)
 
         snapshot = V3DatabaseSnapshot(
@@ -103,7 +103,7 @@ class TestV3FetchNewEventsExplicitProvider:
 
         snapshot = UniswapV3LiquiditySnapshot(
             source=MonolithicJsonFileSnapshot(
-                "tests/uniswap/v3/empty_v3_liquidity_snapshot.json"
+                "tests/uniswap/v3/empty_v3_liquidity_snapshot.json",
             ),
         )
 
@@ -120,7 +120,7 @@ class TestV4FetchNewEventsExplicitProvider:
 
         snapshot = UniswapV4LiquiditySnapshot(
             source=MonolithicJsonFileSnapshot(
-                "tests/uniswap/v3/empty_v3_liquidity_snapshot.json"
+                "tests/uniswap/v3/empty_v3_liquidity_snapshot.json",
             ),
         )
 
@@ -132,7 +132,7 @@ class TestV4FetchNewEventsExplicitProvider:
 
         snapshot = UniswapV4LiquiditySnapshot(
             source=MonolithicJsonFileSnapshot(
-                "tests/uniswap/v3/empty_v3_liquidity_snapshot.json"
+                "tests/uniswap/v3/empty_v3_liquidity_snapshot.json",
             ),
         )
 
