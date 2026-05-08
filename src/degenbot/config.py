@@ -83,7 +83,8 @@ def _init_config() -> DegenbotConfig:
     save_config_to_file(config)
     logger.info(f"Created a configuration file at {CONFIG_FILE}.")
 
-    if not config.database.path.exists():
+    # Skip database creation for in-memory databases
+    if config.database.path.name != ":memory:" and not config.database.path.exists():
         from degenbot.database.operations import create_new_sqlite_database  # noqa: PLC0415
 
         create_new_sqlite_database(db_path=config.database.path)

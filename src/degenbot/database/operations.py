@@ -50,9 +50,16 @@ def backup_sqlite_database(
         assert result == "ok", f"Backup integrity check failed: {result=}"
 
 
+def _get_sqlite_db_string(db_path: pathlib.Path) -> str:
+    """Get the SQLite database string for a path, handling :memory: specially."""
+    if db_path.name == ":memory:":
+        return ":memory:"
+    return str(db_path.absolute())
+
+
 def create_new_sqlite_database(db_path: pathlib.Path) -> None:
     engine = create_engine(
-        f"sqlite:///{db_path.absolute()}",
+        f"sqlite:///{_get_sqlite_db_string(db_path)}",
     )
     with engine.connect() as connection:
         assert (
@@ -75,6 +82,9 @@ def create_new_sqlite_database(db_path: pathlib.Path) -> None:
 
 
 def compact_sqlite_database(db_path: pathlib.Path) -> None:
+    # Skip compacting in-memory databases
+    if db_path.name == ":memory:":
+        return
     engine = create_engine(
         f"sqlite:///{db_path.absolute()}",
     )
@@ -96,7 +106,7 @@ def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Ses
             bind=create_engine(
                 URL.create(
                     drivername="sqlite",
-                    database=str(database_path.absolute()),
+                    database=_get_sqlite_db_string(database_path),
                 )
             )
         )
@@ -106,7 +116,7 @@ def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Ses
 def get_alembic_config(database_path: pathlib.Path | None = None) -> Config:
     cfg = Config()
     db_path = database_path or config.database.path
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path.absolute()}")
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{_get_sqlite_db_string(db_path)}")
     cfg.set_main_option("script_location", "degenbot:migrations")
 
     return cfg

@@ -1,10 +1,12 @@
+import logging.config
 import os
-from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from degenbot.config import config as degenbot_config
 from degenbot.database.models import Base
+from degenbot.database.operations import _get_sqlite_db_string
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -14,16 +16,21 @@ config = context.config
 # fall back to the global config singleton
 database_path = os.environ.get("DEGENBOT_DATABASE_PATH")
 if database_path:
-    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    config.set_main_option(
+        "sqlalchemy.url",
+        f"sqlite:///{database_path}",
+    )
 else:
-    from degenbot.config import config as degenbot_config
-    config.set_main_option("sqlalchemy.url", f"sqlite:///{degenbot_config.database.path.absolute()}")
+    config.set_main_option(
+        "sqlalchemy.url",
+        f"sqlite:///{_get_sqlite_db_string(degenbot_config.database.path)}",
+    )
 
 
 # Interpret the config file for Python logging.
-# This line sets up loggers basically.
+# This line sets up loggers.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    logging.config.fileConfig(config.config_file_name)
 
 # add your model's MetaData object here
 # for 'autogenerate' support
