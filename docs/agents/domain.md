@@ -10,7 +10,7 @@ This repo has a `CONTEXT-MAP.md` at the root pointing to per-module `CONTEXT.md`
 /
 ├── CONTEXT-MAP.md                     ← module index + cross-cutting content
 ├── docs/
-│   ├── adr/                           ← system-wide decisions (not yet created)
+│   ├── adr/                           ← system-wide decisions (e.g., ADR-001 I/O-free pools)
 │   └── agents/
 ├── src/
 │   └── degenbot/
@@ -19,6 +19,8 @@ This repo has a `CONTEXT-MAP.md` at the root pointing to per-module `CONTEXT.md`
 │       ├── registry/CONTEXT.md
 │       ├── arbitrage/CONTEXT.md
 │       ├── aave/CONTEXT.md
+│       ├── curve/CONTEXT.md           ← I/O-free pool architecture
+│       ├── uniswap/CONTEXT.md         ← V2/V3/V4 pools
 │       └── connection/CONTEXT.md
 └── UBIQUITOUS_LANGUAGE.md             ← legacy (replaced by CONTEXT-MAP.md)
 ```

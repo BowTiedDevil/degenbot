@@ -3,6 +3,7 @@
 Module-level context files (terms, aliases, relationships, and ambiguity rulings):
 
 - [Pool Types, Managers & DEX Protocols](src/degenbot/types/CONTEXT.md) — Pool, Pool State, Reserves, Sqrt Price, Tick, Fee, Simulation, Pool Types by Invariant, Pool Manager, Pool Factory, Exchange Deployment, supported DEX protocols · Ambiguity rulings: Factory vs Pool Manager, Fee representations
+- [Uniswap](src/degenbot/uniswap/CONTEXT.md) — V2/V3/V4 pools, concentrated liquidity, tick bitmaps, Pool Manager, Factory, Pool Init Hash, Pool Key, PoolManager contract · Ambiguity rulings: Pool vs Pool Manager vs PoolManager, Fee representations, Token ordering, Price vs Exchange Rate
 - [Tokens](src/degenbot/erc20/CONTEXT.md) — Token, Token0/Token1, Ether Placeholder, Wrapped Native Token, Chain ID
 - [Pool Registries](src/degenbot/registry/CONTEXT.md) — Pool Registry, Token Registry, Managed Pool Registry
 - [Arbitrage, Solvers & Adapters](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Arbitrage Path, Input/Profit Token & Amount, Swap Vector, Solver, Optimizer, Hop State, Pool Adapter · Ambiguity ruling: Solver vs Optimizer
