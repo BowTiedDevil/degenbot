@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
-from collections.abc import Callable
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, cast
 
@@ -14,18 +13,15 @@ from sqlalchemy import select
 from web3 import Web3
 from web3.exceptions import Web3Exception
 
-# Import pool variants for factory-based construction
-from degenbot.aerodrome.pools import AerodromeV3Pool
+from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
+from degenbot.aerodrome.types import AerodromeV2PoolExternalUpdate
 from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
 from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
-from degenbot.database.models.pools import (
-    LiquidityPoolTable,
-    PoolManagerTable,
-    UniswapV4PoolTable,
-)
+from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from degenbot.database.models.pools import LiquidityPoolTable, PoolManagerTable, UniswapV4PoolTable
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.erc20 import Erc20Token, EtherPlaceholder
@@ -41,15 +37,25 @@ from degenbot.sushiswap.pools import SushiswapV3Pool
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
+from degenbot.uniswap.v3_types import (
+    UniswapV3BitmapAtWord,
+    UniswapV3LiquidityAtTick,
+    UniswapV3PoolExternalUpdate,
+)
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-from degenbot.uniswap.v4_types import UniswapV4BitmapAtWord, UniswapV4LiquidityAtTick
+from degenbot.uniswap.v4_types import (
+    UniswapV4BitmapAtWord,
+    UniswapV4LiquidityAtTick,
+    UniswapV4PoolExternalUpdate,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
+    from eth_typing import ChecksumAddress
     from web3.types import BlockIdentifier
 
     from degenbot.types.abstract.pool_manager import AbstractPoolManager
@@ -539,8 +545,6 @@ class Bot:
         self, pool_address: ChecksumAddress, chain_id: int
     ) -> Callable[[int, int], None]:
         """Create a tick data fetcher callback for a V3 pool."""
-        from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-        from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
 
         def fetcher(word_position: int, block_number: int) -> None:
             pool = self.pools.get(pool_address=pool_address, chain_id=chain_id)
@@ -584,8 +588,6 @@ class Bot:
         self, pool_id: HexBytes, pool_manager_address: str, state_view_address: str, chain_id: int
     ) -> Callable[[int, int], None]:
         """Create a tick data fetcher callback for a V4 pool."""
-        from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-        from degenbot.uniswap.v4_types import UniswapV4BitmapAtWord, UniswapV4LiquidityAtTick
 
         def fetcher(word_position: int, block_number: int) -> None:
             pool = self.managed_pools.get(
@@ -1165,10 +1167,6 @@ class Bot:
 
         Returns True if the state changed, False if unchanged.
         """
-        from degenbot.aerodrome.pools import AerodromeV2Pool
-        from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-        from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-        from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
         provider = self.connections.get_provider(pool.chain_id)
 
@@ -1187,8 +1185,6 @@ class Bot:
     def _update_v2_pool(
         self, pool: Any, *, provider: Any, block_number: BlockIdentifier | None
     ) -> bool:
-        from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-        from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 
         assert isinstance(pool, UniswapV2Pool)
         _block_number = block_number if block_number is not None else provider.get_block_number()
@@ -1208,8 +1204,6 @@ class Bot:
     def _update_aerodrome_v2_pool(
         self, pool: Any, *, provider: Any, block_number: BlockIdentifier | None
     ) -> bool:
-        from degenbot.aerodrome.pools import AerodromeV2Pool
-        from degenbot.aerodrome.types import AerodromeV2PoolExternalUpdate
 
         assert isinstance(pool, AerodromeV2Pool)
         _block_number = block_number if block_number is not None else provider.get_block_number()
@@ -1229,8 +1223,6 @@ class Bot:
     def _update_v3_pool(
         self, pool: Any, *, provider: Any, block_number: BlockIdentifier | None
     ) -> bool:
-        from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-        from degenbot.uniswap.v3_types import UniswapV3PoolExternalUpdate
 
         assert isinstance(pool, UniswapV3Pool)
         _block_number = block_number if block_number is not None else provider.get_block_number()
@@ -1277,8 +1269,6 @@ class Bot:
     def _update_v4_pool(
         self, pool: Any, *, provider: Any, block_number: BlockIdentifier | None
     ) -> bool:
-        from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-        from degenbot.uniswap.v4_types import UniswapV4PoolExternalUpdate
 
         assert isinstance(pool, UniswapV4Pool)
         _block_number = block_number if block_number is not None else provider.get_block_number()
