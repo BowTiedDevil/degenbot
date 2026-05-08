@@ -1,4 +1,4 @@
-# Ubiquitous Language — Aave
+# Context — Aave
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |

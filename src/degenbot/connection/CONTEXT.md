@@ -1,4 +1,4 @@
-# Ubiquitous Language — Infrastructure
+# Context — Infrastructure
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |

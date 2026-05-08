@@ -1,4 +1,4 @@
-# Ubiquitous Language — Tokens
+# Context — Tokens
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |

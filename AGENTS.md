@@ -63,7 +63,21 @@ class SomeClass:
 
 ## Ubiquitous Language
 
-Each module has a `UBIQUITOUS_LANGUAGE.md` defining domain terms, aliases to avoid, and resolved ambiguities. The root [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md) indexes all modules and holds cross-cutting content (relationships, ambiguity rulings). Read the relevant module glossary before naming variables, classes, or docstrings in that area.
+Each module has a `CONTEXT.md` defining domain terms, aliases to avoid, and resolved ambiguities. The root [`CONTEXT-MAP.md`](CONTEXT-MAP.md) indexes all modules and holds cross-cutting content (relationships, ambiguity rulings). Read the relevant module context before naming variables, classes, or docstrings in that area.
+
+## Agent skills
+
+### Issue tracker
+
+Local markdown files under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` files. See `docs/agents/domain.md`.
 
 ## Solidity
 

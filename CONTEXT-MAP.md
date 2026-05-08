@@ -1,21 +1,21 @@
-# Ubiquitous Language
+# Context Map
 
-Module-level glossaries (terms, aliases, and module-specific ambiguity rulings):
+Module-level context files (terms, aliases, relationships, and ambiguity rulings):
 
-- [Pool Types, Managers & DEX Protocols](src/degenbot/types/UBIQUITOUS_LANGUAGE.md) — Pool, Pool State, Reserves, Sqrt Price, Tick, Fee, Simulation, Pool Types by Invariant, Pool Manager, Pool Factory, Exchange Deployment, supported DEX protocols · Ambiguity rulings: Factory vs Pool Manager, Fee representations
-- [Tokens](src/degenbot/erc20/UBIQUITOUS_LANGUAGE.md) — Token, Token0/Token1, Ether Placeholder, Wrapped Native Token, Chain ID
-- [Pool Registries](src/degenbot/registry/UBIQUITOUS_LANGUAGE.md) — Pool Registry, Token Registry, Managed Pool Registry
-- [Arbitrage, Solvers & Adapters](src/degenbot/arbitrage/UBIQUITOUS_LANGUAGE.md) — Arbitrage Cycle, Arbitrage Path, Input/Profit Token & Amount, Swap Vector, Solver, Optimizer, Hop State, Pool Adapter · Ambiguity ruling: Solver vs Optimizer
-- [Aave](src/degenbot/aave/UBIQUITOUS_LANGUAGE.md) — Market, Asset, Reserve, Collateral, Debt, aToken/vToken, GHO, Health Factor, Liquidation, Scaled/Raw Amount, Index, Enrichment, Processor, E-Mode, Isolation Mode
-- [Infrastructure](src/degenbot/connection/UBIQUITOUS_LANGUAGE.md) — Anvil Fork, Provider, Connection Manager, Pool State Message
+- [Pool Types, Managers & DEX Protocols](src/degenbot/types/CONTEXT.md) — Pool, Pool State, Reserves, Sqrt Price, Tick, Fee, Simulation, Pool Types by Invariant, Pool Manager, Pool Factory, Exchange Deployment, supported DEX protocols · Ambiguity rulings: Factory vs Pool Manager, Fee representations
+- [Tokens](src/degenbot/erc20/CONTEXT.md) — Token, Token0/Token1, Ether Placeholder, Wrapped Native Token, Chain ID
+- [Pool Registries](src/degenbot/registry/CONTEXT.md) — Pool Registry, Token Registry, Managed Pool Registry
+- [Arbitrage, Solvers & Adapters](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Arbitrage Path, Input/Profit Token & Amount, Swap Vector, Solver, Optimizer, Hop State, Pool Adapter · Ambiguity ruling: Solver vs Optimizer
+- [Aave](src/degenbot/aave/CONTEXT.md) — Market, Asset, Reserve, Collateral, Debt, aToken/vToken, GHO, Health Factor, Liquidation, Scaled/Raw Amount, Index, Enrichment, Processor, E-Mode, Isolation Mode
+- [Infrastructure](src/degenbot/connection/CONTEXT.md) — Anvil Fork, Provider, Connection Manager, Pool State Message
 
 ## Instructions
 
-1. **Terms belong to one module.** Add new terms to the `UBIQUITOUS_LANGUAGE.md` in the module that owns the concept. Don't duplicate definitions at root.
+1. **Terms belong to one module.** Add new terms to the `CONTEXT.md` in the module that owns the concept. Don't duplicate definitions at root.
 2. **Ambiguity rulings go where the ambiguity lives.** If both terms are in the same module (e.g., Solver vs Optimizer), put the ruling in that module. Only cross-module ambiguities (e.g., Pool vs Market, Reserves vs Asset) go in root.
 3. **Relationships follow the same rule.** If all terms in a relationship belong to one module, put it in that module's `## Relationships`. Only cross-module seams (where a term from one module relates to a term from another) go in root's `## Cross-module relationships`.
-4. **When adding a module**, create its `UBIQUITOUS_LANGUAGE.md` with term table, `## Relationships`, and `## Resolved ambiguities` sections as needed, then add a link to the root index.
-5. **Keep the root index in sync.** When a module glossary changes (new terms, new rulings), update the bullet summary in the root index to reflect it.
+4. **When adding a module**, create its `CONTEXT.md` with term table, `## Relationships`, and `## Resolved ambiguities` sections as needed, then add a link to this map.
+5. **Keep this map in sync.** When a module context changes (new terms, new rulings), update the bullet summary in this map to reflect it.
 6. **Root contains only cross-cutting content:** module index, cross-module relationships, cross-module ambiguity rulings, and the example dialogue.
 
 ## Cross-module relationships
@@ -27,7 +27,7 @@ Module-level glossaries (terms, aliases, and module-specific ambiguity rulings):
 - An **Arbitrage Path** subscribes to **Pool State Messages**
 - An **Aave Market** contains many **Assets**, each wrapping an **Erc20Token** plus lending state
 
-Module-internal relationships are documented in each module's glossary.
+Module-internal relationships are documented in each module's context file.
 
 ## Cross-module ambiguity rulings
 
