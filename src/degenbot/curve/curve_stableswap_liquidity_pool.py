@@ -1,7 +1,6 @@
 # TODO
 # ----------------------------------------------------
 # PRIORITY      TASK
-# high          write state_update method
 # high          create a manager for Curve pools
 # medium        add liquidity modifying mode for external_update
 # medium        investigate differences in get_dy_underlying vs exchange_underlying at GUSD-3Crv
@@ -23,7 +22,9 @@ from web3.types import BlockIdentifier
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.types import (
     AdminBalancesFetcher,
+    CurveStableswapPoolExternalUpdate,
     CurveStableswapPoolState,
+    CurveStableSwapPoolStateUpdated,
     RateFetcher,
     RedemptionPriceFetcher,
     TimestampFetcher,
@@ -32,7 +33,6 @@ from degenbot.curve.types import (
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import NoLiquidity
-from degenbot.exceptions.curve import MissingCurveData
 from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.liquidity_pool import InvalidSwapInputAmount
 from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
@@ -311,20 +311,20 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         self._cached_rates_from_aeth: BoundedCache[BlockNumber, int] = BoundedCache(
             max_items=state_cache_depth
         )
-        self._cached_rates_from_ctokens: BoundedCache[BlockNumber, tuple[int, ...]] = (
-            BoundedCache(max_items=state_cache_depth)
+        self._cached_rates_from_ctokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
+            max_items=state_cache_depth
         )
-        self._cached_rates_from_cytokens: BoundedCache[BlockNumber, tuple[int, ...]] = (
-            BoundedCache(max_items=state_cache_depth)
+        self._cached_rates_from_cytokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
+            max_items=state_cache_depth
         )
-        self._cached_rates_from_oracle: BoundedCache[BlockNumber, tuple[int, ...]] = (
-            BoundedCache(max_items=state_cache_depth)
+        self._cached_rates_from_oracle: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
+            max_items=state_cache_depth
         )
         self._cached_rates_from_reth: BoundedCache[BlockNumber, int] = BoundedCache(
             max_items=state_cache_depth
         )
-        self._cached_rates_from_ytokens: BoundedCache[BlockNumber, tuple[int, ...]] = (
-            BoundedCache(max_items=state_cache_depth)
+        self._cached_rates_from_ytokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
+            max_items=state_cache_depth
         )
         self._cached_scaled_redemption_price: BoundedCache[BlockNumber, int] = BoundedCache(
             max_items=state_cache_depth
@@ -387,6 +387,21 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             assert self.state.block is not None
         return self.state.block
 
+    def external_update(self, update: CurveStableswapPoolExternalUpdate) -> None:
+        """Apply an external state update with new balances."""
+        new_state = CurveStableswapPoolState(
+            address=self.address,
+            balances=update.balances,
+            block=update.block_number,
+        )
+        with self._state_lock:
+            self._state = new_state
+            self._state_cache[update.block_number] = new_state
+
+        self._notify_subscribers(
+            CurveStableSwapPoolStateUpdated(state=new_state),
+        )
+
     def _get_provider_for_chain(self) -> Any:
         """Get the provider for this pool's chain.
 
@@ -428,7 +443,9 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         """Fetch token total supply using the bot's provider if available."""
         if self._bot is not None:
             return self._bot.get_token_total_supply(token, block_identifier=block_identifier)
-        return Erc20Token.fetch_total_supply(token.address, self._get_provider_for_chain(), block_identifier)
+        return Erc20Token.fetch_total_supply(
+            token.address, self._get_provider_for_chain(), block_identifier
+        )
 
     def _resolve_block_number(self, block_identifier: BlockIdentifier | None) -> int:
         """Resolve a block identifier to an integer, lazily fetching provider only if needed."""
@@ -530,7 +547,9 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
 
         xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
         d_1 = self._get_d(xp, amp)
-        token_amount: int = self._fetch_token_total_supply(self.lp_token, block_identifier=block_number)
+        token_amount: int = self._fetch_token_total_supply(
+            self.lp_token, block_identifier=block_number
+        )
 
         diff = d_1 - d_0 if deposit else d_0 - d_1
 

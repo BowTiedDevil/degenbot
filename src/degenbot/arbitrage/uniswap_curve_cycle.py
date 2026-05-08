@@ -590,7 +590,9 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
 
         if self._bot is None:
             raise ValueError("A Bot instance is required for async calculations")
-        block_number = self._bot.connections.get_web3(chain_id=curve_pool.chain_id).eth.get_block_number()
+        block_number = self._bot.connections.get_web3(
+            chain_id=curve_pool.chain_id
+        ).eth.get_block_number()
 
         # Some Curve pools utilize on-chain lookups in their calc, so do a simple pre-calc to
         # cache those values for a given block since the pool will be disconnected once sent

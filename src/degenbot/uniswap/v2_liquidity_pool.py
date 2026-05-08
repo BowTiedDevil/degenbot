@@ -268,7 +268,8 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
         return max(
             0,
             int(
-                self.reserves_token0 / ratio_absolute - self.reserves_token1 / (1 - self._fee_token1)
+                self.reserves_token0 / ratio_absolute
+                - self.reserves_token1 / (1 - self._fee_token1)
             ),
         )
 

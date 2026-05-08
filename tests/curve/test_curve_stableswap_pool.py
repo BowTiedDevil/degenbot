@@ -184,6 +184,45 @@ def test_auto_update(fork_mainnet_archive: AnvilFork):
 
 @pytest.mark.parametrize(
     "fork_mainnet_archive",
+    [18849426],
+    indirect=True,
+)
+def test_bot_update_curve_pool(fork_mainnet_archive: AnvilFork):
+    """bot.update(pool) fetches fresh balances and applies them via external_update."""
+    block_number = fork_mainnet_archive.w3.eth.block_number
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_archive.w3))
+
+    tripool = bot.build_curve_pool(TRIPOOL_ADDRESS)
+    assert tripool.update_block == block_number
+    initial_balances = tripool.balances
+
+    # Advance the fork by one block
+    fork = AnvilFork(
+        fork_url=fork_mainnet_archive.fork_url,
+        fork_block=block_number + 1,
+    )
+    # Rebuild bot with the advanced fork
+    advanced_bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
+
+    # The original pool still has old balances
+    assert tripool.balances == initial_balances
+
+    # Update the pool via bot.update()
+    changed = advanced_bot.update(tripool)
+    assert changed is True
+    assert tripool.update_block == block_number + 1
+
+    # Verify balances match what a fresh build would give
+    fresh_pool = advanced_bot.build_curve_pool(TRIPOOL_ADDRESS)
+    assert tripool.balances == fresh_pool.balances
+
+    # Updating again at the same block should return False
+    changed = advanced_bot.update(tripool)
+    assert changed is False
+
+
+@pytest.mark.parametrize(
+    "fork_mainnet_archive",
     [14_900_000],
     indirect=True,
 )

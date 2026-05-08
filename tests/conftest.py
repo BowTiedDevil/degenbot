@@ -10,7 +10,6 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.bot import Bot
 from degenbot.connection import ProviderAdapter
 from degenbot.logging import logger
-from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 
 env_file = dotenv.find_dotenv("tests.env")
 env_values = dotenv.dotenv_values(env_file)

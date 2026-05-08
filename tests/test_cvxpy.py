@@ -13,15 +13,14 @@ from cvxpy.atoms.affine.sum import sum as cvxpy_sum
 from cvxpy.atoms.geo_mean import geo_mean
 
 from degenbot.anvil_fork import AnvilFork
-from degenbot.arbitrage.uniswap_multipool_cycle_testing import (
-    _UniswapMultiPoolCycleTesting,
-)
-from degenbot.checksum_cache import get_checksum_address
+from degenbot.arbitrage.uniswap_multipool_cycle_testing import _UniswapMultiPoolCycleTesting
 from degenbot.bot import Bot
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import ProviderAdapter
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from tests.fakes.pools import MockLiquidityPool
+from tests.helpers.bot_factory import make_bot_with_provider
 
 WBTC_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -34,7 +33,6 @@ WBTC_WETH_V3_POOL_ADDRESS = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
 @pytest.fixture
 def bot_mainnet_full(fork_mainnet_full: AnvilFork) -> Bot:
     """Provide a Bot with the mainnet full fork's provider registered."""
-    from tests.helpers.bot_factory import make_bot_with_provider
 
     provider = ProviderAdapter.from_web3(fork_mainnet_full.w3)
     return make_bot_with_provider(provider)
@@ -43,7 +41,6 @@ def bot_mainnet_full(fork_mainnet_full: AnvilFork) -> Bot:
 @pytest.fixture
 def bot_base_full(fork_base_full: AnvilFork) -> Bot:
     """Provide a Bot with the base fork's provider registered."""
-    from tests.helpers.bot_factory import make_bot_with_provider
 
     provider = ProviderAdapter.from_web3(fork_base_full.w3)
     return make_bot_with_provider(provider)

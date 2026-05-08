@@ -13,14 +13,14 @@ Key features:
 Usage:
     token0 = FakeToken(address="0x6B175474E89094C44Da98b954EedeAC495271d0F", decimals=18, symbol="DAI")
     token1 = FakeToken(address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals=6, symbol="USDC")
-    
+
     pool = FakeCurveStableswapPool(
         tokens=(token0, token1),
         balances=(10_000_000 * 10**18, 10_000_000 * 10**6),
         a_coefficient=1000,
         fee=4000000,  # 0.04%
     )
-    
+
     # Use with ArbitragePath
     hop = pool.to_hop_state(zero_for_one=True)
     result = pool.simulate_swap(token0.address, 1000 * 10**18, token1.address)
@@ -50,21 +50,22 @@ if TYPE_CHECKING:
 @dataclass(frozen=True, kw_only=True)
 class FakeCurvePoolState(AbstractPoolState):
     """Frozen state for Curve pools.
-    
+
     Unlike V2/V3 pools, Curve pools have N balances (not just reserves_token0/reserve1).
     """
+
     balances: tuple[int, ...]
 
 
 class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
     """Synthetic Curve stableswap pool for testing.
-    
+
     Implements the full Curve stableswap invariant math:
     - D calculation via Newton's method
     - get_y for swap output calculation
     - Precision-adjusted balances (xp)
     - Dynamic fee calculation
-    
+
     Supports 2-coin, 3-coin, and metapool configurations.
     """
 
@@ -86,7 +87,7 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         base_pool: FakeCurveStableswapPool | None = None,
     ) -> None:
         """Initialize a fake Curve pool.
-        
+
         Args:
             tokens: Sequence of 2-8 tokens (must match balances length)
             balances: Initial balances for each token
@@ -96,7 +97,9 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             base_pool: For metapools, the underlying base pool
         """
         if len(tokens) != len(balances):
-            raise ValueError(f"Token count ({len(tokens)}) must match balance count ({len(balances)})")
+            raise ValueError(
+                f"Token count ({len(tokens)}) must match balance count ({len(balances)})"
+            )
         if len(tokens) < 2 or len(tokens) > self.MAX_COINS:
             raise ValueError(f"Curve pools require 2-{self.MAX_COINS} tokens, got {len(tokens)}")
 
@@ -156,7 +159,7 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
     def _xp(self, balances: Sequence[int]) -> tuple[int, ...]:
         """Convert balances to precision-adjusted balances.
-        
+
         xp[i] = balances[i] * precision_multipliers[i]
         """
         return tuple(
@@ -166,7 +169,7 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
     def _get_d(self, xp: Sequence[int], amp: int) -> int:
         """Calculate Curve invariant D via Newton's method.
-        
+
         D is the total amount of tokens when the pool is perfectly balanced.
         """
         n_coins = self.n_coins
@@ -191,7 +194,7 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
     def _get_y(self, i: int, j: int, x: int, xp: Sequence[int]) -> int:
         """Calculate y for given x in token i, result in token j.
-        
+
         Solves the stableswap equation for y given new balance x at index i.
         """
         n_coins = self.n_coins
@@ -224,7 +227,7 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
     def _get_dy(self, i: int, j: int, dx: int) -> int:
         """Calculate output amount for input dx.
-        
+
         Main swap calculation. Returns amount of token j received for dx of token i.
         """
         xp = self._xp(self._state.balances)
@@ -251,14 +254,10 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         state_override: AbstractPoolState | None = None,
     ) -> HopType:
         """Create a CurveStableswapHop for the solver.
-        
+
         For 2-token pools: zero_for_one=True means tokens[0] -> tokens[1]
         """
-        state = (
-            state_override
-            if isinstance(state_override, FakeCurvePoolState)
-            else self._state
-        )
+        state = state_override if isinstance(state_override, FakeCurvePoolState) else self._state
 
         # For 2-token pools, map zero_for_one to token indices
         if zero_for_one:
@@ -304,24 +303,18 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
         """Simulate a swap through this pool.
-        
+
         Finds token indices by address, calculates output via Curve math.
         """
-        state = (
-            state_override
-            if isinstance(state_override, FakeCurvePoolState)
-            else self._state
-        )
+        state = state_override if isinstance(state_override, FakeCurvePoolState) else self._state
 
         # Find token indices
         try:
             i = next(
-                idx for idx, t in enumerate(self._tokens)
-                if t.address.lower() == token_in.lower()
+                idx for idx, t in enumerate(self._tokens) if t.address.lower() == token_in.lower()
             )
             j = next(
-                idx for idx, t in enumerate(self._tokens)
-                if t.address.lower() == token_out.lower()
+                idx for idx, t in enumerate(self._tokens) if t.address.lower() == token_out.lower()
             )
         except StopIteration as e:
             raise ValueError(f"Token not found in pool: {token_in} -> {token_out}") from e

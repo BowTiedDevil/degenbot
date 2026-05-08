@@ -4,7 +4,6 @@ from hexbytes import HexBytes
 from sqlalchemy import case, distinct, func, or_, select
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.pools import (
     AerodromeV2PoolTable,

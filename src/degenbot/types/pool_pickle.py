@@ -19,11 +19,7 @@ class PoolPickleMixin:
 
     def __getstate__(self) -> dict[str, Any]:
         with self._state_lock:
-            return {
-                k: v
-                for k, v in self.__dict__.items()
-                if k not in self._pickle_drops
-            }
+            return {k: v for k, v in self.__dict__.items() if k not in self._pickle_drops}
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         for key, factory in self._pickle_reconstructs.items():

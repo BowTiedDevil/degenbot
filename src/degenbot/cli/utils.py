@@ -16,7 +16,11 @@ def _get_use_alloy_from_env() -> bool:
 
 
 def get_provider_from_config(
-    *, chain_id: int, optimize: bool = True, use_alloy: bool | None = None, config: DegenbotConfig | None = None
+    *,
+    chain_id: int,
+    optimize: bool = True,
+    use_alloy: bool | None = None,
+    config: DegenbotConfig | None = None,
 ) -> ProviderAdapter:
     """Get a ProviderAdapter for the given chain ID.
 

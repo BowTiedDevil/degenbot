@@ -1,7 +1,6 @@
 import pytest
 
 from degenbot.anvil_fork import AnvilFork
-from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.manager import Erc20TokenManager
 from degenbot.exceptions import DegenbotValueError
