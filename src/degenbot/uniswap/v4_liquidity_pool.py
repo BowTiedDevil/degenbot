@@ -751,9 +751,13 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
                     # status of any tick
                     if self._tick_data_fetcher is not None:
                         self._tick_data_fetcher(tick_word, state_block - 1)
-                        # Refresh working copies from updated pool state
+                        # Refresh working bitmap from updated pool state
                         working_tick_bitmap = self.tick_bitmap
-                        working_tick_data = self.tick_data
+                        # Merge newly fetched ticks into working_tick_data without overwriting
+                        # existing entries (which may have been modified in earlier iterations)
+                        for fetched_tick, fetched_liquidity in self.tick_data.items():
+                            if fetched_tick not in working_tick_data:
+                                working_tick_data[fetched_tick] = fetched_liquidity
                     else:
                         raise MissingLiquidityData(tick_word)
 

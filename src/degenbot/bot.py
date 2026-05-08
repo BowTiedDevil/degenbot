@@ -14,6 +14,7 @@ from sqlalchemy import select
 from web3 import Web3
 from web3.exceptions import Web3Exception
 
+from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
 from degenbot.connection.connection_manager import ConnectionManager
@@ -335,7 +336,55 @@ class Bot:
         deployer = deployer_address or deployer
         init_hash = init_hash or init_hash
 
-        pool = UniswapV2Pool(
+        # Detect Camelot pools by checking for stableSwap() function
+        # Camelot pools have unique functions like stableSwap() and FEE_DENOMINATOR
+        try:
+            stable_swap_result = provider.call(
+                to=pool_address,
+                data=encode_function_calldata("stableSwap()", None),
+                block=state_block,
+            )
+            (stable_swap,) = eth_abi.abi.decode(types=["bool"], data=stable_swap_result)
+
+            fee_denom_result = provider.call(
+                to=pool_address,
+                data=encode_function_calldata("FEE_DENOMINATOR()", None),
+                block=state_block,
+            )
+            (fee_denominator,) = eth_abi.abi.decode(types=["uint256"], data=fee_denom_result)
+
+            # If we got here, it's a Camelot pool - fetch fee token0/1
+            fee0_result = provider.call(
+                to=pool_address,
+                data=encode_function_calldata("token0FeePercent()", None),
+                block=state_block,
+            )
+            (fee_token0_raw,) = eth_abi.abi.decode(types=["uint16"], data=fee0_result)
+
+            fee1_result = provider.call(
+                to=pool_address,
+                data=encode_function_calldata("token1FeePercent()", None),
+                block=state_block,
+            )
+            (fee_token1_raw,) = eth_abi.abi.decode(types=["uint16"], data=fee1_result)
+
+            pool = CamelotLiquidityPool(
+                address=pool_address,
+                chain_id=chain_id,
+                token0=token0,
+                token1=token1,
+                factory=factory,
+                fee_token0=fee_token0_raw,
+                fee_token1=fee_token1_raw,
+                fee_denominator=fee_denominator,
+                reserves_token0=reserves0,
+                reserves_token1=reserves1,
+                stable_swap=stable_swap,
+                state_block=state_block,
+            )
+        except Exception:
+            # Not a Camelot pool, use standard UniswapV2Pool
+            pool = UniswapV2Pool(
             address=pool_address,
             chain_id=chain_id,
             token0=token0,
@@ -683,6 +732,9 @@ class Bot:
         (liquidity,) = eth_abi.abi.decode(types=["uint128"], data=liquidity_result)
 
         # Fetch initial tick bitmap and tick data
+        # Track if we have complete snapshot data (DB or explicit args).
+        # Single-word fetches from chain are incomplete and should use sparse mode.
+        db_snapshot_loaded = False
         working_tick_bitmap: dict[int, Any] = {}
         working_tick_data: dict[int, Any] = {}
 
@@ -690,6 +742,8 @@ class Bot:
         if tick_bitmap is not None and tick_data is not None:
             working_tick_bitmap = dict(tick_bitmap)
             working_tick_data = dict(tick_data)
+            # Assume provided tick data is complete
+            db_snapshot_loaded = True
         elif tick_bitmap is not None or tick_data is not None:
             raise DegenbotValueError(message="Provide both tick_bitmap and tick_data, or neither.")
         else:
@@ -775,9 +829,15 @@ class Bot:
         deployer = deployer_address or deployer
         init_hash = init_hash or init_hash
 
-        # If tick data was populated, pass both. Otherwise pass None (sparse mode).
-        tick_bitmap_arg = working_tick_bitmap if working_tick_data else None
-        tick_data_arg = working_tick_data or None
+        # Only pass tick data if we have a complete DB snapshot.
+        # Single-word fetches from chain should use sparse mode so the pool
+        # can fetch additional tick data on-demand during swaps.
+        if db_snapshot_loaded and working_tick_data:
+            tick_bitmap_arg = working_tick_bitmap
+            tick_data_arg = working_tick_data
+        else:
+            tick_bitmap_arg = None
+            tick_data_arg = None
 
         pool = UniswapV3Pool(
             address=pool_address,
