@@ -176,11 +176,11 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
         self._pool_manager_address = get_checksum_address(pool_manager_address)
         self._pool_id: Final[HexBytes] = HexBytes(pool_id)
 
-        self._chain_id: Final[int] = (
-            chain_id if chain_id is not None else token0.chain_id
-        )
-        _state_block = state_block if state_block is not None else 0
-        self._initial_state_block = _state_block
+        self._chain_id: Final[int] = chain_id if chain_id is not None else token0.chain_id
+
+        # TODO: check - should this be zero?
+        state_block = state_block if state_block is not None else 0
+        self._initial_state_block = state_block
 
         self._token0: Final[Erc20Token] = token0
         self._token1: Final[Erc20Token] = token1
@@ -188,7 +188,9 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             get_checksum_address(hook_address) if hook_address is not None else ZERO_ADDRESS
         )
         self._state_view_address = (
-            get_checksum_address(state_view_address) if state_view_address is not None else ZERO_ADDRESS
+            get_checksum_address(state_view_address)
+            if state_view_address is not None
+            else ZERO_ADDRESS
         )
         self.active_hooks: frozenset[Hooks] = frozenset(
             hook for hook in Hooks if int(self.hook_address, 16) & hook.value != 0
@@ -267,7 +269,7 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             tick=tick,
             tick_bitmap=working_tick_bitmap,
             tick_data=working_tick_data,
-            block=_state_block,
+            block=state_block,
         )
         self._state_lock = Lock()
         self._state_mgr = ConcentratedLiquidityStateManager(
@@ -290,6 +292,7 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
     def __str__(self) -> str:
         return self.name
 
+    @staticmethod
     def _calculate_swap_fee(
         protocol_fee: int,
         lp_fee: int,
@@ -316,7 +319,7 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             snapshot = LiquidityMapSnapshot.from_state(
                 override_state,
                 tick_spacing=self.tick_spacing,
-                sparse=self._sparse_liquidity_map,
+                sparse=True,
             )
             liquidity_start = override_state.liquidity
             sqrt_price_x96_start = override_state.sqrt_price_x96
@@ -326,7 +329,7 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
                 tick_data=self.tick_data,
                 tick_bitmap=self.tick_bitmap,
                 tick_spacing=self.tick_spacing,
-                sparse=self._sparse_liquidity_map,
+                sparse=True,
             )
             liquidity_start = self.liquidity
             sqrt_price_x96_start = self.sqrt_price_x96
@@ -353,43 +356,32 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
                 ),
             )
 
-        if self._sparse_liquidity_map:
-            while True:
-                try:
-                    result = _v4_swap(
-                        snapshot=snapshot,
-                        zero_for_one=zero_for_one,
-                        amount_specified=amount_specified,
-                        sqrt_price_x96_limit=sqrt_price_x96_limit,
-                        lp_fee=self.lp_fee,
-                        protocol_fee=protocol_fee,
-                        liquidity_start=liquidity_start,
-                        sqrt_price_x96_start=sqrt_price_x96_start,
-                        tick_start=tick_start,
+        # Always use the sparse swap loop so that MissingLiquidityData can be
+        # handled by fetching additional tick data when the fetcher is available.
+        while True:
+            try:
+                result = _v4_swap(
+                    snapshot=snapshot,
+                    zero_for_one=zero_for_one,
+                    amount_specified=amount_specified,
+                    sqrt_price_x96_limit=sqrt_price_x96_limit,
+                    lp_fee=self.lp_fee,
+                    protocol_fee=protocol_fee,
+                    liquidity_start=liquidity_start,
+                    sqrt_price_x96_start=sqrt_price_x96_start,
+                    tick_start=tick_start,
+                )
+                break
+            except MissingLiquidityData as exc:
+                if self._tick_data_fetcher is not None:
+                    self._tick_data_fetcher(exc.word, self.update_block)
+                    snapshot = LiquidityMapSnapshot.from_state(
+                        self.state,
+                        tick_spacing=self.tick_spacing,
+                        sparse=True,
                     )
-                    break
-                except MissingLiquidityData as exc:
-                    if self._tick_data_fetcher is not None:
-                        self._tick_data_fetcher(exc.word, self.update_block)
-                        snapshot = LiquidityMapSnapshot.from_state(
-                            self.state,
-                            tick_spacing=self.tick_spacing,
-                            sparse=True,
-                        )
-                    else:
-                        raise
-        else:
-            result = _v4_swap(
-                snapshot=snapshot,
-                zero_for_one=zero_for_one,
-                amount_specified=amount_specified,
-                sqrt_price_x96_limit=sqrt_price_x96_limit,
-                lp_fee=self.lp_fee,
-                protocol_fee=protocol_fee,
-                liquidity_start=liquidity_start,
-                sqrt_price_x96_start=sqrt_price_x96_start,
-                tick_start=tick_start,
-            )
+                else:
+                    raise
 
         swap_delta = SwapDelta(currency0=result.amount0, currency1=result.amount1)
 
@@ -714,7 +706,7 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
         if update.liquidity == 0:
             return
 
-        with self._state_lock:
+        with self._state_lock:  # noqa:PLR1702
             state_block = update.block_number
 
             # The tick bitmap and tick data dictionaries accessed from the property are copies, so
