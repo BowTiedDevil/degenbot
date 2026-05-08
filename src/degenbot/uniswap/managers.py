@@ -407,9 +407,7 @@ class UniswapV3PoolManager(AbstractUniswapV3PoolManager[UniswapV3Pool], pool_fac
                 deployer_address=self._deployer_address,
                 init_hash=self._pool_init_hash,
                 silent=silent,
-                tick_bitmap=self._snapshot.tick_bitmap(pool_address)
-                if self._snapshot
-                else None,
+                tick_bitmap=self._snapshot.tick_bitmap(pool_address) if self._snapshot else None,
                 tick_data=self._snapshot.tick_data(pool_address) if self._snapshot else None,
             )
         except LiquidityPoolError as exc:  # pragma: no cover

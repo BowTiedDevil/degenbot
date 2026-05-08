@@ -6,7 +6,6 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.manager import ManagerAlreadyInitialized, ManagerError, PoolNotAssociated
 from degenbot.pancakeswap.managers import PancakeswapV3PoolManager
 from degenbot.provider import ProviderAdapter
-from degenbot.registry import PoolRegistry
 from degenbot.sushiswap.managers import SushiswapV2PoolManager, SushiswapV3PoolManager
 from degenbot.uniswap.deployments import (
     UniswapFactoryDeployment,

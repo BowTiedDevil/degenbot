@@ -1,13 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from fractions import Fraction
 from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakSet
-
-from eth_typing import ChecksumAddress
 
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult
 from degenbot.arbitrage.path.pool_hop_adapter import extract_fee as _adapter_extract_fee
@@ -21,10 +16,8 @@ from degenbot.arbitrage.types import (
     UniswapV3PoolSwapAmounts,
     UniswapV4PoolSwapAmounts,
 )
-from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import OptimizationError
 from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
-from degenbot.types.abstract import AbstractPoolState
 from degenbot.types.concrete import (
     AbstractPublisherMessage,
     PoolStateMessage,
@@ -33,8 +26,17 @@ from degenbot.types.concrete import (
     Subscriber,
 )
 from degenbot.types.hop_types import HopType
+from degenbot.types.pool_protocols import ArbitrageCapablePool
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+    from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+    from fractions import Fraction
+
+    from eth_typing import ChecksumAddress
+
+    from degenbot.erc20 import Erc20Token
+    from degenbot.types.abstract import AbstractPoolState
     from degenbot.types.hop_types import HopType
     from degenbot.types.pool_protocols import ArbitragePathPool
 
@@ -112,7 +114,9 @@ class ArbitragePath(PublisherMixin):
 
         self._validate_pools()
         self._swap_vectors = self._build_swap_vectors()
-        self._pool_index: dict[ArbitragePathPool, int] = {pool: i for i, pool in enumerate(self._pools)}
+        self._pool_index: dict[ArbitragePathPool, int] = {
+            pool: i for i, pool in enumerate(self._pools)
+        }
         self._hop_states: list[HopType] = [
             _pool_to_hop_state(pool, self._swap_vectors[i].zero_for_one)
             for i, pool in enumerate(self._pools)

@@ -5,13 +5,13 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.erc20 import Erc20Token, EtherPlaceholder
-from degenbot.types.aliases import ChainId
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
     from degenbot.bot import Bot
+    from degenbot.erc20 import Erc20Token
+    from degenbot.types.aliases import ChainId
 
 
 class Erc20TokenManager:

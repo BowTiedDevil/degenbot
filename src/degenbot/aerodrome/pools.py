@@ -89,9 +89,7 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
 
         self.factory = get_checksum_address(factory)
         self.deployer_address = (
-            get_checksum_address(deployer_address)
-            if deployer_address is not None
-            else self.factory
+            get_checksum_address(deployer_address) if deployer_address is not None else self.factory
         )
         self._stable = stable
         self._fee = fee

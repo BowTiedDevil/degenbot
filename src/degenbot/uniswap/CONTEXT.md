@@ -138,6 +138,7 @@ pool = bot.build_v2_pool("0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc")
 
 # via Pool Manager
 from degenbot.uniswap.managers import UniswapV2PoolManager
+
 manager = UniswapV2PoolManager(
     factory_address="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
     bot=bot,
@@ -153,6 +154,7 @@ pool = bot.build_v3_pool("0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8")
 
 # via Pool Manager
 from degenbot.uniswap.managers import UniswapV3PoolManager
+
 manager = UniswapV3PoolManager(
     factory_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
     bot=bot,

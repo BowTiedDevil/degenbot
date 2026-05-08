@@ -1,12 +1,11 @@
-from typing import Protocol
-
 import dataclasses
+from typing import Protocol
 
 from eth_typing import HexAddress
 
 from degenbot.types.abstract import AbstractPoolState
+from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PoolStateMessage
-
 
 # ── Fetcher Protocols ──
 # These protocols define the interface for callbacks that fetch on-chain data
@@ -16,7 +15,7 @@ from degenbot.types.concrete import PoolStateMessage
 
 class RateFetcher(Protocol):
     """Fetch rates for lending tokens (cTokens, yTokens, etc.) at a given block.
-    
+
     Returns rates for all pool tokens in the same order as pool.tokens.
     Non-lending tokens return PRECISION (10^18).
     """
@@ -26,7 +25,7 @@ class RateFetcher(Protocol):
 
 class VirtualPriceFetcher(Protocol):
     """Fetch virtual price from a base pool at a given block.
-    
+
     Used by metapools to get the LP token price of their base pool.
     """
 
@@ -35,7 +34,7 @@ class VirtualPriceFetcher(Protocol):
 
 class TimestampFetcher(Protocol):
     """Fetch block timestamp for a given block number.
-    
+
     Used for A coefficient ramping calculations.
     """
 
@@ -44,7 +43,7 @@ class TimestampFetcher(Protocol):
 
 class RedemptionPriceFetcher(Protocol):
     """Fetch scaled redemption price for LSD pools at a given block.
-    
+
     Used by pools that wrap LSD tokens (e.g., stETH, frxETH).
     """
 
@@ -53,7 +52,7 @@ class RedemptionPriceFetcher(Protocol):
 
 class AdminBalancesFetcher(Protocol):
     """Fetch admin balances for the pool at a given block.
-    
+
     Used by pools that track accumulated admin fees separately.
     """
 
@@ -67,6 +66,12 @@ class AdminBalancesFetcher(Protocol):
 class CurveStableswapPoolState(AbstractPoolState):
     balances: tuple[int, ...]
     base: "CurveStableswapPoolState | None" = None
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class CurveStableswapPoolExternalUpdate:
+    block_number: BlockNumber
+    balances: tuple[int, ...]
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

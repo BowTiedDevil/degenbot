@@ -116,7 +116,9 @@ class AsyncBot:
         token_from_db = None
         with contextlib.suppress(Exception), self.db() as session:
             token_from_db = get_token_from_database(
-                token=address, chain_id=chain_id, session=session,
+                token=address,
+                chain_id=chain_id,
+                session=session,
             )
 
         name: str | None = None
@@ -136,10 +138,12 @@ class AsyncBot:
             provider = self.connections.get_provider(chain_id)
 
             try:
-                fetched_name, fetched_symbol, fetched_decimals = (
-                    await self._fetch_name_symbol_decimals_batched(
-                        address=address, provider=provider
-                    )
+                (
+                    fetched_name,
+                    fetched_symbol,
+                    fetched_decimals,
+                ) = await self._fetch_name_symbol_decimals_batched(
+                    address=address, provider=provider
                 )
             except (Web3Exception, DecodingError):
                 fetched_name = Erc20Token.UNKNOWN_NAME
@@ -244,13 +248,16 @@ class AsyncBot:
         else:
             try:
                 factory_result = await provider.call(
-                    to=pool_address, data=encode_function_calldata("factory()", None),
+                    to=pool_address,
+                    data=encode_function_calldata("factory()", None),
                 )
                 token0_result = await provider.call(
-                    to=pool_address, data=encode_function_calldata("token0()", None),
+                    to=pool_address,
+                    data=encode_function_calldata("token0()", None),
                 )
                 token1_result = await provider.call(
-                    to=pool_address, data=encode_function_calldata("token1()", None),
+                    to=pool_address,
+                    data=encode_function_calldata("token1()", None),
                 )
             except Exception as exc:
                 raise LiquidityPoolError(message="Could not decode contract data") from exc
@@ -282,7 +289,8 @@ class AsyncBot:
             raise LiquidityPoolError(message="Could not decode contract data") from exc
 
         reserves0, reserves1, _ = eth_abi.abi.decode(
-            types=["uint256", "uint256", "uint256"], data=reserves_result,
+            types=["uint256", "uint256", "uint256"],
+            data=reserves_result,
         )
 
         # Determine deployer/init_hash
@@ -375,19 +383,24 @@ class AsyncBot:
         else:
             try:
                 factory_result = await provider.call(
-                    to=pool_address, data=encode_function_calldata("factory()", None),
+                    to=pool_address,
+                    data=encode_function_calldata("factory()", None),
                 )
                 token0_result = await provider.call(
-                    to=pool_address, data=encode_function_calldata("token0()", None),
+                    to=pool_address,
+                    data=encode_function_calldata("token0()", None),
                 )
                 token1_result = await provider.call(
-                    to=pool_address, data=encode_function_calldata("token1()", None),
+                    to=pool_address,
+                    data=encode_function_calldata("token1()", None),
                 )
                 fee_result = await provider.call(
-                    to=pool_address, data=encode_function_calldata("fee()", None),
+                    to=pool_address,
+                    data=encode_function_calldata("fee()", None),
                 )
                 tick_spacing_result = await provider.call(
-                    to=pool_address, data=encode_function_calldata("tickSpacing()", None),
+                    to=pool_address,
+                    data=encode_function_calldata("tickSpacing()", None),
                 )
             except Exception as exc:
                 raise LiquidityPoolError(message="Could not decode contract data") from exc
@@ -434,7 +447,8 @@ class AsyncBot:
         working_tick_data: dict[int, Any] = {}
 
         word, _ = get_tick_word_and_bit_position(
-            tick=int(tick), tick_spacing=tick_spacing_for_pool,
+            tick=int(tick),
+            tick_spacing=tick_spacing_for_pool,
         )
 
         (bitmap_at_word,) = await async_raw_call(
@@ -458,7 +472,16 @@ class AsyncBot:
                     block=_state_block,
                 )
                 liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
-                    types=["uint128", "int128", "uint256", "uint256", "int56", "uint160", "uint32", "bool"],
+                    types=[
+                        "uint128",
+                        "int128",
+                        "uint256",
+                        "uint256",
+                        "int56",
+                        "uint160",
+                        "uint32",
+                        "bool",
+                    ],
                     data=result,
                 )
                 working_tick_data[active_tick] = UniswapV3LiquidityAtTick(
@@ -468,7 +491,8 @@ class AsyncBot:
                 )
 
         working_tick_bitmap[word] = UniswapV3BitmapAtWord(
-            bitmap=bitmap_at_word, block=_state_block,
+            bitmap=bitmap_at_word,
+            block=_state_block,
         )
 
         _tick_bitmap_arg = working_tick_bitmap if working_tick_data else None
@@ -631,14 +655,16 @@ class AsyncBot:
         working_tick_data: dict[int, Any] = {}
 
         word, _ = get_tick_word_and_bit_position(
-            tick=int(tick_val), tick_spacing=tick_spacing_for_pool,
+            tick=int(tick_val),
+            tick_spacing=tick_spacing_for_pool,
         )
 
         (bitmap_at_word,) = await async_raw_call(
             provider,
             address=_state_view_address,
             calldata=encode_function_calldata(
-                "getTickBitmap(bytes32,int16)", [pool_id_bytes, word],
+                "getTickBitmap(bytes32,int16)",
+                [pool_id_bytes, word],
             ),
             return_types=["uint256"],
             block_identifier=_state_block,
@@ -654,12 +680,14 @@ class AsyncBot:
                 result = await provider.call(
                     to=_state_view_address,
                     data=encode_function_calldata(
-                        "getTickLiquidity(bytes32,int24)", [pool_id_bytes, active_tick],
+                        "getTickLiquidity(bytes32,int24)",
+                        [pool_id_bytes, active_tick],
                     ),
                     block=_state_block,
                 )
                 liquidity_gross, liquidity_net = eth_abi.abi.decode(
-                    types=["uint128", "int128"], data=result,
+                    types=["uint128", "int128"],
+                    data=result,
                 )
                 working_tick_data[active_tick] = UniswapV4LiquidityAtTick(
                     liquidity_net=int(liquidity_net),
@@ -668,7 +696,8 @@ class AsyncBot:
                 )
 
         working_tick_bitmap[word] = UniswapV4BitmapAtWord(
-            bitmap=bitmap_at_word, block=_state_block,
+            bitmap=bitmap_at_word,
+            block=_state_block,
         )
 
         _tick_bitmap_arg = working_tick_bitmap if working_tick_data else None
@@ -695,8 +724,10 @@ class AsyncBot:
         )
 
         self.managed_pools.add(
-            pool=pool, chain_id=chain_id,
-            pool_manager_address=pool.address, pool_id=pool.pool_id,
+            pool=pool,
+            chain_id=chain_id,
+            pool_manager_address=pool.address,
+            pool_id=pool.pool_id,
         )
 
         if not silent:

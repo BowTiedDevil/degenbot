@@ -19,7 +19,6 @@ from degenbot.exceptions.liquidity_pool import (
     PossibleInaccurateResult,
 )
 from degenbot.provider import ProviderAdapter
-from degenbot.registry import ManagedPoolRegistry
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from tests.helpers.bot_factory import make_bot_with_provider
 

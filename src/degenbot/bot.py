@@ -1506,9 +1506,7 @@ class Bot:
                         },
                         block_identifier=state_block,
                     )
-                    (underlying_addr,) = eth_abi.abi.decode(
-                        types=["address"], data=ytoken_result
-                    )
+                    (underlying_addr,) = eth_abi.abi.decode(types=["address"], data=ytoken_result)
                     # Verify the underlying is a valid address (not zero)
                     if int(underlying_addr, 16) != 0:
                         is_lending = True
@@ -1829,6 +1827,8 @@ class Bot:
             return self._update_v3_pool(pool, provider=provider, block_number=block_number)
         if isinstance(pool, UniswapV4Pool):
             return self._update_v4_pool(pool, provider=provider, block_number=block_number)
+        if isinstance(pool, CurveStableswapPool):
+            return self._update_curve_pool(pool, provider=provider, block_number=block_number)
         raise TypeError(f"update() not implemented for pool type {type(pool).__name__}")
 
     def _update_v2_pool(
@@ -1954,6 +1954,47 @@ class Bot:
             sqrt_price_x96=price,
             tick=tick,
             liquidity=liquidity_val,
+        )
+        pool.external_update(update)
+        return True
+
+    def _update_curve_pool(
+        self, pool: Any, *, provider: Any, block_number: BlockIdentifier | None
+    ) -> bool:
+
+        assert isinstance(pool, CurveStableswapPool)
+        _block_number = block_number if block_number is not None else provider.get_block_number()
+
+        # Fetch balances for each token in the pool
+        w3 = self.connections.get_web3(pool.chain_id)
+        new_balances: list[int] = []
+        for i, token in enumerate(pool.tokens):
+            (balance,) = cast(
+                "tuple[int]",
+                eth_abi.abi.decode(
+                    types=["uint256"],
+                    data=w3.eth.call(
+                        {
+                            "to": pool.address,
+                            "data": encode_function_calldata(
+                                function_prototype="balances(uint256)",
+                                function_arguments=[i],
+                            ),
+                        },
+                        block_identifier=_block_number,
+                    ),
+                ),
+            )
+            new_balances.append(balance)
+
+        if pool.balances == tuple(new_balances):
+            return False
+
+        from degenbot.curve.types import CurveStableswapPoolExternalUpdate
+
+        update = CurveStableswapPoolExternalUpdate(
+            block_number=_block_number,
+            balances=tuple(new_balances),
         )
         pool.external_update(update)
         return True
