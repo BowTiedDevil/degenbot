@@ -37,6 +37,18 @@ When your output names a domain concept (in an issue title, a refactor proposal,
 
 If the concept you need isn't in the glossary yet, that's a signal — either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/grill-with-docs`).
 
+## I/O-Free Architecture Terms
+
+When working with Curve pools or other I/O-free features, use these terms as defined in `src/degenbot/curve/CONTEXT.md`:
+
+- **Fetcher** — a callable protocol injected at construction for on-demand data
+- **Fetcher Callback** — the actual function passed to fetch data (e.g., `RateFetcher`)
+- **I/O Decoupling** — the architectural separation of pool logic from on-chain I/O
+- **Fetcher Factory** — the pattern where `Bot.build_*_pool()` creates closures and injects them
+
+**Incorrect**: "the pool fetches rates from the provider"
+**Correct**: "the pool calls its injected RateFetcher callback"
+
 ## Flag ADR conflicts
 
 If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:

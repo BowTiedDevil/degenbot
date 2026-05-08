@@ -242,16 +242,39 @@ All database operations are defined in [`src/degenbot/database/operations.py`](.
 
 ### Database Session
 
+**Deprecated singleton pattern (legacy support):**
+
 The global database session is available in [`src/degenbot/database/__init__.py`](../../src/degenbot/database/__init__.py):
 
 ```python
-db_session = get_scoped_sqlite_session(database_path=settings.database.path)
-
-# Usage:
+# OLD: Global singleton (deprecated)
 from degenbot.database import db_session
-
 with db_session() as session:
     result = session.execute(query)
+```
+
+**Recommended Bot pattern:**
+
+Use the `Bot` class to manage database sessions:
+
+```python
+# NEW: Bot manages database lifecycle
+import degenbot
+bot = degenbot.Bot.from_config_file()
+
+with bot.db() as session:
+    result = session.execute(query)
+
+# Or in CLI commands, use Bot's database for model queries
+from degenbot.database.models.pools import LiquidityPoolTable
+
+with bot.db() as session:
+    pool = session.scalar(
+        select(LiquidityPoolTable).where(
+            LiquidityPoolTable.address == pool_address,
+            LiquidityPoolTable.chain == chain_id,
+        )
+    )
 ```
 
 ## Dependencies
