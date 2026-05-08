@@ -7,6 +7,7 @@ Module-level context files (terms, aliases, relationships, and ambiguity rulings
 - [Pool Registries](src/degenbot/registry/CONTEXT.md) — Pool Registry, Token Registry, Managed Pool Registry
 - [Arbitrage, Solvers & Adapters](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Arbitrage Path, Input/Profit Token & Amount, Swap Vector, Solver, Optimizer, Hop State, Pool Adapter · Ambiguity ruling: Solver vs Optimizer
 - [Aave](src/degenbot/aave/CONTEXT.md) — Market, Asset, Reserve, Collateral, Debt, aToken/vToken, GHO, Health Factor, Liquidation, Scaled/Raw Amount, Index, Enrichment, Processor, E-Mode, Isolation Mode
+- [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — I/O-free pool architecture, Fetcher Protocols, Metapools, Base Pools, Lending Pools, Crypto Pools, A Coefficient, Stored Rates, Virtual Price · Ambiguity rulings: Coin vs Token, Rate units, Lending detection methods
 - [Infrastructure](src/degenbot/connection/CONTEXT.md) — Anvil Fork, Provider, Connection Manager, Pool State Message
 
 ## Instructions
