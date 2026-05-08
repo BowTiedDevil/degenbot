@@ -1,12 +1,14 @@
 import click
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 
 from degenbot.bot import Bot
 from degenbot.cli import cli
-from degenbot.database import current_database_version, latest_database_version
 from degenbot.database.operations import (
     backup_sqlite_database,
     compact_sqlite_database,
     create_new_sqlite_database,
+    get_alembic_config,
     upgrade_existing_sqlite_database,
 )
 from degenbot.exceptions.database import BackupExists
@@ -79,11 +81,19 @@ def database_upgrade(bot: Bot, *, force: bool) -> None:
     Upgrade the database to the latest schema.
     """
 
+    with bot.db() as session:
+        current_version = MigrationContext.configure(
+            connection=bot.db.connection()
+        ).get_current_revision()
+    latest_version = ScriptDirectory.from_config(
+        config=get_alembic_config(database_path=bot.config.database.path)
+    ).get_current_head()
+
     if force or click.confirm(
-        f"The database at {bot.config.database.path} will be upgraded from version {current_database_version} to {latest_database_version}. Do you want to proceed?",  # noqa:E501
+        f"The database at {bot.config.database.path} will be upgraded from version {current_version} to {latest_version}. Do you want to proceed?",  # noqa:E501
         default=False,
     ):
-        upgrade_existing_sqlite_database()
+        upgrade_existing_sqlite_database(database_path=bot.config.database.path)
     else:
         raise click.Abort
 

@@ -2,7 +2,7 @@ import pytest
 from eth_typing import ChainId
 
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
-from degenbot.database import db_session
+from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.database.models.pools import (
     SwapbasedV2PoolTable,
     UniswapV2PoolTable,
@@ -25,7 +25,11 @@ def path_step_identifiers(path: list[PathStep]) -> tuple[str, ...]:
 @pytest.fixture
 def db():
     """Provide the module-level database session manager."""
-    return db_session
+    from degenbot.config import _init_config, DatabaseSettings
+    from degenbot.database.operations import get_scoped_sqlite_session
+
+    cfg = _init_config()
+    return DatabaseSessionManager(get_scoped_sqlite_session(database_path=cfg.database.path))
 
 
 def test_two_pool_pathfinding_cycling_weth():

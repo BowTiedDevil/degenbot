@@ -89,10 +89,42 @@ class Bot:
         self.managed_pools = ManagedPoolRegistry()
         self._managers: dict[tuple[ChainId, str], AbstractPoolManager] = {}
 
+        # Check database migration version
+        self._check_database_version()
+
     @property
     def chain_id(self) -> ChainId:
         """Return the default chain ID from the connection manager."""
         return self.connections.default_chain_id
+
+    def _check_database_version(self) -> None:
+        """Warn if the database schema is out of date."""
+        from alembic.runtime.migration import MigrationContext
+        from alembic.script import ScriptDirectory
+
+        from degenbot.database.operations import get_alembic_config
+        from degenbot.version import __version__
+
+        try:
+            with self.db() as session:
+                current_version = MigrationContext.configure(
+                    connection=self.db.connection()
+                ).get_current_revision()
+        except Exception:  # noqa: BLE001
+            return
+
+        latest_version = ScriptDirectory.from_config(
+            config=get_alembic_config(database_path=self.config.database.path)
+        ).get_current_head()
+
+        if current_version is not None and current_version != latest_version:
+            logger.warning(
+                f"The current database revision ({current_version}) does not match the latest "
+                f"({latest_version}) for {__package__} version {__version__}!"
+                "\n"
+                "Database-related features may raise exceptions if you continue. Perform database "
+                "migrations with 'degenbot database upgrade'."
+            )
 
     @classmethod
     def from_config_file(cls) -> Bot:

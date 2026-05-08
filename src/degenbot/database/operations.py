@@ -6,7 +6,6 @@ from alembic.config import Config
 from sqlalchemy import URL, Engine, create_engine, text
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
-from degenbot.config import config
 from degenbot.database.models import Base
 from degenbot.exceptions.database import BackupExists
 from degenbot.logging import logger
@@ -78,7 +77,7 @@ def create_new_sqlite_database(db_path: pathlib.Path) -> None:
         )
 
         logger.info(f"Initialized new SQLite database at {db_path}")
-        command.stamp(get_alembic_config(), "head")
+        command.stamp(get_alembic_config(database_path=db_path), "head")
 
 
 def compact_sqlite_database(db_path: pathlib.Path) -> None:
@@ -95,8 +94,8 @@ def compact_sqlite_database(db_path: pathlib.Path) -> None:
         logger.info(f"Compacted SQLite database at {db_path}")
 
 
-def upgrade_existing_sqlite_database() -> None:
-    command.upgrade(get_alembic_config(), "head")
+def upgrade_existing_sqlite_database(database_path: pathlib.Path) -> None:
+    command.upgrade(get_alembic_config(database_path=database_path), "head")
     logger.info("Updated existing SQLite database.")
 
 
@@ -115,8 +114,11 @@ def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Ses
 
 def get_alembic_config(database_path: pathlib.Path | None = None) -> Config:
     cfg = Config()
-    db_path = database_path or config.database.path
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{_get_sqlite_db_string(db_path)}")
+    if database_path is None:
+        raise ValueError(
+            "database_path is required. Pass it explicitly or use Bot.config.database.path"
+        )
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{_get_sqlite_db_string(database_path)}")
     cfg.set_main_option("script_location", "degenbot:migrations")
 
     return cfg
