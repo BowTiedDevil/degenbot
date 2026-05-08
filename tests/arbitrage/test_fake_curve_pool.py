@@ -342,8 +342,8 @@ class TestImbalancedPools:
         # Test a swap works in the imbalanced pool
         # (Curve's price stability means we lose less than constant-product would)
         amount_out = pool._get_dy(0, 1, 1000 * 10**18)
-        # Should get close to 1000 B minus fees (~998 with 0.04% fee)
-        assert 900 * 10**18 < amount_out < 1000 * 10**18
+        # 1000 A in → 998 B out (with 0.04% fee on the ~1:1 stableswap output)
+        assert amount_out == 998 * 10**18
 
 
 class TestMetapoolSupport:
