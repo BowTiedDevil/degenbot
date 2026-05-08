@@ -64,49 +64,44 @@ def _test_calculations(lp: CurveStableswapPool, w3: Web3):
                     token_out=token_out,
                     token_in_quantity=amount,
                 )
-            except (InvalidSwapInputAmount, NoLiquidity, EVMRevertError):
-                continue
-            except eth_abi.exceptions.InsufficientDataBytes:
+            except (
+                InvalidSwapInputAmount,
+                NoLiquidity,
+                EVMRevertError,
+                eth_abi.exceptions.InsufficientDataBytes,
+            ):
                 continue
             except Exception:
                 print(f"Failure simulating swap (in-pool) at block {state_block} for {lp.address}:")
                 raise
 
-            if lp.address == "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5":
-                tx = TxParams(
-                    to=lp.address,
-                    data=Web3.keccak(text="get_dy(uint256,uint256,uint256)")[:4]
-                    + eth_abi.abi.encode(
-                        types=["uint256", "uint256", "uint256"],
-                        args=[token_in_index, token_out_index, amount],
-                    ),
-                )
+            try:
+                if lp.address == "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5":
+                    tx = TxParams(
+                        to=lp.address,
+                        data=Web3.keccak(text="get_dy(uint256,uint256,uint256)")[:4]
+                        + eth_abi.abi.encode(
+                            types=["uint256", "uint256", "uint256"],
+                            args=[token_in_index, token_out_index, amount],
+                        ),
+                    )
 
-                try:
                     contract_amount, *_ = eth_abi.abi.decode(
                         data=w3.eth.call(transaction=tx),
                         types=["uint256"],
                     )
-                except ContractLogicError:
-                    raise BrokenPool() from None
-            else:
-                try:
+                else:
                     contract_amount = w3_contract.functions.get_dy(
                         token_in_index,
                         token_out_index,
                         amount,
                     ).call()
-                except ContractLogicError:
-                    raise BrokenPool() from None
+            except (ContractLogicError, eth_abi.exceptions.InsufficientDataBytes):
+                # The on-chain contract reverts for broken/unsupported pools
+                continue
 
-            # Allow for small rounding errors
-            # 0.1% tolerance for stableswap pools
-            # 0.5% tolerance for crypto pools (dynamic fees not fully implemented)
-            max_relative_error = 5e-3 if lp.fee_gamma > 0 else 1e-3
-            relative_error = abs(calc_amount - contract_amount) / contract_amount if contract_amount != 0 else 0
-            assert relative_error < max_relative_error, (
-                f"Failure simulating swap (in-pool) at block {state_block} for {lp.address}: {amount} {token_in} for {token_out}\n"
-                f"calc_amount={calc_amount}, contract_amount={contract_amount}, relative_error={relative_error:.2e}"
+            assert calc_amount == contract_amount, (
+                f"Failure simulating swap (in-pool) at block {state_block} for {lp.address}: {amount} {token_in} for {token_out}"  # noqa:E501
             )
 
     if lp.base_pool is not None:
@@ -133,11 +128,14 @@ def _test_calculations(lp: CurveStableswapPool, w3: Web3):
                 except (InvalidSwapInputAmount, NoLiquidity, EVMRevertError):
                     continue
 
-                contract_amount = w3_contract.functions.get_dy_underlying(
-                    token_in_index,
-                    token_out_index,
-                    amount,
-                ).call()
+                try:
+                    contract_amount = w3_contract.functions.get_dy_underlying(
+                        token_in_index,
+                        token_out_index,
+                        amount,
+                    ).call()
+                except (ContractLogicError, eth_abi.exceptions.InsufficientDataBytes):
+                    continue
 
                 assert calc_amount == contract_amount, (
                     f"Failure simulating swap (metapool) at block {state_block} for {lp.address}: "

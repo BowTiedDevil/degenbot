@@ -1545,6 +1545,26 @@ class Bot:
         except Exception:  # noqa: BLE001
             pass
 
+        # Fetch offpeg_fee_multiplier (used by some lending/crypto pools)
+        pool_offpeg_fee_multiplier: int | None = None
+        try:
+            (offpeg_fee_val,) = eth_abi.abi.decode(
+                types=["uint256"],
+                data=w3.eth.call(
+                    {
+                        "to": pool_address,
+                        "data": encode_function_calldata(
+                            function_prototype="offpeg_fee_multiplier()",
+                            function_arguments=[],
+                        ),
+                    },
+                    block_identifier=state_block,
+                ),
+            )
+            pool_offpeg_fee_multiplier = offpeg_fee_val
+        except Exception:  # noqa: BLE001
+            pass
+
         # Fetch LP token from Curve registry
         lp_token_address: str | None = None
         for registry_address in [
@@ -1719,6 +1739,7 @@ class Bot:
             mid_fee=pool_mid_fee,
             out_fee=pool_out_fee,
             gamma=pool_gamma,
+            offpeg_fee_multiplier=pool_offpeg_fee_multiplier,
         )
 
         # Register pool
