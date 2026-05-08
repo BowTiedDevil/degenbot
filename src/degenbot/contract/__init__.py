@@ -60,12 +60,14 @@ class Contract:
 
     Example:
         >>> from degenbot.contract import Contract
-        >>> from degenbot.connection import get_provider
+        >>> from degenbot import Bot
+        >>>
+        >>> bot = Bot.from_config_file()
         >>>
         >>> # Create contract for an ERC20 token
         >>> token = Contract(
         ...     address="0xA0b86a33E6441e3D4e4b8b8b8b8b8b8b8b8b8b8",
-        ...     provider=get_provider(),
+        ...     provider=bot.get_provider(chain_id=1),
         ... )
         >>>
         >>> # Call balanceOf function

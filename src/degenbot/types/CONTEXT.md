@@ -30,7 +30,7 @@
 | ---- | ---------- | ---------------- |
 | **Constant-Product Pool** | A V2-style pool using the x·y=k invariant with directional fees | XYK pool, AMM pool, product pool |
 | **Concentrated-Liquidity Pool** | A V3/V4-style pool where liquidity providers select active price ranges | CL pool, ranged pool |
-| **Stableswap Pool** | A Curve V1-style pool optimized for swaps between price-pegged tokens | Stable pool, Curve pool |
+| **Stableswap Pool** | A Curve V1-style pool optimized for swaps between price-pegged tokens; see [Curve CONTEXT.md](../curve/CONTEXT.md) for metapool, lending pool, and crypto pool subtypes | Stable pool, Curve pool |
 | **Weighted Pool** | A Balancer V2-style pool with configurable token weights in the invariant | Balancer pool |
 | **Volatile Pool** | An Aerodrome V2 pool using the constant-product invariant (as opposed to its stable variant) | — |
 
@@ -49,6 +49,33 @@
 - A **Pool** holds exactly two tokens: **Token0** and **Token1**
 - A **Pool State** belongs to exactly one **Pool** and is captured at one **State Block**
 - A **Pool Manager** tracks many **Pools** for one **Exchange Deployment**
+- A **Pool State** may be updated via **Fetcher Callbacks** (e.g., Curve pools call RateFetcher, VirtualPriceFetcher on-demand)
+
+## I/O-Free Architecture Pattern (Fetcher Protocol)
+
+Some pool types (e.g., Curve StableSwap) follow an **I/O-free architecture** where on-chain data access is decoupled via injected callbacks:
+
+| Term | Definition |
+|------|------------|
+| **Fetcher** | A callable protocol injected at pool construction that fetches on-chain data on-demand (e.g., `RateFetcher`, `VirtualPriceFetcher`) |
+| **Fetcher Callback** | The actual function passed to the pool; called lazily when data is needed, not at construction |
+| **I/O Decoupling** | Pool class has no direct provider/connection dependencies; all I/O flows through injected fetchers |
+
+**Benefits:**
+- **Testability**: Fake fetchers enable unit testing without network I/O
+- **Async Flexibility**: Fetchers can be sync or async depending on caller needs
+- **Separation of Concerns**: Pool logic is pure; I/O is externalized
+
+**Example:**
+```python
+# Bot.build_curve_pool() creates and injects fetchers
+pool = CurveStableswapPool(
+    address=pool_address,
+    rate_fetcher=RateFetcher(get_cToken_exchangeRateStored),  # Injected callback
+    virtual_price_fetcher=VirtualPriceFetcher(get_base_pool_virtual_price),
+    ...
+)
+```
 
 ## DEX Protocols (Supported)
 

@@ -40,6 +40,7 @@ class Erc20Token(AbstractErc20Token):
     An ERC-20 token contract.
 
     Constructed from pre-fetched data only. Use ``Bot.build_erc20token()`` to fetch from chain.
+    Balance, approval, and total supply queries go through ``Bot.get_token_balance()`` etc.
     """
 
     UNKNOWN_NAME = "Unknown Token"
