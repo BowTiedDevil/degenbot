@@ -16,6 +16,7 @@ from degenbot.exceptions.connection import (
     IPCSocketTimeout,
     Web3ConnectionTimeout,
 )
+from degenbot.exceptions.curve import CurveError, MissingCurveData
 from degenbot.exceptions.fetching import (
     BlockFetchingTimeout,
     FetchingError,
@@ -26,6 +27,7 @@ from . import (
     anvil,
     arbitrage,
     connection,
+    curve,
     database,
     erc20,
     evm,
@@ -40,6 +42,7 @@ __all__ = (
     "ArbCalculationError",
     "BlockFetchingTimeout",
     "ConnectionTimeout",
+    "CurveError",
     "DegenbotConnectionError",
     "DegenbotError",
     "DegenbotTypeError",
@@ -49,6 +52,7 @@ __all__ = (
     "InvalidForwardAmount",
     "InvalidSwapPathError",
     "LogFetchingTimeout",
+    "MissingCurveData",
     "NoLiquidity",
     "NoSolverSolution",
     "OptimizationError",
@@ -58,6 +62,7 @@ __all__ = (
     "anvil",
     "arbitrage",
     "connection",
+    "curve",
     "database",
     "erc20",
     "evm",
