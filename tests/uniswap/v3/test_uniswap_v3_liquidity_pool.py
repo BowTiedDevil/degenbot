@@ -219,7 +219,7 @@ def test_first_200_pools(
 
 SNAPSHOT_BLOCK = 21_123_218
 
-
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "fork_mainnet_archive",
     [SNAPSHOT_BLOCK],

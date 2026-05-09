@@ -1,61 +1,33 @@
 """Factory for creating token processors by revision."""
 
-from typing import Any, ClassVar, cast
+from typing import ClassVar
 
 from degenbot.aave.processors.base import (
     CollateralTokenProcessor,
     DebtTokenProcessor,
     GhoDebtTokenProcessor,
 )
-from degenbot.aave.processors.collateral.v1 import CollateralV1Processor
-from degenbot.aave.processors.collateral.v3 import CollateralV3Processor
-from degenbot.aave.processors.collateral.v4 import CollateralV4Processor
-from degenbot.aave.processors.collateral.v5 import CollateralV5Processor
-from degenbot.aave.processors.debt.gho.v1 import GhoV1Processor
-from degenbot.aave.processors.debt.gho.v2 import GhoV2Processor
-from degenbot.aave.processors.debt.gho.v4 import GhoV4Processor
-from degenbot.aave.processors.debt.gho.v5 import GhoV5Processor
-from degenbot.aave.processors.debt.v1 import DebtV1Processor
-from degenbot.aave.processors.debt.v3 import DebtV3Processor
-from degenbot.aave.processors.debt.v4 import DebtV4Processor
-from degenbot.aave.processors.debt.v5 import DebtV5Processor
+from degenbot.aave.processors.processor import (
+    UnifiedCollateralProcessor,
+    UnifiedDebtProcessor,
+    UnifiedGhoProcessor,
+)
+from degenbot.aave.processors.strategies import (
+    COLLATERAL_STRATEGIES,
+    DEBT_STRATEGIES,
+    GHO_DISCOUNT_STRATEGIES,
+    GHO_STRATEGIES,
+)
 from degenbot.logging import logger
 
 
 class TokenProcessorFactory:
     """Factory for creating token processors by revision number."""
 
-    # AToken revisions: 1-5
-    COLLATERAL_PROCESSORS: ClassVar[dict[int, type[CollateralTokenProcessor]]] = {
-        1: CollateralV1Processor,
-        2: CollateralV1Processor,  # Same as rev 1
-        3: CollateralV3Processor,
-        4: CollateralV4Processor,
-        5: CollateralV5Processor,
-    }
-
-    # VToken revisions: 1-5 (standard vTokens, non-GHO)
-    DEBT_PROCESSORS: ClassVar[dict[int, type[DebtTokenProcessor]]] = {
-        1: DebtV1Processor,
-        2: DebtV1Processor,  # Same as rev 1
-        3: DebtV3Processor,
-        4: DebtV4Processor,
-        5: DebtV5Processor,
-    }
-
-    # GHO VariableDebtToken revisions: 1-6
-    # GHO is special because it has discount handling
-    # rev 2-3 share implementation (discount support)
-    # rev 4 uses standard rayDiv (discount deprecated, no floor division)
-    # rev 5+ uses explicit floor/ceil division (discount deprecated)
-    GHO_DEBT_PROCESSORS: ClassVar[dict[int, type[Any]]] = {
-        1: GhoV1Processor,
-        2: GhoV2Processor,
-        3: GhoV2Processor,  # Same as rev 2
-        4: GhoV4Processor,
-        5: GhoV5Processor,
-        6: GhoV5Processor,  # Same as rev 5
-    }
+    # Supported revision ranges
+    COLLATERAL_REVISIONS: ClassVar[set[int]] = set(COLLATERAL_STRATEGIES.keys())
+    DEBT_REVISIONS: ClassVar[set[int]] = set(DEBT_STRATEGIES.keys())
+    GHO_REVISIONS: ClassVar[set[int]] = set(GHO_STRATEGIES.keys())
 
     @classmethod
     def get_collateral_processor(cls, revision: int) -> CollateralTokenProcessor:
@@ -70,12 +42,16 @@ class TokenProcessorFactory:
         Raises:
             ValueError: If revision is not supported
         """
-        processor_class = cls.COLLATERAL_PROCESSORS.get(revision)
-        if processor_class is None:
+        if revision not in COLLATERAL_STRATEGIES:
             msg = f"No processor for collateral revision {revision}"
             raise ValueError(msg)
-        processor = processor_class()
-        logger.debug(f"Created {processor_class.__name__} for aToken revision {revision}")
+
+        strategy = COLLATERAL_STRATEGIES[revision]
+        processor = UnifiedCollateralProcessor(
+            rounding=strategy,
+            revision=revision,
+        )
+        logger.debug(f"Created UnifiedCollateralProcessor for aToken revision {revision}")
         return processor
 
     @classmethod
@@ -94,12 +70,16 @@ class TokenProcessorFactory:
         Raises:
             ValueError: If revision is not supported
         """
-        processor_class = cls.DEBT_PROCESSORS.get(revision)
-        if processor_class is None:
+        if revision not in DEBT_STRATEGIES:
             msg = f"No processor for debt revision {revision}"
             raise ValueError(msg)
-        processor = processor_class()
-        logger.debug(f"Created {processor_class.__name__} for vToken revision {revision}")
+
+        strategy = DEBT_STRATEGIES[revision]
+        processor = UnifiedDebtProcessor(
+            rounding=strategy,
+            revision=revision,
+        )
+        logger.debug(f"Created UnifiedDebtProcessor for vToken revision {revision}")
         return processor
 
     @classmethod
@@ -118,10 +98,19 @@ class TokenProcessorFactory:
         Raises:
             ValueError: If revision is not supported
         """
-        processor_class = cls.GHO_DEBT_PROCESSORS.get(revision)
-        if processor_class is None:
+        if revision not in GHO_STRATEGIES:
             msg = f"No processor for GHO revision {revision}"
             raise ValueError(msg)
-        processor = cast("GhoDebtTokenProcessor", processor_class())
-        logger.debug(f"Created {processor_class.__name__} for GHO vToken revision {revision}")
+
+        rounding_strategy = GHO_STRATEGIES[revision]
+        discount_strategy = GHO_DISCOUNT_STRATEGIES[revision]
+        processor = UnifiedGhoProcessor(
+            rounding=rounding_strategy,
+            discount=discount_strategy,
+            revision=revision,
+        )
+        logger.debug(f"Created UnifiedGhoProcessor for GHO vToken revision {revision}")
         return processor
+
+
+__all__ = ["TokenProcessorFactory"]
