@@ -364,3 +364,73 @@ class TestAsyncBotIOMethods:
             chain_id=1,
         )
         assert balance == 1000000000
+
+    @pytest.mark.asyncio
+    async def test_get_token_approval(self, tmp_path: pathlib.Path) -> None:
+        config = _make_test_config(tmp_path)
+        bot = AsyncBot(config)
+
+        provider = AsyncMock()
+        provider.get_chain_id.return_value = 1
+        provider.is_connected.return_value = True
+        provider.get_block_number.return_value = 18_000_000
+        await bot.connections.register_provider(provider)
+        bot.connections.set_default_chain(1)
+
+        weth = _make_weth()
+        bot.tokens.add(token_address=WETH_ADDR, chain_id=1, token=weth)
+
+        # Mock allowance response
+        owner_address = "0x1234567890123456789012345678901234567890"
+        spender_address = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+        approval_calldata = encode_function_calldata(
+            "allowance(address,address)", [owner_address, spender_address]
+        )
+        approval_encoded = eth_abi.abi.encode(types=["uint256"], args=[500000000])
+
+        async def mock_call(*, to, data, block=None):
+            if data == approval_calldata:
+                return approval_encoded
+            raise ValueError(f"Unexpected call: data={data!r}")
+
+        provider.call = AsyncMock(side_effect=mock_call)
+
+        approval = await bot.get_token_approval(
+            token_address=WETH_ADDR,
+            owner=owner_address,
+            spender=spender_address,
+            chain_id=1,
+        )
+        assert approval == 500000000
+
+    @pytest.mark.asyncio
+    async def test_get_token_total_supply(self, tmp_path: pathlib.Path) -> None:
+        config = _make_test_config(tmp_path)
+        bot = AsyncBot(config)
+
+        provider = AsyncMock()
+        provider.get_chain_id.return_value = 1
+        provider.is_connected.return_value = True
+        provider.get_block_number.return_value = 18_000_000
+        await bot.connections.register_provider(provider)
+        bot.connections.set_default_chain(1)
+
+        weth = _make_weth()
+        bot.tokens.add(token_address=WETH_ADDR, chain_id=1, token=weth)
+
+        # Mock totalSupply response
+        total_supply_calldata = encode_function_calldata("totalSupply()", None)
+        total_supply_encoded = eth_abi.abi.encode(types=["uint256"], args=[10**27])
+
+        async def mock_call(*, to, data, block=None):
+            if data == total_supply_calldata:
+                return total_supply_encoded
+            raise ValueError(f"Unexpected call: data={data!r}")
+
+        provider.call = AsyncMock(side_effect=mock_call)
+
+        total_supply = await bot.get_token_total_supply(
+            token_address=WETH_ADDR,
+            chain_id=1,
+        )
+        assert total_supply == 10**27
