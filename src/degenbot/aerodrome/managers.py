@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import contextlib
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Never, Self
-
-from eth_typing import ChecksumAddress
+from typing import TYPE_CHECKING, Any, Never
 
 from degenbot.aerodrome.functions import (
     generate_aerodrome_v2_pool_address,
@@ -19,13 +17,15 @@ from degenbot.exceptions.manager import (
 )
 from degenbot.logging import logger
 from degenbot.types.abstract.pool_manager import AbstractPoolManager
-from degenbot.types.aliases import ChainId
-from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, UniswapV2ExchangeDeployment
+from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.uniswap.managers import AbstractUniswapV3PoolManager
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 if TYPE_CHECKING:
+    from eth_typing import ChecksumAddress
+
     from degenbot.bot import Bot
+    from degenbot.types.aliases import ChainId
 
 
 class _AbstractAerodromeV2PoolManager[Pool: AerodromeV2Pool](AbstractPoolManager[Pool]):
@@ -92,17 +92,6 @@ class AerodromeV2PoolManager(
     """
 
     POOL_IMPLEMENTATION_ADDRESS = get_checksum_address("0xA4e46b4f701c62e14DF11B48dCe76A7d793CD6d7")
-
-    @classmethod
-    def from_exchange(
-        cls,
-        exchange: UniswapV2ExchangeDeployment,
-    ) -> Self:
-        return cls(
-            factory_address=exchange.factory.address,
-            deployer_address=exchange.factory.deployer,
-            pool_init_hash=exchange.factory.pool_init_hash,
-        )
 
     def __init__(
         self,

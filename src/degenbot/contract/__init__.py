@@ -5,17 +5,14 @@ Alloy provider for automatic ABI encoding and decoding of function calls.
 
 Example:
     >>> from degenbot.contract import Contract, get_function_selector
-    >>> from degenbot.connection.manager import ConnectionManager
+    >>> from degenbot import Bot
     >>>
-    >>> manager = ConnectionManager()
-    >>> manager.register_chain(
-    ...     ChainConfig(chain_id=1, rpc_urls=["https://eth.example.com"])
-    ... )
+    >>> bot = Bot.from_config_file()
     >>>
     >>> # Create contract instance
     >>> token = Contract(
     ...     address="0xA0b86a33E6441e3D4e4b8b8b8b8b8b8b8b8b8b8",
-    ...     provider=manager.get_provider(1),
+    ...     provider=bot.get_provider(chain_id=1),
     ... )
     >>>
     >>> # Call functions with automatic encoding/decoding

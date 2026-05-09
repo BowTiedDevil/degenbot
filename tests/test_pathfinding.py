@@ -32,7 +32,7 @@ def db():
     return DatabaseSessionManager(get_scoped_sqlite_session(database_path=cfg.database.path))
 
 
-def test_two_pool_pathfinding_cycling_weth():
+def test_two_pool_pathfinding_cycling_weth(db):
     paths = list(
         find_paths(
             db=db,
@@ -50,7 +50,7 @@ def test_two_pool_pathfinding_cycling_weth():
     print(f"Found {len(paths)} 2-pool paths")
 
 
-async def test_two_pool_pathfinding_cycling_weth_async():
+async def test_two_pool_pathfinding_cycling_weth_async(db):
     paths = [
         path
         async for path in find_paths_async(
@@ -69,7 +69,7 @@ async def test_two_pool_pathfinding_cycling_weth_async():
     print(f"Found {len(paths)} 2-pool paths")
 
 
-def test_generic_algo_multiple_tokens():
+def test_generic_algo_multiple_tokens(db):
     depth = 2
 
     # UniswapV4 pools hold both native and WETH pairs, so paths to and from both can be found using
@@ -189,7 +189,7 @@ def test_generic_algo_multiple_tokens():
     )
 
 
-def test_three_pool_pathfinding_cycling_weth_generic_with_limited_types():
+def test_three_pool_pathfinding_cycling_weth_generic_with_limited_types(db):
     depth = 3
 
     paths_found = 0
@@ -212,7 +212,7 @@ def test_three_pool_pathfinding_cycling_weth_generic_with_limited_types():
     print(f"Found {paths_found} {depth}-pool paths (WETH-X -> X-Y -> WETH-Y)")
 
 
-def test_three_pool_pathfinding_cycling_weth_native_with_limited_types():
+def test_three_pool_pathfinding_cycling_weth_native_with_limited_types(db):
     depth = 3
 
     paths_found = 0
@@ -233,7 +233,7 @@ def test_three_pool_pathfinding_cycling_weth_native_with_limited_types():
             print(f"Marker: {paths_found} paths found")
 
 
-def test_three_pool_pathfinding_cycling_weth():
+def test_three_pool_pathfinding_cycling_weth(db):
     paths = list(
         find_paths(
             db=db,
@@ -247,7 +247,7 @@ def test_three_pool_pathfinding_cycling_weth():
     print(f"Found {len(paths)} 3-pool paths (WETH-X -> X-Y -> WETH-Y)")
 
 
-def test_four_pool_pathfinding_cycling_weth_with_limited_types():
+def test_four_pool_pathfinding_cycling_weth_with_limited_types(db):
     paths = list(
         find_paths(
             db=db,
