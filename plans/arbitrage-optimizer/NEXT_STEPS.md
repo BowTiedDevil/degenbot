@@ -419,27 +419,39 @@ construction.
 - Inline the Rust cache call more tightly
 - Provide a `solve_cached_raw()` that returns the Rust result directly
 
-### 22. Pool Cache Auto-Registration
-**Priority**: Medium
-**Effort**: Medium-High
+### 22. Pool Cache Auto-Registration — COMPLETE ✅
 
-**Current**: Users must manually call `register_pool()`/`update_pool()` at
-state update time.
+Added `ArbPoolCacheAdapter` subscriber that auto-registers V2/Aerodrome volatile
+pools in the Rust cache when state updates are published.
 
-**Target**: Pool objects auto-register their state in the cache when they
-update (via the existing PublisherMixin notification system).
+**Architecture**:
+- `ArbPoolCacheAdapter` implements the `Subscriber` protocol
+- `register(pool)` subscribes to the pool and registers **both** reserve orientations
+  (forward: token0→token1, reverse: token1→token0) with unique pool IDs
+- `notify()` is called on pool state updates, updating both orientations in the Rust cache
+- `get_pool_ids(pool)` returns `(forward_id, reverse_id)` for building solve paths
+- Forward ID is always assigned first; reverse ID is `forward_id + 1`
 
-**Approach**:
-- Add an `ArbPoolCacheAdapter` subscriber that listens to `PoolStateMessage`
-- On state update, automatically call `cache.insert()` with the pool's ID
-- Pool objects get a `.arb_pool_id` attribute assigned lazily
-- Requires coordinating the pool's reserve orientation (which token is
-  reserve_in vs reserve_out depends on the arbitrage direction)
+**Resolution of the orientation challenge**: Each pool gets two cache entries
+(one per direction). This doubles the cache size per pool but:
+1. Avoids Rust-side logic to handle orientation
+2. Keeps the solve path simple (just pass pool IDs in order)
+3. Memory cost is negligible (IntHopState is ~64 bytes per entry)
 
-**Challenge**: A single pool may appear in multiple paths with different
-reserve orientations. The cache stores one orientation per ID, so we'd
-need either two entries per pool (one per direction) or store both
-reserves and let Rust choose orientation at solve time.
+**Supported pool types**:
+- UniswapV2Pool (ConstantProductHop)
+- AerodromeV2Pool volatile (ConstantProductHop)
+- V3/V4 concentrated pools are NOT supported (require virtual reserves
+  and tick range data that don't fit the simple Rust cache entry)
+
+**Test coverage**: 7 tests in `test_pool_cache_adapter.py`:
+- 5 unit tests (importable, subscribes, assigns ID, updates on notify, both orientations)
+- 1 mock test (get_pool_ids)
+- 1 fork integration test (real V2 pool with ArbSolver)
+
+**Files changed**:
+- `src/degenbot/arbitrage/optimizers/pool_cache_adapter.py` — New adapter
+- `tests/arbitrage/test_optimizers/test_pool_cache_adapter.py` — 7 new tests
 
 ### 11. V3-V3 Rust Performance Optimization
 **Priority**: Medium
