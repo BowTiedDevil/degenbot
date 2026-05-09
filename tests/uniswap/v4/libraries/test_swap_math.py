@@ -304,7 +304,7 @@ def test_fuzz_compute_swap_step(
     # didn't reach price target, entire amount must be consumed
     if sqrt_q != sqrt_price_target_raw:
         if amount_remaining == MIN_INT256:
-            abs_amt_remaining = MAX_UINT256 + 1
+            abs_amt_remaining = MAX_INT256 + 1
         elif amount_remaining < 0:
             abs_amt_remaining = -amount_remaining
         else:
