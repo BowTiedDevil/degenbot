@@ -9,7 +9,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from degenbot.anvil_fork import AnvilFork
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from degenbot.curve.managers import CurveStableswapPoolManager
 from degenbot.erc20 import Erc20Token
 from degenbot.provider import ProviderAdapter
 from tests.helpers.bot_factory import make_bot_with_provider
@@ -21,23 +23,17 @@ def test_curve_pool_manager_exists() -> None:
 
 def test_curve_pool_manager_requires_bot() -> None:
     """CurveStableswapPoolManager requires a Bot instance."""
-    from degenbot.curve.managers import CurveStableswapPoolManager
-
     with pytest.raises(TypeError):
         CurveStableswapPoolManager()  # type: ignore[call-arg]
 
 
 def test_curve_pool_manager_has_get_pool() -> None:
     """CurveStableswapPoolManager has a get_pool method."""
-    from degenbot.curve.managers import CurveStableswapPoolManager
-
     assert hasattr(CurveStableswapPoolManager, "get_pool")
 
 
 def test_curve_pool_manager_tracks_pools() -> None:
     """After getting a pool, it's tracked in the manager's _tracked_pools."""
-    from degenbot.curve.managers import CurveStableswapPoolManager
-
     tokens = (
         Erc20Token(
             address="0x6B175474E89094C44Da98b954EedeAC495271d0F",
@@ -78,8 +74,6 @@ def test_curve_pool_manager_tracks_pools() -> None:
 
 def test_curve_pool_manager_returns_cached_pool() -> None:
     """Second call to get_pool returns the same tracked instance."""
-    from degenbot.curve.managers import CurveStableswapPoolManager
-
     tokens = (
         Erc20Token(
             address="0x6B175474E89094C44Da98b954EedeAC495271d0F",
@@ -112,8 +106,6 @@ def test_curve_pool_manager_returns_cached_pool() -> None:
 
 def test_curve_pool_manager_fork_tripool(fork_mainnet_full: AnvilFork) -> None:
     """Integration test: build tripool via manager on a forked network."""
-    from degenbot.curve.managers import CurveStableswapPoolManager
-
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     manager = CurveStableswapPoolManager(bot=bot, chain_id=1)
 
@@ -130,9 +122,6 @@ def test_curve_pool_manager_fork_tripool(fork_mainnet_full: AnvilFork) -> None:
 
 def test_curve_pool_manager_fork_metapool(fork_mainnet_full: AnvilFork) -> None:
     """Integration test: build metapool via manager on a forked network."""
-    from degenbot.checksum_cache import get_checksum_address
-    from degenbot.curve.managers import CurveStableswapPoolManager
-
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     manager = CurveStableswapPoolManager(bot=bot, chain_id=1)
 
@@ -145,9 +134,6 @@ def test_curve_pool_manager_fork_metapool(fork_mainnet_full: AnvilFork) -> None:
 
 def test_curve_pool_manager_get_pools_for_token(fork_mainnet_full: AnvilFork) -> None:
     """get_pools_for_token returns pools containing a given token."""
-    from degenbot.checksum_cache import get_checksum_address
-    from degenbot.curve.managers import CurveStableswapPoolManager
-
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     manager = CurveStableswapPoolManager(bot=bot, chain_id=1)
 

@@ -3,6 +3,7 @@ from hexbytes import HexBytes
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.bot import Bot
+from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20.erc20 import Erc20Token
@@ -128,7 +129,6 @@ def test_non_compliant_tokens(bot: Bot):
 def test_erc20token_with_price_feed(bot: Bot):
     weth = bot.build_erc20token(WETH_ADDRESS)
     # Set price oracle directly on the token
-    from degenbot.chainlink import ChainlinkPriceContract
     weth._price_oracle = ChainlinkPriceContract(
         address=CHAINLINK_WETH_PRICE_FEED,
         bot=bot,

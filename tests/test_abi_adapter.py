@@ -434,12 +434,8 @@ class TestHexBytesSupport:
 
         hexbytes_data = HexBytes(raw_data)
 
-        result_bytes = adapter.decode(
-            ["uint256", "address", "bool", "bytes32"], raw_data
-        )
-        result_hexbytes = adapter.decode(
-            ["uint256", "address", "bool", "bytes32"], hexbytes_data
-        )
+        result_bytes = adapter.decode(["uint256", "address", "bool", "bytes32"], raw_data)
+        result_hexbytes = adapter.decode(["uint256", "address", "bool", "bytes32"], hexbytes_data)
 
         assert result_bytes == result_hexbytes
 
@@ -537,9 +533,7 @@ class TestEnvironmentVariable:
         adapter = AbiAdapter()  # No explicit backend
         assert adapter.backend == AbiBackend.RUST
 
-    def test_adapter_explicit_backend_overrides_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_adapter_explicit_backend_overrides_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """
         Test that explicit backend parameter overrides environment variable.
         """

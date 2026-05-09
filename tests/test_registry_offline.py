@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
+from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -24,9 +26,6 @@ UNISWAP_V2_FACTORY_POOL_INIT_HASH = (
 
 def _get_offline_v2_pool() -> UniswapV2Pool:
     """Construct a V2 pool using offline data."""
-    from degenbot.erc20.erc20 import Erc20Token
-    from degenbot.functions import encode_function_calldata, raw_call
-
     data_file = CHAIN_DATA_PATH / "1" / "block_24945920.json"
     provider = OfflineProvider.from_json_file(data_file)
     adapter = ProviderAdapter.from_offline(provider)

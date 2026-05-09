@@ -365,10 +365,14 @@ class AlloyProvider:
     ) -> int:
         """Get the balance of an address in wei.
 
-        Not yet implemented for AlloyProvider.
+        Args:
+            address: Account address
+            block_number: Block number to get balance at (default: latest)
+
+        Returns:
+            Balance in wei as int
         """
-        msg = "get_balance not implemented for AlloyProvider"
-        raise NotImplementedError(msg)
+        return cast("int", self._provider.get_balance(address, block_number))
 
     def get_transaction_count(
         self,
@@ -377,10 +381,40 @@ class AlloyProvider:
     ) -> int:
         """Get the transaction count (nonce) for an address.
 
-        Not yet implemented for AlloyProvider.
+        Args:
+            address: Account address
+            block_number: Block number to get nonce at (default: latest)
+
+        Returns:
+            Transaction count as int
         """
-        msg = "get_transaction_count not implemented for AlloyProvider"
-        raise NotImplementedError(msg)
+        return cast("int", self._provider.get_transaction_count(address, block_number))
+
+    def make_request(
+        self,
+        method: str,
+        params: list[Any],
+    ) -> Any:
+        """Make a raw JSON-RPC request.
+
+        This allows calling arbitrary RPC methods that don't have typed wrappers,
+        such as debug methods, trace methods, or node-specific APIs.
+
+        Args:
+            method: The RPC method name (e.g., "debug_traceTransaction")
+            params: The parameters as a list
+
+        Returns:
+            The raw result (deserialized from JSON with HexBytes for hex values)
+
+        Example:
+            >>> # Call debug_traceTransaction
+            >>> result = provider.make_request(
+            ...     "debug_traceTransaction",
+            ...     ["0x...", {"tracer": "callTracer"}]
+            ... )
+        """
+        return self._provider.make_request(method, params)
 
     def __enter__(self) -> Self:
         """Context manager entry."""

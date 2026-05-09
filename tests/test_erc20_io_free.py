@@ -3,8 +3,11 @@
 import pathlib
 from unittest.mock import MagicMock
 
+import eth_abi.abi
+
 from degenbot.bot import Bot
 from degenbot.config import DatabaseSettings, DegenbotConfig
+from degenbot.database.operations import create_new_sqlite_database
 from degenbot.erc20 import Erc20Token, EtherPlaceholder
 from degenbot.registry import TokenRegistry
 
@@ -121,8 +124,6 @@ class TestBotBuildErc20Token:
     """Bot.build_erc20_token() fetches metadata and constructs I/O-free token."""
 
     def test_build_token_from_chain(self, tmp_path: pathlib.Path) -> None:
-        from degenbot.database.operations import create_new_sqlite_database
-
         config = _make_test_config(tmp_path)
         create_new_sqlite_database(config.database.path)
         bot = Bot(config)
@@ -142,8 +143,6 @@ class TestBotBuildErc20Token:
             if data[:4] == b"\x31\x3c\xe5\x67":  # decimals()
                 return eth_abi_encode(["uint256"], [18])
             return b""
-
-        import eth_abi.abi
 
         def eth_abi_encode(types, args):
             return eth_abi.abi.encode(types=types, args=args)
@@ -209,8 +208,6 @@ class TestBotTokenIOMethods:
 
     def test_get_token_balance_cache_miss(self) -> None:
         """Balance fetched from chain on cache miss, then cached."""
-        import eth_abi.abi
-
         token = Erc20Token(
             "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
             chain_id=1,

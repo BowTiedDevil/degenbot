@@ -30,9 +30,7 @@ SIMPLE_FIXTURES: list[str] = [
 STRESS_FIXTURES_V2: list[str] = [f"random_v2_pair_seed_{i}" for i in range(100)]
 STRESS_FIXTURES_V3: list[str] = [f"random_v3_pair_seed_{i}" for i in range(100)]
 STRESS_FIXTURES_V4: list[str] = [f"random_v4_pair_seed_{i}" for i in range(100)]
-STRESS_FIXTURES_MULTI: list[str] = [
-    f"random_multi_pool_cycle_seed_{i}_pools_3" for i in range(50)
-]
+STRESS_FIXTURES_MULTI: list[str] = [f"random_multi_pool_cycle_seed_{i}_pools_3" for i in range(50)]
 
 ALL_FIXTURES: list[str] = (
     SIMPLE_FIXTURES

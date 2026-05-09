@@ -10,6 +10,7 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.bot import Bot
 from degenbot.connection import ProviderAdapter
 from degenbot.logging import logger
+from tests.helpers.bot_factory import make_bot_with_provider
 
 env_file = dotenv.find_dotenv("tests.env")
 env_values = dotenv.dotenv_values(env_file)
@@ -197,8 +198,6 @@ def fork_mainnet_full() -> Generator[AnvilFork, None, None]:
 @pytest.fixture
 def bot_mainnet_full(fork_mainnet_full: AnvilFork) -> Bot:
     """Provide a Bot with the mainnet full fork's provider registered."""
-    from tests.helpers.bot_factory import make_bot_with_provider
-
     provider = ProviderAdapter.from_web3(fork_mainnet_full.w3)
     return make_bot_with_provider(provider)
 
@@ -206,7 +205,5 @@ def bot_mainnet_full(fork_mainnet_full: AnvilFork) -> Bot:
 @pytest.fixture
 def bot_mainnet_archive(fork_mainnet_archive: AnvilFork) -> Bot:
     """Provide a Bot with the mainnet archive fork's provider registered."""
-    from tests.helpers.bot_factory import make_bot_with_provider
-
     provider = ProviderAdapter.from_web3(fork_mainnet_archive.w3)
     return make_bot_with_provider(provider)

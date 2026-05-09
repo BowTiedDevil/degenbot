@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, scoped_session
 from web3.types import BlockIdentifier
 
+from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models import Erc20TokenTable
 from degenbot.exceptions.erc20 import NoPriceOracle
@@ -72,8 +73,6 @@ class Erc20Token(AbstractErc20Token):
         self.decimals = decimals
         self._price_oracle = None
         if oracle_address:
-            from degenbot.chainlink import ChainlinkPriceContract
-
             self._price_oracle = ChainlinkPriceContract(
                 address=oracle_address, chain_id=self.chain_id
             )

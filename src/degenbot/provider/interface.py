@@ -487,6 +487,27 @@ class ProviderAdapter:  # noqa:PLR0904
         """Close the provider connection if supported."""
         self._backend.close()
 
+    def make_request(self, method: str, params: list[Any]) -> Any:  # noqa: ANN401
+        """Make a raw JSON-RPC request.
+
+        This allows calling arbitrary RPC methods that don't have typed wrappers.
+        Only available for AlloyProvider backends; raises AttributeError for others.
+
+        Args:
+            method: The RPC method name (e.g., "debug_traceTransaction")
+            params: The parameters as a list
+
+        Returns:
+            The raw result (deserialized from JSON)
+
+        Raises:
+            AttributeError: If the underlying provider doesn't support make_request
+        """
+        if hasattr(self._raw_provider, "make_request"):
+            return self._raw_provider.make_request(method, params)
+        msg = f"Provider type '{self._provider_type}' does not support make_request"
+        raise AttributeError(msg)
+
     def __repr__(self) -> str:
         return f"ProviderAdapter(type={self._provider_type})"
 
@@ -639,15 +660,13 @@ class _AsyncAlloyAdapter:
         return await self._alloy.get_code(address, block)
 
     async def get_balance(self, address: str, block: int | None) -> int:
-        msg = "get_balance not implemented for AsyncAlloyProvider"
-        raise NotImplementedError(msg)
+        return await self._alloy.get_balance(address, block)
 
     async def get_storage_at(self, address: str, position: int, block: int | None) -> HexBytes:
         return await self._alloy.get_storage_at(address, position, block)
 
     async def get_transaction_count(self, address: str, block: int | None) -> int:
-        msg = "get_transaction_count not implemented for AsyncAlloyProvider"
-        raise NotImplementedError(msg)
+        return await self._alloy.get_transaction_count(address, block)
 
     def is_connected(self) -> bool:  # noqa: PLR6301
         return True

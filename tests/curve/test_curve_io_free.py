@@ -4,7 +4,6 @@ Phase 4 tracer bullets: replace leaf I/O methods with fetcher callbacks
 so that _get_provider_for_chain() can be removed entirely.
 """
 
-
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20 import Erc20Token
 

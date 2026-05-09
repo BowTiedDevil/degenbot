@@ -57,8 +57,10 @@ def test_encode_function_calldata():
 
 
 def test_low_level_call_for_factory_address(fork_mainnet_full: AnvilFork):
-    cm = ConnectionManager(); cm.register_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    cm.set_default_chain(fork_mainnet_full.w3.eth.chain_id); provider = cm.get_provider(fork_mainnet_full.w3.eth.chain_id)
+    cm = ConnectionManager()
+    cm.register_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
+    cm.set_default_chain(fork_mainnet_full.w3.eth.chain_id)
+    provider = cm.get_provider(fork_mainnet_full.w3.eth.chain_id)
 
     pool_address = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 
@@ -142,8 +144,10 @@ def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
     """
 
     w3 = fork_mainnet_full.w3
-    cm = ConnectionManager(); cm.register_provider(ProviderAdapter.from_web3(w3))
-    cm.set_default_chain(fork_mainnet_full.w3.eth.chain_id); provider = cm.get_provider(fork_mainnet_full.w3.eth.chain_id)
+    cm = ConnectionManager()
+    cm.register_provider(ProviderAdapter.from_web3(w3))
+    cm.set_default_chain(fork_mainnet_full.w3.eth.chain_id)
+    provider = cm.get_provider(fork_mainnet_full.w3.eth.chain_id)
 
     # Known string literals
     latest_block = get_number_for_block_identifier("latest", provider)

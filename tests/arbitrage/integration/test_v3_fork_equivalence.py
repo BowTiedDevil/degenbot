@@ -13,7 +13,6 @@ Status: RED — test asserts equivalence; if mainnet state is unprofitable,
 the test can be skipped or the logic can verify both systems reject.
 """
 
-
 import pytest
 
 from degenbot.anvil_fork import AnvilFork
@@ -123,9 +122,7 @@ class TestV3OnlyForkEquivalence:
 
         # If one accepts and the other rejects, that's a real gap
         if legacy_found != new_found:
-            pytest.fail(
-                f"Disagreement: legacy_found={legacy_found}, new_found={new_found}"
-            )
+            pytest.fail(f"Disagreement: legacy_found={legacy_found}, new_found={new_found}")
 
         # Both found profit — compare results
         assert legacy_result.input_amount > 0

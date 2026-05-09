@@ -274,8 +274,12 @@ class TestSimulationResult:
 
     def test_simulate_swap_by_address(self):
         """Find tokens by address and calculate swap."""
-        token0 = FakeToken(address="0x1111111111111111111111111111111111111111", decimals=18, symbol="TK0")
-        token1 = FakeToken(address="0x2222222222222222222222222222222222222222", decimals=18, symbol="TK1")
+        token0 = FakeToken(
+            address="0x1111111111111111111111111111111111111111", decimals=18, symbol="TK0"
+        )
+        token1 = FakeToken(
+            address="0x2222222222222222222222222222222222222222", decimals=18, symbol="TK1"
+        )
 
         pool = FakeCurveStableswapPool(
             tokens=(token0, token1),
