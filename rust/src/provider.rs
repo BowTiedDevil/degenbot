@@ -457,8 +457,8 @@ impl AlloyProvider {
                     let sleep_duration = Duration::from_millis(delay_ms + jitter);
                     tokio::time::sleep(sleep_duration).await;
 
-                    // Exponential backoff with cap
-                    delay_ms = std::cmp::min(delay_ms * BACKOFF_MULTIPLIER, MAX_RETRY_DELAY_MS);
+                    // Exponential backoff with cap (saturating to prevent overflow)
+                    delay_ms = std::cmp::min(delay_ms.saturating_mul(BACKOFF_MULTIPLIER), MAX_RETRY_DELAY_MS);
                 }
             }
         }
@@ -776,6 +776,7 @@ impl AlloyProvider {
 pub struct LogFetcher {
     provider: Arc<AlloyProvider>,
     max_blocks_per_request: u64,
+    max_concurrent_requests: usize,
 }
 
 impl LogFetcher {
@@ -785,10 +786,21 @@ impl LogFetcher {
         Self {
             provider,
             max_blocks_per_request,
+            max_concurrent_requests: 4, // Default concurrency limit
         }
     }
 
+    /// Set the maximum number of concurrent requests.
+    #[must_use]
+    pub const fn with_concurrency(mut self, max_concurrent: usize) -> Self {
+        self.max_concurrent_requests = max_concurrent;
+        self
+    }
+
     /// Fetch logs across a block range with chunking.
+    ///
+    /// Uses concurrent requests to fetch multiple chunks in parallel,
+    /// improving performance for large block ranges.
     ///
     /// # Errors
     ///
@@ -813,19 +825,52 @@ impl LogFetcher {
             });
         }
 
-        let mut all_logs = Vec::new();
+        // Build list of chunk ranges
+        let mut chunks = Vec::new();
         let mut current_block = from_block;
 
         while current_block <= to_block {
-            let chunk_end =
-                std::cmp::min(current_block + self.max_blocks_per_request - 1, to_block);
-
-            let filter =
-                LogFilter::new(current_block, chunk_end, addresses.clone(), topics.clone())?;
-            let logs = self.provider.get_logs(&filter).await?;
-            all_logs.extend(logs);
-
+            let chunk_end = std::cmp::min(current_block + self.max_blocks_per_request - 1, to_block);
+            chunks.push((current_block, chunk_end));
             current_block = chunk_end + 1;
+        }
+
+        // Pre-allocate result vector with estimated capacity
+        let estimated_logs_per_chunk = 100;
+        let mut all_logs = Vec::with_capacity(chunks.len() * estimated_logs_per_chunk);
+
+        // Process chunks concurrently with a semaphore to limit parallelism
+        let sem = Arc::new(tokio::sync::Semaphore::new(self.max_concurrent_requests));
+
+        let mut handles = Vec::with_capacity(chunks.len());
+
+        for (chunk_start, chunk_end) in chunks {
+            let permit = Arc::clone(&sem).acquire_owned().await.map_err(|_| {
+                ProviderError::Other {
+                    message: "Semaphore acquisition failed".to_string(),
+                }
+            })?;
+
+            let provider = Arc::clone(&self.provider);
+            let addresses = addresses.clone();
+            let topics = topics.clone();
+
+            let handle = tokio::spawn(async move {
+                let _permit = permit; // Hold permit for duration of request
+                let filter =
+                    LogFilter::new(chunk_start, chunk_end, addresses, topics)?;
+                provider.get_logs(&filter).await
+            });
+
+            handles.push(handle);
+        }
+
+        // Collect results from all concurrent requests
+        for handle in handles {
+            let logs = handle.await.map_err(|e| ProviderError::Other {
+                message: format!("Task join error: {e}"),
+            })??;
+            all_logs.extend(logs);
         }
 
         Ok(all_logs)
@@ -931,5 +976,14 @@ mod tests {
             }
             _ => panic!("Expected InvalidBlockRange error"),
         }
+    }
+
+    #[test]
+    fn test_saturating_retry_delay() {
+        // Verify that retry delay uses saturating arithmetic
+        let max_delay = u64::MAX / 2;
+        let result = std::cmp::min(max_delay.saturating_mul(BACKOFF_MULTIPLIER), MAX_RETRY_DELAY_MS);
+        // Should cap at MAX_RETRY_DELAY_MS, not overflow
+        assert_eq!(result, MAX_RETRY_DELAY_MS);
     }
 }

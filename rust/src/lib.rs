@@ -39,6 +39,7 @@ pub mod contract;
 pub mod contract_py;
 pub mod errors;
 pub mod hex_utils;
+pub mod json_converters;
 pub mod optimizers;
 pub mod provider;
 pub mod provider_py;
