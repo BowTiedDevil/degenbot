@@ -16,7 +16,9 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotError
 from degenbot.exceptions.liquidity_pool import ExternalUpdateError
+from degenbot.provider import ProviderAdapter
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
+from tests.helpers.bot_factory import make_bot_with_provider
 
 WETH_CONTRACT_ADDRESS = get_checksum_address("0x4200000000000000000000000000000000000006")
 CBETH_CONTRACT_ADDRESS = get_checksum_address("0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22")
@@ -73,19 +75,13 @@ def test_aerodrome_v2_address_generator():
 def test_pickle_pool(
     fork_base_full: AnvilFork,
 ):
-    from degenbot.provider import ProviderAdapter
-    from tests.helpers.bot_factory import make_bot_with_provider
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
     lp = bot.build_aerodrome_v2_pool(AERODROME_V3_TBTC_USDBC_POOL_ADDRESS)
     pickle.dumps(lp)
 
 
-def test_auto_update(
-    fork_base_full: AnvilFork,
-):
-    from degenbot.provider import ProviderAdapter
-    from tests.helpers.bot_factory import make_bot_with_provider
+def test_bot_update_state(fork_base_full: AnvilFork):
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
     lp = bot.build_aerodrome_v2_pool(AERODROME_V3_TBTC_USDBC_POOL_ADDRESS)
@@ -108,8 +104,6 @@ def test_auto_update(
 def test_external_update(
     fork_base_full: AnvilFork,
 ):
-    from degenbot.provider import ProviderAdapter
-    from tests.helpers.bot_factory import make_bot_with_provider
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
     lp = bot.build_aerodrome_v2_pool(AERODROME_V3_TBTC_USDBC_POOL_ADDRESS)
@@ -146,8 +140,6 @@ def test_external_update(
 
 
 def test_create_pool(fork_base_full: AnvilFork):
-    from degenbot.provider import ProviderAdapter
-    from tests.helpers.bot_factory import make_bot_with_provider
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
     lp = bot.build_aerodrome_v2_pool(AERODROME_V3_TBTC_USDBC_POOL_ADDRESS)
@@ -157,8 +149,6 @@ def test_create_pool(fork_base_full: AnvilFork):
 
 
 def test_calculation_volatile(fork_base_full: AnvilFork, test_pools: list[Any]):
-    from degenbot.provider import ProviderAdapter
-    from tests.helpers.bot_factory import make_bot_with_provider
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
 
@@ -233,8 +223,6 @@ def test_calculation_volatile(fork_base_full: AnvilFork, test_pools: list[Any]):
 
 
 def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
-    from degenbot.provider import ProviderAdapter
-    from tests.helpers.bot_factory import make_bot_with_provider
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
 
@@ -306,16 +294,12 @@ def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
 
 
 def test_aerodrome_v3_pool_creation(fork_base_full: AnvilFork) -> None:
-    from degenbot.provider import ProviderAdapter
-    from tests.helpers.bot_factory import make_bot_with_provider
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
     bot.build_v3_pool(AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
 
 
 def test_aerodrome_v3_state(fork_base_full: AnvilFork) -> None:
-    from degenbot.provider import ProviderAdapter
-    from tests.helpers.bot_factory import make_bot_with_provider
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
     lp = bot.build_v3_pool(AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
@@ -323,8 +307,6 @@ def test_aerodrome_v3_state(fork_base_full: AnvilFork) -> None:
 
 
 def test_aerodrome_v3_pool_calculation(fork_base_full: AnvilFork) -> None:
-    from degenbot.provider import ProviderAdapter
-    from tests.helpers.bot_factory import make_bot_with_provider
 
     quoter = fork_base_full.w3.eth.contract(
         address=AERODROME_V3_QUOTER_ADDRESS, abi=AERODROME_V3_QUOTER_ABI

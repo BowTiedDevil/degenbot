@@ -7,11 +7,14 @@ from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
 import sqlalchemy.exc
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from eth_abi.exceptions import DecodingError
 from hexbytes import HexBytes
 from sqlalchemy import select
 from web3 import Web3
 from web3.exceptions import Web3Exception
+from web3.types import TxParams
 
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from degenbot.aerodrome.types import AerodromeV2PoolExternalUpdate
@@ -22,11 +25,18 @@ from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
+from degenbot.curve.types import CurveStableswapPoolExternalUpdate
 from degenbot.database.models.pools import LiquidityPoolTable, PoolManagerTable, UniswapV4PoolTable
-from degenbot.database.operations import get_scoped_sqlite_session
+from degenbot.database.operations import get_alembic_config, get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.erc20 import Erc20Token, EtherPlaceholder
-from degenbot.erc20.erc20 import get_token_from_database
+from degenbot.erc20 import EtherPlaceholder
+from degenbot.erc20.erc20 import (
+    UNKNOWN_DECIMALS,
+    UNKNOWN_NAME,
+    UNKNOWN_SYMBOL,
+    Erc20Token,
+    get_token_from_database,
+)
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.liquidity_pool import BrokenPool, LiquidityPoolError
 from degenbot.exceptions.manager import ManagerAlreadyInitialized
@@ -52,6 +62,7 @@ from degenbot.uniswap.v4_types import (
     UniswapV4LiquidityAtTick,
     UniswapV4PoolExternalUpdate,
 )
+from degenbot.version import __version__
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -99,11 +110,6 @@ class Bot:
 
     def _check_database_version(self) -> None:
         """Warn if the database schema is out of date."""
-        from alembic.runtime.migration import MigrationContext
-        from alembic.script import ScriptDirectory
-
-        from degenbot.database.operations import get_alembic_config
-        from degenbot.version import __version__
 
         try:
             with self.db() as session:
@@ -227,7 +233,7 @@ class Bot:
                     except (Web3Exception, DecodingError):
                         continue
                 else:
-                    fetched_name = Erc20Token.UNKNOWN_NAME
+                    fetched_name = UNKNOWN_NAME
 
                 for func_prototype in ("symbol()", "SYMBOL()"):
                     try:
@@ -238,7 +244,7 @@ class Bot:
                     except (Web3Exception, DecodingError):
                         continue
                 else:
-                    fetched_symbol = Erc20Token.UNKNOWN_SYMBOL
+                    fetched_symbol = UNKNOWN_SYMBOL
 
                 for func_prototype in ("decimals()", "DECIMALS()"):
                     try:
@@ -249,7 +255,7 @@ class Bot:
                     except (Web3Exception, DecodingError):
                         continue
                 else:
-                    fetched_decimals = Erc20Token.UNKNOWN_DECIMALS
+                    fetched_decimals = UNKNOWN_DECIMALS
 
             name = name or fetched_name
             symbol = symbol or fetched_symbol
@@ -1788,19 +1794,33 @@ class Bot:
             gamma=pool_gamma,
             offpeg_fee_multiplier=pool_offpeg_fee_multiplier,
             # Fetcher callbacks for I/O-free operation
-            virtual_price_fetcher=self._make_curve_virtual_price_fetcher(pool_address, chain_id, base_pool_address=base_pool_address if base_pool else None),
-            base_virtual_price_fetcher=self._make_curve_base_virtual_price_fetcher(pool_address, chain_id),
+            virtual_price_fetcher=self._make_curve_virtual_price_fetcher(
+                pool_address, chain_id, base_pool_address=base_pool_address if base_pool else None
+            ),
+            base_virtual_price_fetcher=self._make_curve_base_virtual_price_fetcher(
+                pool_address, chain_id
+            ),
             timestamp_fetcher=self._make_curve_timestamp_fetcher(chain_id),
-            redemption_price_fetcher=self._make_curve_redemption_price_fetcher(pool_address, chain_id),
+            redemption_price_fetcher=self._make_curve_redemption_price_fetcher(
+                pool_address, chain_id
+            ),
             admin_balances_fetcher=self._make_curve_admin_balances_fetcher(pool_address, chain_id),
             block_number_fetcher=self._make_curve_block_number_fetcher(chain_id),
             total_supply_fetcher=self._make_curve_total_supply_fetcher(chain_id),
             token_balance_fetcher=self._make_curve_token_balance_fetcher(chain_id),
             provider_call=self._make_curve_provider_call(chain_id),
             # Crypto pool fetchers (only useful for crypto pools like Tricrypto)
-            D_fetcher=self._make_curve_D_fetcher(chain_id, pool_address) if pool_fee_gamma else None,
-            gamma_fetcher=self._make_curve_gamma_fetcher(chain_id, pool_address) if pool_fee_gamma else None,
-            price_scale_fetcher=self._make_curve_price_scale_fetcher(chain_id, pool_address, len(tokens)) if pool_fee_gamma else None,
+            D_fetcher=self._make_curve_D_fetcher(chain_id, pool_address)
+            if pool_fee_gamma
+            else None,
+            gamma_fetcher=self._make_curve_gamma_fetcher(chain_id, pool_address)
+            if pool_fee_gamma
+            else None,
+            price_scale_fetcher=self._make_curve_price_scale_fetcher(
+                chain_id, pool_address, len(tokens)
+            )
+            if pool_fee_gamma
+            else None,
         )
 
         # Register pool
@@ -1975,7 +1995,9 @@ class Bot:
     # ── Curve fetcher factories ───────────────────────────────────
 
     def _make_curve_virtual_price_fetcher(
-        self, pool_address: ChecksumAddress, chain_id: ChainId,
+        self,
+        pool_address: ChecksumAddress,
+        chain_id: ChainId,
         base_pool_address: ChecksumAddress | None = None,
     ) -> Any:
         """Create a virtual price fetcher closure for a Curve pool.
@@ -2032,9 +2054,7 @@ class Bot:
 
         return base_virtual_price_fetcher
 
-    def _make_curve_timestamp_fetcher(
-        self, chain_id: ChainId
-    ) -> Any:
+    def _make_curve_timestamp_fetcher(self, chain_id: ChainId) -> Any:
         """Create a timestamp fetcher closure for a Curve pool."""
 
         def timestamp_fetcher(block_number: int) -> int:
@@ -2115,9 +2135,7 @@ class Bot:
 
         return admin_balances_fetcher
 
-    def _make_curve_block_number_fetcher(
-        self, chain_id: ChainId
-    ) -> Any:
+    def _make_curve_block_number_fetcher(self, chain_id: ChainId) -> Any:
         """Create a block number fetcher closure for a Curve pool."""
 
         def block_number_fetcher() -> int:
@@ -2126,9 +2144,7 @@ class Bot:
 
         return block_number_fetcher
 
-    def _make_curve_total_supply_fetcher(
-        self, chain_id: ChainId
-    ) -> Any:
+    def _make_curve_total_supply_fetcher(self, chain_id: ChainId) -> Any:
         """Create a total supply fetcher closure for a Curve pool."""
 
         def total_supply_fetcher(token: Any, *, block_identifier: int | None = None) -> int:
@@ -2136,9 +2152,7 @@ class Bot:
 
         return total_supply_fetcher
 
-    def _make_curve_token_balance_fetcher(
-        self, chain_id: ChainId
-    ) -> Any:
+    def _make_curve_token_balance_fetcher(self, chain_id: ChainId) -> Any:
         """Create a token balance fetcher closure for a Curve pool."""
 
         def token_balance_fetcher(
@@ -2148,9 +2162,7 @@ class Bot:
 
         return token_balance_fetcher
 
-    def _make_curve_provider_call(
-        self, chain_id: ChainId
-    ) -> Any:
+    def _make_curve_provider_call(self, chain_id: ChainId) -> Any:
         """Create a raw provider.call() closure for a Curve pool.
 
         This is used by pool-type-specific rate fetching methods that need
@@ -2166,13 +2178,10 @@ class Bot:
 
         return provider_call
 
-    def _make_curve_D_fetcher(
-        self, chain_id: ChainId, pool_address: ChecksumAddress
-    ) -> Any:
+    def _make_curve_D_fetcher(self, chain_id: ChainId, pool_address: ChecksumAddress) -> Any:
         """Create a D() fetcher closure for a crypto Curve pool."""
 
         def D_fetcher(block_number: int) -> int:
-            from web3.types import TxParams
 
             w3 = self.connections.get_web3(chain_id)
             d: int
@@ -2190,13 +2199,10 @@ class Bot:
 
         return D_fetcher
 
-    def _make_curve_gamma_fetcher(
-        self, chain_id: ChainId, pool_address: ChecksumAddress
-    ) -> Any:
+    def _make_curve_gamma_fetcher(self, chain_id: ChainId, pool_address: ChecksumAddress) -> Any:
         """Create a gamma() fetcher closure for a crypto Curve pool."""
 
         def gamma_fetcher(block_number: int) -> int:
-            from web3.types import TxParams
 
             w3 = self.connections.get_web3(chain_id)
             gamma: int
@@ -2220,7 +2226,6 @@ class Bot:
         """Create a price_scale() fetcher closure for a crypto Curve pool."""
 
         def price_scale_fetcher(block_number: int) -> tuple[int, ...]:
-            from web3.types import TxParams
 
             w3 = self.connections.get_web3(chain_id)
             price_scale = [0] * (n_coins - 1)
@@ -2271,8 +2276,6 @@ class Bot:
 
         if pool.balances == tuple(new_balances):
             return False
-
-        from degenbot.curve.types import CurveStableswapPoolExternalUpdate
 
         update = CurveStableswapPoolExternalUpdate(
             block_number=_block_number,

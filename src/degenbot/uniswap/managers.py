@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextlib
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.liquidity_pool import LiquidityPoolError
@@ -12,11 +12,7 @@ from degenbot.exceptions.manager import (
 )
 from degenbot.logging import logger
 from degenbot.types.abstract import AbstractPoolManager
-from degenbot.uniswap.deployments import (
-    FACTORY_DEPLOYMENTS,
-    UniswapV2ExchangeDeployment,
-    UniswapV3ExchangeDeployment,
-)
+from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.uniswap.v2_functions import generate_v2_pool_address
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_functions import generate_v3_pool_address
@@ -131,17 +127,6 @@ class UniswapV2PoolManager(AbstractUniswapV2PoolManager[UniswapV2Pool], pool_fac
     one of its child classes.
     """
 
-    @classmethod
-    def from_exchange(
-        cls,
-        exchange: UniswapV2ExchangeDeployment,
-    ) -> Self:
-        return cls(
-            factory_address=exchange.factory.address,
-            deployer_address=exchange.factory.deployer,
-            pool_init_hash=exchange.factory.pool_init_hash,
-        )
-
     def __repr__(self) -> str:  # pragma: no cover
         return f"{self.__class__.__name__}(factory={self._factory_address})"
 
@@ -235,44 +220,16 @@ class AbstractUniswapV3PoolManager[Pool: UniswapV3Pool](AbstractPoolManager[Pool
             for liquidity_update in self._snapshot.pending_updates(pool.address):
                 pool.update_liquidity_map(liquidity_update)
 
-    def _build_pool(
-        self,
-        pool_address: ChecksumAddress,
-        *,
-        silent: bool,
-        pool_class_kwargs: dict[str, Any] | None,
-    ) -> Pool:
-        if pool_class_kwargs is None:
-            pool_class_kwargs = {}
-
-        if self._snapshot is not None:
-            pool = self.pool_factory(
-                address=pool_address,
-                tick_bitmap=self._snapshot.tick_bitmap(pool_address),
-                tick_data=self._snapshot.tick_data(pool_address),
-                silent=silent,
-                **pool_class_kwargs,
-            )
-        else:
-            logger.info("Initializing pool without liquidity snapshot")
-            pool = self.pool_factory(
-                address=pool_address,
-                silent=silent,
-                **pool_class_kwargs,
-            )
-        return pool
-
     def get_pool(
         self,
         pool_address: ChecksumAddress | str,
         *,
         silent: bool = False,
-        # keyword arguments passed to the pool class constructor
         pool_class_kwargs: dict[str, Any] | None = None,
     ) -> Pool:
         """
-        Get a pool from its address. If the pool is already tracked or found in the global registry,
-        that instance will be returned. Otherwise, a new one will be built.
+        Get a pool from its address. If the pool is already tracked or found in the pool registry,
+        that instance will be returned. Otherwise, a new one will be built via Bot.
         """
 
         pool_address = get_checksum_address(pool_address)
@@ -298,10 +255,14 @@ class AbstractUniswapV3PoolManager[Pool: UniswapV3Pool](AbstractPoolManager[Pool
             raise PoolNotAssociated(pool_address)
 
         try:
-            new_pool = self._build_pool(
+            new_pool = self._bot.build_v3_pool(
                 pool_address=pool_address,
+                chain_id=self.chain_id,
+                deployer_address=self._deployer_address,
+                init_hash=self._pool_init_hash,
                 silent=silent,
-                pool_class_kwargs=pool_class_kwargs,
+                tick_bitmap=self._snapshot.tick_bitmap(pool_address) if self._snapshot else None,
+                tick_data=self._snapshot.tick_data(pool_address) if self._snapshot else None,
             )
         except LiquidityPoolError as exc:  # pragma: no cover
             raise PoolCreationFailed(
@@ -322,102 +283,8 @@ class UniswapV3PoolManager(AbstractUniswapV3PoolManager[UniswapV3Pool], pool_fac
     one of its child classes.
     """
 
-    @classmethod
-    def from_exchange(
-        cls,
-        exchange: UniswapV3ExchangeDeployment,
-        snapshot: UniswapV3LiquiditySnapshot | None = None,
-    ) -> Self:
-        return cls(
-            factory_address=exchange.factory.address,
-            deployer_address=exchange.factory.deployer,
-            chain_id=exchange.chain_id,
-            snapshot=snapshot,
-        )
-
     def __repr__(self) -> str:  # pragma: no cover
         return f"{self.__class__.__name__}(factory={self._factory_address})"
-
-    def _build_pool(
-        self,
-        pool_address: ChecksumAddress,
-        *,
-        silent: bool,
-        pool_class_kwargs: dict[str, Any] | None,
-    ) -> UniswapV3Pool:
-        if pool_class_kwargs is None:
-            pool_class_kwargs = {}
-
-        if self._snapshot is not None:
-            return UniswapV3Pool(
-                address=pool_address,
-                tick_bitmap=self._snapshot.tick_bitmap(pool_address),
-                tick_data=self._snapshot.tick_data(pool_address),
-                silent=silent,
-                **pool_class_kwargs,
-            )
-
-        logger.info("Initializing pool without liquidity snapshot")
-        return UniswapV3Pool(
-            address=pool_address,
-            silent=silent,
-            **pool_class_kwargs,
-        )
-
-    def get_pool(
-        self,
-        pool_address: ChecksumAddress | str,
-        *,
-        silent: bool = False,
-        # keyword arguments passed to the pool class constructor
-        pool_class_kwargs: dict[str, Any] | None = None,
-    ) -> UniswapV3Pool:
-        """
-        Get a pool from its address. If the pool is already tracked or found in the global registry,
-        that instance will be returned. Otherwise, a new one will be built.
-        """
-
-        pool_address = get_checksum_address(pool_address)
-
-        with contextlib.suppress(KeyError):
-            return self._tracked_pools[pool_address]
-
-        if pool_address in self._untracked_pools:
-            raise PoolNotAssociated(pool_address)
-
-        # Check if the pool registry already has this pool
-        pool_from_registry = self._bot.pools.get(
-            pool_address=pool_address,
-            chain_id=self.chain_id,
-        )
-
-        if pool_from_registry is not None:
-            if TYPE_CHECKING:
-                assert isinstance(pool_from_registry, UniswapV3Pool)
-            if pool_from_registry.factory == self._factory_address:
-                self._add_tracked_pool(pool_from_registry)
-                return pool_from_registry
-            self._untracked_pools.add(pool_address)
-            raise PoolNotAssociated(pool_address)
-
-        try:
-            new_pool = self._bot.build_v3_pool(
-                pool_address=pool_address,
-                chain_id=self.chain_id,
-                deployer_address=self._deployer_address,
-                init_hash=self._pool_init_hash,
-                silent=silent,
-                tick_bitmap=self._snapshot.tick_bitmap(pool_address) if self._snapshot else None,
-                tick_data=self._snapshot.tick_data(pool_address) if self._snapshot else None,
-            )
-        except LiquidityPoolError as exc:  # pragma: no cover
-            raise PoolCreationFailed(
-                message=f"Could not build V3 pool {pool_address}: {exc}"
-            ) from exc
-        else:
-            self._apply_pending_liquidity_updates(new_pool)
-            self._add_tracked_pool(new_pool)
-            return new_pool
 
     def get_pool_from_tokens_and_fee(
         self,

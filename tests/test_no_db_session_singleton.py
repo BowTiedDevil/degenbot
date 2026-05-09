@@ -4,7 +4,6 @@ RED phase — these should all fail until the singletons are removed.
 """
 
 import pathlib
-import types
 
 import pytest
 
@@ -36,11 +35,7 @@ def test_top_level_init_has_no_db_session() -> None:
 
 
 def test_top_level_init_has_no_config_singleton() -> None:
-    """The lazy config proxy should not be exported from degenbot top-level."""
+    """The config module should not export a singleton config instance."""
     # degenbot.config IS the module (config.py), which is fine.
-    # What we removed is the _LazyConfig singleton instance that was importable as degenbot.config.
-    # Verify it's the module, not a _LazyConfig instance:
-    assert isinstance(degenbot.config, types.ModuleType)
-
-    # The _LazyConfig proxy is not at top level
+    # No singleton instance is exported from the top-level package.
     assert "config" not in degenbot.__all__

@@ -7,31 +7,55 @@ Returns the same I/O-free domain objects as Bot.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Sequence
 from fractions import Fraction
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
 from hexbytes import HexBytes
+from sqlalchemy import select
 from web3 import Web3
 from web3.exceptions import Web3Exception
-from web3.types import BlockIdentifier
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
 from degenbot.connection.async_connection_manager import AsyncConnectionManager
+from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
+from degenbot.database.models.pools import LiquidityPoolTable, PoolManagerTable, UniswapV4PoolTable
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.erc20.erc20 import Erc20Token
+from degenbot.erc20.erc20 import (
+    UNKNOWN_DECIMALS,
+    UNKNOWN_NAME,
+    UNKNOWN_SYMBOL,
+    Erc20Token,
+    get_token_from_database,
+)
 from degenbot.erc20.ether_placeholder import EtherPlaceholder
 from degenbot.exceptions.base import DegenbotValueError
+from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.exceptions.manager import ManagerAlreadyInitialized
 from degenbot.functions import async_raw_call, encode_function_calldata
 from degenbot.logging import logger
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.types.abstract import AbstractPoolManager
-from degenbot.types.aliases import ChainId
+from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.v3_types import (
+    UniswapV3BitmapAtWord,
+    UniswapV3LiquidityAtTick,
+)
+from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from degenbot.uniswap.v4_types import UniswapV4BitmapAtWord, UniswapV4LiquidityAtTick
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from web3.types import BlockIdentifier
+
+    from degenbot.types.aliases import ChainId
 
 
 class AsyncBot:
@@ -95,7 +119,6 @@ class AsyncBot:
         silent: bool = False,
     ) -> Erc20Token:
         """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token."""
-        from degenbot.erc20.erc20 import get_token_from_database
 
         address = get_checksum_address(address)
         chain_id = chain_id or self.connections.default_chain_id
@@ -146,9 +169,9 @@ class AsyncBot:
                     address=address, provider=provider
                 )
             except (Web3Exception, DecodingError):
-                fetched_name = Erc20Token.UNKNOWN_NAME
-                fetched_symbol = Erc20Token.UNKNOWN_SYMBOL
-                fetched_decimals = Erc20Token.UNKNOWN_DECIMALS
+                fetched_name = UNKNOWN_NAME
+                fetched_symbol = UNKNOWN_SYMBOL
+                fetched_decimals = UNKNOWN_DECIMALS
 
             name = name or fetched_name
             symbol = symbol or fetched_symbol
@@ -215,10 +238,6 @@ class AsyncBot:
         silent: bool = False,
     ) -> Any:
         """Fetch pool data from DB/RPC and construct an I/O-free UniswapV2Pool."""
-        from degenbot.database.models.pools import LiquidityPoolTable
-        from degenbot.exceptions.liquidity_pool import LiquidityPoolError
-        from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
-        from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
         pool_address = get_checksum_address(pool_address)
         chain_id = chain_id or self.connections.default_chain_id
@@ -229,8 +248,6 @@ class AsyncBot:
         # Try DB first
         pool_from_db = None
         with contextlib.suppress(Exception), self.db() as session:
-            from sqlalchemy import select
-
             pool_from_db = session.scalar(
                 select(LiquidityPoolTable).where(
                     LiquidityPoolTable.address == pool_address,
@@ -345,15 +362,6 @@ class AsyncBot:
         silent: bool = False,
     ) -> Any:
         """Fetch pool data from DB/RPC and construct an I/O-free UniswapV3Pool."""
-        from degenbot.database.models.pools import LiquidityPoolTable
-        from degenbot.exceptions.liquidity_pool import LiquidityPoolError
-        from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
-        from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
-        from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-        from degenbot.uniswap.v3_types import (
-            UniswapV3BitmapAtWord,
-            UniswapV3LiquidityAtTick,
-        )
 
         pool_address = get_checksum_address(pool_address)
         chain_id = chain_id or self.connections.default_chain_id
@@ -364,8 +372,6 @@ class AsyncBot:
         # Try DB first
         pool_from_db = None
         with contextlib.suppress(Exception), self.db() as session:
-            from sqlalchemy import select
-
             pool_from_db = session.scalar(
                 select(LiquidityPoolTable).where(
                     LiquidityPoolTable.address == pool_address,
@@ -554,12 +560,6 @@ class AsyncBot:
         silent: bool = False,
     ) -> Any:
         """Fetch pool data from DB/RPC and construct an I/O-free UniswapV4Pool."""
-        from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
-        from degenbot.database.models.pools import PoolManagerTable, UniswapV4PoolTable
-        from degenbot.exceptions.liquidity_pool import LiquidityPoolError
-        from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
-        from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-        from degenbot.uniswap.v4_types import UniswapV4BitmapAtWord, UniswapV4LiquidityAtTick
 
         pool_manager_address = get_checksum_address(pool_manager_address)
         pool_id_bytes = HexBytes(pool_id)
@@ -571,17 +571,15 @@ class AsyncBot:
         # Try DB first
         pool_from_db = None
         with contextlib.suppress(Exception), self.db() as session:
-            from sqlalchemy import select as _select
-
             pool_manager_in_db = session.scalar(
-                _select(PoolManagerTable).where(
+                select(PoolManagerTable).where(
                     PoolManagerTable.address == pool_manager_address,
                     PoolManagerTable.chain == chain_id,
                 )
             )
             if pool_manager_in_db is not None:
                 pool_from_db = session.scalar(
-                    _select(UniswapV4PoolTable).where(
+                    select(UniswapV4PoolTable).where(
                         UniswapV4PoolTable.pool_hash == pool_id_bytes.to_0x_hex(),
                         UniswapV4PoolTable.manager.has(id=pool_manager_in_db.id),
                     )

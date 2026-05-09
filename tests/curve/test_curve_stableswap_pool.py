@@ -164,7 +164,7 @@ def test_pickle_tripool(tripool: CurveStableswapPool):
     [18849426],
     indirect=True,
 )
-def test_auto_update(fork_mainnet_archive: AnvilFork):
+def test_pool_state_at_different_blocks(fork_mainnet_archive: AnvilFork):
     # Build the pool at a known historical block
     block_number = fork_mainnet_archive.w3.eth.block_number
 

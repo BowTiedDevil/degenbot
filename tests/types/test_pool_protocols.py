@@ -137,9 +137,6 @@ class TestStateManageablePool:
             def external_update(self, update):
                 pass
 
-            def auto_update(self):
-                pass
-
             def discard_states_before_block(self, block):
                 pass
 

@@ -1,7 +1,6 @@
 import tomllib
-from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import Annotated
 
 import tomlkit
 from pydantic import BaseModel, HttpUrl, PlainSerializer, WebsocketUrl, field_validator
@@ -90,37 +89,3 @@ def _init_config() -> DegenbotConfig:
         create_new_sqlite_database(db_path=config.database.path)
 
     return config
-
-
-class _LazyConfig[T: BaseSettings]:
-    """
-    Lazy proxy that defers configuration initialization until first attribute access.
-
-    Avoids import-time side effects (directory creation, config file writing,
-    database initialization) by wrapping the singleton instance.
-    """
-
-    def __init__(self, factory: Callable[[], T]) -> None:
-        self._factory = factory
-        self._instance: T | None = None
-
-    @property
-    def _proxied(self) -> T:
-        if self._instance is None:
-            self._instance = self._factory()
-        return self._instance
-
-    def _reset(self) -> None:
-        self._instance = None
-
-    def __getattr__(self, name: str) -> Any:  # noqa: ANN401
-        return getattr(self._proxied, name)
-
-    def __repr__(self) -> str:
-        return repr(self._proxied)
-
-
-if TYPE_CHECKING:
-    config: DegenbotConfig
-else:
-    config = _LazyConfig(_init_config)
