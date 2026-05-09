@@ -1,10 +1,8 @@
-# TODO
-# ----------------------------------------------------
-# PRIORITY      TASK
-# high          create a manager for Curve pools
-# medium        add liquidity modifying mode for external_update
-# medium        investigate differences in get_dy_underlying vs exchange_underlying at GUSD-3Crv
-# low           investigate providing overrides for live-lookup contracts
+"""Curve StableSwap liquidity pool implementation.
+
+Implements the Curve StableSwap invariant for V1-style pools including
+plain pools, metapools, lending pools, and crypto pools.
+"""
 
 import contextlib
 from collections.abc import Iterable, Sequence
@@ -25,7 +23,9 @@ from degenbot.curve.types import (
     CurveStableswapPoolExternalUpdate,
     CurveStableswapPoolState,
     CurveStableSwapPoolStateUpdated,
-    RateFetcher,
+    DFetcher,
+    GammaFetcher,
+    PriceScaleFetcher,
     RedemptionPriceFetcher,
     TimestampFetcher,
     VirtualPriceFetcher,
@@ -33,9 +33,9 @@ from degenbot.curve.types import (
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import NoLiquidity
+from degenbot.exceptions.curve import MissingCurveData
 from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.liquidity_pool import InvalidSwapInputAmount
-from degenbot.functions import encode_function_calldata, get_number_for_block_identifier, raw_call
 from degenbot.logging import logger
 from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
@@ -54,28 +54,38 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
     _state_cache: BoundedCache[BlockNumber, PoolState]
 
     _pickle_drops: ClassVar[frozenset[str]] = frozenset({
-        "_provider",
-        "_bot",
         "_state_lock",
         "_subscribers",
         # Fetchers (can't pickle closures)
-        "_rate_fetcher",
         "_virtual_price_fetcher",
+        "_base_virtual_price_fetcher",
         "_timestamp_fetcher",
         "_redemption_price_fetcher",
         "_admin_balances_fetcher",
+        "_block_number_fetcher",
+        "_total_supply_fetcher",
+        "_token_balance_fetcher",
+        "_provider_call",
+        "_D_fetcher",
+        "_gamma_fetcher",
+        "_price_scale_fetcher",
     })
     _pickle_reconstructs: ClassVar[dict[str, Any]] = {
         "_state_lock": Lock,
-        "_bot": lambda: None,
-        "_provider": lambda: None,
         "_subscribers": WeakSet,
         # Fetchers default to None after unpickle
-        "_rate_fetcher": lambda: None,
         "_virtual_price_fetcher": lambda: None,
+        "_base_virtual_price_fetcher": lambda: None,
         "_timestamp_fetcher": lambda: None,
         "_redemption_price_fetcher": lambda: None,
         "_admin_balances_fetcher": lambda: None,
+        "_block_number_fetcher": lambda: None,
+        "_total_supply_fetcher": lambda: None,
+        "_token_balance_fetcher": lambda: None,
+        "_provider_call": lambda: None,
+        "_D_fetcher": lambda: None,
+        "_gamma_fetcher": lambda: None,
+        "_price_scale_fetcher": lambda: None,
     }
 
     # Constants from contract
@@ -200,11 +210,19 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         state_block: BlockNumber | None = None,
         state_cache_depth: int = 8,
         # Optional fetchers for on-demand data
-        rate_fetcher: RateFetcher | None = None,
         virtual_price_fetcher: VirtualPriceFetcher | None = None,
+        base_virtual_price_fetcher: VirtualPriceFetcher | None = None,
         timestamp_fetcher: TimestampFetcher | None = None,
         redemption_price_fetcher: RedemptionPriceFetcher | None = None,
         admin_balances_fetcher: AdminBalancesFetcher | None = None,
+        block_number_fetcher: Any | None = None,
+        total_supply_fetcher: Any | None = None,
+        token_balance_fetcher: Any | None = None,
+        provider_call: Any | None = None,
+        # Crypto pool fetchers
+        D_fetcher: DFetcher | None = None,
+        gamma_fetcher: GammaFetcher | None = None,
+        price_scale_fetcher: PriceScaleFetcher | None = None,
         # Pool configuration
         base_pool: "CurveStableswapPool | None" = None,
         tokens_underlying: Sequence[Erc20Token] | None = None,
@@ -223,9 +241,6 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         out_fee: int | None = None,
         gamma: int | None = None,
         offpeg_fee_multiplier: int | None = None,
-        # I/O access
-        bot: Any | None = None,
-        provider: Any | None = None,
     ) -> None:
         """
         A Curve V1 (StableSwap) pool.
@@ -282,11 +297,18 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         self._create_timestamp = create_timestamp
 
         # Fetchers for on-demand data
-        self._rate_fetcher = rate_fetcher
         self._virtual_price_fetcher = virtual_price_fetcher
+        self._base_virtual_price_fetcher = base_virtual_price_fetcher
         self._timestamp_fetcher = timestamp_fetcher
         self._redemption_price_fetcher = redemption_price_fetcher
         self._admin_balances_fetcher = admin_balances_fetcher
+        self._block_number_fetcher = block_number_fetcher
+        self._total_supply_fetcher = total_supply_fetcher
+        self._token_balance_fetcher = token_balance_fetcher
+        self._provider_call = provider_call
+        self._D_fetcher = D_fetcher
+        self._gamma_fetcher = gamma_fetcher
+        self._price_scale_fetcher = price_scale_fetcher
 
         self.base_cache_updated = None
         self.base_virtual_price = 0
@@ -358,8 +380,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
         # I/O access for on-chain data fetching
-        self._bot = bot
-        self._provider: Any = provider
+        # I/O is done via fetcher callbacks injected by Bot.build_curve_pool()
 
     def __repr__(self) -> str:  # pragma: no cover
         token_string = "-".join([token.symbol for token in self._tokens])
@@ -402,58 +423,41 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             CurveStableSwapPoolStateUpdated(state=new_state),
         )
 
-    def _get_provider_for_chain(self) -> Any:
-        """Get the provider for this pool's chain.
-
-        Uses the bot's connection manager if available, otherwise falls back to
-        the explicit provider. Returns None if neither is available (e.g., after
-        unpickling in a subprocess where cached values are used instead of I/O).
-        """
-        if self._bot is not None:
-            try:
-                return self._bot.connections.get_provider(self._chain_id)
-            except Exception:  # noqa: BLE001
-                pass
-        if self._provider is not None:
-            return self._provider
-        return None
-
     def _fetch_token_balance(
         self, token: Erc20Token, address: ChecksumAddress, *, block_identifier: int | None = None
     ) -> int:
-        """Fetch token balance using the bot's provider if available."""
-        if self._bot is not None:
-            return self._bot.get_token_balance(token, address, block_identifier=block_identifier)
-        provider = self._get_provider_for_chain()
-        (balance,) = raw_call(
-            provider,
-            address=token.address,
-            calldata=encode_function_calldata(
-                function_prototype="balanceOf(address)",
-                function_arguments=[address],
-            ),
-            return_types=["uint256"],
-            block_identifier=block_identifier,
+        """Fetch token balance using the token_balance_fetcher if available."""
+        if self._token_balance_fetcher is not None:
+            return self._token_balance_fetcher(token, address, block_identifier=block_identifier)
+        raise MissingCurveData(
+            self.address,
+            "token_balance",
+            "Token balance fetch requires I/O. Provide a token_balance_fetcher callback."
         )
-        return balance
 
     def _fetch_token_total_supply(
         self, token: Erc20Token, *, block_identifier: int | None = None
     ) -> int:
-        """Fetch token total supply using the bot's provider if available."""
-        if self._bot is not None:
-            return self._bot.get_token_total_supply(token, block_identifier=block_identifier)
-        return Erc20Token.fetch_total_supply(
-            token.address, self._get_provider_for_chain(), block_identifier
+        """Fetch token total supply using the total_supply_fetcher if available."""
+        if self._total_supply_fetcher is not None:
+            return self._total_supply_fetcher(token, block_identifier=block_identifier)
+        raise MissingCurveData(
+            self.address,
+            "token_total_supply",
+            "Token total supply fetch requires I/O. Provide a total_supply_fetcher callback."
         )
 
     def _resolve_block_number(self, block_identifier: BlockIdentifier | None) -> int:
-        """Resolve a block identifier to an integer, lazily fetching provider only if needed."""
+        """Resolve a block identifier to an integer. Falls back to block_number_fetcher if available."""
         if isinstance(block_identifier, int):
             return block_identifier
-        return get_number_for_block_identifier(
-            block_identifier,
-            self._get_provider_for_chain(),
+        if self._block_number_fetcher is not None:
+            return self._block_number_fetcher()
+        raise MissingCurveData(
+            self.address,
+            "block_identifier",
+            "block_identifier must be an integer when no provider is available. "
+            "Use Bot.update() or pass an explicit block number."
         )
 
     def _a(self, timestamp: int | None = None) -> int:
@@ -477,9 +481,14 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             return self.future_a_coefficient
 
         if timestamp is None:
-            timestamp = self._get_provider_for_chain().underlying.eth.get_block("latest")[
-                "timestamp"
-            ]
+            if self._timestamp_fetcher is not None:
+                timestamp = self._timestamp_fetcher(0)
+            else:
+                raise MissingCurveData(
+                    self.address,
+                    "timestamp",
+                    "Timestamp is required for A ramping calculation but no timestamp_fetcher is available"
+                )
 
         a_1 = self.future_a_coefficient
         t_1 = self.future_a_coefficient_time
@@ -513,27 +522,24 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         Needed to prevent front-running, not for precise calculations!
         """
 
-        provider = self._get_provider_for_chain()
         n_coins = len(self._tokens)
 
         pool_balances = (
             list(override_state.balances) if override_state is not None else list(self.balances)
         )
 
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                block_identifier,
-                provider,
-            )
-        )
+        block_number = self._resolve_block_number(block_identifier)
 
         # Fetch and cache block timestamp for A ramping calculations
         if block_number not in self._block_timestamps:
-            self._block_timestamps[block_number] = provider.get_block(
-                block_identifier=block_number
-            )["timestamp"]
+            if self._timestamp_fetcher is None:
+                raise MissingCurveData(
+                    self.address,
+                    "block_timestamp",
+                    "Block timestamp requires a timestamp_fetcher callback. "
+                    "Provide one via Bot.build_curve_pool()."
+                )
+            self._block_timestamps[block_number] = self._timestamp_fetcher(block_number)
 
         xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
         amp = self._a(timestamp=self._block_timestamps[block_number])
@@ -558,14 +564,18 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
     def calc_withdraw_one_coin(
         self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
     ) -> tuple[int, ...]:
-        provider = self._get_provider_for_chain()
         block_number = self._resolve_block_number(block_identifier)
 
         # Fetch and cache block timestamp for A ramping calculations
         if block_number not in self._block_timestamps:
-            self._block_timestamps[block_number] = provider.get_block(
-                block_identifier=block_number
-            )["timestamp"]
+            if self._timestamp_fetcher is None:
+                raise MissingCurveData(
+                    self.address,
+                    "block_timestamp",
+                    "Block timestamp requires a timestamp_fetcher callback. "
+                    "Provide one via Bot.build_curve_pool()."
+                )
+            self._block_timestamps[block_number] = self._timestamp_fetcher(block_number)
 
         n_coins = len(self._tokens)
         amp = self._a(timestamp=self._block_timestamps[block_number])
@@ -592,33 +602,17 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         with contextlib.suppress(KeyError):
             return self._cached_scaled_redemption_price[block_number]
 
-        redemption_price_scale = 10**9
+        if self._redemption_price_fetcher is not None:
+            result = self._redemption_price_fetcher(block_number)
+            self._cached_scaled_redemption_price[block_number] = result
+            return result
 
-        # Fetch current provider from connection manager to handle provider updates
-        provider = self._get_provider_for_chain()
-
-        snap_contract_address: str
-        (snap_contract_address,) = eth_abi.abi.decode(
-            types=["address"],
-            data=provider.call(
-                to=self.address,
-                data=Web3.keccak(text="redemption_price_snap()")[:4],
-                block=block_number,
-            ),
+        raise MissingCurveData(
+            self.address,
+            "redemption_price",
+            "Redemption price requires a redemption_price_fetcher callback. "
+            "Provide one via Bot.build_curve_pool()."
         )
-
-        rate: int
-        (rate,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=provider.call(
-                to=get_checksum_address(snap_contract_address),
-                data=Web3.keccak(text="snappedRedemptionPrice()")[:4],
-                block=block_number,
-            ),
-        )
-        result = rate // redemption_price_scale
-        self._cached_scaled_redemption_price[block_number] = result
-        return result
 
     def get_dy(
         self,
@@ -650,15 +644,18 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         pool_balances = override_state.balances if override_state is not None else self.balances
         rates = self.rate_multipliers
 
-        # Fetch current provider from connection manager to handle provider updates
-        provider = self._get_provider_for_chain()
         block_number = self._resolve_block_number(block_identifier)
 
         # Fetch and cache block timestamp for A ramping calculations
         if block_number not in self._block_timestamps:
-            self._block_timestamps[block_number] = provider.get_block(
-                block_identifier=block_number
-            )["timestamp"]
+            if self._timestamp_fetcher is None:
+                raise MissingCurveData(
+                    self.address,
+                    "block_timestamp",
+                    "Block timestamp requires a timestamp_fetcher callback. "
+                    "Provide one via Bot.build_curve_pool()."
+                )
+            self._block_timestamps[block_number] = self._timestamp_fetcher(block_number)
 
         if self.base_pool is not None:
             if self.address == "0xC61557C5d177bd7DC889A3b621eEC333e168f68A":
@@ -710,157 +707,46 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             return (dy - fee) * self.PRECISION // rates[j]
 
         if self.address == "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5":
-
-            def _d(block_number: BlockNumber) -> int:
-                with contextlib.suppress(KeyError):
-                    return self._cached_contract_D[block_number]
-
-                d: int
-                (d,) = eth_abi.abi.decode(
-                    types=["uint256"],
-                    data=provider.call(
-                        to=self.address,
-                        data=Web3.keccak(text="D()")[:4],
-                        block=block_number,
-                    ),
+            # Crypto pool path — uses D(), gamma(), price_scale() from chain
+            if self._D_fetcher is None:
+                raise MissingCurveData(
+                    self.address,
+                    "D_fetcher",
+                    "Crypto pool requires a D_fetcher callback.",
                 )
+            if self._gamma_fetcher is None:
+                raise MissingCurveData(
+                    self.address,
+                    "gamma_fetcher",
+                    "Crypto pool requires a gamma_fetcher callback.",
+                )
+            if self._price_scale_fetcher is None:
+                raise MissingCurveData(
+                    self.address,
+                    "price_scale_fetcher",
+                    "Crypto pool requires a price_scale_fetcher callback.",
+                )
+
+            # Fetch cached or on-chain D
+            try:
+                d = self._cached_contract_D[block_number]
+            except KeyError:
+                d = self._D_fetcher(block_number)
                 self._cached_contract_D[block_number] = d
-                return d
 
-            def _gamma(block_number: BlockNumber) -> int:
-                with contextlib.suppress(KeyError):
-                    return self._cached_gamma[block_number]
+            # Fetch cached or on-chain gamma
+            try:
+                gamma_val = self._cached_gamma[block_number]
+            except KeyError:
+                gamma_val = self._gamma_fetcher(block_number)
+                self._cached_gamma[block_number] = gamma_val
 
-                gamma: int
-                (gamma,) = eth_abi.abi.decode(
-                    types=["uint256"],
-                    data=provider.call(
-                        to=self.address,
-                        data=Web3.keccak(text="gamma()")[:4],
-                        block=block_number,
-                    ),
-                )
-                self._cached_gamma[block_number] = gamma
-                return gamma
-
-            def _price_scale(block_number: BlockNumber) -> tuple[int, ...]:
-                with contextlib.suppress(KeyError):
-                    return self._cached_price_scale[block_number]
-
-                n_coins = len(self._tokens)
-
-                price_scale = [0] * (n_coins - 1)
-                for token_index in range(n_coins - 1):
-                    (price_scale[token_index],) = eth_abi.abi.decode(
-                        types=["uint256"],
-                        data=provider.call(
-                            to=self.address,
-                            data=Web3.keccak(text="price_scale(uint256)")[:4]
-                            + eth_abi.abi.encode(types=["uint256"], args=[token_index]),
-                            block=block_number,
-                        ),
-                    )
-                self._cached_price_scale[block_number] = tuple(price_scale)
-                return tuple(price_scale)
-
-            def _newton_y(ann: int, gamma: int, xp: Sequence[int], d: int, token_index: int) -> int:
-                """
-                Calculating xp[i] given other balances xp[0..N_COINS-1] and invariant D
-                _ann = A * N**N
-                """
-
-                n_coins = len(self._tokens)
-                a_multiplier = self.A_PRECISION
-
-                # Safety checks
-                assert (
-                    n_coins**n_coins * a_multiplier - 1
-                    < ann
-                    < 10000 * n_coins**n_coins * a_multiplier + 1
-                ), "unsafe value for A"
-                assert 10**10 - 1 < gamma < 10**16 + 1, "unsafe values for gamma"
-                assert 10**17 - 1 < d < 10**15 * 10**18 + 1, "unsafe values for D"
-
-                for index in range(3):
-                    if index != token_index:
-                        frac = xp[index] * 10**18 // d
-                        assert 10**16 - 1 < frac < 10**20 + 1, (
-                            f"{frac=} out of range"
-                        )  # dev: unsafe values x[i]
-
-                y = d // n_coins
-                k_0_i = 10**18
-                s_i = 0
-
-                x_sorted = list(xp)
-                x_sorted[token_index] = 0
-                x_sorted = sorted(x_sorted, reverse=True)  # From high to low
-
-                convergence_limit = max(x_sorted[0] // 10**14, d // 10**14, 100)
-                for j_ in range(2, n_coins + 1):
-                    x_ = x_sorted[n_coins - j_]
-                    y = y * d // (x_ * n_coins)  # Small _x first
-                    s_i += x_
-
-                for k_ in range(n_coins - 1):
-                    k_0_i = k_0_i * x_sorted[k_] * n_coins // d  # Large _x first
-
-                for _ in range(255):  # pragma: no branch
-                    y_prev = y
-
-                    k_0 = k_0_i * y * n_coins // d
-                    s = s_i + y
-
-                    g1k0 = gamma + 10**18
-                    g1k0 = g1k0 - k_0 + 1 if g1k0 > k_0 else k_0 - g1k0 + 1
-
-                    mul1 = 10**18 * d // gamma * g1k0 // gamma * g1k0 * a_multiplier // ann
-                    mul2 = 10**18 + (2 * 10**18) * k_0 // g1k0
-
-                    yfprime = 10**18 * y + s * mul2 + mul1
-                    dyfprime = d * mul2
-
-                    if yfprime < dyfprime:
-                        y = y_prev // 2
-                        continue
-
-                    yfprime -= dyfprime
-                    fprime = yfprime // y
-
-                    y_minus = mul1 // fprime
-                    y_plus = (yfprime + 10**18 * d) // fprime + y_minus * 10**18 // k_0
-                    y_minus += 10**18 * s // fprime
-
-                    y = y_prev // 2 if y_plus < y_minus else y_plus - y_minus
-                    diff = y - y_prev if y > y_prev else y_prev - y
-
-                    if diff < max(convergence_limit, y // 10**14):
-                        frac = y * 10**18 // d
-                        assert 10**16 - 1 < frac < 10**20 + 1, "unsafe value for y"
-                        return y
-
-                raise EVMRevertError(
-                    error=f"_newton_y() did not converge for pool {self.address}"
-                )  # pragma: no cover
-
-            def _reduction_coefficient(x: Sequence[int], fee_gamma: int) -> int:
-                """
-                fee_gamma / (fee_gamma + (1 - K))
-                where
-                K = prod(x) / (sum(x) / N)**N
-                (all normalized to 1e18)
-                """
-                k = 10**18
-                s = 0
-                for x_i in x:
-                    s += x_i
-                # Could be good to pre-sort x, but it is used only for dynamic fee,
-                # so that is not so important
-                for x_i in x:
-                    k = k * n_coins * x_i // s
-                if fee_gamma > 0:
-                    k = fee_gamma * 10**18 // (fee_gamma + 10**18 - k)
-                return k
+            # Fetch cached or on-chain price_scale
+            try:
+                price_scale = self._cached_price_scale[block_number]
+            except KeyError:
+                price_scale = self._price_scale_fetcher(block_number)
+                self._cached_price_scale[block_number] = price_scale
 
             n_coins = len(self._tokens)
 
@@ -869,25 +755,24 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             assert j < n_coins, "coin index out of range"
             assert dx > 0, "do not exchange 0 coins"
 
+            # Tricrypto precisions (hard-coded in the contract)
             precisions = [
                 10**12,  # USDT
                 10**10,  # WBTC
                 1,  # WETH
             ]
 
-            price_scale = _price_scale(block_number=block_number)
-
             xp_ = list(pool_balances)
             xp_[i] += dx
             xp_[0] *= precisions[0]
 
             for k in range(n_coins - 1):
-                xp_[k + 1] = xp_[k + 1] * price_scale[k] * precisions[k + 1] // self.PRECISION
+                xp_[k + 1] = (
+                    xp_[k + 1] * price_scale[k] * precisions[k + 1] // self.PRECISION
+                )
 
             amp = self._a(timestamp=self._block_timestamps[block_number])
-            gamma = _gamma(block_number=block_number)
-            d = _d(block_number=block_number)
-            y = _newton_y(amp, gamma, xp_, d, j)
+            y = self._newton_y(amp, gamma_val, xp_, d, j)
             dy = xp_[j] - y - 1
 
             xp_[j] = y
@@ -895,12 +780,11 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
                 dy = dy * self.PRECISION // price_scale[j - 1]
             dy //= precisions[j]
 
-            f = _reduction_coefficient(xp_, self.fee_gamma)
+            f = self._reduction_coefficient(xp_, self.fee_gamma, n_coins)
             fee_calc = (self.mid_fee * f + self.out_fee * (10**18 - f)) // 10**18
 
             dy -= fee_calc * dy // 10**10
             return dy
-
         if self.address in {
             "0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F",
             "0x7fC77b5c7614E1533320Ea6DDc2Eb61fa00A9714",
@@ -1133,14 +1017,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
 
         pool_balances = override_state.balances if override_state is not None else self.balances
 
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else get_number_for_block_identifier(
-                identifier=block_identifier,
-                provider=self._get_provider_for_chain(),
-            )
-        )
+        block_number = self._resolve_block_number(block_identifier)
 
         if self.address == "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d":
             base_n_coins = len(self.base_pool.tokens)
@@ -1373,39 +1250,28 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         with contextlib.suppress(KeyError):
             return self._cached_base_cache_updated[block_number]
 
-        # Fetch current provider from connection manager to handle provider updates
-        provider = self._get_provider_for_chain()
-
-        base_cache_updated: int
-        (base_cache_updated,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=provider.call(
-                to=self.address,
-                data=Web3.keccak(text="base_cache_updated()")[:4],
-                block=block_number,
-            ),
+        raise MissingCurveData(
+            self.address,
+            "base_cache_updated",
+            "base_cache_updated requires I/O. Provide a virtual_price_fetcher callback "
+            "via Bot.build_curve_pool()."
         )
-        self._cached_base_cache_updated[block_number] = base_cache_updated
-        return base_cache_updated
 
     def _get_base_virtual_price(self, block_number: BlockNumber) -> int:
         with contextlib.suppress(KeyError):
             return self._cached_base_virtual_price[block_number]
 
-        # Fetch current provider from connection manager to handle provider updates
-        provider = self._get_provider_for_chain()
+        if self._base_virtual_price_fetcher is not None:
+            result = self._base_virtual_price_fetcher(block_number)
+            self._cached_base_virtual_price[block_number] = result
+            return result
 
-        base_virtual_price: int
-        (base_virtual_price,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=provider.call(
-                to=self.address,
-                data=Web3.keccak(text="base_virtual_price()")[:4],
-                block=block_number,
-            ),
+        raise MissingCurveData(
+            self.address,
+            "base_virtual_price",
+            "Base virtual price requires a base_virtual_price_fetcher callback. "
+            "Provide one via Bot.build_curve_pool()."
         )
-        self._cached_base_virtual_price[block_number] = base_virtual_price
-        return base_virtual_price
 
     def _get_virtual_price(self, block_number: BlockNumber) -> int:
         if TYPE_CHECKING:
@@ -1414,55 +1280,34 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         with contextlib.suppress(KeyError):
             return self._cached_virtual_price[block_number]
 
-        base_cache_expires = 10 * 60  # 10 minutes
+        if self._virtual_price_fetcher is not None:
+            result = self._virtual_price_fetcher(block_number)
+            self._cached_virtual_price[block_number] = result
+            self.base_virtual_price = result
+            return result
 
-        # Fetch current provider from connection manager to handle provider updates
-        provider = self._get_provider_for_chain()
-        self._block_timestamps[block_number] = provider.get_block(block_identifier=block_number)[
-            "timestamp"
-        ]
-
-        base_virtual_price: int
-        if (
-            self.base_cache_updated is None
-            or self._block_timestamps[block_number] > self.base_cache_updated + base_cache_expires
-        ):
-            (base_virtual_price,) = eth_abi.abi.decode(
-                types=["uint256"],
-                data=provider.call(
-                    to=self.base_pool.address,
-                    data=Web3.keccak(text="get_virtual_price()")[:4],
-                    block=block_number,
-                ),
-            )
-        else:
-            base_virtual_price = self.base_virtual_price
-
-        self._cached_virtual_price[block_number] = base_virtual_price
-        self.base_virtual_price = base_virtual_price
-        return base_virtual_price
+        raise MissingCurveData(
+            self.address,
+            "virtual_price",
+            "Virtual price requires a virtual_price_fetcher callback. "
+            "Provide one via Bot.build_curve_pool()."
+        )
 
     def _get_admin_balances(self, block_number: BlockNumber) -> tuple[int, ...]:
         with contextlib.suppress(KeyError):
             return self._cached_admin_balances[block_number]
 
-        admin_balances: list[int] = []
-        for token_index, _ in enumerate(self._tokens):
-            admin_balance: int
-            (admin_balance,) = raw_call(
-                self._get_provider_for_chain(),
-                address=self.address,
-                calldata=encode_function_calldata(
-                    function_prototype="admin_balances(uint256)",
-                    function_arguments=[token_index],
-                ),
-                return_types=["uint256"],
-                block_identifier=block_number,
-            )
-            admin_balances.append(admin_balance)
+        if self._admin_balances_fetcher is not None:
+            result = self._admin_balances_fetcher(block_number)
+            self._cached_admin_balances[block_number] = result
+            return result
 
-        self._cached_admin_balances[block_number] = tuple(admin_balances)
-        return tuple(admin_balances)
+        raise MissingCurveData(
+            self.address,
+            "admin_balances",
+            "Admin balances require an admin_balances_fetcher callback. "
+            "Provide one via Bot.build_curve_pool()."
+        )
 
     def _get_d(self, _xp: Sequence[int], _amp: int) -> int:
         """
@@ -1666,11 +1511,18 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         raise EVMRevertError(error="y_d calculation did not converge.")  # pragma: no cover
 
     def _set_oracle_method(self, block_number: BlockNumber) -> None:
-        # Fetch current provider from connection manager to handle provider updates
-        provider = self._get_provider_for_chain()
+        if self.oracle_method is not None:
+            return
+        if self._provider_call is None:
+            raise MissingCurveData(
+                self.address,
+                "oracle_method",
+                "Oracle method detection requires a provider_call callback. "
+                "Provide it via Bot.build_curve_pool()."
+            )
         (self.oracle_method,) = eth_abi.abi.decode(
             types=["uint256"],
-            data=provider.call(
+            data=self._provider_call(
                 to=self.address,
                 data=Web3.keccak(text="oracle_method()")[:4],
                 block=block_number,
@@ -1681,8 +1533,14 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_ctokens[block_number]
 
-        # Fetch current provider from connection manager to handle provider updates
-        provider = self._get_provider_for_chain()
+        if self._provider_call is None:
+            raise MissingCurveData(
+                self.address,
+                "ctoken_rates",
+                "cToken rates require a provider_call callback.",
+            )
+
+        # Use provider_call callback for on-chain data fetching
 
         result: list[int] = []
         rate: int
@@ -1697,7 +1555,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             else:
                 (rate,) = eth_abi.abi.decode(
                     types=["uint256"],
-                    data=provider.call(
+                    data=self._provider_call(
                         to=token.address,
                         data=Web3.keccak(text="exchangeRateStored()")[:4],
                         block=block_number,
@@ -1706,7 +1564,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
                 supply_rate: int
                 (supply_rate,) = eth_abi.abi.decode(
                     types=["uint256"],
-                    data=provider.call(
+                    data=self._provider_call(
                         to=token.address,
                         data=Web3.keccak(text="supplyRatePerBlock()")[:4],
                         block=block_number,
@@ -1715,7 +1573,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
                 old_block: BlockNumber
                 (old_block,) = eth_abi.abi.decode(
                     types=["uint256"],
-                    data=provider.call(
+                    data=self._provider_call(
                         to=token.address,
                         data=Web3.keccak(text="accrualBlockNumber()")[:4],
                         block=block_number,
@@ -1733,10 +1591,16 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_ytokens[block_number]
 
+        if self._provider_call is None:
+            raise MissingCurveData(
+                self.address,
+                "ytoken_rates",
+                "yToken rates require a provider_call callback.",
+            )
+
         # ref: https://etherscan.io/address/0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27#code
 
-        # Fetch current provider from connection manager to handle provider updates
-        provider = self._get_provider_for_chain()
+        # Use provider_call callback for on-chain data fetching
 
         result: list[int] = []
         for token, multiplier, use_lending in zip(
@@ -1749,7 +1613,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
                 rate: int
                 (rate,) = eth_abi.abi.decode(
                     types=["uint256"],
-                    data=provider.call(
+                    data=self._provider_call(
                         to=token.address,
                         data=Web3.keccak(text="getPricePerFullShare()")[:4],
                         block=block_number,
@@ -1767,8 +1631,14 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_cytokens[block_number]
 
-        # Fetch current provider from connection manager to handle provider updates
-        provider = self._get_provider_for_chain()
+        if self._provider_call is None:
+            raise MissingCurveData(
+                self.address,
+                "cytoken_rates",
+                "cyToken rates require a provider_call callback.",
+            )
+
+        # Use provider_call callback for on-chain data fetching
 
         result: list[int] = []
         for token, precision_multiplier in zip(
@@ -1778,7 +1648,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             (rate,) = eth_abi.abi.decode(
                 types=["uint256"],
                 data=(
-                    provider.call(
+                    self._provider_call(
                         to=token.address,
                         data=Web3.keccak(text="exchangeRateStored()")[:4],
                         block=block_number,
@@ -1788,7 +1658,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             supply_rate: int
             (supply_rate,) = eth_abi.abi.decode(
                 types=["uint256"],
-                data=provider.call(
+                data=self._provider_call(
                     to=token.address,
                     data=Web3.keccak(text="supplyRatePerBlock()")[:4],
                     block=block_number,
@@ -1797,7 +1667,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             old_block: BlockNumber
             (old_block,) = eth_abi.abi.decode(
                 types=["uint256"],
-                data=provider.call(
+                data=self._provider_call(
                     to=token.address,
                     data=Web3.keccak(text="accrualBlockNumber()")[:4],
                     block=block_number,
@@ -1814,14 +1684,20 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         with contextlib.suppress(KeyError):
             return self.PRECISION, self._cached_rates_from_reth[block_number]
 
-        # Fetch current provider from connection manager to handle provider updates
-        provider = self._get_provider_for_chain()
+        if self._provider_call is None:
+            raise MissingCurveData(
+                self.address,
+                "reth_rates",
+                "rETH rates require a provider_call callback.",
+            )
+
+        # Use provider_call callback for on-chain data fetching
 
         # ref: https://etherscan.io/address/0xF9440930043eb3997fc70e1339dBb11F341de7A8#code
         ratio: int
         (ratio,) = eth_abi.abi.decode(
             types=["uint256"],
-            data=provider.call(
+            data=self._provider_call(
                 to=self._tokens[1].address,
                 data=Web3.keccak(text="getExchangeRate()")[:4],
                 block=block_number,
@@ -1839,14 +1715,20 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
                 // self._cached_rates_from_aeth[block_number],
             )
 
-        # Fetch current provider from connection manager to handle provider updates
-        provider = self._get_provider_for_chain()
+        if self._provider_call is None:
+            raise MissingCurveData(
+                self.address,
+                "aeth_rates",
+                "aETH rates require a provider_call callback.",
+            )
+
+        # Use provider_call callback for on-chain data fetching
 
         # ref: https://etherscan.io/address/0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2#code
         ratio: int
         (ratio,) = eth_abi.abi.decode(
             types=["uint256"],
-            data=provider.call(
+            data=self._provider_call(
                 to=self._tokens[1].address,
                 data=Web3.keccak(text="ratio()")[:4],
                 block=block_number,
@@ -1865,8 +1747,14 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         with contextlib.suppress(KeyError):
             return self._cached_rates_from_oracle[block_number]
 
-        # Fetch current provider from connection manager to handle provider updates
-        provider = self._get_provider_for_chain()
+        if self._provider_call is None:
+            raise MissingCurveData(
+                self.address,
+                "oracle_rates",
+                "Oracle rates require a provider_call callback.",
+            )
+
+        # Use provider_call callback for on-chain data fetching
 
         self._set_oracle_method(block_number=block_number)
         if TYPE_CHECKING:
@@ -1879,7 +1767,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             oracle_rate: int
             (oracle_rate,) = eth_abi.abi.decode(
                 types=["uint256"],
-                data=provider.call(
+                data=self._provider_call(
                     to=get_checksum_address(HexBytes(self.oracle_method % 2**160)),
                     data=HexBytes(self.oracle_method & oracle_bit_mask),
                     block=block_number,
@@ -1897,6 +1785,109 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         return tuple(
             rate * balance // self.PRECISION for rate, balance in zip(rates, balances, strict=True)
         )
+
+    def _newton_y(
+        self, ann: int, gamma: int, xp: Sequence[int], d: int, token_index: int
+    ) -> int:
+        """
+        Calculating xp[i] given other balances xp[0..N_COINS-1] and invariant D.
+        _ann = A * N**N
+
+        Used by crypto (volatile) Curve pools.
+        """
+        n_coins = len(self._tokens)
+        a_multiplier = self.A_PRECISION
+
+        # Safety checks
+        assert (
+            n_coins**n_coins * a_multiplier - 1
+            < ann
+            < 10000 * n_coins**n_coins * a_multiplier + 1
+        ), "unsafe value for A"
+        assert 10**10 - 1 < gamma < 10**16 + 1, "unsafe values for gamma"
+        assert 10**17 - 1 < d < 10**15 * 10**18 + 1, "unsafe values for D"
+
+        for index in range(n_coins):
+            if index != token_index:
+                frac = xp[index] * 10**18 // d
+                assert 10**16 - 1 < frac < 10**20 + 1, (  # dev: unsafe values x[i]
+                    f"{frac=} out of range"
+                )
+
+        y = d // n_coins
+        k_0_i = 10**18
+        s_i = 0
+
+        x_sorted = list(xp)
+        x_sorted[token_index] = 0
+        x_sorted = sorted(x_sorted, reverse=True)  # From high to low
+
+        convergence_limit = max(x_sorted[0] // 10**14, d // 10**14, 100)
+        for j_ in range(2, n_coins + 1):
+            x_ = x_sorted[n_coins - j_]
+            y = y * d // (x_ * n_coins)  # Small _x first
+            s_i += x_
+
+        for k_ in range(n_coins - 1):
+            k_0_i = k_0_i * x_sorted[k_] * n_coins // d  # Large _x first
+
+        for _ in range(255):  # pragma: no branch
+            y_prev = y
+
+            k_0 = k_0_i * y * n_coins // d
+            s = s_i + y
+
+            g1k0 = gamma + 10**18
+            g1k0 = g1k0 - k_0 + 1 if g1k0 > k_0 else k_0 - g1k0 + 1
+
+            mul1 = 10**18 * d // gamma * g1k0 // gamma * g1k0 * a_multiplier // ann
+            mul2 = 10**18 + (2 * 10**18) * k_0 // g1k0
+
+            yfprime = 10**18 * y + s * mul2 + mul1
+            dyfprime = d * mul2
+
+            if yfprime < dyfprime:
+                y = y_prev // 2
+                continue
+
+            yfprime -= dyfprime
+            fprime = yfprime // y
+
+            y_minus = mul1 // fprime
+            y_plus = (yfprime + 10**18 * d) // fprime + y_minus * 10**18 // k_0
+            y_minus += 10**18 * s // fprime
+
+            y = y_prev // 2 if y_plus < y_minus else y_plus - y_minus
+            diff = y - y_prev if y > y_prev else y_prev - y
+
+            if diff < max(convergence_limit, y // 10**14):
+                frac = y * 10**18 // d
+                assert 10**16 - 1 < frac < 10**20 + 1, "unsafe value for y"
+                return y
+
+        raise EVMRevertError(
+            error=f"_newton_y() did not converge for pool {self.address}"
+        )  # pragma: no cover
+
+    @staticmethod
+    def _reduction_coefficient(x: Sequence[int], fee_gamma: int, n_coins: int) -> int:
+        """
+        fee_gamma / (fee_gamma + (1 - K))
+        where
+        K = prod(x) / (sum(x) / N)**N
+        (all normalized to 1e18)
+
+        Used by crypto (volatile) Curve pools for dynamic fee calculation.
+        """
+        k = 10**18
+        s = 0
+        for x_i in x:
+            s += x_i
+        for x_i in x:
+            k = k * n_coins * x_i // s
+        if fee_gamma > 0:
+            k = fee_gamma * 10**18 // (fee_gamma + 10**18 - k)
+        return k
 
     def calculate_tokens_out_from_tokens_in(
         self,

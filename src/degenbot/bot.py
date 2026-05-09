@@ -1678,6 +1678,7 @@ class Bot:
                     (base_pool_address,) = eth_abi.abi.decode(
                         types=["address"], data=base_pool_result
                     )
+                    base_pool_address = get_checksum_address(base_pool_address)
                 except Exception:
                     # If base_pool() doesn't exist, try registry
                     try:
@@ -1694,6 +1695,7 @@ class Bot:
                         (base_pool_address,) = eth_abi.abi.decode(
                             types=["address"], data=base_pool_result
                         )
+                        base_pool_address = get_checksum_address(base_pool_address)
                     except Exception:
                         # Last resort: if the pool's second token is a known
                         # base pool LP token, use the corresponding base pool
@@ -1785,8 +1787,20 @@ class Bot:
             out_fee=pool_out_fee,
             gamma=pool_gamma,
             offpeg_fee_multiplier=pool_offpeg_fee_multiplier,
-            # I/O access
-            bot=self,
+            # Fetcher callbacks for I/O-free operation
+            virtual_price_fetcher=self._make_curve_virtual_price_fetcher(pool_address, chain_id, base_pool_address=base_pool_address if base_pool else None),
+            base_virtual_price_fetcher=self._make_curve_base_virtual_price_fetcher(pool_address, chain_id),
+            timestamp_fetcher=self._make_curve_timestamp_fetcher(chain_id),
+            redemption_price_fetcher=self._make_curve_redemption_price_fetcher(pool_address, chain_id),
+            admin_balances_fetcher=self._make_curve_admin_balances_fetcher(pool_address, chain_id),
+            block_number_fetcher=self._make_curve_block_number_fetcher(chain_id),
+            total_supply_fetcher=self._make_curve_total_supply_fetcher(chain_id),
+            token_balance_fetcher=self._make_curve_token_balance_fetcher(chain_id),
+            provider_call=self._make_curve_provider_call(chain_id),
+            # Crypto pool fetchers (only useful for crypto pools like Tricrypto)
+            D_fetcher=self._make_curve_D_fetcher(chain_id, pool_address) if pool_fee_gamma else None,
+            gamma_fetcher=self._make_curve_gamma_fetcher(chain_id, pool_address) if pool_fee_gamma else None,
+            price_scale_fetcher=self._make_curve_price_scale_fetcher(chain_id, pool_address, len(tokens)) if pool_fee_gamma else None,
         )
 
         # Register pool
@@ -1957,6 +1971,274 @@ class Bot:
         )
         pool.external_update(update)
         return True
+
+    # ── Curve fetcher factories ───────────────────────────────────
+
+    def _make_curve_virtual_price_fetcher(
+        self, pool_address: ChecksumAddress, chain_id: ChainId,
+        base_pool_address: ChecksumAddress | None = None,
+    ) -> Any:
+        """Create a virtual price fetcher closure for a Curve pool.
+
+        For metapools, this calls get_virtual_price() on the base pool's contract.
+        For non-metapools, this calls get_virtual_price() on the pool itself.
+        """
+        target_address = base_pool_address if base_pool_address is not None else pool_address
+
+        def virtual_price_fetcher(block_number: int) -> int:
+            w3 = self.connections.get_web3(chain_id)
+            (vp,) = cast(
+                "tuple[int]",
+                eth_abi.abi.decode(
+                    types=["uint256"],
+                    data=w3.eth.call(
+                        {
+                            "to": target_address,
+                            "data": Web3.keccak(text="get_virtual_price()")[:4],
+                        },
+                        block_identifier=block_number,
+                    ),
+                ),
+            )
+            return vp
+
+        return virtual_price_fetcher
+
+    def _make_curve_base_virtual_price_fetcher(
+        self, pool_address: ChecksumAddress, chain_id: ChainId
+    ) -> Any:
+        """Create a base virtual price fetcher closure for a Curve metapool.
+
+        Calls base_virtual_price() on the metapool contract, which returns the
+        virtual price of the base pool LP token.
+        """
+
+        def base_virtual_price_fetcher(block_number: int) -> int:
+            w3 = self.connections.get_web3(chain_id)
+            (vp,) = cast(
+                "tuple[int]",
+                eth_abi.abi.decode(
+                    types=["uint256"],
+                    data=w3.eth.call(
+                        {
+                            "to": pool_address,
+                            "data": Web3.keccak(text="base_virtual_price()")[:4],
+                        },
+                        block_identifier=block_number,
+                    ),
+                ),
+            )
+            return vp
+
+        return base_virtual_price_fetcher
+
+    def _make_curve_timestamp_fetcher(
+        self, chain_id: ChainId
+    ) -> Any:
+        """Create a timestamp fetcher closure for a Curve pool."""
+
+        def timestamp_fetcher(block_number: int) -> int:
+            w3 = self.connections.get_web3(chain_id)
+            block = w3.eth.get_block(block_identifier=block_number)
+            return block["timestamp"]
+
+        return timestamp_fetcher
+
+    def _make_curve_redemption_price_fetcher(
+        self, pool_address: ChecksumAddress, chain_id: ChainId
+    ) -> Any:
+        """Create a redemption price fetcher closure for a Curve pool."""
+
+        def redemption_price_fetcher(block_number: int) -> int:
+            w3 = self.connections.get_web3(chain_id)
+            redemption_price_scale = 10**9
+
+            (snap_contract_address,) = cast(
+                "tuple[str]",
+                eth_abi.abi.decode(
+                    types=["address"],
+                    data=w3.eth.call(
+                        {
+                            "to": pool_address,
+                            "data": Web3.keccak(text="redemption_price_snap()")[:4],
+                        },
+                        block_identifier=block_number,
+                    ),
+                ),
+            )
+
+            (rate,) = cast(
+                "tuple[int]",
+                eth_abi.abi.decode(
+                    types=["uint256"],
+                    data=w3.eth.call(
+                        {
+                            "to": get_checksum_address(snap_contract_address),
+                            "data": Web3.keccak(text="snappedRedemptionPrice()")[:4],
+                        },
+                        block_identifier=block_number,
+                    ),
+                ),
+            )
+            return rate // redemption_price_scale
+
+        return redemption_price_fetcher
+
+    def _make_curve_admin_balances_fetcher(
+        self, pool_address: ChecksumAddress, chain_id: ChainId
+    ) -> Any:
+        """Create an admin balances fetcher closure for a Curve pool."""
+
+        def admin_balances_fetcher(block_number: int) -> tuple[int, ...]:
+            provider = self.connections.get_provider(chain_id)
+            admin_balances: list[int] = []
+            for token_index in range(8):  # max 8 tokens for Curve V1
+                try:
+                    (admin_balance,) = cast(
+                        "tuple[int]",
+                        eth_abi.abi.decode(
+                            types=["uint256"],
+                            data=provider.call(
+                                to=pool_address,
+                                data=encode_function_calldata(
+                                    function_prototype="admin_balances(uint256)",
+                                    function_arguments=[token_index],
+                                ),
+                                block=block_number,
+                            ),
+                        ),
+                    )
+                    admin_balances.append(admin_balance)
+                except Exception:  # noqa: BLE001
+                    break
+            return tuple(admin_balances)
+
+        return admin_balances_fetcher
+
+    def _make_curve_block_number_fetcher(
+        self, chain_id: ChainId
+    ) -> Any:
+        """Create a block number fetcher closure for a Curve pool."""
+
+        def block_number_fetcher() -> int:
+            provider = self.connections.get_provider(chain_id)
+            return provider.get_block_number()
+
+        return block_number_fetcher
+
+    def _make_curve_total_supply_fetcher(
+        self, chain_id: ChainId
+    ) -> Any:
+        """Create a total supply fetcher closure for a Curve pool."""
+
+        def total_supply_fetcher(token: Any, *, block_identifier: int | None = None) -> int:
+            return self.get_token_total_supply(token, block_identifier=block_identifier)
+
+        return total_supply_fetcher
+
+    def _make_curve_token_balance_fetcher(
+        self, chain_id: ChainId
+    ) -> Any:
+        """Create a token balance fetcher closure for a Curve pool."""
+
+        def token_balance_fetcher(
+            token: Any, address: Any, *, block_identifier: int | None = None
+        ) -> int:
+            return self.get_token_balance(token, address, block_identifier=block_identifier)
+
+        return token_balance_fetcher
+
+    def _make_curve_provider_call(
+        self, chain_id: ChainId
+    ) -> Any:
+        """Create a raw provider.call() closure for a Curve pool.
+
+        This is used by pool-type-specific rate fetching methods that need
+        low-level contract calls (e.g. cToken exchangeRateStored, oracle_method, etc.).
+        """
+
+        def provider_call(*, to: Any, data: Any, block: int) -> bytes:
+            w3 = self.connections.get_web3(chain_id)
+            return w3.eth.call(
+                {"to": to, "data": data},
+                block_identifier=block,
+            )
+
+        return provider_call
+
+    def _make_curve_D_fetcher(
+        self, chain_id: ChainId, pool_address: ChecksumAddress
+    ) -> Any:
+        """Create a D() fetcher closure for a crypto Curve pool."""
+
+        def D_fetcher(block_number: int) -> int:
+            from web3.types import TxParams
+
+            w3 = self.connections.get_web3(chain_id)
+            d: int
+            (d,) = eth_abi.abi.decode(
+                types=["uint256"],
+                data=w3.eth.call(
+                    TxParams(
+                        to=pool_address,
+                        data=Web3.keccak(text="D()")[:4],
+                    ),
+                    block_identifier=block_number,
+                ),
+            )
+            return d
+
+        return D_fetcher
+
+    def _make_curve_gamma_fetcher(
+        self, chain_id: ChainId, pool_address: ChecksumAddress
+    ) -> Any:
+        """Create a gamma() fetcher closure for a crypto Curve pool."""
+
+        def gamma_fetcher(block_number: int) -> int:
+            from web3.types import TxParams
+
+            w3 = self.connections.get_web3(chain_id)
+            gamma: int
+            (gamma,) = eth_abi.abi.decode(
+                types=["uint256"],
+                data=w3.eth.call(
+                    TxParams(
+                        to=pool_address,
+                        data=Web3.keccak(text="gamma()")[:4],
+                    ),
+                    block_identifier=block_number,
+                ),
+            )
+            return gamma
+
+        return gamma_fetcher
+
+    def _make_curve_price_scale_fetcher(
+        self, chain_id: ChainId, pool_address: ChecksumAddress, n_coins: int
+    ) -> Any:
+        """Create a price_scale() fetcher closure for a crypto Curve pool."""
+
+        def price_scale_fetcher(block_number: int) -> tuple[int, ...]:
+            from web3.types import TxParams
+
+            w3 = self.connections.get_web3(chain_id)
+            price_scale = [0] * (n_coins - 1)
+            for token_index in range(n_coins - 1):
+                (price_scale[token_index],) = eth_abi.abi.decode(
+                    types=["uint256"],
+                    data=w3.eth.call(
+                        TxParams(
+                            to=pool_address,
+                            data=Web3.keccak(text="price_scale(uint256)")[:4]
+                            + eth_abi.abi.encode(types=["uint256"], args=[token_index]),
+                        ),
+                        block_identifier=block_number,
+                    ),
+                )
+            return tuple(price_scale)
+
+        return price_scale_fetcher
 
     def _update_curve_pool(
         self, pool: Any, *, provider: Any, block_number: BlockIdentifier | None

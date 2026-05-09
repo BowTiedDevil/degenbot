@@ -7,7 +7,6 @@ import pytest
 
 from degenbot.aerodrome.abi import AERODROME_V2_POOL_ABI
 from degenbot.aerodrome.functions import generate_aerodrome_v2_pool_address
-from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from degenbot.aerodrome.types import (
     AerodromeV2PoolExternalUpdate,
     AerodromeV2PoolState,
@@ -16,7 +15,7 @@ from degenbot.aerodrome.types import (
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotError
-from degenbot.exceptions.liquidity_pool import ExternalUpdateError, LateUpdateError
+from degenbot.exceptions.liquidity_pool import ExternalUpdateError
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 
 WETH_CONTRACT_ADDRESS = get_checksum_address("0x4200000000000000000000000000000000000006")
@@ -74,20 +73,22 @@ def test_aerodrome_v2_address_generator():
 def test_pickle_pool(
     fork_base_full: AnvilFork,
 ):
+    from degenbot.provider import ProviderAdapter
+    from tests.helpers.bot_factory import make_bot_with_provider
 
-    lp = AerodromeV2Pool(
-        address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
-    )
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
+    lp = bot.build_aerodrome_v2_pool(AERODROME_V3_TBTC_USDBC_POOL_ADDRESS)
     pickle.dumps(lp)
 
 
 def test_auto_update(
     fork_base_full: AnvilFork,
 ):
-    lp = AerodromeV2Pool(
-        address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
-    )
-    lp.auto_update()
+    from degenbot.provider import ProviderAdapter
+    from tests.helpers.bot_factory import make_bot_with_provider
+
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
+    lp = bot.build_aerodrome_v2_pool(AERODROME_V3_TBTC_USDBC_POOL_ADDRESS)
 
     # Hand-modify the state to force a positive update
     lp._state = AerodromeV2PoolState(
@@ -96,18 +97,22 @@ def test_auto_update(
         reserves_token1=lp.state.reserves_token1 + 1,
         block=None,
     )
-    lp.auto_update()
+    changed = bot.update(lp)
+    assert changed is True
 
-    with pytest.raises(LateUpdateError):
-        lp.auto_update(block_number=lp.update_block - 10)
+    # Updating again at the same block should indicate no change
+    changed = bot.update(lp)
+    assert changed is False
 
 
 def test_external_update(
     fork_base_full: AnvilFork,
 ):
-    lp = AerodromeV2Pool(
-        address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
-    )
+    from degenbot.provider import ProviderAdapter
+    from tests.helpers.bot_factory import make_bot_with_provider
+
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
+    lp = bot.build_aerodrome_v2_pool(AERODROME_V3_TBTC_USDBC_POOL_ADDRESS)
 
     current_state = lp.state
 
@@ -141,16 +146,21 @@ def test_external_update(
 
 
 def test_create_pool(fork_base_full: AnvilFork):
+    from degenbot.provider import ProviderAdapter
+    from tests.helpers.bot_factory import make_bot_with_provider
 
-    lp = AerodromeV2Pool(
-        address=AERODROME_V3_TBTC_USDBC_POOL_ADDRESS,
-    )
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
+    lp = bot.build_aerodrome_v2_pool(AERODROME_V3_TBTC_USDBC_POOL_ADDRESS)
     assert lp.address == AERODROME_V3_TBTC_USDBC_POOL_ADDRESS
     assert lp.factory == AERODROME_V2_FACTORY_ADDRESS
     assert lp.deployer_address == AERODROME_V2_FACTORY_ADDRESS
 
 
 def test_calculation_volatile(fork_base_full: AnvilFork, test_pools: list[Any]):
+    from degenbot.provider import ProviderAdapter
+    from tests.helpers.bot_factory import make_bot_with_provider
+
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
 
     token_amount_multipliers = [
         0.000000001,
@@ -169,7 +179,7 @@ def test_calculation_volatile(fork_base_full: AnvilFork, test_pools: list[Any]):
     ]
 
     for pool_address in [pool["pool_address"] for pool in test_pools if pool["stable"] is False]:
-        lp = AerodromeV2Pool(address=pool_address)
+        lp = bot.build_aerodrome_v2_pool(pool_address)
 
         max_reserves_token0 = lp.reserves_token0
         max_reserves_token1 = lp.reserves_token1
@@ -223,6 +233,10 @@ def test_calculation_volatile(fork_base_full: AnvilFork, test_pools: list[Any]):
 
 
 def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
+    from degenbot.provider import ProviderAdapter
+    from tests.helpers.bot_factory import make_bot_with_provider
+
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
 
     token_amount_multipliers = [
         0.000000001,
@@ -241,7 +255,7 @@ def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
     ]
 
     for pool_address in [pool["pool_address"] for pool in test_pools if pool["stable"] is True]:
-        lp = AerodromeV2Pool(address=pool_address)
+        lp = bot.build_aerodrome_v2_pool(pool_address)
 
         max_reserves_token0 = lp.reserves_token0
         max_reserves_token1 = lp.reserves_token1
@@ -292,24 +306,34 @@ def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
 
 
 def test_aerodrome_v3_pool_creation(fork_base_full: AnvilFork) -> None:
-    AerodromeV3Pool(address=AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
+    from degenbot.provider import ProviderAdapter
+    from tests.helpers.bot_factory import make_bot_with_provider
+
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
+    bot.build_v3_pool(AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
 
 
 def test_aerodrome_v3_state(fork_base_full: AnvilFork) -> None:
+    from degenbot.provider import ProviderAdapter
+    from tests.helpers.bot_factory import make_bot_with_provider
 
-    lp = AerodromeV3Pool(address=AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
+    lp = bot.build_v3_pool(AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
     assert isinstance(lp.state, AerodromeV3PoolState), f"{type(lp.state)=}"
 
 
 def test_aerodrome_v3_pool_calculation(fork_base_full: AnvilFork) -> None:
+    from degenbot.provider import ProviderAdapter
+    from tests.helpers.bot_factory import make_bot_with_provider
 
     quoter = fork_base_full.w3.eth.contract(
         address=AERODROME_V3_QUOTER_ADDRESS, abi=AERODROME_V3_QUOTER_ABI
     )
-    lp = AerodromeV3Pool(address="0x98c7A2338336d2d354663246F64676009c7bDa97")
+    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
+    lp = bot.build_v3_pool("0x98c7A2338336d2d354663246F64676009c7bDa97")
 
-    max_reserves_token0 = lp.token0.get_balance(lp.address)
-    max_reserves_token1 = lp.token1.get_balance(lp.address)
+    max_reserves_token0 = bot.get_token_balance(lp.token0, lp.address)
+    max_reserves_token1 = bot.get_token_balance(lp.token1, lp.address)
 
     token_amount_multipliers = [
         0.000000001,

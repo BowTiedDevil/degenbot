@@ -47,7 +47,7 @@ from .curve import (
     CurveStableswapPoolState,
     CurveStableSwapPoolStateUpdated,
 )
-from .erc20 import Erc20Token, Erc20TokenManager, EtherPlaceholder
+from .erc20 import Erc20Token, EtherPlaceholder
 from .logging import logger
 from .pancakeswap import (
     PancakeswapV2Pool,
@@ -106,7 +106,6 @@ __all__ = (
     "CurveStableswapPoolSimulationResult",
     "CurveStableswapPoolState",
     "Erc20Token",
-    "Erc20TokenManager",
     "EtherPlaceholder",
     "ManagedPoolRegistry",
     "PancakeswapV2Pool",
