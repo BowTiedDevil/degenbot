@@ -60,6 +60,15 @@ impl PyLogFilter {
     fn topics(&self) -> &[Vec<String>] {
         &self.inner.topics
     }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "LogFilter(from_block={:?}, to_block={:?}, addresses={:?})",
+            self.inner.from_block,
+            self.inner.to_block,
+            self.inner.addresses
+        )
+    }
 }
 
 /// Python wrapper for `AlloyProvider`.
@@ -77,21 +86,48 @@ impl PyAlloyProvider {
     /// - HTTP/HTTPS URLs use HTTP transport with connection pooling
     /// - WS/WSS URLs use WebSocket transport
     /// - File paths (Unix: /path, Windows: \\.\pipe\...) use IPC transport
+    ///
+    /// # Retry Behavior
+    ///
+    /// The provider implements exponential backoff with jitter for retryable errors:
+    /// - Initial delay: 100ms
+    /// - Max delay: 30 seconds
+    /// - Backoff multiplier: 2x
+    /// - Jitter: up to 100ms (randomized)
+    /// - Max attempts: `max_retries + 1` (1 initial + retries)
+    ///
+    /// Retryable errors: rate limits (HTTP 429), timeouts, connection failures.
+    ///
+    /// # Rate Limiting (HTTP only)
+    ///
+    /// HTTP connections use transport-level rate limiting to avoid overwhelming
+    /// the RPC endpoint. `requests_per_second` controls the sustained rate,
+    /// while `burst` allows temporary spikes.
     #[new]
-    #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000))]
+    #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000, requests_per_second=50, burst=10))]
     fn new(
         py: Python<'_>,
         rpc_url: &str,
         max_retries: u32,
         max_blocks_per_request: u64,
+        requests_per_second: u32,
+        burst: u32,
     ) -> PyResult<Self> {
+        /// Default burst size for rate limiting (guaranteed non-zero)
+        const DEFAULT_BURST: std::num::NonZeroU32 = std::num::NonZeroU32::new(1).unwrap();
+
+        // Convert burst to NonZeroU32, defaulting to 1 if 0 is provided
+        let burst_nz = std::num::NonZeroU32::new(burst).unwrap_or(DEFAULT_BURST);
+
         // Copy string before detaching from GIL
         let rpc_url = rpc_url.to_string();
 
         // Release GIL during provider creation to allow parallel instantiation
         let provider = py
             .detach(|| {
-                get_runtime().block_on(async { AlloyProvider::new(&rpc_url, max_retries).await })
+                get_runtime().block_on(async {
+                    AlloyProvider::with_rate_limit(&rpc_url, max_retries, requests_per_second, burst_nz).await
+                })
             })
             .map_err(Into::<PyErr>::into)?;
 
@@ -258,6 +294,10 @@ impl PyAlloyProvider {
     #[getter]
     fn rpc_url(&self) -> String {
         self.provider.rpc_url().to_string()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("AlloyProvider(rpc_url={:?})", self.provider.rpc_url())
     }
 
     /// Get current gas price.
@@ -459,7 +499,7 @@ impl PyAlloyProvider {
     /// This allows calling arbitrary RPC methods that don't have typed wrappers.
     ///
     /// # Arguments
-    /// * `method` - The RPC method name (e.g., "debug_traceTransaction")
+    /// * `method` - The RPC method name (e.g., "`debug_traceTransaction`")
     /// * `params` - The parameters as a list (will be serialized to JSON array)
     ///
     /// # Returns
@@ -468,10 +508,10 @@ impl PyAlloyProvider {
         &self,
         py: Python<'py>,
         method: &str,
-        params: Bound<'_, PyList>,
+        params: &Bound<'_, PyList>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        // Convert Python list to JSON array
-        let params_json = python_list_to_json(&params)?;
+        // Convert Python list to JSON array using shared converter
+        let params_json = crate::json_converters::python_list_to_json(params)?;
 
         let method = method.to_string();
         let provider = Arc::clone(&self.provider);
@@ -490,88 +530,6 @@ impl PyAlloyProvider {
 
         Ok(py_obj)
     }
-}
-
-/// Convert a Python list to a JSON array.
-fn python_list_to_json(list: &Bound<'_, PyList>) -> PyResult<serde_json::Value> {
-    let mut arr = Vec::new();
-    for item in list.iter() {
-        let json_val = python_to_json(&item)?;
-        arr.push(json_val);
-    }
-    Ok(serde_json::Value::Array(arr))
-}
-
-/// Convert a Python object to a JSON value.
-fn python_to_json(obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
-    use pyo3::types::PyBool;
-
-    // None -> null
-    if obj.is_none() {
-        return Ok(serde_json::Value::Null);
-    }
-
-    // bool (check before int since bool is subclass of int in Python)
-    if let Ok(b) = obj.cast::<PyBool>() {
-        return Ok(serde_json::Value::Bool(b.is_true()));
-    }
-
-    // int
-    if let Ok(i) = obj.extract::<i64>() {
-        return Ok(serde_json::Value::Number(i.into()));
-    }
-    // Large int (serialize as string for JSON, but Alloy handles it)
-    if let Ok(s) = obj.str() {
-        let s = s.to_string();
-        // Check if it looks like a number
-        if s.parse::<u128>().is_ok() || s.parse::<i128>().is_ok() {
-            // Return as number if it fits, otherwise as string
-            if let Ok(n) = s.parse::<i64>() {
-                return Ok(serde_json::Value::Number(n.into()));
-            }
-            // For larger numbers, return as string (JSON doesn't support arbitrary precision)
-            return Ok(serde_json::Value::String(s));
-        }
-    }
-
-    // float
-    if let Ok(f) = obj.extract::<f64>() {
-        if let Some(n) = serde_json::Number::from_f64(f) {
-            return Ok(serde_json::Value::Number(n));
-        }
-        return Ok(serde_json::Value::Null); // NaN/Inf -> null
-    }
-
-    // string
-    if let Ok(s) = obj.extract::<String>() {
-        return Ok(serde_json::Value::String(s));
-    }
-
-    // bytes -> hex string
-    if let Ok(b) = obj.cast::<PyBytes>() {
-        let hex = crate::hex_utils::encode_hex(b.as_bytes());
-        return Ok(serde_json::Value::String(hex));
-    }
-
-    // list
-    if let Ok(list) = obj.cast::<PyList>() {
-        return python_list_to_json(&list);
-    }
-
-    // dict
-    if let Ok(dict) = obj.cast::<pyo3::types::PyDict>() {
-        let mut map = serde_json::Map::new();
-        for (key, val) in dict.iter() {
-            let key_str = key.extract::<String>()?;
-            let json_val = python_to_json(&val)?;
-            map.insert(key_str, json_val);
-        }
-        return Ok(serde_json::Value::Object(map));
-    }
-
-    // Fallback: convert to string
-    let s = obj.str()?.to_string();
-    Ok(serde_json::Value::String(s))
 }
 
 /// Add provider module to Python module.

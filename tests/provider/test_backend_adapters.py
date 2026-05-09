@@ -252,6 +252,10 @@ class TestAsyncAlloyAdapter:
         alloy.call = _return_fn(TEST_CALL_RESULT)
         alloy.get_code = _return_fn(TEST_CODE)
         alloy.get_storage_at = _return_fn(TEST_STORAGE)
+        alloy.get_balance = _raise_fn(NotImplementedError("get_balance not implemented"))
+        alloy.get_transaction_count = _raise_fn(
+            NotImplementedError("get_transaction_count not implemented")
+        )
         alloy.close = MagicMock()
         return alloy
 
@@ -283,5 +287,14 @@ def _return_fn(val: Any):
 
     async def _fn(*args: Any, **kwargs: Any) -> Any:  # noqa: RUF029
         return val
+
+    return _fn
+
+
+def _raise_fn(exc: Exception):
+    """Helper to create an async mock raising an exception."""
+
+    async def _fn(*args: Any, **kwargs: Any) -> Any:  # noqa: RUF029
+        raise exc
 
     return _fn
