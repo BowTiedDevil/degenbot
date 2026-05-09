@@ -407,7 +407,7 @@ def test_base_registry_pools(fork_mainnet_full: AnvilFork):
         try:
             lp = _build_pool(fork_mainnet_full, cast("str", pool_address))
         except MissingCurveData:
-            print(f"  Skipping pool with missing data")
+            print("  Skipping pool with missing data")
             continue
         _test_calculations(lp=lp, w3=fork_mainnet_full.w3)
 

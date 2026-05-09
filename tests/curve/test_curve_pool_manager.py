@@ -4,8 +4,9 @@ Tracer bullet: a Curve pool manager that tracks pools,
 delegates construction to Bot, and supports registry-based discovery.
 """
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
@@ -16,7 +17,6 @@ from tests.helpers.bot_factory import make_bot_with_provider
 
 def test_curve_pool_manager_exists() -> None:
     """CurveStableswapPoolManager is importable."""
-    from degenbot.curve.managers import CurveStableswapPoolManager
 
 
 def test_curve_pool_manager_requires_bot() -> None:
@@ -130,8 +130,8 @@ def test_curve_pool_manager_fork_tripool(fork_mainnet_full: AnvilFork) -> None:
 
 def test_curve_pool_manager_fork_metapool(fork_mainnet_full: AnvilFork) -> None:
     """Integration test: build metapool via manager on a forked network."""
-    from degenbot.curve.managers import CurveStableswapPoolManager
     from degenbot.checksum_cache import get_checksum_address
+    from degenbot.curve.managers import CurveStableswapPoolManager
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     manager = CurveStableswapPoolManager(bot=bot, chain_id=1)
@@ -145,8 +145,8 @@ def test_curve_pool_manager_fork_metapool(fork_mainnet_full: AnvilFork) -> None:
 
 def test_curve_pool_manager_get_pools_for_token(fork_mainnet_full: AnvilFork) -> None:
     """get_pools_for_token returns pools containing a given token."""
-    from degenbot.curve.managers import CurveStableswapPoolManager
     from degenbot.checksum_cache import get_checksum_address
+    from degenbot.curve.managers import CurveStableswapPoolManager
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     manager = CurveStableswapPoolManager(bot=bot, chain_id=1)
