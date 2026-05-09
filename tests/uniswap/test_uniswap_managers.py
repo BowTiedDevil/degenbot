@@ -74,10 +74,14 @@ BASE_PANCAKESWAP_V3_EXCHANGE = UniswapV3ExchangeDeployment(
 def test_create_base_chain_managers(fork_base_full: AnvilFork):
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
-    uniswap_v2_pool_manager = UniswapV2PoolManager(factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS, bot=bot)
+    uniswap_v2_pool_manager = UniswapV2PoolManager(
+        factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS, bot=bot
+    )
     assert uniswap_v2_pool_manager._factory_address == BASE_UNISWAP_V2_FACTORY_ADDRESS
 
-    uniswap_v3_pool_manager = UniswapV3PoolManager(factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS, bot=bot)
+    uniswap_v3_pool_manager = UniswapV3PoolManager(
+        factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS, bot=bot
+    )
     assert uniswap_v3_pool_manager._factory_address == BASE_UNISWAP_V3_FACTORY_ADDRESS
 
     # Get known pairs

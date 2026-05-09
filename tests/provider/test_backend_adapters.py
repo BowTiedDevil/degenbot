@@ -280,6 +280,7 @@ class TestAsyncAlloyAdapter:
 
 def _return_fn(val: Any):
     """Helper to create an async mock returning a fixed value."""
+
     async def _fn(*args: Any, **kwargs: Any) -> Any:  # noqa: RUF029
         return val
 

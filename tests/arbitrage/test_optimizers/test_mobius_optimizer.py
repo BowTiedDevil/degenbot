@@ -66,7 +66,9 @@ def chain_rule_solve(
     """
     Solve using the existing chain rule Newton optimizer.
     """
-    pool_states = [chain_state_from_def(MobiusFloatHop(h.reserve_in, h.reserve_out, h.fee)) for h in hops]
+    pool_states = [
+        chain_state_from_def(MobiusFloatHop(h.reserve_in, h.reserve_out, h.fee)) for h in hops
+    ]
     return multi_pool_newton_solve(pool_states)
 
 

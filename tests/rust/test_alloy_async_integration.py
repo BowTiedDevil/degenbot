@@ -77,8 +77,7 @@ class TestAsyncProviderWithLiveConnection:
         provider = await AsyncAlloyProvider.create(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
         # balanceOf(address) selector + WETH address padded to 32 bytes
         calldata = bytes.fromhex(
-            "70a08231"
-            + "000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+            "70a08231" + "000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
         )
         result = await provider.call(
             to=WETH_ADDRESS,

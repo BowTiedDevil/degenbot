@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from pydantic import HttpUrl, WebsocketUrl
 from web3 import HTTPProvider, IPCProvider, JSONBaseProvider, LegacyWebSocketProvider, Web3
 
-from degenbot.config import CONFIG_FILE, DegenbotConfig
+from degenbot.config import CONFIG_FILE, DegenbotConfig, _init_config
 from degenbot.connection.connection_manager import _fast_decode_rpc_response
 from degenbot.provider import AlloyProvider, ProviderAdapter
 
@@ -35,8 +35,6 @@ def get_provider_from_config(
     if use_alloy is None:
         use_alloy = _get_use_alloy_from_env()
     if config is None:
-        from degenbot.config import _init_config
-
         config = _init_config()
     match endpoint := config.rpc.get(chain_id):
         case HttpUrl():

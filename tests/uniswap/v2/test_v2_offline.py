@@ -86,9 +86,7 @@ class TestV2PoolCalculations:
         # With 1000:20000 reserves, 1 WBTC should give the exact V2 constant-product result
         fee = Fraction(3, 1000)
         amount_in_with_fee = amount_in * (fee.denominator - fee.numerator)
-        expected_output = (
-            amount_in_with_fee * override_state.reserves_token1
-        ) // (
+        expected_output = (amount_in_with_fee * override_state.reserves_token1) // (
             override_state.reserves_token0 * fee.denominator + amount_in_with_fee
         )
         assert amount_out == expected_output
@@ -118,11 +116,8 @@ class TestV2PoolCalculations:
 
         # With 1000:20000 reserves, the exact V2 constant-product result
         fee = Fraction(3, 1000)
-        expected_input = 1 + (
-            override_state.reserves_token0 * amount_out * fee.denominator
-        ) // (
-            (override_state.reserves_token1 - amount_out)
-            * (fee.denominator - fee.numerator)
+        expected_input = 1 + (override_state.reserves_token0 * amount_out * fee.denominator) // (
+            (override_state.reserves_token1 - amount_out) * (fee.denominator - fee.numerator)
         )
         assert amount_in == expected_input
 

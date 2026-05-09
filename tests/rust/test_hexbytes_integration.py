@@ -114,7 +114,9 @@ class TestHexBytesConversion:
         # balanceOf selector: 0x70a08231
         result = ethereum_mainnet_alloy_provider.call(
             to=WETH_ADDRESS,
-            data=bytes.fromhex("70a08231000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+            data=bytes.fromhex(
+                "70a08231000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+            ),
         )
 
         assert isinstance(result, HexBytes)

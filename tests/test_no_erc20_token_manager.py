@@ -5,6 +5,8 @@ Bot.build_erc20token() / Bot.get_token(). These tests ensure
 the old class is no longer importable.
 """
 
+import importlib
+
 import degenbot
 
 
@@ -15,8 +17,6 @@ def test_erc20_token_manager_not_in_top_level_exports() -> None:
 
 def test_erc20_token_manager_not_importable_from_erc20() -> None:
     """Erc20TokenManager should not be importable from degenbot.erc20."""
-    import importlib
-
     erc20_module = importlib.import_module("degenbot.erc20")
     assert not hasattr(erc20_module, "Erc20TokenManager")
 

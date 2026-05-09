@@ -3,6 +3,10 @@
 from unittest.mock import MagicMock
 
 from degenbot.anvil_fork import AnvilFork
+from degenbot.arbitrage.optimizers.pool_cache_adapter import ArbPoolCacheAdapter
+from degenbot.arbitrage.optimizers.solver import ArbSolver
+from degenbot.provider import ProviderAdapter
+from tests.helpers.bot_factory import make_bot_with_provider
 
 
 def test_adapter_exists() -> None:
@@ -11,8 +15,6 @@ def test_adapter_exists() -> None:
 
 def test_adapter_subscribes_to_pool() -> None:
     """ArbPoolCacheAdapter subscribes to a pool when registered."""
-    from degenbot.arbitrage.optimizers.pool_cache_adapter import ArbPoolCacheAdapter
-
     solver = MagicMock()
     solver.register_pool.side_effect = [1, 2]  # forward_id=1, reverse_id=2
     adapter = ArbPoolCacheAdapter(solver=solver)
@@ -28,8 +30,6 @@ def test_adapter_subscribes_to_pool() -> None:
 
 def test_adapter_assigns_pool_id() -> None:
     """ArbPoolCacheAdapter assigns a unique pool ID when registering."""
-    from degenbot.arbitrage.optimizers.pool_cache_adapter import ArbPoolCacheAdapter
-
     solver = MagicMock()
     solver.register_pool.side_effect = [42, 43]
     adapter = ArbPoolCacheAdapter(solver=solver)
@@ -45,8 +45,6 @@ def test_adapter_assigns_pool_id() -> None:
 
 def test_adapter_updates_cache_on_notify() -> None:
     """When a pool publishes a state update, the adapter updates the Rust cache."""
-    from degenbot.arbitrage.optimizers.pool_cache_adapter import ArbPoolCacheAdapter
-
     solver = MagicMock()
     solver.register_pool.side_effect = [1, 2]
     adapter = ArbPoolCacheAdapter(solver=solver)
@@ -82,8 +80,6 @@ def test_adapter_updates_cache_on_notify() -> None:
 
 def test_adapter_registers_both_orientations() -> None:
     """Adapter registers both reserve orientations for a single pool."""
-    from degenbot.arbitrage.optimizers.pool_cache_adapter import ArbPoolCacheAdapter
-
     solver = MagicMock()
     solver.register_pool.side_effect = [1, 2]
     adapter = ArbPoolCacheAdapter(solver=solver)
@@ -111,8 +107,6 @@ def test_adapter_registers_both_orientations() -> None:
 
 def test_adapter_get_pool_ids() -> None:
     """get_pool_ids returns (forward_id, reverse_id) tuple."""
-    from degenbot.arbitrage.optimizers.pool_cache_adapter import ArbPoolCacheAdapter
-
     solver = MagicMock()
     solver.register_pool.side_effect = [10, 11]
     adapter = ArbPoolCacheAdapter(solver=solver)
@@ -132,11 +126,6 @@ def test_adapter_get_pool_ids() -> None:
 
 def test_adapter_fork_v2_pool(fork_mainnet_full: AnvilFork) -> None:
     """Integration: register a real V2 pool and verify cache update."""
-    from degenbot.arbitrage.optimizers.pool_cache_adapter import ArbPoolCacheAdapter
-    from degenbot.arbitrage.optimizers.solver import ArbSolver
-    from degenbot.provider import ProviderAdapter
-    from tests.helpers.bot_factory import make_bot_with_provider
-
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     pool = bot.build_v2_pool(
         pool_address="0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc",

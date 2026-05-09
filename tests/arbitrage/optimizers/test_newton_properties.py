@@ -148,8 +148,7 @@ class TestThresholdComparison:
             # If relative difference > 1%, threshold matters
             if avg_x > 0 and max_diff / avg_x > 0.01:
                 pytest.xfail(
-                    f"Threshold choice affects result by {max_diff / avg_x:.2%}: "
-                    f"x_opts={x_opts}"
+                    f"Threshold choice affects result by {max_diff / avg_x:.2%}: x_opts={x_opts}"
                 )
 
     @pytest.mark.parametrize(

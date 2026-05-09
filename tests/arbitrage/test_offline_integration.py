@@ -384,9 +384,7 @@ class TestConstruction:
         weth: OfflineErc20Token,
     ):
         """Duplicate pools in swap_pools are rejected."""
-        with pytest.raises(
-            DegenbotValueError, match=r"Swap pools must not contain duplicates"
-        ):
+        with pytest.raises(DegenbotValueError, match=r"Swap pools must not contain duplicates"):
             UniswapLpCycle(
                 id="test_arb",
                 input_token=weth,

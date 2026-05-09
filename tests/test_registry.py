@@ -23,7 +23,10 @@ def test_distinct_registry_instances():
 
 def test_adding_pool(bot_mainnet_full: Bot):
     pool = bot_mainnet_full.build_v2_pool(UNISWAP_V2_WBTC_WETH_POOL)
-    assert bot_mainnet_full.pools.get(pool_address=pool.address, chain_id=bot_mainnet_full.chain_id) is pool
+    assert (
+        bot_mainnet_full.pools.get(pool_address=pool.address, chain_id=bot_mainnet_full.chain_id)
+        is pool
+    )
 
     with pytest.raises(DegenbotValueError):
         bot_mainnet_full.pools.add(
@@ -33,7 +36,10 @@ def test_adding_pool(bot_mainnet_full: Bot):
 
 def test_deleting_pool(bot_mainnet_full: Bot):
     pool = bot_mainnet_full.build_v2_pool(UNISWAP_V2_WBTC_WETH_POOL)
-    assert bot_mainnet_full.pools.get(pool_address=pool.address, chain_id=bot_mainnet_full.chain_id) is pool
+    assert (
+        bot_mainnet_full.pools.get(pool_address=pool.address, chain_id=bot_mainnet_full.chain_id)
+        is pool
+    )
     bot_mainnet_full.pools.remove(pool_address=pool.address, chain_id=bot_mainnet_full.chain_id)
     assert (
         bot_mainnet_full.pools.get(pool_address=pool.address, chain_id=bot_mainnet_full.chain_id)

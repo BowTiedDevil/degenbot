@@ -217,8 +217,7 @@ def _serialize_pool_state(state: AbstractPoolState) -> dict[str, Any]:
             "sqrt_price_x96": state.sqrt_price_x96,
             "tick": state.tick,
             "tick_bitmap": {
-                str(k): {"bitmap": v.bitmap, "block": v.block}
-                for k, v in state.tick_bitmap.items()
+                str(k): {"bitmap": v.bitmap, "block": v.block} for k, v in state.tick_bitmap.items()
             },
             "tick_data": {
                 str(k): {
@@ -238,8 +237,7 @@ def _serialize_pool_state(state: AbstractPoolState) -> dict[str, Any]:
             "sqrt_price_x96": state.sqrt_price_x96,
             "tick": state.tick,
             "tick_bitmap": {
-                str(k): {"bitmap": v.bitmap, "block": v.block}
-                for k, v in state.tick_bitmap.items()
+                str(k): {"bitmap": v.bitmap, "block": v.block} for k, v in state.tick_bitmap.items()
             },
             "tick_data": {
                 str(k): {
@@ -794,9 +792,7 @@ class FixtureFactory:
         liquidity = LIQUIDITY_MULTIPLIERS[liquidity_depth]
 
         for i, pool_type in enumerate(pool_types):
-            pool_address: ChecksumAddress = cast(
-                "ChecksumAddress", f"0x{(seed + i):040x}"
-            )
+            pool_address: ChecksumAddress = cast("ChecksumAddress", f"0x{(seed + i):040x}")
 
             # Each pool has progressively different price
             price_ratio = random.uniform(*price_ratio_range)
@@ -833,9 +829,7 @@ class FixtureFactory:
                     liquidity_depth=liquidity,
                 )
                 # Generate V4 from price
-                decimal_adjustment = 10 ** (
-                    v4_config.token1_decimals - v4_config.token0_decimals
-                )
+                decimal_adjustment = 10 ** (v4_config.token1_decimals - v4_config.token0_decimals)
                 adjusted_price = current_price * decimal_adjustment
                 tick = int(math.log(adjusted_price) / math.log(1.0001))
                 tick = round(tick / v4_config.tick_spacing) * v4_config.tick_spacing

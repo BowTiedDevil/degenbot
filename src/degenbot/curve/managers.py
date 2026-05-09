@@ -97,10 +97,7 @@ class CurveStableswapPoolManager(
         return [
             pool
             for pool in self._tracked_pools.values()
-            if any(
-                token.address == token_address
-                for token in pool.tokens
-            )
+            if any(token.address == token_address for token in pool.tokens)
         ]
 
     def __repr__(self) -> str:  # pragma: no cover

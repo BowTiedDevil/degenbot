@@ -7,11 +7,14 @@ import pytest
 
 from degenbot.async_bot import AsyncBot
 from degenbot.bot import Bot
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.connection.async_connection_manager import AsyncConnectionManager
 from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.database.session_manager import DatabaseSessionManager
+from degenbot.exceptions.manager import ManagerAlreadyInitialized
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
+from degenbot.uniswap.managers import UniswapV2PoolManager
 
 
 def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
@@ -76,8 +79,6 @@ class TestBotAddManager:
     """Bot.add_manager() tests."""
 
     def test_add_manager_stores_manager(self, tmp_path: pathlib.Path) -> None:
-        from degenbot.uniswap.managers import UniswapV2PoolManager
-
         config = _make_test_config(tmp_path)
         bot = Bot(config)
 
@@ -95,16 +96,11 @@ class TestBotAddManager:
         assert isinstance(manager, UniswapV2PoolManager)
         assert ("0x5C69bEe701ef814E44274f655e7632cB715C14B6".lower(),) not in bot._managers
         # Manager is stored keyed by (chain_id, factory_address)
-        from degenbot.checksum_cache import get_checksum_address
-
         key = (1, get_checksum_address("0x5C69bEe701ef814E44274f655e7632cB715C14B6"))
         assert key in bot._managers
         assert bot._managers[key] is manager
 
     def test_add_manager_rejects_duplicate(self, tmp_path: pathlib.Path) -> None:
-        from degenbot.exceptions.manager import ManagerAlreadyInitialized
-        from degenbot.uniswap.managers import UniswapV2PoolManager
-
         config = _make_test_config(tmp_path)
         bot = Bot(config)
 
@@ -138,8 +134,6 @@ class TestMultipleBots:
         assert bot1.db is not bot2.db
 
     def test_independent_managers(self, tmp_path: pathlib.Path) -> None:
-        from degenbot.uniswap.managers import UniswapV2PoolManager
-
         config1 = _make_test_config(tmp_path / "bot1")
         config2 = _make_test_config(tmp_path / "bot2")
 

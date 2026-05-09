@@ -132,8 +132,7 @@ class TestV3PoolStateGeneration:
 
         assert isinstance(state, UniswapV3PoolState)
         expected_tick = (
-            round(math.log(2000.0) / math.log(1.0001) / config.tick_spacing)
-            * config.tick_spacing
+            round(math.log(2000.0) / math.log(1.0001) / config.tick_spacing) * config.tick_spacing
         )
         assert state.tick == expected_tick
 

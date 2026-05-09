@@ -432,7 +432,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         raise MissingCurveData(
             self.address,
             "token_balance",
-            "Token balance fetch requires I/O. Provide a token_balance_fetcher callback."
+            "Token balance fetch requires I/O. Provide a token_balance_fetcher callback.",
         )
 
     def _fetch_token_total_supply(
@@ -444,7 +444,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         raise MissingCurveData(
             self.address,
             "token_total_supply",
-            "Token total supply fetch requires I/O. Provide a total_supply_fetcher callback."
+            "Token total supply fetch requires I/O. Provide a total_supply_fetcher callback.",
         )
 
     def _resolve_block_number(self, block_identifier: BlockIdentifier | None) -> int:
@@ -457,7 +457,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             self.address,
             "block_identifier",
             "block_identifier must be an integer when no provider is available. "
-            "Use Bot.update() or pass an explicit block number."
+            "Use Bot.update() or pass an explicit block number.",
         )
 
     def _a(self, timestamp: int | None = None) -> int:
@@ -487,7 +487,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
                 raise MissingCurveData(
                     self.address,
                     "timestamp",
-                    "Timestamp is required for A ramping calculation but no timestamp_fetcher is available"
+                    "Timestamp is required for A ramping calculation but no timestamp_fetcher is available",
                 )
 
         a_1 = self.future_a_coefficient
@@ -537,7 +537,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
                     self.address,
                     "block_timestamp",
                     "Block timestamp requires a timestamp_fetcher callback. "
-                    "Provide one via Bot.build_curve_pool()."
+                    "Provide one via Bot.build_curve_pool().",
                 )
             self._block_timestamps[block_number] = self._timestamp_fetcher(block_number)
 
@@ -573,7 +573,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
                     self.address,
                     "block_timestamp",
                     "Block timestamp requires a timestamp_fetcher callback. "
-                    "Provide one via Bot.build_curve_pool()."
+                    "Provide one via Bot.build_curve_pool().",
                 )
             self._block_timestamps[block_number] = self._timestamp_fetcher(block_number)
 
@@ -611,7 +611,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             self.address,
             "redemption_price",
             "Redemption price requires a redemption_price_fetcher callback. "
-            "Provide one via Bot.build_curve_pool()."
+            "Provide one via Bot.build_curve_pool().",
         )
 
     def get_dy(
@@ -653,7 +653,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
                     self.address,
                     "block_timestamp",
                     "Block timestamp requires a timestamp_fetcher callback. "
-                    "Provide one via Bot.build_curve_pool()."
+                    "Provide one via Bot.build_curve_pool().",
                 )
             self._block_timestamps[block_number] = self._timestamp_fetcher(block_number)
 
@@ -767,9 +767,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             xp_[0] *= precisions[0]
 
             for k in range(n_coins - 1):
-                xp_[k + 1] = (
-                    xp_[k + 1] * price_scale[k] * precisions[k + 1] // self.PRECISION
-                )
+                xp_[k + 1] = xp_[k + 1] * price_scale[k] * precisions[k + 1] // self.PRECISION
 
             amp = self._a(timestamp=self._block_timestamps[block_number])
             y = self._newton_y(amp, gamma_val, xp_, d, j)
@@ -1254,7 +1252,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             self.address,
             "base_cache_updated",
             "base_cache_updated requires I/O. Provide a virtual_price_fetcher callback "
-            "via Bot.build_curve_pool()."
+            "via Bot.build_curve_pool().",
         )
 
     def _get_base_virtual_price(self, block_number: BlockNumber) -> int:
@@ -1270,7 +1268,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             self.address,
             "base_virtual_price",
             "Base virtual price requires a base_virtual_price_fetcher callback. "
-            "Provide one via Bot.build_curve_pool()."
+            "Provide one via Bot.build_curve_pool().",
         )
 
     def _get_virtual_price(self, block_number: BlockNumber) -> int:
@@ -1290,7 +1288,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             self.address,
             "virtual_price",
             "Virtual price requires a virtual_price_fetcher callback. "
-            "Provide one via Bot.build_curve_pool()."
+            "Provide one via Bot.build_curve_pool().",
         )
 
     def _get_admin_balances(self, block_number: BlockNumber) -> tuple[int, ...]:
@@ -1306,7 +1304,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             self.address,
             "admin_balances",
             "Admin balances require an admin_balances_fetcher callback. "
-            "Provide one via Bot.build_curve_pool()."
+            "Provide one via Bot.build_curve_pool().",
         )
 
     def _get_d(self, _xp: Sequence[int], _amp: int) -> int:
@@ -1518,7 +1516,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
                 self.address,
                 "oracle_method",
                 "Oracle method detection requires a provider_call callback. "
-                "Provide it via Bot.build_curve_pool()."
+                "Provide it via Bot.build_curve_pool().",
             )
         (self.oracle_method,) = eth_abi.abi.decode(
             types=["uint256"],
@@ -1786,9 +1784,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             rate * balance // self.PRECISION for rate, balance in zip(rates, balances, strict=True)
         )
 
-    def _newton_y(
-        self, ann: int, gamma: int, xp: Sequence[int], d: int, token_index: int
-    ) -> int:
+    def _newton_y(self, ann: int, gamma: int, xp: Sequence[int], d: int, token_index: int) -> int:
         """
         Calculating xp[i] given other balances xp[0..N_COINS-1] and invariant D.
         _ann = A * N**N
@@ -1800,9 +1796,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
 
         # Safety checks
         assert (
-            n_coins**n_coins * a_multiplier - 1
-            < ann
-            < 10000 * n_coins**n_coins * a_multiplier + 1
+            n_coins**n_coins * a_multiplier - 1 < ann < 10000 * n_coins**n_coins * a_multiplier + 1
         ), "unsafe value for A"
         assert 10**10 - 1 < gamma < 10**16 + 1, "unsafe values for gamma"
         assert 10**17 - 1 < d < 10**15 * 10**18 + 1, "unsafe values for D"

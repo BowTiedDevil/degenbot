@@ -88,7 +88,9 @@ import os
 import pathlib
 
 _SNAP = json.load(
-    pathlib.Path(os.path.join(os.path.dirname(__file__), "../fixtures/wbtc_weth_v3_snapshot.json")).open()
+    pathlib.Path(
+        os.path.join(os.path.dirname(__file__), "../fixtures/wbtc_weth_v3_snapshot.json")
+    ).open()
 )
 _WBTC_WETH_V3_TICK_BITMAP = {
     int(k): UniswapV3BitmapAtWord(bitmap=v["bitmap"], block=v["block"])

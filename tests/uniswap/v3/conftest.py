@@ -11,6 +11,7 @@ import pytest
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
+from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
@@ -130,8 +131,6 @@ def offline_wbtc_weth_v3_pool(offline_adapter: ProviderAdapter) -> UniswapV3Pool
     )
 
     # Fetch pool state from offline provider
-    from degenbot.functions import encode_function_calldata, raw_call
-
     slot0_result = raw_call(
         offline_adapter,
         address=UNISWAP_V3_WBTC_WETH_POOL,

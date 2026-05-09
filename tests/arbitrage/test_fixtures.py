@@ -309,9 +309,7 @@ class TestMultiPoolCycle:
         with pytest.raises(ValueError, match="must be at least 3"):
             factory.random_multi_pool_cycle(seed=42, num_pools=2)
 
-    def test_random_multi_pool_cycle_pool_types_mismatch(
-        self, factory: FixtureFactory
-    ) -> None:
+    def test_random_multi_pool_cycle_pool_types_mismatch(self, factory: FixtureFactory) -> None:
         """Test that pool_types length must match num_pools."""
         with pytest.raises(ValueError, match="must match"):
             factory.random_multi_pool_cycle(
