@@ -401,6 +401,177 @@ impl PyAlloyProvider {
 
         Ok(result_hb.into())
     }
+
+    /// Get the balance of an address in wei.
+    #[pyo3(signature = (address, block_number=None))]
+    fn get_balance(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block_number: Option<u64>,
+    ) -> PyResult<Py<PyAny>> {
+        // Parse the address (input validation → ValueError)
+        let addr = crate::address_utils::parse_address(address)
+            .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
+
+        let provider = Arc::clone(&self.provider);
+
+        // Release GIL during RPC call
+        let balance = py
+            .detach(|| {
+                get_runtime().block_on(async { provider.get_balance(&addr, block_number).await })
+            })
+            .map_err(Into::<PyErr>::into)?;
+
+        // Convert U256 to Python int
+        let py_int = crate::alloy_py::u256_to_py(py, &balance)?;
+
+        Ok(py_int.into())
+    }
+
+    /// Get the transaction count (nonce) for an address.
+    #[pyo3(signature = (address, block_number=None))]
+    fn get_transaction_count(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block_number: Option<u64>,
+    ) -> PyResult<u64> {
+        // Parse the address (input validation → ValueError)
+        let addr = crate::address_utils::parse_address(address)
+            .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
+
+        let provider = Arc::clone(&self.provider);
+
+        // Release GIL during RPC call
+        let count = py
+            .detach(|| {
+                get_runtime()
+                    .block_on(async { provider.get_transaction_count(&addr, block_number).await })
+            })
+            .map_err(Into::<PyErr>::into)?;
+
+        Ok(count)
+    }
+
+    /// Make a raw JSON-RPC request.
+    ///
+    /// This allows calling arbitrary RPC methods that don't have typed wrappers.
+    ///
+    /// # Arguments
+    /// * `method` - The RPC method name (e.g., "debug_traceTransaction")
+    /// * `params` - The parameters as a list (will be serialized to JSON array)
+    ///
+    /// # Returns
+    /// The raw result as a Python object (deserialized from JSON)
+    fn make_request<'py>(
+        &self,
+        py: Python<'py>,
+        method: &str,
+        params: Bound<'_, PyList>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        // Convert Python list to JSON array
+        let params_json = python_list_to_json(&params)?;
+
+        let method = method.to_string();
+        let provider = Arc::clone(&self.provider);
+
+        // Release GIL during RPC call
+        let result = py
+            .detach(|| {
+                get_runtime().block_on(async { provider.make_request(&method, params_json).await })
+            })
+            .map_err(Into::<PyErr>::into)?;
+
+        // Convert JSON result back to Python
+        let py_obj = json_to_py_with_hexbytes(py, result).map_err(|e| {
+            PyValueError::new_err(format!("Failed to convert result: {e}"))
+        })?;
+
+        Ok(py_obj)
+    }
+}
+
+/// Convert a Python list to a JSON array.
+fn python_list_to_json(list: &Bound<'_, PyList>) -> PyResult<serde_json::Value> {
+    let mut arr = Vec::new();
+    for item in list.iter() {
+        let json_val = python_to_json(&item)?;
+        arr.push(json_val);
+    }
+    Ok(serde_json::Value::Array(arr))
+}
+
+/// Convert a Python object to a JSON value.
+fn python_to_json(obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
+    use pyo3::types::PyBool;
+
+    // None -> null
+    if obj.is_none() {
+        return Ok(serde_json::Value::Null);
+    }
+
+    // bool (check before int since bool is subclass of int in Python)
+    if let Ok(b) = obj.cast::<PyBool>() {
+        return Ok(serde_json::Value::Bool(b.is_true()));
+    }
+
+    // int
+    if let Ok(i) = obj.extract::<i64>() {
+        return Ok(serde_json::Value::Number(i.into()));
+    }
+    // Large int (serialize as string for JSON, but Alloy handles it)
+    if let Ok(s) = obj.str() {
+        let s = s.to_string();
+        // Check if it looks like a number
+        if s.parse::<u128>().is_ok() || s.parse::<i128>().is_ok() {
+            // Return as number if it fits, otherwise as string
+            if let Ok(n) = s.parse::<i64>() {
+                return Ok(serde_json::Value::Number(n.into()));
+            }
+            // For larger numbers, return as string (JSON doesn't support arbitrary precision)
+            return Ok(serde_json::Value::String(s));
+        }
+    }
+
+    // float
+    if let Ok(f) = obj.extract::<f64>() {
+        if let Some(n) = serde_json::Number::from_f64(f) {
+            return Ok(serde_json::Value::Number(n));
+        }
+        return Ok(serde_json::Value::Null); // NaN/Inf -> null
+    }
+
+    // string
+    if let Ok(s) = obj.extract::<String>() {
+        return Ok(serde_json::Value::String(s));
+    }
+
+    // bytes -> hex string
+    if let Ok(b) = obj.cast::<PyBytes>() {
+        let hex = crate::hex_utils::encode_hex(b.as_bytes());
+        return Ok(serde_json::Value::String(hex));
+    }
+
+    // list
+    if let Ok(list) = obj.cast::<PyList>() {
+        return python_list_to_json(&list);
+    }
+
+    // dict
+    if let Ok(dict) = obj.cast::<pyo3::types::PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (key, val) in dict.iter() {
+            let key_str = key.extract::<String>()?;
+            let json_val = python_to_json(&val)?;
+            map.insert(key_str, json_val);
+        }
+        return Ok(serde_json::Value::Object(map));
+    }
+
+    // Fallback: convert to string
+    let s = obj.str()?.to_string();
+    Ok(serde_json::Value::String(s))
 }
 
 /// Add provider module to Python module.

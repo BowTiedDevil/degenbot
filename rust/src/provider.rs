@@ -671,6 +671,105 @@ impl AlloyProvider {
         })
         .await
     }
+
+    /// Get the balance of an address.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::RpcError` if the RPC call fails.
+    pub async fn get_balance(
+        &self,
+        address: &Address,
+        block_number: Option<u64>,
+    ) -> ProviderResult<U256> {
+        use alloy::eips::BlockNumberOrTag;
+
+        self.retry_with_backoff(|| async {
+            let result = if let Some(block) = block_number {
+                self.inner
+                    .get_balance(*address)
+                    .block_id(BlockNumberOrTag::Number(block).into())
+                    .await
+            } else {
+                self.inner.get_balance(*address).await
+            }
+            .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get balance"))?;
+
+            Ok(result)
+        })
+        .await
+    }
+
+    /// Get the transaction count (nonce) for an address.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::RpcError` if the RPC call fails.
+    pub async fn get_transaction_count(
+        &self,
+        address: &Address,
+        block_number: Option<u64>,
+    ) -> ProviderResult<u64> {
+        use alloy::eips::BlockNumberOrTag;
+
+        self.retry_with_backoff(|| async {
+            let result = if let Some(block) = block_number {
+                self.inner
+                    .get_transaction_count(*address)
+                    .block_id(BlockNumberOrTag::Number(block).into())
+                    .await
+            } else {
+                self.inner.get_transaction_count(*address).await
+            }
+            .map_err(|e| {
+                alloy_error_to_provider_error(&e, "Failed to get transaction count")
+            })?;
+
+            Ok(result)
+        })
+        .await
+    }
+
+    /// Make a raw JSON-RPC request.
+    ///
+    /// This method allows calling arbitrary RPC methods that don't have
+    /// typed wrappers, such as debug methods, trace methods, or node-specific APIs.
+    ///
+    /// # Arguments
+    /// * `method` - The RPC method name
+    /// * `params` - The parameters as a JSON value (typically an array)
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::RpcError` if the RPC call fails.
+    pub async fn make_request(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> ProviderResult<serde_json::Value> {
+        // Convert to Arc for sharing across retries
+        let method_owned = Arc::new(method.to_string());
+        let params_owned = Arc::new(params);
+
+        self.retry_with_backoff(|| {
+            let method = Arc::clone(&method_owned);
+            let params = Arc::clone(&params_owned);
+            async move {
+                // Get the client from the provider
+                let client = self.inner.client();
+
+                // Make the raw request - pass owned String which converts to Cow::Owned
+                let method_str = (*method).clone();
+                let result: serde_json::Value = client
+                    .request::<serde_json::Value, serde_json::Value>(method_str, (*params).clone())
+                    .await
+                    .map_err(|e| alloy_error_to_provider_error(&e, "RPC request failed"))?;
+
+                Ok(result)
+            }
+        })
+        .await
+    }
 }
 
 /// Log fetcher with fixed chunk sizing.
