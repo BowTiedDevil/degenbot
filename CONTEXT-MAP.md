@@ -2,15 +2,14 @@
 
 Module-level context files (terms, aliases, relationships, and ambiguity rulings):
 
-- [Pool Types, Managers & DEX Protocols](src/degenbot/types/CONTEXT.md) — Pool, Pool State, Reserves, Sqrt Price, Tick, Fee, Simulation, Pool Types by Invariant, Pool Manager, Pool Factory, Exchange Deployment, supported DEX protocols · Ambiguity rulings: Factory vs Pool Manager, Fee representations
+- [Pool Types, Managers & DEX Protocols](src/degenbot/types/CONTEXT.md) — Pool, Pool State, Reserves, Sqrt Price, Tick, Fee, Simulation, Pool Types by Invariant, Pool Manager, Pool Factory, Exchange Deployment, I/O-Free Architecture, Fetcher Protocol, supported DEX protocols · Ambiguity rulings: Factory vs Pool Manager, Fee representations
 - [Uniswap](src/degenbot/uniswap/CONTEXT.md) — V2/V3/V4 pools, concentrated liquidity, tick bitmaps, Pool Manager, Factory, Pool Init Hash, Pool Key, PoolManager contract · Ambiguity rulings: Pool vs Pool Manager vs PoolManager, Fee representations, Token ordering, Price vs Exchange Rate
 - [Tokens](src/degenbot/erc20/CONTEXT.md) — Token, Token0/Token1, Ether Placeholder, Wrapped Native Token, Chain ID
-- [Pool Registries](src/degenbot/registry/CONTEXT.md) — Pool Registry, Token Registry, Managed Pool Registry (classes, no module-level singletons)
-- [Arbitrage, Solvers & Adapters](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Arbitrage Path, Input/Profit Token & Amount, Swap Vector, Solver, Optimizer, Hop State, Pool Adapter · Ambiguity ruling: Solver vs Optimizer
+- [Pool Registries](src/degenbot/registry/CONTEXT.md) — Pool Registry, Token Registry, Managed Pool Registry (class instances owned by Bot, no module-level singletons) · Ambiguity ruling: Registry vs Manager
+- [Arbitrage, Solvers & Adapters](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Arbitrage Path, Input/Profit Token & Amount, Swap Vector, Solver, Optimizer, Hop State, Pool Adapter, Pool Cache Adapter · Ambiguity ruling: Solver vs Optimizer
 - [Aave](src/degenbot/aave/CONTEXT.md) — Market, Asset, Reserve, Collateral, Debt, aToken/vToken, GHO, Health Factor, Liquidation, Scaled/Raw Amount, Index, Enrichment, Processor, E-Mode, Isolation Mode
-- [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — I/O-free pool architecture, Fetcher Protocols, Metapools, Base Pools, Lending Pools, Crypto Pools, A Coefficient, Stored Rates, Virtual Price · Ambiguity rulings: Coin vs Token, Rate units, Lending detection methods
-- [Infrastructure](src/degenbot/connection/CONTEXT.md) — Anvil Fork, Provider, Connection Manager, Pool State Message, Bot Session
-- [Curve StableSwap Manager](src/degenbot/curve/managers.py) — CurveStableswapPoolManager, pool tracking and discovery
+- [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — I/O-free pool architecture, Fetcher Protocols (VirtualPrice, Timestamp, Redemption, AdminBalances, D, Gamma, PriceScale), provider_call, Metapools, Base Pools, Lending Pools, Crypto Pools, Dynamic Fees, A Coefficient, Stored Rates, Virtual Price, CurveStableswapPoolManager · Ambiguity rulings: Coin vs Token, Rate units, Lending detection methods, provider_call vs typed fetchers, Crypto pool vs Stableswap pool
+- [Infrastructure](src/degenbot/connection/CONTEXT.md) — Anvil Fork, Provider, Connection Manager, Pool State Message, Bot · Ambiguity ruling: ConnectionManager class vs connection_manager module
 
 ## Instructions
 
@@ -23,15 +22,16 @@ Module-level context files (terms, aliases, relationships, and ambiguity rulings
 
 ## Cross-module relationships
 
+- **Bot** owns all session state: Connection Manager, Pool Registry, Token Registry, Managed Pool Registry, config, database
 - A **Pool Registry** (class, owned by Bot) indexes all **Pools** across all chains; a **Token Registry** indexes all **Tokens**
 - A **Managed Pool Registry** indexes **V4 Pools** by (chain ID, PoolManager address, Pool ID)
-- **Bot** owns all session state: connections, pools, tokens, config, database
 - An **Arbitrage Cycle** contains an ordered sequence of **Pools** that form a closed token loop
 - A **Pool Adapter** translates a **Pool** into a **Hop State** for a **Solver**
-- An **ArbPoolCacheAdapter** subscribes to **Pool State Messages** and auto-updates the Rust cache
+- A **Pool Cache Adapter** subscribes to **Pool State Messages** and auto-registers both reserve orientations in the Rust solver cache
 - An **Arbitrage Path** subscribes to **Pool State Messages**
 - An **Aave Market** contains many **Assets**, each wrapping an **Erc20Token** plus lending state
 - A **Curve Pool Manager** tracks **Curve StableSwap Pools** and delegates construction to **Bot**
+- **Fetcher Callbacks** are injected into **Curve Pools** by **Bot.build_curve_pool()**; pools never access connections directly
 
 Module-internal relationships are documented in each module's context file.
 
@@ -68,11 +68,25 @@ A **Token** is just the ERC-20 contract (address, symbol, decimals) — no lendi
 - ✅ "The USDC **Asset** has a borrow rate of 3%" (Aave lending state)
 - ❌ "The asset address is 0xA0b8…" (use **Token** address)
 
+### 4. Singleton (removed) vs Class instance
+
+**Ruling: All former module-level singletons have been removed. Always refer to class instances owned by Bot.**
+
+The following were previously module-level singletons; they are now classes instantiated and owned by Bot:
+- `ConnectionManager` / `AsyncConnectionManager` — formerly `connection_manager` / `async_connection_manager`
+- `PoolRegistry` / `TokenRegistry` / `ManagedPoolRegistry` — formerly `pool_registry` / `token_registry` / `managed_pool_registry`
+- `DatabaseSessionManager` — formerly `db_session`
+- `Config` — formerly `config` (LazyConfig proxy)
+
+- ✅ "Create a `ConnectionManager` instance and pass it to Bot"
+- ✅ "Bot's `connections` attribute is a `ConnectionManager`"
+- ❌ "Import the connection_manager" (the module-level singleton no longer exists)
+
 ## Example dialogue
 
 > **Dev:** "I'm adding a new DEX pool type. Should I register it in the **Pool Registry** directly or go through a **Pool Manager**?"
 >
-> **Domain expert:** "Create a **Pool Manager** subclass for that DEX's **Exchange Deployment**. The **Pool Manager** handles discovery and tracking — it's the off-chain helper. The **Factory** is the on-chain contract that actually creates the **Pools**. The **Pool Registry** is just an index — **Pools** get added there automatically when they're created by the manager."
+> **Domain expert:** "Create a **Pool Manager** subclass for that DEX's **Exchange Deployment**. The **Pool Manager** handles discovery and tracking — it's the off-chain helper. The **Factory** is the on-chain contract that actually creates the **Pools**. The **Pool Registry** is just an index owned by **Bot** — **Pools** get added there automatically when they're created by the manager."
 >
 > **Dev:** "What about V4 pools that don't have their own contract address?"
 >
