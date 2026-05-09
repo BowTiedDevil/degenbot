@@ -29,6 +29,7 @@
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
 | **Pool Adapter** | A protocol object that translates a specific pool type into solver-compatible Hop State, extracts fees, and builds Swap Amounts | Adapter, bridge |
+| **Pool Cache Adapter** | A subscriber that auto-registers pools in the Rust solver cache on state updates, eliminating manual cache management | ArbPoolCacheAdapter, cache adapter |
 | **Pool Compatibility** | An enum indicating whether a pool can participate in an arbitrage path (COMPATIBLE, INCOMPATIBLE_INVARIANT, INCOMPATIBLE_TOKENS) | — |
 
 ## Relationships
@@ -37,6 +38,7 @@
 - An **Arbitrage Path** wraps a sequence of pools with a **Solver** and subscribes to **Pool State Messages**
 - A **Swap Vector** describes the direction of a single hop within an **Arbitrage Path**
 - A **Pool Adapter** translates a **Pool** into a **Hop State** for a **Solver**
+- A **Pool Cache Adapter** subscribes to **Pool State Messages** and auto-registers forward and reverse orientations in the Rust pool cache
 
 ## Resolved ambiguities
 

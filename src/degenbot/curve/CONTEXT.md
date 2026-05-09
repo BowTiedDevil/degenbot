@@ -2,7 +2,7 @@
 
 ## Overview
 
-Curve StableSwap pools are optimized AMMs for price-pegged assets (stablecoins, liquid staking derivatives, yield-bearing tokens). The degenbot implementation follows an **I/O-free architecture** where on-chain data fetching is decoupled via injected callback protocols.
+Curve StableSwap pools are optimized AMMs for price-pegged assets (stablecoins, liquid staking derivatives, yield-bearing tokens). The degenbot implementation follows an **I/O-free architecture** where on-chain data fetching is decoupled via injected callback protocols. All pool types (stableswap, metapool, lending, and crypto) are fully I/O-free.
 
 ## Pool Types
 
@@ -12,7 +12,7 @@ Curve StableSwap pools are optimized AMMs for price-pegged assets (stablecoins, 
 | **Metapool** | A Stableswap pool where one coin is another pool's LP token (typically 3Crv), enabling nested liquidity | Meta pool, nested pool |
 | **Base Pool** | The underlying pool whose LP token is used as a coin in a metapool (e.g., 3Crv tripool) | Underlying pool, parent pool |
 | **Lending Pool** | A pool containing interest-bearing tokens (cTokens, yTokens) requiring rate conversion to underlying | cToken pool, Compound pool |
-| **Crypto Pool** | A Stableswap pool with volatile assets (e.g., Tricrypto) using dynamic fees (fee_gamma, mid_fee, out_fee) | Volatile pool, crypto-stable pool |
+| **Crypto Pool** | A Curve pool with volatile assets (e.g., Tricrypto) using dynamic fees and Newton's method for y-calculation | Volatile pool, crypto-stable pool |
 | **Plain Pool** | A simple Stableswap pool with 2-8 plain ERC-20 tokens (no lending rates, no base pool) | Direct pool, standard pool |
 
 ## Pool State Parameters
@@ -20,7 +20,7 @@ Curve StableSwap pools are optimized AMMs for price-pegged assets (stablecoins, 
 | Term | Definition | Notes |
 |------|------------|-------|
 | **A Coefficient** | The amplification parameter controlling price slippage in the StableSwap invariant | Can ramp over time between A and future_A |
-| **D** | The invariant value representing total pool liquidity when all tokens have equal value | Used in `_get_y()` calculations |
+| **D** | The invariant value representing total pool liquidity when all tokens have equal value | For crypto pools, fetched on-chain via D_fetcher |
 | **Virtual Price** | The price of pool LP token relative to underlying; increases with fees | Used by metapools to value base pool LP tokens |
 | **Stored Rates** | The exchange rates for lending tokens (cTokens, yTokens) to their underlying assets | Updated per-block via fetcher callbacks |
 | **Precision Multipliers** | Scaling factors for token decimals to normalize calculations (10^(18 - decimals)) | For cTokens, use **underlying token decimals**, not cToken decimals |
@@ -32,13 +32,39 @@ The I/O-free architecture uses **fetcher callbacks** injected at construction. T
 
 | Protocol | Purpose | Called When |
 |----------|---------|-------------|
-| **RateFetcher** | Fetch lending token rates (cToken/yToken → underlying) | Pool has cTokens (isCToken) or yTokens |
 | **VirtualPriceFetcher** | Fetch base pool virtual price | Pool is a metapool (is_meta is True) |
 | **TimestampFetcher** | Fetch block timestamp for given block | A coefficient ramping calculations |
 | **RedemptionPriceFetcher** | Fetch LSD redemption price (e.g., stETH, frxETH) | Pool wraps liquid staking derivatives |
 | **AdminBalancesFetcher** | Fetch admin fee balances | Pool uses admin balance tracking |
+| **DFetcher** | Fetch on-chain invariant D | Crypto pool y-calculation |
+| **GammaFetcher** | Fetch on-chain gamma parameter | Crypto pool dynamic fee calculation |
+| **PriceScaleFetcher** | Fetch on-chain price_scale values | Crypto pool multi-asset price normalization |
+
+In addition to typed fetcher protocols, two low-level I/O callbacks exist:
+
+| Callback | Purpose |
+|----------|---------|
+| **provider_call** | Raw `(to, data, block) -> bytes` closure wrapping `w3.eth.call()`; used by `_stored_rates_from_*()` methods for type-specific rate logic (cToken accrual, yToken PPS, aETH ratio, oracle method) |
+| **block_number_fetcher** | Returns current block number when `block_identifier` is None |
 
 **Key Principle:** Fetchers decouple on-chain I/O from pool logic. `Bot.build_curve_pool()` injects these callbacks; `CurveStableswapPool` calls them on-demand without managing connections directly.
+
+## Crypto Pool Details
+
+Crypto pools (e.g., Tricrypto USDT-WBTC-WETH) use a fundamentally different calculation path from stableswap pools:
+
+| Component | Purpose | I/O Required |
+|-----------|---------|--------------|
+| **D** | Current invariant value | Fetched on-chain via `DFetcher` |
+| **gamma** | Curve shape parameter | Fetched on-chain via `GammaFetcher` |
+| **price_scale** | Current prices of volatile assets | Fetched on-chain via `PriceScaleFetcher` |
+| **_newton_y()** | Newton's method solver for y | Pure math (no I/O) |
+| **_reduction_coefficient()** | Fee reduction based on imbalance | Pure math (no I/O) |
+| **Dynamic fee** | Interpolation between mid_fee and out_fee using fee_gamma | Uses pool state (no I/O) |
+
+**Dynamic fee formula:** `fee_calc = (mid_fee * f + out_fee * (10^18 - f)) / 10^18`, where `f = _reduction_coefficient(xp, fee_gamma)`.
+
+**Crypto pool detection:** A pool with `fee_gamma > 0` is identified as a crypto pool during `Bot.build_curve_pool()`. This triggers creation of the D, gamma, and price_scale fetchers.
 
 ## Detection Heuristics
 
@@ -56,7 +82,10 @@ The I/O-free architecture uses **fetcher callbacks** injected at construction. T
 |------------|------------------|-----------------|
 | **cToken** | `isCToken()` returns True | Avoids false positives from `exchangeRateStored()` (WETH responds but isn't lending) |
 | **yToken** | `token()` method returns underlying | More reliable than `getPricePerFullShare()` which WETH also responds to |
-| **Plain Token** | Neither check succeeds | No rate conversion needed |
+| **cyToken** | `isCToken()` + `token()` both return underlying | Yearn vault tokens that are also Compound tokens |
+| **aETH** | Detected by `rate()` method returning ETH ratio | Lido-style staking wrappers |
+| **rETH** | Detected by specific oracle method check | Rocket Pool token |
+| **Plain Token** | None of the above checks succeed | No rate conversion needed |
 
 ### Coin Indexing
 
@@ -83,20 +112,25 @@ This is fetched via `underlying()` contract call + `decimals()` on the underlyin
 | **fee_gamma** | Fee curve parameter adjusting fees based on imbalance | Pool contract `fee_gamma()` |
 | **mid_fee** | Mid-range fee percentage | Pool contract `mid_fee()` |
 | **out_fee** | Outlier fee percentage at extreme imbalance | Pool contract `out_fee()` |
-| **price_scale** | Current price of volatile assets | Pool contract `price_scale()` or `price_oracle()` |
-| **price_oracle** | Exponential moving average price | Pool contract `price_oracle()` |
-
-**Note:** Dynamic fee calculation uses `fee_gamma` to interpolate between `mid_fee` and `out_fee` based on price deviation from `price_scale`.
+| **gamma** | Curve shape parameter for CryptoSwap invariant | Pool contract `gamma()` |
+| **price_scale** | Current price of volatile assets | Pool contract `price_scale(uint256)` |
+| **offpeg_fee_multiplier** | Fee multiplier for off-peg swaps in some lending pools | Pool contract `offpeg_fee_multiplier()` |
 
 ## Error Types
 
 | Exception | When Raised |
 |-----------|-------------|
 | **CurveError** | Base class for all Curve-specific errors |
-| **MissingCurveData** | Required on-chain data unavailable via fetchers |
+| **MissingCurveData** | Required on-chain data unavailable via fetchers (e.g., D_fetcher is None for a crypto pool) |
 | **BrokenPool** | Pool has < 2 tokens or returns invalid data |
 | **InvalidSwapInputAmount** | Swap amount exceeds available liquidity |
 | **NoLiquidity** | Pool has zero reserves for the requested direction |
+
+## Pool Manager
+
+| Term | Definition | Aliases to avoid |
+|------|------------|------------------|
+| **CurveStableswapPoolManager** | A pool manager that tracks Curve StableSwap pools and delegates construction to Bot | Curve manager |
 
 ## Relationships
 
@@ -106,6 +140,8 @@ This is fetched via `underlying()` contract call + `decimals()` on the underlyin
 - A **Pool State** includes balances, rates, and virtual price at a specific block
 - A **Fetcher** is injected per-pool by **Bot.build_curve_pool()**
 - **A Coefficient** ramping uses **TimestampFetcher** to calculate time-weighted values
+- A **Crypto Pool** uses **DFetcher**, **GammaFetcher**, and **PriceScaleFetcher** for y-calculation and dynamic fees
+- A **CurveStableswapPoolManager** tracks Curve pools and delegates construction/query to **Bot**
 
 ## Resolved Ambiguities
 
@@ -149,3 +185,15 @@ The metapool's coins include the base pool LP token; the virtual price of that L
 **Ruling:** A ramping uses **block timestamps**, not block numbers, for time calculations.
 
 The pool contract stores `initial_A_time` and `future_A_time` as Unix timestamps. Use `TimestampFetcher` to get the current block's timestamp for interpolation.
+
+### 7. provider_call vs typed fetchers
+
+**Ruling:** Use **provider_call** for low-level rate-fetching logic that needs pool-type-specific contract decoding. Use **typed fetcher protocols** (DFetcher, etc.) for direct valued returns.
+
+`provider_call` exists because the `_stored_rates_from_*()` methods each have unique decoding logic (cToken supply rate accrual, yToken PPS, aETH ratio inversion, oracle bitmask). A generic typed fetcher can't handle all these cases. For straightforward single-value fetches (D, gamma, price_scale), typed protocols are preferred.
+
+### 8. Crypto pool vs Stableswap pool
+
+**Ruling:** **Crypto pool** is a Curve pool subclass using the CryptoSwap invariant (dynamic fees, Newton's method). **Stableswap pool** uses the standard x·y·D invariant. Both are represented by `CurveStableswapPool` — the difference is internal dispatch in `get_dy()`.
+
+Don't call crypto pools "volatile pools" (that term is used for Aerodrome constant-product pools).
