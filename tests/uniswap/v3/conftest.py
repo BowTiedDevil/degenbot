@@ -60,8 +60,6 @@ def load_v3_liquidity_data(data_file: Path, pool_address: str) -> dict | None:
 def offline_provider() -> OfflineProvider:
     """Provide an offline provider with recorded chain data."""
     data_file = CHAIN_DATA_PATH / "1" / f"block_{UNISWAP_V3_WBTC_WETH_BLOCK}.json"
-    if not data_file.exists():
-        pytest.skip(f"Offline data file not found: {data_file}")
 
     return OfflineProvider.from_json_file(data_file)
 
@@ -80,9 +78,6 @@ def offline_wbtc_weth_v3_pool(offline_adapter: ProviderAdapter) -> UniswapV3Pool
     # Load tick data from recorded file
     data_file = CHAIN_DATA_PATH / "1" / f"block_{UNISWAP_V3_WBTC_WETH_BLOCK}.json"
     liquidity_data = load_v3_liquidity_data(data_file, UNISWAP_V3_WBTC_WETH_POOL)
-
-    if not liquidity_data:
-        pytest.skip("V3 liquidity data not found in recorded file")
 
     tick_bitmap = liquidity_data.get("tick_bitmap", {})
     tick_data = liquidity_data.get("tick_data", {})
