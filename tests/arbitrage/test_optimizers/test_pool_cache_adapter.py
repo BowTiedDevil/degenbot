@@ -1,17 +1,12 @@
 """Tests for ArbPoolCacheAdapter — auto-registers pools in Rust cache on state update."""
 
-from fractions import Fraction
-from typing import Any
 from unittest.mock import MagicMock
-
-import pytest
 
 from degenbot.anvil_fork import AnvilFork
 
 
 def test_adapter_exists() -> None:
     """ArbPoolCacheAdapter is importable."""
-    from degenbot.arbitrage.optimizers.pool_cache_adapter import ArbPoolCacheAdapter
 
 
 def test_adapter_subscribes_to_pool() -> None:
