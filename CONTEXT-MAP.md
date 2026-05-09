@@ -5,11 +5,12 @@ Module-level context files (terms, aliases, relationships, and ambiguity rulings
 - [Pool Types, Managers & DEX Protocols](src/degenbot/types/CONTEXT.md) — Pool, Pool State, Reserves, Sqrt Price, Tick, Fee, Simulation, Pool Types by Invariant, Pool Manager, Pool Factory, Exchange Deployment, supported DEX protocols · Ambiguity rulings: Factory vs Pool Manager, Fee representations
 - [Uniswap](src/degenbot/uniswap/CONTEXT.md) — V2/V3/V4 pools, concentrated liquidity, tick bitmaps, Pool Manager, Factory, Pool Init Hash, Pool Key, PoolManager contract · Ambiguity rulings: Pool vs Pool Manager vs PoolManager, Fee representations, Token ordering, Price vs Exchange Rate
 - [Tokens](src/degenbot/erc20/CONTEXT.md) — Token, Token0/Token1, Ether Placeholder, Wrapped Native Token, Chain ID
-- [Pool Registries](src/degenbot/registry/CONTEXT.md) — Pool Registry, Token Registry, Managed Pool Registry
+- [Pool Registries](src/degenbot/registry/CONTEXT.md) — Pool Registry, Token Registry, Managed Pool Registry (classes, no module-level singletons)
 - [Arbitrage, Solvers & Adapters](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Arbitrage Path, Input/Profit Token & Amount, Swap Vector, Solver, Optimizer, Hop State, Pool Adapter · Ambiguity ruling: Solver vs Optimizer
 - [Aave](src/degenbot/aave/CONTEXT.md) — Market, Asset, Reserve, Collateral, Debt, aToken/vToken, GHO, Health Factor, Liquidation, Scaled/Raw Amount, Index, Enrichment, Processor, E-Mode, Isolation Mode
 - [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — I/O-free pool architecture, Fetcher Protocols, Metapools, Base Pools, Lending Pools, Crypto Pools, A Coefficient, Stored Rates, Virtual Price · Ambiguity rulings: Coin vs Token, Rate units, Lending detection methods
-- [Infrastructure](src/degenbot/connection/CONTEXT.md) — Anvil Fork, Provider, Connection Manager, Pool State Message
+- [Infrastructure](src/degenbot/connection/CONTEXT.md) — Anvil Fork, Provider, Connection Manager, Pool State Message, Bot Session
+- [Curve StableSwap Manager](src/degenbot/curve/managers.py) — CurveStableswapPoolManager, pool tracking and discovery
 
 ## Instructions
 
@@ -22,12 +23,15 @@ Module-level context files (terms, aliases, relationships, and ambiguity rulings
 
 ## Cross-module relationships
 
-- A **Pool Registry** indexes all **Pools** across all chains; a **Token Registry** indexes all **Tokens**
+- A **Pool Registry** (class, owned by Bot) indexes all **Pools** across all chains; a **Token Registry** indexes all **Tokens**
 - A **Managed Pool Registry** indexes **V4 Pools** by (chain ID, PoolManager address, Pool ID)
+- **Bot** owns all session state: connections, pools, tokens, config, database
 - An **Arbitrage Cycle** contains an ordered sequence of **Pools** that form a closed token loop
 - A **Pool Adapter** translates a **Pool** into a **Hop State** for a **Solver**
+- An **ArbPoolCacheAdapter** subscribes to **Pool State Messages** and auto-updates the Rust cache
 - An **Arbitrage Path** subscribes to **Pool State Messages**
 - An **Aave Market** contains many **Assets**, each wrapping an **Erc20Token** plus lending state
+- A **Curve Pool Manager** tracks **Curve StableSwap Pools** and delegates construction to **Bot**
 
 Module-internal relationships are documented in each module's context file.
 
