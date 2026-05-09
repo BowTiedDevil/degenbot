@@ -182,9 +182,6 @@ def test_rust_vs_python_performance():
     """Compare Rust vs Python implementation if both available."""
     solver = PiecewiseMobiusSolver()
 
-    if solver._rust_optimizer is None:
-        pytest.skip("Rust optimizer not available")
-
     ranges = (
         V3TickRangeInfo(
             tick_lower=0,

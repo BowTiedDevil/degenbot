@@ -141,16 +141,6 @@ def test_erc20token_without_price_feed(weth: Erc20Token):
         _ = weth.price
 
 
-@pytest.mark.skip(reason="Erc20Token is now I/O-free, use Bot methods for RPC calls")
-def test_erc20token_functions(weth: Erc20Token):
-    pass
-
-
-@pytest.mark.skip(reason="Erc20Token is now I/O-free, use Bot methods for async RPC calls")
-async def test_async_erc20_functions(fork_mainnet_full: AnvilFork, weth: Erc20Token):
-    pass
-
-
 def test_ether_placeholder(fork_mainnet_full: AnvilFork):
     ether = EtherPlaceholder(ZERO_ADDRESS)
 

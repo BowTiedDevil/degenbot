@@ -35,8 +35,6 @@ V2_BLOCK_NUMBER = 24945920
 def offline_provider() -> OfflineProvider:
     """Provide an offline provider with recorded chain data."""
     data_file = CHAIN_DATA_PATH / "1" / f"block_{V2_BLOCK_NUMBER}.json"
-    if not data_file.exists():
-        pytest.skip(f"Offline data file not found: {data_file}")
 
     return OfflineProvider.from_json_file(data_file)
 

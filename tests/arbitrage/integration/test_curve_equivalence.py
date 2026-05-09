@@ -313,11 +313,3 @@ def test_curve_fork_equivalence(fork_mainnet_full: AnvilFork) -> None:
         }
     )
     assert legacy_result.profit_amount > 0
-
-    # New system — ArbitragePath requires ArbitrageCapablePool. CurveStableswapPool
-    # provides to_hop_state but is not checked as ArbitrageCapablePool. Skip the
-    # new-system comparison until pool compatibility is resolved.
-    pytest.skip(
-        "CurveStableswapPool is not yet compatible with ArbitragePath "
-        "(needs ArbitrageCapablePool protocol check or pool wrapper)"
-    )
