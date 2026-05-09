@@ -13,16 +13,6 @@ from degenbot.types.concrete import PoolStateMessage
 # on-demand data fetching while keeping the pool class I/O-free.
 
 
-class RateFetcher(Protocol):
-    """Fetch rates for lending tokens (cTokens, yTokens, etc.) at a given block.
-
-    Returns rates for all pool tokens in the same order as pool.tokens.
-    Non-lending tokens return PRECISION (10^18).
-    """
-
-    def __call__(self, block_number: int) -> tuple[int, ...]: ...
-
-
 class VirtualPriceFetcher(Protocol):
     """Fetch virtual price from a base pool at a given block.
 
@@ -54,6 +44,35 @@ class AdminBalancesFetcher(Protocol):
     """Fetch admin balances for the pool at a given block.
 
     Used by pools that track accumulated admin fees separately.
+    """
+
+    def __call__(self, block_number: int) -> tuple[int, ...]: ...
+
+
+class DFetcher(Protocol):
+    """Fetch the invariant D for a crypto pool at a given block.
+
+    Used by crypto (volatile) Curve pools that need the on-chain D value
+    instead of computing it locally.
+    """
+
+    def __call__(self, block_number: int) -> int: ...
+
+
+class GammaFetcher(Protocol):
+    """Fetch the gamma parameter for a crypto pool at a given block.
+
+    Used by crypto (volatile) Curve pools for dynamic fee calculation.
+    """
+
+    def __call__(self, block_number: int) -> int: ...
+
+
+class PriceScaleFetcher(Protocol):
+    """Fetch price_scale values for a crypto pool at a given block.
+
+    Returns a tuple of (n_coins - 1) price scale values.
+    Used by crypto (volatile) Curve pools for multi-asset price normalization.
     """
 
     def __call__(self, block_number: int) -> tuple[int, ...]: ...

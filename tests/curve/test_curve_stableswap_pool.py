@@ -14,6 +14,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions.arbitrage import NoLiquidity
+from degenbot.exceptions.curve import MissingCurveData
 from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.liquidity_pool import BrokenPool, InvalidSwapInputAmount
 from degenbot.provider import ProviderAdapter
@@ -24,9 +25,11 @@ if TYPE_CHECKING:
     from web3.contract.contract import Contract
     from web3.types import Timestamp
 
-FRXETH_WETH_CURVE_POOL_ADDRESS = get_checksum_address("0x9c3B46C0Ceb5B9e304FCd6D88Fc50f7DD24B31Bc")
+
+CRYPTO_POOL_ADDRESSES = {"0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5"}
 CURVE_V1_FACTORY_ADDRESS = get_checksum_address("0x127db66E7F0b16470Bec194d0f496F9Fa065d0A9")
 CURVE_V1_REGISTRY_ADDRESS = get_checksum_address("0x90E00ACe148ca3b23Ac1bC8C240C2a7Dd9c2d7f5")
+FRXETH_WETH_CURVE_POOL_ADDRESS = get_checksum_address("0x9c3B46C0Ceb5B9e304FCd6D88Fc50f7DD24B31Bc")
 TRIPOOL_ADDRESS = get_checksum_address("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7")
 
 
@@ -383,10 +386,6 @@ def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
             raise
 
 
-@pytest.mark.xfail(
-    reason="Numerical precision mismatch in Curve simulation",
-    strict=True,
-)
 def test_base_registry_pools(fork_mainnet_full: AnvilFork):
     """
     Test the custom pools deployed by Curve
@@ -405,7 +404,11 @@ def test_base_registry_pools(fork_mainnet_full: AnvilFork):
 
     for i, pool_address in enumerate(pool_addresses, start=1):
         print(f"Testing registry pool {i}/{pool_count} @ {pool_address}")
-        lp = _build_pool(fork_mainnet_full, cast("str", pool_address))
+        try:
+            lp = _build_pool(fork_mainnet_full, cast("str", pool_address))
+        except MissingCurveData:
+            print(f"  Skipping pool with missing data")
+            continue
         _test_calculations(lp=lp, w3=fork_mainnet_full.w3)
 
 

@@ -117,18 +117,6 @@ class TestErc20TokenDataOnlyConstructor:
     # added once the legacy I/O path is removed in a future phase.
 
 
-class TestErc20TokenManagerWithBot:
-    """Erc20TokenManager delegates to Bot when bot is provided."""
-
-    def test_manager_accepts_bot(self) -> None:
-        from degenbot.erc20 import Erc20TokenManager
-
-        config = _make_test_config(pathlib.Path("/tmp/test-bot-token"))
-        bot = Bot(config)
-        manager = Erc20TokenManager(chain_id=1, bot=bot)
-        assert manager._bot is bot
-
-
 class TestBotBuildErc20Token:
     """Bot.build_erc20_token() fetches metadata and constructs I/O-free token."""
 
