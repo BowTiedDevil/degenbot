@@ -26,6 +26,7 @@ from degenbot.database.models.aave import (
     AaveV3Asset,
     AaveV3AssetConfig,
     AaveV3Contract,
+    AaveV3DebtPosition,
     AaveV3EModeCategory,
     AaveV3Market,
     AaveV3User,
@@ -921,6 +922,48 @@ def _process_scaled_token_upgrade_event(
                 f"GHO discount mechanism deprecated at revision {vtoken_revision}. "
                 "Set GHO discounts to 0"
             )
+
+            # Re-sync all GHO debt positions from the contract since the scaled balance
+            # calculation may differ between V3 (with discount) and V4 (without discount)
+            gho_debt_positions = tx_context.session.execute(
+                select(AaveV3DebtPosition).where(
+                    AaveV3DebtPosition.asset_id == aave_debt_asset.id,
+                    AaveV3DebtPosition.balance != 0,
+                )
+            ).scalars().all()
+
+            if gho_debt_positions:
+                gho_vtoken_address = get_checksum_address(gho_asset.v_token.address)
+                block_number = event["blockNumber"]
+
+                for position in gho_debt_positions:
+                    (actual_scaled_balance,) = raw_call(
+                        provider=tx_context.provider,
+                        address=gho_vtoken_address,
+                        calldata=encode_function_calldata(
+                            function_prototype="scaledBalanceOf(address)",
+                            function_arguments=[position.user.address],
+                        ),
+                        return_types=["uint256"],
+                        block_identifier=block_number,
+                    )
+                    (actual_last_index,) = raw_call(
+                        provider=tx_context.provider,
+                        address=gho_vtoken_address,
+                        calldata=encode_function_calldata(
+                            function_prototype="getPreviousIndex(address)",
+                            function_arguments=[position.user.address],
+                        ),
+                        return_types=["uint256"],
+                        block_identifier=block_number,
+                    )
+                    position.balance = actual_scaled_balance
+                    position.last_index = actual_last_index
+
+                logger.info(
+                    f"Re-synced {len(gho_debt_positions)} GHO debt positions "
+                    f"after vToken upgrade to revision {vtoken_revision}"
+                )
 
     else:
         assert_never()
