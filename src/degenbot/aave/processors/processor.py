@@ -342,10 +342,7 @@ class UnifiedGhoProcessor:
 
         if event_data.value >= event_data.balance_increase:
             # GHO BORROW: emitted in _mintScaled
-            #
-            # For GHO with discount support, always calculate from event data
-            # because the discount must be applied. The scaled_amount field is
-            # only used for V4+ where discount is deprecated.
+            # For all GHO revisions, always calculate from event data.
             requested_amount = event_data.value - event_data.balance_increase
             balance_delta = self._ray_div(
                 a=requested_amount,
@@ -449,9 +446,9 @@ class UnifiedGhoProcessor:
         """
         Process a GHO debt burn event.
         """
-        # For GHO with discount support, always calculate from event data
-        # because the discount must be applied. The scaled_amount field is
-        # only used for V4+ where discount is deprecated.
+        # For all GHO revisions, always calculate from event data.
+        # The scaled_amount field is not used for GHO because GHO has its own
+        # calculation logic that differs from standard debt tokens.
         #
         # uint256 amountToBurn = amount - balanceIncrease;
         requested_amount = event_data.value + event_data.balance_increase
@@ -491,15 +488,19 @@ class UnifiedGhoProcessor:
             # Matches Solidity: _burn(user, (amountScaled + discountScaled).toUint128())
             balance_delta = -(amount_scaled + discount_scaled)
         else:
-            # No discount (V4+): use scaled_amount if provided
-            if event_data.scaled_amount is not None:
-                return GhoScaledTokenBurnResult(
-                    balance_delta=-event_data.scaled_amount,
-                    new_index=event_data.index,
-                    discount_scaled=0,
-                    should_refresh_discount=False,
-                )
-            balance_delta = -amount_scaled
+            # No discount (V4+): check for full repayment
+            wad_ray = self._math_libs["wad_ray"]
+            balance_before_burn = wad_ray.ray_mul(
+                a=previous_balance,
+                b=event_data.index,
+            )
+
+            if requested_amount == balance_before_burn:
+                # Full repayment: burn all scaled balance
+                balance_delta = -previous_balance
+            else:
+                # Partial repayment
+                balance_delta = -amount_scaled
 
         # For GHO with discount, always refresh after balance-changing operations
         should_refresh_discount = self._discount.supports_discount
