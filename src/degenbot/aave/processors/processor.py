@@ -342,15 +342,16 @@ class UnifiedGhoProcessor:
 
         if event_data.value >= event_data.balance_increase:
             # GHO BORROW: emitted in _mintScaled
-            if event_data.scaled_amount is not None:
-                balance_delta = event_data.scaled_amount
-            else:
-                requested_amount = event_data.value - event_data.balance_increase
-                balance_delta = self._ray_div(
-                    a=requested_amount,
-                    b=event_data.index,
-                    mode=self._rounding.mint_rounding,
-                )
+            #
+            # For GHO with discount support, always calculate from event data
+            # because the discount must be applied. The scaled_amount field is
+            # only used for V4+ where discount is deprecated.
+            requested_amount = event_data.value - event_data.balance_increase
+            balance_delta = self._ray_div(
+                a=requested_amount,
+                b=event_data.index,
+                mode=self._rounding.mint_rounding,
+            )
 
             if self._discount.supports_discount:
                 if balance_delta > discount_scaled:
@@ -448,15 +449,10 @@ class UnifiedGhoProcessor:
         """
         Process a GHO debt burn event.
         """
-        # Use pre-calculated scaled amount from Pool contract if available
-        if event_data.scaled_amount is not None:
-            return GhoScaledTokenBurnResult(
-                balance_delta=-event_data.scaled_amount,
-                new_index=event_data.index,
-                discount_scaled=0,
-                should_refresh_discount=self._discount.supports_discount,
-            )
-
+        # For GHO with discount support, always calculate from event data
+        # because the discount must be applied. The scaled_amount field is
+        # only used for V4+ where discount is deprecated.
+        #
         # uint256 amountToBurn = amount - balanceIncrease;
         requested_amount = event_data.value + event_data.balance_increase
 
@@ -495,7 +491,14 @@ class UnifiedGhoProcessor:
             # Matches Solidity: _burn(user, (amountScaled + discountScaled).toUint128())
             balance_delta = -(amount_scaled + discount_scaled)
         else:
-            # No discount (V4+)
+            # No discount (V4+): use scaled_amount if provided
+            if event_data.scaled_amount is not None:
+                return GhoScaledTokenBurnResult(
+                    balance_delta=-event_data.scaled_amount,
+                    new_index=event_data.index,
+                    discount_scaled=0,
+                    should_refresh_discount=False,
+                )
             balance_delta = -amount_scaled
 
         # For GHO with discount, always refresh after balance-changing operations
