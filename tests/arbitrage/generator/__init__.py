@@ -8,6 +8,14 @@ from .types import (
     V4PoolGenerationConfig,
 )
 
+# Hypothesis strategies are imported lazily to avoid requiring hypothesis
+# as a dependency for all test imports
+
+def get_hypothesis_strategies():
+    """Import and return hypothesis strategies module."""
+    from . import hypothesis_strategies
+    return hypothesis_strategies
+
 __all__ = (
     "ArbitrageCycleFixture",
     "ArbitrageFixtureConfig",
@@ -17,4 +25,5 @@ __all__ = (
     "PriceDiscrepancyConfig",
     "V3PoolGenerationConfig",
     "V4PoolGenerationConfig",
+    "get_hypothesis_strategies",
 )
