@@ -73,6 +73,7 @@ Some pool types (e.g., Curve StableSwap) follow an **I/O-free architecture** whe
 | **I/O Decoupling** | Pool class has no direct provider/connection dependencies; all I/O flows through injected fetchers |
 | **PoolFamily** | An enum identifying a pool's mathematical invariant family for type resolution: `CONSTANT_PRODUCT`, `CONCENTRATED_LIQUIDITY`, `STABLESWAP`, `WEIGHTED`. Renamed from the former `PoolInvariant` in this module to avoid confusion with the solver-dispatch `PoolInvariant` in `types/hop_types.py` (Plan 020) |
 | **CacheablePool** | A protocol for pools that register with the Rust solver cache, requiring `reserves_for_cache()` and `fee_for_cache()` methods (Plan 019) |
+| **V4PoolKey** | A frozen dataclass carrying the V4 pool identification struct (`currency0`, `currency1`, `fee`, `tick_spacing`, `hooks`); stored on `UniswapV4PoolSwapAmounts` and used by custom PayloadComposers for V4 dispatch (Plan 021) |
 
 **Benefits:**
 - **Testability**: Fake fetchers enable unit testing without network I/O

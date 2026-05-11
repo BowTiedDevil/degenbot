@@ -30,8 +30,11 @@
 | ---- | ---------- | ---------------- |
 | **Pool Adapter** | A protocol object that translates a specific pool type into solver-compatible Hop State, extracts fees, and builds Swap Amounts | Adapter, bridge |
 | **Pool Cache Adapter** | A subscriber that auto-registers pools in the Rust solver cache on state updates, eliminating manual cache management; uses **CacheablePool** protocol methods instead of `getattr` introspection (Plan 019) | ArbPoolCacheAdapter, cache adapter |
-| **SwapEncoder** | A standalone module for encoding swap calldata (V2 `swap()`, V3 `exactInput()`, ERC-20 `approve()`) from `SwapAmounts`; extracted from the legacy `UniswapLpCycle` (Plan 021) | Calldata builder, payload encoder |
-| **Pool Compatibility** | An enum indicating whether a pool can participate in an arbitrage path (COMPATIBLE, INCOMPATIBLE_INVARIANT, INCOMPATIBLE_TOKENS) | — |
+| **SwapEncoder** | The swap encoding layer: each `SwapAmounts` subclass has an `encode()` method that produces an `EncodedCall` for its pool type. The pipeline function `generate_payloads()` wires encoding → approval → composition | Calldata builder, payload encoder |
+| **EncodedCall** | A minimal EVM call fragment (`to`, `data`, `value`) ready for on-chain submission; produced by `SwapAmounts.encode()` | Payload, call tuple |
+| **ApprovalStrategy** | A pluggable protocol that injects ERC-20 approval calls before swap calls; default `NoApprovals` adds none; library callers implement custom strategies (e.g. `ExactApproval`, `UnlimitedApproval`, `Permit2Approval`) | Approval injection |
+| **PayloadComposer** | A pluggable protocol that composes a list of `EncodedCall`s into the format a target contract expects; default `FlatComposer` returns the list as-is; library callers implement custom composers (e.g. `Multicall3Composer`, custom executor wrappers) | Call composition, multicall wrapper |
+| **V4PoolKey** | A frozen dataclass carrying the V4 pool identification struct (`currency0`, `currency1`, `fee`, `tick_spacing`, `hooks`); stored on `UniswapV4PoolSwapAmounts` and used by custom PayloadComposers for V4 dispatch | Pool key, V4 key |
 
 ## Relationships
 
@@ -40,7 +43,9 @@
 - A **Swap Vector** describes the direction of a single hop within an **Arbitrage Path**
 - A **Pool Adapter** translates a **Pool** into a **Hop State** for a **Solver**
 - A **Pool Cache Adapter** subscribes to **Pool State Messages** and auto-registers forward and reverse orientations in the Rust pool cache; uses **CacheablePool** protocol
-- A **SwapEncoder** produces encoded swap calldata from **Swap Amounts** for on-chain execution
+- **Swap Amounts** carry per-pool swap parameters and know how to `encode()` themselves into **EncodedCall**s
+- `generate_payloads()` wires **Swap Amounts** → per-hop `encode()` → **ApprovalStrategy** injection → **PayloadComposer** composition → final `list[EncodedCall]`
+- A **V4PoolKey** lives on `UniswapV4PoolSwapAmounts` and is available to custom **PayloadComposers** for V4's unlock/swap callback dispatch
 
 ## Resolved ambiguities
 
