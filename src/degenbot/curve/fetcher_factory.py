@@ -99,6 +99,32 @@ class CurveFetcherFactory:
 
         return fetcher
 
+    def base_cache_updated_fetcher(
+        self, pool_address: ChecksumAddress
+    ) -> Any:
+        """Create a base_cache_updated fetcher closure for a Curve metapool.
+
+        Calls base_cache_updated() on the metapool contract, which returns the
+        timestamp when the base pool virtual price cache was last updated.
+        """
+        chain_id = self._chain_id
+
+        def fetcher(block_number: int) -> int:
+            w3 = self._connections.get_web3(chain_id)
+            (bcu,) = eth_abi.abi.decode(
+                types=["uint256"],
+                data=w3.eth.call(
+                    TxParams(
+                        to=pool_address,
+                        data=Web3.keccak(text="base_cache_updated()")[:4],
+                    ),
+                    block_identifier=block_number,
+                ),
+            )
+            return bcu
+
+        return fetcher
+
     def timestamp_fetcher(self) -> Any:
         """Create a timestamp fetcher closure for a Curve pool."""
         chain_id = self._chain_id
