@@ -2,10 +2,10 @@
 
 Module-level context files (terms, aliases, relationships, and ambiguity rulings):
 
-- [Pool Types, Managers & DEX Protocols](src/degenbot/types/CONTEXT.md) — Pool, Pool State, Reserves, Sqrt Price, Tick, Fee, Simulation, Pool Types by Invariant, Pool Manager, Pool Factory, Exchange Deployment, I/O-Free Architecture, Fetcher Protocol, supported DEX protocols · Ambiguity rulings: Factory vs Pool Manager, Fee representations
+- [Pool Types, Managers & DEX Protocols](src/degenbot/types/CONTEXT.md) — Pool, Pool State, Reserves, Sqrt Price, Tick, Fee, Simulation, Pool Types by Invariant, PoolFamily, Pool Type Descriptor, Pool Manager, Pool Factory, Exchange Deployment, I/O-Free Architecture, Fetcher Protocol, CacheablePool Protocol, supported DEX protocols · Ambiguity rulings: Factory vs Pool Manager, Fee representations
 - [Uniswap](src/degenbot/uniswap/CONTEXT.md) — V2/V3/V4 pools, concentrated liquidity, tick bitmaps, Pool Manager, Factory, Pool Init Hash, Pool Key, PoolManager contract · Ambiguity rulings: Pool vs Pool Manager vs PoolManager, Fee representations, Token ordering, Price vs Exchange Rate
 - [Tokens](src/degenbot/erc20/CONTEXT.md) — Token, Token0/Token1, Ether Placeholder, Wrapped Native Token, Chain ID
-- [Pool Registries](src/degenbot/registry/CONTEXT.md) — Pool Registry, Token Registry, Managed Pool Registry (class instances owned by Bot, no module-level singletons) · Ambiguity ruling: Registry vs Manager
+- [Pool Registries](src/degenbot/registry/CONTEXT.md) — Pool Registry, Token Registry, Managed Pool Registry (class instances owned by Bot), Pool Type Registry (module-level singleton, factory→class + identity + deployment data, replaces old Pool Class Registry) · Ambiguity rulings: Registry vs Manager, Pool Class Registry vs Pool Type Registry
 - [Arbitrage, Solvers & Adapters](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Arbitrage Path, Input/Profit Token & Amount, Swap Vector, Solver, Optimizer, Hop State, Pool Adapter, Pool Cache Adapter · Ambiguity ruling: Solver vs Optimizer
 - [Aave](src/degenbot/aave/CONTEXT.md) — Market, Asset, Reserve, Collateral, Debt, aToken/vToken, GHO, Health Factor, Liquidation, Scaled/Raw Amount, Index, Enrichment, Processor, E-Mode, Isolation Mode
 - [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — I/O-free pool architecture, Fetcher Protocols (VirtualPrice, Timestamp, Redemption, AdminBalances, D, Gamma, PriceScale), provider_call, Metapools, Base Pools, Lending Pools, Crypto Pools, Dynamic Fees, A Coefficient, Stored Rates, Virtual Price, CurveStableswapPoolManager · Ambiguity rulings: Coin vs Token, Rate units, Lending detection methods, provider_call vs typed fetchers, Crypto pool vs Stableswap pool
@@ -23,6 +23,8 @@ Module-level context files (terms, aliases, relationships, and ambiguity rulings
 ## Cross-module relationships
 
 - **Bot** owns all session state: Connection Manager, Pool Registry, Token Registry, Managed Pool Registry, config, database
+- **Bot.build_pool()** resolves the pool type automatically via DB `kind` column, Pool Type Registry, or on-chain probing, then dispatches to typed builders
+- A **Pool Type Registry** (module-level singleton) maps (chain ID, factory address) → pool class + identity + deployment data; each DEX module self-registers at import time; auto-derives invariant, variant, and kind from the class
 - A **Pool Registry** (class, owned by Bot) indexes all **Pools** across all chains; a **Token Registry** indexes all **Tokens**
 - A **Managed Pool Registry** indexes **V4 Pools** by (chain ID, PoolManager address, Pool ID)
 - An **Arbitrage Cycle** contains an ordered sequence of **Pools** that form a closed token loop
@@ -32,6 +34,9 @@ Module-level context files (terms, aliases, relationships, and ambiguity rulings
 - An **Aave Market** contains many **Assets**, each wrapping an **Erc20Token** plus lending state
 - A **Curve Pool Manager** tracks **Curve StableSwap Pools** and delegates construction to **Bot**
 - **Fetcher Callbacks** are injected into **Curve Pools** by **Bot.build_curve_pool()**; pools never access connections directly
+- V2/V3/V4/Aerodrome **Pools** are I/O-free at construction — **Builders** fetch all data from DB/RPC and pass values; residual `ProviderAdapter`-taking methods are being removed (Plan 017)
+- **PoolFamily** (identity enum, `types/pool_type.py`) maps to **PoolInvariant** (solver-dispatch enum, `types/hop_types.py`) at the pool→solver seam; Plan 020 tracks the rename
+- **CacheablePool** protocol (`reserves_for_cache()`, `fee_for_cache()`) enables **Pool Cache Adapter** registration without `getattr` introspection (Plan 019)
 
 Module-internal relationships are documented in each module's context file.
 
@@ -78,8 +83,11 @@ The following were previously module-level singletons; they are now classes inst
 - `DatabaseSessionManager` — formerly `db_session`
 - `Config` — formerly `config` (LazyConfig proxy)
 
+**Exception:** The `PoolTypeRegistry` (`pool_type_registry`) is a module-level singleton. This is intentional: the (chain ID, factory address) → class + identity + deployment data mapping is global knowledge that does not vary between Bot instances. This replaces the former `PoolClassRegistry` (removed), `FACTORY_DEPLOYMENTS` lookups, `_KIND_TO_DESCRIPTOR`, and `_variant_from_class()`, consolidating all five into a single `register()` call.
+
 - ✅ "Create a `ConnectionManager` instance and pass it to Bot"
 - ✅ "Bot's `connections` attribute is a `ConnectionManager`"
+- ✅ "The `pool_type_registry` maps SushiSwap's factory to `SushiswapV2Pool`"
 - ❌ "Import the connection_manager" (the module-level singleton no longer exists)
 
 ## Example dialogue
@@ -88,9 +96,13 @@ The following were previously module-level singletons; they are now classes inst
 >
 > **Domain expert:** "Create a **Pool Manager** subclass for that DEX's **Exchange Deployment**. The **Pool Manager** handles discovery and tracking — it's the off-chain helper. The **Factory** is the on-chain contract that actually creates the **Pools**. The **Pool Registry** is just an index owned by **Bot** — **Pools** get added there automatically when they're created by the manager."
 >
+> **Dev:** "And when someone calls `bot.build_pool(address)`, how does it know which subclass to use?"
+>
+> **Domain expert:** "The type resolver checks three sources in order. First, the database `kind` column — if the pool was persisted, it knows the exact subclass. Second, the **Pool Type Registry** — each DEX module registers its factory addresses at import time, so the resolver maps factory → class. Third, if neither source matches, it probes the contract on-chain — tries `slot0()` for concentrated-liquidity, `getReserves()` for constant-product. This all happens inside `build_pool` automatically."
+>
 > **Dev:** "What about V4 pools that don't have their own contract address?"
 >
-> **Domain expert:** "V4 pools live inside a **PoolManager** contract and are identified by **Pool ID**, not address. The **Pool Registry** delegates V4 lookups to the **Managed Pool Registry**, which keys by (chain ID, PoolManager address, Pool ID). You'll need to set up the **Pool Adapter** so the **Solver** can convert the V4 pool into a **Hop State**."
+> **Domain expert:** "V4 pools live inside a **PoolManager** contract and are identified by **Pool ID**, not address. Call `build_pool(address, pool_id=...)` — the `pool_id` argument is the V4 discriminator. Without it, `address` is treated as a pool contract."
 >
 > **Dev:** "And for the **Arbitrage Cycle**, I just add the V4 pool to `swap_pools`?"
 >

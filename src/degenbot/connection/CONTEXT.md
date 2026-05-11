@@ -6,7 +6,7 @@
 | **Provider** | An adapter wrapping an RPC connection for blockchain reads (sync or async) | RPC client, web3 |
 | **Connection Manager** | A class managing provider instances keyed by chain ID; instances owned by Bot | Connection |
 | **Pool State Message** | A publisher/subscriber message notifying that a pool's state has changed | State update message |
-| **Bot** | The central session class that owns all I/O, registries, config, and database connections; single entry point for all pool and token operations | Bot session |
+| **Bot** | The central session class that owns all I/O, registries, config, and database connections; single entry point for all pool and token operations; resolves pool types automatically via `build_pool()`; delegates I/O orchestration to typed **Builders** | Bot session |
 
 ## Relationships
 

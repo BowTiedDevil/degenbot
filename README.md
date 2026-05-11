@@ -128,13 +128,15 @@ print(f"Output: {amount_out}")
 
 ### I/O-Free Architecture
 
-Degenbot pools follow an **I/O-free architecture** where on-chain data is fetched at construction time and injected into pool objects. After construction, pools are pure calculation objects with no network dependencies.
+Degenbot pools follow an **I/O-free architecture** where on-chain data is fetched at construction time and injected into pool objects. After construction, pools are pure calculation objects with no network dependencies. Construction is handled by typed **Builder** classes (`V2PoolBuilder`, `V3PoolBuilder`, `V4PoolBuilder`, `CurvePoolBuilder`, `Erc20Builder`) that own the full I/O choreography: DB lookup → RPC fetch → decode → construct pool → register.
 
 **Benefits:**
 - **Testability**: Easy to create test fixtures with mocked data
 - **Performance**: Swap calculations are pure math, no network calls
 - **Reliability**: No async complexity in pool logic
 - **State Management**: Pools can be snapshotted, pickled, and restored
+
+**Current status:** Curve pools are fully I/O-free (fetcher callbacks for on-demand data). V2/V3/V4/Aerodrome pools are I/O-free at construction, with residual provider-dependent methods being removed (see Plan 017).
 
 ### The Bot Class
 
@@ -157,7 +159,10 @@ approval = bot.get_token_approval(token, owner="0x...", spender="0x...")
 - `bot.connections` - ConnectionManager for RPC providers
 - `bot.pools` - PoolRegistry for created pools
 - `bot.tokens` - TokenRegistry for created tokens
+- `bot.managed_pools` - ManagedPoolRegistry for V4 pools
 - `bot.db` - DatabaseSessionManager for state snapshots
+
+Builders are internal to Bot and not exposed publicly. All pool/token creation goes through Bot's `build_*` methods.
 
 ### Pool Types and Builders
 

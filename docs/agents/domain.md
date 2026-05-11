@@ -51,6 +51,23 @@ When working with Curve pools or other I/O-free features, use these terms as def
 **Incorrect**: "the pool fetches rates from the provider"
 **Correct**: "the pool calls its injected RateFetcher callback"
 
+## Enum Naming: PoolFamily vs PoolInvariant
+
+Two enums cover related but distinct concepts:
+
+- **`PoolFamily`** (in `types/pool_type.py`) — identifies a pool's mathematical invariant family for type resolution and DB kind derivation. Values: `CONSTANT_PRODUCT`, `CONCENTRATED_LIQUIDITY`, `STABLESWAP`, `WEIGHTED`.
+- **`PoolInvariant`** (in `types/hop_types.py`) — identifies the solver dispatch path for arbitrage optimization. Values: `CONSTANT_PRODUCT`, `BOUNDED_PRODUCT`, `SOLIDLY_STABLE`, `CURVE_STABLESWAP`, `BALANCER_WEIGHTED`, `BALANCER_MULTI_TOKEN`.
+
+A `PoolFamily` maps 1:1 to `PoolInvariant` for V2/V3, but N:1 for Curve/Stable and Balancer/Weighted.
+
+**Incorrect**: "`PoolInvariant.CONCENTRATED_LIQUIDITY`" (in solver context — use `BOUNDED_PRODUCT`)
+**Correct**: "`PoolFamily.CONCENTRATED_LIQUIDITY`" for pool identity, "`PoolInvariant.BOUNDED_PRODUCT`" for solver dispatch
+
+## Pool Protocol Terms
+
+- **`CacheablePool`** — a protocol for pools that register with the Rust solver cache, requiring `reserves_for_cache()` and `fee_for_cache()` methods
+- **`SwapEncoder`** — a standalone module for encoding swap calldata from `SwapAmounts`
+
 ## Flag ADR conflicts
 
 If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:

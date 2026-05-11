@@ -74,15 +74,28 @@ All pool and token creation flows through the `Bot` class. `Bot` owns registries
 ```python
 # Correct: Bot handles I/O and injects data into I/O-free pools
 bot = degenbot.Bot.from_config_file()
-pool = bot.build_v3_pool("0x...")  # Fetches data, returns ready-to-use pool
+pool = bot.build_pool("0x...")  # Auto-resolves pool type from DB, registry, or on-chain probing
 token = bot.build_erc20token("0x...")  # Fetches metadata, registers in token registry
 ```
 
 **Don't** instantiate pools directly from classes in new code — that's the **deprecated singleton pattern**.
 
-### Fetcher Protocols (Curve)
+#### Type Resolution
 
-Curve pools use **fetcher callbacks** for I/O-free operation. The `Bot` creates these closures and injects them at pool construction:
+`build_pool(address)` automatically determines the concrete pool subclass by consulting these sources in order:
+
+1. **Pool Registry** — return the existing pool if already built this session
+2. **Database `kind` column** — the polymorphic identity (e.g., `sushiswap_v2`) directly identifies the invariant and variant
+3. **Pool Type Registry** — a module-level singleton mapping `(chain_id, factory_address) → pool class + identity + deployment data`; each DEX module self-registers at import time via `pool_type_registry.register()`
+4. **On-chain probing** — fallback: call `slot0()`, `getReserves()`, or `coins()` to identify the invariant
+
+V4 pools are identified by passing `pool_id` to `build_pool(address, pool_id=...)`, which routes to `build_v4_pool`.
+
+Typed builders (`build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`) remain public for callers who already know the type.
+
+### Fetcher Protocols
+
+**Curve pools** use **fetcher callbacks** for fully I/O-free operation — all on-chain data access flows through injected closures:
 
 ```python
 # Bot creates fetcher closures (handles I/O internally)
@@ -90,7 +103,21 @@ Curve pools use **fetcher callbacks** for I/O-free operation. The `Bot` creates 
 pool = bot.build_curve_pool("0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7")
 ```
 
+**V2/V3/V4/Aerodrome pools** are I/O-free at construction — builders fetch all data from DB/RPC, pass it to the pool constructor, and no provider references remain on the pool object. The update path currently still reaches through the builder (Plan 017 tracks completion of this migration).
+
 See `docs/architecture/io-free-pools.md` and `src/degenbot/curve/CONTEXT.md` for details.
+
+### Enum Naming: PoolFamily vs PoolInvariant
+
+Two enums cover related but distinct concepts:
+- **`PoolFamily`** (in `types/pool_type.py`) — identifies a pool's mathematical invariant family for type resolution and DB kind derivation. Values: `CONSTANT_PRODUCT`, `CONCENTRATED_LIQUIDITY`, `STABLESWAP`, `WEIGHTED`.
+- **`PoolInvariant`** (in `types/hop_types.py`) — identifies the solver dispatch path for arbitrage optimization. Values: `CONSTANT_PRODUCT`, `BOUNDED_PRODUCT`, `SOLIDLY_STABLE`, `CURVE_STABLESWAP`, `BALANCER_WEIGHTED`, `BALANCER_MULTI_TOKEN`.
+
+A `PoolFamily` maps 1:1 to `PoolInvariant` for V2/V3, but N:1 for Curve/Stable and Balancer/Weighted (e.g., `STABLESWAP` → `CURVE_STABLESWAP` or `SOLIDLY_STABLE`). See Plan 020 for the migration from the previous dual `PoolInvariant` naming.
+
+### CacheablePool Protocol
+
+Pools that register with the Rust solver cache implement the `CacheablePool` protocol, providing `reserves_for_cache()` and `fee_for_cache()` methods. This replaces `getattr`-based introspection in the adapter (Plan 019).
 
 ## Agent skills
 
@@ -105,6 +132,20 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 ### Domain docs
 
 Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` files. See `docs/agents/domain.md`.
+
+## Architecture Plans
+
+Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Key active plans:
+
+| # | Plan | Summary |
+|---|------|---------|
+| 017 | Complete I/O-Free Migration for V2/V3/V4/Aerodrome Pools | Remove all `ProviderAdapter`-taking methods from pool classes. Completes ADR-001 Phase 3. |
+| 018 | Decompose CurvePoolBuilder.build() into Detection Sub-Modules | Break 400-line `build()` into 5 focused detectors. |
+| 020 | Unify the Dual PoolInvariant Enum | Rename identity-level enum to `PoolFamily`. |
+| 019 | Replace ArbPoolCacheAdapter getattr Chain with Protocol Methods | Add `reserves_for_cache()` / `fee_for_cache()` to pool protocol. |
+| 021 | Extract SwapEncoder from UniswapLpCycle | Standalone swap calldata encoding module. |
+
+See `plans/README.md` for the full list with dependencies and recommended implementation order.
 
 ## Solidity
 

@@ -102,22 +102,27 @@ class VirtualPriceFetcher(Protocol):
 
 ## Migration Path
 
-### Phase 1: Fetcher Protocols (Curve)
+### Phase 1: Fetcher Protocols (Curve) ✅
 - Define protocols in `types.py`
 - Add fetcher parameters to constructor
 - Keep old I/O paths as fallback for backwards compatibility
 
-### Phase 2: Bot Integration
+### Phase 2: Bot Integration ✅
 - `Bot.build_curve_pool()` creates closures and injects them
 - Remove provider from pool constructor
+- Builder extraction complete (`CurvePoolBuilder`)
 
-### Phase 3: Other Pool Types
+### Phase 3: Other Pool Types 🔄
+- V2/V3/V4/Aerodrome construction is I/O-free (builders fetch data, pass to constructors)
+- Residual `ProviderAdapter`-taking methods still on pool classes (`get_reserves()`, `get_immutable_pool_values()`, `from_chain` classmethods)
+- Plan 017 tracks the removal of these methods
 - Repeat for Uniswap V2/V3/V4, Aerodrome, etc.
 
-### Phase 4: Cleanup
-- Remove singleton `ConnectionManager`
+### Phase 4: Cleanup 🔄
+- Remove residual provider-dependent methods from pool classes
 - Deprecate direct pool instantiation
 - Update all tests to use `Fake*` fetchers
+- `PoolFamily`/`PoolInvariant` enum naming resolved (Plan 020)
 
 ## Testing Patterns
 
