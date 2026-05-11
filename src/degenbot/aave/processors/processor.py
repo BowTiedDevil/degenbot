@@ -342,13 +342,33 @@ class UnifiedGhoProcessor:
 
         if event_data.value >= event_data.balance_increase:
             # GHO BORROW: emitted in _mintScaled
-            # For all GHO revisions, always calculate from event data.
-            requested_amount = event_data.value - event_data.balance_increase
-            balance_delta = self._ray_div(
-                a=requested_amount,
-                b=event_data.index,
-                mode=self._rounding.mint_rounding,
-            )
+            #
+            # For V5+ (no discount, CEIL/FLOOR rounding), prefer the
+            # pre-calculated scaled_amount from the enrichment layer.
+            # It is computed via TokenMath which matches the on-chain rayDiv
+            # exactly for V5+. Deriving from Mint event fields introduces 1-wei
+            # rounding errors because `balanceIncrease` is itself rounded
+            # from rayMul, making `value - balanceIncrease` an approximation
+            # of the raw borrow amount.
+            #
+            # For V4 and V1-V3, do NOT use scaled_amount because the
+            # enrichment layer calculates it using pool-level TokenMath
+            # (CEIL/FLOOR for V4+ pools) which differs from GHO V4's
+            # HALF_UP rounding. For those revisions, derive from event data
+            # using the processor's own rounding mode.
+            if (
+                not self._discount.supports_discount
+                and self._rounding.mint_rounding == RoundingMode.CEIL
+                and event_data.scaled_amount is not None
+            ):
+                balance_delta = event_data.scaled_amount
+            else:
+                requested_amount = event_data.value - event_data.balance_increase
+                balance_delta = self._ray_div(
+                    a=requested_amount,
+                    b=event_data.index,
+                    mode=self._rounding.mint_rounding,
+                )
 
             if self._discount.supports_discount:
                 if balance_delta > discount_scaled:
@@ -453,12 +473,29 @@ class UnifiedGhoProcessor:
         # uint256 amountToBurn = amount - balanceIncrease;
         requested_amount = event_data.value + event_data.balance_increase
 
-        # uint256 amountScaled = amount.rayDiv(index);
-        amount_scaled = self._ray_div(
-            a=requested_amount,
-            b=event_data.index,
-            mode=self._rounding.burn_rounding,
-        )
+        # Calculate amount_scaled from either the pre-calculated enrichment
+        # value (V5+, no discount, FLOOR burn rounding) or by deriving from
+        # event fields.
+        #
+        # For V5+ (no discount, FLOOR burn rounding), prefer the pre-calculated
+        # scaled_amount from the enrichment layer to avoid 1-wei rounding errors.
+        # The enrichment uses TokenMath which matches V5+ on-chain calculations.
+        #
+        # For V4 and V1-V3, do NOT use scaled_amount because the enrichment
+        # layer uses pool-level TokenMath (which differs from V4 GHO's HALF_UP).
+        if (
+            not self._discount.supports_discount
+            and self._rounding.burn_rounding == RoundingMode.FLOOR
+            and event_data.scaled_amount is not None
+        ):
+            amount_scaled = event_data.scaled_amount
+        else:
+            # uint256 amountScaled = amount.rayDiv(index);
+            amount_scaled = self._ray_div(
+                a=requested_amount,
+                b=event_data.index,
+                mode=self._rounding.burn_rounding,
+            )
 
         # Accrue debt with discount (stateless - doesn't mutate position)
         discount_scaled = self.accrue_debt_on_action(
