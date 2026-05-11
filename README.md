@@ -132,7 +132,7 @@ Degenbot pools follow an **I/O-free architecture** where on-chain data is fetche
 - **Reliability**: No async complexity in pool logic
 - **State Management**: Pools can be snapshotted, pickled, and restored
 
-**Current status:** Curve pools are fully I/O-free (fetcher callbacks for on-demand data). V2/V3/V4/Aerodrome pools are I/O-free at construction with all updates flowing through `external_update()`. Residual provider-dependent methods (`get_reserves()`, `get_immutable_pool_values()`, `from_chain`) remain on pool classes pending removal (see Plan 017).
+**Current status:** Curve pools are fully I/O-free (fetcher callbacks for on-demand data). V2/V3/V4/Aerodrome pools are I/O-free at construction with all updates flowing through `external_update()`. Residual provider-dependent methods (`get_reserves()`, `get_immutable_pool_values()`, `from_chain`) remain on pool classes pending removal.
 
 ### The Bot Class
 
