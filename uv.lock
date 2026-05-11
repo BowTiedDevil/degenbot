@@ -7,7 +7,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-04-27T19:06:13.244813989Z"
+exclude-newer = "2026-04-27T22:19:43.46559067Z"
 exclude-newer-span = "P14D"
 
 [[package]]
@@ -697,6 +697,7 @@ dev = [
     { name = "pytest-xdist" },
     { name = "python-dotenv" },
     { name = "ruff" },
+    { name = "sybil" },
 ]
 
 [package.metadata]
@@ -730,6 +731,7 @@ dev = [
     { name = "pytest-xdist" },
     { name = "python-dotenv" },
     { name = "ruff" },
+    { name = "sybil" },
 ]
 
 [[package]]
@@ -2189,6 +2191,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e5/c3/c80fcdb41905a2df650c2a3e0337198b6848876e63d66fe9188ef9003d24/sqlalchemy-2.0.49-cp314-cp314t-win32.whl", hash = "sha256:6270d717b11c5476b0cbb21eedc8d4dbb7d1a956fd6c15a23e96f197a6193158", size = 2149151, upload-time = "2026-04-03T17:02:07.281Z" },
     { url = "https://files.pythonhosted.org/packages/05/52/9f1a62feab6ed368aff068524ff414f26a6daebc7361861035ae00b05530/sqlalchemy-2.0.49-cp314-cp314t-win_amd64.whl", hash = "sha256:275424295f4256fd301744b8f335cff367825d270f155d522b30c7bf49903ee7", size = 2184178, upload-time = "2026-04-03T17:02:08.623Z" },
     { url = "https://files.pythonhosted.org/packages/e5/30/8519fdde58a7bdf155b714359791ad1dc018b47d60269d5d160d311fdc36/sqlalchemy-2.0.49-py3-none-any.whl", hash = "sha256:ec44cfa7ef1a728e88ad41674de50f6db8cfdb3e2af84af86e0041aaf02d43d0", size = 1942158, upload-time = "2026-04-03T16:53:44.135Z" },
+]
+
+[[package]]
+name = "sybil"
+version = "10.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/de/2b/5ee5ef413b87f215c03cd08462dc341903b86707e517e20715823c984893/sybil-10.0.1.tar.gz", hash = "sha256:319eed013ebe848f8c57ce79c1ed526e506d952c778693979bc509513ae72a68", size = 80120, upload-time = "2026-03-26T08:56:30.942Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/41/f3/4f2a8069d212a33bccc88be13b5bdad61f810054f6c21c6da3aa25fb38d0/sybil-10.0.1-py3-none-any.whl", hash = "sha256:0030d8583d5ce97969397d303db1f17054f61b23f18469c0ac61f9f42735571c", size = 40316, upload-time = "2026-03-26T08:56:29.502Z" },
 ]
 
 [[package]]

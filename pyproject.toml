@@ -211,6 +211,7 @@ dev = [
     "pytest",
     "python-dotenv",
     "ruff",
+    "sybil",
 ]
 
 [tool.uv]
