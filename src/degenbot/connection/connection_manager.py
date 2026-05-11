@@ -106,21 +106,6 @@ class ConnectionManager:
 
         self.connections[provider.chain_id] = provider
 
-    def register_web3(
-        self,
-        w3: Web3,
-        *,
-        optimize: bool = True,
-    ) -> None:
-        """Register a Web3 instance (legacy method, wraps in ProviderAdapter).
-
-        Args:
-            w3: The Web3 instance to register
-            optimize: Whether to optimize the Web3 instance
-        """
-        provider = ProviderAdapter.from_web3(w3)
-        self.register_provider(provider, optimize=optimize)
-
     def set_default_chain(self, chain_id: ChainId) -> None:
         self._default_chain_id = chain_id
 
