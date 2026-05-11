@@ -5,16 +5,9 @@ Tests convergence and correctness for 3+ pool arbitrage cycles.
 """
 
 from fractions import Fraction
-from typing import TYPE_CHECKING, Literal, cast
 
-import cvxpy
-import cvxpy.settings
 import hypothesis
 import hypothesis.strategies as st
-import numpy as np
-import pytest
-from cvxpy.atoms.affine.bmat import bmat as cvxpy_bmat
-from cvxpy.atoms.geo_mean import geo_mean
 
 from degenbot.arbitrage.uniswap_multipool_cycle_testing import _UniswapMultiPoolCycleTesting
 from degenbot.checksum_cache import get_checksum_address
@@ -23,15 +16,9 @@ from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from tests.arbitrage.generator.fixtures import FixtureFactory
 from tests.arbitrage.generator.hypothesis_strategies import (
     liquidity_depth_strategy,
-    num_pools_strategy,
-    price_ratio_strategy,
     seed_strategy,
 )
 from tests.fakes.pools import MockLiquidityPool
-
-if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
-
 
 # ==============================================================================
 # Test Fixtures

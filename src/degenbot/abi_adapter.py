@@ -37,9 +37,6 @@ from degenbot.utils.bytes import HexBytesLike, to_bytes
 # Type alias for bytes-like data
 type BytesLike = HexBytesLike
 
-# Note: _ensure_bytes is aliased to to_bytes from utils.bytes for backwards compatibility
-_ensure_bytes = to_bytes
-
 
 class AbiBackend(Enum):
     """Available backends for ABI operations."""
@@ -173,7 +170,7 @@ class AbiAdapter:
     ) -> tuple[Any, ...]:
         """Decode using the Rust backend."""
         # Convert HexBytes to bytes if needed
-        data_bytes = _ensure_bytes(data)
+        data_bytes = to_bytes(data)
         try:
             result = rs_decode(types=list(types), data=data_bytes, checksum=checksum)
         except ValueError as e:
@@ -188,7 +185,7 @@ class AbiAdapter:
     def _decode_eth_abi(types: Sequence[str], data: BytesLike) -> tuple[Any, ...]:
         """Decode using the eth_abi backend."""
         # eth_abi requires plain bytes
-        data_bytes = _ensure_bytes(data)
+        data_bytes = to_bytes(data)
         try:
             return eth_abi.abi.decode(types=list(types), data=data_bytes)
         except EthAbiDecodingError as e:
@@ -230,7 +227,7 @@ class AbiAdapter:
     ) -> Any:  # noqa: ANN401 - return type depends on abi_type
         """Decode a single value using the Rust backend."""
         # Convert HexBytes to bytes if needed
-        data_bytes = _ensure_bytes(data)
+        data_bytes = to_bytes(data)
         try:
             return rs_decode_single(abi_type=abi_type, data=data_bytes, checksum=checksum)
         except ValueError as e:
@@ -243,7 +240,7 @@ class AbiAdapter:
     def _decode_single_eth_abi(abi_type: str, data: BytesLike) -> Any:  # noqa: ANN401
         """Decode a single value using the eth_abi backend."""
         # eth_abi requires plain bytes
-        data_bytes = _ensure_bytes(data)
+        data_bytes = to_bytes(data)
         try:
             (result,) = eth_abi.abi.decode(types=[abi_type], data=data_bytes)
         except EthAbiDecodingError as e:
@@ -346,7 +343,7 @@ def decode(
 
     if backend == AbiBackend.RUST:
         # Convert HexBytes to bytes if needed
-        data_bytes = _ensure_bytes(data)
+        data_bytes = to_bytes(data)
         try:
             result = rs_decode(types=list(types), data=data_bytes, checksum=checksum)
         except ValueError as e:
@@ -359,7 +356,7 @@ def decode(
 
     if backend == AbiBackend.ETH_ABI:
         # eth_abi requires plain bytes
-        data_bytes = _ensure_bytes(data)
+        data_bytes = to_bytes(data)
         try:
             return eth_abi.abi.decode(types=list(types), data=data_bytes)
         except EthAbiDecodingError as e:
@@ -393,7 +390,7 @@ def decode_single(
 
     if backend == AbiBackend.RUST:
         # Convert HexBytes to bytes if needed
-        data_bytes = _ensure_bytes(data)
+        data_bytes = to_bytes(data)
         try:
             return rs_decode_single(abi_type=abi_type, data=data_bytes, checksum=checksum)
         except ValueError as e:
@@ -404,7 +401,7 @@ def decode_single(
 
     if backend == AbiBackend.ETH_ABI:
         # eth_abi requires plain bytes
-        data_bytes = _ensure_bytes(data)
+        data_bytes = to_bytes(data)
         try:
             (result,) = eth_abi.abi.decode(types=[abi_type], data=data_bytes)
         except EthAbiDecodingError as e:

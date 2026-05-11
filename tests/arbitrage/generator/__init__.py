@@ -11,10 +11,12 @@ from .types import (
 # Hypothesis strategies are imported lazily to avoid requiring hypothesis
 # as a dependency for all test imports
 
+
 def get_hypothesis_strategies():
     """Import and return hypothesis strategies module."""
     from . import hypothesis_strategies
     return hypothesis_strategies
+
 
 __all__ = (
     "ArbitrageCycleFixture",

@@ -6,7 +6,7 @@ from scipy.optimize import minimize_scalar
 from degenbot.arbitrage.optimizers.mobius import MobiusFloatHop, V3TickRangeHop, simulate_path
 from degenbot.arbitrage.optimizers.solver import SolveInput
 from degenbot.arbitrage.optimizers.v3_tick_predictor import tick_to_sqrt_price
-from degenbot.types.hop_types import Hop
+from degenbot.types.hop_types import ConstantProductHop
 
 # ==============================================================================
 # Shared constants — realistic reserve magnitudes with correct decimals
@@ -88,8 +88,8 @@ def make_2hop_v2_input(
     """
     return SolveInput(
         hops=(
-            Hop(reserve_in=reserve_in_buy, reserve_out=reserve_out_buy, fee=fee),
-            Hop(reserve_in=reserve_in_sell, reserve_out=reserve_out_sell, fee=fee),
+            ConstantProductHop(reserve_in=reserve_in_buy, reserve_out=reserve_out_buy, fee=fee),
+            ConstantProductHop(reserve_in=reserve_in_sell, reserve_out=reserve_out_sell, fee=fee),
         )
     )
 

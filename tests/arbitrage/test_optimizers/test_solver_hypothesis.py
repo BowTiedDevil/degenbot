@@ -7,7 +7,6 @@ pool types (V2, V3) and path lengths.
 
 import math
 from fractions import Fraction
-from typing import Any
 
 import hypothesis
 import hypothesis.strategies as st
@@ -17,15 +16,12 @@ from degenbot.arbitrage.optimizers.hop_types import SolveInput
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
     BrentSolver,
-    MobiusSolver,
-    NewtonSolver,
     SolverMethod,
-    _compute_mobius_coefficients,
-    _simulate_path,
-    _v3_virtual_reserves,
 )
+from degenbot.arbitrage.optimizers._solver_utils import _compute_mobius_coefficients
+from degenbot.arbitrage.optimizers._v3_utils import _v3_virtual_reserves
 from degenbot.exceptions import OptimizationError
-from degenbot.types.hop_types import Hop
+from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop
 
 # ==============================================================================
 # Hypothesis Strategies
@@ -55,7 +51,9 @@ tick_strategy = st.integers(min_value=-10000, max_value=10000)
 num_hops_strategy = st.integers(min_value=2, max_value=6)
 
 # Price multiplier for creating price differences
-price_mult_strategy = st.floats(min_value=1.01, max_value=1.3, allow_nan=False, allow_infinity=False)
+price_mult_strategy = st.floats(
+    min_value=1.01, max_value=1.3, allow_nan=False, allow_infinity=False
+)
 
 
 # ==============================================================================
@@ -63,9 +61,9 @@ price_mult_strategy = st.floats(min_value=1.01, max_value=1.3, allow_nan=False, 
 # ==============================================================================
 
 
-def make_v2_hop(reserve_in: int, reserve_out: int, fee: Fraction) -> Hop:
+def make_v2_hop(reserve_in: int, reserve_out: int, fee: Fraction) -> ConstantProductHop:
     """Create a V2 hop."""
-    return Hop(reserve_in=reserve_in, reserve_out=reserve_out, fee=fee)
+    return ConstantProductHop(reserve_in=reserve_in, reserve_out=reserve_out, fee=fee)
 
 
 def make_v3_hop(
@@ -74,14 +72,14 @@ def make_v3_hop(
     tick_lower: int,
     tick_upper: int,
     fee: Fraction,
-) -> Hop:
+) -> BoundedProductHop:
     """Create a V3 hop with virtual reserves."""
     # Compute virtual reserves from liquidity and sqrt price
     sqrt_price_float = sqrt_price / (2**96)
     reserve_in = int(liquidity / sqrt_price_float)
     reserve_out = int(liquidity * sqrt_price_float)
 
-    return Hop(
+    return BoundedProductHop(
         reserve_in=reserve_in,
         reserve_out=reserve_out,
         fee=fee,
@@ -96,7 +94,7 @@ def make_profitable_v2_pair(
     base_reserve: int,
     price_mult: float,
     fee: Fraction,
-) -> tuple[Hop, Hop]:
+) -> tuple[ConstantProductHop, ConstantProductHop]:
     """Create a profitable V2 pair."""
     reserve_a_in = base_reserve
     reserve_a_out = int(base_reserve * price_mult)
@@ -292,8 +290,12 @@ class TestSolverMultiHopProperties:
             result_brent = brent.solve(inp)
 
             # Should match within tolerance
-            rel_diff = abs(result_solver.profit - result_brent.profit) / max(result_solver.profit, 1)
-            assert rel_diff < 1e-4, f"Profit mismatch: {result_solver.profit} vs {result_brent.profit}"
+            rel_diff = abs(result_solver.profit - result_brent.profit) / max(
+                result_solver.profit, 1
+            )
+            assert rel_diff < 1e-4, (
+                f"Profit mismatch: {result_solver.profit} vs {result_brent.profit}"
+            )
         except OptimizationError:
             pass
 
@@ -335,7 +337,9 @@ class TestSolverBounds:
         base_reserve=reserve_strategy,
         price_mult=st.floats(min_value=1.05, max_value=1.2, allow_nan=False, allow_infinity=False),
         fee=fee_fraction_strategy,
-        max_input_fraction=st.floats(min_value=0.1, max_value=0.9, allow_nan=False, allow_infinity=False),
+        max_input_fraction=st.floats(
+            min_value=0.1, max_value=0.9, allow_nan=False, allow_infinity=False
+        ),
     )
     @hypothesis.settings(deadline=None, max_examples=20)
     def test_max_input_constraint_respected(
@@ -472,7 +476,7 @@ class TestSolverCoefficients:
         """
         Property: Coefficients are well-formed for any valid hop.
         """
-        hop = Hop(reserve_in=reserve_in, reserve_out=reserve_out, fee=fee)
+        hop = ConstantProductHop(reserve_in=reserve_in, reserve_out=reserve_out, fee=fee)
         coeffs = _compute_mobius_coefficients((hop,))
 
         assert coeffs.K > 0

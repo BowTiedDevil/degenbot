@@ -12,7 +12,12 @@ from web3.types import LogReceipt
 from degenbot.aave.enrichment.handlers.base import OperationHandler
 from degenbot.aave.enrichment.handlers.repay import RepayHandler
 from degenbot.aave.events import ScaledTokenEventType
-from degenbot.aave.models import EnrichedDebtBurnEvent, EnrichedDebtMintEvent, EnrichedGhoDebtBurnEvent, EnrichedGhoDebtMintEvent
+from degenbot.aave.models import (
+    EnrichedDebtBurnEvent,
+    EnrichedDebtMintEvent,
+    EnrichedGhoDebtBurnEvent,
+    EnrichedGhoDebtMintEvent,
+)
 from degenbot.aave.operation_types import OperationType
 
 if TYPE_CHECKING:

@@ -1,8 +1,11 @@
 import dataclasses
 
+import eth_abi.abi
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
+from web3 import Web3
 
+from degenbot.arbitrage.encoding import EncodedCall
 from degenbot.erc20 import Erc20Token
 from degenbot.types.aliases import BlockNumber
 
@@ -42,6 +45,7 @@ class ArbitrageCalculationResult[SwapAmountType]:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class CurveStableSwapPoolSwapAmounts(AbstractSwapAmounts):
+    pool: ChecksumAddress
     token_in: Erc20Token
     token_in_index: int
     token_out: Erc20Token
@@ -52,6 +56,23 @@ class CurveStableSwapPoolSwapAmounts(AbstractSwapAmounts):
 
     def __post_init__(self) -> None:
         assert self.token_in != self.token_out
+
+    def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:  # noqa: ARG002
+        """Encode a Curve exchange() or exchange_underlying() call."""
+        if self.underlying:
+            selector = Web3.keccak(text="exchange_underlying(int128,int128,uint256,uint256)")[:4]
+        else:
+            selector = Web3.keccak(text="exchange(int128,int128,uint256,uint256)")[:4]
+        data = selector + eth_abi.abi.encode(
+            types=["int128", "int128", "uint256", "uint256"],
+            args=[
+                self.token_in_index,
+                self.token_out_index,
+                self.amount_in,
+                self.min_amount_out,
+            ],
+        )
+        return EncodedCall(to=self.pool, data=data)
 
 
 @dataclasses.dataclass(slots=True)
@@ -67,6 +88,15 @@ class UniswapV2PoolSwapAmounts(AbstractSwapAmounts):
         assert 0 in self.amounts_in
         assert 0 in self.amounts_out
 
+    def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:
+        """Encode a Uniswap V2 swap() call."""
+        selector = Web3.keccak(text="swap(uint256,uint256,address,bytes)")[:4]
+        data = selector + eth_abi.abi.encode(
+            types=["uint256", "uint256", "address", "bytes"],
+            args=[*self.amounts_out, recipient, b""],
+        )
+        return EncodedCall(to=self.pool, data=data)
+
 
 @dataclasses.dataclass(slots=True)
 class UniswapV3PoolSwapAmounts(AbstractSwapAmounts):
@@ -81,11 +111,32 @@ class UniswapV3PoolSwapAmounts(AbstractSwapAmounts):
     def __post_init__(self) -> None:
         assert self.amount_specified != 0
 
+    def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:
+        """Encode a Uniswap V3 swap() call."""
+        selector = Web3.keccak(text="swap(address,bool,int256,uint160,bytes)")[:4]
+        data = selector + eth_abi.abi.encode(
+            types=["address", "bool", "int256", "uint160", "bytes"],
+            args=[recipient, self.zero_for_one, self.amount_specified, self.sqrt_price_limit_x96, b""],
+        )
+        return EncodedCall(to=self.pool, data=data)
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class V4PoolKey:
+    """V4 pool identification for swap encoding and on-chain dispatch."""
+
+    currency0: ChecksumAddress
+    currency1: ChecksumAddress
+    fee: int
+    tick_spacing: int
+    hooks: ChecksumAddress
+
 
 @dataclasses.dataclass(slots=True)
 class UniswapV4PoolSwapAmounts(AbstractSwapAmounts):
     address: ChecksumAddress
     id: HexBytes
+    pool_key: V4PoolKey
     amount_in: int
     amount_out: int
     amount_specified: int
@@ -95,6 +146,21 @@ class UniswapV4PoolSwapAmounts(AbstractSwapAmounts):
 
     def __post_init__(self) -> None:
         assert self.amount_specified != 0
+
+    def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:
+        """Encode a Uniswap V4 swap() call.
+
+        V4 swaps are dispatched through PoolManager which requires an
+        unlock/swap callback pattern. The default implementation encodes
+        the PoolManager.swap() call; use a custom PayloadComposer for
+        executor-specific wrapping.
+        """
+        msg = (
+            "V4 swap encoding requires a PayloadComposer. "
+            "The pool_key and swap parameters are available on this "
+            "object for custom compositors to use."
+        )
+        raise NotImplementedError(msg)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

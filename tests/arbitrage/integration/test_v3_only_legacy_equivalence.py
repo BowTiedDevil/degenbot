@@ -281,25 +281,50 @@ def _make_patched_legacy_cycle(
 
         return tuple(swap_amounts)
 
-    def patched_arb_profit(
+    def patched_calculate(
         self: UniswapLpCycle,
-        x: float,
         state_overrides: dict | None = None,
-    ) -> float:
+    ):
+        """Use pool's to_hop_state() to build SolveInput, then solve via ArbSolver."""
+        from degenbot.arbitrage.optimizers.hop_types import SolveInput
+        from degenbot.arbitrage.optimizers.solver import ArbSolver
+
         if state_overrides is None:
             state_overrides = {}
-        token_in_quantity = int(x)
-        starting = token_in_quantity
-        token_out_quantity = 0
-        for pool, sv in zip(self.swap_pools, self._swap_vectors, strict=True):
-            pool_state = state_overrides.get(pool)
-            token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
-                token_in=sv.token_in,
-                token_in_quantity=token_in_quantity,
-                override_state=pool_state,
-            )
-            token_in_quantity = token_out_quantity
-        return float(token_out_quantity - starting)
+
+        # Build hops using FakeV3Pool.to_hop_state() which supports duck-typing
+        hops = []
+        current_token = self.input_token
+        for pool in self.swap_pools:
+            zfo = current_token == pool.token0
+            hop = pool.to_hop_state(zfo, state_overrides.get(pool))
+            hops.append(hop)
+            current_token = pool.token1 if current_token == pool.token0 else pool.token0
+
+        solve_input = SolveInput(hops=tuple(hops), max_input=self.max_input)
+        solver = ArbSolver()
+        result = solver.solve(solve_input)
+
+        # Generate swap amounts via the patched _build_swap_amounts
+        optimal_amounts = self._build_swap_amounts(
+            token_in_quantity=result.optimal_input,
+            state_overrides=state_overrides,
+        )
+
+        input_swap, *_, output_swap = optimal_amounts
+        input_swap_amount = input_swap.amount_in
+        best_profit_amount = output_swap.amount_out - input_swap_amount
+
+        from degenbot.arbitrage.types import ArbitrageCalculationResult
+        return ArbitrageCalculationResult(
+            id=self.id,
+            input_token=self.input_token,
+            profit_token=self.input_token,
+            input_amount=input_swap_amount,
+            profit_amount=best_profit_amount,
+            swap_amounts=optimal_amounts,
+            state_block=None,
+        )
 
     patches = [
         unittest.mock.patch.object(UniswapLpCycle, "_validate_pools", return_value=None),
@@ -309,9 +334,11 @@ def _make_patched_legacy_cycle(
         unittest.mock.patch.object(
             UniswapLpCycle, "_pre_calculation_check", patched_pre_calculation_check
         ),
-        unittest.mock.patch.object(UniswapLpCycle, "_arb_profit", patched_arb_profit),
         unittest.mock.patch.object(
             UniswapLpCycle, "_build_swap_amounts", patched_build_swap_amounts
+        ),
+        unittest.mock.patch.object(
+            UniswapLpCycle, "_calculate", patched_calculate
         ),
     ]
 

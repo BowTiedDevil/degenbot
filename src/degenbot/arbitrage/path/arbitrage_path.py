@@ -5,8 +5,6 @@ from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakSet
 
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult
-from degenbot.arbitrage.path.pool_hop_adapter import extract_fee as _adapter_extract_fee
-from degenbot.arbitrage.path.pool_hop_adapter import to_hop_state as _adapter_to_hop_state
 from degenbot.arbitrage.path.swap_amount_builder import build_swap_amount
 from degenbot.arbitrage.path.types import PathValidationError, PoolCompatibility, SwapVector
 from degenbot.arbitrage.types import (
@@ -40,16 +38,13 @@ if TYPE_CHECKING:
     from degenbot.types.hop_types import HopType
     from degenbot.types.pool_protocols import ArbitragePathPool
 
-from degenbot.uniswap.v3_libraries.functions import (
-    v3_virtual_reserves as _v3_virtual_reserves,  # noqa: F401 re-export for tests
-)
 
 _MIN_POOLS_FOR_ARBITRAGE_PATH = 2
 
 
 def _check_pool_compatibility(pool: ArbitragePathPool) -> PoolCompatibility:
     try:
-        _adapter_to_hop_state(pool, zero_for_one=True)
+        pool.to_hop_state(zero_for_one=True)
     except (IncompatiblePoolInvariant, AttributeError):
         return PoolCompatibility.INCOMPATIBLE_INVARIANT
     else:
@@ -57,7 +52,7 @@ def _check_pool_compatibility(pool: ArbitragePathPool) -> PoolCompatibility:
 
 
 def _extract_fee(pool: ArbitragePathPool, zero_for_one: bool) -> Fraction:  # noqa: FBT001
-    return _adapter_extract_fee(pool, zero_for_one=zero_for_one)
+    return pool.extract_fee(zero_for_one=zero_for_one)
 
 
 def _pool_to_hop_state(
@@ -65,7 +60,7 @@ def _pool_to_hop_state(
     zero_for_one: bool,  # noqa: FBT001
     state_override: AbstractPoolState | None = None,
 ) -> HopType:
-    return _adapter_to_hop_state(pool, zero_for_one=zero_for_one, state_override=state_override)
+    return pool.to_hop_state(zero_for_one=zero_for_one, state_override=state_override)
 
 
 class _ProfitableStateDiscovered(AbstractPublisherMessage):

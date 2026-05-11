@@ -11,7 +11,6 @@ Validates:
 
 import pytest
 
-from degenbot.arbitrage.optimizers import Hop as OldHop
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, SolverMethod
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
@@ -470,20 +469,3 @@ class TestArbSolverTaggedDispatch:
             assert result.method == SolverMethod.BRENT
         except OptimizationError:
             pass
-
-
-# ---------------------------------------------------------------------------
-# Test backward compatibility: old Hop still works
-# ---------------------------------------------------------------------------
-
-
-class TestBackwardCompatibility:
-    """The old monolithic Hop dataclass should still work alongside the new
-    tagged union types. Old code that creates Hop() should not break."""
-
-    def test_old_hop_still_importable(self):
-
-        # If we keep the old Hop, it should still work
-        # (We may alias it to ConstantProductHop)
-        hop = OldHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
-        assert hop.reserve_in == USDC_2M

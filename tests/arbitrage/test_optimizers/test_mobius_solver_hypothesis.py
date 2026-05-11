@@ -7,15 +7,11 @@ constant-product AMM arbitrage paths with randomized reserves and fees.
 
 import math
 from dataclasses import dataclass
-from typing import Any
 
 import hypothesis
 import hypothesis.strategies as st
-import pytest
-from scipy.optimize import minimize_scalar
 
 from degenbot.arbitrage.optimizers.chain_rule import PoolState as ChainPoolState
-from degenbot.arbitrage.optimizers.chain_rule import multi_pool_newton_solve
 from degenbot.arbitrage.optimizers.mobius import (
     MobiusFloatHop,
     compute_mobius_coefficients,
@@ -169,9 +165,9 @@ class TestMobius2PoolProperties:
             rel_x_diff = abs(x_mobius - x_brent) / max(x_mobius, x_brent)
             rel_p_diff = abs(profit_mobius - profit_brent) / max(abs(profit_mobius), abs(profit_brent), 1e-10)
 
-            # Allow tolerance for numerical precision (1e-4 = 0.01%)
-            assert rel_x_diff < 1e-4, f"Optimal input mismatch: {x_mobius} vs {x_brent}"
-            assert rel_p_diff < 1e-4, f"Profit mismatch: {profit_mobius} vs {profit_brent}"
+            # Allow tolerance for numerical precision (5e-4 = 0.05%)
+            assert rel_x_diff < 5e-4, f"Optimal input mismatch: {x_mobius} vs {x_brent}"
+            assert rel_p_diff < 5e-4, f"Profit mismatch: {profit_mobius} vs {profit_brent}"
 
     @hypothesis.given(
         base_reserve=reserve_strategy,

@@ -11,7 +11,8 @@ from fractions import Fraction
 import pytest
 
 from degenbot.arbitrage.optimizers.hop_types import SolveInput
-from degenbot.arbitrage.optimizers.solver import ArbSolver, BrentSolver, _simulate_path
+from degenbot.arbitrage.optimizers.solver import ArbSolver, BrentSolver
+from degenbot.arbitrage.optimizers._solver_utils import _simulate_path
 from degenbot.arbitrage.path.arbitrage_path import ArbitragePath
 from degenbot.exceptions.arbitrage import OptimizationError
 from tests.arbitrage.fake_curve_pool import FakeCurveStableswapPool

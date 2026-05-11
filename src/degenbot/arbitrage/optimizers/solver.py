@@ -1,7 +1,7 @@
 """
 Unified solver interface for arbitrage optimization.
 
-All optimizers accept the same ``SolveInput`` (a sequence of ``Hop`` objects)
+All optimizers accept the same ``SolveInput`` (a sequence of ``HopType`` objects)
 and return the same ``SolveResult``.  The ``ArbSolver`` dispatcher automatically
 selects the best method based on the hop types.
 
@@ -15,48 +15,38 @@ from fractions import Fraction
 from typing import Any, ClassVar, override
 
 # Re-export internal helpers so existing test imports keep working
-from degenbot.arbitrage.optimizers._solver_utils import (  # noqa: F401
-    _compute_mobius_coefficients,
-    _infer_zero_for_one,
-    _rust_integer_refinement,
-    _simulate_path,
-)
-from degenbot.arbitrage.optimizers._v3_utils import (  # noqa: F401
-    _get_cached_tick_ranges,
-    _tick_range_cache,
-    _v3_get_adjacent_tick_ranges,
-    _v3_virtual_reserves,
-)
+
 from degenbot.arbitrage.optimizers.balancer_multi_token_solver import (
     BalancerMultiTokenSolver,
 )
 from degenbot.arbitrage.optimizers.brent_solver import BrentSolver
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult, SolverMethod
 from degenbot.arbitrage.optimizers.mobius_solver import MobiusSolver
-from degenbot.arbitrage.optimizers.newton_solver import NewtonSolver  # noqa: F401
+from degenbot.arbitrage.optimizers.newton_solver import NewtonSolver
 from degenbot.arbitrage.optimizers.piecewise_mobius_solver import (
     PiecewiseMobiusSolver,
 )
 from degenbot.arbitrage.optimizers.solidly_stable import (
     SolidlyStableSolver,
 )
-from degenbot.arbitrage.optimizers.solver_hop_builders import (  # noqa: F401
-    pool_state_to_hop,
-    pool_to_hop,
-    pools_to_solve_input,
-)
+
 from degenbot.degenbot_rs import mobius as _rs_mobius
 from degenbot.exceptions import OptimizationError
-from degenbot.types.hop_types import (  # noqa: F401 — re-exported for backward compatibility
-    BalancerMultiTokenHop,
-    BoundedProductHop,
-    ConstantProductHop,
-    Hop,
-    HopType,
-    PoolInvariant,
-    SolidlyStableHop,
-    V3TickRangeInfo,
-)
+
+
+# Explicit exports for type checker and IDE completion
+__all__ = [
+    "ArbSolver",
+    "BrentSolver",
+    "MobiusSolver",
+    "NewtonSolver",
+    "PiecewiseMobiusSolver",
+    "SolidlyStableSolver",
+    "BalancerMultiTokenSolver",
+    "SolveInput",
+    "SolveResult",
+    "SolverMethod",
+]
 
 
 class ArbSolver(Solver):
@@ -75,11 +65,12 @@ class ArbSolver(Solver):
 
     Usage:
     -----
-    >>> from degenbot.arbitrage.optimizers.solver import ArbSolver, Hop, SolveInput
+    >>> from degenbot.arbitrage.optimizers.solver import ArbSolver, SolveInput
+    >>> from degenbot.types.hop_types import ConstantProductHop
     >>> solver = ArbSolver()
     >>> result = solver.solve(SolveInput(hops=(
-    ...     Hop(reserve_in=2_000_000e6, reserve_out=1_000e18, fee=Fraction(3, 1000)),
-    ...     Hop(reserve_in=1_500_000e6, reserve_out=800e18, fee=Fraction(3, 1000)),
+    ...     ConstantProductHop(reserve_in=2_000_000e6, reserve_out=1_000e18, fee=Fraction(3, 1000)),
+    ...     ConstantProductHop(reserve_in=1_500_000e6, reserve_out=800e18, fee=Fraction(3, 1000)),
     ... )))
     """
 

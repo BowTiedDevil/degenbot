@@ -1,5 +1,7 @@
 # ruff: noqa: PLR0904
 
+from __future__ import annotations
+
 import dataclasses
 from collections import deque
 from fractions import Fraction
@@ -49,6 +51,8 @@ if TYPE_CHECKING:
 
 
 class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
+    variant: ClassVar[str | None] = "aerodrome"
+
     type PoolState = AerodromeV2PoolState
 
     _state: PoolState
@@ -112,6 +116,58 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
 
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
+    @classmethod
+    def from_chain(
+        cls,
+        address: ChecksumAddress | str,
+        *,
+        token0: Erc20Token,
+        token1: Erc20Token,
+        factory: str,
+        reserves_token0: int,
+        reserves_token1: int,
+        provider: ProviderAdapter,
+        state_block: BlockNumber | None = None,
+        deployer_address: str | None = None,
+    ) -> AerodromeV2Pool:
+        """Construct an AerodromeV2Pool by fetching stable/fee from chain."""
+        address = get_checksum_address(address)
+        factory = get_checksum_address(factory)
+
+        # Fetch stable flag from pool contract
+        stable_result = provider.call(
+            to=address,
+            data=encode_function_calldata("stable()", None),
+            block=state_block,
+        )
+        (stable,) = eth_abi.abi.decode(types=["bool"], data=stable_result)
+
+        # Fetch fee from factory contract: getFee(pool, stable)
+        fee_result = provider.call(
+            to=factory,
+            data=encode_function_calldata(
+                "getFee(address,bool)",
+                [address, stable],
+            ),
+            block=state_block,
+        )
+        (fee_raw,) = eth_abi.abi.decode(types=["uint256"], data=fee_result)
+        fee = Fraction(fee_raw, cls.FEE_DENOMINATOR)
+
+        return cls(
+            address=address,
+            token0=token0,
+            token1=token1,
+            factory=factory,
+            fee=fee,
+            stable=stable,
+            reserves_token0=reserves_token0,
+            reserves_token1=reserves_token1,
+            chain_id=token0.chain_id if hasattr(token0, "chain_id") else None,
+            deployer_address=deployer_address,
+            state_block=state_block,
+        )
+
     def __repr__(self) -> str:  # pragma: no cover
         return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1}, stable={self._stable})"  # noqa:E501
 
@@ -129,6 +185,16 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
 
     @property
     def fee(self) -> Fraction:
+        return self._fee
+
+    @property
+    def fee_token0(self) -> Fraction:
+        """Return the fee for token0 → token1 swaps (same as fee_token1 for Aerodrome)."""
+        return self._fee
+
+    @property
+    def fee_token1(self) -> Fraction:
+        """Return the fee for token1 → token0 swaps (same as fee_token0 for Aerodrome)."""
         return self._fee
 
     @property
@@ -580,6 +646,14 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
         return self._fee
 
+    def reserves_for_cache(self) -> tuple[int, int]:
+        """Return (reserve_token0, reserve_token1) for the Rust solver cache."""
+        return (self.state.reserves_token0, self.state.reserves_token1)
+
+    def fee_for_cache(self) -> Fraction:
+        """Return the pool fee for the Rust solver cache."""
+        return self._fee
+
     def to_hop_state(
         self,
         zero_for_one: bool,  # noqa: FBT001
@@ -642,6 +716,8 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
 
 
 class AerodromeV3Pool(UniswapV3Pool):
+    variant: ClassVar[str | None] = "aerodrome"
+
     type PoolState = AerodromeV3PoolState
 
     TICK_STRUCT_TYPES = (

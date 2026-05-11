@@ -1,7 +1,7 @@
 """Tests for REPAY_WITH_ATOKENS operation handler."""
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest

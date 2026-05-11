@@ -21,10 +21,10 @@ from degenbot.arbitrage.path.arbitrage_path import (
     _check_pool_compatibility,
     _extract_fee,
     _pool_to_hop_state,
-    _v3_virtual_reserves,
 )
 from degenbot.types.hop_types import BoundedProductHop
 from degenbot.uniswap.v3_libraries.constants import Q96
+from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves as _v3_virtual_reserves
 from tests.fakes.subscribers import FakeSubscriber
 
 from .conftest import (
