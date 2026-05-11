@@ -6,17 +6,18 @@ from fractions import Fraction
 
 import pytest
 
+from degenbot.arbitrage.optimizers._v3_utils import _tick_range_cache
+from degenbot.arbitrage.optimizers.hop_types import SolveInput, SolverMethod
 from degenbot.arbitrage.optimizers.mobius import V3TickRangeHop, V3TickRangeSequence
 from degenbot.arbitrage.optimizers.mobius_solver import MobiusSolver
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
+    PiecewiseMobiusSolver,
+)
+from degenbot.types.hop_types import (
     BoundedProductHop,
     ConstantProductHop,
-    PiecewiseMobiusSolver,
-    SolveInput,
-    SolverMethod,
     V3TickRangeInfo,
-    _tick_range_cache,
 )
 
 # Test constants

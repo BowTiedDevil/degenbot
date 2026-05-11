@@ -8,12 +8,10 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.arbitrage.optimizers.hop_types import SolveResult
+from degenbot.arbitrage.optimizers.hop_types import SolveInput, SolveResult
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
-    ConstantProductHop,
     MobiusSolver,
-    SolveInput,
 )
 from degenbot.arbitrage.path import ArbitragePath, PathValidationError, SwapVector
 from degenbot.arbitrage.path.arbitrage_path import (
@@ -22,7 +20,7 @@ from degenbot.arbitrage.path.arbitrage_path import (
     _extract_fee,
     _pool_to_hop_state,
 )
-from degenbot.types.hop_types import BoundedProductHop
+from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop
 from degenbot.uniswap.v3_libraries.constants import Q96
 from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves as _v3_virtual_reserves
 from tests.fakes.subscribers import FakeSubscriber

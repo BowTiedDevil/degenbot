@@ -10,11 +10,11 @@ import dataclasses
 import pytest
 from eth_typing import ChecksumAddress
 
-from degenbot.arbitrage.optimizers.solver import (
-    V3TickRangeInfo,
+from degenbot.arbitrage.optimizers._v3_utils import (
     _get_cached_tick_ranges,
     _v3_get_adjacent_tick_ranges,
 )
+from degenbot.types.hop_types import V3TickRangeInfo
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 from tests.arbitrage.fake_pools import (
     FakeTickInfo,
