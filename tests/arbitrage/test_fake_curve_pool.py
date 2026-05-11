@@ -8,7 +8,7 @@ from degenbot.arbitrage.optimizers.solidly_stable import (
     _simulate_mixed_path,
     _simulate_mixed_path_int,
 )
-from degenbot.arbitrage.optimizers.solver import _simulate_path
+from degenbot.arbitrage.optimizers._solver_utils import _simulate_path
 from degenbot.types.hop_types import CurveStableswapHop, PoolInvariant
 from tests.arbitrage.fake_curve_pool import (
     FakeCurvePoolState,

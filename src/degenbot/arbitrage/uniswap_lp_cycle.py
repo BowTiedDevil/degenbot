@@ -1,9 +1,9 @@
 import asyncio
 import math
 import uuid
+import warnings
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any
 from weakref import WeakSet
@@ -11,7 +11,6 @@ from weakref import WeakSet
 import eth_abi.abi
 from eth_typing import ChecksumAddress, HexStr
 from hexbytes import HexBytes
-from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
 from degenbot.aerodrome import AerodromeV2Pool, AerodromeV2PoolState, AerodromeV3Pool
@@ -20,13 +19,13 @@ from degenbot.arbitrage.types import (
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
     UniswapV4PoolSwapAmounts,
+    V4PoolKey,
 )
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
 from degenbot.erc20 import Erc20Token, EtherPlaceholder
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import ArbitrageError, RateOfExchangeBelowMinimum
-from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.types.abstract import AbstractArbitrage
@@ -52,15 +51,6 @@ type Pool = AerodromeV2Pool | AerodromeV3Pool | UniswapV2Pool | UniswapV3Pool | 
 type PoolState = AerodromeV2PoolState | UniswapV2PoolState | UniswapV3PoolState | UniswapV4PoolState
 type SwapAmount = UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
 type PoolId = bytes | HexStr
-
-
-@dataclass(slots=True, frozen=True)
-class V4PoolKey:
-    currency0: ChecksumAddress
-    currency1: ChecksumAddress
-    fee: int
-    tick_spacing: int
-    hooks: ChecksumAddress
 
 
 UNISWAP_V2_SWAP_FUNCTION_SELECTOR = Web3.keccak(text="swap(uint256,uint256,address,bytes)")[:4]
@@ -100,6 +90,12 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         id: str | None = None,  # noqa:A002
         max_input: int | None = None,
     ) -> None:
+        warnings.warn(
+            "UniswapLpCycle is deprecated. Use ArbitragePath for solving and "
+            "generate_payloads() for swap encoding.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._validate_pools(swap_pools)
         self.swap_pools: tuple[Pool, ...] = tuple(swap_pools)
 
@@ -281,6 +277,13 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                             UniswapV4PoolSwapAmounts(
                                 address=pool.address,
                                 id=pool.pool_id,
+                                pool_key=V4PoolKey(
+                                    currency0=pool.token0.address,
+                                    currency1=pool.token1.address,
+                                    fee=pool.fee,
+                                    tick_spacing=pool.tick_spacing,
+                                    hooks=pool.hook_address,
+                                ),
                                 amount_in=token_in_quantity,
                                 amount_out=token_out_quantity,
                                 amount_specified=token_in_quantity,
@@ -398,62 +401,6 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         if net_rate_of_exchange < min_rate_of_exchange:
             raise RateOfExchangeBelowMinimum(net_rate_of_exchange)
 
-    def _arb_profit(self, x: float, state_overrides: Mapping[Pool, PoolState]) -> float:
-        starting_token_in_quantity = token_in_quantity = int(x)  # round the input down
-        token_out_quantity: int = 0
-
-        try:
-            for pool, vector in zip(self.swap_pools, self._swap_vectors, strict=True):
-                pool_state_override = state_overrides.get(pool)
-
-                match pool:
-                    case AerodromeV2Pool():
-                        assert pool_state_override is None or isinstance(
-                            pool_state_override, AerodromeV2PoolState
-                        )
-                        token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
-                            token_in=vector.token_in,
-                            token_in_quantity=token_in_quantity,
-                            override_state=pool_state_override,
-                        )
-                    case UniswapV2Pool():
-                        assert pool_state_override is None or isinstance(
-                            pool_state_override, UniswapV2PoolState
-                        )
-                        token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
-                            token_in=vector.token_in,
-                            token_in_quantity=token_in_quantity,
-                            override_state=pool_state_override,
-                        )
-                    case UniswapV3Pool():
-                        assert pool_state_override is None or isinstance(
-                            pool_state_override, UniswapV3PoolState
-                        )
-                        token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
-                            token_in=vector.token_in,
-                            token_in_quantity=token_in_quantity,
-                            override_state=pool_state_override,
-                        )
-                    case UniswapV4Pool():
-                        assert pool_state_override is None or isinstance(
-                            pool_state_override, UniswapV4PoolState
-                        )
-                        token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
-                            token_in=vector.token_in,
-                            token_in_quantity=token_in_quantity,
-                            override_state=pool_state_override,
-                        )
-
-                token_in_quantity = token_out_quantity
-
-        except (EVMRevertError, LiquidityPoolError):  # pragma: no cover
-            # The optimizer might send invalid amounts into the swap calculation during
-            # iteration. We don't want it to stop, so catch the exception and pretend the
-            # swap resulted in zero output
-            token_in_quantity = 0
-
-        return float(token_out_quantity - starting_token_in_quantity)
-
     def _calculate(
         self,
         state_overrides: Mapping[Pool, PoolState] | None = None,
@@ -461,33 +408,47 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
     ]:
         """
-        Calculate the optimal arbitrage profit using the maximum input as an upper bound.
+        Calculate the optimal arbitrage profit using ArbSolver.
+
+        Delegates to ArbSolver.solve() which selects the best solver
+        (MobiusSolver, PiecewiseMobiusSolver, BrentSolver, etc.)
+        based on the pool types in the cycle.
+
+        Raises OptimizationError if no profitable solution is found.
         """
+        from degenbot.arbitrage.optimizers.hop_types import SolveInput
+        from degenbot.arbitrage.optimizers.solver import ArbSolver
+        from degenbot.arbitrage.optimizers.solver_hop_builders import (
+            pool_state_to_hop,
+            pools_to_solve_input,
+        )
 
         if state_overrides is None:
             state_overrides = {}
 
-        # The bounded Brent optimizer requires bounds for the input amount, and a bracketed guess
-        # to initiate the search
-        bounds: tuple[float, float] = (
-            1.0,
-            float(self.max_input),
-        )
-        bracket: tuple[float, float] = (0.25 * self.max_input, 0.50 * self.max_input)
+        # Convert pools → hops, applying state overrides if any
+        if state_overrides:
+            hops = []
+            current_token = self.input_token
+            for pool in self.swap_pools:
+                hop = pool_state_to_hop(pool, current_token, state_overrides.get(pool))
+                hops.append(hop)
+                current_token = pool.token1 if current_token == pool.token0 else pool.token0
+            solve_input = SolveInput(hops=tuple(hops), max_input=self.max_input)
+        else:
+            solve_input = pools_to_solve_input(
+                pools=list(self.swap_pools),
+                input_token=self.input_token,
+                max_input=self.max_input,
+            )
 
-        # Negate the return value from the profit function to make the curve compatible with a
-        # minimizing solver.
-        opt: OptimizeResult = minimize_scalar(
-            fun=lambda x: -self._arb_profit(x, state_overrides=state_overrides),
-            method="bounded",
-            bounds=bounds,
-            bracket=bracket,
-            options={"xatol": 1.0},
-        )
+        # Optimize via ArbSolver
+        solver = ArbSolver()
+        result = solver.solve(solve_input)
 
         # Generate the swap amounts for the optimal input value
         optimal_amounts = self._build_swap_amounts(
-            token_in_quantity=int(opt.x),
+            token_in_quantity=result.optimal_input,
             state_overrides=state_overrides,
         )
 
@@ -713,15 +674,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
                     logger.debug(f"PAYLOAD: swap amounts {swap_amounts}")
                     logger.debug(f"PAYLOAD: destination address {swap_destination_address}")
 
-                    payloads.append(
-                        V4PoolKey(
-                            currency0=swap_pool.token0.address,
-                            currency1=swap_pool.token1.address,
-                            fee=swap_pool.fee,
-                            tick_spacing=swap_pool.tick_spacing,
-                            hooks=swap_pool.hook_address,
-                        )
-                    )
+                    payloads.append(swap_amounts.pool_key)
 
                 case _:  # pragma: no cover
                     raise DegenbotValueError(message="Could not identify pool and swap amounts.")

@@ -2,11 +2,9 @@ import bisect
 from collections.abc import Generator
 from itertools import count
 
-from degenbot.constants import MAX_UINT8
 from degenbot.exceptions.liquidity_pool import LiquidityMapWordMissing
 from degenbot.functions import evm_divide
 from degenbot.types.aliases import BlockNumber
-from degenbot.uniswap.v3_libraries.bit_math import least_significant_bit, most_significant_bit
 from degenbot.uniswap.v3_types import InitializedTickMap, LiquidityMap, Tick, UniswapV3BitmapAtWord
 
 # NOTE: Pydantic validation is applied to certain functions to enforce the built-in integer range
@@ -47,63 +45,6 @@ def flip_tick(
         block=update_block,
     )
     tick_bitmap[word_pos] = new_bitmap
-
-
-def next_initialized_tick_within_one_word_legacy(
-    *,
-    tick_bitmap: dict[int, UniswapV3BitmapAtWord],
-    tick: int,
-    tick_spacing: int,
-    less_than_or_equal: bool,
-) -> tuple[int, bool]:
-    """
-    Returns the next initialized tick contained in the same word (or adjacent word) as the tick that
-    is either to the left (less than or equal to) or right (greater than) of the given tick.
-    """
-
-    # Python rounds down to negative infinity, so use it directly instead of the abs and modulo
-    # implementation of the Solidity contract
-    compressed = tick // tick_spacing
-
-    if less_than_or_equal:
-        word_pos, bit_pos = position(compressed)
-
-        if word_pos not in tick_bitmap:
-            raise LiquidityMapWordMissing(word_pos)
-
-        bitmap_at_word = tick_bitmap[word_pos].bitmap
-        mask = 2 * (1 << bit_pos) - 1  # all the 1s at or to the right of the current bitPos
-        masked = bitmap_at_word & mask
-
-        # If there are no initialized ticks to the right of or at the current tick, return rightmost
-        # in the word
-        initialized_status = masked != 0
-        next_tick = (
-            (compressed - (bit_pos - most_significant_bit(masked))) * tick_spacing
-            if initialized_status
-            else (compressed - bit_pos) * tick_spacing
-        )
-    else:
-        # start from the word of the next tick, since the current tick state doesn't matter
-        word_pos, bit_pos = position(compressed + 1)
-
-        if word_pos not in tick_bitmap:
-            raise LiquidityMapWordMissing(word_pos)
-
-        bitmap_at_word = tick_bitmap[word_pos].bitmap
-        mask = ~((1 << bit_pos) - 1)  # all the 1s at or to the left of the bitPos
-        masked = bitmap_at_word & mask
-
-        # If there are no initialized ticks to the left of the current tick, return leftmost in the
-        # word
-        initialized_status = masked != 0
-        next_tick = (
-            (compressed + 1 + (least_significant_bit(masked) - bit_pos)) * tick_spacing
-            if initialized_status
-            else (compressed + 1 + (MAX_UINT8 - bit_pos)) * tick_spacing
-        )
-
-    return next_tick, initialized_status
 
 
 def gen_ticks(

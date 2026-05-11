@@ -10,7 +10,6 @@ from fractions import Fraction
 import hypothesis.strategies as st
 
 from .types import (
-    LIQUIDITY_MULTIPLIERS,
     PoolGenerationConfig,
     PriceDiscrepancyConfig,
     V3PoolGenerationConfig,

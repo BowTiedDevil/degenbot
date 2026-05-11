@@ -13,7 +13,6 @@ from degenbot.aave.processors.base import (
     CollateralMintEvent,
     DebtBurnEvent,
     DebtMintEvent,
-    GhoUserOperation,
 )
 from degenbot.aave.processors.factory import TokenProcessorFactory
 from degenbot.aave.processors.strategies import (
@@ -550,29 +549,29 @@ class TestFactoryInterface:
     def test_get_collateral_processor_has_required_methods(self) -> None:
         """Factory returns processor with collateral methods."""
         processor = TokenProcessorFactory.get_collateral_processor(1)
-        assert hasattr(processor, 'process_mint_event')
-        assert hasattr(processor, 'process_burn_event')
-        assert hasattr(processor, 'get_math_libraries')
-        assert hasattr(processor, 'revision')
+        assert hasattr(processor, "process_mint_event")
+        assert hasattr(processor, "process_burn_event")
+        assert hasattr(processor, "get_math_libraries")
+        assert hasattr(processor, "revision")
 
     def test_get_debt_processor_has_required_methods(self) -> None:
         """Factory returns processor with debt methods."""
         processor = TokenProcessorFactory.get_debt_processor(1)
-        assert hasattr(processor, 'process_mint_event')
-        assert hasattr(processor, 'process_burn_event')
-        assert hasattr(processor, 'get_math_libraries')
-        assert hasattr(processor, 'revision')
+        assert hasattr(processor, "process_mint_event")
+        assert hasattr(processor, "process_burn_event")
+        assert hasattr(processor, "get_math_libraries")
+        assert hasattr(processor, "revision")
 
     def test_get_gho_debt_processor_has_required_methods(self) -> None:
         """Factory returns processor with GHO debt methods."""
         processor = TokenProcessorFactory.get_gho_debt_processor(1)
-        assert hasattr(processor, 'process_mint_event')
-        assert hasattr(processor, 'process_burn_event')
-        assert hasattr(processor, 'supports_discount')
-        assert hasattr(processor, 'accrue_debt_on_action')
-        assert hasattr(processor, 'get_discounted_balance')
-        assert hasattr(processor, 'get_math_libraries')
-        assert hasattr(processor, 'revision')
+        assert hasattr(processor, "process_mint_event")
+        assert hasattr(processor, "process_burn_event")
+        assert hasattr(processor, "supports_discount")
+        assert hasattr(processor, "accrue_debt_on_action")
+        assert hasattr(processor, "get_discounted_balance")
+        assert hasattr(processor, "get_math_libraries")
+        assert hasattr(processor, "revision")
 
     def test_get_collateral_processor_raises_for_invalid_revision(self) -> None:
         """Factory raises ValueError for unsupported revision."""

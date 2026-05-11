@@ -19,7 +19,6 @@ from degenbot.exceptions.liquidity_pool import LiquidityPoolError
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
-from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.aliases import ChainId
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool

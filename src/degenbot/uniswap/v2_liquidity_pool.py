@@ -51,6 +51,8 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
 
+    variant: ClassVar[str | None] = None
+
     type PoolState = UniswapV2PoolState
     type DatabasePoolType = UniswapV2PoolTable
 
@@ -212,6 +214,11 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
     @property
     def fee_token1(self) -> Fraction:
         return self._fee_token1
+
+    @property
+    def fee(self) -> tuple[Fraction, Fraction]:
+        """Return the pool fees as a tuple (fee_token0, fee_token1)."""
+        return (self._fee_token0, self._fee_token1)
 
     @property
     def reserves_token0(self) -> int:
@@ -742,6 +749,14 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
         return self._fee_token0 if zero_for_one else self._fee_token1
+
+    def reserves_for_cache(self) -> tuple[int, int]:
+        """Return (reserve_token0, reserve_token1) for the Rust solver cache."""
+        return (self.state.reserves_token0, self.state.reserves_token1)
+
+    def fee_for_cache(self) -> Fraction:
+        """Return the forward-direction fee for the Rust solver cache."""
+        return self._fee_token0
 
     def to_hop_state(
         self,

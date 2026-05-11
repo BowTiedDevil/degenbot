@@ -269,6 +269,7 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
                             )
                         swap_amounts.append(
                             CurveStableSwapPoolSwapAmounts(
+                                pool=pool.address,
                                 token_in=swap_vector.token_in,
                                 token_in_index=pool.tokens.index(swap_vector.token_in),
                                 token_out=swap_vector.token_out,

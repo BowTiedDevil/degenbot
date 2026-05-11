@@ -8,31 +8,29 @@ Also includes CVXPY solver comparison tests for property-based validation.
 
 import time
 from fractions import Fraction
-from typing import cast
 
 import cvxpy
 import cvxpy.settings
 import hypothesis
-import hypothesis.strategies as st
 import numpy as np
 import pytest
+from cvxpy.atoms.affine.binary_operators import multiply as cvxpy_multiply
 from cvxpy.atoms.affine.bmat import bmat as cvxpy_bmat
-from cvxpy.atoms.affine.sum import sum as cvxpy_sum
 from cvxpy.atoms.geo_mean import geo_mean
 
-from degenbot.arbitrage.optimizers import Hop, SolveInput, SolveResult, SolverMethod
+from degenbot.arbitrage.optimizers import SolveInput, SolveResult, SolverMethod
+from degenbot.types.hop_types import ConstantProductHop, BoundedProductHop
 from degenbot.arbitrage.optimizers.brent_solver import BrentSolver
 from degenbot.arbitrage.optimizers.newton_solver import NewtonSolver
-from degenbot.arbitrage.optimizers.solver import (
-    ArbSolver,
+from degenbot.arbitrage.optimizers.solver import ArbSolver
+from degenbot.arbitrage.optimizers._solver_utils import (
     _compute_mobius_coefficients,
     _simulate_path,
-    _v3_virtual_reserves,
 )
+from degenbot.arbitrage.optimizers._v3_utils import _v3_virtual_reserves
 from degenbot.exceptions import OptimizationError
 from tests.arbitrage.generator.fixtures import FixtureFactory
 from tests.arbitrage.generator.hypothesis_strategies import (
-    liquidity_depth_strategy,
     price_ratio_strategy,
     seed_strategy,
 )
@@ -106,8 +104,8 @@ class TestSolverFastPathV2V2:
     def test_various_fees(self, solver, fee):
         """Solver should work across different fee tiers."""
         hops = (
-            Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=fee),
-            Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=fee),
+            ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=fee),
+            ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=fee),
         )
         result = solver.solve(SolveInput(hops=hops))
         assert result.profit > 0
@@ -124,8 +122,8 @@ class TestSolverFastPathUnprofitable:
     def test_unprofitable_path(self, solver):
         """Identical reserves should yield no arbitrage opportunity."""
         hops = (
-            Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
-            Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
+            ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+            ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
         )
         with pytest.raises(OptimizationError):
             solver.solve(SolveInput(hops=hops))
@@ -136,8 +134,8 @@ class TestSolverFastPathUnprofitable:
         # pool_hi: 800 WETH → 1.5M USDC (sell WETH at 1875 USDC each)
         # Buying at 2000 and selling at 1875 = loss
         hops = (
-            Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
-            Hop(reserve_in=WETH_800, reserve_out=USDC_1_5M, fee=FEE_0_3_PCT),
+            ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+            ConstantProductHop(reserve_in=WETH_800, reserve_out=USDC_1_5M, fee=FEE_0_3_PCT),
         )
         with pytest.raises(OptimizationError):
             solver.solve(SolveInput(hops=hops))
@@ -152,15 +150,15 @@ class TestSolverFastPathEdgeCases:
 
     def test_single_hop_fails(self, solver):
         """Single-hop path should fail (needs 2+ hops)."""
-        hops = (Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),)
+        hops = (ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),)
         with pytest.raises(OptimizationError):
             solver.solve(SolveInput(hops=hops))
 
     def test_zero_reserves_fails(self, solver):
         """Zero reserves should fail gracefully."""
         hops = (
-            Hop(reserve_in=0, reserve_out=0, fee=FEE_0_3_PCT),
-            Hop(reserve_in=0, reserve_out=0, fee=FEE_0_3_PCT),
+            ConstantProductHop(reserve_in=0, reserve_out=0, fee=FEE_0_3_PCT),
+            ConstantProductHop(reserve_in=0, reserve_out=0, fee=FEE_0_3_PCT),
         )
         with pytest.raises(OptimizationError):
             solver.solve(SolveInput(hops=hops))
@@ -168,8 +166,8 @@ class TestSolverFastPathEdgeCases:
     def test_max_input_constraint(self, solver):
         """max_input should constrain the solver result."""
         hops = (
-            Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
-            Hop(reserve_in=WETH_800, reserve_out=USDC_1_5M, fee=FEE_0_3_PCT),
+            ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+            ConstantProductHop(reserve_in=WETH_800, reserve_out=USDC_1_5M, fee=FEE_0_3_PCT),
         )
         with pytest.raises(OptimizationError):
             solver.solve(SolveInput(hops=hops, max_input=100))
@@ -177,8 +175,8 @@ class TestSolverFastPathEdgeCases:
     def test_very_small_price_difference(self, solver):
         """Very small price difference between pools."""
         hops = (
-            Hop(reserve_in=1_000_000_000_000, reserve_out=500_000_000_000_000_000, fee=FEE_0_3_PCT),
-            Hop(reserve_in=499_000_000_000_000_000, reserve_out=1_001_000_000_000, fee=FEE_0_3_PCT),
+            ConstantProductHop(reserve_in=1_000_000_000_000, reserve_out=500_000_000_000_000_000, fee=FEE_0_3_PCT),
+            ConstantProductHop(reserve_in=499_000_000_000_000_000, reserve_out=1_001_000_000_000, fee=FEE_0_3_PCT),
         )
         with pytest.raises(OptimizationError):
             solver.solve(SolveInput(hops=hops))
@@ -296,8 +294,8 @@ class TestSolverTimingComparison:
         """Profit should be consistent across fee tiers for the same reserves."""
 
         hops = (
-            Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=fee),
-            Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=fee),
+            ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=fee),
+            ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=fee),
         )
         solve_input = SolveInput(hops=hops)
 
@@ -379,7 +377,7 @@ class TestPoolStateToHop:
             zero_for_one=True,
         )
 
-        hop = Hop(
+        hop = BoundedProductHop(
             reserve_in=r_in,
             reserve_out=r_out,
             fee=FEE_0_3_PCT,
@@ -392,7 +390,7 @@ class TestPoolStateToHop:
 
     def test_v2_hop_is_not_v3(self):
         """V2 pool should produce a Hop with is_v3=False."""
-        hop = Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
+        hop = ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
         assert not hop.is_v3
 
 
@@ -415,7 +413,7 @@ class TestArbSolverAllPoolTypes:
         )
 
         hops = (
-            Hop(
+            BoundedProductHop(
                 reserve_in=v3_r_in,
                 reserve_out=v3_r_out,
                 fee=FEE_0_3_PCT,
@@ -424,7 +422,7 @@ class TestArbSolverAllPoolTypes:
                 tick_lower=0,
                 tick_upper=0,
             ),
-            Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
+            ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
         )
         with pytest.raises(OptimizationError):
             solver.solve(SolveInput(hops=hops))
@@ -441,8 +439,8 @@ class TestArbSolverAllPoolTypes:
         )
 
         hops = (
-            Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
-            Hop(
+            ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
+            BoundedProductHop(
                 reserve_in=v3_r_in,
                 reserve_out=v3_r_out,
                 fee=FEE_0_3_PCT,
@@ -467,11 +465,11 @@ class TestArbSolverMultiHop:
         """3-hop triangular path should work."""
         # USDC → WETH → USDT → USDC (triangular)
         hops = (
-            Hop(
+            ConstantProductHop(
                 reserve_in=2_000_000_000_000, reserve_out=1_000_000_000_000_000_000, fee=FEE_0_3_PCT
             ),
-            Hop(reserve_in=800_000_000_000_000_000, reserve_out=1_500_000_000_000, fee=FEE_0_3_PCT),
-            Hop(
+            ConstantProductHop(reserve_in=800_000_000_000_000_000, reserve_out=1_500_000_000_000, fee=FEE_0_3_PCT),
+            ConstantProductHop(
                 reserve_in=1_800_000_000_000, reserve_out=1_200_000_000_000_000_000, fee=FEE_0_3_PCT
             ),
         )
@@ -484,14 +482,14 @@ class TestArbSolverMultiHop:
     def test_four_hop_path(self, solver):
         """4-hop path should work with Möbius O(n)."""
         hops = (
-            Hop(
+            ConstantProductHop(
                 reserve_in=2_000_000_000_000, reserve_out=1_000_000_000_000_000_000, fee=FEE_0_3_PCT
             ),
-            Hop(
+            ConstantProductHop(
                 reserve_in=800_000_000_000_000_000, reserve_out=1_500_000_000_000, fee=FEE_0_05_PCT
             ),
-            Hop(reserve_in=1_500_000_000_000, reserve_out=900_000_000_000_000_000, fee=FEE_0_3_PCT),
-            Hop(
+            ConstantProductHop(reserve_in=1_500_000_000_000, reserve_out=900_000_000_000_000_000, fee=FEE_0_3_PCT),
+            ConstantProductHop(
                 reserve_in=900_000_000_000_000_000, reserve_out=2_200_000_000_000, fee=FEE_0_05_PCT
             ),
         )
@@ -503,15 +501,15 @@ class TestArbSolverMultiHop:
     def test_five_hop_path(self, solver):
         """5-hop path should work."""
         hops = (
-            Hop(
+            ConstantProductHop(
                 reserve_in=2_000_000_000_000, reserve_out=1_000_000_000_000_000_000, fee=FEE_0_3_PCT
             ),
-            Hop(reserve_in=900_000_000_000_000_000, reserve_out=1_800_000_000_000, fee=FEE_0_3_PCT),
-            Hop(
+            ConstantProductHop(reserve_in=900_000_000_000_000_000, reserve_out=1_800_000_000_000, fee=FEE_0_3_PCT),
+            ConstantProductHop(
                 reserve_in=1_800_000_000_000, reserve_out=700_000_000_000_000_000, fee=FEE_0_05_PCT
             ),
-            Hop(reserve_in=700_000_000_000_000_000, reserve_out=1_600_000_000_000, fee=FEE_0_3_PCT),
-            Hop(reserve_in=1_600_000_000_000, reserve_out=2_100_000_000_000, fee=FEE_0_05_PCT),
+            ConstantProductHop(reserve_in=700_000_000_000_000_000, reserve_out=1_600_000_000_000, fee=FEE_0_3_PCT),
+            ConstantProductHop(reserve_in=1_600_000_000_000, reserve_out=2_100_000_000_000, fee=FEE_0_05_PCT),
         )
         result = solver.solve(SolveInput(hops=hops))
         assert isinstance(result, SolveResult)
@@ -521,11 +519,11 @@ class TestArbSolverMultiHop:
 
         # Set up a 3-hop path with clear arbitrage
         hops = (
-            Hop(
+            ConstantProductHop(
                 reserve_in=2_000_000_000_000, reserve_out=1_000_000_000_000_000_000, fee=FEE_0_3_PCT
             ),
-            Hop(reserve_in=800_000_000_000_000_000, reserve_out=1_500_000_000_000, fee=FEE_0_3_PCT),
-            Hop(
+            ConstantProductHop(reserve_in=800_000_000_000_000_000, reserve_out=1_500_000_000_000, fee=FEE_0_3_PCT),
+            ConstantProductHop(
                 reserve_in=1_800_000_000_000, reserve_out=1_200_000_000_000_000_000, fee=FEE_0_3_PCT
             ),
         )
@@ -592,24 +590,24 @@ class TestCVXPYSolverComparison:
         if price_a > price_b:
             # Pool A gives more token1 per token0
             # Buy token0 in pool B (cheaper), sell in pool A
-            hop_1 = Hop(
+            hop_1 = ConstantProductHop(
                 reserve_in=state_b.reserves_token0,
                 reserve_out=state_b.reserves_token1,
                 fee=fee,
             )
-            hop_2 = Hop(
+            hop_2 = ConstantProductHop(
                 reserve_in=state_a.reserves_token1,
                 reserve_out=state_a.reserves_token0,
                 fee=fee,
             )
         else:
             # Pool B gives more token1 per token0
-            hop_1 = Hop(
+            hop_1 = ConstantProductHop(
                 reserve_in=state_a.reserves_token0,
                 reserve_out=state_a.reserves_token1,
                 fee=fee,
             )
-            hop_2 = Hop(
+            hop_2 = ConstantProductHop(
                 reserve_in=state_b.reserves_token1,
                 reserve_out=state_b.reserves_token0,
                 fee=fee,
@@ -732,7 +730,7 @@ class TestCVXPYSolverComparison:
         deposits = cvxpy_bmat(((forward_token_amount, 0), (0, profit_token_in)))
         withdrawals = cvxpy_bmat(((0, profit_token_out), (forward_token_amount, 0)))
 
-        fees_removed = fee_multiplier * deposits
+        fees_removed = cvxpy_multiply(fee_multiplier, deposits)
 
         compressed_reserves_post_swap = (
             compressed_reserves_pre_swap + deposits - withdrawals - fees_removed
@@ -821,7 +819,7 @@ class TestCVXPYSolverAccuracy:
         deposits = cvxpy_bmat(((forward, 0), (0, amount_in)))
         withdrawals = cvxpy_bmat(((0, amount_out), (forward, 0)))
 
-        reserves_post = reserves_pre + deposits - withdrawals - fee_float * deposits
+        reserves_post = reserves_pre + deposits - withdrawals - cvxpy_multiply(fee_float, deposits)
 
         k_a_post = geo_mean(reserves_post[0])
         k_b_post = geo_mean(reserves_post[1])
@@ -885,7 +883,7 @@ class TestCVXPYSolverAccuracy:
         deposits = cvxpy_bmat(((forward, 0), (0, amount_in)))
         withdrawals = cvxpy_bmat(((0, amount_out), (forward, 0)))
 
-        reserves_post = reserves_pre + deposits - withdrawals - fee_float * deposits
+        reserves_post = reserves_pre + deposits - withdrawals - cvxpy_multiply(fee_float, deposits)
 
         k_a_post = geo_mean(reserves_post[0])
         k_b_post = geo_mean(reserves_post[1])

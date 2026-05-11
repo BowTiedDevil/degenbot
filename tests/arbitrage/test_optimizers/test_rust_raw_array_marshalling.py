@@ -20,7 +20,8 @@ from fractions import Fraction
 import pytest
 from degenbot.degenbot_rs import mobius as rs_mobius
 
-from degenbot.arbitrage.optimizers import ArbSolver, Hop, SolveInput, SolverMethod
+from degenbot.arbitrage.optimizers import ArbSolver, SolveInput, SolverMethod
+from degenbot.types.hop_types import ConstantProductHop, BoundedProductHop
 
 from .conftest import (
     FEE_0_05_PCT,
@@ -243,8 +244,8 @@ class TestArbSolverRawArrayMarshalling:
         solver = ArbSolver()
         inp = SolveInput(
             hops=(
-                Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
-                Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
             )
         )
         result = solver.solve(inp)
@@ -268,8 +269,8 @@ class TestArbSolverRawArrayMarshalling:
 
         inp = SolveInput(
             hops=(
-                Hop(reserve_in=r0_a, reserve_out=r1_a, fee=FEE_0_3_PCT),
-                Hop(reserve_in=r1_b, reserve_out=r0_b, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=r0_a, reserve_out=r1_a, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=r1_b, reserve_out=r0_b, fee=FEE_0_3_PCT),
             )
         )
         result = solver.solve(inp)
@@ -286,9 +287,9 @@ class TestArbSolverRawArrayMarshalling:
         solver = ArbSolver()
         inp = SolveInput(
             hops=(
-                Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
-                Hop(reserve_in=WETH_1000, reserve_out=500_000_000_000, fee=FEE_0_3_PCT),
-                Hop(reserve_in=500_000_000_000, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=WETH_1000, reserve_out=500_000_000_000, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=500_000_000_000, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
             )
         )
         result = solver.solve(inp)
@@ -306,8 +307,8 @@ class TestArbSolverRawArrayMarshalling:
         solver = ArbSolver()
         inp = SolveInput(
             hops=(
-                Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_05_PCT),
-                Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_05_PCT),
+                ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
             )
         )
         result = solver.solve(inp)
@@ -324,8 +325,8 @@ class TestArbSolverRawArrayMarshalling:
         solver = ArbSolver()
         inp = SolveInput(
             hops=(
-                Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
-                Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
             )
         )
         result = solver.solve(inp)

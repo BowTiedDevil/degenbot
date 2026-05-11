@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import contextlib
-from fractions import Fraction
 from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
-import sqlalchemy.exc
-from sqlalchemy import select
 
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.checksum_cache import get_checksum_address
@@ -16,10 +12,9 @@ from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
 from degenbot.curve.fetcher_factory import CurveFetcherFactory
 from degenbot.curve.types import CurveStableswapPoolExternalUpdate
-from degenbot.database.models.pools import LiquidityPoolTable
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.exceptions.liquidity_pool import BrokenPool, LiquidityPoolError
-from degenbot.functions import encode_function_calldata, raw_call
+from degenbot.exceptions.liquidity_pool import BrokenPool
+from degenbot.functions import encode_function_calldata
 from degenbot.logging import logger
 from degenbot.registry import PoolRegistry, TokenRegistry
 from degenbot.types.aliases import ChainId

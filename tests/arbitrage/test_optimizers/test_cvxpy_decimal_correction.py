@@ -6,30 +6,13 @@ asymmetric token decimals correctly.
 """
 
 from fractions import Fraction
-from typing import TYPE_CHECKING, cast
 
-import cvxpy
-import cvxpy.settings
 import hypothesis
 import hypothesis.strategies as st
-import numpy as np
-import pytest
-from cvxpy.atoms.affine.binary_operators import multiply as cvxpy_multiply
-from cvxpy.atoms.affine.bmat import bmat as cvxpy_bmat
-from cvxpy.atoms.affine.sum import sum as cvxpy_sum
-from cvxpy.atoms.geo_mean import geo_mean
 
 from tests.arbitrage.generator.hypothesis_strategies import (
-    common_decimal_pairs_strategy,
-    liquidity_depth_strategy,
     mismatched_decimal_pair_strategy,
-    price_ratio_strategy,
-    seed_strategy,
 )
-
-if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
-
 
 # ==============================================================================
 # Decimal Compression Strategies

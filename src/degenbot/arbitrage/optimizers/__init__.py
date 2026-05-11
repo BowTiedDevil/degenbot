@@ -21,36 +21,19 @@ from degenbot.arbitrage.optimizers.solver_hop_builders import (
     pool_to_hop,
     pools_to_solve_input,
 )
-from degenbot.types.hop_types import (
-    BalancerMultiTokenHop,
-    BoundedProductHop,
-    ConstantProductHop,
-    Hop,
-    HopType,
-    PoolInvariant,
-    SolidlyStableHop,
-    V3TickRangeInfo,
-)
+
 
 __all__ = [
     "ArbSolver",
-    "BalancerMultiTokenHop",
     "BalancerMultiTokenSolver",
-    "BoundedProductHop",
     "BrentSolver",
-    "ConstantProductHop",
-    "Hop",
-    "HopType",
     "MobiusSolver",
     "NewtonSolver",
     "PiecewiseMobiusSolver",
-    "PoolInvariant",
-    "SolidlyStableHop",
     "SolidlyStableSolver",
     "SolveInput",
     "SolveResult",
     "SolverMethod",
-    "V3TickRangeInfo",
     "pool_state_to_hop",
     "pool_to_hop",
     "pools_to_solve_input",

@@ -11,6 +11,7 @@ from degenbot.arbitrage.types import (
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
     UniswapV4PoolSwapAmounts,
+    V4PoolKey,
 )
 from degenbot.types.abstract import (
     AbstractAerodromeV2Pool,
@@ -43,6 +44,13 @@ def build_swap_amount(
             return UniswapV4PoolSwapAmounts(
                 address=pool.address,
                 id=pool.pool_id,
+                pool_key=V4PoolKey(
+                    currency0=pool.token0.address,
+                    currency1=pool.token1.address,
+                    fee=pool.fee,
+                    tick_spacing=pool.tick_spacing,
+                    hooks=pool.hook_address,
+                ),
                 amount_in=amount_in,
                 amount_out=amount_out,
                 amount_specified=amount_in,

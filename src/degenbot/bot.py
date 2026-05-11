@@ -9,11 +9,11 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import select
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
+from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.v2_pool_builder import V2PoolBuilder
 from degenbot.builders.v3_pool_builder import V3PoolBuilder
 from degenbot.builders.v4_pool_builder import V4PoolBuilder
-from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
 from degenbot.connection.connection_manager import ConnectionManager
@@ -224,7 +224,7 @@ class Bot:
         # Resolve the pool type and dispatch
         pool_type = self._resolve_pool_type(address, chain_id=chain_id)
 
-        match pool_type.invariant:
+        match pool_type.family:
             case PoolFamily.CONSTANT_PRODUCT:
                 return self.build_v2_pool(
                     address,
@@ -254,7 +254,7 @@ class Bot:
                 )
             case _:
                 raise DegenbotValueError(
-                    message=f"No builder for pool invariant {pool_type.invariant.value!r}"
+                    message=f"No builder for pool family {pool_type.family.value!r}"
                 )
 
     def _resolve_pool_type(
@@ -286,7 +286,7 @@ class Bot:
                 descriptor = pool_type_registry.get_descriptor_by_kind(kind)
                 if descriptor is not None:
                     return PoolTypeDescriptor(
-                        invariant=descriptor.invariant,
+                        family=descriptor.family,
                         variant=descriptor.variant,
                         kind=descriptor.kind,
                         factory=get_checksum_address(pool_from_db.exchange.factory),

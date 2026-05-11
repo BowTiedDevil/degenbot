@@ -9,6 +9,7 @@ class PoolPickleMixin:
         _pickle_drops: frozenset of attribute names to remove before pickling
         _pickle_reconstructs: dict of attribute name → callable factory for values to add
             when unpickling. Each factory is called to produce a fresh value.
+        _state_lock: threading.Lock (or similar) for thread-safe state access
     """
 
     _pickle_drops: ClassVar[frozenset[str]] = frozenset({
@@ -16,6 +17,7 @@ class PoolPickleMixin:
         "_subscribers",
     })
     _pickle_reconstructs: ClassVar[dict[str, Any]] = {}
+    _state_lock: Any  # Defined by subclass
 
     def __getstate__(self) -> dict[str, Any]:
         with self._state_lock:

@@ -6,12 +6,10 @@ from .hop_types import (
     BoundedProductHop,
     ConstantProductHop,
     CurveStableswapHop,
-    Hop,
     HopType,
     PoolInvariant,
     SolidlyStableHop,
     V3TickRangeInfo,
-    hop_factory,
 )
 from .pool_pickle import PoolPickleMixin
 from .pool_protocols import (
@@ -35,7 +33,6 @@ __all__ = (
     "BoundedProductHop",
     "ConstantProductHop",
     "CurveStableswapHop",
-    "Hop",
     "HopType",
     "KeyedDefaultDict",
     "MultiTokenSwapCalculation",
@@ -48,5 +45,4 @@ __all__ = (
     "StateManageablePool",
     "TwoTokenSwapCalculation",
     "V3TickRangeInfo",
-    "hop_factory",
 )

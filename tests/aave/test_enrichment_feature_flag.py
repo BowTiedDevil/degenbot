@@ -2,9 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from degenbot.aave.enrichment import ScaledEventEnricher, _USE_NEW_ENRICHMENT
+from degenbot.aave.enrichment import _USE_NEW_ENRICHMENT, ScaledEventEnricher
 
 
 class TestFeatureFlag:

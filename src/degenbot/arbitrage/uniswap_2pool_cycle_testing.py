@@ -24,15 +24,16 @@ from degenbot.arbitrage.optimizers.solver import (
     ArbSolver as _ArbSolver,
 )
 from degenbot.arbitrage.optimizers.solver import (
-    HopType as _HopType,
-)
-from degenbot.arbitrage.optimizers.solver import (
     SolveInput as _SolveInput,
 )
 from degenbot.arbitrage.optimizers.solver import (
     pool_state_to_hop as _pool_state_to_hop,
 )
+from degenbot.types.hop_types import (
+    HopType as _HopType,
+)
 from degenbot.arbitrage.types import (
+    V4PoolKey,
     ArbitrageCalculationResult,
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
@@ -942,6 +943,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool_lo.address,
                     id=v4_pool_lo.pool_id,
+                    pool_key=V4PoolKey(
+                        currency0=v4_pool_lo.token0.address,
+                        currency1=v4_pool_lo.token1.address,
+                        fee=v4_pool_lo.fee,
+                        tick_spacing=v4_pool_lo.tick_spacing,
+                        hooks=v4_pool_lo.hook_address,
+                    ),
                     amount_in=weth_in,
                     amount_out=forward_token_amount,
                     amount_specified=forward_token_amount,
@@ -953,6 +961,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool_hi.address,
                     id=v4_pool_hi.pool_id,
+                    pool_key=V4PoolKey(
+                        currency0=v4_pool_hi.token0.address,
+                        currency1=v4_pool_hi.token1.address,
+                        fee=v4_pool_hi.fee,
+                        tick_spacing=v4_pool_hi.tick_spacing,
+                        hooks=v4_pool_hi.hook_address,
+                    ),
                     amount_in=forward_token_amount,
                     amount_out=weth_out,
                     amount_specified=-forward_token_amount,
@@ -1142,6 +1157,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool.address,
                     id=v4_pool.pool_id,
+                    pool_key=V4PoolKey(
+                        currency0=v4_pool.token0.address,
+                        currency1=v4_pool.token1.address,
+                        fee=v4_pool.fee,
+                        tick_spacing=v4_pool.tick_spacing,
+                        hooks=v4_pool.hook_address,
+                    ),
                     amount_in=forward_token_amount,
                     amount_out=weth_out,
                     amount_specified=-forward_token_amount,  # exact input swap
@@ -1322,6 +1344,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool.address,
                     id=v4_pool.pool_id,
+                    pool_key=V4PoolKey(
+                        currency0=v4_pool.token0.address,
+                        currency1=v4_pool.token1.address,
+                        fee=v4_pool.fee,
+                        tick_spacing=v4_pool.tick_spacing,
+                        hooks=v4_pool.hook_address,
+                    ),
                     amount_in=weth_in,
                     amount_out=forward_token_amount,
                     amount_specified=forward_token_amount,  # exact output swap
@@ -1504,6 +1533,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool.address,
                     id=v4_pool.pool_id,
+                    pool_key=V4PoolKey(
+                        currency0=v4_pool.token0.address,
+                        currency1=v4_pool.token1.address,
+                        fee=v4_pool.fee,
+                        tick_spacing=v4_pool.tick_spacing,
+                        hooks=v4_pool.hook_address,
+                    ),
                     amount_in=weth_in,
                     amount_out=forward_token_amount,
                     amount_specified=forward_token_amount,  # exact output swap
@@ -2040,6 +2076,13 @@ class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
                 UniswapV4PoolSwapAmounts(
                     address=v4_pool.address,
                     id=v4_pool.pool_id,
+                    pool_key=V4PoolKey(
+                        currency0=v4_pool.token0.address,
+                        currency1=v4_pool.token1.address,
+                        fee=v4_pool.fee,
+                        tick_spacing=v4_pool.tick_spacing,
+                        hooks=v4_pool.hook_address,
+                    ),
                     amount_in=forward_token_amount,
                     amount_out=weth_out,
                     amount_specified=-forward_token_amount,  # exact input swap

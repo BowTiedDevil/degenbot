@@ -10,13 +10,10 @@ from typing import Any
 
 import hypothesis
 import hypothesis.strategies as st
-import pytest
-
 from degenbot.degenbot_rs import mobius
+
 from degenbot.uniswap.v3_libraries.tick_math import (
-    MAX_SQRT_RATIO,
     MAX_TICK,
-    MIN_SQRT_RATIO,
     MIN_TICK,
     get_sqrt_ratio_at_tick,
 )

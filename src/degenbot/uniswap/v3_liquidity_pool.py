@@ -87,6 +87,7 @@ class UniswapV3BitmapAtWordAsDict(TypedDict):
 
 
 class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidityPool):
+    variant: ClassVar[str | None] = None
     type PoolState = UniswapV3PoolState
     _state: PoolState
     _state_mgr: ConcentratedLiquidityStateManager[UniswapV3PoolState]

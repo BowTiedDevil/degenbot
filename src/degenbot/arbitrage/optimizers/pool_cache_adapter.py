@@ -7,10 +7,11 @@ cache management.
 
 from __future__ import annotations
 
-from fractions import Fraction
 from typing import TYPE_CHECKING, Any
 
+from degenbot.logging import logger
 from degenbot.types.concrete import AbstractPublisherMessage, Subscriber
+from degenbot.types.pool_protocols import CacheablePool
 
 if TYPE_CHECKING:
     from degenbot.arbitrage.optimizers.solver import ArbSolver
@@ -27,10 +28,8 @@ class ArbPoolCacheAdapter(Subscriber):
     reserve pairs. The adapter returns the primary pool_id; the reverse
     orientation's ID is ``primary_id + 1``.
 
-    Currently supports UniswapV2Pool and AerodromeV2Pool (volatile)
-    pools with constant-product invariant. V3/V4 concentrated-liquidity
-    pools require virtual reserves and tick range data that is not
-    suitable for the simple Rust cache path.
+    Requires the pool to implement ``CacheablePool`` (has
+    ``reserves_for_cache()`` and ``fee_for_cache()`` methods).
     """
 
     def __init__(self, *, solver: ArbSolver) -> None:
@@ -46,29 +45,31 @@ class ArbPoolCacheAdapter(Subscriber):
 
         Returns the primary (forward) pool ID.
         """
+        if not isinstance(pool, CacheablePool):
+            msg = (
+                f"Pool {pool.address} does not implement CacheablePool "
+                f"(missing reserves_for_cache() or fee_for_cache()). "
+                f"Cannot register in Rust solver cache."
+            )
+            raise TypeError(msg)
+
         pool.subscribe(self)
 
         # Extract current state to register immediately
-        reserves = self._get_reserves(pool)
-        fee = self._get_fee(pool)
-
-        if reserves is None or fee is None:
-            msg = f"Cannot extract reserves/fee from pool {pool.address}"
-            raise ValueError(msg)
-
-        reserve_in, reserve_out = reserves
+        reserve0, reserve1 = pool.reserves_for_cache()
+        fee = pool.fee_for_cache()
 
         # Register forward orientation
         forward_id = self._solver.register_pool(
-            reserve_in=reserve_in,
-            reserve_out=reserve_out,
+            reserve_in=reserve0,
+            reserve_out=reserve1,
             fee=fee,
         )
 
         # Register reverse orientation
         reverse_id = self._solver.register_pool(
-            reserve_in=reserve_out,
-            reserve_out=reserve_in,
+            reserve_in=reserve1,
+            reserve_out=reserve0,
             fee=fee,
         )
 
@@ -86,59 +87,21 @@ class ArbPoolCacheAdapter(Subscriber):
         if ids is None:
             return  # Pool not registered with this adapter
 
-        reserves = self._get_reserves(pool)
-        fee = self._get_fee(pool)
-
-        if reserves is None or fee is None:
+        if not isinstance(pool, CacheablePool):
+            logger.warning(
+                f"Pool {pool.address} no longer implements CacheablePool; "
+                f"skipping cache update."
+            )
             return
 
-        reserve_in, reserve_out = reserves
+        reserve0, reserve1 = pool.reserves_for_cache()
+        fee = pool.fee_for_cache()
         forward_id, reverse_id = ids
 
         # Update both orientations
-        self._solver.update_pool(forward_id, reserve_in, reserve_out, fee)
-        self._solver.update_pool(reverse_id, reserve_out, reserve_in, fee)
+        self._solver.update_pool(forward_id, reserve0, reserve1, fee)
+        self._solver.update_pool(reverse_id, reserve1, reserve0, fee)
 
     def get_pool_ids(self, pool: AbstractLiquidityPool) -> tuple[int, int] | None:
         """Return (forward_id, reverse_id) for a registered pool, or None."""
         return self._pool_to_ids.get(id(pool))
-
-    @staticmethod
-    def _get_reserves(pool: Any) -> tuple[int, int] | None:
-        """Extract (reserve_token0, reserve_token1) from a pool object."""
-        # V2/Aerodrome pools have state.reserves_token0/1
-        state = getattr(pool, "state", None)
-        if state is not None:
-            r0 = getattr(state, "reserves_token0", None)
-            r1 = getattr(state, "reserves_token1", None)
-            if isinstance(r0, int) and isinstance(r1, int):
-                return r0, r1
-
-        # Fallback: reserves tuple
-        reserves = getattr(pool, "reserves", None)
-        if isinstance(reserves, tuple) and len(reserves) == 2:
-            return reserves[0], reserves[1]
-
-        return None
-
-    @staticmethod
-    def _get_fee(pool: Any) -> Fraction | None:
-        """Extract the pool fee as a Fraction."""
-        # V2/Aerodrome volatile pools: fee is a Fraction
-        fee = getattr(pool, "fee", None)
-        if isinstance(fee, Fraction):
-            return fee
-
-        # V2 pools with fee_token0/fee_token1 (directional fees)
-        # Use fee_token0 as the default forward direction fee
-        fee_token0 = getattr(pool, "fee_token0", None)
-        if isinstance(fee_token0, Fraction):
-            return fee_token0
-
-        # V3/V4 pools: fee is int, need FEE_DENOMINATOR
-        fee_int = getattr(pool, "fee", None)
-        fee_denom = getattr(pool, "FEE_DENOMINATOR", None)
-        if isinstance(fee_int, int) and isinstance(fee_denom, int):
-            return Fraction(fee_int, fee_denom)
-
-        return None

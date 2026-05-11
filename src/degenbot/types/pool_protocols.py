@@ -1,5 +1,4 @@
-"""
-Pool simulation protocols.
+"""Pool simulation protocols.
 
 Define structural interfaces for pool behavior. Pools satisfy these
 protocols by implementing the required methods — no inheritance needed.
@@ -89,6 +88,25 @@ class StateManageablePool(Protocol):
     def discard_states_before_block(self, block: int) -> None: ...
 
     def restore_state_before_block(self, block: int) -> None: ...
+
+
+@runtime_checkable
+class CacheablePool(Protocol):
+    """
+    A pool whose reserves and fee can be registered in the Rust solver cache.
+
+    Used by ArbPoolCacheAdapter. Replaces getattr-based introspection
+    with explicit methods.
+    """
+
+    def reserves_for_cache(self) -> tuple[int, int]: ...
+    """Return (reserve_token0, reserve_token1) for the Rust cache."""
+
+    def fee_for_cache(self) -> Fraction: ...
+    """Return the pool fee as a Fraction (e.g. Fraction(3, 1000))."""
+
+    def subscribe(self, subscriber: Subscriber) -> None: ...
+    """Subscribe to pool state updates (provided by PublisherMixin)."""
 
 
 @runtime_checkable

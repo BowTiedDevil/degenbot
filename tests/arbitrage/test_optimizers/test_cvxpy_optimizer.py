@@ -10,7 +10,7 @@ Migrated from tests/test_cvxpy.py with additions for Hypothesis-based testing.
 """
 
 from fractions import Fraction
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import cvxpy
 import cvxpy.settings
@@ -32,22 +32,13 @@ from degenbot.provider import ProviderAdapter
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from tests.arbitrage.generator.fixtures import FixtureFactory
 from tests.arbitrage.generator.hypothesis_strategies import (
-    amount_strategy,
-    common_decimal_pairs_strategy,
     liquidity_depth_strategy,
     mismatched_decimal_pair_strategy,
     price_ratio_strategy,
     seed_strategy,
-    standard_fee_strategy,
-    v2_fee_strategy,
 )
-from tests.arbitrage.generator.pool_generator import PoolStateGenerator
-from tests.arbitrage.generator.types import LIQUIDITY_MULTIPLIERS
 from tests.fakes.pools import MockLiquidityPool
 from tests.helpers.bot_factory import make_bot_with_provider
-
-if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
 
 # ==============================================================================
 # Test Fixtures (Migrated from test_cvxpy.py)

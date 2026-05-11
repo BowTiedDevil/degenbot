@@ -431,17 +431,23 @@ class TestWeb3DirectUsageAudit:
     """Audit codebase for direct web3 usage that should migrate to provider interface."""
 
     def test_bot_py_uses_w3_eth_call(self):
-        """Document that bot.py uses w3.eth.call directly."""
+        """Document that w3.eth.call is used directly in the builders."""
         # This is a documentation test - it should pass but documents what needs migration
-        # Read the file to verify the usage exists
         import re
 
-        content = pathlib.Path("src/degenbot/bot.py").read_text()
+        # Check builders directory since I/O was extracted from bot.py
+        builder_files = list(pathlib.Path("src/degenbot/builders").glob("*.py"))
+        all_content = ""
+        for f in builder_files:
+            all_content += f.read_text() + "\n"
+
+        # Also check bot.py for any remaining usage
+        all_content += pathlib.Path("src/degenbot/bot.py").read_text()
 
         # Count occurrences of w3.eth.call
-        matches = re.findall(r"w3\.eth\.call\(", content)
-        print(f"\nFound {len(matches)} direct w3.eth.call() usages in bot.py")
-        assert len(matches) > 0, "Expected to find w3.eth.call usage in bot.py"
+        matches = re.findall(r"w3\.eth\.call\(", all_content)
+        print(f"\nFound {len(matches)} direct w3.eth.call() usages in builders + bot.py")
+        assert len(matches) > 0, "Expected to find w3.eth.call usage in builders or bot.py"
 
     def test_chainlink_py_uses_contract_factory(self):
         """Document that chainlink.py uses w3.eth.contract directly."""

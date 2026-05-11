@@ -242,14 +242,16 @@ def pool_to_hop(
     if zero_for_one:
         reserve_in = pool.state.reserves_token0
         reserve_out = pool.state.reserves_token1
+        fee = pool.fee_token0
     else:
         reserve_in = pool.state.reserves_token1
         reserve_out = pool.state.reserves_token0
+        fee = pool.fee_token1
 
     return ConstantProductHop(
         reserve_in=reserve_in,
         reserve_out=reserve_out,
-        fee=pool.fee,
+        fee=fee,
     )
 
 
@@ -293,12 +295,112 @@ def pool_state_to_hop(
             reserve_out = state.reserves_token0
             decimals_in = pool.token1.decimals
             decimals_out = pool.token0.decimals
+
+        # Build swap_fn using Aerodrome's calc_exact_in_stable
+        reserves0 = state.reserves_token0
+        reserves1 = state.reserves_token1
+        decimals0 = 10**pool.token0.decimals
+        decimals1 = 10**pool.token1.decimals
+        fee = pool.fee
+        token_in = 0 if zero_for_one else 1
+
+        def _aerodrome_stable_swap_fn(
+            amount_in: int,
+            __reserves0: int = reserves0,
+            __reserves1: int = reserves1,
+            __decimals0: int = decimals0,
+            __decimals1: int = decimals1,
+            __fee: Fraction = fee,
+            __token_in: int = token_in,
+        ) -> int:
+            return _aerodrome_stable_calc(
+                amount_in=amount_in,
+                token_in=__token_in,  # type: ignore[arg-type]
+                reserves0=__reserves0,
+                reserves1=__reserves1,
+                decimals0=__decimals0,
+                decimals1=__decimals1,
+                fee=__fee,
+            )
+
         return SolidlyStableHop(
             reserve_in=reserve_in,
             reserve_out=reserve_out,
             fee=pool.fee,
             decimals_in=decimals_in,
             decimals_out=decimals_out,
+            swap_fn=_aerodrome_stable_swap_fn,
+        )
+
+    # Camelot stable pool — Solidly invariant
+    if isinstance(pool, CamelotLiquidityPool) and getattr(pool, "stable_swap", False):
+        if zero_for_one:
+            reserve_in = state.reserves_token0
+            reserve_out = state.reserves_token1
+            decimals_in = pool.token0.decimals
+            decimals_out = pool.token1.decimals
+        else:
+            reserve_in = state.reserves_token1
+            reserve_out = state.reserves_token0
+            decimals_in = pool.token1.decimals
+            decimals_out = pool.token0.decimals
+
+        # Build swap_fn using Camelot's get_y
+        reserves0 = state.reserves_token0
+        reserves1 = state.reserves_token1
+        decimals0 = 10**pool.token0.decimals
+        decimals1 = 10**pool.token1.decimals
+        fee = pool.fee
+        token_in = 0 if zero_for_one else 1
+
+        def _camelot_stable_swap_fn(
+            amount_in: int,
+            __reserves0: int = reserves0,
+            __reserves1: int = reserves1,
+            __decimals0: int = decimals0,
+            __decimals1: int = decimals1,
+            __fee: Fraction = fee,
+            __token_in: int = token_in,
+        ) -> int:
+            return general_calc_exact_in_stable(
+                amount_in=amount_in,
+                token_in=__token_in,  # type: ignore[arg-type]
+                reserves0=__reserves0,
+                reserves1=__reserves1,
+                decimals0=__decimals0,
+                decimals1=__decimals1,
+                fee=__fee,
+                k_func=k_camelot,
+                get_y_func=get_y_camelot,
+            )
+
+        return SolidlyStableHop(
+            reserve_in=reserve_in,
+            reserve_out=reserve_out,
+            fee=pool.fee,
+            decimals_in=decimals_in,
+            decimals_out=decimals_out,
+            swap_fn=_camelot_stable_swap_fn,
+        )
+
+    # Camelot volatile pool — constant product with asymmetric fees
+    if isinstance(pool, CamelotLiquidityPool):
+        fee_tuple = pool.fee
+        if zero_for_one:
+            reserve_in = state.reserves_token0
+            reserve_out = state.reserves_token1
+            fee_in = fee_tuple[0]
+            fee_out = fee_tuple[1]
+        else:
+            reserve_in = state.reserves_token1
+            reserve_out = state.reserves_token0
+            fee_in = fee_tuple[1]
+            fee_out = fee_tuple[0]
+        return ConstantProductHop(
+            reserve_in=reserve_in,
+            reserve_out=reserve_out,
+            fee=fee_in,
+            fee_out=fee_out,
         )
 
     if isinstance(pool, UniswapV3Pool | UniswapV4Pool):
@@ -337,14 +439,16 @@ def pool_state_to_hop(
     if zero_for_one:
         reserve_in = state.reserves_token0
         reserve_out = state.reserves_token1
+        fee = pool.fee_token0
     else:
         reserve_in = state.reserves_token1
         reserve_out = state.reserves_token0
+        fee = pool.fee_token1
 
     return ConstantProductHop(
         reserve_in=reserve_in,
         reserve_out=reserve_out,
-        fee=pool.fee,
+        fee=fee,
     )
 
 

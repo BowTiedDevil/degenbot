@@ -1,16 +1,27 @@
 """Tests for ArbPoolCacheAdapter — auto-registers pools in Rust cache on state update."""
 
+from fractions import Fraction
 from unittest.mock import MagicMock
+
+import pytest
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage.optimizers.pool_cache_adapter import ArbPoolCacheAdapter
 from degenbot.arbitrage.optimizers.solver import ArbSolver
 from degenbot.provider import ProviderAdapter
+from degenbot.types.pool_protocols import CacheablePool
 from tests.helpers.bot_factory import make_bot_with_provider
 
 
-def test_adapter_exists() -> None:
-    """ArbPoolCacheAdapter is importable."""
+def test_adapter_requires_cacheable_pool() -> None:
+    """Adapter rejects pools that don't implement CacheablePool."""
+    solver = MagicMock()
+    adapter = ArbPoolCacheAdapter(solver=solver)
+
+    pool = MagicMock()
+    # No reserves_for_cache or fee_for_cache
+    with pytest.raises(TypeError, match="CacheablePool"):
+        adapter.register(pool)
 
 
 def test_adapter_subscribes_to_pool() -> None:
@@ -19,10 +30,9 @@ def test_adapter_subscribes_to_pool() -> None:
     solver.register_pool.side_effect = [1, 2]  # forward_id=1, reverse_id=2
     adapter = ArbPoolCacheAdapter(solver=solver)
 
-    pool = MagicMock()
-    pool.reserves = (1000, 2000)
-    pool.fee = 3000
-    pool.FEE_DENOMINATOR = 1_000_000
+    pool = MagicMock(spec=CacheablePool)
+    pool.reserves_for_cache.return_value = (1000, 2000)
+    pool.fee_for_cache.return_value = Fraction(3, 1000)
 
     adapter.register(pool)
     pool.subscribe.assert_called_once_with(adapter)
@@ -34,10 +44,9 @@ def test_adapter_assigns_pool_id() -> None:
     solver.register_pool.side_effect = [42, 43]
     adapter = ArbPoolCacheAdapter(solver=solver)
 
-    pool = MagicMock()
-    pool.reserves = (1000, 2000)
-    pool.fee = 3000
-    pool.FEE_DENOMINATOR = 1_000_000
+    pool = MagicMock(spec=CacheablePool)
+    pool.reserves_for_cache.return_value = (1000, 2000)
+    pool.fee_for_cache.return_value = Fraction(3, 1000)
 
     pool_id = adapter.register(pool)
     assert pool_id == 42  # forward_id
@@ -49,15 +58,14 @@ def test_adapter_updates_cache_on_notify() -> None:
     solver.register_pool.side_effect = [1, 2]
     adapter = ArbPoolCacheAdapter(solver=solver)
 
-    pool = MagicMock()
-    pool.reserves = (1000, 2000)
-    pool.fee = 3000
-    pool.FEE_DENOMINATOR = 1_000_000
+    pool = MagicMock(spec=CacheablePool)
+    pool.reserves_for_cache.return_value = (1000, 2000)
+    pool.fee_for_cache.return_value = Fraction(3, 1000)
 
     adapter.register(pool)
 
     # Simulate state update — reserves change
-    pool.reserves = (1500, 2500)
+    pool.reserves_for_cache.return_value = (1500, 2500)
 
     message = MagicMock()
     adapter.notify(publisher=pool, message=message)
@@ -84,10 +92,9 @@ def test_adapter_registers_both_orientations() -> None:
     solver.register_pool.side_effect = [1, 2]
     adapter = ArbPoolCacheAdapter(solver=solver)
 
-    pool = MagicMock()
-    pool.reserves = (1000, 2000)
-    pool.fee = 3000
-    pool.FEE_DENOMINATOR = 1_000_000
+    pool = MagicMock(spec=CacheablePool)
+    pool.reserves_for_cache.return_value = (1000, 2000)
+    pool.fee_for_cache.return_value = Fraction(3, 1000)
 
     adapter.register(pool)
 
@@ -111,16 +118,15 @@ def test_adapter_get_pool_ids() -> None:
     solver.register_pool.side_effect = [10, 11]
     adapter = ArbPoolCacheAdapter(solver=solver)
 
-    pool = MagicMock()
-    pool.reserves = (1000, 2000)
-    pool.fee = 3000
-    pool.FEE_DENOMINATOR = 1_000_000
+    pool = MagicMock(spec=CacheablePool)
+    pool.reserves_for_cache.return_value = (1000, 2000)
+    pool.fee_for_cache.return_value = Fraction(3, 1000)
 
     adapter.register(pool)
     assert adapter.get_pool_ids(pool) == (10, 11)
 
     # Unregistered pool returns None
-    other_pool = MagicMock()
+    other_pool = MagicMock(spec=CacheablePool)
     assert adapter.get_pool_ids(other_pool) is None
 
 

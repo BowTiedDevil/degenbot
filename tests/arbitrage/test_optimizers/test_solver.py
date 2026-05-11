@@ -14,11 +14,13 @@ from degenbot.arbitrage.optimizers.solver import (
     NewtonSolver,
     SolveResult,
     SolverMethod,
+)
+from degenbot.arbitrage.optimizers._solver_utils import (
     _compute_mobius_coefficients,
     _simulate_path,
 )
 from degenbot.exceptions import OptimizationError
-from degenbot.types.hop_types import Hop
+from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop
 
 from .conftest import (
     FEE_0_3_PCT,
@@ -37,12 +39,12 @@ from .conftest import (
 
 class TestHop:
     def test_v2_hop(self):
-        hop = Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
+        hop = ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
         assert not hop.is_v3
         assert hop.gamma == pytest.approx(0.997)
 
     def test_v3_hop(self):
-        hop = Hop(
+        hop = BoundedProductHop(
             reserve_in=USDC_2M,
             reserve_out=WETH_1000,
             fee=FEE_0_3_PCT,
@@ -53,18 +55,8 @@ class TestHop:
         )
         assert hop.is_v3
 
-    def test_v3_hop_partial_data_is_not_v3(self):
-        """Only some V3 fields set → not a V3 hop."""
-        hop = Hop(
-            reserve_in=USDC_2M,
-            reserve_out=WETH_1000,
-            fee=FEE_0_3_PCT,
-            liquidity=10**18,
-        )
-        assert not hop.is_v3
-
     def test_frozen(self):
-        hop = Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
+        hop = ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
         with pytest.raises(AttributeError):
             hop.reserve_in = 0
 
@@ -78,8 +70,8 @@ class TestSolveInput:
         assert inp.v3_indices == ()
 
     def test_mixed_v2_v3(self):
-        v2 = Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
-        v3 = Hop(
+        v2 = ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
+        v3 = BoundedProductHop(
             reserve_in=USDC_1_5M,
             reserve_out=WETH_800,
             fee=FEE_0_3_PCT,
@@ -113,8 +105,12 @@ class TestSolveResult:
         solver = ArbSolver()
         inp = SolveInput(
             hops=(
-                Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=Fraction(30, 100)),
-                Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=Fraction(30, 100)),
+                ConstantProductHop(
+                    reserve_in=USDC_2M, reserve_out=WETH_1000, fee=Fraction(30, 100)
+                ),
+                ConstantProductHop(
+                    reserve_in=WETH_1000, reserve_out=USDC_2M, fee=Fraction(30, 100)
+                ),
             )
         )
         with pytest.raises(OptimizationError):
@@ -139,8 +135,12 @@ class TestMobiusCoefficients:
         # With identical prices and 30% fees, K/M = gamma^2 = 0.49 < 1
         inp = SolveInput(
             hops=(
-                Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=Fraction(30, 100)),
-                Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=Fraction(30, 100)),
+                ConstantProductHop(
+                    reserve_in=USDC_2M, reserve_out=WETH_1000, fee=Fraction(30, 100)
+                ),
+                ConstantProductHop(
+                    reserve_in=WETH_1000, reserve_out=USDC_2M, fee=Fraction(30, 100)
+                ),
             )
         )
         coeffs = _compute_mobius_coefficients(inp.hops)
@@ -182,16 +182,22 @@ class TestMobiusSolver:
         solver = MobiusSolver()
         inp = SolveInput(
             hops=(
-                Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
-                Hop(reserve_in=WETH_800, reserve_out=500_000 * 10**6, fee=FEE_0_3_PCT),
-                Hop(reserve_in=600_000 * 10**6, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+                ConstantProductHop(
+                    reserve_in=WETH_800, reserve_out=500_000 * 10**6, fee=FEE_0_3_PCT
+                ),
+                ConstantProductHop(
+                    reserve_in=600_000 * 10**6, reserve_out=WETH_1000, fee=FEE_0_3_PCT
+                ),
             )
         )
         assert solver.supports(inp)
 
     def test_does_not_support_1hop(self):
         solver = MobiusSolver()
-        inp = SolveInput(hops=(Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),))
+        inp = SolveInput(
+            hops=(ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),)
+        )
         assert not solver.supports(inp)
 
     def test_profitable_solve(self):
@@ -210,8 +216,12 @@ class TestMobiusSolver:
         # With identical prices and 30% fees, round-trip = gamma^2 = 0.49
         inp = SolveInput(
             hops=(
-                Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=Fraction(30, 100)),
-                Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=Fraction(30, 100)),
+                ConstantProductHop(
+                    reserve_in=USDC_2M, reserve_out=WETH_1000, fee=Fraction(30, 100)
+                ),
+                ConstantProductHop(
+                    reserve_in=WETH_1000, reserve_out=USDC_2M, fee=Fraction(30, 100)
+                ),
             )
         )
         with pytest.raises(OptimizationError):
@@ -230,9 +240,13 @@ class TestMobiusSolver:
         # 3-hop: USDC → WETH → USDC → WETH (triangular)
         inp = SolveInput(
             hops=(
-                Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
-                Hop(reserve_in=WETH_800, reserve_out=500_000_000_000, fee=FEE_0_3_PCT),
-                Hop(reserve_in=500_000_000_000, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+                ConstantProductHop(
+                    reserve_in=WETH_800, reserve_out=500_000_000_000, fee=FEE_0_3_PCT
+                ),
+                ConstantProductHop(
+                    reserve_in=500_000_000_000, reserve_out=WETH_1000, fee=FEE_0_3_PCT
+                ),
             )
         )
         result = solver.solve(inp)
@@ -243,8 +257,8 @@ class TestMobiusSolver:
         # Pool 1: buy WETH cheap (lower USDC/WETH ratio), Pool 2: sell WETH expensive
         inp = SolveInput(
             hops=(
-                Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_5_PCT),
-                Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_5_PCT),
+                ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
             )
         )
         solver.solve(inp)
@@ -265,16 +279,20 @@ class TestNewtonSolver:
         solver = NewtonSolver()
         inp = SolveInput(
             hops=(
-                Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
-                Hop(reserve_in=WETH_800, reserve_out=500_000 * 10**6, fee=FEE_0_3_PCT),
-                Hop(reserve_in=600_000 * 10**6, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+                ConstantProductHop(
+                    reserve_in=WETH_800, reserve_out=500_000 * 10**6, fee=FEE_0_3_PCT
+                ),
+                ConstantProductHop(
+                    reserve_in=600_000 * 10**6, reserve_out=WETH_1000, fee=FEE_0_3_PCT
+                ),
             )
         )
         assert not solver.supports(inp)
 
     def test_does_not_support_v3(self):
         solver = NewtonSolver()
-        v3 = Hop(
+        v3 = BoundedProductHop(
             reserve_in=USDC_2M,
             reserve_out=WETH_1000,
             fee=FEE_0_3_PCT,
@@ -283,7 +301,7 @@ class TestNewtonSolver:
             tick_lower=-100,
             tick_upper=100,
         )
-        v2 = Hop(reserve_in=WETH_800, reserve_out=USDC_1_5M, fee=FEE_0_3_PCT)
+        v2 = ConstantProductHop(reserve_in=WETH_800, reserve_out=USDC_1_5M, fee=FEE_0_3_PCT)
         inp = SolveInput(hops=(v3, v2))
         assert not solver.supports(inp)
 
@@ -333,9 +351,13 @@ class TestArbSolver:
         solver = ArbSolver()
         inp = SolveInput(
             hops=(
-                Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
-                Hop(reserve_in=WETH_800, reserve_out=500_000_000_000, fee=FEE_0_3_PCT),
-                Hop(reserve_in=500_000_000_000, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+                ConstantProductHop(
+                    reserve_in=WETH_800, reserve_out=500_000_000_000, fee=FEE_0_3_PCT
+                ),
+                ConstantProductHop(
+                    reserve_in=500_000_000_000, reserve_out=WETH_1000, fee=FEE_0_3_PCT
+                ),
             )
         )
         result = solver.solve(inp)
@@ -346,8 +368,12 @@ class TestArbSolver:
         # Round trip: same prices, high fees → no profit
         inp = SolveInput(
             hops=(
-                Hop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=Fraction(30, 100)),
-                Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=Fraction(30, 100)),
+                ConstantProductHop(
+                    reserve_in=USDC_2M, reserve_out=WETH_1000, fee=Fraction(30, 100)
+                ),
+                ConstantProductHop(
+                    reserve_in=WETH_1000, reserve_out=USDC_2M, fee=Fraction(30, 100)
+                ),
             )
         )
         with pytest.raises(OptimizationError):
@@ -423,8 +449,8 @@ class TestCrossValidation:
         # Pool 1: USDC → WETH, Pool 2: WETH → USDC
         inp = SolveInput(
             hops=(
-                Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=fee_buy),
-                Hop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=fee_sell),
+                ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=fee_buy),
+                ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=fee_sell),
             )
         )
 
@@ -446,8 +472,8 @@ class TestCrossValidation:
         weth_pool2 = int(WETH_1000 / price_ratio)
         inp = SolveInput(
             hops=(
-                Hop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
-                Hop(reserve_in=weth_pool2, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
+                ConstantProductHop(reserve_in=weth_pool2, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
             )
         )
 
