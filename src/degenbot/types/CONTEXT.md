@@ -34,6 +34,17 @@
 | **Weighted Pool** | A Balancer V2-style pool with configurable token weights in the invariant | Balancer pool |
 | **Volatile Pool** | An Aerodrome V2 pool using the constant-product invariant (as opposed to its stable variant) | — |
 
+## Pool Invariant & Type Resolution
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **Pool Invariant** | An enum value identifying which mathematical invariant governs a pool's swap pricing: `CONSTANT_PRODUCT`, `CONCENTRATED_LIQUIDITY`, `STABLESWAP`, or `WEIGHTED` | Pool family, pool category |
+| **Pool Type Descriptor** | A frozen dataclass carrying the resolved pool identity: `PoolFamily` + variant name (e.g., `"sushiswap"`) + factory address | Type descriptor, pool descriptor |
+| **Pool Variant** | A string identifying the DEX-specific subclass within an invariant family; bare DEX name without `_v2`/`_v3` suffix; `None` for the canonical Uniswap variant (e.g., `"sushiswap"`, `"camelot"`, `"aerodrome"`); the suffix is added by `derive_kind()` based on the invariant | DEX variant, subclass name |
+| **Type Resolution** | The process of determining a pool's `PoolTypeDescriptor` from its address, consulting DB `kind` column → Pool Type Registry → on-chain probing | Pool discovery, type detection |
+| **Kind** | The polymorphic identity string stored in the database `kind` column (e.g., `"uniswap_v2"`, `"sushiswap_v3"`, `"camelot_v2"`); derived from `derive_kind(family, variant)` — the family adds the `_v2`/`_v3` suffix | Polymorphic type, DB type |
+| **from_chain** | A classmethod on pool classes with non-standard constructors that fetches class-specific state from chain and constructs the pool; `Bot.build_v2_pool` delegates to it via `hasattr(pool_class, "from_chain")` | Factory method, chain constructor |
+
 ## Pool Managers
 
 | Term | Definition | Aliases to avoid |
@@ -60,6 +71,8 @@ Some pool types (e.g., Curve StableSwap) follow an **I/O-free architecture** whe
 | **Fetcher** | A callable protocol injected at pool construction that fetches on-chain data on-demand (e.g., `RateFetcher`, `VirtualPriceFetcher`) |
 | **Fetcher Callback** | The actual function passed to the pool; called lazily when data is needed, not at construction |
 | **I/O Decoupling** | Pool class has no direct provider/connection dependencies; all I/O flows through injected fetchers |
+| **PoolFamily** | An enum identifying a pool's mathematical invariant family for type resolution: `CONSTANT_PRODUCT`, `CONCENTRATED_LIQUIDITY`, `STABLESWAP`, `WEIGHTED`. Renamed from the former `PoolInvariant` in this module to avoid confusion with the solver-dispatch `PoolInvariant` in `types/hop_types.py` (Plan 020) |
+| **CacheablePool** | A protocol for pools that register with the Rust solver cache, requiring `reserves_for_cache()` and `fee_for_cache()` methods (Plan 019) |
 
 **Benefits:**
 - **Testability**: Fake fetchers enable unit testing without network I/O

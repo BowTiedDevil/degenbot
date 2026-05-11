@@ -29,7 +29,8 @@
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
 | **Pool Adapter** | A protocol object that translates a specific pool type into solver-compatible Hop State, extracts fees, and builds Swap Amounts | Adapter, bridge |
-| **Pool Cache Adapter** | A subscriber that auto-registers pools in the Rust solver cache on state updates, eliminating manual cache management | ArbPoolCacheAdapter, cache adapter |
+| **Pool Cache Adapter** | A subscriber that auto-registers pools in the Rust solver cache on state updates, eliminating manual cache management; uses **CacheablePool** protocol methods instead of `getattr` introspection (Plan 019) | ArbPoolCacheAdapter, cache adapter |
+| **SwapEncoder** | A standalone module for encoding swap calldata (V2 `swap()`, V3 `exactInput()`, ERC-20 `approve()`) from `SwapAmounts`; extracted from the legacy `UniswapLpCycle` (Plan 021) | Calldata builder, payload encoder |
 | **Pool Compatibility** | An enum indicating whether a pool can participate in an arbitrage path (COMPATIBLE, INCOMPATIBLE_INVARIANT, INCOMPATIBLE_TOKENS) | — |
 
 ## Relationships
@@ -38,7 +39,8 @@
 - An **Arbitrage Path** wraps a sequence of pools with a **Solver** and subscribes to **Pool State Messages**
 - A **Swap Vector** describes the direction of a single hop within an **Arbitrage Path**
 - A **Pool Adapter** translates a **Pool** into a **Hop State** for a **Solver**
-- A **Pool Cache Adapter** subscribes to **Pool State Messages** and auto-registers forward and reverse orientations in the Rust pool cache
+- A **Pool Cache Adapter** subscribes to **Pool State Messages** and auto-registers forward and reverse orientations in the Rust pool cache; uses **CacheablePool** protocol
+- A **SwapEncoder** produces encoded swap calldata from **Swap Amounts** for on-chain execution
 
 ## Resolved ambiguities
 

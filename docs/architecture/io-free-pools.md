@@ -122,6 +122,18 @@ def build_curve_pool(self, pool_address):
 
 **Key insight**: The pool never touches `provider` or `connection_manager`. I/O lives in the injected closures.
 
+## Migration Status
+
+### Completed
+
+- **Curve StableSwap Pools** — fully I/O-free with fetcher callbacks (ADR-001 Phase 1–2)
+- **All pool construction** — `Bot.build_*_pool()` methods fetch data from DB/RPC and pass values to pool constructors; no provider references on pool objects after construction
+- **Builder extraction** — pool construction I/O has been extracted from `Bot` into typed builder classes (`V2PoolBuilder`, `V3PoolBuilder`, `V4PoolBuilder`, `CurvePoolBuilder`, `Erc20Builder`)
+
+### In Progress
+
+- **V2/V3/V4/Aerodrome update path** — the `update()` path in builders still calls provider directly (correct — I/O stays in builders), but pool classes still carry residual `ProviderAdapter`-taking methods like `get_reserves()`, `get_immutable_pool_values()`, and `from_chain` classmethods. Plan 017 tracks the removal of these methods.
+
 ## Migration Guide
 
 ### Converting from Direct I/O to Fetchers
@@ -157,22 +169,34 @@ class IoFreePool:
         return self._rate_fetcher(block_number)
 ```
 
-**Bot-side changes:**
+**Builder-side (Bot delegates to builders, not pools):**
 ```python
-# Before: Just pass address
-def build_pool(self, address):
-    return PoolWithIo(address)
+# Builders own the I/O choreography
+# Bot.create_builder() injects connections and db into builders
+# Builders call providers, construct pools with pure data
 
-# After: Create and inject fetchers
-def build_pool(self, address):
-    provider = self.get_provider_for_chain(chain_id)  # Bot handles I/O
-    
-    def make_rate_fetcher():
-        def fetcher(block_number):
-            return provider.call(...)  # I/O in fetcher, not pool
-        return fetcher
-    
-    return IoFreePool(address, rate_fetcher=make_rate_fetcher())
+# V2 construction: builder fetches from DB/RPC, pool receives pure values
+class V2PoolBuilder:
+    def build(self, pool_address, *, chain_id, ...):
+        provider = self._connections.get_provider(chain_id)  # Builder handles I/O
+        ...
+        pool = UniswapV2Pool(
+            address=pool_address,
+            token0=token0, token1=token1,
+            reserves_token0=reserves0, reserves_token1=reserves1,
+            # No provider reference passed to pool
+        )
+
+# Curve construction: builder creates fetcher closures, injects into pool
+class CurvePoolBuilder:
+    def build(self, address, *, chain_id, ...):
+        fetchers = CurveFetcherFactory(connections=self._connections, chain_id=chain_id)
+        pool = CurveStableswapPool(
+            ...,
+            virtual_price_fetcher=fetchers.virtual_price_fetcher(pool_address),
+            timestamp_fetcher=fetchers.timestamp_fetcher(),
+            # Fetchers are closures — pool calls them, doesn't know about providers
+        )
 ```
 
 ## When to Use
@@ -237,13 +261,25 @@ The Curve I/O-free refactor introduced these fetchers:
 
 See `src/degenbot/curve/types.py` for protocol definitions.
 
+## Related Pool Types
+
+### V2/V3/V4/Aerodrome Pools
+
+These pool types are I/O-free at construction — builders fetch all data and pass values to the pool constructor. Residual `ProviderAdapter`-taking methods (`get_reserves()`, `get_immutable_pool_values()`, `from_chain` classmethods) are being removed (Plan 017).
+
+### Solver Cache Integration
+
+Pools participating in the Rust solver cache implement the `CacheablePool` protocol with `reserves_for_cache()` and `fee_for_cache()` methods. This replaces `getattr`-based introspection in the adapter with explicit protocol methods (Plan 019).
+
 ## References
 
 - `src/degenbot/curve/CONTEXT.md` — Curve domain terminology
 - `src/degenbot/curve/types.py` — Fetcher protocol definitions
-- `plans/20-curve-io-free-architecture.md` — Migration status and decisions
-- `src/degenbot/types/CONTEXT.md` — I/O-free architecture pattern
+- `src/degenbot/types/pool_protocols.py` — Pool simulation and cacheable protocols
+- `plans/017-v2-v3-io-free-migration.md` — Plan to complete ADR-001 Phase 3
+- `plans/019-pool-cache-adapter-protocol.md` — CacheablePool protocol plan
+- `docs/adr/ADR-001-io-free-pools.md` — ADR-001 (I/O-free pools)
 
 ---
 
-*Last updated: 2026-05-08*
+*Last updated: 2026-05-11*

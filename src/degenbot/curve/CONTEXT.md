@@ -68,6 +68,8 @@ Crypto pools (e.g., Tricrypto USDT-WBTC-WETH) use a fundamentally different calc
 
 ## Detection Heuristics
 
+> **Note:** These detection heuristics currently live in `CurvePoolBuilder.build()`. Plan 018 proposes decomposing them into standalone detector modules (`CoinDiscovery`, `LendingDetector`, `MetapoolDetector`, `CryptoDetector`, `ARampingDetector`), each returnable as a frozen dataclass and independently testable with a fake provider.
+
 ### Metapool Detection
 
 1. Check Registry `is_meta(pool_address)` if available
