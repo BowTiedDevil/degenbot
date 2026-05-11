@@ -6,16 +6,11 @@ uses actual V3 pool calculations instead of constant-product approximation.
 
 import pytest
 
-from degenbot.arbitrage.optimizers.solver import (
-    ArbSolver,
-    BoundedProductHop,
-    ConstantProductHop,
-    SolveInput,
-    SolveResult,
-    SolverMethod,
-    _v3_virtual_reserves,
-)
+from degenbot.arbitrage.optimizers._v3_utils import _v3_virtual_reserves
+from degenbot.arbitrage.optimizers.hop_types import SolveInput, SolveResult, SolverMethod
+from degenbot.arbitrage.optimizers.solver import ArbSolver
 from degenbot.exceptions import OptimizationError
+from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop
 
 from .conftest import FEE_0_3_PCT, USDC_1_5M, USDC_2M, WETH_800, WETH_1000
 

@@ -19,12 +19,9 @@ from fractions import Fraction
 import pytest
 from degenbot.degenbot_rs import mobius as rs_mobius
 
-from degenbot.arbitrage.optimizers.solver import (
-    ArbSolver,
-    ConstantProductHop,
-    SolveInput,
-    SolverMethod,
-)
+from degenbot.arbitrage.optimizers.hop_types import SolveInput, SolverMethod
+from degenbot.arbitrage.optimizers.solver import ArbSolver
+from degenbot.types.hop_types import ConstantProductHop
 
 from .conftest import (
     FEE_0_05_PCT,

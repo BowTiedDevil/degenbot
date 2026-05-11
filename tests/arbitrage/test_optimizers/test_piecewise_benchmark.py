@@ -9,13 +9,13 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.arbitrage.optimizers.solver import (
+from degenbot.arbitrage.optimizers._v3_utils import _v3_virtual_reserves
+from degenbot.arbitrage.optimizers.hop_types import SolveInput
+from degenbot.arbitrage.optimizers.solver import PiecewiseMobiusSolver
+from degenbot.types.hop_types import (
     BoundedProductHop,
     ConstantProductHop,
-    PiecewiseMobiusSolver,
-    SolveInput,
     V3TickRangeInfo,
-    _v3_virtual_reserves,
 )
 
 Q96 = 2**96

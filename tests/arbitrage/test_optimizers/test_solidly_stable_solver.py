@@ -17,17 +17,18 @@ from typing import Literal
 import pytest
 
 from degenbot.aerodrome.functions import calc_exact_in_stable
+from degenbot.arbitrage.optimizers.hop_types import SolveInput, SolverMethod
 from degenbot.arbitrage.optimizers.solidly_stable import _simulate_mixed_path_int
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
+    SolidlyStableSolver,
+)
+from degenbot.exceptions import OptimizationError
+from degenbot.types.hop_types import (
     ConstantProductHop,
     PoolInvariant,
     SolidlyStableHop,
-    SolidlyStableSolver,
-    SolveInput,
-    SolverMethod,
 )
-from degenbot.exceptions import OptimizationError
 
 # ---------------------------------------------------------------------------
 # Helpers
