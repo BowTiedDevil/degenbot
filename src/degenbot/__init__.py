@@ -55,7 +55,13 @@ from .pancakeswap import (
     PancakeswapV3Pool,
     PancakeswapV3PoolManager,
 )
-from .registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
+from .registry import (
+    ManagedPoolRegistry,
+    PoolRegistry,
+    PoolTypeRegistry,
+    TokenRegistry,
+    pool_type_registry,
+)
 from .sushiswap import (
     SushiswapV2Pool,
     SushiswapV2PoolManager,
@@ -113,6 +119,7 @@ __all__ = (
     "PancakeswapV3Pool",
     "PancakeswapV3PoolManager",
     "PoolRegistry",
+    "PoolTypeRegistry",
     "SushiswapV2Pool",
     "SushiswapV2PoolManager",
     "SushiswapV3Pool",
@@ -150,5 +157,6 @@ __all__ = (
     "get_sqrt_ratio_at_tick",
     "get_tick_at_sqrt_ratio",
     "logger",
+    "pool_type_registry",
     "to_checksum_address",
 )
