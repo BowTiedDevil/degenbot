@@ -106,21 +106,6 @@ class AsyncConnectionManager:
 
         self.connections[await provider.get_chain_id()] = provider
 
-    async def register_web3(
-        self,
-        w3: AsyncWeb3[AsyncBaseProvider],
-        *,
-        optimize: bool = True,
-    ) -> None:
-        """Register an AsyncWeb3 instance (legacy method, wraps in AsyncProviderAdapter).
-
-        Args:
-            w3: The AsyncWeb3 instance to register
-            optimize: Whether to optimize the AsyncWeb3 instance
-        """
-        provider = AsyncProviderAdapter.from_web3(w3)
-        await self.register_provider(provider, optimize=optimize)
-
     def set_default_chain(self, chain_id: ChainId) -> None:
         self._default_chain_id = chain_id
 
