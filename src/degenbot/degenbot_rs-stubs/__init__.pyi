@@ -178,6 +178,24 @@ def decode_single(
         NotImplementedError: If strict=False or for unsupported types
     """
 
+def encode(
+    types: list[str],
+    values: list[Any],
+) -> bytes:
+    """
+    Encode multiple ABI values.
+
+    Args:
+        types: List of ABI type strings
+        values: List of Python values to encode
+
+    Returns:
+        The ABI-encoded bytes.
+
+    Raises:
+        ValueError: If values cannot be encoded or type/value counts differ
+    """
+
 def encode_function_call(function_signature: str, args: list[str]) -> bytes:
     """
     Encode function arguments into calldata.
@@ -252,7 +270,7 @@ class Contract:
         function_signature: str,
         args: list[str],
         block_number: int | None = None,
-    ) -> list[Any]:
+    ) -> list[str]:
         """
         Execute a contract call.
 
@@ -262,7 +280,7 @@ class Contract:
             block_number: Optional block number to query
 
         Returns:
-            List of decoded return values
+            List of decoded return values as strings
         """
 
 class LogFilter:
@@ -292,6 +310,7 @@ class AlloyProvider:
 
     Automatically detects connection type from URL:
     - HTTP/HTTPS URLs use HTTP transport with connection pooling
+    - WS/WSS URLs use WebSocket transport
     - File paths (Unix: /path, Windows: \\.\pipe\...) use IPC transport
     """
 
@@ -300,6 +319,8 @@ class AlloyProvider:
         rpc_url: str,
         max_retries: int = 10,
         max_blocks_per_request: int = 5000,
+        requests_per_second: int = 50,
+        burst: int = 10,
     ) -> None: ...
     @property
     def rpc_url(self) -> str: ...
@@ -336,6 +357,27 @@ class AlloyProvider:
         value: int | None = None,
         block_number: int | None = None,
     ) -> int: ...
+    def get_storage_at(
+        self,
+        address: str,
+        position: int,
+        block_number: int | None = None,
+    ) -> HexBytes: ...
+    def get_balance(
+        self,
+        address: str,
+        block_number: int | None = None,
+    ) -> int: ...
+    def get_transaction_count(
+        self,
+        address: str,
+        block_number: int | None = None,
+    ) -> int: ...
+    def make_request(
+        self,
+        method: str,
+        params: list[Any],
+    ) -> Any: ...
     def close(self) -> None: ...
 
 class AsyncAlloyProvider:
@@ -349,6 +391,8 @@ class AsyncAlloyProvider:
         rpc_url: str,
         max_retries: int = 10,
         max_blocks_per_request: int = 5000,
+        requests_per_second: int = 50,
+        burst: int = 10,
     ) -> Coroutine[Any, Any, AsyncAlloyProvider]: ...
     @property
     def rpc_url(self) -> str: ...
@@ -393,6 +437,21 @@ class AsyncAlloyProvider:
         position: int,
         block_number: int | None = None,
     ) -> Coroutine[Any, Any, HexBytes]: ...
+    def get_balance(
+        self,
+        address: str,
+        block_number: int | None = None,
+    ) -> Coroutine[Any, Any, int]: ...
+    def get_transaction_count(
+        self,
+        address: str,
+        block_number: int | None = None,
+    ) -> Coroutine[Any, Any, int]: ...
+    def make_request(
+        self,
+        method: str,
+        params: list[Any],
+    ) -> Coroutine[Any, Any, Any]: ...
     def close(self) -> None: ...
 
 class AsyncContract:
@@ -407,7 +466,7 @@ class AsyncContract:
         max_retries: int | None = None,
     ) -> Coroutine[Any, Any, AsyncContract]: ...
     @staticmethod
-    def from_provider(address: str, provider: AsyncAlloyProvider) -> AsyncContract: ...
+    def from_provider(address: str, provider: AlloyProvider) -> AsyncContract: ...
     @property
     def address(self) -> str: ...
     def call(
@@ -415,12 +474,12 @@ class AsyncContract:
         function_signature: str,
         args: list[str],
         block_number: int | None = None,
-    ) -> Coroutine[Any, Any, list[Any]]: ...
+    ) -> Coroutine[Any, Any, list[str]]: ...
     def batch_call(
         self,
         calls: list[tuple[str, list[str]]],
         block_number: int | None = None,
-    ) -> Coroutine[Any, Any, list[list[Any]]]: ...
+    ) -> Coroutine[Any, Any, list[list[str]]]: ...
 
 __all__ = [
     "AlloyProvider",
@@ -432,6 +491,7 @@ __all__ = [
     "decode",
     "decode_return_data",
     "decode_single",
+    "encode",
     "encode_function_call",
     "encode_single",
     "get_function_selector",
