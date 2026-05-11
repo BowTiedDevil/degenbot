@@ -611,6 +611,54 @@ ArbitrageCalculationResult(
 )
 ```
 
+#### Swap Encoding & On-Chain Execution
+
+Each `SwapAmounts` subclass encodes its own per-hop calldata via `encode()`.
+The `generate_payloads()` pipeline wires encoding → approval → composition:
+
+```python
+from degenbot.arbitrage.encoding import generate_payloads, EncodedCall
+
+# Encode swap amounts into on-chain calldata
+payloads = generate_payloads(
+    result.swap_amounts,
+    recipient=bot_address,
+)
+# Returns list[EncodedCall] — each has .to, .data, .value
+
+# With a custom approval strategy (e.g., ERC-20 approvals)
+from my_strategies import ExactApproval
+
+payloads = generate_payloads(
+    result.swap_amounts,
+    recipient=bot_address,
+    approval_strategy=ExactApproval(),
+)
+
+# With a custom composer (e.g., wrapping in Multicall3)
+from my_composers import Multicall3Composer
+
+payloads = generate_payloads(
+    result.swap_amounts,
+    recipient=bot_address,
+    composer=Multicall3Composer(address=multicall_address),
+)
+```
+
+**Supported pool types for encoding:**
+- Uniswap V2: `swap(uint256,uint256,address,bytes)`
+- Uniswap V3: `swap(address,bool,int256,uint160,bytes)`
+- Curve V1: `exchange(int128,int128,uint256,uint256)` / `exchange_underlying(...)`
+- Uniswap V4: requires a custom `PayloadComposer` (V4 uses an unlock/swap callback pattern)
+
+**Pluggable layers:**
+
+| Layer | Protocol | Default | Purpose |
+|-------|----------|---------|--------|
+| Per-hop encoding | `SwapAmounts.encode()` | Pool-type-specific ABI encoding | V2 `swap()`, V3 `swap()`, Curve `exchange()` |
+| Approval injection | `ApprovalStrategy` | `NoApprovals` | Add ERC-20 `approve()` calls before swaps |
+| Call composition | `PayloadComposer` | `FlatComposer` | Wrap calls for target contract (Multicall3, custom executor, flash loan) |
+
 ## Bot API Reference
 
 The `Bot` class is the primary entry point for degenbot usage. Access factories, registries, and utilities through Bot.

@@ -6,7 +6,7 @@ Module-level context files (terms, aliases, relationships, and ambiguity rulings
 - [Uniswap](src/degenbot/uniswap/CONTEXT.md) — V2/V3/V4 pools, concentrated liquidity, tick bitmaps, Pool Manager, Factory, Pool Init Hash, Pool Key, PoolManager contract · Ambiguity rulings: Pool vs Pool Manager vs PoolManager, Fee representations, Token ordering, Price vs Exchange Rate
 - [Tokens](src/degenbot/erc20/CONTEXT.md) — Token, Token0/Token1, Ether Placeholder, Wrapped Native Token, Chain ID
 - [Pool Registries](src/degenbot/registry/CONTEXT.md) — Pool Registry, Token Registry, Managed Pool Registry (class instances owned by Bot), Pool Type Registry (module-level singleton, factory→class + identity + deployment data, replaces old Pool Class Registry) · Ambiguity rulings: Registry vs Manager, Pool Class Registry vs Pool Type Registry
-- [Arbitrage, Solvers & Adapters](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Arbitrage Path, Input/Profit Token & Amount, Swap Vector, Solver, Optimizer, Hop State, Pool Adapter, Pool Cache Adapter · Ambiguity ruling: Solver vs Optimizer
+- [Arbitrage, Solvers & Adapters](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Arbitrage Path, Input/Profit Token & Amount, Swap Vector, Solver, Optimizer, Hop State, Pool Adapter, Pool Cache Adapter, EncodedCall, ApprovalStrategy, PayloadComposer, V4PoolKey · Ambiguity ruling: Solver vs Optimizer
 - [Aave](src/degenbot/aave/CONTEXT.md) — Market, Asset, Reserve, Collateral, Debt, aToken/vToken, GHO, Health Factor, Liquidation, Scaled/Raw Amount, Index, Enrichment, Processor, E-Mode, Isolation Mode
 - [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — I/O-free pool architecture, Fetcher Protocols (VirtualPrice, Timestamp, Redemption, AdminBalances, D, Gamma, PriceScale), provider_call, Metapools, Base Pools, Lending Pools, Crypto Pools, Dynamic Fees, A Coefficient, Stored Rates, Virtual Price, CurveStableswapPoolManager · Ambiguity rulings: Coin vs Token, Rate units, Lending detection methods, provider_call vs typed fetchers, Crypto pool vs Stableswap pool
 - [Infrastructure](src/degenbot/connection/CONTEXT.md) — Anvil Fork, Provider, Connection Manager, Pool State Message, Bot · Ambiguity ruling: ConnectionManager class vs connection_manager module
@@ -35,8 +35,10 @@ Module-level context files (terms, aliases, relationships, and ambiguity rulings
 - A **Curve Pool Manager** tracks **Curve StableSwap Pools** and delegates construction to **Bot**
 - **Fetcher Callbacks** are injected into **Curve Pools** by **Bot.build_curve_pool()**; pools never access connections directly
 - V2/V3/V4/Aerodrome **Pools** are I/O-free at construction — **Builders** fetch all data from DB/RPC and pass values; residual `ProviderAdapter`-taking methods are being removed (Plan 017)
-- **PoolFamily** (identity enum, `types/pool_type.py`) maps to **PoolInvariant** (solver-dispatch enum, `types/hop_types.py`) at the pool→solver seam; Plan 020 tracks the rename
+- **PoolFamily** (identity enum, `types/pool_type.py`) is the sole identity enum; the backward-compat `PoolInvariant` alias was removed (Plan 020)
 - **CacheablePool** protocol (`reserves_for_cache()`, `fee_for_cache()`) enables **Pool Cache Adapter** registration without `getattr` introspection (Plan 019)
+- **Swap Amounts** carry per-pool swap parameters and self-encode via `encode(recipient=)` into **EncodedCall**s; the pipeline function `generate_payloads()` wires encoding → **ApprovalStrategy** → **PayloadComposer** (Plan 021)
+- **V4PoolKey** lives on `UniswapV4PoolSwapAmounts` for custom **PayloadComposers** handling V4's unlock/swap callback dispatch (Plan 021)
 
 Module-internal relationships are documented in each module's context file.
 

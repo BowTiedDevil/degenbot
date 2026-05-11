@@ -119,6 +119,16 @@ A `PoolFamily` maps 1:1 to `PoolInvariant` for V2/V3, but N:1 for Curve/Stable a
 
 Pools that register with the Rust solver cache implement the `CacheablePool` protocol, providing `reserves_for_cache()` and `fee_for_cache()` methods. This replaces `getattr`-based introspection in the adapter (Plan 019).
 
+### Swap Encoding Pipeline
+
+Each `SwapAmounts` subclass (V2, V3, Curve, V4) has an `encode(recipient=)` method that produces an `EncodedCall(to, data, value)`. The `generate_payloads()` function wires a three-layer pipeline:
+
+1. **Per-hop encoding** — `SwapAmounts.encode()` (pool-type-specific ABI encoding)
+2. **Approval injection** — `ApprovalStrategy` protocol (default: `NoApprovals`)
+3. **Call composition** — `PayloadComposer` protocol (default: `FlatComposer`)
+
+Library callers extend this by implementing custom `ApprovalStrategy` and `PayloadComposer` for their specific smart contracts. V4 encoding requires a custom `PayloadComposer` since V4 uses an unlock/swap callback pattern. The `V4PoolKey` dataclass is available on `UniswapV4PoolSwapAmounts.pool_key` for V4 dispatch. See `src/degenbot/arbitrage/CONTEXT.md` for full terminology.
+
 ## Agent skills
 
 ### Issue tracker
