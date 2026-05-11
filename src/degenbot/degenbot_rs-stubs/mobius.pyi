@@ -6,6 +6,8 @@ CFMM arbitrage path optimization. Provides both float (fast) and integer
 (EVM-exact) solvers.
 """
 
+from typing import Any
+
 class RustHopState:
     """
     Pool hop state with reserves and fee for float-based Möbius solving.
@@ -31,18 +33,18 @@ class RustMobiusCoefficients:
     The path output is computed as: l(x) = K * x / (M + N * x)
 
     Attributes:
-        coeff_k: K coefficient (product of gammas and reserves)
-        coeff_m: M coefficient (product of input reserves)
-        coeff_n: N coefficient (cross-term coefficient)
+        coeff_K: K coefficient (product of gammas and reserves)
+        coeff_M: M coefficient (product of input reserves)
+        coeff_N: N coefficient (cross-term coefficient)
         is_profitable: Whether K > M (profitable arbitrage exists)
     """
 
     @property
-    def coeff_k(self) -> float: ...
+    def coeff_K(self) -> float: ...
     @property
-    def coeff_m(self) -> float: ...
+    def coeff_M(self) -> float: ...
     @property
-    def coeff_n(self) -> float: ...
+    def coeff_N(self) -> float: ...
     @property
     def is_profitable(self) -> bool: ...
     def path_output(self, x: float) -> float:
@@ -86,6 +88,16 @@ class RustV3TickRangeHop:
     def fee(self) -> float: ...
     @property
     def zero_for_one(self) -> bool: ...
+    def alpha(self) -> float:
+        """Lower bound on R0: L / √P_upper."""
+    def beta(self) -> float:
+        """Lower bound on R1: L · √P_lower."""
+    def to_hop_state(self) -> RustHopState:
+        """Convert to a RustHopState with effective reserves."""
+    def contains_sqrt_price(self, sqrt_price: float) -> bool:
+        """Check if a sqrt price is within this tick range."""
+    def max_gross_input_in_range(self) -> float:
+        """Maximum gross input (including fees) this range can absorb."""
 
 class RustV3TickRangeSequence:
     """
@@ -95,12 +107,8 @@ class RustV3TickRangeSequence:
     """
 
     def __init__(self, ranges: list[RustV3TickRangeHop]) -> None: ...
-    @property
-    def ranges(self) -> list[RustV3TickRangeHop]: ...
-    def to_hop_state(self, range_index: int | None = None) -> RustHopState:
-        """Convert a tick range to an effective HopState."""
-    def compute_crossing(self, end_idx: int) -> RustTickRangeCrossing:
-        """Compute the crossing data for ending at a specific range."""
+    def compute_crossing(self, k: int) -> RustTickRangeCrossing:
+        """Compute the crossing data for reaching range k."""
 
 class RustTickRangeCrossing:
     """
@@ -112,6 +120,12 @@ class RustTickRangeCrossing:
         ending_range: The final tick range where the swap ends
     """
 
+    def __init__(
+        self,
+        crossing_gross_input: float,
+        crossing_output: float,
+        ending_range: RustV3TickRangeHop,
+    ) -> None: ...
     @property
     def crossing_gross_input(self) -> float: ...
     @property
@@ -143,23 +157,49 @@ class RustMobiusOptimizer:
     """
     High-level Möbius optimizer for multi-hop paths.
 
-    Provides both pure Möbius and piecewise Möbius solving with
-    V3 tick range support.
+    Every constant product swap y = (γ·s·x)/(r + γ·x) is a Möbius
+    transformation. An n-hop path composes into l(x) = K·x / (M + N·x),
+    with closed-form optimal input x_opt = (√(K·M) - M) / N.
+
+    Zero iterations, exact solution, O(n) forward pass.
     """
 
     def __init__(self) -> None: ...
+    def compute_coefficients(
+        self,
+        hops: list[RustHopState],
+    ) -> RustMobiusCoefficients:
+        """Compute Möbius coefficients K, M, N for an n-hop path."""
+    def simulate_path(self, x: float, hops: list[RustHopState]) -> float:
+        """Simulate a swap through all hops."""
     def solve(
         self,
         hops: list[RustHopState],
         max_input: float | None = None,
-    ) -> RustMobiusResult: ...
+    ) -> RustMobiusResult:
+        """Solve for optimal arbitrage input (closed-form, zero iterations)."""
+    def solve_v3_candidates(
+        self,
+        base_hops: list[RustHopState],
+        v3_hop_index: int,
+        v3_candidates: list[RustV3TickRangeHop],
+        max_input: float | None = None,
+    ) -> RustMobiusResult:
+        """Solve with multiple candidate V3 tick ranges."""
+    def estimate_v3_final_sqrt_price(
+        self,
+        amount_in: float,
+        v3_hop: RustV3TickRangeHop,
+    ) -> float:
+        """Estimate final sqrt price after a V3 swap."""
     def solve_piecewise(
         self,
         hops: list[RustHopState],
         v3_hop_index: int,
         crossings: list[RustTickRangeCrossing],
         max_input: float | None = None,
-    ) -> RustMobiusResult: ...
+    ) -> RustMobiusResult:
+        """Solve arbitrage with piecewise-Möbius for V3 tick crossings."""
     def solve_v3_sequence(
         self,
         hops: list[RustHopState],
@@ -167,14 +207,42 @@ class RustMobiusOptimizer:
         sequence: RustV3TickRangeSequence,
         max_candidates: int,
         max_input: float | None = None,
-    ) -> RustMobiusResult: ...
+    ) -> RustMobiusResult:
+        """Solve arbitrage with full V3 tick range sequence handling."""
     def solve_v3_v3(
         self,
-        seq1: RustV3TickRangeSequence,
-        seq2: RustV3TickRangeSequence,
+        sequence1: RustV3TickRangeSequence,
+        sequence2: RustV3TickRangeSequence,
         max_input: float | None = None,
-        max_iterations: int = 10,
-    ) -> RustMobiusResult: ...
+        max_candidates: int = 10,
+    ) -> RustMobiusResult:
+        """Solve V3-V3 arbitrage (two V3 hops, both potentially crossing ticks)."""
+    def solve_batch(
+        self,
+        hops_array: list[float],
+        num_hops: int,
+        max_inputs: list[float],
+    ) -> dict[str, Any]:
+        """
+        Solve a batch of paths with the same hop count.
+
+        Returns:
+            dict with 'optimal_input', 'profit', 'is_profitable' lists.
+        """
+    def solve_batch_vectorized(
+        self,
+        reserves_in: list[float],
+        reserves_out: list[float],
+        fees: list[float],
+        num_hops: int,
+        max_inputs: list[float],
+    ) -> dict[str, Any]:
+        """
+        Solve a batch using vectorized coefficient computation.
+
+        Returns:
+            dict with 'optimal_input', 'profit', 'is_profitable' lists.
+        """
 
 class RustArbResult:
     """
@@ -190,7 +258,7 @@ class RustArbResult:
         iterations: Number of iterations
         success: Whether optimization succeeded
         supported: Whether the path type is supported
-        method: Integer method tag (0=MOBIUS, 1=PIECEWISE_MOBIUS)
+        method: Integer method tag (0=MOBIUS, 1=PIECEWISE_MOBIUS, 2=V3V3)
     """
 
     @property
@@ -198,9 +266,9 @@ class RustArbResult:
     @property
     def profit(self) -> float: ...
     @property
-    def optimal_input_int(self) -> float | None: ...
+    def optimal_input_int(self) -> int | None: ...
     @property
-    def profit_int(self) -> float | None: ...
+    def profit_int(self) -> int | None: ...
     @property
     def iterations(self) -> int: ...
     @property
@@ -214,8 +282,9 @@ class RustArbSolver:
     """
     Unified arbitrage solver with automatic method selection.
 
-    Handles V2, V3 single-range, and V3 multi-range paths with automatic
-    dispatch to the optimal algorithm.
+    Accepts mixed hop types and automatically selects the best solver.
+    Returns supported=False for hop types not handled by Rust
+    (Solidly, Balancer, Curve), so Python can fall back.
     """
 
     def __init__(self) -> None: ...
@@ -224,18 +293,24 @@ class RustArbSolver:
         hops: list[RustHopState | RustIntHopState | tuple[float, float, float]],
         v3_sequences: list[tuple[int, RustV3TickRangeSequence]] | None = None,
         max_input: float | None = None,
-        max_iterations: int = 10,
-    ) -> RustArbResult: ...
+        max_candidates: int = 10,
+    ) -> RustArbResult:
+        """
+        Unified solve entry point with automatic method selection.
+
+        When all hops are RustIntHopState, does merged integer refinement
+        and returns EVM-exact integer results.
+        """
     def solve_raw(
         self,
-        hops_flat: list[int],
+        int_hops_flat: list[int],
         max_input: float | None = None,
     ) -> RustArbResult:
         """
         Solve using flat integer array for minimal marshalling overhead.
 
         Args:
-            hops_flat: Flat list of [r0, s0, gamma_numer0, fee_denom0, r1, s1, ...]
+            int_hops_flat: Flat list of [reserve_in, reserve_out, gamma_numer, fee_denom] per hop
             max_input: Optional maximum input constraint
         """
 
@@ -265,6 +340,10 @@ class RustPoolCache:
         max_input: float | None = None,
     ) -> RustArbResult:
         """Solve an arbitrage path using cached pool states by ID."""
+    def contains(self, pool_id: int) -> bool:
+        """Check if a pool ID is in the cache."""
+    def __len__(self) -> int: ...
+    def __bool__(self) -> bool: ...
 
 class RustIntHopState:
     """
@@ -293,6 +372,8 @@ class RustIntHopState:
     @property
     def gamma_numer(self) -> int: ...
     @property
+    def fee_numer(self) -> int: ...
+    @property
     def fee_denom(self) -> int: ...
 
 class RustIntMobiusResult:
@@ -315,44 +396,49 @@ class RustIntMobiusResult:
     @property
     def success(self) -> bool: ...
 
-def compute_mobius_coefficients(
+def py_compute_mobius_coefficients(
     hops: list[RustHopState],
 ) -> RustMobiusCoefficients:
     """Compute Möbius coefficients for a path."""
 
-def mobius_solve(
+def py_mobius_solve(
     hops: list[RustHopState],
     max_input: float | None = None,
 ) -> RustMobiusResult:
     """Solve for optimal arbitrage input using float arithmetic."""
 
-def simulate_path(x: float, hops: list[RustHopState]) -> float:
+def py_simulate_path(x: float, hops: list[RustHopState]) -> float:
     """Simulate a swap through all hops."""
 
-def estimate_v3_final_sqrt_price(
+def py_estimate_v3_final_sqrt_price(
     amount_in: float,
     v3_hop: RustV3TickRangeHop,
 ) -> float:
     """Estimate the final sqrt price after a V3 swap."""
 
-def int_mobius_solve(
+def py_int_mobius_solve(
     hops: list[RustIntHopState],
-    max_input: float | None = None,
 ) -> RustIntMobiusResult:
     """Solve for optimal arbitrage input using integer arithmetic."""
 
-def int_simulate_path(x: float, hops: list[RustIntHopState]) -> float:
+def py_int_simulate_path(x: int, hops: list[RustIntHopState]) -> int:
     """Simulate a swap through all hops using integer arithmetic."""
 
-def mobius_refine_int(
+def py_mobius_refine_int(
+    x_approx: float,
     hops: list[RustIntHopState],
-    x_float: float,
-) -> tuple[int, int]:
+    max_input: float | None = None,
+) -> RustIntMobiusResult:
     """
-    Refine a float solution to integer optimal input and profit.
+    Integer refinement around a float optimum using EVM-exact U256 arithmetic.
+
+    Args:
+        x_approx: Approximate optimal input from the float Möbius solver
+        hops: List of integer hop states
+        max_input: Optional maximum input constraint
 
     Returns:
-        Tuple of (optimal_input, profit)
+        RustIntMobiusResult with optimal_input, profit, success, and iterations
     """
 
 __all__ = [
@@ -368,11 +454,11 @@ __all__ = [
     "RustTickRangeCrossing",
     "RustV3TickRangeHop",
     "RustV3TickRangeSequence",
-    "compute_mobius_coefficients",
-    "estimate_v3_final_sqrt_price",
-    "int_mobius_solve",
-    "int_simulate_path",
-    "mobius_refine_int",
-    "mobius_solve",
-    "simulate_path",
+    "py_compute_mobius_coefficients",
+    "py_estimate_v3_final_sqrt_price",
+    "py_int_mobius_solve",
+    "py_int_simulate_path",
+    "py_mobius_refine_int",
+    "py_mobius_solve",
+    "py_simulate_path",
 ]
