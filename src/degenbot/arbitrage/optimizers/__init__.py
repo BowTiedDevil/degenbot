@@ -22,7 +22,6 @@ from degenbot.arbitrage.optimizers.solver_hop_builders import (
     pools_to_solve_input,
 )
 
-
 __all__ = [
     "ArbSolver",
     "BalancerMultiTokenSolver",

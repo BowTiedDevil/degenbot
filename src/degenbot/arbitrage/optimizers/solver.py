@@ -15,7 +15,6 @@ from fractions import Fraction
 from typing import Any, ClassVar, override
 
 # Re-export internal helpers so existing test imports keep working
-
 from degenbot.arbitrage.optimizers.balancer_multi_token_solver import (
     BalancerMultiTokenSolver,
 )
@@ -29,20 +28,18 @@ from degenbot.arbitrage.optimizers.piecewise_mobius_solver import (
 from degenbot.arbitrage.optimizers.solidly_stable import (
     SolidlyStableSolver,
 )
-
 from degenbot.degenbot_rs import mobius as _rs_mobius
 from degenbot.exceptions import OptimizationError
-
 
 # Explicit exports for type checker and IDE completion
 __all__ = [
     "ArbSolver",
+    "BalancerMultiTokenSolver",
     "BrentSolver",
     "MobiusSolver",
     "NewtonSolver",
     "PiecewiseMobiusSolver",
     "SolidlyStableSolver",
-    "BalancerMultiTokenSolver",
     "SolveInput",
     "SolveResult",
     "SolverMethod",

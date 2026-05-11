@@ -26,18 +26,15 @@ from degenbot.arbitrage.optimizers.solver import (
 from degenbot.arbitrage.optimizers.solver import (
     SolveInput as _SolveInput,
 )
-from degenbot.arbitrage.optimizers.solver import (
+from degenbot.arbitrage.optimizers.solver_hop_builders import (
     pool_state_to_hop as _pool_state_to_hop,
 )
-from degenbot.types.hop_types import (
-    HopType as _HopType,
-)
 from degenbot.arbitrage.types import (
-    V4PoolKey,
     ArbitrageCalculationResult,
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
     UniswapV4PoolSwapAmounts,
+    V4PoolKey,
 )
 from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
 from degenbot.checksum_cache import get_checksum_address
@@ -57,6 +54,9 @@ from degenbot.exceptions.liquidity_pool import (
     PossibleInaccurateResult,
 )
 from degenbot.logging import logger
+from degenbot.types.hop_types import (
+    HopType as _HopType,
+)
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO

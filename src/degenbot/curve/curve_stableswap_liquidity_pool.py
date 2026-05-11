@@ -59,6 +59,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         # Fetchers (can't pickle closures)
         "_virtual_price_fetcher",
         "_base_virtual_price_fetcher",
+        "_base_cache_updated_fetcher",
         "_timestamp_fetcher",
         "_redemption_price_fetcher",
         "_admin_balances_fetcher",
@@ -76,6 +77,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         # Fetchers default to None after unpickle
         "_virtual_price_fetcher": lambda: None,
         "_base_virtual_price_fetcher": lambda: None,
+        "_base_cache_updated_fetcher": lambda: None,
         "_timestamp_fetcher": lambda: None,
         "_redemption_price_fetcher": lambda: None,
         "_admin_balances_fetcher": lambda: None,
@@ -96,6 +98,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
     FEE_DENOMINATOR: int = 10**10
     A_PRECISION: int = 100
     MAX_COINS: int = 8
+    BASE_CACHE_EXPIRES: int = 10 * 60  # 10 minutes in seconds
 
     D_VARIANT_GROUP_0 = frozenset(
         get_checksum_address(pool_address)
@@ -212,6 +215,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         # Optional fetchers for on-demand data
         virtual_price_fetcher: VirtualPriceFetcher | None = None,
         base_virtual_price_fetcher: VirtualPriceFetcher | None = None,
+        base_cache_updated_fetcher: VirtualPriceFetcher | None = None,
         timestamp_fetcher: TimestampFetcher | None = None,
         redemption_price_fetcher: RedemptionPriceFetcher | None = None,
         admin_balances_fetcher: AdminBalancesFetcher | None = None,
@@ -299,6 +303,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         # Fetchers for on-demand data
         self._virtual_price_fetcher = virtual_price_fetcher
         self._base_virtual_price_fetcher = base_virtual_price_fetcher
+        self._base_cache_updated_fetcher = base_cache_updated_fetcher
         self._timestamp_fetcher = timestamp_fetcher
         self._redemption_price_fetcher = redemption_price_fetcher
         self._admin_balances_fetcher = admin_balances_fetcher
@@ -310,8 +315,8 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         self._gamma_fetcher = gamma_fetcher
         self._price_scale_fetcher = price_scale_fetcher
 
-        self.base_cache_updated = None
-        self.base_virtual_price = 0
+        self.base_cache_updated: int | None = None
+        self.base_virtual_price: int = 0
         self._coin_index_type = "uint256"
 
         # State caches
@@ -372,6 +377,14 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         self._cached_gamma: BoundedCache[BlockNumber, int] = BoundedCache(
             max_items=state_cache_depth
         )
+
+        # Pre-populate base cache values for metapools at construction time,
+        # matching the contract's _vp_rate_ro() cache behavior.
+        if self.base_pool is not None and state_block != 0:
+            with contextlib.suppress(Exception):
+                self.base_cache_updated = self._get_base_cache_updated(block_number=state_block)
+            with contextlib.suppress(Exception):
+                self.base_virtual_price = self._get_base_virtual_price(block_number=state_block)
 
         fee_string = f"{100 * self.fee / self.FEE_DENOMINATOR:.2f}"
         token_string = "-".join([token.symbol for token in self._tokens])
@@ -1248,10 +1261,16 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         with contextlib.suppress(KeyError):
             return self._cached_base_cache_updated[block_number]
 
+        if self._base_cache_updated_fetcher is not None:
+            result = self._base_cache_updated_fetcher(block_number)
+            self._cached_base_cache_updated[block_number] = result
+            self.base_cache_updated = result
+            return result
+
         raise MissingCurveData(
             self.address,
             "base_cache_updated",
-            "base_cache_updated requires I/O. Provide a virtual_price_fetcher callback "
+            "base_cache_updated requires a base_cache_updated_fetcher callback "
             "via Bot.build_curve_pool().",
         )
 
@@ -1278,18 +1297,29 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         with contextlib.suppress(KeyError):
             return self._cached_virtual_price[block_number]
 
-        if self._virtual_price_fetcher is not None:
-            result = self._virtual_price_fetcher(block_number)
-            self._cached_virtual_price[block_number] = result
-            self.base_virtual_price = result
-            return result
+        base_virtual_price: int
+        if (
+            self.base_cache_updated is None
+            or self._block_timestamps.get(block_number, 0)
+            > self.base_cache_updated + self.BASE_CACHE_EXPIRES
+        ):
+            # Cache is not set or has expired — fetch live virtual price from base pool
+            if self._virtual_price_fetcher is not None:
+                base_virtual_price = self._virtual_price_fetcher(block_number)
+            else:
+                raise MissingCurveData(
+                    self.address,
+                    "virtual_price",
+                    "Virtual price requires a virtual_price_fetcher callback. "
+                    "Provide one via Bot.build_curve_pool().",
+                )
+        else:
+            # Cache is still valid — use the cached base_virtual_price
+            base_virtual_price = self.base_virtual_price
 
-        raise MissingCurveData(
-            self.address,
-            "virtual_price",
-            "Virtual price requires a virtual_price_fetcher callback. "
-            "Provide one via Bot.build_curve_pool().",
-        )
+        self._cached_virtual_price[block_number] = base_virtual_price
+        self.base_virtual_price = base_virtual_price
+        return base_virtual_price
 
     def _get_admin_balances(self, block_number: BlockNumber) -> tuple[int, ...]:
         with contextlib.suppress(KeyError):
