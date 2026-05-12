@@ -2,7 +2,7 @@
 
 ## Status
 
-**Implemented** — Active for Curve StableSwap pools (v2025.05). Planned for Uniswap V2/V3/V4 and other pool types.
+**Implemented** — All pool types (Curve, V2, V3, V4, Aerodrome, Camelot) are I/O-free.
 
 ## Context
 
@@ -112,14 +112,12 @@ class VirtualPriceFetcher(Protocol):
 - Remove provider from pool constructor
 - Builder extraction complete (`CurvePoolBuilder`)
 
-### Phase 3: Other Pool Types 🔄
+### Phase 3: Other Pool Types ✅
 - V2/V3/V4/Aerodrome construction is I/O-free (builders fetch data, pass to constructors)
-- Residual `ProviderAdapter`-taking methods still on pool classes (`get_reserves()`, `get_immutable_pool_values()`, `from_chain` classmethods)
-- Plan 017 tracks the removal of these methods
-- Repeat for Uniswap V2/V3/V4, Aerodrome, etc.
+- All `ProviderAdapter`-taking methods removed from pool classes (`get_reserves()`, `get_immutable_pool_values()`, `from_chain` classmethods, etc.)
+- Plan 017 complete
 
 ### Phase 4: Cleanup 🔄
-- Remove residual provider-dependent methods from pool classes
 - Deprecate direct pool instantiation
 - Update all tests to use `Fake*` fetchers
 - `PoolFamily`/`PoolInvariant` enum naming resolved (Plan 020)

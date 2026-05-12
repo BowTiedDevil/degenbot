@@ -34,7 +34,7 @@ Module-level context files (terms, aliases, relationships, and ambiguity rulings
 - An **Aave Market** contains many **Assets**, each wrapping an **Erc20Token** plus lending state
 - A **Curve Pool Manager** tracks **Curve StableSwap Pools** and delegates construction to **Bot**
 - **Fetcher Callbacks** are injected into **Curve Pools** by **Bot.build_curve_pool()**; pools never access connections directly
-- V2/V3/V4/Aerodrome **Pools** are I/O-free at construction — **Builders** fetch all data from DB/RPC and pass values; residual `ProviderAdapter`-taking methods are being removed (Plan 017)
+- V2/V3/V4/Aerodrome **Pools** are fully I/O-free — **Builders** fetch all data from DB/RPC and pass values; no pool class imports `ProviderAdapter` or carries provider-dependent methods (ADR-001 Phase 3 complete)
 - **PoolFamily** (identity enum, `types/pool_type.py`) is the sole identity enum; the backward-compat `PoolInvariant` alias was removed (Plan 020)
 - **CacheablePool** protocol (`reserves_for_cache()`, `fee_for_cache()`) enables **Pool Cache Adapter** registration without `getattr` introspection (Plan 019)
 - **Swap Amounts** carry per-pool swap parameters and self-encode via `encode(recipient=)` into **EncodedCall**s; the pipeline function `generate_payloads()` wires encoding → **ApprovalStrategy** → **PayloadComposer** (Plan 021)

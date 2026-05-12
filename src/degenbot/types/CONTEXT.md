@@ -43,7 +43,7 @@
 | **Pool Variant** | A string identifying the DEX-specific subclass within an invariant family; bare DEX name without `_v2`/`_v3` suffix; `None` for the canonical Uniswap variant (e.g., `"sushiswap"`, `"camelot"`, `"aerodrome"`); the suffix is added by `derive_kind()` based on the invariant | DEX variant, subclass name |
 | **Type Resolution** | The process of determining a pool's `PoolTypeDescriptor` from its address, consulting DB `kind` column → Pool Type Registry → on-chain probing | Pool discovery, type detection |
 | **Kind** | The polymorphic identity string stored in the database `kind` column (e.g., `"uniswap_v2"`, `"sushiswap_v3"`, `"camelot_v2"`); derived from `derive_kind(family, variant)` — the family adds the `_v2`/`_v3` suffix | Polymorphic type, DB type |
-| **from_chain** | A classmethod on pool classes with non-standard constructors that fetches class-specific state from chain and constructs the pool; `Bot.build_v2_pool` delegates to it via `hasattr(pool_class, "from_chain")` | Factory method, chain constructor |
+| **Builder variant method** | A method on a pool builder that fetches class-specific state from chain and constructs variant pools (e.g., `V2PoolBuilder._build_aerodrome_v2()`, `V2PoolBuilder._build_camelot()`); replaces the former `from_chain` classmethod pattern | Variant builder, chain constructor |
 
 ## Pool Managers
 
