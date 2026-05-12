@@ -4,26 +4,19 @@ Position database operations for Aave V3.
 Functions for managing collateral and debt positions.
 """
 
-from typing import TYPE_CHECKING, cast
-
 from sqlalchemy import select
 
 from degenbot.cli.aave.types import TransactionContext
 from degenbot.database.models.aave import AaveV3CollateralPosition, AaveV3DebtPosition, AaveV3User
 
-if TYPE_CHECKING:
-    from typing import TypeVar
 
-    T = TypeVar("T", AaveV3CollateralPosition, AaveV3DebtPosition)
-
-
-def get_or_create_position(
+def get_or_create_position[T: (AaveV3CollateralPosition, AaveV3DebtPosition)](
     *,
     tx_context: TransactionContext,
     user: AaveV3User,
     asset_id: int,
-    position_table: type["T"],
-) -> "T":
+    position_table: type[T],
+) -> T:
     """
     Get existing position or create new one with zero balance.
     """
@@ -51,7 +44,7 @@ def get_or_create_position(
     tx_context.session.add(new_position)
     tx_context.session.flush()
 
-    return cast("T", new_position)
+    return new_position
 
 
 def get_or_create_collateral_position(
