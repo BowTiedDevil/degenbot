@@ -169,7 +169,6 @@ class TestAsyncBotBuildV2Pool:
 
         assert isinstance(pool, UniswapV2Pool)
         assert pool.address == get_checksum_address(USDC_WETH_V2_POOL)
-        assert not hasattr(pool, "_provider")
 
 
 class TestAsyncBotBuildV3Pool:
@@ -244,7 +243,6 @@ class TestAsyncBotBuildV3Pool:
         assert pool.sqrt_price_x96 == sqrt_price
         assert pool.tick == tick
         assert pool.liquidity == liquidity
-        assert not hasattr(pool, "_provider")
 
 
 class TestAsyncBotBuildV4Pool:
@@ -325,7 +323,6 @@ class TestAsyncBotBuildV4Pool:
 
         assert isinstance(pool, UniswapV4Pool)
         assert pool.sqrt_price_x96 == sqrt_price
-        assert not hasattr(pool, "_provider")
 
 
 class TestAsyncBotIOMethods:

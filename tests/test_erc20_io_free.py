@@ -102,9 +102,6 @@ class TestErc20TokenDataOnlyConstructor:
         token.set_cached_total_supply(block_number=100, total_supply=10**27)
         assert token.get_cached_total_supply(block_number=100) == 10**27
 
-    # Note: Tests for "no db_session/connection_manager/token_registry imports" will be
-    # added once the legacy I/O path is removed in a future phase.
-
 
 class TestBotBuildErc20Token:
     """Bot.build_erc20_token() fetches metadata and constructs I/O-free token."""
