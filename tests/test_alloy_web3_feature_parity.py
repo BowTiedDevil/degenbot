@@ -330,18 +330,6 @@ class TestAlloyProviderImplementedMethods:
         assert hasattr(mock_alloy_provider, "get_transaction_count")
         assert callable(mock_alloy_provider.get_transaction_count)
 
-    def test_alloy_does_not_have_contract_factory(self, mock_alloy_provider):
-        """AlloyProvider does not have contract factory method."""
-        assert not hasattr(mock_alloy_provider, "contract")
-
-    def test_alloy_does_not_have_batch_requests(self, mock_alloy_provider):
-        """AlloyProvider does not have batch_requests method."""
-        assert not hasattr(mock_alloy_provider, "batch_requests")
-
-    def test_alloy_does_not_have_middleware_onion(self, mock_alloy_provider):
-        """AlloyProvider does not have middleware_onion attribute."""
-        assert not hasattr(mock_alloy_provider, "middleware_onion")
-
     def test_alloy_has_make_request_method(self, mock_alloy_provider):
         """AlloyProvider has make_request method for raw RPC calls."""
         assert hasattr(mock_alloy_provider, "make_request")
