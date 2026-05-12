@@ -10,11 +10,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
 from weakref import WeakSet
 
-import eth_abi.abi
-from eth_abi.exceptions import DecodingError
 from eth_typing import ChecksumAddress
-from web3.exceptions import ContractLogicError
-from web3.types import BlockIdentifier
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
@@ -25,8 +21,6 @@ from degenbot.exceptions.liquidity_pool import (
     IncompleteSwap,
     LiquidityPoolError,
 )
-from degenbot.functions import encode_function_calldata, raw_call
-from degenbot.provider import ProviderAdapter
 from degenbot.types.abstract import AbstractArbitrage, AbstractConcentratedLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
@@ -67,9 +61,6 @@ from degenbot.uniswap.v3_types import (
     UniswapV3PoolState,
     UniswapV3PoolStateUpdated,
 )
-
-if TYPE_CHECKING:
-    from hexbytes import HexBytes
 
 type Token0Amount = int
 type Token1Amount = int
@@ -349,65 +340,6 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
                 result.tick,
             )
 
-    def get_tick_bitmap_at_word(
-        self,
-        provider: ProviderAdapter,
-        word_position: int,
-        block_identifier: BlockIdentifier,
-    ) -> int:
-        (bitmap_at_word,) = raw_call(
-            provider,
-            address=self.address,
-            calldata=encode_function_calldata(
-                function_prototype="tickBitmap(int16)",
-                function_arguments=[word_position],
-            ),
-            return_types=["uint256"],
-            block_identifier=block_identifier,
-        )
-        return cast("int", bitmap_at_word)
-
-    def get_populated_ticks_in_word(
-        self,
-        provider: ProviderAdapter,
-        word_position: int,
-        block_identifier: BlockIdentifier,
-    ) -> list[tuple[int, int, int]]:
-        bitmap_at_word = self.get_tick_bitmap_at_word(
-            provider,
-            word_position=word_position,
-            block_identifier=block_identifier,
-        )
-
-        active_ticks = [
-            ((word_position << 8) + i) * self._tick_spacing
-            for i in range(256)
-            if bitmap_at_word & (1 << i) > 0
-        ]
-
-        results: list[HexBytes] = []
-        block = block_identifier if isinstance(block_identifier, int) else None
-        for tick in active_ticks:
-            result = provider.call(
-                to=self.address,
-                data=encode_function_calldata(
-                    function_prototype="ticks(int24)",
-                    function_arguments=[tick],
-                ),
-                block=block,
-            )
-            results.append(result)
-
-        populated_ticks = []
-        for tick, result in zip(active_ticks, results, strict=True):
-            liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
-                types=self.TICK_STRUCT_TYPES,
-                data=result,
-            )
-            populated_ticks.append((tick, liquidity_gross, liquidity_net))
-
-        return populated_ticks
-
     def _verified_address(self) -> ChecksumAddress:
         return generate_v3_pool_address(
             deployer_address=self.deployer_address,
@@ -415,109 +347,6 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             fee=self._fee,
             init_hash=self.init_hash,
         )
-
-    def get_immutable_pool_values(
-        self,
-        provider: ProviderAdapter,
-    ) -> tuple[
-        str,  # factory
-        tuple[str, str],  # tokens
-        int,  # fee
-        int,  # tick spacing
-    ]:
-        try:
-            factory_result = provider.call(
-                to=self.address,
-                data=encode_function_calldata(
-                    function_prototype="factory()",
-                    function_arguments=None,
-                ),
-            )
-            token0_result = provider.call(
-                to=self.address,
-                data=encode_function_calldata(
-                    function_prototype="token0()",
-                    function_arguments=None,
-                ),
-            )
-            token1_result = provider.call(
-                to=self.address,
-                data=encode_function_calldata(
-                    function_prototype="token1()",
-                    function_arguments=None,
-                ),
-            )
-            fee_result = provider.call(
-                to=self.address,
-                data=encode_function_calldata(
-                    function_prototype="fee()",
-                    function_arguments=None,
-                ),
-            )
-            tick_spacing_result = provider.call(
-                to=self.address,
-                data=encode_function_calldata(
-                    function_prototype="tickSpacing()",
-                    function_arguments=None,
-                ),
-            )
-
-            (factory,) = eth_abi.abi.decode(types=["address"], data=factory_result)
-            (token0,) = eth_abi.abi.decode(types=["address"], data=token0_result)
-            (token1,) = eth_abi.abi.decode(types=["address"], data=token1_result)
-            (fee,) = eth_abi.abi.decode(types=["uint256"], data=fee_result)
-            (tick_spacing,) = eth_abi.abi.decode(types=["uint256"], data=tick_spacing_result)
-
-        except (ContractLogicError, DecodingError) as exc:
-            # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch this
-            # here and raise as a pool-specific exception
-            raise LiquidityPoolError(message="Could not decode contract data") from exc
-
-        else:
-            return (
-                cast("str", factory),
-                cast("tuple[str,str]", (token0, token1)),
-                cast("int", fee),
-                cast("int", tick_spacing),
-            )
-
-    def get_mutable_pool_values(
-        self,
-        provider: ProviderAdapter,
-        state_block: BlockNumber,
-    ) -> tuple[SqrtPriceX96, Tick, Liquidity]:
-        try:
-            slot0_result = provider.call(
-                to=self.address,
-                data=encode_function_calldata(
-                    function_prototype="slot0()",
-                    function_arguments=None,
-                ),
-                block=state_block,
-            )
-            liquidity_result = provider.call(
-                to=self.address,
-                data=encode_function_calldata(
-                    function_prototype="liquidity()",
-                    function_arguments=None,
-                ),
-                block=state_block,
-            )
-
-            price, tick, *_ = eth_abi.abi.decode(types=self.SLOT0_STRUCT_TYPES, data=slot0_result)
-            (liquidity,) = eth_abi.abi.decode(types=["uint256"], data=liquidity_result)
-
-        except (ContractLogicError, DecodingError) as exc:
-            # Contracts differ slightly across Uniswap V3 forks, so decoding may fail. Catch this
-            # here and raise as a pool-specific exception
-            raise LiquidityPoolError(message="Could not decode contract data") from exc
-
-        else:
-            return (
-                cast("int", price),
-                cast("int", tick),
-                cast("int", liquidity),
-            )
 
     @property
     def chain_id(self) -> int:

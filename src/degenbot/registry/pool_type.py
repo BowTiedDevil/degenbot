@@ -74,8 +74,10 @@ class PoolTypeRegistry:
        — the suffix is derived automatically from the family.
 
     3. If the pool has a non-standard constructor (e.g. requires
-       chain fetches for extra parameters), add a ``from_chain``
-       classmethod. ``Bot.build_v2_pool`` will detect and delegate to it.
+       chain fetches for extra parameters), add a builder method
+       (e.g. ``_build_aerodrome_v2``, ``_build_camelot``) on the
+       appropriate pool builder class. The builder will be dispatched
+       via ``issubclass`` checks in the ``build()`` method.
 
     4. Call ``pool_type_registry.register()`` with the class, chain ID,
        factory address, and optional deployment data.

@@ -3,6 +3,10 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING, Any
 
+import eth_abi.abi
+
+from degenbot.functions import encode_function_calldata, raw_call
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -22,6 +26,7 @@ class TickDataTypes:
 
     bitmap_at_word: type  # UniswapV3BitmapAtWord or UniswapV4BitmapAtWord
     liquidity_at_tick: type  # UniswapV3LiquidityAtTick or UniswapV4LiquidityAtTick
+    tick_struct_types: tuple[str, ...]  # ABI types for decoding tick data
 
 
 def make_tick_data_fetcher(
@@ -47,8 +52,14 @@ def make_tick_data_fetcher(
         working_tick_data = dict(pool.tick_data)
 
         try:
-            bitmap_value = pool.get_tick_bitmap_at_word(
-                provider, word_position=word_position, block_identifier=block_number
+            (bitmap_value,) = raw_call(
+                provider,
+                address=pool.address,
+                calldata=encode_function_calldata(
+                    "tickBitmap(int16)", [word_position]
+                ),
+                return_types=["uint256"],
+                block_identifier=block_number,
             )
         except Exception:  # noqa: BLE001
             return
@@ -58,13 +69,31 @@ def make_tick_data_fetcher(
         )
 
         if bitmap_value != 0:
-            populated_ticks = pool.get_populated_ticks_in_word(
-                provider, word_position=word_position, block_identifier=block_number
-            )
-            for tick, liquidity_gross, liquidity_net in populated_ticks:
-                working_tick_data[tick] = types.liquidity_at_tick(
-                    liquidity_net=liquidity_net,
-                    liquidity_gross=liquidity_gross,
+            active_ticks = [
+                ((word_position << 8) + i) * pool.tick_spacing
+                for i in range(256)
+                if bitmap_value & (1 << i) > 0
+            ]
+
+            for active_tick in active_ticks:
+                try:
+                    result = provider.call(
+                        to=pool.address,
+                        data=encode_function_calldata(
+                            "ticks(int24)", [active_tick]
+                        ),
+                        block=block_number,
+                    )
+                except Exception:  # noqa: BLE001
+                    continue
+
+                liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
+                    types=types.tick_struct_types,
+                    data=result,
+                )
+                working_tick_data[active_tick] = types.liquidity_at_tick(
+                    liquidity_net=int(liquidity_net),
+                    liquidity_gross=int(liquidity_gross),
                     block=block_number,
                 )
 

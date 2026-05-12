@@ -73,6 +73,7 @@ class V4PoolBuilder:
             types=TickDataTypes(
                 bitmap_at_word=UniswapV4BitmapAtWord,
                 liquidity_at_tick=UniswapV4LiquidityAtTick,
+                tick_struct_types=("uint128", "int128"),
             ),
         )
 

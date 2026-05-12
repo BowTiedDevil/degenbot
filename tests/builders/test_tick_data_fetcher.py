@@ -6,14 +6,16 @@ fetches bitmap/tick data from a concentrated-liquidity pool and pushes
 updated state, for both V3 and V4 type variants.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+import eth_abi.abi
 import pytest
 
 from degenbot.builders.tick_data_fetcher import TickDataTypes, make_tick_data_fetcher
 from degenbot.uniswap.concentrated.state_manager import (
     ConcentratedLiquidityStateManager,
 )
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
     UniswapV3LiquidityAtTick,
@@ -30,14 +32,16 @@ def _make_fake_pool(state):
     Build a fake pool with the given state and a real state manager.
 
     The fake pool exposes tick_bitmap, tick_data, update_block, state,
-    get_tick_bitmap_at_word, get_populated_ticks_in_word, and
-    _state_mgr.push_state — everything the fetcher needs.
+    address, tick_spacing, and _state_mgr.push_state — everything the
+    fetcher needs.
     """
     pool = MagicMock()
+    pool.address = "0x" + "00" * 20
     pool.tick_bitmap = dict(state.tick_bitmap)
     pool.tick_data = dict(state.tick_data)
     pool.state = state
     pool.update_block = state.block or 0
+    pool.tick_spacing = 60
 
     state_mgr = ConcentratedLiquidityStateManager(initial_state=state)
     pool._state_mgr = state_mgr
@@ -63,11 +67,13 @@ def _make_v3_state(
 V3_TYPES = TickDataTypes(
     bitmap_at_word=UniswapV3BitmapAtWord,
     liquidity_at_tick=UniswapV3LiquidityAtTick,
+    tick_struct_types=UniswapV3Pool.TICK_STRUCT_TYPES,
 )
 
 V4_TYPES = TickDataTypes(
     bitmap_at_word=UniswapV4BitmapAtWord,
     liquidity_at_tick=UniswapV4LiquidityAtTick,
+    tick_struct_types=("uint128", "int128"),
 )
 
 
@@ -84,19 +90,52 @@ class TestNonZeroBitmapUpdatesBitmapAndTickData:
         state = _make_v3_state(block=100)
         pool = _make_fake_pool(state)
 
-        # Configure the pool to return a non-zero bitmap and one populated tick
-        pool.get_tick_bitmap_at_word = MagicMock(return_value=7)
-        pool.get_populated_ticks_in_word = MagicMock(
-            return_value=[(-10, 500, 100)]
-        )
+        # Configure raw_call to return a non-zero bitmap (7 = bits 0,1,2 set)
+        # This means ticks at positions (3<<8 + 0)*60, (3<<8 + 1)*60, (3<<8 + 2)*60
+        # = 46080, 46140, 46200
+        bitmap_value = 7
 
-        fetcher = make_tick_data_fetcher(
-            pool_lookup=lambda _: pool,
-            provider_lookup=lambda: MagicMock(),  # noqa: PLW0108
-            types=types,
-        )
+        # Configure provider.call to return tick data for the 3 active ticks
+        tick_data_responses = {}
+        for i in range(3):
+            tick = ((3 << 8) + i) * 60
+            # Encode using the full tick struct types
+            # V3: (uint128, int128, uint256, uint256, int56, uint160, uint32, bool)
+            # V4: (uint128, int128)
+            if len(types.tick_struct_types) == 8:
+                tick_data_responses[tick] = eth_abi.abi.encode(
+                    types=types.tick_struct_types,
+                    args=[500, 100, 0, 0, 0, 0, 0, False],
+                )
+            else:
+                tick_data_responses[tick] = eth_abi.abi.encode(
+                    types=types.tick_struct_types,
+                    args=[500, 100],
+                )
 
-        fetcher(word_position=3, block_number=200)
+        def mock_call(*, to, data, block=None):
+            # Check if it's a ticks(int24) call by looking for the selector
+            # We'll match by checking if any of our known ticks are being queried
+            for tick, response in tick_data_responses.items():
+                tick_calldata = _encode_ticks_calldata(tick)
+                if data == tick_calldata:
+                    return response
+            msg = f"Unexpected call with data={data!r}"
+            raise ValueError(msg)
+
+        provider = MagicMock()
+        provider.call = MagicMock(side_effect=mock_call)
+
+        with patch("degenbot.builders.tick_data_fetcher.raw_call") as mock_raw_call:
+            mock_raw_call.return_value = (bitmap_value,)
+
+            fetcher = make_tick_data_fetcher(
+                pool_lookup=lambda _: pool,
+                provider_lookup=lambda: provider,
+                types=types,
+            )
+
+            fetcher(word_position=3, block_number=200)
 
         # The state manager should have the pushed state as current
         new_state = pool._state_mgr.state
@@ -106,11 +145,13 @@ class TestNonZeroBitmapUpdatesBitmapAndTickData:
         assert new_state.tick_bitmap[3].bitmap == 7
         assert new_state.tick_bitmap[3].block == 200
 
-        # Tick data at tick -10 should be populated
-        assert -10 in new_state.tick_data
-        assert new_state.tick_data[-10].liquidity_net == 100
-        assert new_state.tick_data[-10].liquidity_gross == 500
-        assert new_state.tick_data[-10].block == 200
+        # Tick data should be populated for all 3 active ticks
+        for i in range(3):
+            tick = ((3 << 8) + i) * 60
+            assert tick in new_state.tick_data
+            assert new_state.tick_data[tick].liquidity_net == 100
+            assert new_state.tick_data[tick].liquidity_gross == 500
+            assert new_state.tick_data[tick].block == 200
 
         # Block should be max of original and new
         assert new_state.block == 200
@@ -127,16 +168,19 @@ class TestZeroBitmapUpdatesBitmapOnly:
         state = _make_v3_state(block=100)
         pool = _make_fake_pool(state)
 
-        pool.get_tick_bitmap_at_word = MagicMock(return_value=0)
-        pool.get_populated_ticks_in_word = MagicMock()
+        provider = MagicMock()
+        provider.call = MagicMock()  # Should NOT be called
 
-        fetcher = make_tick_data_fetcher(
-            pool_lookup=lambda _: pool,
-            provider_lookup=lambda: MagicMock(),  # noqa: PLW0108
-            types=types,
-        )
+        with patch("degenbot.builders.tick_data_fetcher.raw_call") as mock_raw_call:
+            mock_raw_call.return_value = (0,)
 
-        fetcher(word_position=5, block_number=200)
+            fetcher = make_tick_data_fetcher(
+                pool_lookup=lambda _: pool,
+                provider_lookup=lambda: provider,
+                types=types,
+            )
+
+            fetcher(word_position=5, block_number=200)
 
         new_state = pool._state_mgr.state
 
@@ -144,8 +188,8 @@ class TestZeroBitmapUpdatesBitmapOnly:
         assert 5 in new_state.tick_bitmap
         assert new_state.tick_bitmap[5].bitmap == 0
 
-        # Populated ticks should NOT have been fetched
-        pool.get_populated_ticks_in_word.assert_not_called()
+        # Provider.call should NOT have been called (no tick fetching)
+        provider.call.assert_not_called()
 
         # No tick data added
         assert len(new_state.tick_data) == 0
@@ -177,7 +221,7 @@ class TestPoolNotFound:
 
 class TestBitmapFetchRaises:
     """
-    When get_tick_bitmap_at_word raises, the fetcher should return
+    When the bitmap RPC call raises, the fetcher should return
     early without updating state.
     """
 
@@ -186,18 +230,29 @@ class TestBitmapFetchRaises:
         state = _make_v3_state(block=100)
         pool = _make_fake_pool(state)
 
-        pool.get_tick_bitmap_at_word = MagicMock(side_effect=Exception("RPC error"))
+        with patch("degenbot.builders.tick_data_fetcher.raw_call") as mock_raw_call:
+            mock_raw_call.side_effect = Exception("RPC error")
 
-        fetcher = make_tick_data_fetcher(
-            pool_lookup=lambda _: pool,
-            provider_lookup=lambda: MagicMock(),  # noqa: PLW0108
-            types=types,
-        )
+            fetcher = make_tick_data_fetcher(
+                pool_lookup=lambda _: pool,
+                provider_lookup=lambda: MagicMock(),  # noqa: PLW0108
+                types=types,
+            )
 
-        # Should not raise
-        fetcher(word_position=3, block_number=200)
+            # Should not raise
+            fetcher(word_position=3, block_number=200)
 
         # State unchanged from initial
         new_state = pool._state_mgr.state
         assert len(new_state.tick_bitmap) == 0
         assert len(new_state.tick_data) == 0
+
+
+# --- Helper for encoding ticks(int24) calldata ---
+
+
+def _encode_ticks_calldata(tick: int) -> bytes:
+    """Encode a ticks(int24) call for the given tick value."""
+    from degenbot.functions import encode_function_calldata
+
+    return encode_function_calldata("ticks(int24)", [tick])

@@ -68,6 +68,7 @@ class V3PoolBuilder:
             types=TickDataTypes(
                 bitmap_at_word=UniswapV3BitmapAtWord,
                 liquidity_at_tick=UniswapV3LiquidityAtTick,
+                tick_struct_types=UniswapV3Pool.TICK_STRUCT_TYPES,
             ),
         )
 

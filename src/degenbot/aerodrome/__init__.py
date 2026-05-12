@@ -22,7 +22,7 @@ pool_type_registry.register(
 
 # Register Aerodrome V2 factory with the unified pool type registry.
 # AerodromeV2Pool has a non-standard constructor that requires `stable` and `fee`
-# arguments. The `from_chain` classmethod handles the chain fetches for these.
+# arguments. The builder handles the chain fetches for these.
 _v2_factory_address = "0x420DD381b31aEf6683db6B902084cB0FFECe40Da"
 _v2_deployment = FACTORY_DEPLOYMENTS.get(_chain_id, {}).get(_v2_factory_address)
 pool_type_registry.register(

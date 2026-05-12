@@ -3,23 +3,19 @@ from __future__ import annotations
 from fractions import Fraction
 from typing import TYPE_CHECKING, ClassVar
 
-import eth_abi.abi
-
 from degenbot.camelot.functions import get_y_camelot, k_camelot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models import CamelotV2PoolTable
-from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.functions import encode_function_calldata
 from degenbot.logging import logger
 from degenbot.solidly.solidly_functions import general_calc_exact_in_stable
-from degenbot.types.aliases import ChainId
 from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 if TYPE_CHECKING:
-    from degenbot.provider.interface import ProviderAdapter
+    from degenbot.erc20 import Erc20Token
+    from degenbot.types.aliases import ChainId
+    from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 
 class CamelotLiquidityPool(UniswapV2Pool):
@@ -63,68 +59,6 @@ class CamelotLiquidityPool(UniswapV2Pool):
             fee_token1=Fraction(fee_token1, fee_denominator),
             reserves_token0=reserves_token0,
             reserves_token1=reserves_token1,
-            state_block=state_block,
-            deployer_address=deployer_address,
-        )
-
-    @classmethod
-    def from_chain(
-        cls,
-        address: str,
-        *,
-        token0: Erc20Token,
-        token1: Erc20Token,
-        factory: str,
-        reserves_token0: int,
-        reserves_token1: int,
-        provider: ProviderAdapter,
-        state_block: int | None = None,
-        deployer_address: str | None = None,
-    ) -> CamelotLiquidityPool:
-        """Construct a CamelotLiquidityPool by fetching class-specific state from chain."""
-
-        address = get_checksum_address(address)
-
-        stable_swap_result = provider.call(
-            to=address,
-            data=encode_function_calldata("stableSwap()", None),
-            block=state_block,
-        )
-        (stable_swap,) = eth_abi.abi.decode(types=["bool"], data=stable_swap_result)
-
-        fee_denom_result = provider.call(
-            to=address,
-            data=encode_function_calldata("FEE_DENOMINATOR()", None),
-            block=state_block,
-        )
-        (fee_denominator,) = eth_abi.abi.decode(types=["uint256"], data=fee_denom_result)
-
-        fee0_result = provider.call(
-            to=address,
-            data=encode_function_calldata("token0FeePercent()", None),
-            block=state_block,
-        )
-        (fee_token0_raw,) = eth_abi.abi.decode(types=["uint16"], data=fee0_result)
-
-        fee1_result = provider.call(
-            to=address,
-            data=encode_function_calldata("token1FeePercent()", None),
-            block=state_block,
-        )
-        (fee_token1_raw,) = eth_abi.abi.decode(types=["uint16"], data=fee1_result)
-
-        return cls(
-            address=address,
-            token0=token0,
-            token1=token1,
-            factory=factory,
-            fee_token0=fee_token0_raw,
-            fee_token1=fee_token1_raw,
-            fee_denominator=fee_denominator,
-            reserves_token0=reserves_token0,
-            reserves_token1=reserves_token1,
-            stable_swap=stable_swap,
-            chain_id=token0.chain_id,
             state_block=state_block,
             deployer_address=deployer_address,
         )

@@ -14,7 +14,6 @@ import eth_abi.abi
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from web3 import Web3
-from web3.types import BlockIdentifier
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
@@ -27,8 +26,6 @@ from degenbot.exceptions.liquidity_pool import (
     LiquidityPoolError,
     PossibleInaccurateResult,
 )
-from degenbot.functions import encode_function_calldata, raw_call
-from degenbot.provider import ProviderAdapter
 from degenbot.types.abstract import AbstractArbitrage, AbstractConcentratedLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import (
@@ -46,7 +43,7 @@ from degenbot.uniswap.v3_functions import (
     exchange_rate_from_sqrt_price_x96,
     get_tick_word_and_bit_position,
 )
-from degenbot.uniswap.v3_types import BitmapWord, LiquidityGross, LiquidityNet, Pip, Tick
+from degenbot.uniswap.v3_types import BitmapWord, Pip, Tick
 from degenbot.uniswap.v4_libraries.tick_bitmap import flip_tick
 from degenbot.uniswap.v4_libraries.tick_math import MAX_SQRT_PRICE, MIN_SQRT_PRICE
 from degenbot.uniswap.v4_types import (
@@ -487,65 +484,6 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             )
 
         return swap_delta.amount_out
-
-    def get_tick_bitmap_at_word(
-        self, provider: ProviderAdapter, word_position: int, block_identifier: BlockIdentifier
-    ) -> int:
-        (bitmap_at_word,) = cast(
-            "tuple[int]",
-            raw_call(
-                provider=provider,
-                address=self._state_view_address,
-                calldata=encode_function_calldata(
-                    function_prototype="getTickBitmap(bytes32,int16)",
-                    function_arguments=[self.pool_id, word_position],
-                ),
-                return_types=["uint256"],
-                block_identifier=block_identifier,
-            ),
-        )
-        return bitmap_at_word
-
-    def get_populated_ticks_in_word(
-        self,
-        provider: ProviderAdapter,
-        word_position: int,
-        block_identifier: BlockIdentifier,
-    ) -> list[tuple[Tick, LiquidityGross, LiquidityNet]]:
-        bitmap_at_word = self.get_tick_bitmap_at_word(
-            provider=provider,
-            word_position=word_position,
-            block_identifier=block_identifier,
-        )
-
-        active_ticks = [
-            ((word_position << 8) + i) * self.tick_spacing
-            for i in range(256)
-            if bitmap_at_word & (1 << i) > 0
-        ]
-
-        results: list[HexBytes] = []
-        block = block_identifier if isinstance(block_identifier, int) else None
-        for tick in active_ticks:
-            result = provider.call(
-                to=self._state_view_address,
-                data=encode_function_calldata(
-                    function_prototype="getTickLiquidity(bytes32,int24)",
-                    function_arguments=[self.pool_id, tick],
-                ),
-                block=block,
-            )
-            results.append(result)
-
-        populated_ticks: list[tuple[Tick, LiquidityGross, LiquidityNet]] = []
-        for tick, result in zip(active_ticks, results, strict=True):
-            liquidity_gross, liquidity_net = eth_abi.abi.decode(
-                types=self.TICK_LIQUIDITY_STRUCT_TYPES,
-                data=result,
-            )
-            populated_ticks.append((tick, liquidity_gross, liquidity_net))
-
-        return populated_ticks
 
     @property
     def address(self) -> ChecksumAddress:  # type: ignore[override]

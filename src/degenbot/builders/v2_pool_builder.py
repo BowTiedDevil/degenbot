@@ -10,6 +10,7 @@ from sqlalchemy import select
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.aerodrome.types import AerodromeV2PoolExternalUpdate
 from degenbot.builders.erc20_builder import Erc20Builder
+from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.database.models.pools import LiquidityPoolTable
@@ -145,18 +146,33 @@ class V2PoolBuilder:
         # Determine pool class from registry
         pool_class = pool_type_registry.get_v2_class(chain_id, factory)
 
-        # Use from_chain if the class provides it (e.g. Camelot, AerodromeV2)
-        if hasattr(pool_class, "from_chain"):
-            pool = pool_class.from_chain(
-                address=pool_address,
+        # Construct the pool — handle variant-specific I/O here instead of
+        # delegating to pool classmethods
+        if issubclass(pool_class, AerodromeV2Pool):
+            pool = self._build_aerodrome_v2(
+                pool_address=pool_address,
+                pool_class=pool_class,
                 token0=token0,
                 token1=token1,
                 factory=factory,
-                reserves_token0=reserves0,
-                reserves_token1=reserves1,
+                reserves0=reserves0,
+                reserves1=reserves1,
                 provider=provider,
                 state_block=state_block,
-                deployer_address=deployer,
+                deployer=deployer,
+            )
+        elif issubclass(pool_class, CamelotLiquidityPool):
+            pool = self._build_camelot(
+                pool_address=pool_address,
+                pool_class=pool_class,
+                token0=token0,
+                token1=token1,
+                factory=factory,
+                reserves0=reserves0,
+                reserves1=reserves1,
+                provider=provider,
+                state_block=state_block,
+                deployer=deployer,
             )
         else:
             pool = pool_class(
@@ -184,6 +200,117 @@ class V2PoolBuilder:
 
         return pool
 
+    def _build_aerodrome_v2(
+        self,
+        *,
+        pool_address: str,
+        pool_class: type[AerodromeV2Pool],
+        token0: Any,
+        token1: Any,
+        factory: str,
+        reserves0: int,
+        reserves1: int,
+        provider: Any,
+        state_block: int,
+        deployer: str,
+    ) -> AerodromeV2Pool:
+        """Build an Aerodrome V2 pool by fetching stable flag and fee from chain."""
+        # Fetch stable flag from pool contract
+        stable_result = provider.call(
+            to=pool_address,
+            data=encode_function_calldata("stable()", None),
+            block=state_block,
+        )
+        (stable,) = eth_abi.abi.decode(types=["bool"], data=stable_result)
+
+        # Fetch fee from factory contract: getFee(pool, stable)
+        fee_result = provider.call(
+            to=factory,
+            data=encode_function_calldata(
+                "getFee(address,bool)",
+                [pool_address, stable],
+            ),
+            block=state_block,
+        )
+        (fee_raw,) = eth_abi.abi.decode(types=["uint256"], data=fee_result)
+        fee = Fraction(fee_raw, AerodromeV2Pool.FEE_DENOMINATOR)
+
+        return pool_class(
+            address=pool_address,
+            token0=token0,
+            token1=token1,
+            factory=factory,
+            fee=fee,
+            stable=stable,
+            reserves_token0=reserves0,
+            reserves_token1=reserves1,
+            chain_id=token0.chain_id,
+            deployer_address=deployer,
+            state_block=state_block,
+        )
+
+    def _build_camelot(
+        self,
+        *,
+        pool_address: str,
+        pool_class: type[CamelotLiquidityPool],
+        token0: Any,
+        token1: Any,
+        factory: str,
+        reserves0: int,
+        reserves1: int,
+        provider: Any,
+        state_block: int,
+        deployer: str,
+    ) -> CamelotLiquidityPool:
+        """Build a Camelot pool by fetching stableSwap, fee denominator, and fee percents."""
+        # Fetch stableSwap flag
+        stable_swap_result = provider.call(
+            to=pool_address,
+            data=encode_function_calldata("stableSwap()", None),
+            block=state_block,
+        )
+        (stable_swap,) = eth_abi.abi.decode(types=["bool"], data=stable_swap_result)
+
+        # Fetch fee denominator
+        fee_denom_result = provider.call(
+            to=pool_address,
+            data=encode_function_calldata("FEE_DENOMINATOR()", None),
+            block=state_block,
+        )
+        (fee_denominator,) = eth_abi.abi.decode(types=["uint256"], data=fee_denom_result)
+
+        # Fetch fee percents
+        fee0_result = provider.call(
+            to=pool_address,
+            data=encode_function_calldata("token0FeePercent()", None),
+            block=state_block,
+        )
+        (fee_token0_raw,) = eth_abi.abi.decode(types=["uint16"], data=fee0_result)
+
+        fee1_result = provider.call(
+            to=pool_address,
+            data=encode_function_calldata("token1FeePercent()", None),
+            block=state_block,
+        )
+        (fee_token1_raw,) = eth_abi.abi.decode(types=["uint16"], data=fee1_result)
+
+        return pool_class(
+            address=pool_address,
+            token0=token0,
+            token1=token1,
+            factory=factory,
+            fee_token0=fee_token0_raw,
+            fee_token1=fee_token1_raw,
+            fee_denominator=fee_denominator,
+            reserves_token0=reserves0,
+            reserves_token1=reserves1,
+            stable_swap=stable_swap,
+            chain_id=token0.chain_id,
+            state_block=state_block,
+            deployer_address=deployer,
+        )
+
     def update(
         self,
         pool: Any,
@@ -202,7 +329,13 @@ class V2PoolBuilder:
     ) -> bool:
         provider = self._connections.get_provider(pool.chain_id)
         _block_number = block_number if block_number is not None else provider.get_block_number()
-        reserves0, reserves1 = pool.get_reserves(provider, block_identifier=_block_number)
+        reserves0, reserves1 = raw_call(
+            provider,
+            address=pool.address,
+            calldata=encode_function_calldata("getReserves()", None),
+            return_types=["uint256", "uint256"],
+            block_identifier=_block_number,
+        )
 
         if pool.reserves_token0 == reserves0 and pool.reserves_token1 == reserves1:
             return False
@@ -220,7 +353,13 @@ class V2PoolBuilder:
     ) -> bool:
         provider = self._connections.get_provider(pool.chain_id)
         _block_number = block_number if block_number is not None else provider.get_block_number()
-        reserves0, reserves1 = pool.get_reserves(provider, block_identifier=_block_number)
+        reserves0, reserves1 = raw_call(
+            provider,
+            address=pool.address,
+            calldata=encode_function_calldata("getReserves()", None),
+            return_types=["uint256", "uint256"],
+            block_identifier=_block_number,
+        )
 
         if pool.reserves_token0 == reserves0 and pool.reserves_token1 == reserves1:
             return False

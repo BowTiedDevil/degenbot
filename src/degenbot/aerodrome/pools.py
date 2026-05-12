@@ -12,7 +12,7 @@ from weakref import WeakSet
 import eth_abi.abi
 from eth_typing import ChecksumAddress
 from web3 import Web3
-from web3.types import BlockIdentifier, TxParams
+from web3.types import TxParams
 
 from degenbot.aerodrome.functions import (
     calc_exact_in_stable,
@@ -32,9 +32,8 @@ from degenbot.exceptions.liquidity_pool import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.functions import encode_function_calldata, raw_call
+from degenbot.functions import encode_function_calldata
 from degenbot.logging import logger
-from degenbot.provider import ProviderAdapter
 from degenbot.solidly.solidly_functions import general_calc_exact_in_volatile
 from degenbot.types.abstract import AbstractAerodromeV2Pool
 from degenbot.types.aliases import BlockNumber, ChainId
@@ -115,58 +114,6 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
         self._state_cache.append(initial_state)
 
         self._subscribers: WeakSet[Subscriber] = WeakSet()
-
-    @classmethod
-    def from_chain(
-        cls,
-        address: ChecksumAddress | str,
-        *,
-        token0: Erc20Token,
-        token1: Erc20Token,
-        factory: str,
-        reserves_token0: int,
-        reserves_token1: int,
-        provider: ProviderAdapter,
-        state_block: BlockNumber | None = None,
-        deployer_address: str | None = None,
-    ) -> AerodromeV2Pool:
-        """Construct an AerodromeV2Pool by fetching stable/fee from chain."""
-        address = get_checksum_address(address)
-        factory = get_checksum_address(factory)
-
-        # Fetch stable flag from pool contract
-        stable_result = provider.call(
-            to=address,
-            data=encode_function_calldata("stable()", None),
-            block=state_block,
-        )
-        (stable,) = eth_abi.abi.decode(types=["bool"], data=stable_result)
-
-        # Fetch fee from factory contract: getFee(pool, stable)
-        fee_result = provider.call(
-            to=factory,
-            data=encode_function_calldata(
-                "getFee(address,bool)",
-                [address, stable],
-            ),
-            block=state_block,
-        )
-        (fee_raw,) = eth_abi.abi.decode(types=["uint256"], data=fee_result)
-        fee = Fraction(fee_raw, cls.FEE_DENOMINATOR)
-
-        return cls(
-            address=address,
-            token0=token0,
-            token1=token1,
-            factory=factory,
-            fee=fee,
-            stable=stable,
-            reserves_token0=reserves_token0,
-            reserves_token1=reserves_token1,
-            chain_id=token0.chain_id if hasattr(token0, "chain_id") else None,
-            deployer_address=deployer_address,
-            state_block=state_block,
-        )
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1}, stable={self._stable})"  # noqa:E501
@@ -521,22 +468,6 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
             cast("int", fee),
             (cast("int", reserves0), cast("int", reserves1)),
         )
-
-    def get_reserves(
-        self, provider: ProviderAdapter, block_identifier: BlockIdentifier | None = None
-    ) -> tuple[int, int]:
-        reserves_token0, reserves_token1 = raw_call(
-            provider,
-            address=self.address,
-            block_identifier=block_identifier,
-            calldata=encode_function_calldata(
-                function_prototype="getReserves()",
-                function_arguments=None,
-            ),
-            return_types=["uint256", "uint256"],
-        )
-
-        return cast("int", reserves_token0), cast("int", reserves_token1)
 
     def discard_states_before_block(
         self,
