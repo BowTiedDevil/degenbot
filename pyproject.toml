@@ -175,7 +175,7 @@ allow-star-arg-any = true
 [tool.pytest.ini_options]
 addopts = [
     "--numprocesses", "4",
-    "--dist", "worksteal",
+    "--dist", "loadgroup",
     "--import-mode", "importlib",
     "--cov", "src/degenbot",
     "--cov-branch",
