@@ -12,14 +12,14 @@ import hypothesis
 import hypothesis.strategies as st
 import pytest
 
+from degenbot.arbitrage.optimizers._solver_utils import _compute_mobius_coefficients
+from degenbot.arbitrage.optimizers._v3_utils import _v3_virtual_reserves
 from degenbot.arbitrage.optimizers.hop_types import SolveInput
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
     BrentSolver,
     SolverMethod,
 )
-from degenbot.arbitrage.optimizers._solver_utils import _compute_mobius_coefficients
-from degenbot.arbitrage.optimizers._v3_utils import _v3_virtual_reserves
 from degenbot.exceptions import OptimizationError
 from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop
 

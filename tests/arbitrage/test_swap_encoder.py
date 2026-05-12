@@ -4,16 +4,12 @@ Each SwapAmounts subclass encodes its own per-hop calldata.
 ApprovalStrategy and PayloadComposer are pluggable at the pipeline level.
 """
 
-from eth_typing import ChecksumAddress
 import eth_abi.abi
+from eth_typing import ChecksumAddress
 from web3 import Web3
 
 from degenbot.arbitrage.encoding import (
-    ApprovalStrategy,
     EncodedCall,
-    FlatComposer,
-    NoApprovals,
-    PayloadComposer,
     generate_payloads,
 )
 from degenbot.arbitrage.types import (

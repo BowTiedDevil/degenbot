@@ -1,7 +1,6 @@
 """Tests for Curve pool metapool detection."""
 
 import eth_abi.abi
-import pytest
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.metapool_detector import detect_metapool

@@ -1,9 +1,9 @@
 """
-Tests for `from_chain` classmethod on pool classes that need custom construction
-logic (Camelot, AerodromeV2).
+Tests for V2PoolBuilder's variant-specific construction of Aerodrome and Camelot pools.
 
-The `from_chain` classmethod encapsulates the class-specific chain fetches that
-Bot otherwise has to hard-code as branches in build_v2_pool.
+The I/O that was previously in pool.from_chain() classmethods is now handled
+by the builder, which fetches variant-specific data from chain and passes it
+to the pool constructor.
 """
 
 from fractions import Fraction
@@ -14,8 +14,13 @@ from hexbytes import HexBytes
 from web3 import Web3
 
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
+from degenbot.builders.erc20_builder import Erc20Builder
+from degenbot.builders.v2_pool_builder import V2PoolBuilder
 from degenbot.camelot.pools import CamelotLiquidityPool
+from degenbot.connection.connection_manager import ConnectionManager
+from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.erc20 import Erc20Token
+from degenbot.registry import PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 # --- Fake provider that returns pre-programmed responses ---
@@ -57,7 +62,21 @@ def _make_erc20(address: str, chain_id: int = 42161) -> Erc20Token:
     return token
 
 
-# --- CamelotLiquidityPool.from_chain ---
+def _make_builder(provider: MagicMock | None = None) -> V2PoolBuilder:
+    """Create a V2PoolBuilder with mock dependencies."""
+    connections = MagicMock(spec=ConnectionManager)
+    if provider is not None:
+        connections.get_provider.return_value = provider
+    return V2PoolBuilder(
+        connections=connections,
+        db=MagicMock(spec=DatabaseSessionManager),
+        pools=MagicMock(spec=PoolRegistry),
+        tokens=MagicMock(spec=TokenRegistry),
+        erc20_builder=MagicMock(spec=Erc20Builder),
+    )
+
+
+# --- CamelotLiquidityPool construction via builder ---
 
 
 def _camelot_provider(
@@ -84,43 +103,47 @@ def _camelot_provider(
     )
 
 
-class TestCamelotFromChain:
-    """Test CamelotLiquidityPool.from_chain classmethod."""
+class TestCamelotBuilderConstruction:
+    """Test V2PoolBuilder._build_camelot() method."""
 
     POOL_ADDRESS = "0x0000000000000000000000000000000000000001"
     TOKEN0_ADDRESS = "0x0000000000000000000000000000000000000002"
     TOKEN1_ADDRESS = "0x0000000000000000000000000000000000000003"
     FACTORY_ADDRESS = "0x6EcCab422D763aC031210895C81787E87B43A652"
 
-    def test_from_chain_exists(self) -> None:
-        """CamelotLiquidityPool should have a from_chain classmethod."""
-        assert hasattr(CamelotLiquidityPool, "from_chain")
-        assert callable(CamelotLiquidityPool.from_chain)
+    def test_camelot_has_no_from_chain(self) -> None:
+        """CamelotLiquidityPool should not have from_chain."""
+        assert not hasattr(CamelotLiquidityPool, "from_chain")
 
-    def test_from_chain_returns_camelot_pool(self) -> None:
-        """from_chain should return a CamelotLiquidityPool instance."""
-        pool = CamelotLiquidityPool.from_chain(
-            address=self.POOL_ADDRESS,
+    def test_build_camelot_returns_camelot_pool(self) -> None:
+        """_build_camelot should return a CamelotLiquidityPool instance."""
+        builder = _make_builder(_camelot_provider())
+        pool = builder._build_camelot(
+            pool_address=self.POOL_ADDRESS,
+            pool_class=CamelotLiquidityPool,
             token0=_make_erc20(self.TOKEN0_ADDRESS),
             token1=_make_erc20(self.TOKEN1_ADDRESS),
             factory=self.FACTORY_ADDRESS,
-            reserves_token0=1000,
-            reserves_token1=2000,
+            reserves0=1000,
+            reserves1=2000,
             provider=_camelot_provider(),
             state_block=1,
+            deployer=self.FACTORY_ADDRESS,
         )
         assert isinstance(pool, CamelotLiquidityPool)
         assert isinstance(pool, UniswapV2Pool)
 
-    def test_from_chain_fetches_camelot_specific_state(self) -> None:
-        """from_chain should fetch stableSwap, FEE_DENOMINATOR, and fee percents."""
-        pool = CamelotLiquidityPool.from_chain(
-            address=self.POOL_ADDRESS,
+    def test_build_camelot_fetches_camelot_specific_state(self) -> None:
+        """_build_camelot should fetch stableSwap, FEE_DENOMINATOR, and fee percents."""
+        builder = _make_builder()
+        pool = builder._build_camelot(
+            pool_address=self.POOL_ADDRESS,
+            pool_class=CamelotLiquidityPool,
             token0=_make_erc20(self.TOKEN0_ADDRESS),
             token1=_make_erc20(self.TOKEN1_ADDRESS),
             factory=self.FACTORY_ADDRESS,
-            reserves_token0=1000,
-            reserves_token1=2000,
+            reserves0=1000,
+            reserves1=2000,
             provider=_camelot_provider(
                 stable_swap=True,
                 fee_denominator=1000,
@@ -128,60 +151,69 @@ class TestCamelotFromChain:
                 fee_token1=7,
             ),
             state_block=1,
+            deployer=self.FACTORY_ADDRESS,
         )
         assert pool.stable_swap is True
         assert pool.fee_denominator == 1000
         assert pool.fee_token0 == Fraction(5, 1000)
         assert pool.fee_token1 == Fraction(7, 1000)
 
-    def test_from_chain_stable_swap_false(self) -> None:
-        """from_chain with stable_swap=False should set the attribute accordingly."""
-        pool = CamelotLiquidityPool.from_chain(
-            address=self.POOL_ADDRESS,
+    def test_build_camelot_stable_swap_false(self) -> None:
+        """_build_camelot with stable_swap=False should set the attribute accordingly."""
+        builder = _make_builder()
+        pool = builder._build_camelot(
+            pool_address=self.POOL_ADDRESS,
+            pool_class=CamelotLiquidityPool,
             token0=_make_erc20(self.TOKEN0_ADDRESS),
             token1=_make_erc20(self.TOKEN1_ADDRESS),
             factory=self.FACTORY_ADDRESS,
-            reserves_token0=1000,
-            reserves_token1=2000,
+            reserves0=1000,
+            reserves1=2000,
             provider=_camelot_provider(stable_swap=False),
             state_block=1,
+            deployer=self.FACTORY_ADDRESS,
         )
         assert pool.stable_swap is False
 
-    def test_from_chain_sets_fee_as_fraction(self) -> None:
-        """from_chain should set fee_token0/fee_token1 as Fractions."""
-        pool = CamelotLiquidityPool.from_chain(
-            address=self.POOL_ADDRESS,
+    def test_build_camelot_sets_fee_as_fraction(self) -> None:
+        """_build_camelot should set fee_token0/fee_token1 as Fractions."""
+        builder = _make_builder()
+        pool = builder._build_camelot(
+            pool_address=self.POOL_ADDRESS,
+            pool_class=CamelotLiquidityPool,
             token0=_make_erc20(self.TOKEN0_ADDRESS),
             token1=_make_erc20(self.TOKEN1_ADDRESS),
             factory=self.FACTORY_ADDRESS,
-            reserves_token0=1000,
-            reserves_token1=2000,
+            reserves0=1000,
+            reserves1=2000,
             provider=_camelot_provider(fee_denominator=10000, fee_token0=30, fee_token1=30),
             state_block=1,
+            deployer=self.FACTORY_ADDRESS,
         )
         assert isinstance(pool.fee_token0, Fraction)
         assert isinstance(pool.fee_token1, Fraction)
         assert pool.fee_token0 == Fraction(30, 10000)
         assert pool.fee_token1 == Fraction(30, 10000)
 
-    def test_from_chain_passes_deployer_address(self) -> None:
-        """from_chain should forward deployer_address to the constructor."""
-        pool = CamelotLiquidityPool.from_chain(
-            address=self.POOL_ADDRESS,
+    def test_build_camelot_passes_deployer_address(self) -> None:
+        """_build_camelot should forward deployer_address to the constructor."""
+        builder = _make_builder()
+        pool = builder._build_camelot(
+            pool_address=self.POOL_ADDRESS,
+            pool_class=CamelotLiquidityPool,
             token0=_make_erc20(self.TOKEN0_ADDRESS),
             token1=_make_erc20(self.TOKEN1_ADDRESS),
             factory=self.FACTORY_ADDRESS,
-            reserves_token0=1000,
-            reserves_token1=2000,
+            reserves0=1000,
+            reserves1=2000,
             provider=_camelot_provider(),
             state_block=1,
-            deployer_address="0x0000000000000000000000000000000000000004",
+            deployer="0x0000000000000000000000000000000000000004",
         )
         assert pool.deployer == "0x0000000000000000000000000000000000000004"
 
 
-# --- AerodromeV2Pool.from_chain ---
+# --- AerodromeV2Pool construction via builder ---
 
 
 def _aerodrome_provider(
@@ -200,75 +232,85 @@ def _aerodrome_provider(
     )
 
 
-class TestAerodromeV2FromChain:
-    """Test AerodromeV2Pool.from_chain classmethod."""
+class TestAerodromeV2BuilderConstruction:
+    """Test V2PoolBuilder._build_aerodrome_v2() method."""
 
     POOL_ADDRESS = "0x0000000000000000000000000000000000000001"
     TOKEN0_ADDRESS = "0x0000000000000000000000000000000000000002"
     TOKEN1_ADDRESS = "0x0000000000000000000000000000000000000003"
     FACTORY_ADDRESS = "0x420DD381b31aEf6683db6B902084cB0FFECe40Da"
 
-    def test_from_chain_exists(self) -> None:
-        """AerodromeV2Pool should have a from_chain classmethod."""
-        assert hasattr(AerodromeV2Pool, "from_chain")
-        assert callable(AerodromeV2Pool.from_chain)
+    def test_aerodrome_has_no_from_chain(self) -> None:
+        """AerodromeV2Pool should not have from_chain."""
+        assert not hasattr(AerodromeV2Pool, "from_chain")
 
-    def test_from_chain_returns_aerodrome_v2_pool(self) -> None:
-        """from_chain should return an AerodromeV2Pool instance."""
-        pool = AerodromeV2Pool.from_chain(
-            address=self.POOL_ADDRESS,
+    def test_build_aerodrome_v2_returns_pool(self) -> None:
+        """_build_aerodrome_v2 should return an AerodromeV2Pool instance."""
+        builder = _make_builder()
+        pool = builder._build_aerodrome_v2(
+            pool_address=self.POOL_ADDRESS,
+            pool_class=AerodromeV2Pool,
             token0=_make_erc20(self.TOKEN0_ADDRESS, chain_id=8453),
             token1=_make_erc20(self.TOKEN1_ADDRESS, chain_id=8453),
             factory=self.FACTORY_ADDRESS,
-            reserves_token0=1000,
-            reserves_token1=2000,
+            reserves0=1000,
+            reserves1=2000,
             provider=_aerodrome_provider(),
             state_block=1,
+            deployer=self.FACTORY_ADDRESS,
         )
         assert isinstance(pool, AerodromeV2Pool)
 
-    def test_from_chain_fetches_stable_and_fee(self) -> None:
-        """from_chain should fetch stable and fee from chain."""
-        pool = AerodromeV2Pool.from_chain(
-            address=self.POOL_ADDRESS,
+    def test_build_aerodrome_v2_fetches_stable_and_fee(self) -> None:
+        """_build_aerodrome_v2 should fetch stable and fee from chain."""
+        builder = _make_builder()
+        pool = builder._build_aerodrome_v2(
+            pool_address=self.POOL_ADDRESS,
+            pool_class=AerodromeV2Pool,
             token0=_make_erc20(self.TOKEN0_ADDRESS, chain_id=8453),
             token1=_make_erc20(self.TOKEN1_ADDRESS, chain_id=8453),
             factory=self.FACTORY_ADDRESS,
-            reserves_token0=1000,
-            reserves_token1=2000,
+            reserves0=1000,
+            reserves1=2000,
             provider=_aerodrome_provider(stable=True, fee=50),
             state_block=1,
+            deployer=self.FACTORY_ADDRESS,
         )
         assert pool.stable is True
         assert pool.fee == Fraction(50, 10_000)
 
-    def test_from_chain_volatile_pool(self) -> None:
-        """from_chain with stable=False should create a volatile pool."""
-        pool = AerodromeV2Pool.from_chain(
-            address=self.POOL_ADDRESS,
+    def test_build_aerodrome_v2_volatile_pool(self) -> None:
+        """_build_aerodrome_v2 with stable=False should create a volatile pool."""
+        builder = _make_builder()
+        pool = builder._build_aerodrome_v2(
+            pool_address=self.POOL_ADDRESS,
+            pool_class=AerodromeV2Pool,
             token0=_make_erc20(self.TOKEN0_ADDRESS, chain_id=8453),
             token1=_make_erc20(self.TOKEN1_ADDRESS, chain_id=8453),
             factory=self.FACTORY_ADDRESS,
-            reserves_token0=1000,
-            reserves_token1=2000,
+            reserves0=1000,
+            reserves1=2000,
             provider=_aerodrome_provider(stable=False, fee=30),
             state_block=1,
+            deployer=self.FACTORY_ADDRESS,
         )
         assert pool.stable is False
         assert pool.fee == Fraction(30, 10_000)
 
-    def test_from_chain_passes_deployer_address(self) -> None:
-        """from_chain should forward deployer_address to the constructor."""
-        pool = AerodromeV2Pool.from_chain(
-            address=self.POOL_ADDRESS,
+    def test_build_aerodrome_v2_passes_deployer_address(self) -> None:
+        """_build_aerodrome_v2 should forward deployer_address to the constructor."""
+        builder = _make_builder()
+        pool = builder._build_aerodrome_v2(
+            pool_address=self.POOL_ADDRESS,
+            pool_class=AerodromeV2Pool,
             token0=_make_erc20(self.TOKEN0_ADDRESS, chain_id=8453),
             token1=_make_erc20(self.TOKEN1_ADDRESS, chain_id=8453),
             factory=self.FACTORY_ADDRESS,
-            reserves_token0=1000,
-            reserves_token1=2000,
+            reserves0=1000,
+            reserves1=2000,
             provider=_aerodrome_provider(),
             state_block=1,
-            deployer_address="0x0000000000000000000000000000000000000004",
+            deployer="0x0000000000000000000000000000000000000004",
         )
         assert pool.deployer_address == "0x0000000000000000000000000000000000000004"
 

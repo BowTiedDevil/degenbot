@@ -12,9 +12,9 @@ import pytest
 from degenbot.degenbot_rs import mobius as rs_mobius
 
 from degenbot.arbitrage.optimizers import SolveInput, SolverMethod
-from degenbot.types.hop_types import ConstantProductHop
 from degenbot.arbitrage.optimizers.solver import ArbSolver
 from degenbot.exceptions import OptimizationError
+from degenbot.types.hop_types import ConstantProductHop
 
 from .conftest import (
     FEE_0_3_PCT,

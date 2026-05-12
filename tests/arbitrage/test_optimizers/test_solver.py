@@ -6,6 +6,10 @@ from fractions import Fraction
 
 import pytest
 
+from degenbot.arbitrage.optimizers._solver_utils import (
+    _compute_mobius_coefficients,
+    _simulate_path,
+)
 from degenbot.arbitrage.optimizers.hop_types import SolveInput
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
@@ -14,10 +18,6 @@ from degenbot.arbitrage.optimizers.solver import (
     NewtonSolver,
     SolveResult,
     SolverMethod,
-)
-from degenbot.arbitrage.optimizers._solver_utils import (
-    _compute_mobius_coefficients,
-    _simulate_path,
 )
 from degenbot.exceptions import OptimizationError
 from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop

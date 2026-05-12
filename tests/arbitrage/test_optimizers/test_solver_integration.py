@@ -19,16 +19,16 @@ from cvxpy.atoms.affine.bmat import bmat as cvxpy_bmat
 from cvxpy.atoms.geo_mean import geo_mean
 
 from degenbot.arbitrage.optimizers import SolveInput, SolveResult, SolverMethod
-from degenbot.types.hop_types import ConstantProductHop, BoundedProductHop
-from degenbot.arbitrage.optimizers.brent_solver import BrentSolver
-from degenbot.arbitrage.optimizers.newton_solver import NewtonSolver
-from degenbot.arbitrage.optimizers.solver import ArbSolver
 from degenbot.arbitrage.optimizers._solver_utils import (
     _compute_mobius_coefficients,
     _simulate_path,
 )
 from degenbot.arbitrage.optimizers._v3_utils import _v3_virtual_reserves
+from degenbot.arbitrage.optimizers.brent_solver import BrentSolver
+from degenbot.arbitrage.optimizers.newton_solver import NewtonSolver
+from degenbot.arbitrage.optimizers.solver import ArbSolver
 from degenbot.exceptions import OptimizationError
+from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop
 from tests.arbitrage.generator.fixtures import FixtureFactory
 from tests.arbitrage.generator.hypothesis_strategies import (
     price_ratio_strategy,

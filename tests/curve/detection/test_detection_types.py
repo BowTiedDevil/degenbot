@@ -3,7 +3,6 @@
 from dataclasses import FrozenInstanceError
 
 import pytest
-from eth_typing import ChecksumAddress
 
 from degenbot.curve.detection.types import (
     ARampingResult,

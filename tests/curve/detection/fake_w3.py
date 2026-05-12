@@ -6,34 +6,30 @@ w3.eth.call() based on the method selector in the calldata.
 
 from typing import Any
 
-from eth_typing import ChecksumAddress
+import eth_abi.abi
 from hexbytes import HexBytes
 
 
 def _encode_address(addr: str) -> bytes:
     """ABI-encode an address for use as a call return value."""
-    import eth_abi.abi
 
     return eth_abi.abi.encode(["address"], [addr])
 
 
 def _encode_uint256(value: int) -> bytes:
     """ABI-encode a uint256 for use as a call return value."""
-    import eth_abi.abi
 
     return eth_abi.abi.encode(["uint256"], [value])
 
 
 def _encode_uint8(value: int) -> bytes:
     """ABI-encode a uint8 for use as a call return value."""
-    import eth_abi.abi
 
     return eth_abi.abi.encode(["uint8"], [value])
 
 
 def _encode_bool(value: bool) -> bytes:
     """ABI-encode a bool for use as a call return value."""
-    import eth_abi.abi
 
     return eth_abi.abi.encode(["bool"], [value])
 
