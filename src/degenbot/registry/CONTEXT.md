@@ -2,13 +2,17 @@
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
-| **Pool Registry** | A class indexing (chain ID, pool address) → Pool across all DEX protocols; instances owned by Bot | Pool index, pool cache |
-| **Token Registry** | A class indexing (chain ID, token address) → Token across all DEX protocols; instances owned by Bot | Token index, token cache |
-| **Managed Pool Registry** | A sub-registry for V4-style singleton architecture pools, keyed by (chain ID, PoolManager address, Pool ID); instance owned by Bot | V4 registry |
+| **Pool Registry** | A class indexing (chain ID, pool address) → Pool across all DEX protocols; inherits from `AddressRegistry[AbstractLiquidityPool]`; instances owned by Bot | Pool index, pool cache |
+| **Token Registry** | A class indexing (chain ID, token address) → Token across all DEX protocols; inherits from `AddressRegistry[Erc20Token]`; instances owned by Bot | Token index, token cache |
+| **Managed Pool Registry** | A sub-registry for V4-style singleton architecture pools, keyed by (chain ID, PoolManager address, Pool ID); inherits from `MultiKeyAddressRegistry[AbstractLiquidityPool]`; instance owned by Bot | V4 registry |
 | **Pool Type Registry** | A module-level singleton that maps (chain ID, factory address) → pool class + identity + deployment data in a single registration; replaces the old Pool Class Registry, FACTORY_DEPLOYMENTS lookups, _KIND_TO_DESCRIPTOR, and _variant_from_class | Pool class registry, type registry |
+| **AbstractAddressRegistry** | Abstract PEP-695 generic base class `AbstractAddressRegistry[T]` for all address-based registries; provides checksumming, deduplication, key construction, and removal | Registry base, generic registry |
+| **AddressRegistry** | Concrete PEP-695 generic `AddressRegistry[T]` for single-address keys `(chain_id, checksummed_address)`; subclass for Pool Registry, Token Registry, and custom registries | Single-key registry |
+| **MultiKeyAddressRegistry** | Concrete PEP-695 generic `MultiKeyAddressRegistry[T]` for multi-field keys `(chain_id, field_1, field_2, …)`; configured via `address_fields`; subclass for Managed Pool Registry | Multi-key registry |
 
 ## Relationships
 
+- **Pool Registry** inherits from `AddressRegistry[AbstractLiquidityPool]`; **Token Registry** inherits from `AddressRegistry[Erc20Token]`; **Managed Pool Registry** inherits from `MultiKeyAddressRegistry[AbstractLiquidityPool]`
 - A **Pool Registry** indexes all **Pools** across all chains; a **Token Registry** indexes all **Tokens**
 - A **Managed Pool Registry** indexes **V4 Pools** by (chain ID, PoolManager address, Pool ID)
 - A **Pool Type Registry** provides the (chain ID, factory) → class mapping used by Bot's type resolver to select the concrete pool subclass; each DEX module self-registers at import time
@@ -18,6 +22,7 @@
 - The **Pool Type Registry** auto-derives pool identity from the class hierarchy (`PoolFamily`) and class attribute (`variant`), producing the `kind` string (e.g. `"sushiswap_v2"`) used for DB polymorphic identity
 - The **Pool Type Registry** stores deployment data (deployer, pool_init_hash) alongside the class, so adding a new DEX requires only one registration call
 - Pool classes with non-standard constructors (e.g. Camelot's `stableSwap`/`fee_denominator`, AerodromeV2's `stable`/`fee`) are handled by builders via explicit `_build_aerodrome_v2()` and `_build_camelot()` methods that fetch variant-specific data from chain — no `from_chain` classmethods on pool classes
+- The generic base class uses PEP-695 syntax (`class AddressRegistry[T]`) requiring Python ≥ 3.12; `T` is the value type (e.g. `Pool`, `Token`)
 
 ## Resolved Ambiguities
 
