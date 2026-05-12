@@ -174,15 +174,14 @@ allow-star-arg-any = true
 
 [tool.pytest.ini_options]
 addopts = [
-    "--numprocesses", "4",
+    "--numprocesses", "auto",
     "--dist", "loadgroup",
     "--import-mode", "importlib",
     "--cov", "src/degenbot",
     "--cov-branch",
     "--cov-report", "html",
     "--random-order",
-    "-m",
-    "not slow and not base",
+    "-m", "not slow and not base",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
