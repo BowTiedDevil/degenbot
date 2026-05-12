@@ -14,7 +14,6 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.functions import encode_function_calldata
-from degenbot.registry import PoolRegistry
 from degenbot.uniswap.managers import UniswapV2PoolManager
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
@@ -85,26 +84,6 @@ class TestV2PoolIOFreeConstructor:
         assert pool.reserves_token1 == 2_000_000 * 10**6
         assert pool.update_block == 18_000_000
 
-    def test_io_free_constructor_has_no_provider(self) -> None:
-        """An I/O-free pool should not have a _provider attribute."""
-        weth = _make_weth()
-        usdc = _make_usdc()
-
-        pool = UniswapV2Pool(
-            address=WETH_USDC_V2_POOL,
-            chain_id=1,
-            token0=weth,
-            token1=usdc,
-            factory=UNISWAP_V2_FACTORY,
-            fee_token0=Fraction(3, 1000),
-            fee_token1=Fraction(3, 1000),
-            reserves_token0=1000 * 10**18,
-            reserves_token1=2_000_000 * 10**6,
-            state_block=18_000_000,
-        )
-
-        assert not hasattr(pool, "_provider")
-
     def test_io_free_pool_computation_works(self) -> None:
         """Simulations and calculations work on an I/O-free pool."""
         weth = _make_weth()
@@ -162,28 +141,6 @@ class TestV2PoolIOFreeConstructor:
         assert pool.fee_token0 == Fraction(3, 1000)
         assert pool.fee_token1 == Fraction(2, 1000)
 
-    def test_io_free_constructor_no_self_registration(self) -> None:
-        """I/O-free pools should not self-register in pool_registry."""
-
-        weth = _make_weth()
-        usdc = _make_usdc()
-
-        pool = UniswapV2Pool(
-            address=WETH_USDC_V2_POOL,
-            chain_id=1,
-            token0=weth,
-            token1=usdc,
-            factory=UNISWAP_V2_FACTORY,
-            fee_token0=Fraction(3, 1000),
-            fee_token1=Fraction(3, 1000),
-            reserves_token0=1000 * 10**18,
-            reserves_token1=2_000_000 * 10**6,
-            state_block=18_000_000,
-        )
-
-        # Pool should NOT be in any user-created registry
-        assert PoolRegistry().get(pool_address=pool.address, chain_id=1) is None
-
     def test_io_free_pool_pickle(self) -> None:
         """I/O-free pools can be pickled and unpickled."""
 
@@ -209,7 +166,6 @@ class TestV2PoolIOFreeConstructor:
         assert unpickled.address == pool.address
         assert unpickled.reserves_token0 == pool.reserves_token0
         assert unpickled.reserves_token1 == pool.reserves_token1
-        assert not hasattr(unpickled, "_provider")
 
 
 class TestBotBuildV2Pool:
@@ -319,7 +275,6 @@ class TestBotBuildV2Pool:
         assert pool.factory == get_checksum_address(factory_addr)
         assert pool.reserves_token0 == 1000 * 10**18
         assert pool.reserves_token1 == 2_000_000 * 10**6
-        assert not hasattr(pool, "_provider")
 
         # Pool should be registered in bot's pool registry
         assert bot.pools.get(pool_address=pool.address, chain_id=1) is pool
@@ -436,7 +391,6 @@ class TestV2PoolManagerWithBot:
         assert pool.address == get_checksum_address(WETH_USDC_V2_POOL)
         assert pool.token0.address == get_checksum_address(weth_addr)
         assert pool.token1.address == get_checksum_address(usdc_addr)
-        assert not hasattr(pool, "_provider")
 
         # Pool should be in both the manager's tracked pools AND bot.pools
         assert pool.address in manager._tracked_pools

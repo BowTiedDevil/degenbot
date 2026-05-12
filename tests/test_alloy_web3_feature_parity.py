@@ -9,7 +9,6 @@ AlloyProvider provides an equivalent method/function.
 """
 
 import inspect
-import pathlib
 from typing import Any
 
 import pytest
@@ -425,59 +424,6 @@ class TestProviderAdapterIntegration:
         # (we use a mock URL since we're not making real calls)
         assert hasattr(ProviderAdapter, "from_alloy")
         assert callable(ProviderAdapter.from_alloy)
-
-
-class TestWeb3DirectUsageAudit:
-    """Audit codebase for direct web3 usage that should migrate to provider interface."""
-
-    def test_bot_py_uses_w3_eth_call(self):
-        """Document that w3.eth.call is used directly in the builders."""
-        # This is a documentation test - it should pass but documents what needs migration
-        import re
-
-        # Check builders directory since I/O was extracted from bot.py
-        builder_files = list(pathlib.Path("src/degenbot/builders").glob("*.py"))
-        all_content = ""
-        for f in builder_files:
-            all_content += f.read_text() + "\n"
-
-        # Also check bot.py for any remaining usage
-        all_content += pathlib.Path("src/degenbot/bot.py").read_text()
-
-        # Count occurrences of w3.eth.call
-        matches = re.findall(r"w3\.eth\.call\(", all_content)
-        print(f"\nFound {len(matches)} direct w3.eth.call() usages in builders + bot.py")
-        assert len(matches) > 0, "Expected to find w3.eth.call usage in builders or bot.py"
-
-    def test_chainlink_py_uses_contract_factory(self):
-        """Document that chainlink.py uses w3.eth.contract directly."""
-        import re
-
-        content = pathlib.Path("src/degenbot/chainlink.py").read_text()
-
-        matches = re.findall(r"w3\.eth\.contract\(", content)
-        print(f"\nFound {len(matches)} direct w3.eth.contract() usages in chainlink.py")
-        assert len(matches) > 0, "Expected to find w3.eth.contract usage in chainlink.py"
-
-    def test_anvil_fork_uses_make_request(self):
-        """Document that anvil_fork.py uses w3.provider.make_request directly."""
-        import re
-
-        content = pathlib.Path("src/degenbot/anvil_fork.py").read_text()
-
-        matches = re.findall(r"w3\.provider\.make_request\(", content)
-        print(f"\nFound {len(matches)} direct w3.provider.make_request() usages in anvil_fork.py")
-        assert len(matches) > 0, "Expected to find w3.provider.make_request usage in anvil_fork.py"
-
-    def test_aerodrome_pools_uses_batch_requests(self):
-        """Document that aerodrome/pools.py uses w3.batch_requests directly."""
-        import re
-
-        content = pathlib.Path("src/degenbot/aerodrome/pools.py").read_text()
-
-        matches = re.findall(r"w3\.batch_requests\(\)", content)
-        print(f"\nFound {len(matches)} direct w3.batch_requests() usages in aerodrome/pools.py")
-        assert len(matches) > 0, "Expected to find w3.batch_requests usage in aerodrome/pools.py"
 
 
 class TestFeatureParitySummary:

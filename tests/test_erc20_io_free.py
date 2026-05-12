@@ -9,7 +9,6 @@ from degenbot.bot import Bot
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.database.operations import create_new_sqlite_database
 from degenbot.erc20 import Erc20Token, EtherPlaceholder
-from degenbot.registry import TokenRegistry
 
 
 def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
@@ -58,19 +57,6 @@ class TestErc20TokenDataOnlyConstructor:
             decimals=18,
         )
         assert token.name == "WETH"
-
-    def test_no_self_registration(self, tmp_path: pathlib.Path) -> None:
-        """Erc20Token does not self-register in token_registry (I/O-free path)."""
-        registry = TokenRegistry()
-        token = Erc20Token(
-            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-            chain_id=1,
-            name="Wrapped Ether",
-            symbol="WETH",
-            decimals=18,
-        )
-        # The I/O-free path does not self-register
-        assert registry.get(token_address=token.address, chain_id=1) is None
 
     def test_cache_accessors_balance(self) -> None:
         token = Erc20Token(

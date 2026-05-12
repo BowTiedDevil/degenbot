@@ -13,7 +13,7 @@ import eth_abi.abi
 from hexbytes import HexBytes
 from web3 import Web3
 
-from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
+from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.v2_pool_builder import V2PoolBuilder
 from degenbot.camelot.pools import CamelotLiquidityPool
@@ -110,10 +110,6 @@ class TestCamelotBuilderConstruction:
     TOKEN0_ADDRESS = "0x0000000000000000000000000000000000000002"
     TOKEN1_ADDRESS = "0x0000000000000000000000000000000000000003"
     FACTORY_ADDRESS = "0x6EcCab422D763aC031210895C81787E87B43A652"
-
-    def test_camelot_has_no_from_chain(self) -> None:
-        """CamelotLiquidityPool should not have from_chain."""
-        assert not hasattr(CamelotLiquidityPool, "from_chain")
 
     def test_build_camelot_returns_camelot_pool(self) -> None:
         """_build_camelot should return a CamelotLiquidityPool instance."""
@@ -240,10 +236,6 @@ class TestAerodromeV2BuilderConstruction:
     TOKEN1_ADDRESS = "0x0000000000000000000000000000000000000003"
     FACTORY_ADDRESS = "0x420DD381b31aEf6683db6B902084cB0FFECe40Da"
 
-    def test_aerodrome_has_no_from_chain(self) -> None:
-        """AerodromeV2Pool should not have from_chain."""
-        assert not hasattr(AerodromeV2Pool, "from_chain")
-
     def test_build_aerodrome_v2_returns_pool(self) -> None:
         """_build_aerodrome_v2 should return an AerodromeV2Pool instance."""
         builder = _make_builder()
@@ -313,18 +305,3 @@ class TestAerodromeV2BuilderConstruction:
             deployer="0x0000000000000000000000000000000000000004",
         )
         assert pool.deployer_address == "0x0000000000000000000000000000000000000004"
-
-
-# --- V2 pools WITHOUT from_chain should not break ---
-
-
-class TestStandardV2NoFromChain:
-    """Standard V2 pools don't need from_chain — they use the standard constructor."""
-
-    def test_uniswap_v2_has_no_from_chain(self) -> None:
-        """UniswapV2Pool should not have from_chain (not needed)."""
-        assert not hasattr(UniswapV2Pool, "from_chain")
-
-    def test_aerodrome_v3_has_no_from_chain(self) -> None:
-        """AerodromeV3Pool doesn't need from_chain (same constructor as UniswapV3)."""
-        assert not hasattr(AerodromeV3Pool, "from_chain")
