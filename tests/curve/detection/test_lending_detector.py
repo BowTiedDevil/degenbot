@@ -1,7 +1,8 @@
 """Tests for Curve pool lending token detection."""
 
+from itertools import starmap
+
 import eth_abi.abi
-import pytest
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.lending_detector import detect_lending_tokens
@@ -55,12 +56,7 @@ class TestDetectLendingTokens:
 
         token_addresses = (DAI, USDC, USDT)
         tokens = tuple(
-            FakeErc20Token(addr, d)
-            for addr, d in [
-                (DAI, 18),
-                (USDC, 6),
-                (USDT, 6),
-            ]
+            starmap(FakeErc20Token, [(DAI, 18), (USDC, 6), (USDT, 6)])
         )
 
         # isCToken() returns False for all, token() reverts for all
@@ -85,11 +81,7 @@ class TestDetectLendingTokens:
         # Pool with cDAI (8 decimals) and USDC (6 decimals)
         token_addresses = (CDAI, USDC)
         tokens = tuple(
-            FakeErc20Token(addr, d)
-            for addr, d in [
-                (CDAI, 8),
-                (USDC, 6),
-            ]
+            starmap(FakeErc20Token, [(CDAI, 8), (USDC, 6)])
         )
 
         call_count = {"is_ctoken": 0}
@@ -134,11 +126,7 @@ class TestDetectLendingTokens:
 
         token_addresses = (CUSDC, DAI)
         tokens = tuple(
-            FakeErc20Token(addr, d)
-            for addr, d in [
-                (CUSDC, 8),
-                (DAI, 18),
-            ]
+            starmap(FakeErc20Token, [(CUSDC, 8), (DAI, 18)])
         )
 
         def handle_is_ctoken(to: str, data: bytes, block: int) -> bytes:
@@ -178,11 +166,7 @@ class TestDetectLendingTokens:
 
         token_addresses = (YDAI, USDC)
         tokens = tuple(
-            FakeErc20Token(addr, d)
-            for addr, d in [
-                (YDAI, 18),
-                (USDC, 6),
-            ]
+            starmap(FakeErc20Token, [(YDAI, 18), (USDC, 6)])
         )
 
         def handle_is_ctoken(to: str, data: bytes, block: int) -> bytes:
@@ -217,11 +201,7 @@ class TestDetectLendingTokens:
 
         token_addresses = (DAI, USDC)
         tokens = tuple(
-            FakeErc20Token(addr, d)
-            for addr, d in [
-                (DAI, 18),
-                (USDC, 6),
-            ]
+            starmap(FakeErc20Token, [(DAI, 18), (USDC, 6)])
         )
 
         def handle_is_ctoken(to: str, data: bytes, block: int) -> bytes:

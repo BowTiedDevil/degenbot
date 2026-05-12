@@ -152,7 +152,7 @@ class TestPoolTypeRegistrySingleton:
         assert pool_type_registry.get_v3_class(999, "0x" + "0" * 40) is UniswapV3Pool
 
     def test_aerodrome_v2_registered(self) -> None:
-        """AerodromeV2Pool is now registered via from_chain classmethod."""
+        """AerodromeV2Pool is registered with the pool type registry."""
         assert pool_type_registry.has_registration(
             8453, BaseAerodromeV2.factory.address
         )
@@ -187,7 +187,7 @@ class TestSingletonKindReverseLookup:
         assert desc.kind == kind
 
     def test_aerodrome_v2_kind_resolvable(self) -> None:
-        """AerodromeV2 is registered via from_chain, so 'aerodrome_v2' has a descriptor."""
+        """AerodromeV2 is registered, so 'aerodrome_v2' has a descriptor."""
         desc = pool_type_registry.get_descriptor_by_kind("aerodrome_v2")
         assert desc is not None
         assert desc.kind == "aerodrome_v2"

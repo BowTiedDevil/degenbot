@@ -1,7 +1,6 @@
 """Tests for Curve pool A ramping parameter detection."""
 
 import eth_abi.abi
-import pytest
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.a_ramping import detect_a_ramping

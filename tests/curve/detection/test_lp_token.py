@@ -1,7 +1,6 @@
 """Tests for Curve pool LP token discovery."""
 
 import eth_abi.abi
-import pytest
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.lp_token import find_lp_token

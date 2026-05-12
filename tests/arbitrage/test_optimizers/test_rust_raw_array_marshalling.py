@@ -21,7 +21,7 @@ import pytest
 from degenbot.degenbot_rs import mobius as rs_mobius
 
 from degenbot.arbitrage.optimizers import ArbSolver, SolveInput, SolverMethod
-from degenbot.types.hop_types import ConstantProductHop, BoundedProductHop
+from degenbot.types.hop_types import ConstantProductHop
 
 from .conftest import (
     FEE_0_05_PCT,

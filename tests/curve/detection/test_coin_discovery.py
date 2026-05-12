@@ -1,7 +1,6 @@
 """Tests for Curve pool coin discovery."""
 
 import eth_abi.abi
-import pytest
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.coin_discovery import discover_coins

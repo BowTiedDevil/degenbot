@@ -328,10 +328,10 @@ class TestDeploymentDataMatchesFactoriesModule:
 
 
 class TestAerodromeV2Registration:
-    """AerodromeV2Pool is now registered via from_chain classmethod."""
+    """AerodromeV2Pool is registered with the pool type registry."""
 
     def test_aerodrome_v2_in_registrations(self) -> None:
-        """AerodromeV2Pool is registered via from_chain."""
+        """AerodromeV2Pool is registered in the registry."""
 
         key = (8453, BaseAerodromeV2.factory.address)
         assert key in REGISTRATIONS
@@ -341,10 +341,10 @@ class TestAerodromeV2Registration:
 
         assert AerodromeV2Pool.variant == "aerodrome"
 
-    def test_aerodrome_v2_has_from_chain(self) -> None:
-        """AerodromeV2Pool provides from_chain for construction with chain fetches."""
+    def test_aerodrome_v2_has_no_from_chain(self) -> None:
+        """AerodromeV2Pool no longer provides from_chain (I/O moved to builder)."""
 
-        assert hasattr(AerodromeV2Pool, "from_chain")
+        assert not hasattr(AerodromeV2Pool, "from_chain")
 
 
 class TestV4DeploymentsExcluded:

@@ -1,7 +1,6 @@
 """Tests for Curve pool crypto parameter detection."""
 
 import eth_abi.abi
-import pytest
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.crypto_detector import detect_crypto_params
