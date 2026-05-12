@@ -75,6 +75,8 @@ class V4PoolBuilder:
                 liquidity_at_tick=UniswapV4LiquidityAtTick,
                 tick_struct_types=("uint128", "int128"),
             ),
+            state_view_address=state_view_address,
+            pool_id=bytes(pool_id),
         )
 
     def build(
