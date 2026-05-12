@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot, _HasLiquidityNet
     from degenbot.uniswap.v3_types import Liquidity, SqrtPriceX96
 
-
 _MIN_SQRT_PRICE = 4295128739
 _MAX_SQRT_PRICE = 1461446703485210103287273052203988822378723970342
 _FEE_DENOMINATOR = 1_000_000
@@ -112,7 +111,9 @@ def calculate_swap(
             zero_for_one=zero_for_one,
         )
 
+    step_count = 0
     while not (amount_specified_remaining == 0 or result.sqrt_price_x96 == sqrt_price_x96_limit):
+        step_count += 1
         step.sqrt_price_start_x96 = result.sqrt_price_x96
 
         if not snapshot.sparse:

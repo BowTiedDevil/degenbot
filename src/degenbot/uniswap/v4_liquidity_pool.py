@@ -355,6 +355,7 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
 
         # Always use the sparse swap loop so that MissingLiquidityData can be
         # handled by fetching additional tick data when the fetcher is available.
+        fetched_words: set[int] = set()
         while True:
             try:
                 result = _v4_swap(
@@ -370,7 +371,15 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
                 )
                 break
             except MissingLiquidityData as exc:
+                if exc.word in fetched_words:
+                    raise LiquidityPoolError(
+                        message=f"Tick data fetcher did not resolve word {exc.word} "
+                        f"on a previous attempt. "
+                        f"pool_id={self.pool_id.to_0x_hex()} zfo={zero_for_one} "
+                        f"amount_specified={amount_specified}"
+                    ) from exc
                 if self._tick_data_fetcher is not None:
+                    fetched_words.add(exc.word)
                     self._tick_data_fetcher(exc.word, self.update_block)
                     snapshot = LiquidityMapSnapshot.from_state(
                         self.state,
