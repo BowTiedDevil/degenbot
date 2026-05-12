@@ -289,6 +289,7 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
 
         if self._sparse_liquidity_map:
             # Sparse map may raise MissingLiquidityData. Fetch missing data and retry.
+            fetched_words: set[int] = set()
             while True:
                 try:
                     result = _v3_swap(
@@ -302,7 +303,15 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
                         tick_start=tick_start,
                     )
                 except MissingLiquidityData as exc:
+                    if exc.word in fetched_words:
+                        raise LiquidityPoolError(
+                            message=f"Tick data fetcher did not resolve word {exc.word} "
+                            f"on a previous attempt. "
+                            f"pool={self.address} zfo={zero_for_one} "
+                            f"amount_specified={amount_specified}"
+                        ) from exc
                     if self._tick_data_fetcher is not None:
+                        fetched_words.add(exc.word)
                         # Fetch missing word via the injected fetcher (typically from Bot)
                         self._tick_data_fetcher(exc.word, self.update_block)
                         # Rebuild snapshot from updated tick data
