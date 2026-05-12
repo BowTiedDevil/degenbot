@@ -6,11 +6,10 @@ import dataclasses
 from collections import deque
 from fractions import Fraction
 from threading import Lock
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar
 from weakref import WeakSet
 
-import eth_abi.abi
-from eth_typing import BlockIdentifier, ChecksumAddress
+from eth_typing import ChecksumAddress
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import UniswapV2PoolTable
@@ -22,9 +21,7 @@ from degenbot.exceptions.liquidity_pool import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
-from degenbot.provider import ProviderAdapter
 from degenbot.types.abstract import AbstractArbitrage, AbstractUniswapV2Pool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
@@ -153,44 +150,6 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
             deployer_address=self.deployer,
             token_addresses=(self._token0.address, self._token1.address),
             init_hash=self.init_hash,
-        )
-
-    def get_immutable_pool_values(
-        self,
-        provider: ProviderAdapter,
-    ) -> tuple[
-        str,  # factory
-        tuple[str, str],  # tokens
-    ]:
-        factory_result = provider.call(
-            to=self.address,
-            data=encode_function_calldata(
-                function_prototype="factory()",
-                function_arguments=None,
-            ),
-        )
-        token0_result = provider.call(
-            to=self.address,
-            data=encode_function_calldata(
-                function_prototype="token0()",
-                function_arguments=None,
-            ),
-        )
-        token1_result = provider.call(
-            to=self.address,
-            data=encode_function_calldata(
-                function_prototype="token1()",
-                function_arguments=None,
-            ),
-        )
-
-        (factory,) = eth_abi.abi.decode(types=["address"], data=factory_result)
-        (token0,) = eth_abi.abi.decode(types=["address"], data=token0_result)
-        (token1,) = eth_abi.abi.decode(types=["address"], data=token1_result)
-
-        return (
-            cast("str", factory),
-            cast("tuple[str,str]", (token0, token1)),
         )
 
     @property
@@ -494,21 +453,6 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
             if token == self._token0
             else Fraction(10**self._token0.decimals, 10**self._token1.decimals)
         )
-
-    def get_reserves(
-        self, provider: ProviderAdapter, block_identifier: BlockIdentifier
-    ) -> tuple[int, int]:
-        reserves_token0, reserves_token1 = raw_call(
-            provider,
-            address=self.address,
-            calldata=encode_function_calldata(
-                function_prototype="getReserves()",
-                function_arguments=None,
-            ),
-            return_types=["uint256", "uint256"],
-            block_identifier=block_identifier,
-        )
-        return reserves_token0, reserves_token1
 
     def discard_states_before_block(
         self,
