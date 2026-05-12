@@ -17,7 +17,7 @@
 - Each DEX module (uniswap, sushiswap, pancakeswap, aerodrome, camelot, swapbased) self-registers its pool classes in its `__init__.py` against the **Pool Type Registry** via `pool_type_registry.register()`
 - The **Pool Type Registry** auto-derives pool identity from the class hierarchy (`PoolFamily`) and class attribute (`variant`), producing the `kind` string (e.g. `"sushiswap_v2"`) used for DB polymorphic identity
 - The **Pool Type Registry** stores deployment data (deployer, pool_init_hash) alongside the class, so adding a new DEX requires only one registration call
-- Pool classes with non-standard constructors (e.g. Camelot's `stableSwap`/`fee_denominator`, AerodromeV2's `stable`/`fee`) previously provided a `from_chain` classmethod that `build_v2_pool` delegated to; this is being removed — builders handle variant-specific I/O directly (Plan 017)
+- Pool classes with non-standard constructors (e.g. Camelot's `stableSwap`/`fee_denominator`, AerodromeV2's `stable`/`fee`) are handled by builders via explicit `_build_aerodrome_v2()` and `_build_camelot()` methods that fetch variant-specific data from chain — no `from_chain` classmethods on pool classes
 
 ## Resolved Ambiguities
 

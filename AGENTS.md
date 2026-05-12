@@ -103,7 +103,7 @@ Typed builders (`build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_
 pool = bot.build_curve_pool("0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7")
 ```
 
-**V2/V3/V4/Aerodrome pools** are I/O-free at construction — builders fetch all data from DB/RPC, pass it to the pool constructor, and no provider references remain on the pool object. All updates flow through `external_update()` (pure logic). Residual provider-dependent methods (`get_reserves()`, `get_immutable_pool_values()`, `from_chain`) remain on pool classes pending removal (Plan 017 tracks completion of this migration).
+**V2/V3/V4/Aerodrome/Camelot pools** are fully I/O-free — builders fetch all data from DB/RPC, pass it to the pool constructor, and no provider references remain on the pool object. All updates flow through `external_update()` (pure logic). No pool class imports `ProviderAdapter` or carries provider-dependent methods (ADR-001 Phase 3 complete).
 
 See `docs/architecture/io-free-pools.md` and `src/degenbot/curve/CONTEXT.md` for details.
 
@@ -149,7 +149,6 @@ Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. K
 
 | # | Plan | Summary |
 |---|------|---------|
-| 017 | Complete I/O-Free Migration for V2/V3/V4/Aerodrome Pools | Remove all `ProviderAdapter`-taking methods from pool classes. Completes ADR-001 Phase 3. |
 | 018 | Decompose CurvePoolBuilder.build() into Detection Sub-Modules | Break 400-line `build()` into 5 focused detectors. |
 | 022 | Remove Backward Compatibility Shims and Aliases | Remove `*_legacy` functions, `hop_factory`/`Hop` alias, `pool_hop_adapter`, stale re-exports, and legacy `register_web3()`. Steps 1–4 complete; Steps 5–6 pending. |
 
