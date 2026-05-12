@@ -17,7 +17,7 @@ from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.fakes.pools import FakeUniswapV4Pool
 
-CHAIN_DATA_PATH = Path(__file__).parent / "fixtures" / "chain_data"
+CHAIN_DATA_PATH = Path(__file__).parent.parent / "fixtures" / "chain_data"
 UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
 UNISWAP_V2_FACTORY_POOL_INIT_HASH = (
     "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
