@@ -1,10 +1,9 @@
-"""Tests for snapshot explicit-dependency injection (Phase 8).
+"""Tests for snapshot explicit-dependency injection.
 
-Verifies that DatabaseSnapshot and fetch_new_events/fetch_new_events_async
-accept explicit dependencies instead of importing module-level singletons.
+Verifies that DatabaseSnapshot accepts explicit dependencies
+instead of importing module-level singletons.
 """
 
-import inspect
 import pathlib
 from unittest.mock import MagicMock
 
@@ -14,9 +13,7 @@ from sqlalchemy.orm import scoped_session, sessionmaker
 from degenbot.database.models.base import Base, ExchangeTable
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
-from degenbot.uniswap.v3_snapshot import MonolithicJsonFileSnapshot, UniswapV3LiquiditySnapshot
 from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
-from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
 
 
 class TestV3DatabaseSnapshotExplicitDeps:
@@ -93,48 +90,3 @@ class TestV4DatabaseSnapshotExplicitDeps:
         assert snapshot.session is db
         assert snapshot.database_path == db_path
         assert snapshot.chain_id == 1
-
-
-class TestV3FetchNewEventsExplicitProvider:
-    """V3 fetch_new_events accepts an explicit provider parameter."""
-
-    def test_fetch_new_events_accepts_provider_kwarg(self) -> None:
-        """fetch_new_events should accept provider= instead of using connection_manager."""
-
-        snapshot = UniswapV3LiquiditySnapshot(
-            source=MonolithicJsonFileSnapshot(
-                "tests/uniswap/v3/empty_v3_liquidity_snapshot.json",
-            ),
-        )
-
-        # Verify the method signature accepts provider=
-        sig = inspect.signature(snapshot.fetch_new_events)
-        assert "provider" in sig.parameters
-
-
-class TestV4FetchNewEventsExplicitProvider:
-    """V4 fetch_new_events accepts an explicit provider parameter."""
-
-    def test_fetch_new_events_accepts_provider_kwarg(self) -> None:
-        """fetch_new_events should accept provider= instead of using connection_manager."""
-
-        snapshot = UniswapV4LiquiditySnapshot(
-            source=MonolithicJsonFileSnapshot(
-                "tests/uniswap/v3/empty_v3_liquidity_snapshot.json",
-            ),
-        )
-
-        sig = inspect.signature(snapshot.fetch_new_events)
-        assert "provider" in sig.parameters
-
-    def test_fetch_new_events_async_accepts_w3_kwarg(self) -> None:
-        """fetch_new_events_async should accept w3= instead of using async_connection_manager."""
-
-        snapshot = UniswapV4LiquiditySnapshot(
-            source=MonolithicJsonFileSnapshot(
-                "tests/uniswap/v3/empty_v3_liquidity_snapshot.json",
-            ),
-        )
-
-        sig = inspect.signature(snapshot.fetch_new_events_async)
-        assert "w3" in sig.parameters

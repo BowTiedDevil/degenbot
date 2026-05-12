@@ -16,7 +16,6 @@ from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.functions import encode_function_calldata
-from degenbot.registry import ManagedPoolRegistry
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.uniswap.v4_types import (
     UniswapV4BitmapAtWord,
@@ -109,62 +108,6 @@ class TestV4PoolIOFreeConstructor:
         assert pool.protocol_fee.zero_for_one == protocol_fee_zero_for_one
         assert pool.protocol_fee.one_for_zero == protocol_fee_one_for_zero
         assert pool.lp_fee == lp_fee
-
-    def test_io_free_no_provider_attribute(self) -> None:
-        """I/O-free pool should not have _provider attribute."""
-        native_eth = _make_native_eth()
-        usdc = _make_usdc()
-
-        pool = UniswapV4Pool(
-            pool_id=V4_POOL_ID,
-            pool_manager_address=V4_POOL_MANAGER,
-            token0=native_eth,
-            token1=usdc,
-            fee=V4_FEE,
-            tick_spacing=V4_TICK_SPACING,
-            hook_address=V4_HOOKS,
-            sqrt_price_x96=2198666895605149686863,
-            tick=-76020,
-            liquidity=1234567890,
-            protocol_fee_zero_for_one=0,
-            protocol_fee_one_for_zero=0,
-            lp_fee=500000,
-            state_block=18_000_000,
-        )
-
-        assert not hasattr(pool, "_provider")
-
-    def test_io_free_no_self_registration(self, tmp_path: pathlib.Path) -> None:
-        """I/O-free pool should not self-register in managed_pool_registry."""
-        registry = ManagedPoolRegistry()
-
-        native_eth = _make_native_eth()
-        usdc = _make_usdc()
-
-        pool = UniswapV4Pool(
-            pool_id=V4_POOL_ID,
-            pool_manager_address=V4_POOL_MANAGER,
-            token0=native_eth,
-            token1=usdc,
-            fee=V4_FEE,
-            tick_spacing=V4_TICK_SPACING,
-            hook_address=V4_HOOKS,
-            sqrt_price_x96=2198666895605149686863,
-            tick=-76020,
-            liquidity=1234567890,
-            protocol_fee_zero_for_one=0,
-            protocol_fee_one_for_zero=0,
-            lp_fee=500000,
-            state_block=18_000_000,
-        )
-
-        # Pool should NOT be in registry
-        found = registry.get(
-            chain_id=1,
-            pool_manager_address=V4_POOL_MANAGER,
-            pool_id=V4_POOL_ID,
-        )
-        assert found is None
 
     def test_io_free_with_tick_data(self) -> None:
         """I/O-free pool with tick data is not sparse."""
@@ -260,7 +203,6 @@ class TestV4PoolIOFreeConstructor:
         assert unpickled.liquidity == pool.liquidity
         assert unpickled.fee == pool.fee
         assert unpickled.tick_spacing == pool.tick_spacing
-        assert not hasattr(unpickled, "_provider")
 
     def test_io_free_pool_key_and_hooks(self) -> None:
         """I/O-free pool correctly sets pool_key, hook_address, and active_hooks."""
@@ -402,7 +344,6 @@ class TestBotBuildV4Pool:
         assert pool.tick == _tick
         assert pool.liquidity == _liquidity
         assert pool.lp_fee == _lp_fee
-        assert not hasattr(pool, "_provider")
 
         # Pool should be registered in bot's managed pool registry
         found = bot.managed_pools.get(

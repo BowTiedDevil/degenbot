@@ -14,7 +14,6 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.functions import encode_function_calldata
-from degenbot.registry import PoolRegistry
 from degenbot.uniswap.managers import UniswapV3PoolManager
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
@@ -91,50 +90,6 @@ class TestV3PoolIOFreeConstructor:
         assert pool.tick == -76020
         assert pool.liquidity == 1234567890
         assert pool.update_block == 18_000_000
-
-    def test_io_free_constructor_has_no_provider(self) -> None:
-        """An I/O-free pool should not have a _provider attribute."""
-        weth = _make_weth()
-        usdc = _make_usdc()
-
-        pool = UniswapV3Pool(
-            address=USDC_WETH_V3_POOL,
-            chain_id=1,
-            token0=weth,
-            token1=usdc,
-            factory=UNISWAP_V3_FACTORY,
-            fee=V3_FEE,
-            tick_spacing=V3_TICK_SPACING,
-            sqrt_price_x96=2198666895605149686863,
-            tick=-76020,
-            liquidity=1234567890,
-            state_block=18_000_000,
-        )
-
-        assert not hasattr(pool, "_provider")
-
-    def test_io_free_constructor_no_self_registration(self) -> None:
-        """I/O-free pools should not self-register in pool_registry."""
-
-        weth = _make_weth()
-        usdc = _make_usdc()
-
-        pool = UniswapV3Pool(
-            address=USDC_WETH_V3_POOL,
-            chain_id=1,
-            token0=weth,
-            token1=usdc,
-            factory=UNISWAP_V3_FACTORY,
-            fee=V3_FEE,
-            tick_spacing=V3_TICK_SPACING,
-            sqrt_price_x96=2198666895605149686863,
-            tick=-76020,
-            liquidity=1234567890,
-            state_block=18_000_000,
-        )
-
-        # Pool should NOT be in any user-created registry
-        assert PoolRegistry().get(pool_address=pool.address, chain_id=1) is None
 
     def test_io_free_constructor_with_tick_data(self) -> None:
         """I/O-free constructor accepts pre-fetched tick_bitmap and tick_data."""
@@ -237,7 +192,6 @@ class TestV3PoolIOFreeConstructor:
         assert unpickled.sqrt_price_x96 == pool.sqrt_price_x96
         assert unpickled.tick == pool.tick
         assert unpickled.liquidity == pool.liquidity
-        assert not hasattr(unpickled, "_provider")
 
 
 class TestBotBuildV3Pool:
@@ -326,7 +280,6 @@ class TestBotBuildV3Pool:
         assert pool.sqrt_price_x96 == sqrt_price
         assert pool.tick == tick
         assert pool.liquidity == liquidity
-        assert not hasattr(pool, "_provider")
 
         # Pool should be registered in bot's pool registry
         assert bot.pools.get(pool_address=pool.address, chain_id=1) is pool

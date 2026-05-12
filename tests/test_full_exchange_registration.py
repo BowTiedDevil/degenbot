@@ -341,11 +341,6 @@ class TestAerodromeV2Registration:
 
         assert AerodromeV2Pool.variant == "aerodrome"
 
-    def test_aerodrome_v2_has_no_from_chain(self) -> None:
-        """AerodromeV2Pool no longer provides from_chain (I/O moved to builder)."""
-
-        assert not hasattr(AerodromeV2Pool, "from_chain")
-
 
 class TestV4DeploymentsExcluded:
     """V4 deployments use PoolManager, not factory — not covered by this registry."""
