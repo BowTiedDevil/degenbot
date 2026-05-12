@@ -358,7 +358,7 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
             assert calc_token_amount == calc_token_amount_contract
 
 
-# @pytest.mark.slow
+@pytest.mark.slow
 def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
     """
     Test the user-deployed pools deployed by the factory
