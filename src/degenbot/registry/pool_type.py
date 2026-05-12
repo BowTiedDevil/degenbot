@@ -208,9 +208,7 @@ class PoolTypeRegistry:
             return entry.pool_class
         return self._default_v3_class
 
-    def get_descriptor(
-        self, chain_id: ChainId, factory_address: str
-    ) -> PoolTypeDescriptor | None:
+    def get_descriptor(self, chain_id: ChainId, factory_address: str) -> PoolTypeDescriptor | None:
         """Get the PoolTypeDescriptor for (chain_id, factory)."""
         entry = self._entries.get((chain_id, factory_address))
         if entry is None:
@@ -222,9 +220,7 @@ class PoolTypeRegistry:
             factory=factory_address,
         )
 
-    def get_deployment(
-        self, chain_id: ChainId, factory_address: str
-    ) -> PoolDeploymentData | None:
+    def get_deployment(self, chain_id: ChainId, factory_address: str) -> PoolDeploymentData | None:
         """Get the deployment data for (chain_id, factory)."""
         entry = self._entries.get((chain_id, factory_address))
         if entry is None:
