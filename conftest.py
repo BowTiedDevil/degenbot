@@ -9,6 +9,7 @@ relative to its path. It is picked up because pyproject.toml includes
 "README.md" in testpaths.
 """
 
+import pytest
 from sybil import Sybil
 from sybil.parsers.markdown.clear import ClearNamespaceParser
 from sybil.parsers.markdown.codeblock import PythonCodeBlockParser
@@ -20,3 +21,50 @@ pytest_collect_file = Sybil(
     patterns=["README.md"],
     excludes=["*/README.md"],
 ).pytest()
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """
+    Restore document order for README.md sybil items and pin them to one
+    xdist worker.
+
+    Sybil's skip directive state is tracked per-document and depends on
+    sequential, ordered evaluation. Two pytest plugins break this:
+
+    - pytest-random-order reorders items, breaking the skip state machine.
+    - pytest-xdist distributes items across workers, so each worker sees
+      an unbalanced subset of skip:start/skip:end pairs.
+
+    This hook:
+    1. Sorts README items back into document (line) order
+    2. Marks them ``random_order(disabled=True)`` so pytest-random-order
+       preserves their relative order within the parent
+    3. Marks them with a shared ``xdist_group`` so ``--dist=loadgroup``
+       sends them to a single worker
+    """
+    readme_items = []
+    other_items = []
+    for item in items:
+        if "README.md" in item.nodeid:
+            readme_items.append(item)
+        else:
+            other_items.append(item)
+
+    # Sort README items by line number to restore document order
+    def readme_sort_key(item: pytest.Item) -> int:
+        parts = item.nodeid.split("line:")
+        if len(parts) == 2:
+            try:
+                return int(parts[1].split(",")[0])
+            except ValueError:
+                return 0
+        return 0
+
+    readme_items.sort(key=readme_sort_key)
+
+    for item in readme_items:
+        item.add_marker(pytest.mark.random_order(disabled=True))
+        item.add_marker(pytest.mark.xdist_group("readme_sybil"))
+
+    items[:] = readme_items + other_items
