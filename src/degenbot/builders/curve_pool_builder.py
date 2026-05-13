@@ -239,7 +239,8 @@ class CurvePoolBuilder:
     ) -> bool:
         """Fetch current state from chain and push update to the pool."""
         if not isinstance(pool, CurveStableswapPool):
-            raise TypeError(f"CurvePoolBuilder cannot update {type(pool).__name__}")
+            msg = f"CurvePoolBuilder cannot update {type(pool).__name__}"
+            raise TypeError(msg)
 
         provider = self._connections.get_provider(pool.chain_id)
         _block_number = block_number if block_number is not None else provider.get_block_number()

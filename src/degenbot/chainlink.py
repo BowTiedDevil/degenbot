@@ -44,7 +44,8 @@ class ChainlinkPriceContract:
     def decimals(self) -> int:
         if self._decimals is None:
             if self._bot is None:
-                raise ValueError("ChainlinkPriceContract requires a `bot` to fetch decimals")
+                msg = "ChainlinkPriceContract requires a `bot` to fetch decimals"
+                raise ValueError(msg)
             chain_id = self._chain_id or self._bot.connections.default_chain_id
             w3 = self._bot.connections.get_provider(chain_id).underlying
             contract = w3.eth.contract(
@@ -57,7 +58,8 @@ class ChainlinkPriceContract:
     @property
     def price(self) -> float:
         if self._bot is None:
-            raise ValueError("ChainlinkPriceContract requires a `bot` to fetch price")
+            msg = "ChainlinkPriceContract requires a `bot` to fetch price"
+            raise ValueError(msg)
         chain_id = self._chain_id or self._bot.connections.default_chain_id
         w3 = self._bot.connections.get_provider(chain_id).underlying
         contract = w3.eth.contract(

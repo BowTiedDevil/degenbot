@@ -115,8 +115,9 @@ def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Ses
 def get_alembic_config(database_path: pathlib.Path | None = None) -> Config:
     cfg = Config()
     if database_path is None:
+        msg = "database_path is required. Pass it explicitly or use Bot.config.database.path"
         raise ValueError(
-            "database_path is required. Pass it explicitly or use Bot.config.database.path"
+            msg
         )
     cfg.set_main_option("sqlalchemy.url", f"sqlite:///{_get_sqlite_db_string(database_path)}")
     cfg.set_main_option("script_location", "degenbot:migrations")

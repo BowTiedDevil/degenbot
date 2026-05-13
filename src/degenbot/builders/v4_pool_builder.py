@@ -338,7 +338,8 @@ class V4PoolBuilder:
     ) -> bool:
         """Fetch current state from chain and push update to the pool."""
         if not isinstance(pool, UniswapV4Pool):
-            raise TypeError(f"V4PoolBuilder cannot update {type(pool).__name__}")
+            msg = f"V4PoolBuilder cannot update {type(pool).__name__}"
+            raise TypeError(msg)
 
         provider = self._connections.get_provider(pool.chain_id)
         _block_number = block_number if block_number is not None else provider.get_block_number()

@@ -202,8 +202,9 @@ class BoundedProductOptimizer:
         start_time = time.perf_counter_ns()
 
         if len(pools) != 1:
+            msg = "Bounded product optimizer requires single V3 pool"
             raise OptimizationError(
-                "Bounded product optimizer requires single V3 pool",
+                msg,
                 iterations=0,
                 method="bounded_product",
             )
@@ -211,8 +212,9 @@ class BoundedProductOptimizer:
         pool = pools[0]
 
         if not isinstance(pool, UniswapV3Pool):
+            msg = "Pool must be UniswapV3Pool"
             raise OptimizationError(
-                "Pool must be UniswapV3Pool",
+                msg,
                 iterations=0,
                 method="bounded_product",
             )
@@ -245,8 +247,9 @@ class BoundedProductOptimizer:
 
             # If no external price provided, can't optimize
             if external_price is None:
+                msg = "External price required for bounded product optimization"
                 raise OptimizationError(
-                    "External price required for bounded product optimization",
+                    msg,
                     iterations=0,
                     method="bounded_product",
                 )
@@ -275,8 +278,9 @@ class BoundedProductOptimizer:
                 profit = int(delta_R0) if delta_R1 > 0 else 0
 
             if optimal_input <= 0 or profit <= 0:
+                msg = "No profitable arbitrage"
                 raise OptimizationError(
-                    "No profitable arbitrage",
+                    msg,
                     iterations=1,
                     method="bounded_product",
                 )

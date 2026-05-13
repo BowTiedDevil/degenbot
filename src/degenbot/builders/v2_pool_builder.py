@@ -322,7 +322,8 @@ class V2PoolBuilder:
             return self._update_aerodrome_v2(pool, block_number=block_number)
         if isinstance(pool, UniswapV2Pool):
             return self._update_uniswap_v2(pool, block_number=block_number)
-        raise TypeError(f"V2PoolBuilder cannot update {type(pool).__name__}")
+        msg = f"V2PoolBuilder cannot update {type(pool).__name__}"
+        raise TypeError(msg)
 
     def _update_uniswap_v2(
         self, pool: UniswapV2Pool, *, block_number: BlockIdentifier | None

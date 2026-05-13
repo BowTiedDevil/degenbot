@@ -233,7 +233,8 @@ class TestDiscoverCoinsEdgeCases:
         def handle_balances_uint256(to: str, data: bytes, block: int) -> bytes:
             balance_calls["count"] += 1
             if balance_calls["count"] > 1:
-                raise Exception("balance revert")
+                msg = "balance revert"
+                raise Exception(msg)
             return _encode_uint256(100)
 
         from tests.curve.detection.fake_w3 import FakeCurveW3

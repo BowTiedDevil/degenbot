@@ -253,7 +253,8 @@ def _create_mock_context_collateral() -> MagicMock:
         class_map = {ScaledTokenEventType.COLLATERAL_BURN: EnrichedCollateralBurnEvent}
         enriched_class = class_map.get(event_type)
         if enriched_class is None:
-            raise ValueError(f"Unsupported: {event_type}")
+            msg = f"Unsupported: {event_type}"
+            raise ValueError(msg)
         kwargs = {
             "event": event.event,
             "event_type": event_type,
@@ -308,7 +309,8 @@ def _create_mock_context_collateral_mint() -> MagicMock:
         class_map = {ScaledTokenEventType.COLLATERAL_MINT: EnrichedCollateralMintEvent}
         enriched_class = class_map.get(event_type)
         if enriched_class is None:
-            raise ValueError(f"Unsupported: {event_type}")
+            msg = f"Unsupported: {event_type}"
+            raise ValueError(msg)
         kwargs = {
             "event": event.event,
             "event_type": event_type,
@@ -362,7 +364,8 @@ def _create_mock_context_debt() -> MagicMock:
         class_map = {ScaledTokenEventType.DEBT_BURN: EnrichedDebtBurnEvent}
         enriched_class = class_map.get(event_type)
         if enriched_class is None:
-            raise ValueError(f"Unsupported: {event_type}")
+            msg = f"Unsupported: {event_type}"
+            raise ValueError(msg)
         kwargs = {
             "event": event.event,
             "event_type": event_type,
@@ -417,7 +420,8 @@ def _create_mock_context_debt_mint() -> MagicMock:
         class_map = {ScaledTokenEventType.DEBT_MINT: EnrichedDebtMintEvent}
         enriched_class = class_map.get(event_type)
         if enriched_class is None:
-            raise ValueError(f"Unsupported: {event_type}")
+            msg = f"Unsupported: {event_type}"
+            raise ValueError(msg)
         kwargs = {
             "event": event.event,
             "event_type": event_type,

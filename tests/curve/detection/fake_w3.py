@@ -55,7 +55,8 @@ class FakeCurveW3Eth:
         selector = data[:4]
         handler = self._call_responses.get(selector)
         if handler is None:
-            raise Exception(f"No handler for selector {selector.hex()}")
+            msg = f"No handler for selector {selector.hex()}"
+            raise Exception(msg)
         if callable(handler):
             return HexBytes(handler(tx.get("to", ""), data, block_identifier))
         return HexBytes(handler)
