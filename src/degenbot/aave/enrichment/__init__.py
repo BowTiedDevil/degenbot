@@ -10,17 +10,13 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
+from degenbot.aave.enrichment._legacy import ScaledEventEnricher as LegacyEnricher
+from degenbot.aave.enrichment.core import ScaledEventEnricher as NewEnricher
 from degenbot.aave.models import EnrichedScaledTokenEvent
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.aave.enrichment._legacy import (
-        ScaledEventEnricher as LegacyEnricher,
-    )
-    from degenbot.aave.enrichment.core import (
-        ScaledEventEnricher as NewEnricher,
-    )
     from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
 
 # Feature flag: use new handler-based enrichment if env var is set
@@ -60,22 +56,12 @@ class ScaledEventEnricher:
         """Get the appropriate enricher implementation."""
         if self._enricher is None:
             if _USE_NEW_ENRICHMENT:
-                # Local import to avoid circular import and allow lazy loading
-                from degenbot.aave.enrichment.core import (  # noqa: PLC0415
-                    ScaledEventEnricher as NewEnricher,
-                )
-
                 self._enricher = NewEnricher(
                     pool_revision=self.pool_revision,
                     token_revisions=self.token_revisions,
                     session=self.session,
                 )
             else:
-                # Local import to avoid circular import and allow lazy loading
-                from degenbot.aave.enrichment._legacy import (  # noqa: PLC0415
-                    ScaledEventEnricher as LegacyEnricher,
-                )
-
                 self._enricher = LegacyEnricher(
                     pool_revision=self.pool_revision,
                     token_revisions=self.token_revisions,

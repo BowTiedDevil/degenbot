@@ -25,6 +25,58 @@ if TYPE_CHECKING:
 
 
 class TestLiquidationHandler:
+    # ERC20 transfer events within a LIQUIDATION operation have no index.
+    # They should be treated as no-scaling transfers (raw_amount = scaled_amount).
+    # See: legacy _legacy.py line ~120 which handled ERC20_COLLATERAL_TRANSFER
+    # before the liquidation-specific extraction code.
+
+    def test_erc20_collateral_transfer_bypasses_index_check(
+        self, handler: LiquidationHandler
+    ) -> None:
+        """
+        ERC20_COLLATERAL_TRANSFER events within LIQUIDATION have no index.
+
+        Standard ERC20 Transfer events don't carry an Aave index.
+        They should use raw_amount = scaled_amount = event.amount.
+        """
+        scaled_event = _create_mock_scaled_event(
+            event_type=ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+            amount=1_000_000_000_000_000_000,
+            index=None,
+        )
+
+        pool_event = _create_mock_liquidation_pool_event(500, 600)
+        operation = _create_mock_operation(OperationType.LIQUIDATION, pool_event)
+        context = _create_mock_context_erc20_transfer()
+
+        result = handler.handle(scaled_event, operation, context)
+
+        assert result.raw_amount == 1_000_000_000_000_000_000
+        assert result.scaled_amount == 1_000_000_000_000_000_000
+
+    def test_erc20_debt_transfer_bypasses_index_check(
+        self, handler: LiquidationHandler
+    ) -> None:
+        """
+        ERC20_DEBT_TRANSFER events within LIQUIDATION have no index.
+
+        Standard ERC20 Transfer events don't carry an Aave index.
+        They should use raw_amount = scaled_amount = event.amount.
+        """
+        scaled_event = _create_mock_scaled_event(
+            event_type=ScaledTokenEventType.ERC20_DEBT_TRANSFER,
+            amount=1_000_000_000_000_000_000,
+            index=None,
+        )
+
+        pool_event = _create_mock_liquidation_pool_event(500, 600)
+        operation = _create_mock_operation(OperationType.LIQUIDATION, pool_event)
+        context = _create_mock_context_erc20_transfer()
+
+        result = handler.handle(scaled_event, operation, context)
+
+        assert result.raw_amount == 1_000_000_000_000_000_000
+        assert result.scaled_amount == 1_000_000_000_000_000_000
     """Tests for LiquidationHandler."""
 
     @pytest.fixture
@@ -492,6 +544,57 @@ def _create_mock_context_debt_mint() -> MagicMock:
     mock_context.get_underlying_asset = mock_get_underlying_asset
     mock_context.extract_pool_amount = mock_extract_pool_amount
     mock_context.calculate = mock_calculate
+    mock_context.build_enriched_event = mock_build_enriched_event
+    return mock_context
+
+
+def _create_mock_context_erc20_transfer() -> MagicMock:
+    """Context for ERC20 transfer events within liquidation (no index, no scaling)."""
+    from degenbot.aave.enrichment.context import EnrichmentContext
+    from degenbot.aave.models import (
+        EnrichedCollateralTransferEvent,
+        EnrichedDebtTransferEvent,
+        EnrichedScaledTokenEvent,
+    )
+
+    mock_context = MagicMock(spec=EnrichmentContext)
+    mock_context.pool_revision = 1
+    mock_context.token_revisions = {}
+
+    def mock_get_token_revision(token_address: ChecksumAddress) -> int:
+        return 1
+
+    def mock_get_underlying_asset(token_address: ChecksumAddress) -> ChecksumAddress:
+        return ChecksumAddress("0x1111111111111111111111111111111111111111")
+
+    def mock_build_enriched_event(event: "ScaledTokenEvent", operation: "Operation", raw_amount: int, scaled_amount: int | None) -> EnrichedScaledTokenEvent:
+        event_type = event.event_type
+        if event_type == ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER:
+            enriched_class = EnrichedCollateralTransferEvent
+            actual_event_type = ScaledTokenEventType.COLLATERAL_TRANSFER
+        elif event_type == ScaledTokenEventType.ERC20_DEBT_TRANSFER:
+            enriched_class = EnrichedDebtTransferEvent
+            actual_event_type = ScaledTokenEventType.DEBT_TRANSFER
+        else:
+            msg = f"Unsupported: {event_type}"
+            raise ValueError(msg)
+        kwargs = {
+            "event": event.event,
+            "event_type": actual_event_type,
+            "user_address": event.user_address,
+            "raw_amount": raw_amount,
+            "scaled_amount": scaled_amount,
+            "pool_revision": 1,
+            "token_revision": 1,
+            "token_address": ChecksumAddress(event.event["address"]),
+            "underlying_asset": ChecksumAddress("0x1111111111111111111111111111111111111111"),
+            "from_address": event.user_address,
+            "to_address": event.user_address,
+        }
+        return enriched_class(**kwargs)
+
+    mock_context.get_token_revision = mock_get_token_revision
+    mock_context.get_underlying_asset = mock_get_underlying_asset
     mock_context.build_enriched_event = mock_build_enriched_event
     return mock_context
 
