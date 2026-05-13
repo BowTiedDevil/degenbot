@@ -103,7 +103,8 @@ class ArbSolver(Solver):
         construction on the solve path.
         """
         if self._pool_cache is None:
-            raise RuntimeError("Pool cache requires the Rust extension (degenbot_rs)")
+            msg = "Pool cache requires the Rust extension (degenbot_rs)"
+            raise RuntimeError(msg)
         return self._pool_cache
 
     def register_pool(

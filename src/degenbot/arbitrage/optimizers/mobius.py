@@ -641,8 +641,9 @@ class MobiusOptimizer:
 
         min_pools = 2
         if len(pools) < min_pools:
+            msg = "Möbius optimizer requires 2+ pools"
             raise OptimizationError(
-                "Möbius optimizer requires 2+ pools",
+                msg,
                 iterations=0,
                 method="mobius",
             )
@@ -668,8 +669,9 @@ class MobiusOptimizer:
 
             pool_type = type(pool).__name__
             if pool_type not in v2_pool_types:
+                msg = f"Unsupported pool type: {pool_type}. Use V2 pools or V3TickRangeHop objects."
                 raise OptimizationError(
-                    f"Unsupported pool type: {pool_type}. Use V2 pools or V3TickRangeHop objects.",
+                    msg,
                     iterations=0,
                     method="mobius",
                 )
@@ -683,8 +685,9 @@ class MobiusOptimizer:
                 reserve_out = float(pool.state.reserves_token0)
                 next_token = pool.token0
             else:
+                msg = f"Token {current_token} not in pool"
                 raise OptimizationError(
-                    f"Token {current_token} not in pool",
+                    msg,
                     iterations=0,
                     method="mobius",
                 )
@@ -705,8 +708,9 @@ class MobiusOptimizer:
         optimal_input = int(x_opt)
 
         if optimal_input <= 0 or profit <= 0:
+            msg = "No profitable arbitrage"
             raise OptimizationError(
-                "No profitable arbitrage",
+                msg,
                 iterations=iterations,
                 method="mobius",
             )
@@ -723,11 +727,14 @@ class MobiusOptimizer:
                         # This is the V3 hop — estimate final sqrt price
                         final_sqrt_price = estimate_v3_final_sqrt_price(amt, v3_hop)
                         if not v3_hop.contains_sqrt_price(final_sqrt_price):
-                            raise OptimizationError(
+                            msg = (
                                 f"V3 swap at hop {hop_idx} crosses tick "
                                 f"boundary (sqrt_price={final_sqrt_price:.6f} "
                                 f"outside [{v3_hop.sqrt_price_lower:.6f}, "
-                                f"{v3_hop.sqrt_price_upper:.6f}])",
+                                f"{v3_hop.sqrt_price_upper:.6f}])"
+                            )
+                            raise OptimizationError(
+                                msg,
                                 iterations=iterations,
                                 method="mobius",
                             )
@@ -753,8 +760,9 @@ class MobiusOptimizer:
         elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
 
         if actual_profit <= 0:
+            msg = "No profitable arbitrage (integer verification failed)"
             raise OptimizationError(
-                "No profitable arbitrage (integer verification failed)",
+                msg,
                 iterations=iterations,
                 method="mobius",
             )
@@ -1026,8 +1034,9 @@ class MobiusOptimizer:
         if best_result is not None:
             return best_result
 
+        msg = "No valid piecewise-Mobius solution found"
         raise OptimizationError(
-            "No valid piecewise-Mobius solution found",
+            msg,
             iterations=0,
             method="mobius",
         )

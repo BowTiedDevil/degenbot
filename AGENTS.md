@@ -51,6 +51,19 @@ class SomeClass:
 - Create specific subtypes for distinct categories
 - Catch specific exceptions (`except TimeoutError:`), avoid broad catches
 
+#### Exception Messages
+
+Use the `msg` variable pattern to avoid ruff TRY003 warnings:
+
+```python
+# Bad: message inline with exception (triggers TRY003)
+raise ValueError(f"Unsupported pool type: {pool_type}")
+
+# Good: assign to msg variable first
+msg = f"Unsupported pool type: {pool_type}"
+raise ValueError(msg)
+```
+
 ### Logging
 - Use `from degenbot.logging import logger`
 

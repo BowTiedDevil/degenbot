@@ -541,4 +541,5 @@ class Bot:
             return self._v4_builder
         if isinstance(pool, CurveStableswapPool):
             return self._curve_builder
-        raise TypeError(f"update() not implemented for pool type {type(pool).__name__}")
+        msg = f"update() not implemented for pool type {type(pool).__name__}"
+        raise TypeError(msg)

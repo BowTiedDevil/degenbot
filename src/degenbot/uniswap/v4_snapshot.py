@@ -151,7 +151,8 @@ class DatabaseSnapshot:
             self.database_path = database_path or pathlib.Path()
         else:
             if database_path is None:
-                raise ValueError("Either db or database_path must be provided")
+                msg = "Either db or database_path must be provided"
+                raise ValueError(msg)
             self.session = get_scoped_sqlite_session(database_path)
             self.database_path = database_path
 

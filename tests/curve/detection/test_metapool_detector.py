@@ -80,7 +80,8 @@ class TestDetectMetapool:
                 return _encode_address(base_pool_addr)
             if selector == GET_UNDERLYING_COINS:
                 return _encode_address_array8(underlying_coins)
-            raise Exception(f"Unexpected selector: {selector.hex()}")
+            msg = f"Unexpected selector: {selector.hex()}"
+            raise Exception(msg)
 
         w3 = FakeCurveW3({
             IS_META: handle_call,
@@ -112,12 +113,14 @@ class TestDetectMetapool:
             if selector == IS_META:
                 return _encode_bool(True)
             if selector == BASE_POOL:
-                raise Exception("base_pool() not supported")
+                msg = "base_pool() not supported"
+                raise Exception(msg)
             if selector == GET_BASE_POOL:
                 return _encode_address(base_pool_addr)
             if selector == GET_UNDERLYING_COINS:
                 return _encode_address_array8(underlying_coins)
-            raise Exception(f"Unexpected selector: {selector.hex()}")
+            msg = f"Unexpected selector: {selector.hex()}"
+            raise Exception(msg)
 
         w3 = FakeCurveW3({
             IS_META: handle_call,
@@ -152,7 +155,8 @@ class TestDetectMetapool:
                 raise Exception("revert")
             if selector == GET_UNDERLYING_COINS:
                 return _encode_address_array8(underlying_coins)
-            raise Exception(f"Unexpected selector: {selector.hex()}")
+            msg = f"Unexpected selector: {selector.hex()}"
+            raise Exception(msg)
 
         w3 = FakeCurveW3({
             IS_META: handle_call,
@@ -190,7 +194,8 @@ class TestDetectMetapool:
                 return _encode_address(TRIPOOL_ADDR)
             if selector == GET_UNDERLYING_COINS:
                 return _encode_address_array8([DAI, USDC, USDT])
-            raise Exception(f"Unexpected selector: {selector.hex()}")
+            msg = f"Unexpected selector: {selector.hex()}"
+            raise Exception(msg)
 
         w3 = FakeCurveW3({
             IS_META: handle_call,

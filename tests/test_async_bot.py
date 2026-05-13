@@ -306,7 +306,8 @@ class TestAsyncBotBuildV4Pool:
                 return responses[data]
             if data[:4] == tick_bitmap_selector:
                 return eth_abi.abi.encode(types=["uint256"], args=[0])
-            raise ValueError(f"Unexpected call: data={data!r}")
+            msg = f"Unexpected call: data={data!r}"
+            raise ValueError(msg)
 
         provider.call = AsyncMock(side_effect=mock_call)
 
@@ -351,7 +352,8 @@ class TestAsyncBotIOMethods:
         async def mock_call(*, to, data, block=None):
             if data == balance_calldata:
                 return balance_encoded
-            raise ValueError(f"Unexpected call: data={data!r}")
+            msg = f"Unexpected call: data={data!r}"
+            raise ValueError(msg)
 
         provider.call = AsyncMock(side_effect=mock_call)
 
@@ -388,7 +390,8 @@ class TestAsyncBotIOMethods:
         async def mock_call(*, to, data, block=None):
             if data == approval_calldata:
                 return approval_encoded
-            raise ValueError(f"Unexpected call: data={data!r}")
+            msg = f"Unexpected call: data={data!r}"
+            raise ValueError(msg)
 
         provider.call = AsyncMock(side_effect=mock_call)
 
@@ -422,7 +425,8 @@ class TestAsyncBotIOMethods:
         async def mock_call(*, to, data, block=None):
             if data == total_supply_calldata:
                 return total_supply_encoded
-            raise ValueError(f"Unexpected call: data={data!r}")
+            msg = f"Unexpected call: data={data!r}"
+            raise ValueError(msg)
 
         provider.call = AsyncMock(side_effect=mock_call)
 

@@ -302,7 +302,8 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
     ) -> int:
         """Fetch the ERC-20 approval for `spender` on behalf of `owner`."""
         if self._bot is None:
-            raise ValueError("A Bot instance is required for token approval lookups")
+            msg = "A Bot instance is required for token approval lookups"
+            raise ValueError(msg)
         provider = self._bot.connections.get_provider(token.chain_id)
         (approval,) = eth_abi.abi.decode(
             types=["uint256"],
@@ -590,7 +591,8 @@ class UniswapCurveCycle(PublisherMixin, AbstractArbitrage):
             assert isinstance(curve_swap_vector, CurveStableSwapPoolVector)
 
         if self._bot is None:
-            raise ValueError("A Bot instance is required for async calculations")
+            msg = "A Bot instance is required for async calculations"
+            raise ValueError(msg)
         block_number = self._bot.connections.get_web3(
             chain_id=curve_pool.chain_id
         ).eth.get_block_number()

@@ -334,9 +334,11 @@ class V3PoolBuilder:
         from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
         if isinstance(pool, UniswapV4Pool):
-            raise TypeError(f"V3PoolBuilder cannot update {type(pool).__name__}")
+            msg = f"V3PoolBuilder cannot update {type(pool).__name__}"
+            raise TypeError(msg)
         if not isinstance(pool, UniswapV3Pool):
-            raise TypeError(f"V3PoolBuilder cannot update {type(pool).__name__}")
+            msg = f"V3PoolBuilder cannot update {type(pool).__name__}"
+            raise TypeError(msg)
 
         provider = self._connections.get_provider(pool.chain_id)
         _block_number = block_number if block_number is not None else provider.get_block_number()

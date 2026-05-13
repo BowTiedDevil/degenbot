@@ -97,11 +97,13 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
             base_pool: For metapools, the underlying base pool
         """
         if len(tokens) != len(balances):
+            msg = f"Token count ({len(tokens)}) must match balance count ({len(balances)})"
             raise ValueError(
-                f"Token count ({len(tokens)}) must match balance count ({len(balances)})"
+                msg
             )
         if len(tokens) < 2 or len(tokens) > self.MAX_COINS:
-            raise ValueError(f"Curve pools require 2-{self.MAX_COINS} tokens, got {len(tokens)}")
+            msg = f"Curve pools require 2-{self.MAX_COINS} tokens, got {len(tokens)}"
+            raise ValueError(msg)
 
         self._tokens: tuple[FakeToken, ...] = tuple(tokens)
         self.address: ChecksumAddress = address  # type: ignore[assignment]
@@ -154,7 +156,8 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
     def token1(self) -> FakeToken:
         """Second token (compatibility with V2/V3-style pools)."""
         if len(self._tokens) < 2:
-            raise AttributeError("Pool has fewer than 2 tokens")
+            msg = "Pool has fewer than 2 tokens"
+            raise AttributeError(msg)
         return self._tokens[1]
 
     def _xp(self, balances: Sequence[int]) -> tuple[int, ...]:
@@ -267,7 +270,8 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
 
         # Verify indices valid
         if i >= len(state.balances) or j >= len(state.balances):
-            raise ValueError(f"Invalid swap indices ({i}, {j}) for {len(state.balances)} tokens")
+            msg = f"Invalid swap indices ({i}, {j}) for {len(state.balances)} tokens"
+            raise ValueError(msg)
 
         # Create swap_fn closure
         def swap_fn(dx: int) -> int:
@@ -317,7 +321,8 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
                 idx for idx, t in enumerate(self._tokens) if t.address.lower() == token_out.lower()
             )
         except StopIteration as e:
-            raise ValueError(f"Token not found in pool: {token_in} -> {token_out}") from e
+            msg = f"Token not found in pool: {token_in} -> {token_out}"
+            raise ValueError(msg) from e
 
         # Calculate output
         amount_out = self._get_dy(i, j, amount_in)

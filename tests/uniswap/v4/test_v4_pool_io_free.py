@@ -320,7 +320,8 @@ class TestBotBuildV4Pool:
                 return liquidity_encoded
             if data[:4] == tick_bitmap_selector:
                 return eth_abi.abi.encode(types=["uint256"], args=[0])
-            raise ValueError(f"Unexpected call with data={data!r}")
+            msg = f"Unexpected call with data={data!r}"
+            raise ValueError(msg)
 
         provider.call = MagicMock(side_effect=mock_call)
 

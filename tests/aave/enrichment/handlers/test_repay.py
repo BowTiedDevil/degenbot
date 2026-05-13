@@ -282,7 +282,8 @@ def _create_mock_context() -> MagicMock:
         }
         enriched_class = class_map.get(event_type)
         if enriched_class is None:
-            raise ValueError(f"Unsupported: {event_type}")
+            msg = f"Unsupported: {event_type}"
+            raise ValueError(msg)
 
         kwargs: dict[str, Any] = {
             "event": event.event,
@@ -355,7 +356,8 @@ def _create_mock_context_with_mint() -> MagicMock:
         }
         enriched_class = class_map.get(event_type)
         if enriched_class is None:
-            raise ValueError(f"Unsupported: {event_type}")
+            msg = f"Unsupported: {event_type}"
+            raise ValueError(msg)
 
         kwargs: dict[str, Any] = {
             "event": event.event,
@@ -427,7 +429,8 @@ def _create_mock_context_gho() -> MagicMock:
         }
         enriched_class = class_map.get(event_type)
         if enriched_class is None:
-            raise ValueError(f"Unsupported: {event_type}")
+            msg = f"Unsupported: {event_type}"
+            raise ValueError(msg)
 
         kwargs: dict[str, Any] = {
             "event": event.event,
@@ -502,7 +505,8 @@ def _create_mock_context_gho_mint() -> MagicMock:
         }
         enriched_class = class_map.get(event_type)
         if enriched_class is None:
-            raise ValueError(f"Unsupported: {event_type}")
+            msg = f"Unsupported: {event_type}"
+            raise ValueError(msg)
 
         kwargs: dict[str, Any] = {
             "event": event.event,
