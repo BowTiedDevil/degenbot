@@ -60,6 +60,12 @@ class LiquidationHandler:
         ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
     }
 
+    # ERC20 transfer events have no Aave index — bypass index-based scaling
+    ERC20_TRANSFER_TYPES: ClassVar[set[ScaledTokenEventType]] = {
+        ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
+        ScaledTokenEventType.ERC20_DEBT_TRANSFER,
+    }
+
     def handle(
         self,
         event: "ScaledTokenEvent",
@@ -76,6 +82,13 @@ class LiquidationHandler:
             raise EnrichmentError(msg)
 
         event_type = event.event_type
+
+        # ERC20 transfers within liquidation bypass index-based scaling
+        # Standard ERC20 Transfer events don't carry an Aave index.
+        # raw_amount = scaled_amount (amount is already in scaled units).
+        # Legacy code handled this before the liquidation branch.
+        if event_type in self.ERC20_TRANSFER_TYPES:
+            return self._handle_erc20_transfer(event, operation, context)
 
         # Check for net debt increase case (DEBT_MINT with balance_increase > amount)
         if (
@@ -124,6 +137,25 @@ class LiquidationHandler:
             operation=operation,
             raw_amount=raw_amount,
             scaled_amount=scaled_amount,
+        )
+
+    def _handle_erc20_transfer(  # noqa: PLR6301
+        self,
+        event: "ScaledTokenEvent",
+        operation: "Operation",
+        context: "EnrichmentContext",
+    ) -> "EnrichedScaledTokenEvent":
+        """
+        Handle ERC20 transfer events within a liquidation operation.
+
+        Standard ERC20 Transfer events don't carry an Aave index.
+        The amount is already in scaled units, so raw_amount = scaled_amount.
+        """
+        return context.build_enriched_event(
+            event=event,
+            operation=operation,
+            raw_amount=event.amount,
+            scaled_amount=event.amount,
         )
 
     def _is_liquidation_call_event(self, pool_event: LogReceipt) -> bool:  # noqa: PLR6301
