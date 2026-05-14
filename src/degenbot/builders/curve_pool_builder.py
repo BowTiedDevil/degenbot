@@ -7,7 +7,7 @@ import eth_abi.abi
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection.connection_manager import ConnectionManager
-from degenbot.curve._variant_groups import resolve_d_variant, resolve_y_variant, resolve_yd_variant
+from degenbot.curve._pool_strategies import resolve_pool_strategies
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
 from degenbot.curve.detection.a_ramping import detect_a_ramping
@@ -137,10 +137,8 @@ class CurvePoolBuilder:
         if len(tokens) < 2:
             raise BrokenPool()
 
-        # 13. Resolve variant groups
-        d_variant = resolve_d_variant(pool_address)
-        y_variant = resolve_y_variant(pool_address)
-        yd_variant = resolve_yd_variant(pool_address)
+        # 13. Resolve strategies from pool address
+        strategies = resolve_pool_strategies(pool_address)
 
         # 14. Create fetchers and construct pool
         fetchers = CurveFetcherFactory(connections=self._connections, chain_id=chain_id)
@@ -181,7 +179,16 @@ class CurvePoolBuilder:
             block_number_fetcher=fetchers.block_number_fetcher(),
             total_supply_fetcher=fetchers.total_supply_fetcher(),
             token_balance_fetcher=fetchers.token_balance_fetcher(),
-            provider_call=fetchers.provider_call(),
+            lending_rate_fetcher=fetchers.lending_rate_fetcher(
+                pool_address=pool_address,
+                tokens=list(tokens),
+                use_lending=list(lending.use_lending) if lending.use_lending else [False] * len(tokens),
+                precision_multipliers=list(lending.precision_multipliers) if lending.precision_multipliers else [1] * len(tokens),
+                rate_multipliers=tuple(
+                    pm * 10**18 for pm in (lending.precision_multipliers or [1] * len(tokens))
+                ),
+                lending_rate_style=strategies.lending_rate_style,
+            ),
             D_fetcher=fetchers.D_fetcher(pool_address) if crypto.is_crypto else None,
             gamma_fetcher=fetchers.gamma_fetcher(pool_address) if crypto.is_crypto else None,
             price_scale_fetcher=(
@@ -189,9 +196,7 @@ class CurvePoolBuilder:
                 if crypto.is_crypto
                 else None
             ),
-            d_variant=d_variant,
-            y_variant=y_variant,
-            yd_variant=yd_variant,
+            strategies=strategies,
         )
 
         # Register pool

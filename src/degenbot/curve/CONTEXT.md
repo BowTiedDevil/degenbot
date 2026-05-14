@@ -39,12 +39,12 @@ The I/O-free architecture uses **fetcher callbacks** injected at construction. T
 | **DFetcher** | Fetch on-chain invariant D | Crypto pool y-calculation |
 | **GammaFetcher** | Fetch on-chain gamma parameter | Crypto pool dynamic fee calculation |
 | **PriceScaleFetcher** | Fetch on-chain price_scale values | Crypto pool multi-asset price normalization |
+| **LendingRateFetcher** | Fetch per-token lending rates for a block | Lending pools (cToken, yToken, cyToken, aETH, rETH, oracle) |
 
 In addition to typed fetcher protocols, two low-level I/O callbacks exist:
 
 | Callback | Purpose |
 |----------|---------|
-| **provider_call** | Raw `(to, data, block) -> bytes` closure wrapping `w3.eth.call()`; used by `_stored_rates_from_*()` methods for type-specific rate logic (cToken accrual, yToken PPS, aETH ratio, oracle method) |
 | **block_number_fetcher** | Returns current block number when `block_identifier` is None |
 
 **Key Principle:** Fetchers decouple on-chain I/O from pool logic. `Bot.build_curve_pool()` injects these callbacks; `CurveStableswapPool` calls them on-demand without managing connections directly.
@@ -66,6 +66,28 @@ Mainnet Curve pools use different calculation formulas depending on the pool con
 **YDVariant values:** `STANDARD` (b/c without A_PRECISION), `VARIANT_0` (b/c with A_PRECISION).
 
 Variant resolution is done by `resolve_d_variant()`, `resolve_y_variant()`, `resolve_yd_variant()` in `_variant_groups.py`, called by `CurvePoolBuilder.build()` at construction time. The pool class is address-agnostic for D/Y/YD calculations — it only reads the enum values.
+
+## Strategy Enums
+
+Mainnet Curve pools differ in their swap computation path, rate source, and fee application. These were formerly dispatched via `if self.address` blocks in `get_dy()` and `_get_dy_underlying()`. Each pool now receives a `PoolStrategies` frozen dataclass at construction time, combining all orthogonal strategy axes into a single value object.
+
+| Term | Definition | Aliases to avoid |
+|------|------------|------------------|
+| **SwapStyle** | An enum identifying which computation path `get_dy()` uses for dy calculation, fee application, and rate conversion order | Fee style, swap type, calculation path |
+| **MetapoolRateStyle** | An enum identifying how a metapool constructs its rate tuple in `get_dy()` | Metapool rate, meta style |
+| **MetapoolUnderlyingStyle** | An enum identifying how a metapool computes `get_dy_underlying()` | Metapool underlying style |
+| **LendingRateStyle** | An enum identifying which `_stored_rates_from_*()` method provides lending rates | Rate source, rate style |
+| **PoolStrategies** | A frozen dataclass combining all strategy enums into a single value object passed to the pool constructor | Strategies, pool config |
+
+**SwapStyle values:** `STANDARD` (dy = xp[j] - y - 1, fee, rate convert), `RATE_ADJUSTED` (dy converted before fee), `RATE_ADJUSTED_NO_ONE` (dy converted before fee, no -1 subtraction), `RAW_BALANCE` (no rate conversion), `CRYPTO` (Newton's method, dynamic fee), `LIVE_ADMIN` (live balances minus admin), `LIVE_ADMIN_DYNAMIC` (live balances, dynamic offpeg fee), `LIVE_ADMIN_DYNAMIC_PRECISION` (live balances, precision multipliers for xp), `LIVE_ADMIN_ORACLE` (live balances, oracle rates), `NO_ONE_FEE_RATE` (dy = xp[j] - y without -1, fee, rate convert — AETH/RETH), `CYTOKEN` (dy = xp[j] - y - 1, fee inside rate conversion).
+
+**MetapoolRateStyle values:** `STANDARD` (rate_multipliers[0], VP), `PRECISION_VP` (PRECISION, VP), `REDEMPTION_VP` (redemption_price, VP).
+
+**MetapoolUnderlyingStyle values:** `STANDARD` (default underlying path), `PRECISION_VP` (PRECISION + VP rate tuple for base coin), `REDEMPTION` (redemption price for first coin).
+
+**LendingRateStyle values:** `NONE` (no lending rates, use rate_multipliers), `CTOKEN` (cToken accrual rates), `YTOKEN` (yToken price-per-share rates), `CYTOKEN` (Yearn vault cToken rates), `AETH` (ankrETH ratio rates), `RETH` (rETH oracle rates), `ORACLE` (oracle-based rates).
+
+Strategy resolution is done by `resolve_pool_strategies()` in `_pool_strategies.py`, which combines the address→strategy mapping with variant group resolution. The `PoolStrategies` dataclass is frozen (immutable after creation) and picklable (contains only enums). The pool class is fully address-agnostic — it only reads strategy enum values.
 
 ## Crypto Pool Details
 
@@ -206,11 +228,11 @@ The metapool's coins include the base pool LP token; the virtual price of that L
 
 The pool contract stores `initial_A_time` and `future_A_time` as Unix timestamps. Use `TimestampFetcher` to get the current block's timestamp for interpolation.
 
-### 7. provider_call vs typed fetchers
+### 7. LendingRateFetcher vs provider_call
 
-**Ruling:** Use **provider_call** for low-level rate-fetching logic that needs pool-type-specific contract decoding. Use **typed fetcher protocols** (DFetcher, etc.) for direct valued returns.
+**Ruling:** Use **LendingRateFetcher** for all lending rate-fetching. The old `provider_call` backdoor has been removed.
 
-`provider_call` exists because the `_stored_rates_from_*()` methods each have unique decoding logic (cToken supply rate accrual, yToken PPS, aETH ratio inversion, oracle bitmask). A generic typed fetcher can't handle all these cases. For straightforward single-value fetches (D, gamma, price_scale), typed protocols are preferred.
+Each lending rate variant (cToken, yToken, cyToken, aETH, rETH, oracle) has its own fetcher closure factory method in `CurveFetcherFactory`. The factory creates closures that capture tokens, use_lending, and precision_multipliers at construction time, and use the `ConnectionManager` for I/O when called. The `LendingRateFetcher` protocol provides a single `(block_number) -> tuple[int, ...]` interface, and the pool's `_resolve_rates()` method dispatches to the correct fetcher based on `PoolStrategies.lending_rate_style`.
 
 ### 8. Crypto pool vs Stableswap pool
 

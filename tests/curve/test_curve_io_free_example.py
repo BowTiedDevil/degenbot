@@ -1,10 +1,8 @@
 """Example: Testing Curve pool calculations with I/O-free architecture.
 
 This demonstrates how the I/O-free pattern eliminates the need for mocks
-when testing pool logic.
+when testing pool logic. All on-chain data is injected via typed fetcher closures.
 """
-
-import eth_abi.abi
 
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20 import Erc20Token
@@ -66,15 +64,15 @@ def test_curve_plain_pool_with_lambda_fetchers():
     assert result < expected_approx * 1.01
 
 
-def test_curve_lending_pool_with_provider_call():
+def test_curve_lending_pool_with_lending_rate_fetcher():
     """
-    Test a lending pool (cToken/yToken) with fake provider_call callback.
+    Test a lending pool (cToken/yToken) with fake lending rate fetcher.
 
     BEFORE: Would need to mock the provider object
-    AFTER: Pass a lambda that mimics provider.call() for rate fetching.
+    AFTER: Pass a lending_rate_fetcher closure that returns fake rates.
 
-    Note: Lending pools use provider_call (low-level) instead of typed fetchers
-    because rate fetching requires pool-specific decoding logic.
+    The lending rate fetcher replaces the old provider_call callback, completing
+    the I/O-free architecture for lending pools.
     """
     cdai = Erc20Token(
         address="0x5d3a536E4D6DbD6114cc1Ead35777bAB948E3643",
@@ -89,20 +87,16 @@ def test_curve_lending_pool_with_provider_call():
         decimals=8,
     )
 
-    # Fake provider_call - mimics w3.eth.call() for rate fetching
-    # The pool will call this with (to, data, block) for exchangeRateStored()
+    # Fake lending rate fetcher - returns per-token rates scaled to PRECISION
+    # For cToken pools, rates are the exchange rate * precision multiplier
     PRECISION = 10**18
 
-    def fake_provider_call(*, to: str, data: bytes, block: int) -> bytes:
-        # Decode the function selector to know what's being called
-        # For simplicity, just return fake encoded rates
-
-        # Return rate = 1.02e18 for cDAI, 1.05e18 for cUSDC
-        if to.lower() == cdai.address.lower():
-            return eth_abi.abi.encode(["uint256"], [PRECISION * 102 // 100])
-        if to.lower() == cusdc.address.lower():
-            return eth_abi.abi.encode(["uint256"], [PRECISION * 105 // 100])
-        return eth_abi.abi.encode(["uint256"], [PRECISION])
+    def fake_lending_rate_fetcher(
+        block_number,  # noqa: ARG001
+    ) -> tuple[int, ...]:
+        # Return rates for cDAI and cUSDC
+        # cDAI rate ~1.02, cUSDC rate ~1.05, scaled by precision multiplier
+        return (PRECISION * 102 // 100, PRECISION * 105 // 100)
 
     # Fake timestamp fetcher (needed for all pools)
     def fake_timestamp_fetcher(
@@ -125,7 +119,7 @@ def test_curve_lending_pool_with_provider_call():
         # Mark tokens as lending
         use_lending=(True, True),
         # Inject fake fetchers - NO MOCKS!
-        provider_call=fake_provider_call,
+        lending_rate_fetcher=fake_lending_rate_fetcher,
         timestamp_fetcher=fake_timestamp_fetcher,
     )
 

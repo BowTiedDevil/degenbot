@@ -85,7 +85,7 @@ Some pool types (e.g., Curve StableSwap) follow an **I/O-free architecture** whe
 # Bot.build_curve_pool() creates and injects fetchers
 pool = CurveStableswapPool(
     address=pool_address,
-    provider_call=make_provider_call(w3),  # Low-level I/O callback
+    lending_rate_fetcher=make_lending_rate_fetcher(pool_address, tokens, use_lending, precision_multipliers, rate_multipliers, lending_rate_style),  # Typed lending rate fetcher
     virtual_price_fetcher=VirtualPriceFetcher(get_base_pool_virtual_price),
     D_fetcher=DFetcher(get_crypto_pool_D),  # Crypto pool fetchers
     ...
