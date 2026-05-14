@@ -5,7 +5,6 @@ import contextlib
 import dataclasses
 from collections import deque
 from collections.abc import Callable
-from fractions import Fraction
 from threading import Lock
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
 from weakref import WeakSet
@@ -18,7 +17,6 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.evm import EVMRevertError
 from degenbot.exceptions.liquidity_pool import (
     ExternalUpdateError,
-    IncompleteSwap,
     LiquidityPoolError,
 )
 from degenbot.types.abstract import AbstractArbitrage, AbstractConcentratedLiquidityPool
@@ -35,7 +33,6 @@ from degenbot.uniswap.concentrated.v3_simulator import calculate_swap as _v3_swa
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import (
-    exchange_rate_from_sqrt_price_x96,
     generate_v3_pool_address,
     get_tick_word_and_bit_position,
 )
@@ -47,6 +44,8 @@ from degenbot.uniswap.v3_libraries.tick_math import (
     MIN_TICK,
     get_sqrt_ratio_at_tick,
 )
+from degenbot.uniswap.v3_pool_calc import UniswapV3PoolCalc
+from degenbot.uniswap.v3_pool_state import V3PoolState
 from degenbot.uniswap.v3_types import (
     InitializedTickMap,
     Liquidity,
@@ -77,7 +76,13 @@ class UniswapV3BitmapAtWordAsDict(TypedDict):
     block: int
 
 
-class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidityPool):
+class UniswapV3Pool(
+    PublisherMixin,
+    PoolPickleMixin,
+    V3PoolState,
+    UniswapV3PoolCalc,
+    AbstractConcentratedLiquidityPool,
+):
     variant: ClassVar[str | None] = None
     type PoolState = UniswapV3PoolState
     _state: PoolState
@@ -105,8 +110,6 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
         "uint8",
         "bool",
     )
-
-    FEE_DENOMINATOR = 1_000_000
 
     _pickle_drops: ClassVar[frozenset[str]] = frozenset({
         "_state_lock",
@@ -362,26 +365,6 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
         return self._chain_id
 
     @property
-    def token0(self) -> Erc20Token:
-        return self._token0
-
-    @property
-    def token1(self) -> Erc20Token:
-        return self._token1
-
-    @property
-    def fee(self) -> int:
-        return self._fee
-
-    @property
-    def tick_spacing(self) -> int:
-        return self._tick_spacing
-
-    @property
-    def sparse_liquidity_map(self) -> bool:
-        return self._sparse_liquidity_map
-
-    @property
     def liquidity(self) -> int:
         return self._state_mgr.liquidity
 
@@ -418,10 +401,6 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
         return cast("LiquidityMap", self._state_mgr.tick_data)
 
     @property
-    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
-        return self._token0, self._token1
-
-    @property
     def update_block(self) -> BlockNumber:
         if TYPE_CHECKING:
             assert self.state.block is not None
@@ -437,106 +416,6 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             zero_for_one=vector.zero_for_one,
             sparse_liquidity_map=self._sparse_liquidity_map,
         )
-
-    def calculate_tokens_out_from_tokens_in(
-        self,
-        token_in: Erc20Token,
-        token_in_quantity: int,
-        override_state: PoolState | None = None,
-    ) -> Token0Amount | Token1Amount:
-        """
-        This function implements the common degenbot interface `calculate_tokens_out_from_tokens_in`
-        to calculate the number of tokens withdrawn (out) for a given number of tokens deposited
-        (in).
-
-        It is similar to calling quoteExactInputSingle using the quoter contract with arguments:
-        `quoteExactInputSingle(
-            tokenIn=token_in,
-            tokenOut=[automatically determined by helper],
-            fee=[automatically determined by helper],
-            amountIn=token_in_quantity,
-            sqrt_price_limitX96 = 0
-        )` which returns the value `amountOut`
-
-        Note that this wrapper function always assumes that the sqrt_price_limit_x96 argument is
-        unset, thus the swap calculation will continue until the target amount is satisfied,
-        regardless of price impact.
-
-        Accepts an override of state values.
-        """
-
-        if token_in not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError(message="token_in not found!")
-
-        zero_for_one = token_in == self._token0
-
-        try:
-            amount0_delta, amount1_delta, *_ = self._calculate_swap(
-                zero_for_one=zero_for_one,
-                amount_specified=token_in_quantity,
-                sqrt_price_limit_x96=(MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1),
-                override_state=override_state,
-            )
-        except EVMRevertError as e:  # pragma: no cover
-            raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
-        else:
-            if zero_for_one is True and amount0_delta < token_in_quantity:
-                raise IncompleteSwap(amount_in=amount0_delta, amount_out=-amount1_delta)
-            if zero_for_one is False and amount1_delta < token_in_quantity:
-                raise IncompleteSwap(amount_in=amount1_delta, amount_out=-amount0_delta)
-
-            return -amount1_delta if zero_for_one else -amount0_delta
-
-    def calculate_tokens_in_from_tokens_out(
-        self,
-        token_out: Erc20Token,
-        token_out_quantity: int,
-        override_state: PoolState | None = None,
-    ) -> int:
-        """
-        This function implements the common degenbot interface `calculate_tokens_in_from_tokens_out`
-        to calculate the number of tokens deposited (in) for a given number of tokens withdrawn
-        (out).
-
-        It is similar to calling quoteExactOutputSingle using the quoter contract with arguments:
-        `quoteExactOutputSingle(
-            tokenIn=[automatically determined by helper],
-            tokenOut=token_out,
-            fee=[automatically determined by helper],
-            amountOut=token_out_quantity,
-            sqrtPriceLimitX96 = 0
-        )` which returns the value `amountIn`
-
-        Note that this wrapper function always assumes that the sqrtPriceLimitX96 argument is unset,
-        thus the swap calculation will continue until the target amount is satisfied, regardless of
-        price impact
-
-        Accepts an override of state values.
-        """
-
-        if token_out not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError(message="token_out not found!")
-
-        is_zero_for_one = token_out == self._token1
-
-        try:
-            amount0_delta, amount1_delta, *_ = self._calculate_swap(
-                zero_for_one=is_zero_for_one,
-                amount_specified=-token_out_quantity,
-                sqrt_price_limit_x96=(
-                    MIN_SQRT_RATIO + 1 if is_zero_for_one else MAX_SQRT_RATIO - 1
-                ),
-                override_state=override_state,
-            )
-        except EVMRevertError as e:  # pragma: no cover
-            raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
-        else:
-            if is_zero_for_one is True and -amount1_delta < token_out_quantity:
-                raise IncompleteSwap(amount_in=amount0_delta, amount_out=-amount1_delta)
-            if is_zero_for_one is False and -amount0_delta < token_out_quantity:
-                raise IncompleteSwap(amount_in=amount1_delta, amount_out=-amount0_delta)
-
-            return amount0_delta if is_zero_for_one else amount1_delta
 
     def external_update(
         self,
@@ -733,73 +612,6 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             if self in subscriber.swap_pools
         )
 
-    def get_absolute_price(
-        self,
-        token: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the absolute price for the given token, expressed in units of the other.
-        """
-
-        return 1 / self.get_absolute_exchange_rate(token, override_state=override_state)
-
-    def get_absolute_exchange_rate(
-        self,
-        token: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the absolute exchange rate for the given token, expressed in terms of a unit amount of
-        its paired token.
-
-        e.g. taking the USDC-WETH pool in https://blog.uniswap.org/uniswap-v3-math-primer — the
-        WETH/USDC exchange rate is 649004842.70137. Rounding down, this signifies that the smallest
-        swap (1 USDC) results in a 649004842 WETH output.
-
-        A V3 pool encodes the token1/token0 exchange rate in `sqrt_price_x96`, so it can be directly
-        obtained.
-        """
-
-        if token not in self.tokens:
-            raise DegenbotValueError(message=f"Unknown token {token}")
-
-        state = self.state if override_state is None else override_state
-
-        return (
-            exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
-            if token == self._token1
-            else 1 / exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
-        )
-
-    def get_nominal_price(
-        self,
-        token: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the nominal price for the given token, expressed in units of the other, corrected for
-        decimal place values.
-        """
-
-        return 1 / self.get_nominal_rate(token, override_state=override_state)
-
-    def get_nominal_rate(
-        self,
-        token: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the nominal rate of exchange for a swap **withdrawing** the given token, corrected for
-        both token decimal place values.
-        """
-
-        return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
-            Fraction(10**self._token1.decimals, 10**self._token0.decimals)
-            if token == self._token0
-            else Fraction(10**self._token0.decimals, 10**self._token1.decimals)
-        )
-
     def discard_states_before_block(self, block: BlockNumber) -> None:
         """Discard cached states earlier than the given block."""
         with self._state_lock:
@@ -962,9 +774,6 @@ class UniswapV3Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             initial_state=result.initial_state,
             final_state=result.final_state,
         )
-
-    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
-        return Fraction(self._fee, self.FEE_DENOMINATOR)
 
     _TICK_RANGE_CACHE: dict[tuple[str, int, bool], tuple[tuple[V3TickRangeInfo, ...], int] | None]
     _MAX_TICK_RANGE_CACHE_SIZE: int = 128
