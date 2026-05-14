@@ -24,17 +24,17 @@ def _encode_address(addr: str) -> bytes:
 class TestFindLpToken:
     def testLpTokenFromFirstRegistry(self):
         """LP token found via the first registry."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         def handle_get_lp_token(to: str, data: bytes, block: int) -> bytes:
             return _encode_address(THREE_CRV_LP)
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             GET_LP_TOKEN: handle_get_lp_token,
         })
 
         result = find_lp_token(
-            w3,
+            provider,
             POOL_ADDR,
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS),
             block_identifier=18_000_000,
@@ -43,7 +43,7 @@ class TestFindLpToken:
 
     def testLpTokenFromSecondRegistry(self):
         """First registry returns zero address, second registry finds the LP token."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         call_count = {"count": 0}
 
@@ -53,12 +53,12 @@ class TestFindLpToken:
                 return _encode_address(ZERO_ADDR)
             return _encode_address(THREE_CRV_LP)
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             GET_LP_TOKEN: handle_get_lp_token,
         })
 
         result = find_lp_token(
-            w3,
+            provider,
             POOL_ADDR,
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS),
             block_identifier=18_000_000,
@@ -67,12 +67,12 @@ class TestFindLpToken:
 
     def testNoLpTokenFound(self):
         """Both registries revert or return zero — no LP token found."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
-        w3 = FakeCurveW3({})  # All calls revert
+        provider = make_fake_curve_provider({})  # All calls revert
 
         result = find_lp_token(
-            w3,
+            provider,
             POOL_ADDR,
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS),
             block_identifier=18_000_000,
@@ -81,19 +81,19 @@ class TestFindLpToken:
 
     def testFirstRegistryReverts(self):
         """First registry reverts, second registry finds LP token."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         def handle_get_lp_token(to: str, data: bytes, block: int) -> bytes:
             if to == CURVE_V1_REGISTRY_ADDRESS:
                 raise Exception("revert")
             return _encode_address(THREE_CRV_LP)
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             GET_LP_TOKEN: handle_get_lp_token,
         })
 
         result = find_lp_token(
-            w3,
+            provider,
             POOL_ADDR,
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS),
             block_identifier=18_000_000,

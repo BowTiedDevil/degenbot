@@ -519,6 +519,9 @@ class Bot:
         return self.connections.get_provider(chain_id)
 
     def get_web3(self, *, chain_id: ChainId) -> Any:
+        """.. deprecated:: 0.x
+            Use ``get_provider(chain_id)`` instead.
+        """
         return self.connections.get_web3(chain_id)
 
     def update(self, pool: Any, *, block_number: BlockIdentifier | None = None) -> bool:

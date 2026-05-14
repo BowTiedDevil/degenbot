@@ -45,17 +45,17 @@ def _encode_address_array8(addrs: list[str]) -> bytes:
 class TestDetectMetapool:
     def testNotMetapool(self):
         """Pool where is_meta() returns False for all registries."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         def handle_is_meta(to: str, data: bytes, block: int) -> bytes:
             return _encode_bool(False)
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             IS_META: handle_is_meta,
         })
 
         result = detect_metapool(
-            w3,
+            provider,
             POOL_ADDR,
             (DAI, USDC),
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS,),
@@ -67,7 +67,7 @@ class TestDetectMetapool:
 
     def testMetapoolDetectedFromRegistry(self):
         """Metapool detected via is_meta() on the first registry."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         base_pool_addr = TRIPOOL_ADDR
         underlying_coins = [DAI, USDC, USDT]
@@ -83,14 +83,14 @@ class TestDetectMetapool:
             msg = f"Unexpected selector: {selector.hex()}"
             raise Exception(msg)
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             IS_META: handle_call,
             BASE_POOL: handle_call,
             GET_UNDERLYING_COINS: handle_call,
         })
 
         result = detect_metapool(
-            w3,
+            provider,
             POOL_ADDR,
             (DAI, THREE_CRV_LP),
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS,),
@@ -103,7 +103,7 @@ class TestDetectMetapool:
 
     def testMetapoolFallbackToGetBasePool(self):
         """If base_pool() reverts, falls back to get_base_pool() on the registry."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         base_pool_addr = TRIPOOL_ADDR
         underlying_coins = [DAI, USDC, USDT]
@@ -122,7 +122,7 @@ class TestDetectMetapool:
             msg = f"Unexpected selector: {selector.hex()}"
             raise Exception(msg)
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             IS_META: handle_call,
             BASE_POOL: handle_call,
             GET_BASE_POOL: handle_call,
@@ -130,7 +130,7 @@ class TestDetectMetapool:
         })
 
         result = detect_metapool(
-            w3,
+            provider,
             POOL_ADDR,
             (DAI, THREE_CRV_LP),
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS,),
@@ -141,7 +141,7 @@ class TestDetectMetapool:
 
     def testMetapoolFallbackTo3CrvHardcode(self):
         """If base_pool() and get_base_pool() both revert but second token is 3Crv LP."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         underlying_coins = [DAI, USDC, USDT]
 
@@ -158,7 +158,7 @@ class TestDetectMetapool:
             msg = f"Unexpected selector: {selector.hex()}"
             raise Exception(msg)
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             IS_META: handle_call,
             BASE_POOL: handle_call,
             GET_BASE_POOL: handle_call,
@@ -166,7 +166,7 @@ class TestDetectMetapool:
         })
 
         result = detect_metapool(
-            w3,
+            provider,
             POOL_ADDR,
             (DAI, THREE_CRV_LP),
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS,),
@@ -178,7 +178,7 @@ class TestDetectMetapool:
 
     def testBothRegistriesTried(self):
         """If first registry reverts on is_meta(), second registry is tried."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         first_registry_tried = {"value": False}
 
@@ -197,14 +197,14 @@ class TestDetectMetapool:
             msg = f"Unexpected selector: {selector.hex()}"
             raise Exception(msg)
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             IS_META: handle_call,
             BASE_POOL: handle_call,
             GET_UNDERLYING_COINS: handle_call,
         })
 
         result = detect_metapool(
-            w3,
+            provider,
             POOL_ADDR,
             (DAI, THREE_CRV_LP),
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS),

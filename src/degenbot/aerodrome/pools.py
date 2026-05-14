@@ -11,8 +11,6 @@ from weakref import WeakSet
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
-from web3 import Web3
-from web3.types import TxParams
 
 from degenbot.aerodrome.functions import (
     calc_exact_in_stable,
@@ -47,6 +45,8 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
     from hexbytes import HexBytes
+
+    from degenbot.provider.interface import ProviderAdapter
 
 
 class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
@@ -380,7 +380,7 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
 
     def get_pool_identity_values(
         self,
-        w3: Web3,
+        provider: ProviderAdapter,
         state_block: BlockNumber,
     ) -> tuple[
         ChecksumAddress,  # factory
@@ -389,80 +389,76 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
         int,  # fee
         tuple[int, int],  # reserves
     ]:
-        with w3.batch_requests() as batch:
-            batch.add_mapping({
-                # These calls default to use 'latest' for block number, which is OK since the
-                # values are immutable
-                w3.eth.call: [
-                    TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="factory()",
-                            function_arguments=None,
-                        ),
-                    ),
-                    TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="token0()",
-                            function_arguments=None,
-                        ),
-                    ),
-                    TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="token1()",
-                            function_arguments=None,
-                        ),
-                    ),
-                    TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="stable()",
-                            function_arguments=None,
-                        ),
-                    ),
-                ],
-            })
-            batch.add(
-                # This call uses a specific block so the reserve values are consistent
-                w3.eth.call(
-                    transaction=TxParams(
-                        to=self.address,
-                        data=encode_function_calldata(
-                            function_prototype="getReserves()",
-                            function_arguments=None,
-                        ),
-                    ),
-                    block_identifier=state_block,
-                )
-            )
-
-            factory, token0, token1, stable, reserves = batch.execute()
-
-        (factory,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", factory))
-        (token0,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token0))
-        (token1,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token1))
-        (stable,) = eth_abi.abi.decode(types=["bool"], data=cast("HexBytes", stable))
-        reserves0, reserves1, _ = eth_abi.abi.decode(
-            types=["uint256", "uint256", "uint256"], data=cast("HexBytes", reserves)
+        immutable_calls = [
+            {
+                "to": self.address,
+                "data": encode_function_calldata(
+                    function_prototype="factory()",
+                    function_arguments=None,
+                ),
+            },
+            {
+                "to": self.address,
+                "data": encode_function_calldata(
+                    function_prototype="token0()",
+                    function_arguments=None,
+                ),
+            },
+            {
+                "to": self.address,
+                "data": encode_function_calldata(
+                    function_prototype="token1()",
+                    function_arguments=None,
+                ),
+            },
+            {
+                "to": self.address,
+                "data": encode_function_calldata(
+                    function_prototype="stable()",
+                    function_arguments=None,
+                ),
+            },
+        ]
+        factory_data, token0_data, token1_data, stable_data = provider.batch_call(
+            immutable_calls
         )
 
+        # This call uses a specific block so the reserve values are consistent
+        reserves_data = provider.call_raw(
+            {
+                "to": self.address,
+                "data": encode_function_calldata(
+                    function_prototype="getReserves()",
+                    function_arguments=None,
+                ),
+            },
+            block=state_block,
+        )
+
+        (factory,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", factory_data))
+        (token0,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token0_data))
+        (token1,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token1_data))
+        (stable,) = eth_abi.abi.decode(types=["bool"], data=cast("HexBytes", stable_data))
+        reserves0, reserves1, _ = eth_abi.abi.decode(
+            types=["uint256", "uint256", "uint256"], data=cast("HexBytes", reserves_data)
+        )
+
+        factory_checksum = get_checksum_address(cast("str", factory))
         (fee,) = eth_abi.abi.decode(
             types=["uint256"],
-            data=w3.eth.call(
-                TxParams(
-                    to=get_checksum_address(cast("str", factory)),
-                    data=encode_function_calldata(
+            data=provider.call_raw(
+                {
+                    "to": factory_checksum,
+                    "data": encode_function_calldata(
                         function_prototype="getFee(address,bool)",
                         function_arguments=[self.address, stable],
                     ),
-                )
+                }
             ),
         )
 
         return (
-            get_checksum_address(cast("str", factory)),
+            factory_checksum,
             (get_checksum_address(cast("str", token0)), get_checksum_address(cast("str", token1))),
             cast("bool", stable),
             cast("int", fee),

@@ -11,7 +11,7 @@ from typing import Any
 from hexbytes import HexBytes
 
 # Shared fake data
-TEST_BLOCK = {"number": 18_000_000, "hash": HexBytes(b"\x01" * 32)}
+TEST_BLOCK = {"number": 18_000_000, "hash": HexBytes(b"\x01" * 32), "timestamp": 1690000000}
 TEST_LOG = {"address": "0x1234", "topics": ["0xabcd"]}
 TEST_CODE = HexBytes(b"\x00" * 100)
 TEST_CALL_RESULT = HexBytes(b"\x01" * 32)

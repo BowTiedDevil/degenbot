@@ -7,7 +7,7 @@ the underlying token's decimals.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import eth_abi.abi
 
@@ -18,11 +18,12 @@ from degenbot.functions import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
+    from degenbot.provider.interface import ProviderAdapter
     from degenbot.tokens.erc20_token import Erc20Token
 
 
 def detect_lending_tokens(
-    w3: Any,
+    provider: ProviderAdapter,
     pool_address: ChecksumAddress,
     token_addresses: tuple[ChecksumAddress, ...],
     tokens: tuple[Erc20Token, ...],
@@ -45,7 +46,7 @@ def detect_lending_tokens(
 
         # Check if token is a cToken using isCToken()
         try:
-            is_ctoken_result = w3.eth.call(
+            is_ctoken_result = provider.call_raw(
                 {
                     "to": checksummed_addr,
                     "data": encode_function_calldata(
@@ -53,14 +54,14 @@ def detect_lending_tokens(
                         function_arguments=[],
                     ),
                 },
-                block_identifier=block_identifier,
+                block=block_identifier,
             )
             (is_c,) = eth_abi.abi.decode(types=["bool"], data=is_ctoken_result)
             if is_c:
                 is_lending = True
                 # cToken: get underlying token decimals via underlying() method
                 try:
-                    underlying_result = w3.eth.call(
+                    underlying_result = provider.call_raw(
                         {
                             "to": checksummed_addr,
                             "data": encode_function_calldata(
@@ -68,7 +69,7 @@ def detect_lending_tokens(
                                 function_arguments=[],
                             ),
                         },
-                        block_identifier=block_identifier,
+                        block=block_identifier,
                     )
                     (underlying_addr,) = eth_abi.abi.decode(
                         types=["address"], data=underlying_result
@@ -76,7 +77,7 @@ def detect_lending_tokens(
                     underlying_addr = get_checksum_address(underlying_addr)
                     # Fetch underlying decimals
                     try:
-                        underlying_dec_result = w3.eth.call(
+                        underlying_dec_result = provider.call_raw(
                             {
                                 "to": underlying_addr,
                                 "data": encode_function_calldata(
@@ -84,7 +85,7 @@ def detect_lending_tokens(
                                     function_arguments=[],
                                 ),
                             },
-                            block_identifier=block_identifier,
+                            block=block_identifier,
                         )
                         (underlying_dec,) = eth_abi.abi.decode(
                             types=["uint8"], data=underlying_dec_result
@@ -101,7 +102,7 @@ def detect_lending_tokens(
         # Check if token is a yToken (has token() method returning underlying)
         if not is_lending:
             try:
-                ytoken_result = w3.eth.call(
+                ytoken_result = provider.call_raw(
                     {
                         "to": checksummed_addr,
                         "data": encode_function_calldata(
@@ -109,7 +110,7 @@ def detect_lending_tokens(
                             function_arguments=[],
                         ),
                     },
-                    block_identifier=block_identifier,
+                    block=block_identifier,
                 )
                 (underlying_addr,) = eth_abi.abi.decode(types=["address"], data=ytoken_result)
                 # Verify the underlying is a valid address (not zero)

@@ -1,7 +1,7 @@
 """Curve fetcher factory.
 
 Creates fetcher closures for Curve StableSwap pools. Each fetcher captures
-chain_id and optionally pool_address at creation, then uses ConnectionManager
+chain_id and optionally pool_address at creation, then uses ProviderAdapter
 to perform I/O when called.
 
 This factory is created by Bot (or the CurvePoolBuilder) and its methods
@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 
 import eth_abi.abi
 from web3 import Web3
-from web3.types import TxParams
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.functions import encode_function_calldata
@@ -58,15 +57,12 @@ class CurveFetcherFactory:
         target_address = base_pool_address if base_pool_address is not None else pool_address
 
         def fetcher(block_number: int) -> int:
-            w3 = self._connections.get_web3(chain_id)
+            provider = self._connections.get_provider(chain_id)
             (vp,) = eth_abi.abi.decode(
                 types=["uint256"],
-                data=w3.eth.call(
-                    TxParams(
-                        to=target_address,
-                        data=Web3.keccak(text="get_virtual_price()")[:4],
-                    ),
-                    block_identifier=block_number,
+                data=provider.call_raw(
+                    {"to": target_address, "data": Web3.keccak(text="get_virtual_price()")[:4]},
+                    block=block_number,
                 ),
             )
             return vp
@@ -84,15 +80,12 @@ class CurveFetcherFactory:
         chain_id = self._chain_id
 
         def fetcher(block_number: int) -> int:
-            w3 = self._connections.get_web3(chain_id)
+            provider = self._connections.get_provider(chain_id)
             (vp,) = eth_abi.abi.decode(
                 types=["uint256"],
-                data=w3.eth.call(
-                    TxParams(
-                        to=pool_address,
-                        data=Web3.keccak(text="base_virtual_price()")[:4],
-                    ),
-                    block_identifier=block_number,
+                data=provider.call_raw(
+                    {"to": pool_address, "data": Web3.keccak(text="base_virtual_price()")[:4]},
+                    block=block_number,
                 ),
             )
             return vp
@@ -110,15 +103,12 @@ class CurveFetcherFactory:
         chain_id = self._chain_id
 
         def fetcher(block_number: int) -> int:
-            w3 = self._connections.get_web3(chain_id)
+            provider = self._connections.get_provider(chain_id)
             (bcu,) = eth_abi.abi.decode(
                 types=["uint256"],
-                data=w3.eth.call(
-                    TxParams(
-                        to=pool_address,
-                        data=Web3.keccak(text="base_cache_updated()")[:4],
-                    ),
-                    block_identifier=block_number,
+                data=provider.call_raw(
+                    {"to": pool_address, "data": Web3.keccak(text="base_cache_updated()")[:4]},
+                    block=block_number,
                 ),
             )
             return bcu
@@ -130,9 +120,8 @@ class CurveFetcherFactory:
         chain_id = self._chain_id
 
         def fetcher(block_number: int) -> int:
-            w3 = self._connections.get_web3(chain_id)
-            block = w3.eth.get_block(block_identifier=block_number)
-            return block["timestamp"]
+            provider = self._connections.get_provider(chain_id)
+            return provider.get_block_timestamp(block=block_number)
 
         return fetcher
 
@@ -144,27 +133,24 @@ class CurveFetcherFactory:
         redemption_price_scale = 10**9
 
         def fetcher(block_number: int) -> int:
-            w3 = self._connections.get_web3(chain_id)
+            provider = self._connections.get_provider(chain_id)
 
             (snap_contract_address,) = eth_abi.abi.decode(
                 types=["address"],
-                data=w3.eth.call(
-                    TxParams(
-                        to=pool_address,
-                        data=Web3.keccak(text="redemption_price_snap()")[:4],
-                    ),
-                    block_identifier=block_number,
+                data=provider.call_raw(
+                    {"to": pool_address, "data": Web3.keccak(text="redemption_price_snap()")[:4]},
+                    block=block_number,
                 ),
             )
 
             (rate,) = eth_abi.abi.decode(
                 types=["uint256"],
-                data=w3.eth.call(
-                    TxParams(
-                        to=get_checksum_address(snap_contract_address),
-                        data=Web3.keccak(text="snappedRedemptionPrice()")[:4],
-                    ),
-                    block_identifier=block_number,
+                data=provider.call_raw(
+                    {
+                        "to": get_checksum_address(snap_contract_address),
+                        "data": Web3.keccak(text="snappedRedemptionPrice()")[:4],
+                    },
+                    block=block_number,
                 ),
             )
             return rate // redemption_price_scale
@@ -262,7 +248,7 @@ class CurveFetcherFactory:
         return fetcher
 
     def provider_call(self) -> Any:
-        """Create a raw provider.call() closure for a Curve pool.
+        """Create a raw provider.call_raw() closure for a Curve pool.
 
         This is used by pool-type-specific rate fetching methods that need
         low-level contract calls (e.g. cToken exchangeRateStored, oracle_method, etc.).
@@ -270,10 +256,10 @@ class CurveFetcherFactory:
         chain_id = self._chain_id
 
         def fetcher(*, to: Any, data: Any, block: int) -> bytes:
-            w3 = self._connections.get_web3(chain_id)
-            return w3.eth.call(
+            provider = self._connections.get_provider(chain_id)
+            return provider.call_raw(
                 {"to": to, "data": data},
-                block_identifier=block,
+                block=block,
             )
 
         return fetcher
@@ -283,15 +269,12 @@ class CurveFetcherFactory:
         chain_id = self._chain_id
 
         def fetcher(block_number: int) -> int:
-            w3 = self._connections.get_web3(chain_id)
+            provider = self._connections.get_provider(chain_id)
             (d,) = eth_abi.abi.decode(
                 types=["uint256"],
-                data=w3.eth.call(
-                    TxParams(
-                        to=pool_address,
-                        data=Web3.keccak(text="D()")[:4],
-                    ),
-                    block_identifier=block_number,
+                data=provider.call_raw(
+                    {"to": pool_address, "data": Web3.keccak(text="D()")[:4]},
+                    block=block_number,
                 ),
             )
             return d
@@ -303,15 +286,12 @@ class CurveFetcherFactory:
         chain_id = self._chain_id
 
         def fetcher(block_number: int) -> int:
-            w3 = self._connections.get_web3(chain_id)
+            provider = self._connections.get_provider(chain_id)
             (gamma,) = eth_abi.abi.decode(
                 types=["uint256"],
-                data=w3.eth.call(
-                    TxParams(
-                        to=pool_address,
-                        data=Web3.keccak(text="gamma()")[:4],
-                    ),
-                    block_identifier=block_number,
+                data=provider.call_raw(
+                    {"to": pool_address, "data": Web3.keccak(text="gamma()")[:4]},
+                    block=block_number,
                 ),
             )
             return gamma
@@ -325,18 +305,18 @@ class CurveFetcherFactory:
         chain_id = self._chain_id
 
         def fetcher(block_number: int) -> tuple[int, ...]:
-            w3 = self._connections.get_web3(chain_id)
+            provider = self._connections.get_provider(chain_id)
             price_scale = [0] * (n_coins - 1)
             for token_index in range(n_coins - 1):
                 (price_scale[token_index],) = eth_abi.abi.decode(
                     types=["uint256"],
-                    data=w3.eth.call(
-                        TxParams(
-                            to=pool_address,
-                            data=Web3.keccak(text="price_scale(uint256)")[:4]
+                    data=provider.call_raw(
+                        {
+                            "to": pool_address,
+                            "data": Web3.keccak(text="price_scale(uint256)")[:4]
                             + eth_abi.abi.encode(types=["uint256"], args=[token_index]),
-                        ),
-                        block_identifier=block_number,
+                        },
+                        block=block_number,
                     ),
                 )
             return tuple(price_scale)

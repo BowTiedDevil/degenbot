@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from degenbot.provider.interface import (
+    ProviderAdapter,
     _AlloyAdapter,
     _AsyncAlloyAdapter,
     _AsyncWeb3Adapter,
@@ -30,6 +31,65 @@ from tests.fakes.web3 import (
 )
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+
+
+class TestProviderAdapterCallRaw:
+    """Test ProviderAdapter.call_raw routes through the backend."""
+
+    def test_call_raw_web3(self) -> None:
+        adapter = ProviderAdapter.from_web3(FakeW3())
+        result = adapter.call_raw({"to": WETH_ADDRESS, "data": b"\x01"}, 18_000_000)
+        assert result == TEST_CALL_RESULT
+
+    def test_call_raw_alloy(self) -> None:
+        alloy = MagicMock()
+        alloy.call.return_value = TEST_CALL_RESULT
+        adapter = ProviderAdapter.from_alloy(alloy)
+        result = adapter.call_raw({"to": WETH_ADDRESS, "data": b"\x01"}, 18_000_000)
+        assert result == TEST_CALL_RESULT
+
+    def test_batch_call_web3(self) -> None:
+        adapter = ProviderAdapter.from_web3(FakeW3())
+        calls = [
+            {"to": WETH_ADDRESS, "data": b"\x01"},
+            {"to": WETH_ADDRESS, "data": b"\x02"},
+        ]
+        results = adapter.batch_call(calls, block=18_000_000)
+        assert len(results) == 2
+        assert all(r == TEST_CALL_RESULT for r in results)
+
+    def test_batch_call_returns_results_in_order(self) -> None:
+        adapter = ProviderAdapter.from_web3(FakeW3())
+        calls = [
+            {"to": WETH_ADDRESS, "data": b"\x01"},
+            {"to": WETH_ADDRESS, "data": b"\x02"},
+            {"to": WETH_ADDRESS, "data": b"\x03"},
+        ]
+        results = adapter.batch_call(calls, block=18_000_000)
+        assert len(results) == 3
+
+
+class TestProviderAdapterGetBlockTimestamp:
+    """Test ProviderAdapter.get_block_timestamp convenience method."""
+
+    def test_get_block_timestamp_web3(self) -> None:
+        adapter = ProviderAdapter.from_web3(FakeW3())
+        ts = adapter.get_block_timestamp(block=18_000_000)
+        assert isinstance(ts, int)
+
+
+class TestWeb3AdapterCallRaw:
+    """Test call_raw delegates to w3.eth.call with raw transaction dict."""
+
+    def test_call_raw_without_block(self) -> None:
+        adapter = _Web3Adapter(FakeW3())
+        result = adapter.call_raw({"to": WETH_ADDRESS, "data": b"\x01"}, None)
+        assert result == TEST_CALL_RESULT
+
+    def test_call_raw_with_block(self) -> None:
+        adapter = _Web3Adapter(FakeW3())
+        result = adapter.call_raw({"to": WETH_ADDRESS, "data": b"\x01"}, 18_000_000)
+        assert result == TEST_CALL_RESULT
 
 
 class TestWeb3Adapter:
@@ -105,6 +165,42 @@ class TestWeb3Adapter:
         adapter = _Web3Adapter(FakeW3())
         # Should not raise
         adapter.close()
+
+
+class TestAlloyAdapterCallRaw:
+    """Test call_raw delegates to alloy.call with block_number keyword."""
+
+    def test_call_raw_with_block(self) -> None:
+        alloy = MagicMock()
+        alloy.call.return_value = TEST_CALL_RESULT
+        adapter = _AlloyAdapter(alloy)
+        adapter.call_raw({"to": WETH_ADDRESS, "data": b"\x01"}, 18_000_000)
+        alloy.call.assert_called_once_with(WETH_ADDRESS, b"\x01", block_number=18_000_000)
+
+    def test_call_raw_without_block(self) -> None:
+        alloy = MagicMock()
+        alloy.call.return_value = TEST_CALL_RESULT
+        adapter = _AlloyAdapter(alloy)
+        adapter.call_raw({"to": WETH_ADDRESS, "data": b"\x01"}, None)
+        alloy.call.assert_called_once_with(WETH_ADDRESS, b"\x01", block_number=None)
+
+
+class TestOfflineAdapterCallRaw:
+    """Test call_raw delegates to offline.call with block_number keyword."""
+
+    def test_call_raw_with_block(self) -> None:
+        offline = MagicMock()
+        offline.call.return_value = TEST_CALL_RESULT
+        adapter = _OfflineAdapter(offline)
+        adapter.call_raw({"to": WETH_ADDRESS, "data": b"\x01"}, 18_000_000)
+        offline.call.assert_called_once_with(WETH_ADDRESS, b"\x01", block_number=18_000_000)
+
+    def test_call_raw_without_block(self) -> None:
+        offline = MagicMock()
+        offline.call.return_value = TEST_CALL_RESULT
+        adapter = _OfflineAdapter(offline)
+        adapter.call_raw({"to": WETH_ADDRESS, "data": b"\x01"}, None)
+        offline.call.assert_called_once_with(WETH_ADDRESS, b"\x01", block_number=None)
 
 
 class TestAlloyAdapter:
