@@ -50,8 +50,12 @@ test-all: test-rust test-python
 
 # ========== Code Quality ==========
 
-# Run all linters (Rust + Python)
-lint: lint-rust
+# Lint Markdown files
+lint-markdown:
+    npx --yes markdownlint-cli2 "**/*.md" "!node_modules/**" "!.opencode/node_modules/**" "!.venv/**"
+
+# Run all linters (Rust + Python + Markdown)
+lint: lint-rust lint-markdown
     uv run ruff check src/
     uv run mypy src/
 
@@ -67,7 +71,7 @@ ci-rust: lint-rust test-rust
     cargo build --release --features extension-module --manifest-path rust/Cargo.toml
 
 # Simulate full CI pipeline
-ci-full: ci-rust test-python
+ci-full: ci-rust lint-markdown test-python
 
 # ========== Repository Setup ==========
 

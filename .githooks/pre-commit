@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+#
+# pre-commit hook — lint staged Markdown files.
+# Installed by: just setup-git-hooks
+
+# Get staged .md files, excluding deleted files
+staged_md_files=$(git diff --cached --name-only --diff-filter=ACM '*.md')
+
+if [ -z "$staged_md_files" ]; then
+  exit 0
+fi
+
+if ! command -v npx &>/dev/null; then
+  echo "⚠  npx not found; skipping Markdown lint."
+  exit 0
+fi
+
+npx --yes markdownlint-cli2 $staged_md_files
+exit_code=$?
+
+if [ $exit_code -ne 0 ]; then
+  echo ""
+  echo "💡 Fix with: npx markdownlint-cli2 --fix <file>, or commit with --no-verify to bypass."
+fi
+
+exit $exit_code
