@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from weakref import WeakSet
 
 import eth_abi.abi
-from eth_typing import ChecksumAddress
 
 from degenbot.aerodrome.functions import (
     calc_exact_in_stable,
@@ -22,7 +21,6 @@ from degenbot.aerodrome.types import (
     AerodromeV3PoolState,
 )
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.liquidity_pool import (
     ExternalUpdateError,
@@ -34,19 +32,21 @@ from degenbot.functions import encode_function_calldata
 from degenbot.logging import logger
 from degenbot.solidly.solidly_functions import general_calc_exact_in_volatile
 from degenbot.types.abstract import AbstractAerodromeV2Pool
-from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
 from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
-from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_functions import constant_product_calc_exact_out
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
+    from eth_typing import ChecksumAddress
     from hexbytes import HexBytes
 
+    from degenbot.erc20 import Erc20Token
     from degenbot.provider.interface import ProviderAdapter
+    from degenbot.types.aliases import BlockNumber, ChainId
+    from degenbot.uniswap.types import UniswapPoolSwapVector
 
 
 class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
@@ -419,9 +419,7 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
                 ),
             },
         ]
-        factory_data, token0_data, token1_data, stable_data = provider.batch_call(
-            immutable_calls
-        )
+        factory_data, token0_data, token1_data, stable_data = provider.batch_call(immutable_calls)
 
         # This call uses a specific block so the reserve values are consistent
         reserves_data = provider.call_raw(
@@ -446,15 +444,13 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
         factory_checksum = get_checksum_address(cast("str", factory))
         (fee,) = eth_abi.abi.decode(
             types=["uint256"],
-            data=provider.call_raw(
-                {
-                    "to": factory_checksum,
-                    "data": encode_function_calldata(
-                        function_prototype="getFee(address,bool)",
-                        function_arguments=[self.address, stable],
-                    ),
-                }
-            ),
+            data=provider.call_raw({
+                "to": factory_checksum,
+                "data": encode_function_calldata(
+                    function_prototype="getFee(address,bool)",
+                    function_arguments=[self.address, stable],
+                ),
+            }),
         )
 
         return (
