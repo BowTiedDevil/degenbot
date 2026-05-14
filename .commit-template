@@ -1,0 +1,17 @@
+# type(scope): description
+#
+# Types:  feat | fix | refactor | docs | lint | test | chore | remove
+# Scope:  curve | aave | v2 | v3 | v4 | aerodrome | camelot | balancer | arbitrage | database | rust | sdk (or omit)
+#
+# Subject: imperative mood, lowercase, no trailing period, ≤72 chars
+# Body:    optional, blank line above, wrap at 72 chars
+# Footer:  Plan: <number>  (optional, repeatable)
+#          BREAKING CHANGE: <description>  (if applicable)
+#
+# Examples:
+#   feat(curve): strategy objects & lending rate fetchers
+#   fix(v3): correct tick spacing calculation
+#   refactor: separate I/O from calculation in Aave position analysis
+#   remove: delete position_analysis.py shim
+#
+#   Plan: 029
