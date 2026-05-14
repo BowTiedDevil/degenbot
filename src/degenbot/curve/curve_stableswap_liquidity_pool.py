@@ -36,6 +36,7 @@ from degenbot.curve.types import (
     YDVariant,
     YVariant,
 )
+from degenbot.curve.stableswap_pool_state import StableswapPoolState
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import NoLiquidity
@@ -55,7 +56,12 @@ from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 
 
-class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
+class CurveStableswapPool(
+    PublisherMixin,
+    PoolPickleMixin,
+    StableswapPoolState,
+    AbstractLiquidityPool,
+):
     type PoolState = CurveStableswapPoolState
     _state_cache: BoundedCache[BlockNumber, PoolState]
 
@@ -302,10 +308,6 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
     @property
     def state(self) -> CurveStableswapPoolState:
         return self._state
-
-    @property
-    def tokens(self) -> tuple[Erc20Token, ...]:
-        return self._tokens
 
     @property
     def update_block(self) -> BlockNumber:
