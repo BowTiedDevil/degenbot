@@ -4,10 +4,9 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, ClassVar
 
 from degenbot.camelot.functions import get_y_camelot, k_camelot
+from degenbot.camelot.v2_pool_calc import CamelotPoolCalc
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models import CamelotV2PoolTable
-from degenbot.exceptions import DegenbotValueError
-from degenbot.logging import logger
 from degenbot.solidly.solidly_functions import general_calc_exact_in_stable
 from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -18,7 +17,7 @@ if TYPE_CHECKING:
     from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 
-class CamelotLiquidityPool(UniswapV2Pool):
+class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
     variant: ClassVar[str | None] = "camelot"
 
     type DatabasePoolType = CamelotV2PoolTable
@@ -48,6 +47,9 @@ class CamelotLiquidityPool(UniswapV2Pool):
         self.fee_denominator = fee_denominator
         self.stable_swap = stable_swap
 
+        # Wire calculation strategy at construction
+        self._wire_camelot_calculations(stable_swap)
+
         super().__init__(
             address=address,
             chain_id=chain_id if chain_id is not None else token0.chain_id,
@@ -61,69 +63,6 @@ class CamelotLiquidityPool(UniswapV2Pool):
             reserves_token1=reserves_token1,
             state_block=state_block,
             deployer_address=deployer_address,
-        )
-
-    def _calculate_tokens_out_from_tokens_in_stable_swap(
-        self,
-        token_in: Erc20Token,
-        token_in_quantity: int,
-        override_state: UniswapV2PoolState | None = None,
-    ) -> int:
-        """
-        Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
-        Uses the self.token0 and self.token1 pointers to determine which token is being swapped in
-        """
-
-        if override_state is not None:  # pragma: no cover
-            logger.debug(f"State overrides applied: {override_state}")
-
-        if token_in_quantity <= 0:  # pragma: no cover
-            raise DegenbotValueError(message="token_in_quantity must be positive")
-
-        precision_multiplier_token0: int = 10**self.token0.decimals
-        precision_multiplier_token1: int = 10**self.token1.decimals
-
-        fee_percent = self.fee_denominator * (
-            self.fee_token0 if token_in == self.token0 else self.fee_token1
-        )
-
-        reserves_token0 = (
-            override_state.reserves_token0 if override_state is not None else self.reserves_token0
-        )
-        reserves_token1 = (
-            override_state.reserves_token1 if override_state is not None else self.reserves_token1
-        )
-
-        # Remove fee from amount received
-        token_in_quantity -= token_in_quantity * fee_percent // self.fee_denominator
-        xy = k_camelot(
-            balance_0=reserves_token0,
-            balance_1=reserves_token1,
-            decimals_0=precision_multiplier_token0,
-            decimals_1=precision_multiplier_token1,
-        )
-        reserves_token0 = reserves_token0 * 10**18 // precision_multiplier_token0
-        reserves_token1 = reserves_token1 * 10**18 // precision_multiplier_token1
-        reserve_a, reserve_b = (
-            (reserves_token0, reserves_token1)
-            if token_in == self.token0
-            else (reserves_token1, reserves_token0)
-        )
-        token_in_quantity = (
-            token_in_quantity * 10**18 // precision_multiplier_token0
-            if token_in == self.token0
-            else token_in_quantity * 10**18 // precision_multiplier_token1
-        )
-        y = reserve_b - get_y_camelot(token_in_quantity + reserve_a, xy, reserve_b)
-
-        return (
-            y
-            * (
-                precision_multiplier_token1
-                if token_in == self.token0
-                else precision_multiplier_token0
-            )
-            // 10**18
         )
 
     def to_hop_state(
@@ -190,20 +129,4 @@ class CamelotLiquidityPool(UniswapV2Pool):
             fee_out=fee_out,
         )
 
-    def calculate_tokens_out_from_tokens_in(
-        self,
-        token_in: Erc20Token,
-        token_in_quantity: int,
-        override_state: UniswapV2PoolState | None = None,
-    ) -> int:
-        if self.stable_swap:
-            return self._calculate_tokens_out_from_tokens_in_stable_swap(
-                token_in=token_in,
-                token_in_quantity=token_in_quantity,
-                override_state=override_state,
-            )
-        return super().calculate_tokens_out_from_tokens_in(
-            token_in=token_in,
-            token_in_quantity=token_in_quantity,
-            override_state=override_state,
-        )
+
