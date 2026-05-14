@@ -27,6 +27,20 @@ jobs:
       - name: Lint commit messages
         run: npx --yes @commitlint/cli --from=origin/main --to=HEAD
 
+  markdownlint:
+    name: Markdown Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Lint Markdown
+        run: npx --yes markdownlint-cli2 "**/*.md" "!node_modules/**" "!.opencode/node_modules/**" "!.venv/**"
+
   rust-check:
     name: Rust Lint
     runs-on: ubuntu-latest

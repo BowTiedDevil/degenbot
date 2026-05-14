@@ -1,0 +1,90 @@
+# markdownlint-cli2 configuration
+# https://github.com/DavidAnson/markdownlint#optionsconfig
+
+# MD013/line-length — disable; long URLs and tables are common
+MD013: false
+
+# MD033/no-inline-html — allow details/summary tags used in plan docs, and type names parsed as HTML (U256, T, etc.)
+MD033:
+  allowed_elements: [details, summary, br, U256, T, I256]
+
+# MD041/first-line-heading — many files start with context text, not a heading
+MD041: false
+
+# MD060/table-column-style — compact pipe tables are used throughout CONTEXT.md files
+MD060: false
+
+# MD032/blanks-around-lists — CONTEXT.md files place lists directly after headings
+MD032: false
+
+# MD031/blanks-around-fences — CONTEXT.md files place code blocks after list items
+MD031: false
+
+# MD037/no-space-in-emphasis — some files use underscore emphasis in table cells
+MD037: false
+
+# MD024/no-duplicate-heading — plan docs reuse headings like "Test plan" per step
+MD024: false
+
+# MD036/no-emphasis-as-heading — plan docs use bold for status labels
+MD036: false
+
+# MD022/blanks-around-headings — some docs are compact by design
+MD022: false
+
+# MD040/fenced-code-language — some code blocks are intentionally untyped
+MD040: false
+
+# MD055/table-pipe-style — mixed table styles in legacy docs
+MD055: false
+
+# MD056/table-column-count — some tables have inconsistent column counts
+MD056: false
+
+# MD038/no-space-in-code — some code spans have trailing spaces from formatting
+MD038: false
+
+# MD009/no-trailing-spaces — debug/plan docs often have trailing whitespace
+MD009: false
+
+# MD029/ol-prefix — plan docs use non sequential numbering across sections
+MD029: false
+
+# MD026/no-trailing-punctuation — debug docs use colons in headings
+MD026: false
+
+# MD034/no-bare-urls — debug/plan docs use bare URLs for reference
+MD034: false
+
+# MD058/blanks-around-tables — debug docs place tables without blank lines
+MD058: false
+
+# MD012/no-multiple-blanks — some docs have extra blank lines
+MD012: false
+
+# MD001/heading-increment — debug docs skip heading levels
+MD001: false
+
+# MD025/single-title — some docs have multiple H1s across sections
+MD025: false
+
+# MD005/list-indent — docs use varied indentation for nested lists
+MD005: false
+
+# MD007/ul-indent — docs use varied indentation for unordered lists
+MD007: false
+
+# MD047/single-trailing-newline — some docs lack trailing newline
+MD047: false
+
+# MD050/strong-style — mixed asterisk/underscore bold across plan docs
+MD050: false
+
+# MD049/emphasis-style — mixed asterisk/underscore italic across plan docs
+MD049: false
+
+# MD004/ul-style — mixed dash/asterisk list markers in third-party docs
+MD004: false
+
+# MD014/commands-show-output — debug docs show commands without output
+MD014: false
