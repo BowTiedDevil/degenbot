@@ -70,7 +70,7 @@ rules:
   body-max-line-length:
     - 1
     - always
-    - 72
+    - 80
 
   body-min-length:
     - 0
