@@ -553,9 +553,9 @@ def position() -> None:
 @click.option(
     "--market",
     type=str,
-    default="aave_v3",
+    default="Aave Ethereum Market",
     show_default=True,
-    help="Market name to query (default: aave_v3).",
+    help="Market name to query (default: Aave Ethereum Market).",
 )
 @click.option(
     "--chain-id",
@@ -659,9 +659,9 @@ def position_show(bot: Bot, address: str, market: str, chain_id: int) -> None:
 @click.option(
     "--market",
     type=str,
-    default="aave_v3",
+    default="Aave Ethereum Market",
     show_default=True,
-    help="Market name to analyze (default: aave_v3).",
+    help="Market name to analyze (default: Aave Ethereum Market).",
 )
 @click.option(
     "--chain-id",
