@@ -36,7 +36,7 @@ Answer: No. `EVMRevertError` is raised by pool code and caught by pool code. It 
 | `connection.py` | 56 | `DegenbotConnectionError`, `ConnectionTimeout`, `IPCSocketTimeout`, `Web3ConnectionTimeout` | RPC/Network |
 | `curve.py` | 21 | `CurveError`, `MissingCurveData` | Pools (Curve) |
 | `evm.py` | 19 | `EVMRevertError`, `InvalidUint256` | Pools (EVM) |
-| `manager.py` | 26 | `ManagerError`, `PoolNotAssociated`, `PoolCreationFailed`, `ManagerAlreadyInitialized` | Pools (Managers) |
+| `manager.py` | 26 | `ManagerError`, `PoolNotAssociated`, `PoolCreationFailed`, `ManagerAlreadyInitialized` | Pools (Trackers) |
 | `registry.py` | 17 | `RegistryError`, `RegistryAlreadyInitialized` | Infrastructure |
 | `database.py` | 13 | `BackupExists` | Infrastructure |
 | `erc20.py` | 16 | `Erc20TokenError`, `NoPriceOracle` | Tokens |
@@ -45,7 +45,7 @@ Answer: No. `EVMRevertError` is raised by pool code and caught by pool code. It 
 
 ### Key observations
 
-1. **Pool-related exceptions are split across 5 files:** `liquidity_pool.py`, `curve.py`, `evm.py`, `manager.py`, and `arbitrage.py` (since `NoLiquidity` is an arbitrage exception that's raised by pool code). Understanding "what can go wrong with pools?" requires reading 5 files.
+1. **Pool-related exceptions are split across 5 files:** `liquidity_pool.py`, `curve.py`, `evm.py`, `manager.py`, and `arbitrage.py` (since `NoLiquidity` is an arbitrage exception that's raised by pool code). Understanding "what can go wrong with pools?" requires reading 5 files. Note: `manager.py` contains Pool Tracker exceptions — the class names still use "Manager" pending a full rename (see CONTEXT.md for the Tracker↔Manager ruling).
 2. **Infrastructure exceptions are split across 4 files:** `connection.py`, `fetching.py`, `registry.py`, `database.py`, `anvil.py`. Understanding "what can fail at the infrastructure layer?" requires reading 5 files.
 3. **Tiny files with no independent value:** `evm.py` (2 classes), `database.py` (1 class), `anvil.py` (1 class), `registry.py` (2 classes), `erc20.py` (2 classes), `curve.py` (2 classes). None of these justify their own file.
 4. **`NoLiquidity` is an arbitrage exception but it's raised by pool code.** This cross-domain reference is a code smell. After consolidation, the exception hierarchy makes the relationship clearer.
@@ -58,7 +58,7 @@ Answer: No. `EVMRevertError` is raised by pool code and caught by pool code. It 
 src/degenbot/exceptions/
 ├── __init__.py        # Re-exports (unchanged API)
 ├── base.py            # Foundation: DegenbotError, DegenbotValueError, DegenbotTypeError, ExternalServiceError
-├── pool.py            # Pool + EVM + Curve + Manager exceptions (merges liquidity_pool.py, curve.py, evm.py, manager.py)
+├── pool.py            # Pool + EVM + Curve + Tracker exceptions (merges liquidity_pool.py, curve.py, evm.py, manager.py)
 ├── arbitrage.py       # Arbitrage/Solver exceptions (unchanged — largest, most coherent)
 ├── infrastructure.py  # Connection + Fetching + Registry + Database + Anvil + ERC20 (merges 6 files)
 ```
@@ -66,6 +66,8 @@ src/degenbot/exceptions/
 4 files instead of 12. The `base.py` and `arbitrage.py` files are unchanged (moved as-is).
 
 ### File: `pool.py` (merges `liquidity_pool.py` + `curve.py` + `evm.py` + `manager.py`)
+
+> **Note:** The `manager.py` file contains exceptions for Pool Trackers (off-chain discovery/tracking helpers). The exception class names (`ManagerError`, etc.) still use "Manager" pending a full class rename. The file section header below reflects the new Tracker terminology.
 
 ~200 lines. Contains all pool-related exceptions in a single file with clear section headers:
 
@@ -76,7 +78,7 @@ Includes exceptions for:
 - Generic pool operations (LiquidityPoolError, BrokenPool, ...)
 - EVM execution (EVMRevertError, InvalidUint256)
 - Curve StableSwap (CurveError, MissingCurveData)
-- Pool managers (ManagerError, PoolNotAssociated, ...)
+- Pool trackers (ManagerError, PoolNotAssociated, ...)
 """
 
 # --- EVM ---
@@ -87,8 +89,8 @@ class InvalidUint256(EVMRevertError): ...
 class CurveError(DegenbotError): ...
 class MissingCurveData(CurveError): ...
 
-# --- Pool Managers ---
-class ManagerError(DegenbotError): ...
+# --- Pool Trackers ---
+class ManagerError(DegenbotError): ...  # TODO: rename to TrackerError
 # ...
 
 # --- Liquidity Pools ---
@@ -96,7 +98,7 @@ class LiquidityPoolError(DegenbotError): ...
 # ...
 ```
 
-**Rationale:** EVM, Curve, and pool manager exceptions are all raised and caught within pool construction and update paths. A developer working on pool code needs all of these.
+**Rationale:** EVM, Curve, and pool tracker exceptions are all raised and caught within pool construction and update paths. A developer working on pool code needs all of these.
 
 ### File: `infrastructure.py` (merges `connection.py` + `fetching.py` + `registry.py` + `database.py` + `anvil.py` + `erc20.py`)
 
@@ -133,7 +135,7 @@ The `__init__.py` re-exports all public exception classes. The import paths chan
 from degenbot.exceptions.base import DegenbotError, DegenbotTypeError, DegenbotValueError, ExternalServiceError
 from degenbot.exceptions.pool import (
     BrokenPool, CurveError, EVMRevertError, InvalidSwapInputAmount, InvalidUint256,
-    LiquidityPoolError, ManagerError, MissingCurveData, ...
+    LiquidityPoolError, ManagerError, MissingCurveData, ...  # ManagerError → TrackerError pending rename
 )
 from degenbot.exceptions.arbitrage import (
     ArbCalculationError, IncompatiblePoolInvariant, InvalidForwardAmount,
@@ -223,7 +225,7 @@ Run `just test-python` to verify no import errors.
 
 ## Benefits
 
-- **Locality:** Understanding "what can go wrong with pools?" requires reading one file (`pool.py`) instead of five (`liquidity_pool.py`, `curve.py`, `evm.py`, `manager.py`, and parts of `arbitrage.py`).
+- **Locality:** Understanding "what can go wrong with pools?" requires reading one file (`pool.py`) instead of five (`liquidity_pool.py`, `curve.py`, `evm.py`, `manager.py` (tracker exceptions), and parts of `arbitrage.py`).
 - **Leverage:** The public API (`from degenbot.exceptions import ...`) doesn't change. Callers don't need to update. But the internal organization is simpler.
 - **Fewer files to maintain:** 12 → 4. Less boilerplate, less navigation, less cognitive overhead.
 
