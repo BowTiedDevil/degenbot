@@ -2,7 +2,7 @@
 
 import pytest
 
-from degenbot.aave.position_analysis import (
+from degenbot.aave.analysis.core import (
     BASIS_POINTS,
     HEALTH_FACTOR_AT_RISK_THRESHOLD,
     HEALTH_FACTOR_LIQUIDATABLE_THRESHOLD,

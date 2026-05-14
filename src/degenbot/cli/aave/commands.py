@@ -9,9 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 from tqdm.contrib.logging import logging_redirect_tqdm
 
+from degenbot.aave.analysis.core import UserPositionSummary
+from degenbot.aave.analysis.orchestrator import analyze_positions_for_market
 from degenbot.aave.deployments import EthereumMainnetAaveV3
 from degenbot.aave.events import AaveV3GhoDebtTokenEvent, AaveV3PoolConfigEvent
-from degenbot.aave.position_analysis import UserPositionSummary, analyze_positions_for_market
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
