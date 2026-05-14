@@ -20,23 +20,21 @@ from degenbot.aerodrome.types import (
     AerodromeV2PoolStateUpdated,
     AerodromeV3PoolState,
 )
+from degenbot.aerodrome.v2_pool_calc import AerodromeV2PoolCalc
+from degenbot.aerodrome.v2_pool_state import AerodromeV2PoolState as AerodromeV2PoolStateMixin
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.liquidity_pool import (
     ExternalUpdateError,
-    InvalidSwapInputAmount,
-    LiquidityPoolError,
     NoPoolStateAvailable,
 )
 from degenbot.functions import encode_function_calldata
 from degenbot.logging import logger
-from degenbot.solidly.solidly_functions import general_calc_exact_in_volatile
 from degenbot.types.abstract import AbstractAerodromeV2Pool
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
 from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
-from degenbot.uniswap.v2_functions import constant_product_calc_exact_out
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
@@ -49,7 +47,13 @@ if TYPE_CHECKING:
     from degenbot.uniswap.types import UniswapPoolSwapVector
 
 
-class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
+class AerodromeV2Pool(
+    PublisherMixin,
+    PoolPickleMixin,
+    AerodromeV2PoolStateMixin,
+    AerodromeV2PoolCalc,
+    AbstractAerodromeV2Pool,
+):
     variant: ClassVar[str | None] = "aerodrome"
 
     type PoolState = AerodromeV2PoolState
@@ -99,6 +103,9 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
         self._token0 = token0
         self._token1 = token1
 
+        # Wire calculation strategy at construction — no runtime if self._stable dispatch
+        self._wire_stable_calculations(stable)
+
         self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee.numerator / self._fee.denominator:.2f}%)"  # noqa:E501
 
         self._state_lock = Lock()
@@ -123,32 +130,6 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
         return self._chain_id
 
     @property
-    def token0(self) -> Erc20Token:
-        return self._token0
-
-    @property
-    def token1(self) -> Erc20Token:
-        return self._token1
-
-    @property
-    def fee(self) -> Fraction:
-        return self._fee
-
-    @property
-    def fee_token0(self) -> Fraction:
-        """Return the fee for token0 → token1 swaps (same as fee_token1 for Aerodrome)."""
-        return self._fee
-
-    @property
-    def fee_token1(self) -> Fraction:
-        """Return the fee for token1 → token0 swaps (same as fee_token0 for Aerodrome)."""
-        return self._fee
-
-    @property
-    def stable(self) -> bool:
-        return self._stable
-
-    @property
     def reserves_token0(self) -> int:
         return self.state.reserves_token0
 
@@ -159,10 +140,6 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
     @property
     def state(self) -> PoolState:
         return self._state_cache[-1]
-
-    @property
-    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
-        return self._token0, self._token1
 
     @property
     def update_block(self) -> BlockNumber:
@@ -178,115 +155,6 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
         if state.reserves_token0 == 0 or state.reserves_token1 == 0:
             return False
         return state.reserves_token1 > 1 if vector.zero_for_one else state.reserves_token0 > 1
-
-    def calculate_tokens_in_from_tokens_out(
-        self,
-        token_out_quantity: int,
-        token_out: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> int:
-        """
-        Calculates the required token INPUT of token_in for a target OUTPUT at current pool
-        reserves.
-
-        Accepts a `PoolState` state override for calculation against an arbitrary state
-        in lieu of the recorded state.
-        """
-
-        if token_out_quantity <= 0:  # pragma: no cover
-            raise InvalidSwapInputAmount
-
-        if override_state:  # pragma: no cover
-            logger.debug(f"State overrides applied: {override_state}")
-
-        if token_out == self._token1:
-            reserves_in = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-            reserves_out = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-
-        elif token_out == self._token0:
-            reserves_in = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-            reserves_out = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-
-        else:  # pragma: no cover
-            raise DegenbotValueError(
-                message=f"Could not identify token_out: {token_out}! This pool holds: {self._token0} {self._token1}"  # noqa:E501
-            )
-
-        # last token becomes infinitely expensive, so largest possible swap out is reserves - 1
-        if token_out_quantity > reserves_out - 1:
-            raise LiquidityPoolError(
-                message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})"  # noqa:E501
-            )
-
-        if self._stable:
-            raise NotImplementedError
-
-        return constant_product_calc_exact_out(
-            amount_out=token_out_quantity,
-            reserves_in=reserves_in,
-            reserves_out=reserves_out,
-            fee=self._fee,
-        )
-
-    def calculate_tokens_out_from_tokens_in(
-        self,
-        token_in: Erc20Token,
-        token_in_quantity: int,
-        override_state: PoolState | None = None,
-    ) -> int:
-        """
-        Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
-        """
-
-        if token_in not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError(message="token_in not recognized.")
-
-        if token_in_quantity <= 0:  # pragma: no cover
-            raise InvalidSwapInputAmount
-
-        if override_state:  # pragma: no cover
-            logger.debug(f"State overrides applied: {override_state}")
-
-        reserves_0 = (
-            override_state.reserves_token0 if override_state is not None else self.reserves_token0
-        )
-        reserves_1 = (
-            override_state.reserves_token1 if override_state is not None else self.reserves_token1
-        )
-
-        if self._stable:
-            return calc_exact_in_stable(
-                amount_in=token_in_quantity,
-                token_in=0 if token_in == self._token0 else 1,
-                reserves0=reserves_0,
-                reserves1=reserves_1,
-                decimals0=10**self._token0.decimals,
-                decimals1=10**self._token1.decimals,
-                fee=self._fee,
-            )
-        return general_calc_exact_in_volatile(
-            amount_in=token_in_quantity,
-            token_in=0 if token_in == self._token0 else 1,
-            reserves0=reserves_0,
-            reserves1=reserves_1,
-            fee=self._fee,
-        )
 
     def external_update(
         self,
@@ -312,71 +180,6 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
             self._notify_subscribers(
                 message=AerodromeV2PoolStateUpdated(self.state),
             )
-
-    def get_absolute_price(
-        self, token: Erc20Token, override_state: PoolState | None = None
-    ) -> Fraction:
-        """
-        Get the absolute price for the given token, expressed in units of the other.
-        """
-
-        return 1 / self.get_absolute_exchange_rate(token, override_state=override_state)
-
-    def get_absolute_exchange_rate(
-        self,
-        token: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the absolute exchange rate for the given token, expressed in terms of a unit amount of
-        its paired token.
-
-        e.g. taking the USDC-WETH pool in https://blog.uniswap.org/uniswap-v3-math-primer — the
-        WETH/USDC exchange rate is 649004842.70137. Rounding down, this signifies that the smallest
-        swap (1 USDC) results in a 649004842 WETH output.
-
-        The exchange rate for a V2 pool is a simple ratio of the output token reserves to the input
-        token reserves.
-        """
-
-        if token not in self.tokens:
-            raise DegenbotValueError(message=f"Unknown token {token}")
-
-        state = self.state if override_state is None else override_state
-
-        return (
-            Fraction(state.reserves_token1, state.reserves_token0)
-            if token == self._token1
-            else Fraction(state.reserves_token0, state.reserves_token1)
-        )
-
-    def get_nominal_price(
-        self,
-        token: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the nominal price for the given token, expressed per nominal unit of its paired token.
-        The price is corrected for the decimal place values of both tokens.
-        """
-
-        return 1 / self.get_nominal_exchange_rate(token=token, override_state=override_state)
-
-    def get_nominal_exchange_rate(
-        self,
-        token: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the nominal rate for the given token, expressed in units of the other, corrected for
-        decimal place values.
-        """
-
-        return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
-            Fraction(10**self._token1.decimals, 10**self._token0.decimals)
-            if token == self._token0
-            else Fraction(10**self._token0.decimals, 10**self._token1.decimals)
-        )
 
     def get_pool_identity_values(
         self,
@@ -566,9 +369,6 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
             final_state=initial_state,
         )
 
-    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
-        return self._fee
-
     def reserves_for_cache(self) -> tuple[int, int]:
         """Return (reserve_token0, reserve_token1) for the Rust solver cache."""
         return (self.state.reserves_token0, self.state.reserves_token1)
@@ -596,7 +396,7 @@ class AerodromeV2Pool(PublisherMixin, PoolPickleMixin, AbstractAerodromeV2Pool):
             decimals_in = self._token1.decimals
             decimals_out = self._token0.decimals
 
-        if self._stable:
+        if self._stable_calc_mode:
             reserves0 = state.reserves_token0
             reserves1 = state.reserves_token1
             decimals0 = 10**self._token0.decimals
