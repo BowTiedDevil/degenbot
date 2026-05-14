@@ -11,10 +11,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 from weakref import WeakSet
 
-import eth_abi.abi
 from eth_typing import ChecksumAddress
-from hexbytes import HexBytes
-from web3 import Web3
 from web3.types import BlockIdentifier
 
 from degenbot.checksum_cache import get_checksum_address
@@ -26,8 +23,14 @@ from degenbot.curve.types import (
     DFetcher,
     DVariant,
     GammaFetcher,
+    LendingRateFetcher,
+    LendingRateStyle,
+    MetapoolRateStyle,
+    MetapoolUnderlyingStyle,
+    PoolStrategies,
     PriceScaleFetcher,
     RedemptionPriceFetcher,
+    SwapStyle,
     TimestampFetcher,
     VirtualPriceFetcher,
     YDVariant,
@@ -69,7 +72,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         "_block_number_fetcher",
         "_total_supply_fetcher",
         "_token_balance_fetcher",
-        "_provider_call",
+        "_lending_rate_fetcher",
         "_D_fetcher",
         "_gamma_fetcher",
         "_price_scale_fetcher",
@@ -87,7 +90,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         "_block_number_fetcher": lambda: None,
         "_total_supply_fetcher": lambda: None,
         "_token_balance_fetcher": lambda: None,
-        "_provider_call": lambda: None,
+        "_lending_rate_fetcher": lambda: None,
         "_D_fetcher": lambda: None,
         "_gamma_fetcher": lambda: None,
         "_price_scale_fetcher": lambda: None,
@@ -97,7 +100,6 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
     # ref: https://github.com/curvefi/curve-contract/blob/master/contracts/pool-templates/base/SwapTemplateBase.vy
     PRECISION_DECIMALS: int = 18
     PRECISION: int = 10**PRECISION_DECIMALS
-    LENDING_PRECISION: int = PRECISION
     FEE_DENOMINATOR: int = 10**10
     A_PRECISION: int = 100
     MAX_COINS: int = 8
@@ -125,11 +127,12 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         block_number_fetcher: Any | None = None,
         total_supply_fetcher: Any | None = None,
         token_balance_fetcher: Any | None = None,
-        provider_call: Any | None = None,
         # Crypto pool fetchers
         D_fetcher: DFetcher | None = None,
         gamma_fetcher: GammaFetcher | None = None,
         price_scale_fetcher: PriceScaleFetcher | None = None,
+        # Lending rate fetcher (replaces provider_call + _stored_rates_from_* methods)
+        lending_rate_fetcher: LendingRateFetcher | None = None,
         # Pool configuration
         base_pool: "CurveStableswapPool | None" = None,
         tokens_underlying: Sequence[Erc20Token] | None = None,
@@ -148,10 +151,8 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         out_fee: int | None = None,
         gamma: int | None = None,
         offpeg_fee_multiplier: int | None = None,
-        # Variant enums (resolved by builder from pool address)
-        d_variant: DVariant = DVariant.STANDARD,
-        y_variant: YVariant = YVariant.STANDARD,
-        yd_variant: YDVariant = YDVariant.STANDARD,
+        # Strategy enums (resolved by builder from pool address)
+        strategies: PoolStrategies = PoolStrategies(),
     ) -> None:
         """
         A Curve V1 (StableSwap) pool.
@@ -192,12 +193,9 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         )
         self.out_fee = out_fee if out_fee is not None else 0
         self.gamma = gamma if gamma is not None else 0
-        self.oracle_method = None
 
         # Variant computation strategies (resolved by builder from pool address)
-        self._d_variant = d_variant
-        self._y_variant = y_variant
-        self._yd_variant = yd_variant
+        self._strategies = strategies
 
         # Pool configuration
         self.base_pool = base_pool
@@ -222,10 +220,10 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
         self._block_number_fetcher = block_number_fetcher
         self._total_supply_fetcher = total_supply_fetcher
         self._token_balance_fetcher = token_balance_fetcher
-        self._provider_call = provider_call
         self._D_fetcher = D_fetcher
         self._gamma_fetcher = gamma_fetcher
         self._price_scale_fetcher = price_scale_fetcher
+        self._lending_rate_fetcher = lending_rate_fetcher
 
         self.base_cache_updated: int | None = None
         self.base_virtual_price: int = 0
@@ -245,24 +243,6 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
 
         self._block_timestamps: dict[BlockNumber, int] = {}
         self._cached_rates: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_rates_from_aeth: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_rates_from_ctokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_rates_from_cytokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_rates_from_oracle: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_rates_from_reth: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_rates_from_ytokens: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
             max_items=state_cache_depth
         )
         self._cached_scaled_redemption_price: BoundedCache[BlockNumber, int] = BoundedCache(
@@ -583,21 +563,22 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             self._block_timestamps[block_number] = self._timestamp_fetcher(block_number)
 
         if self.base_pool is not None:
-            if self.address == "0xC61557C5d177bd7DC889A3b621eEC333e168f68A":
-                rates = (
-                    self.PRECISION,
-                    self._get_virtual_price(block_number=block_number),
-                )
-            elif self.address == "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d":
-                rates = (
-                    self._get_scaled_redemption_price(block_number=block_number),
-                    self._get_virtual_price(block_number=block_number),
-                )
-            else:
-                rates = (
-                    self.rate_multipliers[0],
-                    self._get_virtual_price(block_number=block_number),
-                )
+            match self._strategies.metapool_rate_style:
+                case MetapoolRateStyle.PRECISION_VP:
+                    rates = (
+                        self.PRECISION,
+                        self._get_virtual_price(block_number=block_number),
+                    )
+                case MetapoolRateStyle.REDEMPTION_VP:
+                    rates = (
+                        self._get_scaled_redemption_price(block_number=block_number),
+                        self._get_virtual_price(block_number=block_number),
+                    )
+                case MetapoolRateStyle.STANDARD:
+                    rates = (
+                        self.rate_multipliers[0],
+                        self._get_virtual_price(block_number=block_number),
+                    )
 
             xp = self._xp(rates=rates, balances=pool_balances)
             x = xp[i] + (dx * rates[i] // self.PRECISION)
@@ -606,326 +587,263 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             fee = self.fee * dy // self.FEE_DENOMINATOR
             return (dy - fee) * self.PRECISION // rates[j]
 
-        if self.address in {
-            "0x4e0915C88bC70750D68C481540F081fEFaF22273",
-            "0x1005F7406f32a61BD760CfA14aCCd2737913d546",
-            "0x6A274dE3e2462c7614702474D64d376729831dCa",
-            "0xb9446c4Ef5EBE66268dA6700D26f96273DE3d571",
-            "0x3Fb78e61784C9c637D560eDE23Ad57CA1294c14a",
-        }:
-            live_balances = [
-                self._fetch_token_balance(token, self.address, block_identifier=block_number)
-                for token in self._tokens
-            ]
-            admin_balances = self._get_admin_balances(block_number=block_number)
+        match self._strategies.swap_style:
+            case SwapStyle.LIVE_ADMIN:
+                live_balances = [
+                    self._fetch_token_balance(token, self.address, block_identifier=block_number)
+                    for token in self._tokens
+                ]
+                admin_balances = self._get_admin_balances(block_number=block_number)
 
-            balances = [
-                pool_balance - admin_balance
-                for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
-            ]
+                balances = [
+                    pool_balance - admin_balance
+                    for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
+                ]
 
-            xp = self._xp(rates=rates, balances=balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y - 1
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return (dy - fee) * self.PRECISION // rates[j]
+                xp = self._xp(rates=rates, balances=balances)
+                x = xp[i] + (dx * rates[i] // self.PRECISION)
+                y = self._get_y(i, j, x, xp)
+                dy = xp[j] - y - 1
+                fee = self.fee * dy // self.FEE_DENOMINATOR
+                return (dy - fee) * self.PRECISION // rates[j]
 
-        if self.address == "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5":
-            # Crypto pool path — uses D(), gamma(), price_scale() from chain
-            if self._D_fetcher is None:
-                raise MissingCurveData(
-                    self.address,
-                    "D_fetcher",
-                    "Crypto pool requires a D_fetcher callback.",
+            case SwapStyle.CRYPTO:
+                # Crypto pool path — uses D(), gamma(), price_scale() from chain
+                if self._D_fetcher is None:
+                    raise MissingCurveData(
+                        self.address,
+                        "D_fetcher",
+                        "Crypto pool requires a D_fetcher callback.",
+                    )
+                if self._gamma_fetcher is None:
+                    raise MissingCurveData(
+                        self.address,
+                        "gamma_fetcher",
+                        "Crypto pool requires a gamma_fetcher callback.",
+                    )
+                if self._price_scale_fetcher is None:
+                    raise MissingCurveData(
+                        self.address,
+                        "price_scale_fetcher",
+                        "Crypto pool requires a price_scale_fetcher callback.",
+                    )
+
+                # Fetch cached or on-chain D
+                try:
+                    d = self._cached_contract_D[block_number]
+                except KeyError:
+                    d = self._D_fetcher(block_number)
+                    self._cached_contract_D[block_number] = d
+
+                # Fetch cached or on-chain gamma
+                try:
+                    gamma_val = self._cached_gamma[block_number]
+                except KeyError:
+                    gamma_val = self._gamma_fetcher(block_number)
+                    self._cached_gamma[block_number] = gamma_val
+
+                # Fetch cached or on-chain price_scale
+                try:
+                    price_scale = self._cached_price_scale[block_number]
+                except KeyError:
+                    price_scale = self._price_scale_fetcher(block_number)
+                    self._cached_price_scale[block_number] = price_scale
+
+                n_coins = len(self._tokens)
+
+                assert i != j, "coin index out of range"
+                assert i < n_coins, "coin index out of range"
+                assert j < n_coins, "coin index out of range"
+                assert dx > 0, "do not exchange 0 coins"
+
+                # Tricrypto precisions (hard-coded in the contract)
+                precisions = [
+                    10**12,  # USDT
+                    10**10,  # WBTC
+                    1,  # WETH
+                ]
+
+                xp_ = list(pool_balances)
+                xp_[i] += dx
+                xp_[0] *= precisions[0]
+
+                for k in range(n_coins - 1):
+                    xp_[k + 1] = xp_[k + 1] * price_scale[k] * precisions[k + 1] // self.PRECISION
+
+                amp = self._a(timestamp=self._block_timestamps[block_number])
+                y = self._newton_y(amp, gamma_val, xp_, d, j)
+                dy = xp_[j] - y - 1
+
+                xp_[j] = y
+                if j > 0:
+                    dy = dy * self.PRECISION // price_scale[j - 1]
+                dy //= precisions[j]
+
+                f = self._reduction_coefficient(xp_, self.fee_gamma, n_coins)
+                fee_calc = (self.mid_fee * f + self.out_fee * (10**18 - f)) // 10**18
+
+                dy -= fee_calc * dy // 10**10
+                return dy
+
+            case SwapStyle.RATE_ADJUSTED:
+                # Rate-adjusted path: dy converted to target units before fee
+                # Used by 3pool, Compound, PAX, etc.
+                rates = self._resolve_rates(
+                    rates=rates,
+                    block_number=block_number,
+                    pool_balances=pool_balances,
                 )
-            if self._gamma_fetcher is None:
-                raise MissingCurveData(
-                    self.address,
-                    "gamma_fetcher",
-                    "Crypto pool requires a gamma_fetcher callback.",
+                xp = self._xp(rates=rates, balances=pool_balances)
+                x = xp[i] + (dx * rates[i] // self.PRECISION)
+                y = self._get_y(i, j, x, xp)
+                dy = (xp[j] - y - 1) * self.PRECISION // rates[j]
+                fee = self.fee * dy // self.FEE_DENOMINATOR
+                return dy - fee
+
+            case SwapStyle.NO_ONE_FEE_RATE:
+                # AETH/RETH path: dy = xp[j] - y (no -1), then fee, then rate convert
+                rates = self._resolve_rates(
+                    rates=rates,
+                    block_number=block_number,
+                    pool_balances=pool_balances,
                 )
-            if self._price_scale_fetcher is None:
-                raise MissingCurveData(
-                    self.address,
-                    "price_scale_fetcher",
-                    "Crypto pool requires a price_scale_fetcher callback.",
+                xp = self._xp(rates=rates, balances=pool_balances)
+                x = xp[i] + (dx * rates[i] // self.PRECISION)
+                y = self._get_y(i, j, x, xp)
+                dy = xp[j] - y
+                fee = self.fee * dy // self.FEE_DENOMINATOR
+                return (dy - fee) * self.PRECISION // rates[j]
+
+            case SwapStyle.CYTOKEN:
+                # CYTOKEN path: dy = xp[j] - y - 1, then fee inside rate conversion
+                rates = self._resolve_rates(
+                    rates=rates,
+                    block_number=block_number,
+                    pool_balances=pool_balances,
                 )
+                xp = self._xp(rates=rates, balances=pool_balances)
+                x = xp[i] + (dx * rates[i] // self.PRECISION)
+                y = self._get_y(i, j, x, xp)
+                dy = xp[j] - y - 1
+                return (dy - (self.fee * dy // self.FEE_DENOMINATOR)) * self.PRECISION // rates[j]
 
-            # Fetch cached or on-chain D
-            try:
-                d = self._cached_contract_D[block_number]
-            except KeyError:
-                d = self._D_fetcher(block_number)
-                self._cached_contract_D[block_number] = d
-
-            # Fetch cached or on-chain gamma
-            try:
-                gamma_val = self._cached_gamma[block_number]
-            except KeyError:
-                gamma_val = self._gamma_fetcher(block_number)
-                self._cached_gamma[block_number] = gamma_val
-
-            # Fetch cached or on-chain price_scale
-            try:
-                price_scale = self._cached_price_scale[block_number]
-            except KeyError:
-                price_scale = self._price_scale_fetcher(block_number)
-                self._cached_price_scale[block_number] = price_scale
-
-            n_coins = len(self._tokens)
-
-            assert i != j, "coin index out of range"
-            assert i < n_coins, "coin index out of range"
-            assert j < n_coins, "coin index out of range"
-            assert dx > 0, "do not exchange 0 coins"
-
-            # Tricrypto precisions (hard-coded in the contract)
-            precisions = [
-                10**12,  # USDT
-                10**10,  # WBTC
-                1,  # WETH
-            ]
-
-            xp_ = list(pool_balances)
-            xp_[i] += dx
-            xp_[0] *= precisions[0]
-
-            for k in range(n_coins - 1):
-                xp_[k + 1] = xp_[k + 1] * price_scale[k] * precisions[k + 1] // self.PRECISION
-
-            amp = self._a(timestamp=self._block_timestamps[block_number])
-            y = self._newton_y(amp, gamma_val, xp_, d, j)
-            dy = xp_[j] - y - 1
-
-            xp_[j] = y
-            if j > 0:
-                dy = dy * self.PRECISION // price_scale[j - 1]
-            dy //= precisions[j]
-
-            f = self._reduction_coefficient(xp_, self.fee_gamma, n_coins)
-            fee_calc = (self.mid_fee * f + self.out_fee * (10**18 - f)) // 10**18
-
-            dy -= fee_calc * dy // 10**10
-            return dy
-        if self.address in {
-            "0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F",
-            "0x7fC77b5c7614E1533320Ea6DDc2Eb61fa00A9714",
-            "0x93054188d876f558f4a66B2EF1d97d16eDf0895B",
-            "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
-        }:
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = (xp[j] - y - 1) * self.PRECISION // rates[j]
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return dy - fee
-
-        if self.address in {
-            "0x0Ce6a5fF5217e38315f87032CF90686C96627CAA",
-            "0x19b080FE1ffA0553469D20Ca36219F17Fcf03859",
-            "0x1C5F80b6B68A9E1Ef25926EeE00b5255791b996B",
-            "0x1F6bb2a7a2A84d08bb821B89E38cA651175aeDd4",
-            "0x21B45B2c1C53fDFe378Ed1955E8Cc29aE8cE0132",
-            "0x3CFAa1596777CAD9f5004F9a0c443d912E262243",
-            "0x3F1B0278A9ee595635B61817630cC19DE792f506",
-            "0x4424b4A37ba0088D8a718b8fc2aB7952C7e695F5",
-            "0x602a9Abb10582768Fd8a9f13aD6316Ac2A5A2e2B",
-            "0x8461A004b50d321CB22B7d034969cE6803911899",
-            "0x857110B5f8eFD66CC3762abb935315630AC770B5",
-            "0x8818a9bb44Fbf33502bE7c15c500d0C783B73067",
-            "0x9c2C8910F113181783c249d8F6Aa41b51Cde0f0c",
-            "0xa1F8A6807c402E4A15ef4EBa36528A3FED24E577",
-            "0xaE34574AC03A15cd58A92DC79De7B1A0800F1CE3",
-            "0xAf25fFe6bA5A8a29665adCfA6D30C5Ae56CA0Cd3",
-            "0xBa3436Fd341F2C8A928452Db3C5A3670d1d5Cc73",
-            "0xbB2dC673E1091abCA3eaDB622b18f6D4634b2CD9",
-            "0xc5424B857f758E906013F3555Dad202e4bdB4567",
-            "0xc8a7C1c4B748970F57cA59326BcD49F5c9dc43E3",
-            "0xcbD5cC53C5b846671C6434Ab301AD4d210c21184",
-            "0xD6Ac1CB9019137a896343Da59dDE6d097F710538",
-            "0xD7C10449A6D134A9ed37e2922F8474EAc6E5c100",
-            "0xDC24316b9AE028F1497c275EB9192a3Ea0f67022",
-            "0xDcEF968d416a41Cdac0ED8702fAC8128A64241A2",
-            "0xe7A3b38c39F97E977723bd1239C3470702568e7B",
-            "0xf083FBa98dED0f9C970e5a418500bad08D8b9732",
-            "0xF178C0b5Bb7e7aBF4e12A4838C7b7c5bA2C623c0",
-            "0xf253f83AcA21aAbD2A20553AE0BF7F65C755A07F",
-            "0xfC8c34a3B3CFE1F1Dd6DBCCEC4BC5d3103b80FF0",
-            "0xFD5dB7463a3aB53fD211b4af195c5BCCC1A03890",
-        }:
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y - 1
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return (dy - fee) * self.PRECISION // rates[j]
-
-        if self.address in {
-            "0x04c90C198b2eFF55716079bc06d7CCc4aa4d7512",
-            "0x320B564Fb9CF36933eC507a846ce230008631fd3",
-            "0x48fF31bBbD8Ab553Ebe7cBD84e1eA3dBa8f54957",
-            "0x55A8a39bc9694714E2874c1ce77aa1E599461E18",
-            "0x875DF0bA24ccD867f8217593ee27253280772A97",
-            "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8",
-            "0xBaaa1F5DbA42C3389bDbc2c9D2dE134F5cD0Dc89",
-            "0xDa5B670CcD418a187a3066674A8002Adc9356Ad1",
-            "0xf03bD3cfE85f00bF5819AC20f0870cE8a8d1F0D8",
-            "0xFB9a265b5a1f52d97838Ec7274A0b1442efAcC87",
-        }:
-            xp = tuple(pool_balances)
-            x = xp[i] + dx
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y - 1
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return dy - fee
-
-        if self.address in {
-            "0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492",
-            "0xBfAb6FA95E0091ed66058ad493189D2cB29385E6",
-        }:
-            live_balances = [
-                self._fetch_token_balance(token, self.address, block_identifier=block_number)
-                for token in self._tokens
-            ]
-            admin_balances = self._get_admin_balances(block_number=block_number)
-            balances = [
-                pool_balance - admin_balance
-                for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
-            ]
-            rates = self._stored_rates_from_oracle(block_number=block_number)
-            xp = self._xp(rates=rates, balances=balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y - 1
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return (dy - fee) * self.PRECISION // rates[j]
-
-        if self.address in {
-            "0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C",
-            "0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56",
-            "0xA5407eAE9Ba41422680e2e00537571bcC53efBfD",
-        }:
-            rates = self._stored_rates_from_ctokens(block_number=block_number)
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = (xp[j] - y) * self.PRECISION // rates[j]
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return dy - fee
-
-        if self.address == "0x2dded6Da1BF5DBdF597C45fcFaa3194e53EcfeAF":
-            rates = self._stored_rates_from_cytokens(block_number=block_number)
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y - 1
-            return (dy - (self.fee * dy // self.FEE_DENOMINATOR)) * self.PRECISION // rates[j]
-
-        if self.address == "0x06364f10B501e868329afBc005b3492902d6C763":
-            rates = self._stored_rates_from_ytokens(block_number=block_number)
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = (xp[j] - y - 1) * self.PRECISION // rates[j]
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return dy - fee
-
-        if self.address in {
-            "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
-            "0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27",
-        }:
-            rates = self._stored_rates_from_ytokens(block_number=block_number)
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = (xp[j] - y) * self.PRECISION // rates[j]
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return dy - fee
-
-        if self.address == "0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2":
-            rates = self._stored_rates_from_aeth(block_number=block_number)
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return (dy - fee) * self.PRECISION // rates[j]
-
-        if self.address == "0xF9440930043eb3997fc70e1339dBb11F341de7A8":
-            rates = self._stored_rates_from_reth(block_number=block_number)
-            xp = self._xp(rates=rates, balances=pool_balances)
-            x = xp[i] + (dx * rates[i] // self.PRECISION)
-            y = self._get_y(i, j, x, xp)
-            dy = xp[j] - y
-            fee = self.fee * dy // self.FEE_DENOMINATOR
-            return (dy - fee) * self.PRECISION // rates[j]
-
-        if self.address == "0xEB16Ae0052ed37f479f7fe63849198Df1765a733":
-            live_balances = [
-                self._fetch_token_balance(token, self.address, block_identifier=block_number)
-                for token in self._tokens
-            ]
-            admin_balances = self._get_admin_balances(block_number=block_number)
-
-            xp_ = [
-                pool_balance - admin_balance
-                for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
-            ]
-            x = xp_[i] + dx
-            y = self._get_y(i, j, x, xp_)
-            dy = xp_[j] - y
-            fee_ = (
-                _dynamic_fee(
-                    xpi=(xp_[i] + x) // 2,
-                    xpj=(xp_[j] + y) // 2,
-                    _fee=self.fee,
-                    _feemul=self.offpeg_fee_multiplier,
+            case SwapStyle.RATE_ADJUSTED_NO_ONE:
+                # YTOKEN variant: dy = (xp[j] - y) * PRECISION // rates[j], fee on converted dy
+                # Same as RATE_ADJUSTED but without the -1 subtraction
+                rates = self._resolve_rates(
+                    rates=rates,
+                    block_number=block_number,
+                    pool_balances=pool_balances,
                 )
-                * dy
-                // self.FEE_DENOMINATOR
-            )
-            return dy - fee_
+                xp = self._xp(rates=rates, balances=pool_balances)
+                x = xp[i] + (dx * rates[i] // self.PRECISION)
+                y = self._get_y(i, j, x, xp)
+                dy = (xp[j] - y) * self.PRECISION // rates[j]
+                fee = self.fee * dy // self.FEE_DENOMINATOR
+                return dy - fee
 
-        if self.address == "0xDeBF20617708857ebe4F679508E7b7863a8A8EeE":
-            live_balances = [
-                self._fetch_token_balance(token, self.address, block_identifier=block_number)
-                for token in self._tokens
-            ]
-            admin_balances = self._get_admin_balances(block_number=block_number)
-            balances = [
-                pool_balance - admin_balance
-                for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
-            ]
-
-            xp_ = [
-                balance * rate
-                for balance, rate in zip(balances, self.precision_multipliers, strict=True)
-            ]
-
-            x = xp_[i] + dx * self.precision_multipliers[i]
-            y = self._get_y(i, j, x, xp_)
-            dy = (xp_[j] - y) // self.precision_multipliers[j]
-
-            fee_ = (
-                _dynamic_fee(
-                    xpi=(xp_[i] + x) // 2,
-                    xpj=(xp_[j] + y) // 2,
-                    _fee=self.fee,
-                    _feemul=self.offpeg_fee_multiplier,
+            case SwapStyle.STANDARD:
+                # Standard path: select rates based on lending rate style
+                rates = self._resolve_rates(
+                    rates=rates,
+                    block_number=block_number,
+                    pool_balances=pool_balances,
                 )
-                * dy
-                // self.FEE_DENOMINATOR
-            )
-            return dy - fee_
+                xp = self._xp(rates=rates, balances=pool_balances)
+                x = xp[i] + (dx * rates[i] // self.PRECISION)
+                y = self._get_y(i, j, x, xp)
+                dy = xp[j] - y - 1
+                fee = self.fee * dy // self.FEE_DENOMINATOR
+                return (dy - fee) * self.PRECISION // rates[j]
 
-        # default pool behavior
-        xp = self._xp(rates=rates, balances=pool_balances)
-        x = xp[i] + (dx * rates[i] // self.PRECISION)
-        y = self._get_y(i, j, x, xp)
-        dy = xp[j] - y - 1
-        fee = self.fee * dy // self.FEE_DENOMINATOR
-        return (dy - fee) * self.PRECISION // rates[j]
+            case SwapStyle.RAW_BALANCE:
+                # Raw balance path: no rate conversion, fee applied directly
+                xp = tuple(pool_balances)
+                x = xp[i] + dx
+                y = self._get_y(i, j, x, xp)
+                dy = xp[j] - y - 1
+                fee = self.fee * dy // self.FEE_DENOMINATOR
+                return dy - fee
+
+            case SwapStyle.LIVE_ADMIN_ORACLE:
+                live_balances = [
+                    self._fetch_token_balance(token, self.address, block_identifier=block_number)
+                    for token in self._tokens
+                ]
+                admin_balances = self._get_admin_balances(block_number=block_number)
+                balances = [
+                    pool_balance - admin_balance
+                    for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
+                ]
+                rates = self._resolve_rates(
+                    rates=rates,
+                    block_number=block_number,
+                    pool_balances=pool_balances,
+                )
+                xp = self._xp(rates=rates, balances=balances)
+                x = xp[i] + (dx * rates[i] // self.PRECISION)
+                y = self._get_y(i, j, x, xp)
+                dy = xp[j] - y - 1
+                fee = self.fee * dy // self.FEE_DENOMINATOR
+                return (dy - fee) * self.PRECISION // rates[j]
+
+            case SwapStyle.LIVE_ADMIN_DYNAMIC:
+                live_balances = [
+                    self._fetch_token_balance(token, self.address, block_identifier=block_number)
+                    for token in self._tokens
+                ]
+                admin_balances = self._get_admin_balances(block_number=block_number)
+
+                xp_ = [
+                    pool_balance - admin_balance
+                    for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
+                ]
+                x = xp_[i] + dx
+                y = self._get_y(i, j, x, xp_)
+                dy = xp_[j] - y
+                fee_ = (
+                    _dynamic_fee(
+                        xpi=(xp_[i] + x) // 2,
+                        xpj=(xp_[j] + y) // 2,
+                        _fee=self.fee,
+                        _feemul=self.offpeg_fee_multiplier,
+                    )
+                    * dy
+                    // self.FEE_DENOMINATOR
+                )
+                return dy - fee_
+
+            case SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION:
+                live_balances = [
+                    self._fetch_token_balance(token, self.address, block_identifier=block_number)
+                    for token in self._tokens
+                ]
+                admin_balances = self._get_admin_balances(block_number=block_number)
+                balances = [
+                    pool_balance - admin_balance
+                    for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
+                ]
+
+                xp_ = [
+                    balance * rate
+                    for balance, rate in zip(balances, self.precision_multipliers, strict=True)
+                ]
+
+                x = xp_[i] + dx * self.precision_multipliers[i]
+                y = self._get_y(i, j, x, xp_)
+                dy = (xp_[j] - y) // self.precision_multipliers[j]
+
+                fee_ = (
+                    _dynamic_fee(
+                        xpi=(xp_[i] + x) // 2,
+                        xpj=(xp_[j] + y) // 2,
+                        _fee=self.fee,
+                        _feemul=self.offpeg_fee_multiplier,
+                    )
+                    * dy
+                    // self.FEE_DENOMINATOR
+                )
+                return dy - fee_
 
     def _get_dy_underlying(
         self,
@@ -942,7 +860,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
 
         block_number = self._resolve_block_number(block_identifier)
 
-        if self.address == "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d":
+        if self._strategies.metapool_underlying_style == MetapoolUnderlyingStyle.REDEMPTION:
             base_n_coins = len(self.base_pool.tokens)
             max_coin = len(self._tokens) - 1
             redemption_coin = 0
@@ -1022,10 +940,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
 
             return dy
 
-        if self.address in {
-            "0xC61557C5d177bd7DC889A3b621eEC333e168f68A",
-            "0x4606326b4Db89373F5377C316d3b0F6e55Bc6A20",
-        }:
+        if self._strategies.metapool_underlying_style == MetapoolUnderlyingStyle.PRECISION_VP:
             base_n_coins = len(self.base_pool.tokens)
             max_coin = len(self._tokens) - 1
 
@@ -1096,6 +1011,9 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
                 )
 
             return dy
+
+        elif self._strategies.metapool_underlying_style == MetapoolUnderlyingStyle.STANDARD:
+            pass
 
         working_rates = list(self.rate_multipliers)
 
@@ -1322,7 +1240,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
 
         d_func = calc_d
         dp_func = calc_dp
-        match self._d_variant:
+        match self._strategies.d_variant:
             case DVariant.VARIANT_ALPHA:
                 d_func = calc_d_variant_alpha
             case DVariant.VARIANT_ALPHA_DP_ALPHA:
@@ -1382,7 +1300,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
 
         amp = (
             self._a(timestamp=self._block_timestamps[self.update_block]) // self.A_PRECISION
-            if self._y_variant == YVariant.VARIANT_0
+            if self._strategies.y_variant == YVariant.VARIANT_0
             else self._a(timestamp=self._block_timestamps[self.update_block])
         )
         c = y = d = self._get_d(xp, amp)
@@ -1399,7 +1317,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             c = c * d // (x_ * n_coins)
 
         a_nn = amp * n_coins
-        if self._y_variant in (YVariant.VARIANT_0, YVariant.VARIANT_1):
+        if self._strategies.y_variant in (YVariant.VARIANT_0, YVariant.VARIANT_1):
             c = c * d // (a_nn * n_coins)
             b = s + d // a_nn
         else:
@@ -1435,7 +1353,7 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             c = c * d // (x * n_coins)
 
         a_nn = a * n_coins
-        if self._yd_variant == YDVariant.VARIANT_0:
+        if self._strategies.yd_variant == YDVariant.VARIANT_0:
             b = s + d * self.A_PRECISION // a_nn
             c = c * d * self.A_PRECISION // (a_nn * n_coins)
         else:
@@ -1453,275 +1371,30 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
 
         raise EVMRevertError(error="y_d calculation did not converge.")  # pragma: no cover
 
-    def _set_oracle_method(self, block_number: BlockNumber) -> None:
-        if self.oracle_method is not None:
-            return
-        if self._provider_call is None:
-            raise MissingCurveData(
-                self.address,
-                "oracle_method",
-                "Oracle method detection requires a provider_call callback. "
-                "Provide it via Bot.build_curve_pool().",
-            )
-        (self.oracle_method,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=self._provider_call(
-                to=self.address,
-                data=Web3.keccak(text="oracle_method()")[:4],
-                block=block_number,
-            ),
-        )
+    def _resolve_rates(
+        self,
+        *,
+        rates: tuple[int, ...],
+        block_number: int,
+        pool_balances: tuple[int, ...],
+    ) -> tuple[int, ...]:
+        """Select rates based on the pool's lending rate style.
 
-    def _stored_rates_from_ctokens(self, block_number: BlockNumber) -> tuple[int, ...]:
-        with contextlib.suppress(KeyError):
-            return self._cached_rates_from_ctokens[block_number]
-
-        if self._provider_call is None:
-            raise MissingCurveData(
-                self.address,
-                "ctoken_rates",
-                "cToken rates require a provider_call callback.",
-            )
-
-        # Use provider_call callback for on-chain data fetching
-
-        result: list[int] = []
-        rate: int
-        for token, use_lending, multiplier in zip(
-            self._tokens,
-            self.use_lending,
-            self.precision_multipliers,
-            strict=True,
-        ):
-            if not use_lending:
-                rate = self.PRECISION
-            else:
-                (rate,) = eth_abi.abi.decode(
-                    types=["uint256"],
-                    data=self._provider_call(
-                        to=token.address,
-                        data=Web3.keccak(text="exchangeRateStored()")[:4],
-                        block=block_number,
-                    ),
-                )
-                supply_rate: int
-                (supply_rate,) = eth_abi.abi.decode(
-                    types=["uint256"],
-                    data=self._provider_call(
-                        to=token.address,
-                        data=Web3.keccak(text="supplyRatePerBlock()")[:4],
-                        block=block_number,
-                    ),
-                )
-                old_block: BlockNumber
-                (old_block,) = eth_abi.abi.decode(
-                    types=["uint256"],
-                    data=self._provider_call(
-                        to=token.address,
-                        data=Web3.keccak(text="accrualBlockNumber()")[:4],
-                        block=block_number,
-                    ),
-                )
-
-                rate += rate * supply_rate * (block_number - old_block) // self.PRECISION
-
-            result.append(multiplier * rate)
-
-        self._cached_rates_from_ctokens[block_number] = tuple(result)
-        return tuple(result)
-
-    def _stored_rates_from_ytokens(self, block_number: BlockNumber) -> tuple[int, ...]:
-        with contextlib.suppress(KeyError):
-            return self._cached_rates_from_ytokens[block_number]
-
-        if self._provider_call is None:
-            raise MissingCurveData(
-                self.address,
-                "ytoken_rates",
-                "yToken rates require a provider_call callback.",
-            )
-
-        # ref: https://etherscan.io/address/0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27#code
-
-        # Use provider_call callback for on-chain data fetching
-
-        result: list[int] = []
-        for token, multiplier, use_lending in zip(
-            self._tokens,
-            self.precision_multipliers,
-            self.use_lending,
-            strict=True,
-        ):
-            if use_lending:
-                rate: int
-                (rate,) = eth_abi.abi.decode(
-                    types=["uint256"],
-                    data=self._provider_call(
-                        to=token.address,
-                        data=Web3.keccak(text="getPricePerFullShare()")[:4],
-                        block=block_number,
-                    ),
-                )
-            else:
-                rate = self.LENDING_PRECISION
-
-            result.append(rate * multiplier)
-
-        self._cached_rates_from_ytokens[block_number] = tuple(result)
-        return tuple(result)
-
-    def _stored_rates_from_cytokens(self, block_number: BlockNumber) -> tuple[int, ...]:
-        with contextlib.suppress(KeyError):
-            return self._cached_rates_from_cytokens[block_number]
-
-        if self._provider_call is None:
-            raise MissingCurveData(
-                self.address,
-                "cytoken_rates",
-                "cyToken rates require a provider_call callback.",
-            )
-
-        # Use provider_call callback for on-chain data fetching
-
-        result: list[int] = []
-        for token, precision_multiplier in zip(
-            self._tokens, self.precision_multipliers, strict=True
-        ):
-            rate: int
-            (rate,) = eth_abi.abi.decode(
-                types=["uint256"],
-                data=(
-                    self._provider_call(
-                        to=token.address,
-                        data=Web3.keccak(text="exchangeRateStored()")[:4],
-                        block=block_number,
-                    )
-                ),
-            )
-            supply_rate: int
-            (supply_rate,) = eth_abi.abi.decode(
-                types=["uint256"],
-                data=self._provider_call(
-                    to=token.address,
-                    data=Web3.keccak(text="supplyRatePerBlock()")[:4],
-                    block=block_number,
-                ),
-            )
-            old_block: BlockNumber
-            (old_block,) = eth_abi.abi.decode(
-                types=["uint256"],
-                data=self._provider_call(
-                    to=token.address,
-                    data=Web3.keccak(text="accrualBlockNumber()")[:4],
-                    block=block_number,
-                ),
-            )
-
-            rate += rate * supply_rate * (block_number - old_block) // self.PRECISION
-            result.append(precision_multiplier * rate)
-
-        self._cached_rates_from_cytokens[block_number] = tuple(result)
-        return tuple(result)
-
-    def _stored_rates_from_reth(self, block_number: BlockNumber) -> tuple[int, ...]:
-        with contextlib.suppress(KeyError):
-            return self.PRECISION, self._cached_rates_from_reth[block_number]
-
-        if self._provider_call is None:
-            raise MissingCurveData(
-                self.address,
-                "reth_rates",
-                "rETH rates require a provider_call callback.",
-            )
-
-        # Use provider_call callback for on-chain data fetching
-
-        # ref: https://etherscan.io/address/0xF9440930043eb3997fc70e1339dBb11F341de7A8#code
-        ratio: int
-        (ratio,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=self._provider_call(
-                to=self._tokens[1].address,
-                data=Web3.keccak(text="getExchangeRate()")[:4],
-                block=block_number,
-            ),
-        )
-        self._cached_rates_from_reth[block_number] = ratio
-        return self.PRECISION, ratio
-
-    def _stored_rates_from_aeth(self, block_number: BlockNumber) -> tuple[int, ...]:
-        with contextlib.suppress(KeyError):
-            return (
-                self.PRECISION,
-                self.PRECISION
-                * self.LENDING_PRECISION
-                // self._cached_rates_from_aeth[block_number],
-            )
-
-        if self._provider_call is None:
-            raise MissingCurveData(
-                self.address,
-                "aeth_rates",
-                "aETH rates require a provider_call callback.",
-            )
-
-        # Use provider_call callback for on-chain data fetching
-
-        # ref: https://etherscan.io/address/0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2#code
-        ratio: int
-        (ratio,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=self._provider_call(
-                to=self._tokens[1].address,
-                data=Web3.keccak(text="ratio()")[:4],
-                block=block_number,
-            ),
-        )
-        self._cached_rates_from_aeth[block_number] = ratio
-        return self.PRECISION, self.PRECISION * self.LENDING_PRECISION // ratio
-
-    def _stored_rates_from_oracle(self, block_number: BlockNumber) -> tuple[int, ...]:
+        Returns rate_multipliers for NONE, or calls the lending rate fetcher
+        for lending pools.
         """
-        Get rates from on-chain oracle
+        if self._strategies.lending_rate_style == LendingRateStyle.NONE:
+            return rates
 
-        Ref: https://etherscan.io/address/0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492#code
-        """
-
-        with contextlib.suppress(KeyError):
-            return self._cached_rates_from_oracle[block_number]
-
-        if self._provider_call is None:
+        if self._lending_rate_fetcher is None:
             raise MissingCurveData(
                 self.address,
-                "oracle_rates",
-                "Oracle rates require a provider_call callback.",
+                "lending_rate",
+                "Lending rate fetcher is required for pools with lending tokens. "
+                "Provide one via Bot.build_curve_pool().",
             )
+        return self._lending_rate_fetcher(block_number)
 
-        # Use provider_call callback for on-chain data fetching
-
-        self._set_oracle_method(block_number=block_number)
-        if TYPE_CHECKING:
-            assert self.oracle_method is not None
-
-        if self.oracle_method == 0:
-            rates = self.rate_multipliers
-        else:
-            oracle_bit_mask = (2**32 - 1) * 256**28
-            oracle_rate: int
-            (oracle_rate,) = eth_abi.abi.decode(
-                types=["uint256"],
-                data=self._provider_call(
-                    to=get_checksum_address(HexBytes(self.oracle_method % 2**160)),
-                    data=HexBytes(self.oracle_method & oracle_bit_mask),
-                    block=block_number,
-                ),
-            )
-            rates = (
-                self.rate_multipliers[0],
-                self.rate_multipliers[1] * oracle_rate // self.PRECISION,
-            )
-
-        self._cached_rates_from_oracle[block_number] = rates
         return rates
 
     def _xp(self, rates: Iterable[int], balances: Iterable[int]) -> tuple[int, ...]:

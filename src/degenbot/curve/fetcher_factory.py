@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import eth_abi.abi
+from hexbytes import HexBytes
 from web3 import Web3
 
 from degenbot.checksum_cache import get_checksum_address
@@ -247,22 +248,392 @@ class CurveFetcherFactory:
 
         return fetcher
 
-    def provider_call(self) -> Any:
-        """Create a raw provider.call_raw() closure for a Curve pool.
+    def ctoken_rate_fetcher(
+        self,
+        pool_address: ChecksumAddress,
+        tokens: list[Any],
+        use_lending: list[bool],
+        precision_multipliers: list[int],
+    ) -> Any:
+        """Create a cToken rate fetcher closure for a Curve lending pool.
 
-        This is used by pool-type-specific rate fetching methods that need
-        low-level contract calls (e.g. cToken exchangeRateStored, oracle_method, etc.).
+        Fetches exchangeRateStored() + supplyRatePerBlock() + accrualBlockNumber()
+        for each lending token, then computes the supply-adjusted rate.
         """
         chain_id = self._chain_id
+        PRECISION = 10**18
+        cache: dict[int, tuple[int, ...]] = {}
 
-        def fetcher(*, to: Any, data: Any, block: int) -> bytes:
+        def fetcher(block_number: int) -> tuple[int, ...]:
+            try:
+                return cache[block_number]
+            except KeyError:
+                pass
+
             provider = self._connections.get_provider(chain_id)
-            return provider.call_raw(
-                {"to": to, "data": data},
-                block=block,
-            )
+            result: list[int] = []
+            rate: int
+            for token, is_lending, multiplier in zip(
+                tokens, use_lending, precision_multipliers, strict=True
+            ):
+                if not is_lending:
+                    rate = PRECISION
+                else:
+                    (rate,) = eth_abi.abi.decode(
+                        types=["uint256"],
+                        data=provider.call_raw(
+                            {
+                                "to": token.address,
+                                "data": Web3.keccak(text="exchangeRateStored()")[:4],
+                            },
+                            block=block_number,
+                        ),
+                    )
+                    supply_rate: int
+                    (supply_rate,) = eth_abi.abi.decode(
+                        types=["uint256"],
+                        data=provider.call_raw(
+                            {
+                                "to": token.address,
+                                "data": Web3.keccak(text="supplyRatePerBlock()")[:4],
+                            },
+                            block=block_number,
+                        ),
+                    )
+                    old_block: int
+                    (old_block,) = eth_abi.abi.decode(
+                        types=["uint256"],
+                        data=provider.call_raw(
+                            {
+                                "to": token.address,
+                                "data": Web3.keccak(text="accrualBlockNumber()")[:4],
+                            },
+                            block=block_number,
+                        ),
+                    )
+
+                    rate += rate * supply_rate * (block_number - old_block) // PRECISION
+
+                result.append(multiplier * rate)
+
+            cache[block_number] = tuple(result)
+            return tuple(result)
 
         return fetcher
+
+    def ytoken_rate_fetcher(
+        self,
+        pool_address: ChecksumAddress,
+        tokens: list[Any],
+        use_lending: list[bool],
+        precision_multipliers: list[int],
+    ) -> Any:
+        """Create a yToken rate fetcher closure for a Curve lending pool.
+
+        Fetches getPricePerFullShare() for each lending token.
+        """
+        chain_id = self._chain_id
+        LENDING_PRECISION = 10**18
+        cache: dict[int, tuple[int, ...]] = {}
+
+        def fetcher(block_number: int) -> tuple[int, ...]:
+            try:
+                return cache[block_number]
+            except KeyError:
+                pass
+
+            provider = self._connections.get_provider(chain_id)
+            result: list[int] = []
+            for token, multiplier, is_lending in zip(
+                tokens, precision_multipliers, use_lending, strict=True
+            ):
+                if is_lending:
+                    rate: int
+                    (rate,) = eth_abi.abi.decode(
+                        types=["uint256"],
+                        data=provider.call_raw(
+                            {
+                                "to": token.address,
+                                "data": Web3.keccak(text="getPricePerFullShare()")[
+                                    :4
+                                ],
+                            },
+                            block=block_number,
+                        ),
+                    )
+                else:
+                    rate = LENDING_PRECISION
+
+                result.append(rate * multiplier)
+
+            cache[block_number] = tuple(result)
+            return tuple(result)
+
+        return fetcher
+
+    def cytoken_rate_fetcher(
+        self,
+        pool_address: ChecksumAddress,
+        tokens: list[Any],
+        use_lending: list[bool],
+        precision_multipliers: list[int],
+    ) -> Any:
+        """Create a cyToken rate fetcher closure for a Curve lending pool.
+
+        Similar to cToken rate fetcher but all tokens are treated as lending tokens.
+        Fetches exchangeRateStored() + supplyRatePerBlock() + accrualBlockNumber().
+        """
+        chain_id = self._chain_id
+        PRECISION = 10**18
+        cache: dict[int, tuple[int, ...]] = {}
+
+        def fetcher(block_number: int) -> tuple[int, ...]:
+            try:
+                return cache[block_number]
+            except KeyError:
+                pass
+
+            provider = self._connections.get_provider(chain_id)
+            result: list[int] = []
+            for token, precision_multiplier in zip(
+                tokens, precision_multipliers, strict=True
+            ):
+                rate: int
+                (rate,) = eth_abi.abi.decode(
+                    types=["uint256"],
+                    data=provider.call_raw(
+                        {
+                            "to": token.address,
+                            "data": Web3.keccak(text="exchangeRateStored()")[:4],
+                        },
+                        block=block_number,
+                    ),
+                )
+                supply_rate: int
+                (supply_rate,) = eth_abi.abi.decode(
+                    types=["uint256"],
+                    data=provider.call_raw(
+                        {
+                            "to": token.address,
+                            "data": Web3.keccak(text="supplyRatePerBlock()")[:4],
+                        },
+                        block=block_number,
+                    ),
+                )
+                old_block: int
+                (old_block,) = eth_abi.abi.decode(
+                    types=["uint256"],
+                    data=provider.call_raw(
+                        {
+                            "to": token.address,
+                            "data": Web3.keccak(text="accrualBlockNumber()")[:4],
+                        },
+                        block=block_number,
+                    ),
+                )
+
+                rate += rate * supply_rate * (block_number - old_block) // PRECISION
+                result.append(precision_multiplier * rate)
+
+            cache[block_number] = tuple(result)
+            return tuple(result)
+
+        return fetcher
+
+    def reth_rate_fetcher(
+        self,
+        pool_address: ChecksumAddress,
+        tokens: list[Any],
+        use_lending: list[bool],
+        precision_multipliers: list[int],
+    ) -> Any:
+        """Create a rETH rate fetcher closure for a Curve lending pool.
+
+        Fetches getExchangeRate() on the second token (rETH).
+        """
+        chain_id = self._chain_id
+        PRECISION = 10**18
+        cache: dict[int, tuple[int, ...]] = {}
+
+        def fetcher(block_number: int) -> tuple[int, ...]:
+            try:
+                return cache[block_number]
+            except KeyError:
+                pass
+
+            provider = self._connections.get_provider(chain_id)
+            ratio: int
+            (ratio,) = eth_abi.abi.decode(
+                types=["uint256"],
+                data=provider.call_raw(
+                    {
+                        "to": tokens[1].address,
+                        "data": Web3.keccak(text="getExchangeRate()")[:4],
+                    },
+                    block=block_number,
+                ),
+            )
+            result = (PRECISION, ratio)
+            cache[block_number] = result
+            return result
+
+        return fetcher
+
+    def aeth_rate_fetcher(
+        self,
+        pool_address: ChecksumAddress,
+        tokens: list[Any],
+        use_lending: list[bool],
+        precision_multipliers: list[int],
+    ) -> Any:
+        """Create an aETH rate fetcher closure for a Curve lending pool.
+
+        Fetches ratio() on the second token (ankrETH), then inverts it.
+        The aETH rate is computed as PRECISION * LENDING_PRECISION // ratio.
+        """
+        chain_id = self._chain_id
+        PRECISION = 10**18
+        LENDING_PRECISION = 10**18
+        cache: dict[int, tuple[int, ...]] = {}
+
+        def fetcher(block_number: int) -> tuple[int, ...]:
+            try:
+                return cache[block_number]
+            except KeyError:
+                pass
+
+            provider = self._connections.get_provider(chain_id)
+            ratio: int
+            (ratio,) = eth_abi.abi.decode(
+                types=["uint256"],
+                data=provider.call_raw(
+                    {
+                        "to": tokens[1].address,
+                        "data": Web3.keccak(text="ratio()")[:4],
+                    },
+                    block=block_number,
+                ),
+            )
+            result = (PRECISION, PRECISION * LENDING_PRECISION // ratio)
+            cache[block_number] = result
+            return result
+
+        return fetcher
+
+    def oracle_rate_fetcher(
+        self,
+        pool_address: ChecksumAddress,
+        tokens: list[Any],
+        use_lending: list[bool],
+        precision_multipliers: list[int],
+        rate_multipliers: tuple[int, ...],
+    ) -> Any:
+        """Create an oracle rate fetcher closure for a Curve lending pool.
+
+        Two-step fetch: first detects oracle_method via oracle_method() call,
+        then uses the method bitmask to fetch the actual rate.
+        """
+        chain_id = self._chain_id
+        PRECISION = 10**18
+        cache: dict[int, tuple[int, ...]] = {}
+        oracle_method_cache: list[int | None] = [None]  # mutable list closure trick
+
+        def fetcher(block_number: int) -> tuple[int, ...]:
+            try:
+                return cache[block_number]
+            except KeyError:
+                pass
+
+            provider = self._connections.get_provider(chain_id)
+
+            # Lazy-once detection of oracle method
+            if oracle_method_cache[0] is None:
+                (oracle_method_value,) = eth_abi.abi.decode(
+                    types=["uint256"],
+                    data=provider.call_raw(
+                        {
+                            "to": pool_address,
+                            "data": Web3.keccak(text="oracle_method()")[:4],
+                        },
+                        block=block_number,
+                    ),
+                )
+                oracle_method_cache[0] = oracle_method_value
+
+            oracle_method = oracle_method_cache[0]
+
+            if oracle_method == 0:
+                rates = rate_multipliers
+            else:
+                oracle_bit_mask = (2**32 - 1) * 256**28
+                oracle_rate: int
+                (oracle_rate,) = eth_abi.abi.decode(
+                    types=["uint256"],
+                    data=provider.call_raw(
+                        {
+                            "to": get_checksum_address(
+                                HexBytes(oracle_method % 2**160)
+                            ),
+                            "data": HexBytes(oracle_method & oracle_bit_mask),
+                        },
+                        block=block_number,
+                    ),
+                )
+                rates = (
+                    rate_multipliers[0],
+                    rate_multipliers[1] * oracle_rate // PRECISION,
+                )
+
+            cache[block_number] = rates
+            return rates
+
+        return fetcher
+
+    def lending_rate_fetcher(
+        self,
+        pool_address: ChecksumAddress,
+        tokens: list[Any],
+        use_lending: list[bool],
+        precision_multipliers: list[int],
+        rate_multipliers: tuple[int, ...] | None = None,
+        lending_rate_style: Any = None,
+    ) -> Any:
+        """Create the appropriate lending rate fetcher based on the style enum.
+
+        Returns None for pools without lending tokens.
+        """
+        from degenbot.curve.types import LendingRateStyle
+
+        if lending_rate_style is None or lending_rate_style == LendingRateStyle.NONE:
+            return None
+
+        match lending_rate_style:
+            case LendingRateStyle.CTOKEN:
+                return self.ctoken_rate_fetcher(
+                    pool_address, tokens, use_lending, precision_multipliers
+                )
+            case LendingRateStyle.YTOKEN:
+                return self.ytoken_rate_fetcher(
+                    pool_address, tokens, use_lending, precision_multipliers
+                )
+            case LendingRateStyle.CYTOKEN:
+                return self.cytoken_rate_fetcher(
+                    pool_address, tokens, use_lending, precision_multipliers
+                )
+            case LendingRateStyle.AETH:
+                return self.aeth_rate_fetcher(
+                    pool_address, tokens, use_lending, precision_multipliers
+                )
+            case LendingRateStyle.RETH:
+                return self.reth_rate_fetcher(
+                    pool_address, tokens, use_lending, precision_multipliers
+                )
+            case LendingRateStyle.ORACLE:
+                return self.oracle_rate_fetcher(
+                    pool_address, tokens, use_lending, precision_multipliers, rate_multipliers
+                )
+            case _:
+                return None
 
     def D_fetcher(self, pool_address: ChecksumAddress) -> Any:
         """Create a D() fetcher closure for a crypto Curve pool."""

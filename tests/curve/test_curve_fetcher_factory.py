@@ -259,20 +259,6 @@ class TestBlockNumberFetcher:
         assert result == 42
 
 
-class TestProviderCall:
-    """Test provider_call factory method."""
-
-    def test_returns_callable(self) -> None:
-        expected_data = b"\x00\x01\x02"
-        provider = _make_fake_provider({
-            b"\xab\xcd\xef\x01": expected_data,
-        })
-        connections = FakeConnectionManager(provider=provider)
-        factory = CurveFetcherFactory(connections=connections, chain_id=CHAIN_ID)
-        fetcher = factory.provider_call()
-        assert callable(fetcher)
-
-
 class TestDFetcher:
     """Test D_fetcher factory method."""
 

@@ -52,6 +52,81 @@ class YDVariant(Enum):
     STANDARD = auto()
     VARIANT_0 = auto()  # A_PRECISION in b/c formulas
 
+
+class SwapStyle(Enum):
+    """Which computation path to use in get_dy.
+
+    Each value identifies a complete swap calculation path differing in rate source,
+    balance source, fee application, and rate conversion. These are not independent
+    axes — each path is a coherent unit.
+
+    The variants capture differences in:
+    - How dy is computed (with or without the - 1 subtraction)
+    - When fee is applied (before or after rate conversion)
+    - How rate conversion is applied
+    - What balances are used (pool state, live minus admin, raw)
+    """
+
+    STANDARD = auto()  # dy = xp[j] - y - 1, fee, then rate convert
+    RATE_ADJUSTED = auto()  # dy = (xp[j] - y - 1) * PRECISION // rates[j], fee on converted dy
+    RAW_BALANCE = auto()  # raw balances, no rate conversion, direct fee
+    CRYPTO = auto()  # Newton's method, dynamic fee
+    LIVE_ADMIN = auto()  # live balances minus admin, dy = xp[j] - y - 1, fee, rate convert
+    LIVE_ADMIN_DYNAMIC = auto()  # live balances minus admin, dynamic offpeg fee
+    LIVE_ADMIN_DYNAMIC_PRECISION = auto()  # live balances minus admin, precision multipliers for xp, dynamic offpeg fee
+    LIVE_ADMIN_ORACLE = auto()  # live balances minus admin, oracle rates, dy = xp[j] - y - 1, fee, rate convert
+    NO_ONE_FEE_RATE = auto()  # dy = xp[j] - y (no -1), fee, then rate convert — used by AETH/RETH pools
+    CYTOKEN = auto()  # dy = xp[j] - y - 1, then (dy - fee) * PRECISION // rates[j] — fee inside rate conversion
+    RATE_ADJUSTED_NO_ONE = auto()  # dy = (xp[j] - y) * PRECISION // rates[j], fee on converted dy — used by some ytoken pools
+
+
+class MetapoolRateStyle(Enum):
+    """Which rates to use for the metapool branch in get_dy."""
+
+    STANDARD = auto()  # (rate_multipliers[0], virtual_price)
+    PRECISION_VP = auto()  # (PRECISION, virtual_price)
+    REDEMPTION_VP = auto()  # (redemption_price, virtual_price)
+
+
+class MetapoolUnderlyingStyle(Enum):
+    """Which computation path to use in _get_dy_underlying."""
+
+    STANDARD = auto()  # rate_multipliers with VP for base pool LP token
+    REDEMPTION = auto()  # redemption_price for first coin, VP for second
+    PRECISION_VP = auto()  # (PRECISION, virtual_price) — no rate multiplier for first coin
+
+
+class LendingRateStyle(Enum):
+    """Which rate-fetching method to use for lending tokens.
+
+    Used by get_dy() to select which _stored_rates_from_*() method to call.
+    Will be replaced by typed fetcher protocols in Plan 027.
+    """
+
+    NONE = auto()  # No lending tokens — use rate_multipliers directly
+    CTOKEN = auto()  # Exchange rate with supply rate accrual
+    YTOKEN = auto()  # Price per full share
+    CYTOKEN = auto()  # cToken + yToken combined accrual
+    AETH = auto()  # Lido aETH ratio inversion
+    RETH = auto()  # Rocket Pool exchange rate
+    ORACLE = auto()  # On-chain oracle bitmask
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class PoolStrategies:
+    """Resolved calculation strategies for a Curve pool instance.
+
+    Set at construction time by the builder from the pool address.
+    The pool class is address-agnostic — it only reads these strategy values.
+    """
+    d_variant: DVariant = DVariant.STANDARD
+    y_variant: YVariant = YVariant.STANDARD
+    yd_variant: YDVariant = YDVariant.STANDARD
+    swap_style: SwapStyle = SwapStyle.STANDARD
+    metapool_rate_style: MetapoolRateStyle = MetapoolRateStyle.STANDARD
+    metapool_underlying_style: MetapoolUnderlyingStyle = MetapoolUnderlyingStyle.STANDARD
+    lending_rate_style: LendingRateStyle = LendingRateStyle.NONE
+
 # ── Fetcher Protocols ──
 # These protocols define the interface for callbacks that fetch on-chain data
 # for Curve pools. They are injected by Bot.build_curve_pool() to enable
@@ -118,6 +193,17 @@ class PriceScaleFetcher(Protocol):
 
     Returns a tuple of (n_coins - 1) price scale values.
     Used by crypto (volatile) Curve pools for multi-asset price normalization.
+    """
+
+    def __call__(self, block_number: int) -> tuple[int, ...]: ...
+
+
+class LendingRateFetcher(Protocol):
+    """Fetch lending rates for all tokens in a Curve pool at a given block.
+
+    Returns per-token rates scaled to PRECISION (10^18).
+    Non-lending tokens return PRECISION. Lending tokens return
+    their rate (e.g., cToken exchange rate, yToken PPS).
     """
 
     def __call__(self, block_number: int) -> tuple[int, ...]: ...
