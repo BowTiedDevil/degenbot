@@ -12,7 +12,7 @@ from web3.types import LogReceipt
 from degenbot.aave.enrichment.handlers.base import OperationHandler
 from degenbot.aave.enrichment.handlers.borrow import BorrowHandler
 from degenbot.aave.events import ScaledTokenEventType
-from degenbot.aave.models import EnrichedDebtMintEvent, EnrichedGhoDebtMintEvent
+from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
 
 if TYPE_CHECKING:
@@ -70,7 +70,7 @@ class TestBorrowHandler:
         assert result.raw_amount == raw_amount
         # Scaled amount = raw_amount / index (ceil for debt mint)
         assert result.scaled_amount == 500_000_000_000_000_000
-        assert isinstance(result, EnrichedDebtMintEvent)
+        assert result.event_type == ScaledTokenEventType.DEBT_MINT
 
     def test_gho_borrow_calculates_scaled_amount(
         self, handler: BorrowHandler
@@ -96,7 +96,7 @@ class TestBorrowHandler:
 
         assert result.raw_amount == raw_amount
         assert result.scaled_amount == 500_000_000_000_000_000
-        assert isinstance(result, EnrichedGhoDebtMintEvent)
+        assert result.event_type == ScaledTokenEventType.GHO_DEBT_MINT
 
 
 # Helper functions to create mock objects
@@ -184,9 +184,8 @@ def _create_mock_operation(
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for BORROW."""
     from degenbot.aave.enrichment.context import EnrichmentContext
-    from degenbot.aave.models import EnrichedScaledTokenEvent
 
-    mock_session = MagicMock()
+    MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
     mock_context.token_revisions = {}
@@ -230,16 +229,6 @@ def _create_mock_context() -> MagicMock:
         """Build enriched event for testing."""
         event_type = event.event_type
 
-        class_map: dict[ScaledTokenEventType, type[EnrichedScaledTokenEvent]] = {
-            ScaledTokenEventType.DEBT_MINT: EnrichedDebtMintEvent,
-            ScaledTokenEventType.GHO_DEBT_MINT: EnrichedGhoDebtMintEvent,
-        }
-
-        enriched_class = class_map.get(event_type)
-        if enriched_class is None:
-            msg = f"Unsupported event type for test: {event_type}"
-            raise ValueError(msg)
-
         kwargs: dict[str, Any] = {
             "event": event.event,
             "event_type": event_type,
@@ -259,7 +248,7 @@ def _create_mock_context() -> MagicMock:
             kwargs["discount_percent"] = 0
             kwargs["discount_scaled"] = 0
 
-        return enriched_class(**kwargs)
+        return EnrichedScaledTokenEvent(**kwargs)
 
     mock_context.get_token_revision = mock_get_token_revision
     mock_context.get_underlying_asset = mock_get_underlying_asset

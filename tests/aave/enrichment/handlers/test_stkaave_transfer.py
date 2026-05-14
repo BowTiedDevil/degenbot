@@ -12,7 +12,7 @@ from web3.types import LogReceipt
 from degenbot.aave.enrichment.handlers.base import OperationHandler
 from degenbot.aave.enrichment.handlers.stkaave_transfer import StkAaveTransferHandler
 from degenbot.aave.events import ScaledTokenEventType
-from degenbot.aave.models import EnrichedCollateralTransferEvent
+from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
 
 if TYPE_CHECKING:
@@ -122,9 +122,8 @@ def _create_mock_operation(operation_type: OperationType) -> "Operation":
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for stkAAVE transfers."""
     from degenbot.aave.enrichment.context import EnrichmentContext
-    from degenbot.aave.models import EnrichedScaledTokenEvent
 
-    mock_session = MagicMock()
+    MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
     mock_context.token_revisions = {}
@@ -136,16 +135,6 @@ def _create_mock_context() -> MagicMock:
         scaled_amount: int | None,
     ) -> EnrichedScaledTokenEvent:
         """Build enriched event for testing."""
-        event_type = event.event_type
-
-        class_map: dict[ScaledTokenEventType, type[EnrichedScaledTokenEvent]] = {
-            ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER: EnrichedCollateralTransferEvent,
-        }
-
-        enriched_class = class_map.get(event_type)
-        if enriched_class is None:
-            msg = f"Unsupported event type for test: {event_type}"
-            raise ValueError(msg)
 
         # Map ERC20 transfer to base type
         actual_event_type = ScaledTokenEventType.COLLATERAL_TRANSFER
@@ -164,7 +153,7 @@ def _create_mock_context() -> MagicMock:
             "to_address": event.target_address or event.user_address,
         }
 
-        return enriched_class(**kwargs)
+        return EnrichedScaledTokenEvent(**kwargs)
 
     mock_context.build_enriched_event = mock_build_enriched_event
     return mock_context

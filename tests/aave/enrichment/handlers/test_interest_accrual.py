@@ -12,12 +12,7 @@ from web3.types import LogReceipt
 from degenbot.aave.enrichment.handlers.base import OperationHandler
 from degenbot.aave.enrichment.handlers.interest_accrual import InterestAccrualHandler
 from degenbot.aave.events import ScaledTokenEventType
-from degenbot.aave.models import (
-    EnrichedCollateralInterestMintEvent,
-    EnrichedDebtInterestMintEvent,
-    EnrichedGhoDebtInterestMintEvent,
-    EnrichedScaledTokenEvent,
-)
+from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
 
 if TYPE_CHECKING:
@@ -69,7 +64,7 @@ class TestInterestAccrualHandler:
 
         assert result.scaled_amount == 0
         assert result.raw_amount == 1000
-        assert isinstance(result, EnrichedCollateralInterestMintEvent)
+        assert result.event_type == ScaledTokenEventType.COLLATERAL_INTEREST_MINT
 
     def test_debt_mint_sets_scaled_amount_to_zero(
         self, handler: InterestAccrualHandler
@@ -91,7 +86,7 @@ class TestInterestAccrualHandler:
 
         assert result.scaled_amount == 0
         assert result.raw_amount == 500
-        assert isinstance(result, EnrichedDebtInterestMintEvent)
+        assert result.event_type == ScaledTokenEventType.DEBT_INTEREST_MINT
 
     def test_gho_debt_mint_sets_scaled_amount_to_zero(
         self, handler: InterestAccrualHandler
@@ -113,7 +108,7 @@ class TestInterestAccrualHandler:
 
         assert result.scaled_amount == 0
         assert result.raw_amount == 250
-        assert isinstance(result, EnrichedGhoDebtInterestMintEvent)
+        assert result.event_type == ScaledTokenEventType.GHO_DEBT_INTEREST_MINT
 
 
 # Helper functions to create mock objects
@@ -185,7 +180,7 @@ def _create_mock_context() -> MagicMock:
 
     # Use the real build_enriched_event implementation
     # We need to bind it to the mock context
-    real_context = EnrichmentContext(
+    EnrichmentContext(
         pool_revision=1,
         token_revisions={},
         session=mock_session,
@@ -201,26 +196,6 @@ def _create_mock_context() -> MagicMock:
         """Build enriched event using the real implementation logic."""
         # Build the event inline since we can't use the real DB session
         event_type = event.event_type
-        is_interest_accrual = operation.operation_type == OperationType.INTEREST_ACCRUAL
-
-        # Map event type to enriched class for interest accrual
-        class_map: dict[ScaledTokenEventType, type[EnrichedScaledTokenEvent]]
-        if is_interest_accrual:
-            class_map = {
-                ScaledTokenEventType.COLLATERAL_MINT: EnrichedCollateralInterestMintEvent,
-                ScaledTokenEventType.COLLATERAL_BURN: None,  # type: ignore
-                ScaledTokenEventType.DEBT_MINT: EnrichedDebtInterestMintEvent,
-                ScaledTokenEventType.DEBT_BURN: None,  # type: ignore
-                ScaledTokenEventType.GHO_DEBT_MINT: EnrichedGhoDebtInterestMintEvent,
-                ScaledTokenEventType.GHO_DEBT_BURN: None,  # type: ignore
-            }
-        else:
-            class_map = {}
-
-        enriched_class = class_map.get(event_type)
-        if enriched_class is None:
-            msg = f"Unsupported event type for test: {event_type}"
-            raise ValueError(msg)
 
         # Map to interest-specific event type
         interest_event_type_map: dict[ScaledTokenEventType, ScaledTokenEventType] = {
@@ -249,7 +224,7 @@ def _create_mock_context() -> MagicMock:
             kwargs["discount_percent"] = 0
             kwargs["discount_scaled"] = 0
 
-        return enriched_class(**kwargs)
+        return EnrichedScaledTokenEvent(**kwargs)
 
     mock_context.build_enriched_event = mock_build_enriched_event
     return mock_context

@@ -12,7 +12,7 @@ from web3.types import LogReceipt
 from degenbot.aave.enrichment.handlers.base import OperationHandler
 from degenbot.aave.enrichment.handlers.mint_to_treasury import MintToTreasuryHandler
 from degenbot.aave.events import ScaledTokenEventType
-from degenbot.aave.models import EnrichedCollateralMintEvent
+from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
 
 if TYPE_CHECKING:
@@ -123,9 +123,8 @@ def _create_mock_operation(operation_type: OperationType) -> "Operation":
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for MINT_TO_TREASURY."""
     from degenbot.aave.enrichment.context import EnrichmentContext
-    from degenbot.aave.models import EnrichedScaledTokenEvent
 
-    mock_session = MagicMock()
+    MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
     mock_context.token_revisions = {}
@@ -138,15 +137,6 @@ def _create_mock_context() -> MagicMock:
     ) -> EnrichedScaledTokenEvent:
         """Build enriched event for testing."""
         event_type = event.event_type
-
-        class_map: dict[ScaledTokenEventType, type[EnrichedScaledTokenEvent]] = {
-            ScaledTokenEventType.COLLATERAL_MINT: EnrichedCollateralMintEvent,
-        }
-
-        enriched_class = class_map.get(event_type)
-        if enriched_class is None:
-            msg = f"Unsupported event type for test: {event_type}"
-            raise ValueError(msg)
 
         kwargs: dict[str, Any] = {
             "event": event.event,
@@ -162,7 +152,7 @@ def _create_mock_context() -> MagicMock:
             "balance_increase": event.balance_increase,
         }
 
-        return enriched_class(**kwargs)
+        return EnrichedScaledTokenEvent(**kwargs)
 
     mock_context.build_enriched_event = mock_build_enriched_event
     return mock_context
