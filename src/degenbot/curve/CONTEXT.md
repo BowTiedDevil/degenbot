@@ -239,3 +239,51 @@ Each lending rate variant (cToken, yToken, cyToken, aETH, rETH, oracle) has its 
 **Ruling:** **Crypto pool** is a Curve pool subclass using the CryptoSwap invariant (dynamic fees, Newton's method). **Stableswap pool** uses the standard x·y·D invariant. Both are represented by `CurveStableswapPool` — the difference is internal dispatch in `get_dy()`.
 
 Don't call crypto pools "volatile pools" (that term is used for Aerodrome constant-product pools).
+
+## Debugging Swap Mismatches
+
+When `get_dy()` disagrees with the on-chain contract call for a specific pool, the mismatch is almost always a wrong strategy enum — not a floating-point or arithmetic error. Use this workflow:
+
+### Step 1: Fetch the verified contract source
+
+```bash
+cast source <pool_address> > /tmp/pool_source.vy
+```
+
+Curve V1 pools are written in Vyper. The source is the ground truth for all calculation paths.
+
+### Step 2: Verify each strategy enum against the source
+
+| Python enum | Contract reference | What to check |
+|-------------|-------------------|---------------|
+| `LendingRateStyle` | `USE_LENDING` constant | Does the contract have any `True` values? If all `False`, `LendingRateStyle` must be `NONE`. |
+| `SwapStyle` | `get_dy()` function body | Compare the dy formula: presence/absence of `-1`, order of rate conversion vs fee, whether `_stored_rates()` or `_current_rates()` is called. |
+| `DVariant` | `get_D()` function body | Check whether `A_PRECISION` appears in the D and D_P formulas. Standard pools divide by `A_PRECISION`; variant_alpha pools omit it. Also check whether the D_P loop has `+ 1` (variant_dp_alpha). |
+| `YVariant` | `get_y()` function body | Check whether `self.A` is used directly (VARIANT_0 / VARIANT_1) or scaled by `A_PRECISION` (STANDARD). Check whether the `c` and `b` formulas include `A_PRECISION`. |
+| `YDVariant` | `calc_withdraw_one_coin()` function body | Same A_PRECISION check as YVariant, but for the y_d calculation. |
+| `MetapoolRateStyle` | `get_dy()` when `base_pool` exists | What rate tuple is constructed? `(PRECISION, VP)`, `(redemption_price, VP)`, or `(rate_multipliers[0], VP)`? |
+| `MetapoolUnderlyingStyle` | `get_dy_underlying()` function body | Same analysis for the underlying swap path. |
+
+### Step 3: Check the address mapping
+
+The address→strategy mapping in `_pool_strategies.py` was **derived from old class-level frozensets**, not verified against contract source. Two common errors:
+
+1. **Wrong `LendingRateStyle`.** A pool was grouped into a cToken/yToken frozenset because the old Python code routed it through `_stored_rates_from_ctokens()`, but the contract has `USE_LENDING = [False, ...]`. The old code worked because the `_stored_rates_from_*()` method returns `PRECISION * LENDING_PRECISION` when `use_lending` is all-False — same as `rate_multipliers`. The new code creates a fetcher that makes spurious on-chain calls, potentially returning different rates.
+
+2. **Missing address.** A pool not in the mapping falls through to `PoolStrategies()` defaults (`SwapStyle.STANDARD`, `LendingRateStyle.NONE`). This is correct for plain 2-token stablecoin pools but wrong for unlisted lending, metapool, or crypto pools.
+
+### Step 4: Verify with on-chain call
+
+Compare the contract's output directly:
+
+```bash
+cast call <pool_address> "get_dy(int128,int128,uint256)" <i> <j> <dx> --block <block>
+```
+
+Then compare against the Python pool's `get_dy()` result. If they match for several block heights and token pairs, the strategy is correct.
+
+### Common pitfalls
+
+- **sUSD pool pattern.** Pool `0xA5407eAE` holds DAI, USDC, USDT, sUSD (no cTokens) but the old code had it in the `CTOKEN_ADDRESSES` frozenset. The contract's `USE_LENDING = [False, False, False, False]` means `_stored_rates()` just returns `PRECISION_MUL * LENDING_PRECISION`.
+- **Y pool sub-variants.** Some Y pools use `(xp[j] - y - 1)` in the dy formula (`RATE_ADJUSTED`) while others use `(xp[j] - y)` without the `-1` (`RATE_ADJUSTED_NO_ONE`). The Vyper source is the only way to distinguish.
+- **A_PRECISION in get_y.** The contract stores `A` as the raw value (not scaled by `A_PRECISION`). But degenbot stores `self.a_coefficient` and scales it in `_a()`. When `YVariant.VARIANT_0` divides `amp` by `A_PRECISION` before passing to `_get_d()`, the intermediate values change — this is correct, matching the contract's direct use of `self.A`. But the D calculation must also use a matching `d_variant` that omits `A_PRECISION` from the formula.
