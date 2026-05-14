@@ -1,6 +1,11 @@
+"""Aerodrome pool calculations and address generation.
+
+.. deprecated::
+    Calculation functions have been moved to :mod:`degenbot.calculations.solidly_stable`.
+    This module retains address-generation functions and backwards-compatible re-exports.
+"""
+
 from collections.abc import Sequence
-from fractions import Fraction
-from typing import Literal
 
 import eth_abi.abi
 import eth_abi.packed
@@ -8,98 +13,28 @@ from eth_typing import ChecksumAddress
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
-from degenbot.exceptions.evm import EVMRevertError
-from degenbot.functions import eip_1167_clone_address, raise_if_invalid_uint256
-from degenbot.solidly.solidly_functions import (
-    general_calc_d,
-    general_calc_exact_in_stable,
-    general_calc_k,
+from degenbot.calculations.solidly_stable import (
+    calc_d as _calc_d,
+    calc_exact_in_stable as _calc_exact_in_stable,
+    calc_f as _f_aerodrome,
+    calc_k as _k_aerodrome,
+    get_y_solidly as _get_y_aerodrome,
 )
+from degenbot.functions import eip_1167_clone_address
 
 
-def _f_aerodrome(
-    x0: int,
-    y: int,
-) -> int:
-    a = (x0 * y) // 10**18
-    b = (x0 * x0) // 10**18 + (y * y) // 10**18
-    return (a * b) // 10**18
+def calc_exact_in_stable(*args, **kwargs):
+    """Aerodrome-specific stable exact-in calculation.
 
-
-def calc_exact_in_stable(
-    *,
-    amount_in: int,
-    token_in: Literal[0, 1],
-    reserves0: int,
-    reserves1: int,
-    decimals0: int,
-    decimals1: int,
-    fee: Fraction,
-) -> int:
-    return general_calc_exact_in_stable(
-        amount_in=amount_in,
-        token_in=token_in,
-        reserves0=reserves0,
-        reserves1=reserves1,
-        decimals0=decimals0,
-        decimals1=decimals1,
-        fee=fee,
-        k_func=general_calc_k,
+    Delegates to :func:`degenbot.calculations.solidly_stable.calc_exact_in_stable`
+    with Aerodrome's k_func and get_y_func.
+    """
+    return _calc_exact_in_stable(
+        *args,
+        **kwargs,
+        k_func=_k_aerodrome,
         get_y_func=_get_y_aerodrome,
     )
-
-
-def _get_y_aerodrome(
-    x0: int,
-    xy: int,
-    y: int,
-    decimals0: int,
-    decimals1: int,
-) -> int:  # pragma: no cover
-    """
-    Calculate the minimum reserves for the withdrawn token that satisfy the pool invariant.
-
-    Reference: https://github.com/aerodrome-finance/contracts/blob/main/contracts/Pool.sol
-    """
-
-    for _ in range(255):
-        k = _f_aerodrome(x0, y)
-        if k < xy:
-            dy = ((xy - k) * 10**18) // general_calc_d(x0, y)
-            if dy == 0:
-                if k == xy:
-                    return y
-                if (
-                    _k_aerodrome(
-                        balance_0=x0, balance_1=y + 1, decimals_0=decimals0, decimals_1=decimals1
-                    )
-                    > xy
-                ):
-                    return y + 1
-                dy = 1
-            y += dy
-        else:
-            dy = ((k - xy) * 10**18) // general_calc_d(x0, y)
-            if dy == 0:
-                if k == xy or _f_aerodrome(x0, y - 1) < xy:
-                    return y
-                dy = 1
-            y -= dy
-    raise EVMRevertError(error="Failed to converge on a value for y")
-
-
-def _k_aerodrome(
-    balance_0: int,
-    balance_1: int,
-    decimals_0: int,
-    decimals_1: int,
-) -> int:
-    x = balance_0 * 10**18 // decimals_0
-    y = balance_1 * 10**18 // decimals_1
-    a = (x * y) // 10**18
-    b = (x * x) // 10**18 + (y * y) // 10**18
-    raise_if_invalid_uint256(a * b)
-    return a * b // 10**18  # x^3*y + y^3*x >= k
 
 
 def generate_aerodrome_v2_pool_address(
