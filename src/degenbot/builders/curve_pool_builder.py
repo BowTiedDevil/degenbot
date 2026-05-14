@@ -7,6 +7,7 @@ import eth_abi.abi
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection.connection_manager import ConnectionManager
+from degenbot.curve._variant_groups import resolve_d_variant, resolve_y_variant, resolve_yd_variant
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
 from degenbot.curve.detection.a_ramping import detect_a_ramping
@@ -136,7 +137,12 @@ class CurvePoolBuilder:
         if len(tokens) < 2:
             raise BrokenPool()
 
-        # 13. Create fetchers and construct pool
+        # 13. Resolve variant groups
+        d_variant = resolve_d_variant(pool_address)
+        y_variant = resolve_y_variant(pool_address)
+        yd_variant = resolve_yd_variant(pool_address)
+
+        # 14. Create fetchers and construct pool
         fetchers = CurveFetcherFactory(connections=self._connections, chain_id=chain_id)
         pool = CurveStableswapPool(
             address=pool_address,
@@ -183,6 +189,9 @@ class CurvePoolBuilder:
                 if crypto.is_crypto
                 else None
             ),
+            d_variant=d_variant,
+            y_variant=y_variant,
+            yd_variant=yd_variant,
         )
 
         # Register pool

@@ -49,6 +49,24 @@ In addition to typed fetcher protocols, two low-level I/O callbacks exist:
 
 **Key Principle:** Fetchers decouple on-chain I/O from pool logic. `Bot.build_curve_pool()` injects these callbacks; `CurveStableswapPool` calls them on-demand without managing connections directly.
 
+## Variant Enums
+
+Mainnet Curve pools use different calculation formulas depending on the pool contract version. The variant is determined by the pool address at construction time and stored as an enum on the pool instance. This replaces the former class-level address frozensets (`D_VARIANT_GROUP_*`, `Y_VARIANT_GROUP_*`, `Y_D_VARIANT_GROUP_*`) that coupled configuration data to pool behaviour.
+
+| Term | Definition | Aliases to avoid |
+|------|------------|------------------|
+| **DVariant** | An enum identifying which D-calculation formula pair (`calc_d` / `calc_dp`) a pool uses in `_get_d()` | D variant, D group |
+| **YVariant** | An enum identifying which Y-calculation formula a pool uses in `_get_y()`; controls amp divisor and c/b formula selection | Y variant, Y group |
+| **YDVariant** | An enum identifying which Y_D-calculation formula a pool uses in `_get_y_d()`; controls whether A_PRECISION appears in b/c formulas | Y_D variant, Y_D group |
+
+**DVariant values:** `STANDARD` (standard calc_d + calc_dp), `VARIANT_ALPHA` (variant_alpha d + standard dp), `VARIANT_ALPHA_DP_ALPHA` (variant_alpha d + variant_alpha dp), `VARIANT_DP_ALPHA` (standard d + variant_alpha dp), `VARIANT_BETA_DP` (standard d + variant_beta dp), `VARIANT_GAMMA_DP` (standard d + variant_gamma dp).
+
+**YVariant values:** `STANDARD` (amp with A_PRECISION divisor, c/b with A_PRECISION), `VARIANT_0` (amp without A_PRECISION divisor, c/b without A_PRECISION), `VARIANT_1` (amp with A_PRECISION divisor, c/b without A_PRECISION).
+
+**YDVariant values:** `STANDARD` (b/c without A_PRECISION), `VARIANT_0` (b/c with A_PRECISION).
+
+Variant resolution is done by `resolve_d_variant()`, `resolve_y_variant()`, `resolve_yd_variant()` in `_variant_groups.py`, called by `CurvePoolBuilder.build()` at construction time. The pool class is address-agnostic for D/Y/YD calculations — it only reads the enum values.
+
 ## Crypto Pool Details
 
 Crypto pools (e.g., Tricrypto USDT-WBTC-WETH) use a fundamentally different calculation path from stableswap pools:

@@ -73,7 +73,10 @@ def _test_calculations(lp: CurveStableswapPool, w3: Web3):
             ):
                 continue
             except Exception:
-                print(f"Failure simulating swap (in-pool) at block {state_block} for {lp.address}:")
+                print(
+                    f"Failure simulating swap (in-pool) at block {state_block} for {lp.address}. "
+                    f"Reproduce with test_single_pool @ {lp.address}"
+                )
                 raise
 
             try:
@@ -102,7 +105,10 @@ def _test_calculations(lp: CurveStableswapPool, w3: Web3):
                 continue
 
             assert calc_amount == contract_amount, (
-                f"Failure simulating swap (in-pool) at block {state_block} for {lp.address}: {amount} {token_in} for {token_out}"  # noqa:E501
+                f"Swap mismatch at block {state_block} for {lp.address}: "
+                f"{amount} {token_in} for {token_out} — "
+                f"got {calc_amount}, expected {contract_amount}. "
+                f"Reproduce with test_single_pool @ {lp.address}"
             )
 
     if lp.base_pool is not None:
@@ -139,8 +145,10 @@ def _test_calculations(lp: CurveStableswapPool, w3: Web3):
                     continue
 
                 assert calc_amount == contract_amount, (
-                    f"Failure simulating swap (metapool) at block {state_block} for {lp.address}: "
-                    f"{amount} {token_in} for {token_out}"
+                    f"Metapool swap mismatch at block {state_block} for {lp.address}: "
+                    f"{amount} {token_in} for {token_out} — "
+                    f"got {calc_amount}, expected {contract_amount}. "
+                    f"Reproduce with test_single_pool @ {lp.address}"
                 )
 
 
@@ -358,7 +366,6 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
             assert calc_token_amount == calc_token_amount_contract
 
 
-@pytest.mark.slow
 def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
     """
     Test the user-deployed pools deployed by the factory
@@ -383,8 +390,15 @@ def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
         except (BrokenPool, NoLiquidity):
             continue
         except Exception as e:
-            print(f"{type(e)}: {e} - pool {i}, {pool_address=}")
-            raise
+            block_number = fork_mainnet_full.w3.eth.block_number
+            msg = (
+                f"{type(e).__name__}: {e} — "
+                f"pool {i}/{pool_count} @ {pool_address}, block {block_number}. "
+                f"Reproduce: set pool_address=\"{pool_address}\" in test_single_pool "
+                f"with @pytest.mark.parametrize('fork_mainnet_archive', [{block_number}], indirect=True)"
+            )
+            print(msg)
+            raise AssertionError(msg) from e
 
 
 def test_base_registry_pools(fork_mainnet_full: AnvilFork):
@@ -410,7 +424,28 @@ def test_base_registry_pools(fork_mainnet_full: AnvilFork):
         except MissingCurveData:
             print("  Skipping pool with missing data")
             continue
-        _test_calculations(lp=lp, w3=fork_mainnet_full.w3)
+        except Exception as e:
+            block_number = fork_mainnet_full.w3.eth.block_number
+            msg = (
+                f"{type(e).__name__}: {e} — "
+                f"registry pool {i}/{pool_count} @ {pool_address}, block {block_number}. "
+                f"Reproduce: set pool_address=\"{pool_address}\" in test_single_pool "
+                f"with @pytest.mark.parametrize('fork_mainnet_archive', [{block_number}], indirect=True)"
+            )
+            print(msg)
+            raise AssertionError(msg) from e
+        try:
+            _test_calculations(lp=lp, w3=fork_mainnet_full.w3)
+        except Exception as e:
+            block_number = fork_mainnet_full.w3.eth.block_number
+            msg = (
+                f"{type(e).__name__}: {e} — "
+                f"registry pool {i}/{pool_count} @ {pool_address}, block {block_number}. "
+                f"Reproduce: set pool_address=\"{pool_address}\" in test_single_pool "
+                f"with @pytest.mark.parametrize('fork_mainnet_archive', [{block_number}], indirect=True)"
+            )
+            print(msg)
+            raise AssertionError(msg) from e
 
 
 def test_get_d(tripool: CurveStableswapPool):
