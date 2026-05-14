@@ -17,13 +17,13 @@ from degenbot.aave.libraries.pool_math import PoolMath
 from degenbot.aave.libraries.token_math import TokenMathFactory
 from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.pattern_types import LiquidationPattern
-from degenbot.aave.processors import (
+from degenbot.aave.processors.base import (
     CollateralBurnEvent,
     CollateralMintEvent,
     DebtBurnEvent,
     DebtMintEvent,
-    TokenProcessorFactory,
 )
+from degenbot.aave.processors.factory import TokenProcessorFactory
 from degenbot.cli.aave.constants import UserOperation, WadRayMathLibrary
 from degenbot.cli.aave.db_assets import get_asset_by_token_type, get_asset_identifier
 from degenbot.cli.aave.db_positions import (
