@@ -17,10 +17,9 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential_jitter,
 )
-from web3 import AsyncBaseProvider, AsyncWeb3
 from web3._utils.threads import Timeout  # noqa: PLC2701
 from web3.exceptions import Web3Exception
-from web3.types import BlockIdentifier, FilterParams, LogReceipt
+from web3.types import BlockIdentifier, LogReceipt
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256
@@ -29,6 +28,7 @@ from degenbot.exceptions.evm import InvalidUint256
 from degenbot.exceptions.fetching import LogFetchingTimeout
 from degenbot.logging import logger
 from degenbot.provider import ProviderAdapter
+from degenbot.provider.interface import AsyncProviderAdapter
 from degenbot.types.aliases import BlockNumber
 
 if TYPE_CHECKING:
@@ -302,7 +302,7 @@ def fetch_logs_retrying(
 
 async def fetch_logs_retrying_async(
     *,
-    w3: AsyncWeb3[AsyncBaseProvider],
+    provider: AsyncProviderAdapter,
     start_block: BlockNumber,
     end_block: BlockNumber,
     max_retries: int = 10,
@@ -348,19 +348,17 @@ async def fetch_logs_retrying_async(
                             f"Fetching logs for range {fetcher.start_block}-{chunk_end} "
                             f" ({fetcher.chunk_size} blocks)"
                         )
-                        logs = await w3.eth.get_logs(
-                            FilterParams(
-                                address=address,
-                                fromBlock=fetcher.start_block,
-                                toBlock=chunk_end,
-                                topics=topic_signature,
-                            )
-                            if address is not None
-                            else FilterParams(
-                                fromBlock=fetcher.start_block,
-                                toBlock=chunk_end,
-                                topics=topic_signature,
-                            )
+                        addresses_arg = [address] if address is not None else None
+                        topics_arg = (
+                            [list(t) for t in topic_signature]
+                            if topic_signature
+                            else None
+                        )
+                        logs = await provider.get_logs(
+                            from_block=fetcher.start_block,
+                            to_block=chunk_end,
+                            addresses=addresses_arg,
+                            topics=topics_arg,
                         )
                         event_logs.extend(logs)
                     except (Timeout, Web3Exception):
@@ -431,15 +429,15 @@ def get_number_for_block_identifier(
 
 async def get_number_for_block_identifier_async(
     identifier: BlockIdentifier | None,
-    w3: AsyncWeb3[AsyncBaseProvider],
+    provider: AsyncProviderAdapter,
 ) -> BlockNumber:
     match identifier:
         case None:
-            return await w3.eth.get_block_number()
+            return await provider.get_block_number()
         case int() as block_number_as_int:
             return block_number_as_int
         case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
-            block = await w3.eth.get_block(block_tag)
+            block = await provider.get_block(block_tag)
             block_number = block.get("number")
             if TYPE_CHECKING:
                 assert block_number is not None

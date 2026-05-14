@@ -6,7 +6,7 @@ balances() methods, trying both uint256 and int128 index prototypes.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import eth_abi.abi
 
@@ -17,9 +17,11 @@ from degenbot.functions import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
+    from degenbot.provider.interface import ProviderAdapter
+
 
 def discover_coins(
-    w3: Any,
+    provider: ProviderAdapter,
     pool_address: ChecksumAddress,
     *,
     block_identifier: int,
@@ -40,7 +42,7 @@ def discover_coins(
         if coin_prototype is None:
             # Try uint256 first
             try:
-                coin_addr = w3.eth.call(
+                coin_addr = provider.call_raw(
                     {
                         "to": pool_address,
                         "data": encode_function_calldata(
@@ -48,7 +50,7 @@ def discover_coins(
                             function_arguments=[i],
                         ),
                     },
-                    block_identifier=block_identifier,
+                    block=block_identifier,
                 )
                 (token_address,) = eth_abi.abi.decode(types=["address"], data=coin_addr)
                 if int(token_address, 16) != 0:
@@ -61,7 +63,7 @@ def discover_coins(
             # Try int128 if uint256 failed
             if coin_prototype is None:
                 try:
-                    coin_addr = w3.eth.call(
+                    coin_addr = provider.call_raw(
                         {
                             "to": pool_address,
                             "data": encode_function_calldata(
@@ -69,7 +71,7 @@ def discover_coins(
                                 function_arguments=[i],
                             ),
                         },
-                        block_identifier=block_identifier,
+                        block=block_identifier,
                     )
                     (token_address,) = eth_abi.abi.decode(types=["address"], data=coin_addr)
                     if int(token_address, 16) != 0:
@@ -92,7 +94,7 @@ def discover_coins(
             assert coin_prototype is not None
             assert balance_prototype is not None
             try:
-                coin_addr = w3.eth.call(
+                coin_addr = provider.call_raw(
                     {
                         "to": pool_address,
                         "data": encode_function_calldata(
@@ -100,7 +102,7 @@ def discover_coins(
                             function_arguments=[i],
                         ),
                     },
-                    block_identifier=block_identifier,
+                    block=block_identifier,
                 )
                 (token_address,) = eth_abi.abi.decode(types=["address"], data=coin_addr)
                 if int(token_address, 16) == 0:
@@ -113,7 +115,7 @@ def discover_coins(
         # Fetch balance
         assert balance_prototype is not None
         try:
-            balance_result = w3.eth.call(
+            balance_result = provider.call_raw(
                 {
                     "to": pool_address,
                     "data": encode_function_calldata(
@@ -121,7 +123,7 @@ def discover_coins(
                         function_arguments=[i],
                     ),
                 },
-                block_identifier=block_identifier,
+                block=block_identifier,
             )
             (balance,) = eth_abi.abi.decode(types=["uint256"], data=balance_result)
             balances.append(balance)

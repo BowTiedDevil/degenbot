@@ -24,7 +24,7 @@ class TestProviderAdapter:
         adapter = ProviderAdapter.from_alloy(alloy_provider)
 
         assert adapter.provider_type == "alloy"
-        assert adapter.underlying is alloy_provider
+        assert adapter.provider is alloy_provider
         assert adapter.is_connected() is True
         assert "ProviderAdapter" in repr(adapter)
 
@@ -33,7 +33,7 @@ class TestProviderAdapter:
         adapter = ProviderAdapter.from_web3(fork_mainnet_full.w3)
 
         assert adapter.provider_type == "web3"
-        assert adapter.underlying is fork_mainnet_full.w3
+        assert adapter.provider is fork_mainnet_full.w3
         assert adapter.is_connected() is True
 
     def test_adapter_has_required_interface(self, alloy_provider: AlloyProvider):

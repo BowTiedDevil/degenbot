@@ -21,6 +21,7 @@ from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.liquidity_pool import UnknownPoolId
 from degenbot.functions import fetch_logs_retrying, fetch_logs_retrying_async
 from degenbot.logging import logger
+from degenbot.provider.interface import AsyncProviderAdapter
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import KeyedDefaultDict
 from degenbot.uniswap.abi import UNISWAP_V4_POOL_MANAGER_ABI
@@ -295,7 +296,7 @@ class UniswapV4LiquiditySnapshot:
         self,
         to_block: BlockNumber,
         *,
-        provider: Any,
+        provider: AsyncProviderAdapter,
         blocks_per_request: int | None = None,
     ) -> None:
         """
@@ -337,7 +338,7 @@ class UniswapV4LiquiditySnapshot:
         self,
         to_block: BlockNumber,
         *,
-        w3: Any,
+        provider: AsyncProviderAdapter,
         blocks_per_request: int | None = None,
     ) -> None:
         """
@@ -351,7 +352,7 @@ class UniswapV4LiquiditySnapshot:
         logger.info(f"Updating Uniswap V4 snapshot from block {self.newest_block} to {to_block}")
 
         event_logs = await fetch_logs_retrying_async(
-            w3=w3,
+            provider=provider,
             start_block=self.newest_block + 1,
             end_block=to_block,
             max_blocks_per_request=blocks_per_request,

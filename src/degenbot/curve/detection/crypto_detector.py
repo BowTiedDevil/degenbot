@@ -8,7 +8,7 @@ reverts since not all crypto pools expose all of them.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import eth_abi.abi
 
@@ -18,9 +18,11 @@ from degenbot.functions import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
+    from degenbot.provider.interface import ProviderAdapter
+
 
 def detect_crypto_params(
-    w3: Any,
+    provider: ProviderAdapter,
     pool_address: ChecksumAddress,
     *,
     block_identifier: int,
@@ -37,7 +39,7 @@ def detect_crypto_params(
     offpeg_fee_multiplier: int | None = None
 
     try:
-        fee_gamma_result = w3.eth.call(
+        fee_gamma_result = provider.call_raw(
             {
                 "to": pool_address,
                 "data": encode_function_calldata(
@@ -45,7 +47,7 @@ def detect_crypto_params(
                     function_arguments=[],
                 ),
             },
-            block_identifier=block_identifier,
+            block=block_identifier,
         )
         (fee_gamma_val,) = eth_abi.abi.decode(types=["uint256"], data=fee_gamma_result)
         if fee_gamma_val > 0:
@@ -53,7 +55,7 @@ def detect_crypto_params(
 
             # Fetch related crypto pool parameters
             try:
-                mid_fee_result = w3.eth.call(
+                mid_fee_result = provider.call_raw(
                     {
                         "to": pool_address,
                         "data": encode_function_calldata(
@@ -61,7 +63,7 @@ def detect_crypto_params(
                             function_arguments=[],
                         ),
                     },
-                    block_identifier=block_identifier,
+                    block=block_identifier,
                 )
                 (mid_fee_val,) = eth_abi.abi.decode(types=["uint256"], data=mid_fee_result)
                 mid_fee = mid_fee_val
@@ -69,7 +71,7 @@ def detect_crypto_params(
                 pass
 
             try:
-                out_fee_result = w3.eth.call(
+                out_fee_result = provider.call_raw(
                     {
                         "to": pool_address,
                         "data": encode_function_calldata(
@@ -77,7 +79,7 @@ def detect_crypto_params(
                             function_arguments=[],
                         ),
                     },
-                    block_identifier=block_identifier,
+                    block=block_identifier,
                 )
                 (out_fee_val,) = eth_abi.abi.decode(types=["uint256"], data=out_fee_result)
                 out_fee = out_fee_val
@@ -85,7 +87,7 @@ def detect_crypto_params(
                 pass
 
             try:
-                gamma_result = w3.eth.call(
+                gamma_result = provider.call_raw(
                     {
                         "to": pool_address,
                         "data": encode_function_calldata(
@@ -93,7 +95,7 @@ def detect_crypto_params(
                             function_arguments=[],
                         ),
                     },
-                    block_identifier=block_identifier,
+                    block=block_identifier,
                 )
                 (gamma_val,) = eth_abi.abi.decode(types=["uint256"], data=gamma_result)
                 gamma = gamma_val
@@ -104,7 +106,7 @@ def detect_crypto_params(
 
     # Fetch offpeg_fee_multiplier (used by some lending/crypto pools)
     try:
-        offpeg_result = w3.eth.call(
+        offpeg_result = provider.call_raw(
             {
                 "to": pool_address,
                 "data": encode_function_calldata(
@@ -112,7 +114,7 @@ def detect_crypto_params(
                     function_arguments=[],
                 ),
             },
-            block_identifier=block_identifier,
+            block=block_identifier,
         )
         (offpeg_val,) = eth_abi.abi.decode(types=["uint256"], data=offpeg_result)
         offpeg_fee_multiplier = offpeg_val

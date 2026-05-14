@@ -49,14 +49,14 @@ class TestDiscoverCoinsUint256:
                 return _encode_uint256(balances[idx])
             return _encode_uint256(0)
 
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             COINS_UINT256: handle_coins_uint256,
             BALANCES_UINT256: handle_balances_uint256,
         })
 
-        result = discover_coins(w3, POOL_ADDR, block_identifier=18_000_000)
+        result = discover_coins(provider, POOL_ADDR, block_identifier=18_000_000)
 
         assert len(result.token_addresses) == 2
         assert result.token_addresses[0] == USDC
@@ -79,14 +79,14 @@ class TestDiscoverCoinsUint256:
             (idx,) = eth_abi.abi.decode(["uint256"], data[4:])
             return _encode_uint256(1000 * (idx + 1))
 
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             COINS_UINT256: handle_coins_uint256,
             BALANCES_UINT256: handle_balances_uint256,
         })
 
-        result = discover_coins(w3, POOL_ADDR, block_identifier=18_000_000)
+        result = discover_coins(provider, POOL_ADDR, block_identifier=18_000_000)
 
         assert len(result.token_addresses) == 3
         assert result.balances == (1000, 2000, 3000)
@@ -109,14 +109,14 @@ class TestDiscoverCoinsInt128:
             (idx,) = eth_abi.abi.decode(["int128"], data[4:])
             return _encode_uint256(5000)
 
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             COINS_INT128: handle_coins_int128,
             BALANCES_INT128: handle_balances_int128,
         })
 
-        result = discover_coins(w3, POOL_ADDR, block_identifier=18_000_000)
+        result = discover_coins(provider, POOL_ADDR, block_identifier=18_000_000)
 
         assert result.coin_prototype == "coins(int128)"
         assert result.balance_prototype == "balances(int128)"
@@ -141,15 +141,15 @@ class TestDiscoverCoinsInt128:
         def handle_balances_int128(to: str, data: bytes, block: int) -> bytes:
             return _encode_uint256(999)
 
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             COINS_UINT256: handle_coins_uint256,
             COINS_INT128: handle_coins_int128,
             BALANCES_INT128: handle_balances_int128,
         })
 
-        result = discover_coins(w3, POOL_ADDR, block_identifier=18_000_000)
+        result = discover_coins(provider, POOL_ADDR, block_identifier=18_000_000)
 
         assert result.coin_prototype == "coins(int128)"
         assert call_count["uint256_tries"] >= 1
@@ -171,14 +171,14 @@ class TestDiscoverCoinsEdgeCases:
         def handle_balances_uint256(to: str, data: bytes, block: int) -> bytes:
             return _encode_uint256(100)
 
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             COINS_UINT256: handle_coins_uint256,
             BALANCES_UINT256: handle_balances_uint256,
         })
 
-        result = discover_coins(w3, POOL_ADDR, block_identifier=18_000_000)
+        result = discover_coins(provider, POOL_ADDR, block_identifier=18_000_000)
         assert len(result.token_addresses) == 2
 
     def testStopsAtRevert(self):
@@ -194,23 +194,23 @@ class TestDiscoverCoinsEdgeCases:
         def handle_balances_uint256(to: str, data: bytes, block: int) -> bytes:
             return _encode_uint256(100)
 
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             COINS_UINT256: handle_coins_uint256,
             BALANCES_UINT256: handle_balances_uint256,
         })
 
-        result = discover_coins(w3, POOL_ADDR, block_identifier=18_000_000)
+        result = discover_coins(provider, POOL_ADDR, block_identifier=18_000_000)
         assert len(result.token_addresses) == 2
 
     def testNoCoinsAtAll(self):
         """Both uint256 and int128 revert on the first call returns empty result."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
-        w3 = FakeCurveW3({})  # No handlers — all calls revert
+        provider = make_fake_curve_provider({})  # No handlers — all calls revert
 
-        result = discover_coins(w3, POOL_ADDR, block_identifier=18_000_000)
+        result = discover_coins(provider, POOL_ADDR, block_identifier=18_000_000)
         assert len(result.token_addresses) == 0
         assert len(result.balances) == 0
 
@@ -237,14 +237,14 @@ class TestDiscoverCoinsEdgeCases:
                 raise Exception(msg)
             return _encode_uint256(100)
 
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             COINS_UINT256: handle_coins_uint256,
             BALANCES_UINT256: handle_balances_uint256,
         })
 
-        result = discover_coins(w3, POOL_ADDR, block_identifier=18_000_000)
+        result = discover_coins(provider, POOL_ADDR, block_identifier=18_000_000)
         # Coin 0 (DAI) + balance is fetched. Coin 1 (USDC) is appended
         # but its balance reverts, breaking the loop.
         assert len(result.token_addresses) == 2

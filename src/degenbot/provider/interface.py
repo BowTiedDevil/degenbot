@@ -22,6 +22,7 @@ Example:
     >>> result = provider.call(to="0x...", data=calldata)
 """
 
+import warnings
 from typing import Any, Literal, Protocol, Self, runtime_checkable
 
 from hexbytes import HexBytes
@@ -111,6 +112,8 @@ class _SyncProviderBackend(Protocol):
 
     def call(self, to: str, data: bytes, block: int | None) -> HexBytes: ...
 
+    def call_raw(self, tx: dict[str, Any], block: int | None) -> HexBytes: ...
+
     def get_code(self, address: str, block: int | None) -> HexBytes: ...
 
     def get_balance(self, address: str, block: int | None) -> int: ...
@@ -165,6 +168,11 @@ class _Web3Adapter:
 
     def call(self, to: str, data: bytes, block: int | None) -> HexBytes:
         tx: dict[str, Any] = {"to": to, "data": data}
+        if block is not None:
+            return self._w3.eth.call(tx, block)
+        return self._w3.eth.call(tx)
+
+    def call_raw(self, tx: dict[str, Any], block: int | None) -> HexBytes:
         if block is not None:
             return self._w3.eth.call(tx, block)
         return self._w3.eth.call(tx)
@@ -242,6 +250,9 @@ class _AlloyAdapter:
     def call(self, to: str, data: bytes, block: int | None) -> HexBytes:
         return self._alloy.call(to, data, block_number=block)
 
+    def call_raw(self, tx: dict[str, Any], block: int | None) -> HexBytes:
+        return self._alloy.call(tx["to"], tx["data"], block_number=block)
+
     def get_code(self, address: str, block: int | None) -> HexBytes:
         return self._alloy.get_code(address, block_number=block)
 
@@ -298,6 +309,9 @@ class _OfflineAdapter:
 
     def call(self, to: str, data: bytes, block: int | None) -> HexBytes:
         return self._offline.call(to, data, block_number=block)
+
+    def call_raw(self, tx: dict[str, Any], block: int | None) -> HexBytes:
+        return self._offline.call(tx["to"], tx["data"], block_number=block)
 
     def get_code(self, address: str, block: int | None) -> HexBytes:
         return self._offline.get_code(address, block_number=block)
@@ -406,7 +420,17 @@ class ProviderAdapter:  # noqa:PLR0904
 
     @property
     def underlying(self) -> Any:  # noqa: ANN401
-        """Get the underlying provider instance."""
+        """Get the underlying provider instance.
+
+        .. deprecated:: 0.x
+            This escape hatch will be removed in a future release.
+            Use ProviderAdapter methods directly instead.
+        """
+        warnings.warn(
+            "ProviderAdapter.underlying is deprecated — use ProviderAdapter methods directly.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self._raw_provider
 
     @property
@@ -453,6 +477,49 @@ class ProviderAdapter:  # noqa:PLR0904
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         """Execute an eth_call."""
         return self._backend.call(to, data, block)
+
+    def call_raw(self, tx: dict[str, Any], block: int | None = None) -> HexBytes:
+        """Execute an eth_call with a raw transaction dict.
+
+        The dict must contain ``to`` (address string) and ``data`` (bytes).
+        Additional keys (e.g. ``from``, ``value``) are passed through to the
+        backend.
+
+        This is the low-level counterpart to :meth:`call`, which uses keyword
+        arguments. Prefer :meth:`call` for new code; use :meth:`call_raw` when
+        migrating existing ``w3.eth.call({\"to\": ..., \"data\": ...})`` call
+        sites.
+        """
+        return self._backend.call_raw(tx, block)
+
+    def batch_call(
+        self, calls: list[dict[str, Any]], block: int | None = None
+    ) -> list[HexBytes]:
+        """Execute multiple eth_calls and return results in input order.
+
+        Each entry in ``calls`` is a transaction dict with at least ``to`` and
+        ``data`` keys, matching the :meth:`call_raw` signature.
+
+        The default implementation sends requests sequentially. Backends that
+        support batching (e.g. multicall3) can override this for better
+        performance.
+        """
+        return [self._backend.call_raw(tx, block) for tx in calls]
+
+    def get_block_timestamp(self, block: int | None = None) -> int:
+        """Get the timestamp for a block.
+
+        Args:
+            block: Block number, or None for latest.
+
+        Returns:
+            The block timestamp as an integer (Unix seconds).
+        """
+        block_data = self._backend.get_block(block if block is not None else "latest")
+        if block_data is None:
+            msg = f"Block {block} not found"
+            raise ValueError(msg)
+        return block_data["timestamp"]
 
     def get_code(self, address: str, block: int | None = None) -> HexBytes:
         """Get contract bytecode at an address."""
@@ -725,7 +792,18 @@ class AsyncProviderAdapter:
 
     @property
     def underlying(self) -> Any:  # noqa: ANN401
-        """Get the underlying provider instance."""
+        """Get the underlying provider instance.
+
+        .. deprecated:: 0.x
+            This escape hatch will be removed in a future release.
+            Use AsyncProviderAdapter methods directly instead.
+        """
+        warnings.warn(
+            "AsyncProviderAdapter.underlying is deprecated "
+            "— use AsyncProviderAdapter methods directly.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self._raw_provider
 
     # Note: Async provider properties raise NotImplementedError intentionally.

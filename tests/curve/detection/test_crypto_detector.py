@@ -23,11 +23,11 @@ def _encode_uint256(val: int) -> bytes:
 class TestDetectCryptoParams:
     def testNotCryptoPool(self):
         """Pool where fee_gamma() reverts is not a crypto pool."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
-        w3 = FakeCurveW3({})
+        provider = make_fake_curve_provider({})
 
-        result = detect_crypto_params(w3, POOL_ADDR, block_identifier=18_000_000)
+        result = detect_crypto_params(provider, POOL_ADDR, block_identifier=18_000_000)
         assert not result.is_crypto
         assert result.fee_gamma is None
         assert result.mid_fee is None
@@ -37,20 +37,20 @@ class TestDetectCryptoParams:
 
     def testFeeGammaZeroIsNotCrypto(self):
         """Pool where fee_gamma() returns 0 is not a crypto pool."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             FEE_GAMMA: _encode_uint256(0),
         })
 
-        result = detect_crypto_params(w3, POOL_ADDR, block_identifier=18_000_000)
+        result = detect_crypto_params(provider, POOL_ADDR, block_identifier=18_000_000)
         assert not result.is_crypto
 
     def testCryptoPoolWithAllParams(self):
         """Crypto pool with fee_gamma > 0 fetches all related parameters."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             FEE_GAMMA: _encode_uint256(5_000_000_000_000_000),
             MID_FEE: _encode_uint256(4_000_000),
             OUT_FEE: _encode_uint256(4_000_000),
@@ -58,7 +58,7 @@ class TestDetectCryptoParams:
             OFFPEG_FEE_MULTIPLIER: _encode_uint256(5_000_000_000_000_000),
         })
 
-        result = detect_crypto_params(w3, POOL_ADDR, block_identifier=18_000_000)
+        result = detect_crypto_params(provider, POOL_ADDR, block_identifier=18_000_000)
         assert result.is_crypto
         assert result.fee_gamma == 5_000_000_000_000_000
         assert result.mid_fee == 4_000_000
@@ -68,16 +68,16 @@ class TestDetectCryptoParams:
 
     def testCryptoPoolWithMissingMidFee(self):
         """Crypto pool where mid_fee() reverts still reports is_crypto=True."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             FEE_GAMMA: _encode_uint256(5_000_000_000_000_000),
             # MID_FEE not provided — will revert
             OUT_FEE: _encode_uint256(4_000_000),
             GAMMA: _encode_uint256(100_000_000_000_000),
         })
 
-        result = detect_crypto_params(w3, POOL_ADDR, block_identifier=18_000_000)
+        result = detect_crypto_params(provider, POOL_ADDR, block_identifier=18_000_000)
         assert result.is_crypto
         assert result.mid_fee is None
         assert result.out_fee == 4_000_000
@@ -85,9 +85,9 @@ class TestDetectCryptoParams:
 
     def testCryptoPoolWithoutOffpegFee(self):
         """Crypto pool where offpeg_fee_multiplier() reverts returns None for it."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             FEE_GAMMA: _encode_uint256(5_000_000_000_000_000),
             MID_FEE: _encode_uint256(4_000_000),
             OUT_FEE: _encode_uint256(4_000_000),
@@ -95,6 +95,6 @@ class TestDetectCryptoParams:
             # OFFPEG_FEE_MULTIPLIER not provided
         })
 
-        result = detect_crypto_params(w3, POOL_ADDR, block_identifier=18_000_000)
+        result = detect_crypto_params(provider, POOL_ADDR, block_identifier=18_000_000)
         assert result.is_crypto
         assert result.offpeg_fee_multiplier is None

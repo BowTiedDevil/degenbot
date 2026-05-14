@@ -6,7 +6,7 @@ probing initial_A(), initial_A_time(), future_A(), and future_A_time().
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import eth_abi.abi
 
@@ -16,9 +16,11 @@ from degenbot.functions import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
+    from degenbot.provider.interface import ProviderAdapter
+
 
 def detect_a_ramping(
-    w3: Any,
+    provider: ProviderAdapter,
     pool_address: ChecksumAddress,
     *,
     block_identifier: int,
@@ -29,7 +31,7 @@ def detect_a_ramping(
     If any call reverts, returns has_ramping=False.
     """
     try:
-        initial_a_result = w3.eth.call(
+        initial_a_result = provider.call_raw(
             {
                 "to": pool_address,
                 "data": encode_function_calldata(
@@ -37,11 +39,11 @@ def detect_a_ramping(
                     function_arguments=[],
                 ),
             },
-            block_identifier=block_identifier,
+            block=block_identifier,
         )
         (initial_a,) = eth_abi.abi.decode(types=["uint256"], data=initial_a_result)
 
-        initial_a_time_result = w3.eth.call(
+        initial_a_time_result = provider.call_raw(
             {
                 "to": pool_address,
                 "data": encode_function_calldata(
@@ -49,11 +51,11 @@ def detect_a_ramping(
                     function_arguments=[],
                 ),
             },
-            block_identifier=block_identifier,
+            block=block_identifier,
         )
         (initial_a_time,) = eth_abi.abi.decode(types=["uint256"], data=initial_a_time_result)
 
-        future_a_result = w3.eth.call(
+        future_a_result = provider.call_raw(
             {
                 "to": pool_address,
                 "data": encode_function_calldata(
@@ -61,11 +63,11 @@ def detect_a_ramping(
                     function_arguments=[],
                 ),
             },
-            block_identifier=block_identifier,
+            block=block_identifier,
         )
         (future_a,) = eth_abi.abi.decode(types=["uint256"], data=future_a_result)
 
-        future_a_time_result = w3.eth.call(
+        future_a_time_result = provider.call_raw(
             {
                 "to": pool_address,
                 "data": encode_function_calldata(
@@ -73,7 +75,7 @@ def detect_a_ramping(
                     function_arguments=[],
                 ),
             },
-            block_identifier=block_identifier,
+            block=block_identifier,
         )
         (future_a_time,) = eth_abi.abi.decode(types=["uint256"], data=future_a_time_result)
     except Exception:

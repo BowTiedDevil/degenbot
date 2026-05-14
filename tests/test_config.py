@@ -29,10 +29,13 @@ def test_connection_manager(fork_mainnet_full: AnvilFork):
     cm.register_provider(provider)
     cm.set_default_chain(provider.chain_id)
     assert cm.default_chain_id == fork_mainnet_full.w3.eth.chain_id
-    assert cm.get_web3(fork_mainnet_full.w3.eth.chain_id) is fork_mainnet_full.w3
+    # get_web3() is deprecated but still works for Web3 providers
+    with pytest.warns(DeprecationWarning, match="get_web3"):
+        assert cm.get_web3(fork_mainnet_full.w3.eth.chain_id) is fork_mainnet_full.w3  # noqa: DTZ001
 
-    with pytest.raises(DegenbotValueError):
-        cm.get_web3(69)
+    with pytest.warns(DeprecationWarning, match="get_web3"):
+        with pytest.raises(DegenbotValueError):
+            cm.get_web3(69)
 
 
 def test_optimized_web3():

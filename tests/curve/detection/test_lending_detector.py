@@ -52,7 +52,7 @@ class FakeErc20Token:
 class TestDetectLendingTokens:
     def testNoLendingTokens(self):
         """Plain pool with no cTokens or yTokens."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         token_addresses = (DAI, USDC, USDT)
         tokens = tuple(
@@ -60,12 +60,12 @@ class TestDetectLendingTokens:
         )
 
         # isCToken() returns False for all, token() reverts for all
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             IS_CTOKEN: _encode_bool(False),
         })
 
         result = detect_lending_tokens(
-            w3,
+            provider,
             POOL_ADDR,
             token_addresses,
             tokens,
@@ -76,7 +76,7 @@ class TestDetectLendingTokens:
 
     def testCTokenDetection(self):
         """cToken detection via isCToken(), with underlying decimals for precision."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         # Pool with cDAI (8 decimals) and USDC (6 decimals)
         token_addresses = (CDAI, USDC)
@@ -100,14 +100,14 @@ class TestDetectLendingTokens:
             # DAI has 18 decimals
             return _encode_uint8(18)
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             IS_CTOKEN: handle_is_ctoken,
             UNDERLYING: handle_underlying,
             DECIMALS: handle_decimals,
         })
 
         result = detect_lending_tokens(
-            w3,
+            provider,
             POOL_ADDR,
             token_addresses,
             tokens,
@@ -122,7 +122,7 @@ class TestDetectLendingTokens:
 
     def testCTokenWithDifferentUnderlyingDecimals(self):
         """cUSDC has 8 decimals, USDC underlying has 6 → precision = 10^12."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         token_addresses = (CUSDC, DAI)
         tokens = tuple(
@@ -142,14 +142,14 @@ class TestDetectLendingTokens:
                 return _encode_uint8(6)
             return _encode_uint8(18)
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             IS_CTOKEN: handle_is_ctoken,
             UNDERLYING: handle_underlying,
             DECIMALS: handle_decimals,
         })
 
         result = detect_lending_tokens(
-            w3,
+            provider,
             POOL_ADDR,
             token_addresses,
             tokens,
@@ -162,7 +162,7 @@ class TestDetectLendingTokens:
 
     def testYTokenDetection(self):
         """yToken detection via token() returning a non-zero address."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         token_addresses = (YDAI, USDC)
         tokens = tuple(
@@ -178,13 +178,13 @@ class TestDetectLendingTokens:
                 return _encode_address(DAI)
             return _encode_address(ZERO_ADDR)
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             IS_CTOKEN: handle_is_ctoken,
             TOKEN: handle_token,
         })
 
         result = detect_lending_tokens(
-            w3,
+            provider,
             POOL_ADDR,
             token_addresses,
             tokens,
@@ -197,7 +197,7 @@ class TestDetectLendingTokens:
 
     def testYTokenWithZeroAddressNotLending(self):
         """yToken where token() returns zero address is not treated as lending."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         token_addresses = (DAI, USDC)
         tokens = tuple(
@@ -211,13 +211,13 @@ class TestDetectLendingTokens:
             # Returns zero address — not a yToken
             return _encode_address(ZERO_ADDR)
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             IS_CTOKEN: handle_is_ctoken,
             TOKEN: handle_token,
         })
 
         result = detect_lending_tokens(
-            w3,
+            provider,
             POOL_ADDR,
             token_addresses,
             tokens,

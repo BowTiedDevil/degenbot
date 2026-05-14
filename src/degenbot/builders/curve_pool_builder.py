@@ -21,6 +21,7 @@ from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.liquidity_pool import BrokenPool
 from degenbot.functions import encode_function_calldata
 from degenbot.logging import logger
+from degenbot.provider.interface import ProviderAdapter
 from degenbot.registry import PoolRegistry, TokenRegistry
 from degenbot.types.aliases import ChainId
 
@@ -69,22 +70,20 @@ class CurvePoolBuilder:
         chain_id = chain_id or self._connections.default_chain_id
         provider = self._connections.get_provider(chain_id)
         state_block = state_block if state_block is not None else provider.get_block_number()
-        w3 = self._connections.get_web3(chain_id)
 
         # 1. Discover coins and balances
-        coins = discover_coins(w3, pool_address, block_identifier=state_block)
+        coins = discover_coins(provider, pool_address, block_identifier=state_block)
 
         # 2. Fetch A, fee, admin_fee
         a_coefficient, fee, admin_fee = _fetch_pool_params(
-            w3, pool_address, block_identifier=state_block
+            provider, pool_address, block_identifier=state_block
         )
 
         # 3. Detect A ramping
-        a_ramping = detect_a_ramping(w3, pool_address, block_identifier=state_block)
+        a_ramping = detect_a_ramping(provider, pool_address, block_identifier=state_block)
 
         # 4. Get block timestamp
-        block = provider.get_block(state_block)
-        create_timestamp = block["timestamp"]
+        create_timestamp = provider.get_block_timestamp(block=state_block)
 
         # 5. Build tokens
         tokens = tuple(
@@ -94,15 +93,15 @@ class CurvePoolBuilder:
 
         # 6. Detect lending tokens
         lending = detect_lending_tokens(
-            w3, pool_address, coins.token_addresses, tokens, block_identifier=state_block
+            provider, pool_address, coins.token_addresses, tokens, block_identifier=state_block
         )
 
         # 7. Detect crypto pool parameters
-        crypto = detect_crypto_params(w3, pool_address, block_identifier=state_block)
+        crypto = detect_crypto_params(provider, pool_address, block_identifier=state_block)
 
         # 8. Find LP token
         lp_token_address = find_lp_token(
-            w3,
+            provider,
             pool_address,
             registry_addresses=_REGISTRY_ADDRESSES,
             block_identifier=state_block,
@@ -110,7 +109,7 @@ class CurvePoolBuilder:
 
         # 9. Detect metapool
         metapool = detect_metapool(
-            w3,
+            provider,
             pool_address,
             coins.token_addresses,
             registry_addresses=_REGISTRY_ADDRESSES,
@@ -246,14 +245,13 @@ class CurvePoolBuilder:
         _block_number = block_number if block_number is not None else provider.get_block_number()
 
         # Fetch balances for each token in the pool
-        w3 = self._connections.get_web3(pool.chain_id)
         new_balances: list[int] = []
         for i, token in enumerate(pool.tokens):
             (balance,) = cast(
                 "tuple[int]",
                 eth_abi.abi.decode(
                     types=["uint256"],
-                    data=w3.eth.call(
+                    data=provider.call_raw(
                         {
                             "to": pool.address,
                             "data": encode_function_calldata(
@@ -261,7 +259,7 @@ class CurvePoolBuilder:
                                 function_arguments=[i],
                             ),
                         },
-                        block_identifier=_block_number,
+                        block=_block_number,
                     ),
                 ),
             )
@@ -279,31 +277,31 @@ class CurvePoolBuilder:
 
 
 def _fetch_pool_params(
-    w3: Any,
+    provider: ProviderAdapter,
     pool_address: str,
     *,
     block_identifier: int,
 ) -> tuple[int, int, int]:
     """Fetch A, fee, and admin_fee from a Curve pool contract."""
-    a_result = w3.eth.call(
+    a_result = provider.call_raw(
         {
             "to": pool_address,
             "data": encode_function_calldata(function_prototype="A()", function_arguments=[]),
         },
-        block_identifier=block_identifier,
+        block=block_identifier,
     )
     (a_coefficient,) = eth_abi.abi.decode(types=["uint256"], data=a_result)
 
-    fee_result = w3.eth.call(
+    fee_result = provider.call_raw(
         {
             "to": pool_address,
             "data": encode_function_calldata(function_prototype="fee()", function_arguments=[]),
         },
-        block_identifier=block_identifier,
+        block=block_identifier,
     )
     (fee,) = eth_abi.abi.decode(types=["uint256"], data=fee_result)
 
-    admin_fee_result = w3.eth.call(
+    admin_fee_result = provider.call_raw(
         {
             "to": pool_address,
             "data": encode_function_calldata(
@@ -311,7 +309,7 @@ def _fetch_pool_params(
                 function_arguments=[],
             ),
         },
-        block_identifier=block_identifier,
+        block=block_identifier,
     )
     (admin_fee,) = eth_abi.abi.decode(types=["uint256"], data=admin_fee_result)
 

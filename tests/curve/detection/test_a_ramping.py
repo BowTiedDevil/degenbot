@@ -22,11 +22,11 @@ def _encode_uint256(val: int) -> bytes:
 class TestDetectARamping:
     def testNoRampingParameters(self):
         """Pool that doesn't support A ramping functions returns has_ramping=False."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
-        w3 = FakeCurveW3({})  # All calls revert
+        provider = make_fake_curve_provider({})  # All calls revert
 
-        result = detect_a_ramping(w3, POOL_ADDR, block_identifier=18_000_000)
+        result = detect_a_ramping(provider, POOL_ADDR, block_identifier=18_000_000)
         assert not result.has_ramping
         assert result.initial_a is None
         assert result.initial_a_time is None
@@ -35,16 +35,16 @@ class TestDetectARamping:
 
     def testActiveRamping(self):
         """Pool with all four A ramping parameters returns has_ramping=True."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             INITIAL_A: _encode_uint256(1000),
             INITIAL_A_TIME: _encode_uint256(1700000000),
             FUTURE_A: _encode_uint256(2000),
             FUTURE_A_TIME: _encode_uint256(1700086400),
         })
 
-        result = detect_a_ramping(w3, POOL_ADDR, block_identifier=18_000_000)
+        result = detect_a_ramping(provider, POOL_ADDR, block_identifier=18_000_000)
         assert result.has_ramping
         assert result.initial_a == 1000
         assert result.initial_a_time == 1700000000
@@ -53,15 +53,15 @@ class TestDetectARamping:
 
     def testPartialRampingReturnsNoRamping(self):
         """If any of the four ramping calls reverts, has_ramping is False."""
-        from tests.curve.detection.fake_w3 import FakeCurveW3
+        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         # Only provide 3 of 4 ramping selectors
-        w3 = FakeCurveW3({
+        provider = make_fake_curve_provider({
             INITIAL_A: _encode_uint256(1000),
             INITIAL_A_TIME: _encode_uint256(1700000000),
             FUTURE_A: _encode_uint256(2000),
             # Missing FUTURE_A_TIME — will revert
         })
 
-        result = detect_a_ramping(w3, POOL_ADDR, block_identifier=18_000_000)
+        result = detect_a_ramping(provider, POOL_ADDR, block_identifier=18_000_000)
         assert not result.has_ramping

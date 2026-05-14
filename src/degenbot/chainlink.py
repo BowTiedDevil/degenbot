@@ -1,6 +1,8 @@
 from typing import Any
 
+import eth_abi.abi
 import pydantic_core
+from web3 import Web3
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.aliases import ChainId
@@ -47,12 +49,14 @@ class ChainlinkPriceContract:
                 msg = "ChainlinkPriceContract requires a `bot` to fetch decimals"
                 raise ValueError(msg)
             chain_id = self._chain_id or self._bot.connections.default_chain_id
-            w3 = self._bot.connections.get_provider(chain_id).underlying
-            contract = w3.eth.contract(
-                address=self.address,
-                abi=CHAINLINK_PRICE_FEED_ABI,
+            provider = self._bot.connections.get_provider(chain_id)
+            (decimals,) = eth_abi.abi.decode(
+                types=["uint8"],
+                data=provider.call_raw(
+                    {"to": self.address, "data": Web3.keccak(text="decimals()")[:4]},
+                ),
             )
-            self._decimals = contract.functions.decimals().call()
+            self._decimals = decimals
         return self._decimals
 
     @property
@@ -61,9 +65,12 @@ class ChainlinkPriceContract:
             msg = "ChainlinkPriceContract requires a `bot` to fetch price"
             raise ValueError(msg)
         chain_id = self._chain_id or self._bot.connections.default_chain_id
-        w3 = self._bot.connections.get_provider(chain_id).underlying
-        contract = w3.eth.contract(
-            address=self.address,
-            abi=CHAINLINK_PRICE_FEED_ABI,
+        provider = self._bot.connections.get_provider(chain_id)
+        round_data = provider.call_raw(
+            {"to": self.address, "data": Web3.keccak(text="latestRoundData()")[:4]},
         )
-        return float(contract.functions.latestRoundData().call()[1] / (10**self.decimals))
+        _round_id, answer, _started_at, _updated_at, _answered_in_round = eth_abi.abi.decode(
+            types=["uint80", "int256", "uint256", "uint256", "uint80"],
+            data=round_data,
+        )
+        return float(answer / (10**self.decimals))

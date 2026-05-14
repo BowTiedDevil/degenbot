@@ -6,7 +6,7 @@ the Curve registry and factory via get_lp_token().
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import eth_abi.abi
 
@@ -17,9 +17,11 @@ from degenbot.functions import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
+    from degenbot.provider.interface import ProviderAdapter
+
 
 def find_lp_token(
-    w3: Any,
+    provider: ProviderAdapter,
     pool_address: ChecksumAddress,
     *,
     registry_addresses: tuple[ChecksumAddress, ...],
@@ -33,7 +35,7 @@ def find_lp_token(
     """
     for registry_address in registry_addresses:
         try:
-            lp_token_result = w3.eth.call(
+            lp_token_result = provider.call_raw(
                 {
                     "to": registry_address,
                     "data": encode_function_calldata(
@@ -41,7 +43,7 @@ def find_lp_token(
                         function_arguments=[pool_address],
                     ),
                 },
-                block_identifier=block_identifier,
+                block=block_identifier,
             )
             (lp_token_addr,) = eth_abi.abi.decode(types=["address"], data=lp_token_result)
             if lp_token_addr != _ZERO_ADDRESS:

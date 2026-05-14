@@ -10,7 +10,7 @@ builder handles the recursive base pool build and token construction.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import eth_abi.abi
 
@@ -21,6 +21,8 @@ from degenbot.functions import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
+    from degenbot.provider.interface import ProviderAdapter
+
 
 # 3Crv LP token — used as fallback base pool detection
 _THREE_CRV_LP_TOKEN_ADDRESS = "0x6c3F90f043a72FA612Cbac8115ee7e52bDE6E490"
@@ -28,7 +30,7 @@ _THREE_CRV_POOL_ADDRESS = get_checksum_address("0xbEbc44782C7dB0a1A60Cb6fe97d0b4
 
 
 def detect_metapool(
-    w3: Any,
+    provider: ProviderAdapter,
     pool_address: ChecksumAddress,
     token_addresses: tuple[ChecksumAddress, ...],
     *,
@@ -42,7 +44,7 @@ def detect_metapool(
     """
     for registry_address in registry_addresses:
         try:
-            is_meta_result = w3.eth.call(
+            is_meta_result = provider.call_raw(
                 {
                     "to": registry_address,
                     "data": encode_function_calldata(
@@ -50,7 +52,7 @@ def detect_metapool(
                         function_arguments=[pool_address],
                     ),
                 },
-                block_identifier=block_identifier,
+                block=block_identifier,
             )
             (is_meta,) = eth_abi.abi.decode(types=["bool"], data=is_meta_result)
             if not is_meta:
@@ -59,11 +61,11 @@ def detect_metapool(
 
             # Get base pool address from the pool contract itself
             base_pool_address = _resolve_base_pool_address(
-                w3, pool_address, token_addresses, registry_address, block_identifier
+                provider, pool_address, token_addresses, registry_address, block_identifier
             )
 
             # Get underlying coins from registry
-            underlying_coins_result = w3.eth.call(
+            underlying_coins_result = provider.call_raw(
                 {
                     "to": registry_address,
                     "data": encode_function_calldata(
@@ -71,7 +73,7 @@ def detect_metapool(
                         function_arguments=[pool_address],
                     ),
                 },
-                block_identifier=block_identifier,
+                block=block_identifier,
             )
             underlying_addresses = eth_abi.abi.decode(
                 types=["address[8]"], data=underlying_coins_result
@@ -101,7 +103,7 @@ def detect_metapool(
 
 
 def _resolve_base_pool_address(
-    w3: Any,
+    provider: ProviderAdapter,
     pool_address: ChecksumAddress,
     token_addresses: tuple[ChecksumAddress, ...],
     registry_address: ChecksumAddress,
@@ -110,7 +112,7 @@ def _resolve_base_pool_address(
     """Resolve the base pool address, trying multiple methods in order."""
     # Try base_pool() on the pool contract
     try:
-        base_pool_result = w3.eth.call(
+        base_pool_result = provider.call_raw(
             {
                 "to": pool_address,
                 "data": encode_function_calldata(
@@ -118,7 +120,7 @@ def _resolve_base_pool_address(
                     function_arguments=[],
                 ),
             },
-            block_identifier=block_identifier,
+            block=block_identifier,
         )
         (base_pool_address,) = eth_abi.abi.decode(types=["address"], data=base_pool_result)
         return get_checksum_address(base_pool_address)
@@ -127,7 +129,7 @@ def _resolve_base_pool_address(
 
     # Try get_base_pool() on the registry
     try:
-        base_pool_result = w3.eth.call(
+        base_pool_result = provider.call_raw(
             {
                 "to": registry_address,
                 "data": encode_function_calldata(
@@ -135,7 +137,7 @@ def _resolve_base_pool_address(
                     function_arguments=[pool_address],
                 ),
             },
-            block_identifier=block_identifier,
+            block=block_identifier,
         )
         (base_pool_address,) = eth_abi.abi.decode(types=["address"], data=base_pool_result)
         return get_checksum_address(base_pool_address)
