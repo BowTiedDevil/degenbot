@@ -12,7 +12,7 @@ from web3.types import LogReceipt
 from degenbot.aave.enrichment.handlers.base import OperationHandler
 from degenbot.aave.enrichment.handlers.gho_flash_loan import GhoFlashLoanHandler
 from degenbot.aave.events import ScaledTokenEventType
-from degenbot.aave.models import EnrichedGhoDebtBurnEvent
+from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
 
 if TYPE_CHECKING:
@@ -65,7 +65,7 @@ class TestGhoFlashLoanHandler:
         assert result.raw_amount == raw_amount
         # Scaled amount = raw_amount / index (floor for debt burn)
         assert result.scaled_amount == 500_000_000_000_000_000
-        assert isinstance(result, EnrichedGhoDebtBurnEvent)
+        assert result.event_type == ScaledTokenEventType.GHO_DEBT_BURN
 
 
 # Helper functions to create mock objects
@@ -152,9 +152,8 @@ def _create_mock_operation(
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for GHO_FLASH_LOAN."""
     from degenbot.aave.enrichment.context import EnrichmentContext
-    from degenbot.aave.models import EnrichedScaledTokenEvent
 
-    mock_session = MagicMock()
+    MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
     mock_context.token_revisions = {}
@@ -195,15 +194,6 @@ def _create_mock_context() -> MagicMock:
         """Build enriched event for testing."""
         event_type = event.event_type
 
-        class_map: dict[ScaledTokenEventType, type[EnrichedScaledTokenEvent]] = {
-            ScaledTokenEventType.GHO_DEBT_BURN: EnrichedGhoDebtBurnEvent,
-        }
-
-        enriched_class = class_map.get(event_type)
-        if enriched_class is None:
-            msg = f"Unsupported event type for test: {event_type}"
-            raise ValueError(msg)
-
         kwargs: dict[str, Any] = {
             "event": event.event,
             "event_type": event_type,
@@ -222,7 +212,7 @@ def _create_mock_context() -> MagicMock:
             "discount_scaled": 0,
         }
 
-        return enriched_class(**kwargs)
+        return EnrichedScaledTokenEvent(**kwargs)
 
     mock_context.get_token_revision = mock_get_token_revision
     mock_context.get_underlying_asset = mock_get_underlying_asset

@@ -12,10 +12,7 @@ from web3.types import LogReceipt
 from degenbot.aave.enrichment.handlers.base import OperationHandler
 from degenbot.aave.enrichment.handlers.deficit_coverage import DeficitCoverageHandler
 from degenbot.aave.events import ScaledTokenEventType
-from degenbot.aave.models import (
-    EnrichedCollateralBurnEvent,
-    EnrichedCollateralTransferEvent,
-)
+from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
 
 if TYPE_CHECKING:
@@ -63,7 +60,7 @@ class TestDeficitCoverageHandler:
 
         assert result.scaled_amount == 1000
         assert result.raw_amount == 1000
-        assert isinstance(result, EnrichedCollateralTransferEvent)
+        assert result.event_type == ScaledTokenEventType.COLLATERAL_TRANSFER
 
     def test_deficit_coverage_burn_calculates_scaled_amount(
         self, handler: DeficitCoverageHandler
@@ -91,7 +88,7 @@ class TestDeficitCoverageHandler:
         assert result.raw_amount == raw_amount
         # Scaled amount = raw_amount / index (ceil for collateral burn)
         assert result.scaled_amount == 500_000_000_000_000_000
-        assert isinstance(result, EnrichedCollateralBurnEvent)
+        assert result.event_type == ScaledTokenEventType.COLLATERAL_BURN
 
 
 # Helper functions to create mock objects
@@ -178,9 +175,8 @@ def _create_mock_operation(
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for transfer events."""
     from degenbot.aave.enrichment.context import EnrichmentContext
-    from degenbot.aave.models import EnrichedScaledTokenEvent
 
-    mock_session = MagicMock()
+    MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
     mock_context.token_revisions = {}
@@ -193,15 +189,6 @@ def _create_mock_context() -> MagicMock:
     ) -> EnrichedScaledTokenEvent:
         """Build enriched event for testing."""
         event_type = event.event_type
-
-        class_map: dict[ScaledTokenEventType, type[EnrichedScaledTokenEvent]] = {
-            ScaledTokenEventType.COLLATERAL_TRANSFER: EnrichedCollateralTransferEvent,
-        }
-
-        enriched_class = class_map.get(event_type)
-        if enriched_class is None:
-            msg = f"Unsupported event type for test: {event_type}"
-            raise ValueError(msg)
 
         kwargs: dict[str, Any] = {
             "event": event.event,
@@ -217,7 +204,7 @@ def _create_mock_context() -> MagicMock:
             "to_address": event.target_address or event.user_address,
         }
 
-        return enriched_class(**kwargs)
+        return EnrichedScaledTokenEvent(**kwargs)
 
     mock_context.build_enriched_event = mock_build_enriched_event
     return mock_context
@@ -226,9 +213,8 @@ def _create_mock_context() -> MagicMock:
 def _create_mock_context_for_burn() -> MagicMock:
     """Create a mock EnrichmentContext for burn events."""
     from degenbot.aave.enrichment.context import EnrichmentContext
-    from degenbot.aave.models import EnrichedScaledTokenEvent
 
-    mock_session = MagicMock()
+    MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
     mock_context.token_revisions = {}
@@ -269,15 +255,6 @@ def _create_mock_context_for_burn() -> MagicMock:
         """Build enriched event for testing."""
         event_type = event.event_type
 
-        class_map: dict[ScaledTokenEventType, type[EnrichedScaledTokenEvent]] = {
-            ScaledTokenEventType.COLLATERAL_BURN: EnrichedCollateralBurnEvent,
-        }
-
-        enriched_class = class_map.get(event_type)
-        if enriched_class is None:
-            msg = f"Unsupported event type for test: {event_type}"
-            raise ValueError(msg)
-
         kwargs: dict[str, Any] = {
             "event": event.event,
             "event_type": event_type,
@@ -294,7 +271,7 @@ def _create_mock_context_for_burn() -> MagicMock:
             "target_address": None,
         }
 
-        return enriched_class(**kwargs)
+        return EnrichedScaledTokenEvent(**kwargs)
 
     mock_context.get_token_revision = mock_get_token_revision
     mock_context.get_underlying_asset = mock_get_underlying_asset

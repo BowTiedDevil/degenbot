@@ -10,21 +10,6 @@ from degenbot.aave.calculator import ScaledAmountCalculator
 from degenbot.aave.events import AaveV3PoolEvent, ScaledTokenEventType
 from degenbot.aave.extraction import RawAmountExtractor
 from degenbot.aave.models import (
-    EnrichedCollateralBurnEvent,
-    EnrichedCollateralInterestBurnEvent,
-    EnrichedCollateralInterestMintEvent,
-    EnrichedCollateralMintEvent,
-    EnrichedCollateralTransferEvent,
-    EnrichedDebtBurnEvent,
-    EnrichedDebtInterestBurnEvent,
-    EnrichedDebtInterestMintEvent,
-    EnrichedDebtMintEvent,
-    EnrichedDebtTransferEvent,
-    EnrichedGhoDebtBurnEvent,
-    EnrichedGhoDebtInterestBurnEvent,
-    EnrichedGhoDebtInterestMintEvent,
-    EnrichedGhoDebtMintEvent,
-    EnrichedGhoDebtTransferEvent,
     EnrichedScaledTokenEvent,
     EnrichmentError,
 )
@@ -34,6 +19,39 @@ from degenbot.database.models.erc20 import Erc20TokenTable
 
 if TYPE_CHECKING:
     from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
+
+# Event types that use index-based scaling (mint/burn/interest)
+_INDEX_SCALED_TYPES: set[ScaledTokenEventType] = {
+    ScaledTokenEventType.COLLATERAL_MINT,
+    ScaledTokenEventType.COLLATERAL_BURN,
+    ScaledTokenEventType.DEBT_MINT,
+    ScaledTokenEventType.DEBT_BURN,
+    ScaledTokenEventType.GHO_DEBT_MINT,
+    ScaledTokenEventType.GHO_DEBT_BURN,
+    # Interest accrual types also carry index
+    ScaledTokenEventType.COLLATERAL_INTEREST_MINT,
+    ScaledTokenEventType.COLLATERAL_INTEREST_BURN,
+    ScaledTokenEventType.DEBT_INTEREST_MINT,
+    ScaledTokenEventType.DEBT_INTEREST_BURN,
+    ScaledTokenEventType.GHO_DEBT_INTEREST_MINT,
+    ScaledTokenEventType.GHO_DEBT_INTEREST_BURN,
+}
+
+# Map base event types to their interest-accrual equivalents
+_INTEREST_EVENT_TYPE_MAP: dict[ScaledTokenEventType, ScaledTokenEventType] = {
+    ScaledTokenEventType.COLLATERAL_MINT: ScaledTokenEventType.COLLATERAL_INTEREST_MINT,
+    ScaledTokenEventType.COLLATERAL_BURN: ScaledTokenEventType.COLLATERAL_INTEREST_BURN,
+    ScaledTokenEventType.DEBT_MINT: ScaledTokenEventType.DEBT_INTEREST_MINT,
+    ScaledTokenEventType.DEBT_BURN: ScaledTokenEventType.DEBT_INTEREST_BURN,
+    ScaledTokenEventType.GHO_DEBT_MINT: ScaledTokenEventType.GHO_DEBT_INTEREST_MINT,
+    ScaledTokenEventType.GHO_DEBT_BURN: ScaledTokenEventType.GHO_DEBT_INTEREST_BURN,
+}
+
+# Map ERC20 transfer types to their base types
+_ERC20_TRANSFER_MAP: dict[ScaledTokenEventType, ScaledTokenEventType] = {
+    ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER: ScaledTokenEventType.COLLATERAL_TRANSFER,
+    ScaledTokenEventType.ERC20_DEBT_TRANSFER: ScaledTokenEventType.DEBT_TRANSFER,
+}
 
 
 class EnrichmentContext:
@@ -191,66 +209,18 @@ class EnrichmentContext:
         raw_amount: int,
         scaled_amount: int | None,
     ) -> EnrichedScaledTokenEvent:
-        """Create the appropriate enriched event type."""
+        """Create an enriched event using the unified model."""
         token_address = ChecksumAddress(event.event["address"])
         token_revision = self.get_token_revision(token_address)
         underlying_asset = self.get_underlying_asset(token_address)
         event_type = event.event_type
         is_interest_accrual = operation.operation_type == OperationType.INTEREST_ACCRUAL
 
-        # Map event type to enriched class
-        # For INTEREST_ACCRUAL, use interest-specific event types
-        class_map: dict[ScaledTokenEventType, type[EnrichedScaledTokenEvent]]
+        # Resolve the actual event type
         if is_interest_accrual:
-            class_map = {
-                ScaledTokenEventType.COLLATERAL_MINT: EnrichedCollateralInterestMintEvent,
-                ScaledTokenEventType.COLLATERAL_BURN: EnrichedCollateralInterestBurnEvent,
-                ScaledTokenEventType.DEBT_MINT: EnrichedDebtInterestMintEvent,
-                ScaledTokenEventType.DEBT_BURN: EnrichedDebtInterestBurnEvent,
-                ScaledTokenEventType.GHO_DEBT_MINT: EnrichedGhoDebtInterestMintEvent,
-                ScaledTokenEventType.GHO_DEBT_BURN: EnrichedGhoDebtInterestBurnEvent,
-            }
+            actual_event_type = _INTEREST_EVENT_TYPE_MAP.get(event_type, event_type)
         else:
-            class_map = {
-                ScaledTokenEventType.COLLATERAL_MINT: EnrichedCollateralMintEvent,
-                ScaledTokenEventType.COLLATERAL_BURN: EnrichedCollateralBurnEvent,
-                ScaledTokenEventType.COLLATERAL_TRANSFER: EnrichedCollateralTransferEvent,
-                ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER: EnrichedCollateralTransferEvent,
-                ScaledTokenEventType.DEBT_MINT: EnrichedDebtMintEvent,
-                ScaledTokenEventType.DEBT_BURN: EnrichedDebtBurnEvent,
-                ScaledTokenEventType.DEBT_TRANSFER: EnrichedDebtTransferEvent,
-                ScaledTokenEventType.ERC20_DEBT_TRANSFER: EnrichedDebtTransferEvent,
-                ScaledTokenEventType.GHO_DEBT_MINT: EnrichedGhoDebtMintEvent,
-                ScaledTokenEventType.GHO_DEBT_BURN: EnrichedGhoDebtBurnEvent,
-                ScaledTokenEventType.GHO_DEBT_TRANSFER: EnrichedGhoDebtTransferEvent,
-            }
-
-        enriched_class = class_map.get(event_type)
-        if enriched_class is None:
-            msg = f"Unknown event type: {event_type}"
-            raise EnrichmentError(msg)
-
-        # Build base kwargs (common to all event types)
-        # For interest accrual, map to the interest-specific event type
-        if is_interest_accrual:
-            interest_event_type_map: dict[ScaledTokenEventType, ScaledTokenEventType] = {
-                ScaledTokenEventType.COLLATERAL_MINT: ScaledTokenEventType.COLLATERAL_INTEREST_MINT,
-                ScaledTokenEventType.COLLATERAL_BURN: ScaledTokenEventType.COLLATERAL_INTEREST_BURN,
-                ScaledTokenEventType.DEBT_MINT: ScaledTokenEventType.DEBT_INTEREST_MINT,
-                ScaledTokenEventType.DEBT_BURN: ScaledTokenEventType.DEBT_INTEREST_BURN,
-                ScaledTokenEventType.GHO_DEBT_MINT: ScaledTokenEventType.GHO_DEBT_INTEREST_MINT,
-                ScaledTokenEventType.GHO_DEBT_BURN: ScaledTokenEventType.GHO_DEBT_INTEREST_BURN,
-            }
-            actual_event_type = interest_event_type_map.get(event_type, event_type)
-        else:
-            # Map ERC20 transfer types to their base types
-            event_type_map: dict[ScaledTokenEventType, ScaledTokenEventType] = {
-                ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER: (
-                    ScaledTokenEventType.COLLATERAL_TRANSFER
-                ),
-                ScaledTokenEventType.ERC20_DEBT_TRANSFER: ScaledTokenEventType.DEBT_TRANSFER,
-            }
-            actual_event_type = event_type_map.get(event_type, event_type)
+            actual_event_type = _ERC20_TRANSFER_MAP.get(event_type, event_type)
 
         kwargs: dict[str, Any] = {
             "event": event.event,
@@ -264,57 +234,52 @@ class EnrichmentContext:
             "underlying_asset": underlying_asset,
         }
 
-        # Interest accrual events need index and balance_increase for processor validation
+        # Index-scaled events (mint/burn/interest) require index and balance_increase
         if is_interest_accrual:
             if event.index is None:
                 msg = f"Interest accrual event has no index: {event}"
                 raise EnrichmentError(msg)
             kwargs["index"] = event.index
             kwargs["balance_increase"] = event.balance_increase or 0
-        # Index-scaled events (mint/burn) require index and balance_increase
-        elif event_type in {
-            ScaledTokenEventType.COLLATERAL_MINT,
-            ScaledTokenEventType.COLLATERAL_BURN,
-            ScaledTokenEventType.DEBT_MINT,
-            ScaledTokenEventType.DEBT_BURN,
-            ScaledTokenEventType.GHO_DEBT_MINT,
-            ScaledTokenEventType.GHO_DEBT_BURN,
-        }:
+        elif event_type in _INDEX_SCALED_TYPES:
             if event.index is None:
                 msg = f"Index-scaled event has no index: {event}"
                 raise EnrichmentError(msg)
             kwargs["index"] = event.index
             kwargs["balance_increase"] = event.balance_increase
 
-        # Add type-specific fields
-        if event_type == ScaledTokenEventType.COLLATERAL_MINT and not is_interest_accrual:
+        # Type-specific fields
+        if actual_event_type in {
+            ScaledTokenEventType.COLLATERAL_MINT,
+            ScaledTokenEventType.DEBT_MINT,
+        } and not is_interest_accrual:
             kwargs["caller_address"] = event.caller_address
-        elif event_type == ScaledTokenEventType.COLLATERAL_BURN and not is_interest_accrual:
+
+        if actual_event_type in {
+            ScaledTokenEventType.COLLATERAL_BURN,
+            ScaledTokenEventType.DEBT_BURN,
+        } and not is_interest_accrual:
             kwargs["from_address"] = event.from_address or event.user_address
             kwargs["target_address"] = event.target_address
-        elif event_type in {
+
+        if actual_event_type in {
             ScaledTokenEventType.COLLATERAL_TRANSFER,
             ScaledTokenEventType.DEBT_TRANSFER,
-            ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER,
-            ScaledTokenEventType.ERC20_DEBT_TRANSFER,
         }:
             kwargs["from_address"] = event.from_address or event.user_address
             kwargs["to_address"] = event.target_address or event.user_address
-        elif event_type == ScaledTokenEventType.DEBT_MINT and not is_interest_accrual:
-            kwargs["caller_address"] = event.caller_address
-        elif event_type == ScaledTokenEventType.DEBT_BURN and not is_interest_accrual:
-            kwargs["from_address"] = event.from_address or event.user_address
-            kwargs["target_address"] = event.target_address
-        elif event_type == ScaledTokenEventType.GHO_DEBT_MINT:
+
+        # GHO-specific fields
+        if actual_event_type == ScaledTokenEventType.GHO_DEBT_MINT:
             kwargs["caller_address"] = event.caller_address
             if is_interest_accrual:
-                # Interest accrual - use actual discount from event if available
                 kwargs["discount_percent"] = getattr(event, "discount_percent", 0)
                 kwargs["discount_scaled"] = getattr(event, "discount_scaled", 0)
             else:
                 kwargs["discount_percent"] = self._PLACEHOLDER_INT
                 kwargs["discount_scaled"] = self._PLACEHOLDER_INT
-        elif event_type == ScaledTokenEventType.GHO_DEBT_BURN:
+
+        elif actual_event_type == ScaledTokenEventType.GHO_DEBT_BURN:
             kwargs["from_address"] = event.from_address or event.user_address
             kwargs["target_address"] = event.target_address
             if is_interest_accrual:
@@ -323,9 +288,18 @@ class EnrichmentContext:
             else:
                 kwargs["discount_percent"] = self._PLACEHOLDER_INT
                 kwargs["discount_scaled"] = self._PLACEHOLDER_INT
-        elif event_type == ScaledTokenEventType.GHO_DEBT_TRANSFER:
+
+        elif actual_event_type == ScaledTokenEventType.GHO_DEBT_TRANSFER:
             kwargs["from_address"] = event.from_address or event.user_address
             kwargs["to_address"] = event.user_address
             kwargs["discount_scaled"] = self._PLACEHOLDER_INT
 
-        return enriched_class(**kwargs)
+        # Interest accrual GHO events
+        if actual_event_type in {
+            ScaledTokenEventType.GHO_DEBT_INTEREST_MINT,
+            ScaledTokenEventType.GHO_DEBT_INTEREST_BURN,
+        }:
+            kwargs["discount_percent"] = getattr(event, "discount_percent", 0)
+            kwargs["discount_scaled"] = getattr(event, "discount_scaled", 0)
+
+        return EnrichedScaledTokenEvent(**kwargs)

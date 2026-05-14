@@ -12,11 +12,7 @@ from web3.types import LogReceipt
 from degenbot.aave.enrichment.handlers.base import OperationHandler
 from degenbot.aave.enrichment.handlers.transfer import BalanceTransferHandler
 from degenbot.aave.events import ScaledTokenEventType
-from degenbot.aave.models import (
-    EnrichedCollateralTransferEvent,
-    EnrichedDebtTransferEvent,
-    EnrichedGhoDebtTransferEvent,
-)
+from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
 
 if TYPE_CHECKING:
@@ -64,7 +60,7 @@ class TestBalanceTransferHandler:
 
         assert result.scaled_amount == 1000
         assert result.raw_amount == 1000
-        assert isinstance(result, EnrichedCollateralTransferEvent)
+        assert result.event_type == ScaledTokenEventType.COLLATERAL_TRANSFER
 
     def test_debt_transfer_uses_amount_directly(
         self, handler: BalanceTransferHandler
@@ -84,7 +80,7 @@ class TestBalanceTransferHandler:
 
         assert result.scaled_amount == 500
         assert result.raw_amount == 500
-        assert isinstance(result, EnrichedDebtTransferEvent)
+        assert result.event_type == ScaledTokenEventType.DEBT_TRANSFER
 
     def test_gho_debt_transfer_uses_amount_directly(
         self, handler: BalanceTransferHandler
@@ -104,7 +100,7 @@ class TestBalanceTransferHandler:
 
         assert result.scaled_amount == 250
         assert result.raw_amount == 250
-        assert isinstance(result, EnrichedGhoDebtTransferEvent)
+        assert result.event_type == ScaledTokenEventType.GHO_DEBT_TRANSFER
 
     def test_erc20_collateral_transfer_uses_amount_directly(
         self, handler: BalanceTransferHandler
@@ -124,7 +120,7 @@ class TestBalanceTransferHandler:
 
         assert result.scaled_amount == 750
         assert result.raw_amount == 750
-        assert isinstance(result, EnrichedCollateralTransferEvent)
+        assert result.event_type == ScaledTokenEventType.COLLATERAL_TRANSFER
 
 
 # Helper functions to create mock objects
@@ -186,9 +182,8 @@ def _create_mock_operation(operation_type: OperationType) -> "Operation":
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for transfers."""
     from degenbot.aave.enrichment.context import EnrichmentContext
-    from degenbot.aave.models import EnrichedScaledTokenEvent
 
-    mock_session = MagicMock()
+    MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
     mock_context.token_revisions = {}
@@ -201,18 +196,6 @@ def _create_mock_context() -> MagicMock:
     ) -> EnrichedScaledTokenEvent:
         """Build enriched event for testing."""
         event_type = event.event_type
-
-        class_map: dict[ScaledTokenEventType, type[EnrichedScaledTokenEvent]] = {
-            ScaledTokenEventType.COLLATERAL_TRANSFER: EnrichedCollateralTransferEvent,
-            ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER: EnrichedCollateralTransferEvent,
-            ScaledTokenEventType.DEBT_TRANSFER: EnrichedDebtTransferEvent,
-            ScaledTokenEventType.GHO_DEBT_TRANSFER: EnrichedGhoDebtTransferEvent,
-        }
-
-        enriched_class = class_map.get(event_type)
-        if enriched_class is None:
-            msg = f"Unsupported event type for test: {event_type}"
-            raise ValueError(msg)
 
         # Map ERC20 transfer types to their base types
         event_type_map: dict[ScaledTokenEventType, ScaledTokenEventType] = {
@@ -240,7 +223,7 @@ def _create_mock_context() -> MagicMock:
         if event_type == ScaledTokenEventType.GHO_DEBT_TRANSFER:
             kwargs["discount_scaled"] = 0
 
-        return enriched_class(**kwargs)
+        return EnrichedScaledTokenEvent(**kwargs)
 
     mock_context.build_enriched_event = mock_build_enriched_event
     return mock_context

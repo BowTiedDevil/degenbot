@@ -12,12 +12,7 @@ from web3.types import LogReceipt
 from degenbot.aave.enrichment.handlers.base import OperationHandler
 from degenbot.aave.enrichment.handlers.repay import RepayHandler
 from degenbot.aave.events import ScaledTokenEventType
-from degenbot.aave.models import (
-    EnrichedDebtBurnEvent,
-    EnrichedDebtMintEvent,
-    EnrichedGhoDebtBurnEvent,
-    EnrichedGhoDebtMintEvent,
-)
+from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
 
 if TYPE_CHECKING:
@@ -69,7 +64,7 @@ class TestRepayHandler:
 
         assert result.raw_amount == raw_amount
         assert result.scaled_amount == 500_000_000_000_000_000
-        assert isinstance(result, EnrichedDebtBurnEvent)
+        assert result.event_type == ScaledTokenEventType.DEBT_BURN
 
     def test_interest_exceeds_repayment_uses_burn_calculation(
         self, handler: RepayHandler
@@ -106,7 +101,7 @@ class TestRepayHandler:
         assert result.raw_amount == repay_amount
         # Should use DEBT_BURN calculation (floor)
         assert result.scaled_amount == 750
-        assert isinstance(result, EnrichedDebtMintEvent)
+        assert result.event_type == ScaledTokenEventType.DEBT_MINT
 
     def test_gho_repay_standard_burn(
         self, handler: RepayHandler
@@ -129,7 +124,7 @@ class TestRepayHandler:
 
         assert result.raw_amount == raw_amount
         assert result.scaled_amount == 500_000_000_000_000_000
-        assert isinstance(result, EnrichedGhoDebtBurnEvent)
+        assert result.event_type == ScaledTokenEventType.GHO_DEBT_BURN
 
     def test_gho_repay_interest_exceeds_repayment(
         self, handler: RepayHandler
@@ -155,7 +150,7 @@ class TestRepayHandler:
 
         assert result.raw_amount == repay_amount
         assert result.scaled_amount == 750
-        assert isinstance(result, EnrichedGhoDebtMintEvent)
+        assert result.event_type == ScaledTokenEventType.GHO_DEBT_MINT
 
 
 # Helper functions to create mock objects
@@ -239,9 +234,8 @@ def _create_mock_operation(
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for REPAY burn."""
     from degenbot.aave.enrichment.context import EnrichmentContext
-    from degenbot.aave.models import EnrichedScaledTokenEvent
 
-    mock_session = MagicMock()
+    MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
     mock_context.token_revisions = {}
@@ -277,13 +271,6 @@ def _create_mock_context() -> MagicMock:
         scaled_amount: int | None,
     ) -> EnrichedScaledTokenEvent:
         event_type = event.event_type
-        class_map: dict[ScaledTokenEventType, type[EnrichedScaledTokenEvent]] = {
-            ScaledTokenEventType.DEBT_BURN: EnrichedDebtBurnEvent,
-        }
-        enriched_class = class_map.get(event_type)
-        if enriched_class is None:
-            msg = f"Unsupported: {event_type}"
-            raise ValueError(msg)
 
         kwargs: dict[str, Any] = {
             "event": event.event,
@@ -300,7 +287,7 @@ def _create_mock_context() -> MagicMock:
             "from_address": event.user_address,
             "target_address": None,
         }
-        return enriched_class(**kwargs)
+        return EnrichedScaledTokenEvent(**kwargs)
 
     mock_context.get_token_revision = mock_get_token_revision
     mock_context.get_underlying_asset = mock_get_underlying_asset
@@ -313,9 +300,8 @@ def _create_mock_context() -> MagicMock:
 def _create_mock_context_with_mint() -> MagicMock:
     """Create mock context for REPAY with DEBT_MINT case."""
     from degenbot.aave.enrichment.context import EnrichmentContext
-    from degenbot.aave.models import EnrichedScaledTokenEvent
 
-    mock_session = MagicMock()
+    MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
     mock_context.token_revisions = {}
@@ -351,13 +337,6 @@ def _create_mock_context_with_mint() -> MagicMock:
         scaled_amount: int | None,
     ) -> EnrichedScaledTokenEvent:
         event_type = event.event_type
-        class_map: dict[ScaledTokenEventType, type[EnrichedScaledTokenEvent]] = {
-            ScaledTokenEventType.DEBT_MINT: EnrichedDebtMintEvent,
-        }
-        enriched_class = class_map.get(event_type)
-        if enriched_class is None:
-            msg = f"Unsupported: {event_type}"
-            raise ValueError(msg)
 
         kwargs: dict[str, Any] = {
             "event": event.event,
@@ -373,7 +352,7 @@ def _create_mock_context_with_mint() -> MagicMock:
             "balance_increase": event.balance_increase,
             "caller_address": None,
         }
-        return enriched_class(**kwargs)
+        return EnrichedScaledTokenEvent(**kwargs)
 
     mock_context.get_token_revision = mock_get_token_revision
     mock_context.get_underlying_asset = mock_get_underlying_asset
@@ -386,9 +365,8 @@ def _create_mock_context_with_mint() -> MagicMock:
 def _create_mock_context_gho() -> MagicMock:
     """Create mock context for GHO_REPAY burn."""
     from degenbot.aave.enrichment.context import EnrichmentContext
-    from degenbot.aave.models import EnrichedScaledTokenEvent
 
-    mock_session = MagicMock()
+    MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
     mock_context.token_revisions = {}
@@ -424,13 +402,6 @@ def _create_mock_context_gho() -> MagicMock:
         scaled_amount: int | None,
     ) -> EnrichedScaledTokenEvent:
         event_type = event.event_type
-        class_map: dict[ScaledTokenEventType, type[EnrichedScaledTokenEvent]] = {
-            ScaledTokenEventType.GHO_DEBT_BURN: EnrichedGhoDebtBurnEvent,
-        }
-        enriched_class = class_map.get(event_type)
-        if enriched_class is None:
-            msg = f"Unsupported: {event_type}"
-            raise ValueError(msg)
 
         kwargs: dict[str, Any] = {
             "event": event.event,
@@ -449,7 +420,7 @@ def _create_mock_context_gho() -> MagicMock:
             "discount_percent": 0,
             "discount_scaled": 0,
         }
-        return enriched_class(**kwargs)
+        return EnrichedScaledTokenEvent(**kwargs)
 
     mock_context.get_token_revision = mock_get_token_revision
     mock_context.get_underlying_asset = mock_get_underlying_asset
@@ -462,9 +433,8 @@ def _create_mock_context_gho() -> MagicMock:
 def _create_mock_context_gho_mint() -> MagicMock:
     """Create mock context for GHO_REPAY with GHO_DEBT_MINT case."""
     from degenbot.aave.enrichment.context import EnrichmentContext
-    from degenbot.aave.models import EnrichedScaledTokenEvent
 
-    mock_session = MagicMock()
+    MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
     mock_context.token_revisions = {}
@@ -500,13 +470,6 @@ def _create_mock_context_gho_mint() -> MagicMock:
         scaled_amount: int | None,
     ) -> EnrichedScaledTokenEvent:
         event_type = event.event_type
-        class_map: dict[ScaledTokenEventType, type[EnrichedScaledTokenEvent]] = {
-            ScaledTokenEventType.GHO_DEBT_MINT: EnrichedGhoDebtMintEvent,
-        }
-        enriched_class = class_map.get(event_type)
-        if enriched_class is None:
-            msg = f"Unsupported: {event_type}"
-            raise ValueError(msg)
 
         kwargs: dict[str, Any] = {
             "event": event.event,
@@ -524,7 +487,7 @@ def _create_mock_context_gho_mint() -> MagicMock:
             "discount_percent": 0,
             "discount_scaled": 0,
         }
-        return enriched_class(**kwargs)
+        return EnrichedScaledTokenEvent(**kwargs)
 
     mock_context.get_token_revision = mock_get_token_revision
     mock_context.get_underlying_asset = mock_get_underlying_asset
