@@ -24,6 +24,54 @@ Uses `just` (see justfile) and `uv` as the package runner. Key commands:
 - `just lint` - Run clippy, ruff, and mypy
 - `just format` - Run `cargo fmt` and `ruff format`
 
+## Git Commits
+
+All commit messages must follow the project convention enforced by `commitlint`. Run `just setup-git-hooks` once after cloning to enable the local hook and editor template.
+
+```
+type(scope): subject
+
+[optional body]
+
+[optional footer]
+```
+
+### Types
+
+| Type | Use for |
+|------|---------|
+| `feat` | New user-facing functionality |
+| `fix` | Bug fixes |
+| `refactor` | Structural changes with no public API change |
+| `docs` | Documentation only |
+| `lint` | Auto-formatter or linter-driven changes only |
+| `test` | Adding or updating tests |
+| `chore` | Repo maintenance (locks, CI, justfile, plan files) |
+| `remove` | Pure deletion of dead code, shims, deprecated files |
+
+### Scopes
+
+Optional but encouraged. Closed list: `curve`, `aave`, `v2`, `v3`, `v4`, `aerodrome`, `camelot`, `balancer`, `arbitrage`, `database`, `rust`, `sdk`. Omit scope for cross-cutting changes.
+
+### Rules
+
+- **Subject**: imperative mood, no trailing period, ≤72 characters
+- **Body**: optional, wrap at 80 characters
+- **Footer**: use `Plan: <number>` to reference an architecture plan (repeatable); use `BREAKING CHANGE: <description>` for breaking changes
+
+### Examples
+
+```
+feat(curve): strategy objects & lending rate fetchers
+fix(v3): correct tick spacing calculation
+refactor: separate I/O from calculation in Aave position analysis
+remove: delete position_analysis.py shim
+
+Plan: 029
+```
+
+Bypass with `--no-verify` if needed, but CI will still reject non-conforming messages on PRs.
+
 ## Database
 - Config file at `~/.config/degenbot/config.toml`; database path defaults to `~/.config/degenbot/degenbot.db` (overridable via `database.path` setting)
 - SQLAlchemy ORM models in `src/degenbot/database/models/`
