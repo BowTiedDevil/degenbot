@@ -48,10 +48,8 @@ rules:
     - never
 
   # ── Subject ───────────────────────────────────────────────
-  subject-case:
-    - 2
-    - always
-    - lower-case
+  # subject-case: not enforced — 'lower-case' rejects proper nouns
+  # like AGENTS.md; convention is documented in template and AGENTS.md
 
   subject-empty:
     - 2
