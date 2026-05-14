@@ -168,10 +168,6 @@ cython_debug/
 # VSCode
 .vscode
 
-# Planning files
-plans
-research
-
 # Opencode
 .opencode/*
 .opencode/plans
