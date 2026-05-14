@@ -6,6 +6,32 @@ conditional dispatch in CurveStableswapPool.get_dy() and related methods.
 
 The mapping is resolved once at construction time by CurvePoolBuilder.
 The pool class is address-agnostic — it only reads strategy enum values.
+
+⚠️  PROVENANCE WARNING
+
+The address→strategy mapping below was derived by translating the old
+CurveStableswapPool class-level frozensets (CTOKEN_ADDRESSES, etc.) and
+`if self.address` blocks into enum-based dispatch. That transliteration
+preserved the *dispatch path* (which `if` branch each address hit) but
+did NOT verify each address against the on-chain contract source.
+
+Two kinds of error are possible:
+
+1. **Wrong enum value.** An address was grouped with others that share
+   a dispatch path, but the contract's actual behavior differs.
+   Example: 0xA5407eAE was in the CTOKEN frozenset because the old
+   Python code routed it through _stored_rates_from_ctokens(), but the
+   contract has USE_LENDING = [False, False, False, False] — it's not a
+   cToken pool. The common branch happened to work because both paths
+   return PRECISION_MUL * LENDING_PRECISION when no lending is active.
+
+2. **Missing address.** A pool not in the mapping falls through to
+   PoolStrategies() defaults (STANDARD/NONE). This is correct for plain
+   pools but wrong for any unlisted lending, metapool, or crypto pool.
+
+When debugging a swap mismatch for a specific pool, always verify the
+strategy enums against `cast source <address>`. See CONTEXT.md
+"Debugging swap mismatches" section for the workflow.
 """
 
 from eth_typing import ChecksumAddress
@@ -32,7 +58,15 @@ def _a(addr: str) -> ChecksumAddress:
 # must appear here with the correct strategies.
 
 _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
+    # ────────────────────────────────────────────────────────────────
+    # Each group header notes its provenance: which old frozenset or
+    # `if self.address` block these addresses were extracted from.
+    # ⚠️  These have NOT been systematically verified against contract
+    # source. See module docstring for the full warning.
+    # ────────────────────────────────────────────────────────────────
+
     # ── Metapool rate style variants ──
+    # Source: `if self.address == "0xC61557C5..."`` and similar blocks in get_dy()/_get_dy_underlying()
     # 0xC61557C5d177bd7DC889A3b621eEC333e168f68A
     #   get_dy metapool: (PRECISION, virtual_price)
     #   _get_dy_underlying: (PRECISION, virtual_price) with special base_i/base_j logic
@@ -55,6 +89,7 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
     ),
 
     # ── Live balances minus admin (SwapStyle.LIVE_ADMIN) ──
+    # Source: LIVE_ADMIN_ADDRESSES frozenset in old CurveStableswapPool
     _a("0x4e0915C88bC70750D68C481540F081fEFaF22273"): PoolStrategies(
         swap_style=SwapStyle.LIVE_ADMIN,
     ),
@@ -72,11 +107,13 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
     ),
 
     # ── Crypto pool ──
+    # Source: `if self.address == "0x80466c64..."` block in get_dy()
     _a("0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5"): PoolStrategies(
         swap_style=SwapStyle.CRYPTO,
     ),
 
     # ── Rate-adjusted fee style (SwapStyle.RATE_ADJUSTED) ──
+    # Source: RATE_ADJUSTED_ADDRESSES frozenset in old CurveStableswapPool
     # dy computed as (xp[j] - y - 1) * PRECISION // rates[j], then fee applied
     _a("0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F"): PoolStrategies(
         swap_style=SwapStyle.RATE_ADJUSTED,
@@ -91,7 +128,8 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
         swap_style=SwapStyle.RATE_ADJUSTED,
     ),
 
-    # ── Standard rate style (SwapStyle.STANDARD_RATE) ──
+    # ── Standard rate style (SwapStyle.STANDARD) ──
+    # Source: STANDARD_RATE_ADDRESSES frozenset in old CurveStableswapPool
     # dy computed as xp[j] - y - 1, fee applied, then rate conversion
     # 31 addresses
     _a("0x0Ce6a5fF5217e38315f87032CF90686C96627CAA"): PoolStrategies(
@@ -189,6 +227,7 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
     ),
 
     # ── Raw balance style (SwapStyle.RAW_BALANCE) ──
+    # Source: RAW_BALANCE_ADDRESSES frozenset in old CurveStableswapPool
     # No rate conversion, direct fee application
     _a("0x04c90C198b2eFF55716079bc06d7CCc4aa4d7512"): PoolStrategies(
         swap_style=SwapStyle.RAW_BALANCE,
@@ -222,6 +261,7 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
     ),
 
     # ── Live admin + oracle (SwapStyle.LIVE_ADMIN_ORACLE) ──
+    # Source: ORACLE_ADDRESSES frozenset in old CurveStableswapPool
     _a("0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492"): PoolStrategies(
         swap_style=SwapStyle.LIVE_ADMIN_ORACLE,
         lending_rate_style=LendingRateStyle.ORACLE,
@@ -232,6 +272,10 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
     ),
 
     # ── CTOKEN swap style (RATE_ADJUSTED_NO_ONE) ──
+    # Source: CTOKEN_ADDRESSES frozenset in old CurveStableswapPool
+    # ⚠️  0xA5407eAE uses this swap style but has USE_LENDING=[F,F,F,F]
+    # (no lending tokens). Its _stored_rates() returns PRECISION_MUL * LENDING_PRECISION,
+    # identical to rate_multipliers. LendingRateStyle remains NONE.
     _a("0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C"): PoolStrategies(
         swap_style=SwapStyle.RATE_ADJUSTED_NO_ONE,
         lending_rate_style=LendingRateStyle.CTOKEN,
@@ -245,12 +289,14 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
     ),
 
     # ── CYTOKEN swap style ──
+    # Source: `if self.address == "0x2dded6Da..."` block in get_dy()
     _a("0x2dded6Da1BF5DBdF597C45fcFaa3194e53EcfeAF"): PoolStrategies(
         swap_style=SwapStyle.CYTOKEN,
         lending_rate_style=LendingRateStyle.CYTOKEN,
     ),
 
     # ── YTOKEN swap style ──
+    # Source: YTOKEN_ADDRESSES and YTOKEN_NO_ONE_ADDRESSES blocks in get_dy()
     # 0x06364f10: dy before rate with -1, fee on converted (RATE_ADJUSTED)
     _a("0x06364f10B501e868329afBc005b3492902d6C763"): PoolStrategies(
         swap_style=SwapStyle.RATE_ADJUSTED,
@@ -267,18 +313,21 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
     ),
 
     # ── AETH swap style (NO_ONE_FEE_RATE) ──
+    # Source: `if self.address == "0xA96A65c0..."` block in get_dy()
     _a("0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2"): PoolStrategies(
         swap_style=SwapStyle.NO_ONE_FEE_RATE,
         lending_rate_style=LendingRateStyle.AETH,
     ),
 
     # ── RETH swap style (NO_ONE_FEE_RATE) ──
+    # Source: `if self.address == "0xF9440930..."` block in get_dy()
     _a("0xF9440930043eb3997fc70e1339dBb11F341de7A8"): PoolStrategies(
         swap_style=SwapStyle.NO_ONE_FEE_RATE,
         lending_rate_style=LendingRateStyle.RETH,
     ),
 
     # ── Live admin + dynamic fee ──
+    # Source: `if self.address == "0xEB16Ae00..."` and `"0xDeBF2061..."` blocks in get_dy()
     _a("0xEB16Ae0052ed37f479f7fe63849198Df1765a733"): PoolStrategies(
         swap_style=SwapStyle.LIVE_ADMIN_DYNAMIC,
     ),
