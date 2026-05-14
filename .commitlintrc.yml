@@ -1,0 +1,88 @@
+rules:
+  # ── Type ──────────────────────────────────────────────────
+  type-enum:
+    - 2
+    - always
+    - - feat
+      - fix
+      - refactor
+      - docs
+      - lint
+      - test
+      - chore
+      - remove
+
+  type-case:
+    - 2
+    - always
+    - lower-case
+
+  type-empty:
+    - 2
+    - never
+
+  # ── Scope ─────────────────────────────────────────────────
+  scope-enum:
+    - 2
+    - always
+    - - curve
+      - aave
+      - v2
+      - v3
+      - v4
+      - aerodrome
+      - camelot
+      - balancer
+      - arbitrage
+      - database
+      - rust
+      - sdk
+
+  scope-case:
+    - 2
+    - always
+    - lower-case
+
+  scope-empty:
+    - 1
+    - never
+
+  # ── Subject ───────────────────────────────────────────────
+  subject-case:
+    - 2
+    - always
+    - lower-case
+
+  subject-empty:
+    - 2
+    - never
+
+  subject-full-stop:
+    - 2
+    - never
+
+  subject-max-length:
+    - 2
+    - always
+    - 72
+
+  # ── Body ──────────────────────────────────────────────────
+  body-max-line-length:
+    - 1
+    - always
+    - 72
+
+  body-min-length:
+    - 0
+
+  # ── Footer ────────────────────────────────────────────────
+  footer-max-line-length:
+    - 2
+    - always
+    - 72
+
+  # ── Overall ───────────────────────────────────────────────
+  header-max-length:
+    - 2
+    - always
+    - 72

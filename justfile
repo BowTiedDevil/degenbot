@@ -69,6 +69,14 @@ ci-rust: lint-rust test-rust
 # Simulate full CI pipeline
 ci-full: ci-rust test-python
 
+# ========== Repository Setup ==========
+
+# Install git hooks and configure commit template
+setup-git-hooks:
+    git config core.hooksPath .githooks
+    git config commit.template .commit-template
+    @echo "✓ Git hooks and commit template configured."
+
 # ========== Documentation ==========
 
 # Build documentation

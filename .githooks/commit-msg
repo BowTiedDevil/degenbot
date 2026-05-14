@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#
+# commit-msg hook — validates the commit message via commitlint.
+# Installed by: just setup-git-hooks
+
+COMMIT_MSG_FILE="$1"
+
+if ! command -v npx &>/dev/null; then
+  echo "⚠  npx not found; skipping commit message lint."
+  exit 0
+fi
+
+# Run commitlint; --edit reads from the commit msg file
+npx --yes @commitlint/cli --edit "$COMMIT_MSG_FILE"
+exit_code=$?
+
+if [ $exit_code -ne 0 ]; then
+  echo ""
+  echo "💡 Edit .commit-template for format reference, or run with --no-verify to bypass."
+fi
+
+exit $exit_code

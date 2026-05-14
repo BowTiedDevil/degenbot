@@ -11,6 +11,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  commitlint:
+    name: Commit Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Lint commit messages
+        run: npx --yes @commitlint/cli --from=origin/main --to=HEAD
+
   rust-check:
     name: Rust Lint
     runs-on: ubuntu-latest
