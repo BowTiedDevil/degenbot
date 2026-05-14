@@ -1395,8 +1395,6 @@ class CurveStableswapPool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool
             )
         return self._lending_rate_fetcher(block_number)
 
-        return rates
-
     def _xp(self, rates: Iterable[int], balances: Iterable[int]) -> tuple[int, ...]:
         return tuple(
             rate * balance // self.PRECISION for rate, balance in zip(rates, balances, strict=True)

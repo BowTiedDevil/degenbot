@@ -394,7 +394,7 @@ def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
             msg = (
                 f"{type(e).__name__}: {e} — "
                 f"pool {i}/{pool_count} @ {pool_address}, block {block_number}. "
-                f"Reproduce: set pool_address=\"{pool_address}\" in test_single_pool "
+                f'Reproduce: set pool_address="{pool_address}" in test_single_pool '
                 f"with @pytest.mark.parametrize('fork_mainnet_archive', [{block_number}], indirect=True)"
             )
             print(msg)
@@ -429,7 +429,7 @@ def test_base_registry_pools(fork_mainnet_full: AnvilFork):
             msg = (
                 f"{type(e).__name__}: {e} — "
                 f"registry pool {i}/{pool_count} @ {pool_address}, block {block_number}. "
-                f"Reproduce: set pool_address=\"{pool_address}\" in test_single_pool "
+                f'Reproduce: set pool_address="{pool_address}" in test_single_pool '
                 f"with @pytest.mark.parametrize('fork_mainnet_archive', [{block_number}], indirect=True)"
             )
             print(msg)
@@ -441,7 +441,7 @@ def test_base_registry_pools(fork_mainnet_full: AnvilFork):
             msg = (
                 f"{type(e).__name__}: {e} — "
                 f"registry pool {i}/{pool_count} @ {pool_address}, block {block_number}. "
-                f"Reproduce: set pool_address=\"{pool_address}\" in test_single_pool "
+                f'Reproduce: set pool_address="{pool_address}" in test_single_pool '
                 f"with @pytest.mark.parametrize('fork_mainnet_archive', [{block_number}], indirect=True)"
             )
             print(msg)

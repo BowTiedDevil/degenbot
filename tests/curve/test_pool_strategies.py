@@ -104,12 +104,13 @@ class TestResolvePoolStrategies:
     def test_variant_groups_merged(self):
         """Strategies merge variant group resolution with address mapping."""
         # 0xA5407eAE is in D_VARIANT_GROUP_1 (VARIANT_ALPHA_DP_ALPHA) and Y_VARIANT_GROUP_0+1 (VARIANT_0)
-        # and is a CTOKEN pool (RATE_ADJUSTED_NO_ONE)
+        # It uses RATE_ADJUSTED_NO_ONE swap style but has NO lending tokens
+        # (USE_LENDING = [False, False, False, False] in the contract)
         strategies = resolve_pool_strategies("0xA5407eAE9Ba41422680e2e00537571bcC53efBfD")
         assert strategies.d_variant == DVariant.VARIANT_ALPHA_DP_ALPHA
         assert strategies.y_variant == YVariant.VARIANT_0
         assert strategies.swap_style == SwapStyle.RATE_ADJUSTED_NO_ONE
-        assert strategies.lending_rate_style == LendingRateStyle.CTOKEN
+        assert strategies.lending_rate_style == LendingRateStyle.NONE
 
     def test_unknown_address_has_standard_variants(self):
         strategies = resolve_pool_strategies("0x0000000000000000000000000000000000000001")
