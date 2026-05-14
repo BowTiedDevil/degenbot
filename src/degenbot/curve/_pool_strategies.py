@@ -242,7 +242,6 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
     ),
     _a("0xA5407eAE9Ba41422680e2e00537571bcC53efBfD"): PoolStrategies(
         swap_style=SwapStyle.RATE_ADJUSTED_NO_ONE,
-        lending_rate_style=LendingRateStyle.CTOKEN,
     ),
 
     # ── CYTOKEN swap style ──
