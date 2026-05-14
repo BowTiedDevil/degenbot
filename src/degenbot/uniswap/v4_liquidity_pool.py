@@ -5,7 +5,6 @@ import dataclasses
 from collections import deque
 from collections.abc import Callable
 from enum import Enum
-from fractions import Fraction
 from threading import Lock
 from typing import Any, ClassVar, Final, cast
 from weakref import WeakSet
@@ -40,12 +39,13 @@ from degenbot.uniswap.concentrated.state_manager import ConcentratedLiquiditySta
 from degenbot.uniswap.concentrated.v4_simulator import calculate_swap as _v4_swap
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import (
-    exchange_rate_from_sqrt_price_x96,
     get_tick_word_and_bit_position,
 )
 from degenbot.uniswap.v3_types import BitmapWord, Pip, Tick
 from degenbot.uniswap.v4_libraries.tick_bitmap import flip_tick
 from degenbot.uniswap.v4_libraries.tick_math import MAX_SQRT_PRICE, MIN_SQRT_PRICE
+from degenbot.uniswap.v4_pool_calc import UniswapV4PoolCalc
+from degenbot.uniswap.v4_pool_state import V4PoolState
 from degenbot.uniswap.v4_types import (
     FeeToProtocol,
     InitializedTickMap,
@@ -120,7 +120,13 @@ class Hooks(Enum):
     AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA = 1 << 0
 
 
-class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidityPool):
+class UniswapV4Pool(
+    PublisherMixin,
+    PoolPickleMixin,
+    V4PoolState,
+    UniswapV4PoolCalc,
+    AbstractConcentratedLiquidityPool,
+):
     _state_mgr: ConcentratedLiquidityStateManager[UniswapV4PoolState]
 
     SLOT0_STRUCT_TYPES = (
@@ -133,8 +139,6 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
         "uint128",  # liquidityGross
         "int128",  # liquidityNet
     )
-
-    FEE_DENOMINATOR = 1_000_000
 
     _pickle_drops: ClassVar[frozenset[str]] = frozenset({
         "_state_lock",
@@ -515,14 +519,6 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
         self._state_mgr.state_cache = value
 
     @property
-    def token0(self) -> Erc20Token:
-        return self._token0
-
-    @property
-    def token1(self) -> Erc20Token:
-        return self._token1
-
-    @property
     def liquidity(self) -> int:
         return self._state_mgr.liquidity
 
@@ -555,20 +551,12 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
         return cast("LiquidityMap", self._state_mgr.tick_data)
 
     @property
-    def sparse_liquidity_map(self) -> bool:
-        return self._sparse_liquidity_map
-
-    @property
     def tick_spacing(self) -> int:
         return self.pool_key.tick_spacing
 
     @property
     def fee(self) -> int:
         return self.pool_key.fee
-
-    @property
-    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
-        return self._token0, self._token1
 
     @property
     def update_block(self) -> BlockNumber:
@@ -770,73 +758,6 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             if isinstance(subscriber, AbstractArbitrage)
         )
 
-    def get_absolute_price(
-        self,
-        token: Erc20Token,
-        override_state: UniswapV4PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the absolute price for the given token, expressed in units of the other.
-        """
-
-        return 1 / self.get_absolute_exchange_rate(token, override_state=override_state)
-
-    def get_absolute_exchange_rate(
-        self,
-        token: Erc20Token,
-        override_state: UniswapV4PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the absolute exchange rate for the given token, expressed in terms of a unit amount of
-        its paired token.
-
-        e.g. taking the USDC-WETH pool in https://blog.uniswap.org/uniswap-v3-math-primer — the
-        WETH/USDC exchange rate is 649004842.70137. Rounding down, this signifies that the smallest
-        swap (1 USDC) results in a 649004842 WETH output.
-
-        A V4 pool encodes the token1/token0 exchange rate in `sqrt_price_x96`, so it can be directly
-        obtained.
-        """
-
-        if token not in self.tokens:
-            raise DegenbotValueError(message=f"Unknown token {token}")
-
-        state = self.state if override_state is None else override_state
-
-        return (
-            exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
-            if token == self._token1
-            else 1 / exchange_rate_from_sqrt_price_x96(state.sqrt_price_x96)
-        )
-
-    def get_nominal_price(
-        self,
-        token: Erc20Token,
-        override_state: UniswapV4PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the nominal price for the given token, expressed in units of the other, corrected for
-        decimal place values.
-        """
-
-        return 1 / self.get_nominal_exchange_rate(token, override_state=override_state)
-
-    def get_nominal_exchange_rate(
-        self,
-        token: Erc20Token,
-        override_state: UniswapV4PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the nominal rate for the given token, expressed in units of the other, corrected for
-        decimal place values.
-        """
-
-        return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
-            Fraction(10**self._token1.decimals, 10**self._token0.decimals)
-            if token == self._token0
-            else Fraction(10**self._token0.decimals, 10**self._token1.decimals)
-        )
-
     def discard_states_before_block(self, block: BlockNumber) -> None:
         """Discard cached states earlier than the given block."""
         with self._state_lock:
@@ -874,9 +795,6 @@ class UniswapV4Pool(PublisherMixin, PoolPickleMixin, AbstractConcentratedLiquidi
             initial_state=initial_state,
             final_state=initial_state,
         )
-
-    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
-        return Fraction(self.fee, self.FEE_DENOMINATOR)
 
     def to_hop_state(
         self,
