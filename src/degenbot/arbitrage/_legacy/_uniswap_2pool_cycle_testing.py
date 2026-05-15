@@ -9,20 +9,13 @@ import eth_abi.abi
 import numpy as np
 import web3
 
-try:
-    from cvxpy import Maximize, Parameter, Problem, Variable
-    from cvxpy.atoms.affine.binary_operators import multiply
-    from cvxpy.atoms.affine.bmat import bmat
-    from cvxpy.atoms.affine.sum import sum as cvxpy_sum
-    from cvxpy.atoms.geo_mean import geo_mean
-    from cvxpy.error import SolverError
-    from cvxpy.settings import SOLUTION_PRESENT
-except ImportError:
-    msg = (
-        "cvxpy is required for legacy cycle classes. "
-        "Install with: pip install degenbot[legacy-cycles]"
-    )
-    raise ImportError(msg) from None
+from cvxpy import Maximize, Parameter, Problem, Variable
+from cvxpy.atoms.affine.binary_operators import multiply
+from cvxpy.atoms.affine.bmat import bmat
+from cvxpy.atoms.affine.sum import sum as cvxpy_sum
+from cvxpy.atoms.geo_mean import geo_mean
+from cvxpy.error import SolverError
+from cvxpy.settings import SOLUTION_PRESENT
 from eth_typing import ChecksumAddress, HexStr
 from scipy.optimize import OptimizeResult, minimize_scalar
 

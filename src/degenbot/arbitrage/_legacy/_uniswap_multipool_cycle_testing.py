@@ -3,21 +3,14 @@ from collections.abc import Mapping, Sequence
 from fractions import Fraction
 from typing import TYPE_CHECKING, ClassVar, Literal
 
-try:
-    import cvxpy.settings
+import cvxpy.settings
 
-    from cvxpy import Maximize, Parameter, Problem, Variable
-    from cvxpy.atoms.affine.binary_operators import multiply
-    from cvxpy.atoms.affine.bmat import bmat
-    from cvxpy.atoms.affine.hstack import hstack
-    from cvxpy.atoms.geo_mean import geo_mean
-    from cvxpy.error import SolverError
-except ImportError:
-    msg = (
-        "cvxpy is required for legacy cycle classes. "
-        "Install with: pip install degenbot[legacy-cycles]"
-    )
-    raise ImportError(msg) from None
+from cvxpy import Maximize, Parameter, Problem, Variable
+from cvxpy.atoms.affine.binary_operators import multiply
+from cvxpy.atoms.affine.bmat import bmat
+from cvxpy.atoms.affine.hstack import hstack
+from cvxpy.atoms.geo_mean import geo_mean
+from cvxpy.error import SolverError
 
 import eth_abi.abi
 import numpy as np
