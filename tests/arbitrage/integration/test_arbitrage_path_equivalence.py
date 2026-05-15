@@ -15,7 +15,7 @@ import pytest
 from eth_typing import ChainId
 
 from degenbot.anvil_fork import AnvilFork
-from degenbot.arbitrage import UniswapLpCycle
+from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
 from degenbot.arbitrage.optimizers.solver import MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.arbitrage.types import (

@@ -8,13 +8,21 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import eth_abi.abi
 import numpy as np
 import web3
-from cvxpy import Maximize, Parameter, Problem, Variable
-from cvxpy.atoms.affine.binary_operators import multiply
-from cvxpy.atoms.affine.bmat import bmat
-from cvxpy.atoms.affine.sum import sum as cvxpy_sum
-from cvxpy.atoms.geo_mean import geo_mean
-from cvxpy.error import SolverError
-from cvxpy.settings import SOLUTION_PRESENT
+
+try:
+    from cvxpy import Maximize, Parameter, Problem, Variable
+    from cvxpy.atoms.affine.binary_operators import multiply
+    from cvxpy.atoms.affine.bmat import bmat
+    from cvxpy.atoms.affine.sum import sum as cvxpy_sum
+    from cvxpy.atoms.geo_mean import geo_mean
+    from cvxpy.error import SolverError
+    from cvxpy.settings import SOLUTION_PRESENT
+except ImportError:
+    msg = (
+        "cvxpy is required for legacy cycle classes. "
+        "Install with: pip install degenbot[legacy-cycles]"
+    )
+    raise ImportError(msg) from None
 from eth_typing import ChecksumAddress, HexStr
 from scipy.optimize import OptimizeResult, minimize_scalar
 
@@ -36,7 +44,7 @@ from degenbot.arbitrage.types import (
     UniswapV4PoolSwapAmounts,
     V4PoolKey,
 )
-from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
+from degenbot.arbitrage._legacy._uniswap_lp_cycle import _UniswapLpCycle
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT256, WRAPPED_NATIVE_TOKENS
 from degenbot.erc20.erc20 import Erc20Token
@@ -231,7 +239,7 @@ type SwapAmount = UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV
 type PoolId = bytes | HexStr
 
 
-class _UniswapTwoPoolCycleTesting(UniswapLpCycle):
+class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
     convex_problem: ClassVar[Problem] = _build_convex_problem(num_pools=2)
     _arb_solver: ClassVar[_ArbSolver | None] = None
 

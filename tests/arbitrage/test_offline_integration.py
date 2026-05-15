@@ -30,7 +30,7 @@ from weakref import WeakSet
 import pytest
 from eth_typing import ChecksumAddress
 
-from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
+from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions.arbitrage import ArbitrageError, RateOfExchangeBelowMinimum

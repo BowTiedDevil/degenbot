@@ -14,7 +14,6 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic ~= 1.18",
     "click ~= 8.3",
-    "cvxpy ~= 1.8",
     "networkx ~= 3.6",
     "pydantic ~= 2.12",
     "pydantic-settings ~= 2.13",
@@ -37,6 +36,9 @@ classifiers = [
     "Natural Language :: English",
     "Operating System :: POSIX",
 ]
+
+[project.optional-dependencies]
+legacy-cycles = ["cvxpy ~= 1.8"]
 
 [project.urls]
 Homepage = "https://www.degencode.com"

@@ -44,7 +44,7 @@ from degenbot.exceptions.pool import MissingCurveData
 from degenbot.exceptions.pool import EVMRevertError
 from degenbot.exceptions.pool import InvalidSwapInputAmount
 from degenbot.logging import logger
-from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
+from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import (
     BoundedCache,
@@ -1610,13 +1610,6 @@ class CurveStableswapPool(
         raise DegenbotValueError(
             message="Tokens not held by pool or in underlying base pool"
         )  # pragma: no cover
-
-    def get_arbitrage_helpers(self) -> tuple[AbstractArbitrage, ...]:
-        return tuple(
-            subscriber
-            for subscriber in self._subscribers
-            if isinstance(subscriber, AbstractArbitrage)
-        )
 
     def simulate_swap(
         self,

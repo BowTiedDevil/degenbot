@@ -20,7 +20,7 @@ from degenbot.exceptions.pool import (
     NoPoolStateAvailable,
 )
 from degenbot.logging import logger
-from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
+from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType
@@ -432,13 +432,6 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolC
             amount_out=amount_out,
             initial_state=result.initial_state,
             final_state=result.final_state,
-        )
-
-    def get_arbitrage_helpers(self) -> tuple[AbstractArbitrage, ...]:
-        return tuple(
-            subscriber
-            for subscriber in self._subscribers
-            if isinstance(subscriber, AbstractArbitrage)
         )
 
     def reserves_for_cache(self) -> tuple[int, int]:

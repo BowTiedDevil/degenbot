@@ -3,7 +3,7 @@ import dataclasses
 import pytest
 
 from degenbot.anvil_fork import AnvilFork
-from degenbot.arbitrage.uniswap_2pool_cycle_testing import _UniswapTwoPoolCycleTesting
+from degenbot.arbitrage._legacy import _UniswapTwoPoolCycleTesting
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.erc20.ether_placeholder import EtherPlaceholder

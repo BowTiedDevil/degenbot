@@ -3,22 +3,31 @@ from collections.abc import Mapping, Sequence
 from fractions import Fraction
 from typing import TYPE_CHECKING, ClassVar, Literal
 
-import cvxpy.settings
+try:
+    import cvxpy.settings
+
+    from cvxpy import Maximize, Parameter, Problem, Variable
+    from cvxpy.atoms.affine.binary_operators import multiply
+    from cvxpy.atoms.affine.bmat import bmat
+    from cvxpy.atoms.affine.hstack import hstack
+    from cvxpy.atoms.geo_mean import geo_mean
+    from cvxpy.error import SolverError
+except ImportError:
+    msg = (
+        "cvxpy is required for legacy cycle classes. "
+        "Install with: pip install degenbot[legacy-cycles]"
+    )
+    raise ImportError(msg) from None
+
 import eth_abi.abi
 import numpy as np
 import web3
-from cvxpy import Maximize, Parameter, Problem, Variable
-from cvxpy.atoms.affine.binary_operators import multiply
-from cvxpy.atoms.affine.bmat import bmat
-from cvxpy.atoms.affine.hstack import hstack
-from cvxpy.atoms.geo_mean import geo_mean
-from cvxpy.error import SolverError
 from eth_typing import ChecksumAddress
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.aerodrome.types import AerodromeV2PoolState
 from degenbot.arbitrage.types import ArbitrageCalculationResult, UniswapV2PoolSwapAmounts
-from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
+from degenbot.arbitrage._legacy._uniswap_lp_cycle import _UniswapLpCycle
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.arbitrage import ArbitrageError, NoSolverSolution, Unprofitable
@@ -208,7 +217,7 @@ type Pool = UniswapV2Pool | AerodromeV2Pool
 type PoolState = UniswapV2PoolState | AerodromeV2PoolState
 
 
-class _UniswapMultiPoolCycleTesting(UniswapLpCycle):
+class _UniswapMultiPoolCycleTesting(_UniswapLpCycle):
     swap_pools: tuple[Pool, ...]
     convex_problems: ClassVar[
         dict[

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Self, override
 from eth_typing import ChecksumAddress
 
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
-from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
+from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.arbitrage import ArbitrageError
 from degenbot.uniswap.types import UniswapPoolSwapVector

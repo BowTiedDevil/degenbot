@@ -17,7 +17,7 @@ from degenbot.arbitrage.optimizers.solidly_stable import (
     _simulate_mixed_path_int,
 )
 from degenbot.arbitrage.optimizers.solver import BrentSolver
-from degenbot.arbitrage.uniswap_curve_cycle import UniswapCurveCycle
+from degenbot.arbitrage._legacy import _UniswapCurveCycle as UniswapCurveCycle
 from degenbot.provider import ProviderAdapter
 from degenbot.types.hop_types import ConstantProductHop, CurveStableswapHop
 from degenbot.uniswap.v2_types import UniswapV2PoolState

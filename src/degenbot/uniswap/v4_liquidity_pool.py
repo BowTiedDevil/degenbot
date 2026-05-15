@@ -25,7 +25,7 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
     PossibleInaccurateResult,
 )
-from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
+from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import (
     PublisherMixin,
@@ -750,13 +750,6 @@ class UniswapV4Pool(
             self._notify_subscribers(
                 message=UniswapV4PoolStateUpdated(working_state),
             )
-
-    def get_arbitrage_helpers(self) -> tuple[AbstractArbitrage, ...]:
-        return tuple(
-            subscriber
-            for subscriber in self._subscribers
-            if isinstance(subscriber, AbstractArbitrage)
-        )
 
     def discard_states_before_block(self, block: BlockNumber) -> None:
         """Discard cached states earlier than the given block."""
