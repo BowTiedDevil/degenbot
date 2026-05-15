@@ -24,7 +24,7 @@ from degenbot.aerodrome.v2_pool_calc import AerodromeV2PoolCalc
 from degenbot.aerodrome.v2_pool_state import AerodromeV2PoolState as AerodromeV2PoolStateMixin
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.liquidity_pool import (
+from degenbot.exceptions.pool import (
     ExternalUpdateError,
     NoPoolStateAvailable,
 )

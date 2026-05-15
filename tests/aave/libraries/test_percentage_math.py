@@ -11,7 +11,7 @@ from degenbot.aave.libraries.percentage_math import (
     percent_mul_floor,
 )
 from degenbot.constants import MAX_UINT256
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 
 
 def test_percent_mul() -> None:

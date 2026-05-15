@@ -14,7 +14,7 @@ All functions are pure: numeric inputs → numeric outputs, no self, no class re
 
 from collections.abc import Sequence
 
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 
 
 # ── D calculation variants ──

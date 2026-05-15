@@ -11,7 +11,7 @@ from collections.abc import Callable
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 from degenbot.functions import raise_if_invalid_uint256
 
 if TYPE_CHECKING:

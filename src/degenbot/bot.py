@@ -25,7 +25,7 @@ from degenbot.erc20.erc20 import (
     Erc20Token,
 )
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.exceptions.manager import ManagerAlreadyInitialized
+from degenbot.exceptions.pool import ManagerAlreadyInitialized
 from degenbot.functions import encode_function_calldata
 from degenbot.logging import logger
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry

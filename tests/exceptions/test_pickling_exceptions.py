@@ -1,7 +1,7 @@
 import pickle
 
 from degenbot.exceptions.arbitrage import NoSolverSolution
-from degenbot.exceptions.liquidity_pool import IncompleteSwap, PossibleInaccurateResult
+from degenbot.exceptions.pool import IncompleteSwap, PossibleInaccurateResult
 
 
 def test_no_solver_solution_pickling() -> None:

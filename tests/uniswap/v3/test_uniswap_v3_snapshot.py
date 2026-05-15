@@ -5,7 +5,7 @@ import pytest
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.exceptions.liquidity_pool import UnknownPool
+from degenbot.exceptions.pool import UnknownPool
 from degenbot.provider import ProviderAdapter
 from degenbot.uniswap.managers import UniswapV3PoolManager
 from degenbot.uniswap.v3_snapshot import (

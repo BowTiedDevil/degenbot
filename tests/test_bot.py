@@ -12,7 +12,7 @@ from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.connection.async_connection_manager import AsyncConnectionManager
 from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.exceptions.manager import ManagerAlreadyInitialized
+from degenbot.exceptions.pool import ManagerAlreadyInitialized
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.managers import UniswapV2PoolManager
 

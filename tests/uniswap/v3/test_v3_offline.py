@@ -9,7 +9,7 @@ import pickle
 
 import pytest
 
-from degenbot.exceptions.liquidity_pool import ExternalUpdateError, LiquidityPoolError
+from degenbot.exceptions.pool import ExternalUpdateError, LiquidityPoolError
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
     UniswapV3PoolExternalUpdate,

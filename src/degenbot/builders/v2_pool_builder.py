@@ -15,7 +15,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.database.models.pools import LiquidityPoolTable
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.exceptions.liquidity_pool import LiquidityPoolError
+from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
 from degenbot.registry import PoolRegistry, TokenRegistry

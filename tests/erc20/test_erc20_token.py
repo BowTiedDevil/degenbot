@@ -9,7 +9,7 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.erc20.ether_placeholder import EtherPlaceholder
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.erc20 import NoPriceOracle
+from degenbot.exceptions.infrastructure import NoPriceOracle
 from degenbot.provider import ProviderAdapter
 from tests.helpers.bot_factory import make_bot_with_provider
 

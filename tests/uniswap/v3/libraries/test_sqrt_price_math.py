@@ -3,7 +3,7 @@ from decimal import Decimal, getcontext
 import pytest
 
 from degenbot.constants import MAX_UINT128, MAX_UINT256
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.v3_libraries.sqrt_price_math import (
     get_amount0_delta,
     get_amount1_delta,

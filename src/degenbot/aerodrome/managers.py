@@ -10,8 +10,8 @@ from degenbot.aerodrome.functions import (
 )
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.exceptions.liquidity_pool import LiquidityPoolError
-from degenbot.exceptions.manager import (
+from degenbot.exceptions.pool import LiquidityPoolError
+from degenbot.exceptions.pool import (
     PoolCreationFailed,
     PoolNotAssociated,
 )

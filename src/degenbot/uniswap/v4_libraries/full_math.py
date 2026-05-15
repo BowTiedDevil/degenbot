@@ -1,5 +1,5 @@
 from degenbot.constants import MAX_UINT256
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.v4_libraries.functions import mulmod
 
 

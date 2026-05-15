@@ -18,7 +18,7 @@ from degenbot.aave.libraries.token_math import (
     HalfUpRoundingMath,
 )
 from degenbot.constants import MAX_UINT256, MIN_UINT256
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 
 if TYPE_CHECKING:
     from web3.contract import Contract

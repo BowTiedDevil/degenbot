@@ -1,3 +1,12 @@
+"""Pool-related exceptions.
+
+Includes exceptions for:
+- Generic pool operations (LiquidityPoolError, BrokenPool, ...)
+- EVM execution (EVMRevertError, InvalidUint256)
+- Curve StableSwap (CurveError, MissingCurveData)
+- Pool trackers (ManagerError, PoolNotAssociated, ...)
+"""
+
 from typing import TYPE_CHECKING, Any
 
 from eth_typing import ChecksumAddress
@@ -10,13 +19,84 @@ if TYPE_CHECKING:
     from degenbot.uniswap.v4_liquidity_pool import Hooks
 
 
+# --- EVM ---
+
+
+class EVMRevertError(DegenbotError):
+    """
+    Raised when a simulated EVM contract operation would revert.
+    """
+
+    def __init__(self, error: str | None = None) -> None:
+        self.error = error
+        if error:
+            super().__init__(message=f"EVM Revert: {error}")
+        else:
+            super().__init__(message="EVM Revert")
+
+
+class InvalidUint256(EVMRevertError):
+    def __init__(self) -> None:
+        super().__init__(error="Not a valid uint256")
+
+
+# --- Curve ---
+
+
+class CurveError(DegenbotError):
+    """Base exception for Curve pool errors."""
+
+
+class MissingCurveData(CurveError):
+    """Raised when on-chain data is needed but no fetcher is available."""
+
+    def __init__(
+        self,
+        pool_address: str,
+        data_type: str,
+        message: str,
+    ) -> None:
+        self.pool_address = pool_address
+        self.data_type = data_type
+        super().__init__(message=message)
+
+
+# --- Pool Trackers ---
+
+
+class ManagerError(DegenbotError):
+    """
+    Exception raised inside manager helpers
+    """
+
+
+class PoolNotAssociated(ManagerError):
+    """
+    Raised by a Uniswap pool manager if a requested pool address is not associated with the DEX.
+    """
+
+    def __init__(self, pool_address: str) -> None:
+        super().__init__(message=f"Pool {pool_address} is not associated with this DEX")
+
+
+class PoolCreationFailed(ManagerError): ...
+
+
+class ManagerAlreadyInitialized(ManagerError):
+    """
+    Raised by a Uniswap pool manager if a caller attempts to create from a known factory address.
+    """
+
+
+# --- Liquidity Pools ---
+
+
 class LiquidityPoolError(DegenbotError):
     """
     Exception raised inside liquidity pool helpers.
     """
 
 
-# 2nd level exceptions for Liquidity Pool classes
 class AddressMismatch(LiquidityPoolError):
     """
     The expected pool address does not match the provided address.

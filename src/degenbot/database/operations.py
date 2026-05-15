@@ -7,7 +7,7 @@ from sqlalchemy import URL, Engine, create_engine, text
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
 from degenbot.database.models import Base
-from degenbot.exceptions.database import BackupExists
+from degenbot.exceptions.infrastructure import BackupExists
 from degenbot.logging import logger
 
 

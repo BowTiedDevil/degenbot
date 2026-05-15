@@ -5,8 +5,8 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.exceptions.liquidity_pool import LiquidityPoolError
-from degenbot.exceptions.manager import (
+from degenbot.exceptions.pool import LiquidityPoolError
+from degenbot.exceptions.pool import (
     PoolCreationFailed,
     PoolNotAssociated,
 )

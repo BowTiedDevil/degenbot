@@ -10,7 +10,7 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.exceptions.liquidity_pool import ExternalUpdateError, InvalidSwapInputAmount
+from degenbot.exceptions.pool import ExternalUpdateError, InvalidSwapInputAmount
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,

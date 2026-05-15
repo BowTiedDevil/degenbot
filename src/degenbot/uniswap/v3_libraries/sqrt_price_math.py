@@ -2,7 +2,7 @@ import functools
 from typing import overload
 
 from degenbot.constants import MAX_UINT160, MAX_UINT256
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.v3_libraries._config import V3_LIB_CACHE_SIZE
 from degenbot.uniswap.v3_libraries.constants import Q96, Q96_RESOLUTION
 from degenbot.uniswap.v3_libraries.full_math import muldiv, muldiv_rounding_up

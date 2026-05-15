@@ -3,7 +3,7 @@ from eth_typing import ChainId
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.exceptions.manager import ManagerAlreadyInitialized, ManagerError, PoolNotAssociated
+from degenbot.exceptions.pool import ManagerAlreadyInitialized, ManagerError, PoolNotAssociated
 from degenbot.pancakeswap.managers import PancakeswapV3PoolManager
 from degenbot.provider import ProviderAdapter
 from degenbot.sushiswap.managers import SushiswapV2PoolManager, SushiswapV3PoolManager

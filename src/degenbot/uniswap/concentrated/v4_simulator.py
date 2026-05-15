@@ -10,7 +10,7 @@ import dataclasses
 from typing import TYPE_CHECKING, cast
 
 from degenbot.constants import MAX_INT256, MIN_INT256
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.concentrated.types import SwapResult
 from degenbot.uniswap.v4_libraries.swap_math import compute_swap_step, get_sqrt_price_target
 from degenbot.uniswap.v4_libraries.tick_math import get_sqrt_price_at_tick, get_tick_at_sqrt_price

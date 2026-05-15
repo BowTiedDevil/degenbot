@@ -1,7 +1,7 @@
 import functools
 
 from degenbot.constants import MAX_UINT128, MAX_UINT256
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 from degenbot.types.aliases import Tick
 from degenbot.uniswap.v3_libraries._config import V3_LIB_CACHE_SIZE
 

@@ -3,7 +3,7 @@ import hypothesis.strategies
 import pytest
 
 from degenbot.constants import MAX_INT24, MAX_UINT160, MIN_INT24, MIN_UINT160
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.v4_libraries import tick_math
 
 # All tests ported from Foundry tests on Uniswap V4 Github repo

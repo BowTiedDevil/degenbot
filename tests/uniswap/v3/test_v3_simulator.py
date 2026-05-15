@@ -7,7 +7,7 @@ results to ``UniswapV3Pool._calculate_swap``. The simulator consumes a frozen
 
 import pytest
 
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot, MissingLiquidityData
 from degenbot.uniswap.concentrated.v3_simulator import calculate_swap
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool

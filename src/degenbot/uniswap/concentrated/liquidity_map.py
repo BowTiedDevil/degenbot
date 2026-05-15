@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, Self
 
-from degenbot.exceptions.liquidity_pool import LiquidityMapWordMissing
+from degenbot.exceptions.pool import LiquidityMapWordMissing
 from degenbot.uniswap.v3_libraries.tick_bitmap import (
     gen_ticks,
     next_initialized_tick_within_one_word,

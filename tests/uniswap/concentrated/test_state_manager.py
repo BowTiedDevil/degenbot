@@ -13,7 +13,7 @@ import dataclasses
 
 import pytest
 
-from degenbot.exceptions.liquidity_pool import NoPoolStateAvailable
+from degenbot.exceptions.pool import NoPoolStateAvailable
 from degenbot.uniswap.concentrated.state_manager import ConcentratedLiquidityStateManager
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 

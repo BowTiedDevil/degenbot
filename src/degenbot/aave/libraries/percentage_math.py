@@ -1,5 +1,5 @@
 from degenbot.constants import MAX_UINT256
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 
 # Percentage: decimal numbers with 4 digits of precision (100.00%)
 PERCENTAGE_FACTOR = 10**4

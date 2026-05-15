@@ -1,5 +1,5 @@
 from degenbot.constants import MAX_UINT128, MIN_UINT128
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 
 
 def add_delta(

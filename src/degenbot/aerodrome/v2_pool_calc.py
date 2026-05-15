@@ -21,7 +21,7 @@ from degenbot.calculations.solidly_stable import (
     get_y_solidly,
 )
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.liquidity_pool import (
+from degenbot.exceptions.pool import (
     InvalidSwapInputAmount,
     LiquidityPoolError,
 )

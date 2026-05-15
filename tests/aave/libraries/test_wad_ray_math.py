@@ -16,7 +16,7 @@ from degenbot.aave.libraries.wad_ray_math import (
     wad_to_ray,
 )
 from degenbot.constants import MAX_UINT256, MIN_UINT256
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 
 
 def test_constants() -> None:

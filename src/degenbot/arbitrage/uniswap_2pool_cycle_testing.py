@@ -47,8 +47,8 @@ from degenbot.exceptions.arbitrage import (
     NoSolverSolution,
     Unprofitable,
 )
-from degenbot.exceptions.evm import EVMRevertError
-from degenbot.exceptions.liquidity_pool import (
+from degenbot.exceptions.pool import EVMRevertError
+from degenbot.exceptions.pool import (
     IncompleteSwap,
     LiquidityPoolError,
     PossibleInaccurateResult,
