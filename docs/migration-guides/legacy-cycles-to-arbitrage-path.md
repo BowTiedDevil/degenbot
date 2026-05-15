@@ -93,4 +93,4 @@ path = ArbitragePath(
 
 3. **Swap amounts**: `build_swap_amounts()` returns typed `SwapAmounts` subclasses with `input_amount()`, `output_amount()`, and `encode()` methods. The legacy classes returned raw tuples.
 
-4. **No cvxpy dependency**: The new architecture doesn't require cvxpy. If you need legacy cycle classes, install with `pip install degenbot[legacy-cycles]`.
+4. **No cvxpy dependency**: The new architecture doesn't require cvxpy for its solver path. (cvxpy remains an install dependency for legacy cycle support.)
