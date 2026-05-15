@@ -30,3 +30,26 @@
 - A **Health Factor** is computed from all **Collateral** and **Debt** positions of a single user
 - A **Liquidation** occurs when a **Health Factor** drops below 1.0
 - **GHO** debt uses a discount mechanism not present in standard **Debt**
+
+## Cross-module rulings
+
+- **Pool vs Market vs Pool Contract** — "Market" is the canonical term for an Aave lending system; "Pool" is reserved for DEX contracts. See [CONTEXT-MAP.md](../../../CONTEXT-MAP.md) for the full ruling with examples.
+- **Asset vs Token** — "Asset" = ERC-20 token + lending state; "Token" = bare ERC-20 contract. See [CONTEXT-MAP.md](../../../CONTEXT-MAP.md) for the full ruling with examples.
+- **Reserves (DEX) vs Asset (Aave)** — "Reserves" (plural) = DEX token balances; "Asset" = Aave lending state. See [CONTEXT-MAP.md](../../../CONTEXT-MAP.md) for the full ruling with examples.
+
+## Example dialogue
+
+> **Dev:** "The Aave **pool** has 8 reserves with different borrow rates."
+> **Domain expert:** "Use **Market** and **Assets**. A **Market** is the Aave lending system; an **Asset** is one token's lending state within it. 'Pool' is for DEX contracts; 'Reserves' is for DEX token balances."
+>
+> **Dev:** "But the on-chain contract is literally called Pool.sol."
+> **Domain expert:** "Right — you can say '**Pool contract**' when you mean the on-chain contract specifically. But the lending system as a whole is a **Market**. 'The Market's Pool contract emitted a Supply event' is fine."
+>
+> **Dev:** "And an **Asset** is different from a **Token**?"
+> **Domain expert:** "Yes. A **Token** is just the ERC-20 contract — address, symbol, decimals. An **Asset** is the Token plus its lending state: supply/borrow rates, collateral config, caps. Every Asset wraps a Token; not every Token is an Asset."
+>
+> **Dev:** "What about the **Health Factor** — when does it trigger a liquidation?"
+> **Domain expert:** "When it drops below 1.0. It's the ratio of adjusted **Collateral** value to **Debt** value. The threshold depends on each Asset's **Liquidation Threshold**."
+>
+> **Dev:** "And **Scaled Amounts** vs **Raw Amounts**?"
+> **Domain expert:** "A **Raw Amount** is the actual token quantity. A **Scaled Amount** is normalized by the current **Index** — raw ÷ index. Scaled amounts are used for interest-accruing balance tracking because they stay constant between accruals."
