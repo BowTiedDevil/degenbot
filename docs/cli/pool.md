@@ -50,7 +50,7 @@ V4 uses a **centralized pool manager** (instead of per-pool contracts) with hook
 - **Hooks**: Customizable behavior at pool boundaries
 - **ModifyLiquidity**: Single event type for liquidity operations
 
-V4 uses separate `ManagedPool` database tables with pool manager references.
+V4 uses separate `ManagedPool` database tables with PoolManager contract references.
 
 ## Commands
 
