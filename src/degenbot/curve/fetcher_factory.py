@@ -19,7 +19,7 @@ from hexbytes import HexBytes
 from web3 import Web3
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.functions import encode_function_calldata
+from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 import eth_abi.abi
 
-from degenbot.functions import encode_function_calldata, raw_call
+from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 
 if TYPE_CHECKING:
     from collections.abc import Callable

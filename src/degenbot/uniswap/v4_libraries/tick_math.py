@@ -2,7 +2,7 @@ import functools
 
 from degenbot.constants import MAX_INT16, MAX_UINT256
 from degenbot.exceptions.pool import EVMRevertError
-from degenbot.functions import evm_divide
+from degenbot.calculations.evm_math import evm_divide
 from degenbot.uniswap.v4_libraries import bit_math
 from degenbot.uniswap.v4_libraries._config import V4_LIB_CACHE_SIZE
 

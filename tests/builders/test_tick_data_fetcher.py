@@ -253,6 +253,6 @@ class TestBitmapFetchRaises:
 
 def _encode_ticks_calldata(tick: int) -> bytes:
     """Encode a ticks(int24) call for the given tick value."""
-    from degenbot.functions import encode_function_calldata
+    from degenbot.provider.call_helpers import encode_function_calldata
 
     return encode_function_calldata("ticks(int24)", [tick])

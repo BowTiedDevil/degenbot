@@ -11,7 +11,7 @@ from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models import Erc20TokenTable
 from degenbot.exceptions.infrastructure import NoPriceOracle
-from degenbot.functions import encode_function_calldata, raw_call
+from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.provider import ProviderAdapter
 from degenbot.types.abstract import AbstractErc20Token
 from degenbot.types.aliases import BlockNumber, ChainId

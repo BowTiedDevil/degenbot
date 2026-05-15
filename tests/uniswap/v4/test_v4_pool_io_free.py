@@ -15,7 +15,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20.erc20 import Erc20Token
-from degenbot.functions import encode_function_calldata
+from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.uniswap.v4_types import (
     UniswapV4BitmapAtWord,

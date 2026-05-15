@@ -12,7 +12,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 from degenbot.exceptions.pool import EVMRevertError
-from degenbot.functions import raise_if_invalid_uint256
+from degenbot.calculations.evm_math import raise_if_invalid_uint256
 
 if TYPE_CHECKING:
     from typing import Literal

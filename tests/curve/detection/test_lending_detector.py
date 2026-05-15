@@ -6,7 +6,7 @@ import eth_abi.abi
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.lending_detector import detect_lending_tokens
-from degenbot.functions import encode_function_calldata
+from degenbot.provider.call_helpers import encode_function_calldata
 
 # Well-known addresses
 CDAI = get_checksum_address("0x5d3a536E4D6DbD6114cc1Ead35777bAB948E3643")
