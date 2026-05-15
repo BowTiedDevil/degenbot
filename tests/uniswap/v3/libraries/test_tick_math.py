@@ -14,9 +14,11 @@ from degenbot.uniswap.v3_libraries import (
     MIN_SQRT_RATIO,
     MIN_TICK,
     get_sqrt_ratio_at_tick,
-    get_sqrt_ratio_at_tick_rs,
     get_tick_at_sqrt_ratio,
-    get_tick_at_sqrt_ratio_rs,
+)
+from degenbot.uniswap.v3_libraries.tick_math import (
+    get_sqrt_ratio_at_tick as get_sqrt_ratio_at_tick_py,
+    get_tick_at_sqrt_ratio as get_tick_at_sqrt_ratio_py,
 )
 
 # Tests adapted from Typescript tests on Uniswap V3 Github repo
@@ -36,10 +38,10 @@ def encode_price_sqrt(reserve1: int, reserve0: int) -> int:
 
 
 def test_get_sqrt_ratio_at_tick() -> None:
-    with pytest.raises(EVMRevertError, match="abs_tick <= MAX_TICK"):
+    with pytest.raises(ValueError, match="Invalid tick"):
         get_sqrt_ratio_at_tick(MIN_TICK - 1)
 
-    with pytest.raises(EVMRevertError, match="abs_tick <= MAX_TICK"):
+    with pytest.raises(ValueError, match="Invalid tick"):
         get_sqrt_ratio_at_tick(MAX_TICK + 1)
 
     assert get_sqrt_ratio_at_tick(MIN_TICK) == 4295128739
@@ -64,16 +66,16 @@ def test_max_sqrt_ratio() -> None:
 
 
 def test_get_tick_at_sqrt_ratio() -> None:
-    with pytest.raises(EVMRevertError, match="R"):
+    with pytest.raises((EVMRevertError, OverflowError)):
         get_tick_at_sqrt_ratio(MIN_UINT160 - 1)
 
-    with pytest.raises(EVMRevertError, match="R"):
+    with pytest.raises((EVMRevertError, OverflowError)):
         get_tick_at_sqrt_ratio(MAX_UINT160 + 1)
 
-    with pytest.raises(EVMRevertError, match="R"):
+    with pytest.raises(ValueError):
         get_tick_at_sqrt_ratio(MIN_SQRT_RATIO - 1)
 
-    with pytest.raises(EVMRevertError, match="R"):
+    with pytest.raises(ValueError):
         get_tick_at_sqrt_ratio(MAX_SQRT_RATIO)
 
     assert (get_tick_at_sqrt_ratio(MIN_SQRT_RATIO)) == (MIN_TICK)
@@ -118,7 +120,7 @@ def test_get_tick_at_sqrt_ratio() -> None:
     )
 )
 def test_get_sqrt_ratio_at_tick_rs(tick: int):
-    assert get_sqrt_ratio_at_tick(tick) == get_sqrt_ratio_at_tick_rs(tick)
+    assert get_sqrt_ratio_at_tick(tick) == get_sqrt_ratio_at_tick_py(tick)
 
 
 @hypothesis.given(
@@ -128,7 +130,7 @@ def test_get_sqrt_ratio_at_tick_rs(tick: int):
     )
 )
 def test_get_tick_at_sqrt_ratio_rs(sqrt_price_x96: int):
-    assert get_tick_at_sqrt_ratio(sqrt_price_x96) == get_tick_at_sqrt_ratio_rs(sqrt_price_x96)
+    assert get_tick_at_sqrt_ratio(sqrt_price_x96) == get_tick_at_sqrt_ratio_py(sqrt_price_x96)
 
 
 @pytest.fixture(scope="session")
