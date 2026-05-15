@@ -11,7 +11,6 @@ See the [skill vocabulary](https://github.com/user/skills/improve-codebase-archi
 | # | Plan | Summary |
 |---|------|---------|
 | 023 | [Consolidate CLI Pool Update Functions into Parameterized Processor](023-consolidate-pool-update-functions.md) | Extract 12+ near-identical pool update functions from `pool.py` (~1900 lines) into a parameterized `PoolEventProcessor` with pluggable decoders. |
-| 028 | [Builder Registry on Bot](028-builder-registry.md) | Replace 5-point builder wiring with `PoolBuilder` protocol + registry keyed by `PoolFamily`. Adding a new pool family goes from 5 touch points to 2. |
 | 030 | [Consolidate Exception Module Files](030-consolidate-exceptions.md) | Merge 12 exception files (583 lines) into 4 domain-aligned files: `base.py`, `pool.py`, `arbitrage.py`, `infrastructure.py`. Public API unchanged. |
 
 ### Aave
@@ -21,6 +20,16 @@ See the [skill vocabulary](https://github.com/user/skills/improve-codebase-archi
 ### Arbitrage
 
 (No active arbitrage plans — Plans 011, 019, 021 are complete.)
+
+### Documentation
+
+(No active documentation plans — Plan 031 is complete.)
+
+### Pool / Bot Architecture
+
+| # | Plan | Summary |
+|---|------|---------|
+| 032 | [Rename PoolManager → PoolTracker](032-rename-pool-manager-to-tracker.md) | Rename all off-chain pool manager classes, modules, and Bot API to "tracker" naming. 14 classes, 8 module files, Bot.add_tracker(). Backward-compat aliases included. |
 
 ### Infrastructure
 
@@ -63,6 +72,7 @@ See the [skill vocabulary](https://github.com/user/skills/improve-codebase-archi
 | 008 | [Extract Per-OperationType Handlers Behind a Pipeline Seam](completed/008-aave-event-enrichment-handlers.md) | Replace the ~300-line `ScaledEventEnricher.enrich()` monolith with an `OperationHandler` pipeline. 13 handlers, `EnrichmentContext` shared services, feature flag removed. |
 | 010 | [Parameterize Aave Event Model Taxonomy](completed/010-aave-event-models-parameterized.md) | 18 Pydantic event classes → single `EnrichedScaledTokenEvent`. Properties derive from `ScaledTokenEventType` enum via module-level sets. |
 | 009 | [Separate I/O from Calculation in Position Analysis](completed/009-aave-position-analysis-io-free.md) | I/O-free architecture for Aave position analysis. Pure `core.py` + I/O `orchestrator.py` with `PriceFetcher`/`PositionQuery` protocols. Flat records replace ORM navigation. |
+| 031 | [Context Docs Cleanup](031-context-docs-cleanup.md) | Align all CONTEXT.md files with grill-with-docs format: glossaries only, example dialogues, one authoritative definition per term, implementation details extracted to reference docs. |
 
 ## Dependency Graph
 
@@ -85,6 +95,8 @@ Plan 027 (Curve Lending-Rate Fetchers) ✅ ← typed LendingRateFetcher protocol
 Plan 028 (Builder Registry)             ← PoolBuilder protocol + registry on Bot
 Plan 029 (Variant Group Externalization) ✅ ← move addresses to config (subset of 026)
 Plan 030 (Exception Consolidation)       ← 12 files → 4
+Plan 031 (Context Docs Cleanup) ✅        ← documentation only; no code changes
+Plan 032 (Rename PoolManager → Tracker)   ← 14 classes, 8 modules, Bot API
 
 --- Active Plans ---
 
@@ -133,3 +145,5 @@ Plan 030 (Exception Consolidation)        ← independent; code organization onl
 18. ~~**Plan 027** (Curve Lending-Rate Fetchers)~~ ✅ — complete I/O-free for Curve; depends on 026
 19. **Plan 028** (Builder Registry) — independent; simplifies Bot wiring
 20. **Plan 030** (Exception Consolidation) — independent; do anytime
+21. ~~**Plan 031** (Context Docs Cleanup)~~ ✅ — documentation only; no code changes
+22. **Plan 032** (Rename PoolManager → PoolTracker) — large mechanical rename; do after 031 docs are in sync
