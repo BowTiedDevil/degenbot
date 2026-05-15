@@ -11,7 +11,7 @@ from degenbot.exceptions.pool import (
     PoolNotAssociated,
 )
 from degenbot.logging import logger
-from degenbot.types.abstract import AbstractPoolManager
+from degenbot.types.abstract import AbstractPoolTracker
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.uniswap.v2_functions import generate_v2_pool_address
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 
 
-class AbstractUniswapV2PoolManager[Pool: UniswapV2Pool](AbstractPoolManager[Pool]):
+class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool]):
     def __init__(
         self,
         factory_address: str,
@@ -121,7 +121,7 @@ class AbstractUniswapV2PoolManager[Pool: UniswapV2Pool](AbstractPoolManager[Pool
             return new_pool
 
 
-class UniswapV2PoolManager(AbstractUniswapV2PoolManager[UniswapV2Pool], pool_factory=UniswapV2Pool):
+class UniswapV2PoolTracker(AbstractUniswapV2PoolTracker[UniswapV2Pool], pool_factory=UniswapV2Pool):
     """
     A class that generates and tracks concrete instances of a Uniswap V2 liquidity pool helper or
     one of its child classes.
@@ -158,7 +158,7 @@ class UniswapV2PoolManager(AbstractUniswapV2PoolManager[UniswapV2Pool], pool_fac
         )
 
 
-class AbstractUniswapV3PoolManager[Pool: UniswapV3Pool](AbstractPoolManager[Pool]):
+class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool]):
     _chain_id: ChainId
     _deployer_address: ChecksumAddress
     _factory_address: ChecksumAddress
@@ -277,7 +277,7 @@ class AbstractUniswapV3PoolManager[Pool: UniswapV3Pool](AbstractPoolManager[Pool
         self._snapshot = None
 
 
-class UniswapV3PoolManager(AbstractUniswapV3PoolManager[UniswapV3Pool], pool_factory=UniswapV3Pool):
+class UniswapV3PoolTracker(AbstractUniswapV3PoolTracker[UniswapV3Pool], pool_factory=UniswapV3Pool):
     """
     A class that generates and tracks concrete instances of a Uniswap V3 liquidity pool helper or
     one of its child classes.

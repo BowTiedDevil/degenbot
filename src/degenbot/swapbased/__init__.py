@@ -1,7 +1,7 @@
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 
-from .managers import SwapbasedV2PoolManager
+from .trackers import SwapbasedV2PoolTracker
 from .pools import SwapbasedV2Pool
 
 # Register Swapbased V2 factory
@@ -18,5 +18,5 @@ pool_type_registry.register(
 
 __all__ = (
     "SwapbasedV2Pool",
-    "SwapbasedV2PoolManager",
+    "SwapbasedV2PoolTracker",
 )

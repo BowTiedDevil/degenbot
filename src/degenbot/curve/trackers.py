@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions.pool import PoolCreationFailed, PoolNotAssociated
-from degenbot.types.abstract import AbstractPoolManager
+from degenbot.types.abstract import AbstractPoolTracker
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
@@ -16,8 +16,8 @@ if TYPE_CHECKING:
     from degenbot.types.aliases import ChainId
 
 
-class CurveStableswapPoolManager(
-    AbstractPoolManager["CurveStableswapPool"],
+class CurveStableswapPoolTracker(
+    AbstractPoolTracker["CurveStableswapPool"],
     pool_factory=None,  # type: ignore[assignment]
 ):
     """

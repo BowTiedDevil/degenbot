@@ -2,21 +2,21 @@
 Tests that verify pool managers return the correct pool subclass for each DEX variant.
 
 This ensures that:
-- UniswapV2PoolManager returns UniswapV2Pool
-- SushiswapV2PoolManager returns SushiswapV2Pool
-- AerodromeV2PoolManager returns AerodromeV2Pool
-- UniswapV3PoolManager returns UniswapV3Pool
-- SushiswapV3PoolManager returns SushiswapV3Pool
-- PancakeswapV3PoolManager returns PancakeswapV3Pool
-- AerodromeV3PoolManager returns AerodromeV3Pool
+- UniswapV2PoolTracker returns UniswapV2Pool
+- SushiswapV2PoolTracker returns SushiswapV2Pool
+- AerodromeV2PoolTracker returns AerodromeV2Pool
+- UniswapV3PoolTracker returns UniswapV3Pool
+- SushiswapV3PoolTracker returns SushiswapV3Pool
+- PancakeswapV3PoolTracker returns PancakeswapV3Pool
+- AerodromeV3PoolTracker returns AerodromeV3Pool
 """
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.provider import ProviderAdapter
-from degenbot.sushiswap.managers import SushiswapV2PoolManager
+from degenbot.sushiswap.trackers import SushiswapV2PoolTracker
 from degenbot.sushiswap.pools import SushiswapV2Pool
-from degenbot.uniswap.managers import UniswapV2PoolManager, UniswapV3PoolManager
+from degenbot.uniswap.trackers import UniswapV2PoolTracker, UniswapV3PoolTracker
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.helpers.bot_factory import make_bot_with_provider
@@ -49,9 +49,9 @@ class TestV2PoolSubclassSelection:
     def test_uniswap_v2_pool_manager_returns_uniswap_v2_pool(
         self, fork_mainnet_full: AnvilFork
     ) -> None:
-        """UniswapV2PoolManager should return UniswapV2Pool instances."""
+        """UniswapV2PoolTracker should return UniswapV2Pool instances."""
         bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-        manager = UniswapV2PoolManager(
+        manager = UniswapV2PoolTracker(
             factory_address=MAINNET_UNISWAP_V2_FACTORY,
             bot=bot,
         )
@@ -67,9 +67,9 @@ class TestV2PoolSubclassSelection:
     def test_sushiswap_v2_pool_manager_returns_sushiswap_v2_pool(
         self, fork_mainnet_full: AnvilFork
     ) -> None:
-        """SushiswapV2PoolManager should return SushiswapV2Pool instances."""
+        """SushiswapV2PoolTracker should return SushiswapV2Pool instances."""
         bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-        manager = SushiswapV2PoolManager(
+        manager = SushiswapV2PoolTracker(
             factory_address=MAINNET_SUSHISWAP_V2_FACTORY,
             bot=bot,
         )
@@ -95,9 +95,9 @@ class TestV3PoolSubclassSelection:
     def test_uniswap_v3_pool_manager_returns_uniswap_v3_pool(
         self, fork_mainnet_full: AnvilFork
     ) -> None:
-        """UniswapV3PoolManager should return UniswapV3Pool instances."""
+        """UniswapV3PoolTracker should return UniswapV3Pool instances."""
         bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-        manager = UniswapV3PoolManager(
+        manager = UniswapV3PoolTracker(
             factory_address=MAINNET_UNISWAP_V3_FACTORY,
             bot=bot,
         )

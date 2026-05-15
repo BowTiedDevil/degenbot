@@ -14,7 +14,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.functions import encode_function_calldata
-from degenbot.uniswap.managers import UniswapV2PoolManager
+from degenbot.uniswap.trackers import UniswapV2PoolTracker
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 
@@ -280,10 +280,10 @@ class TestBotBuildV2Pool:
         assert bot.pools.get(pool_address=pool.address, chain_id=1) is pool
 
 
-class TestV2PoolManagerWithBot:
-    """UniswapV2PoolManager delegates to Bot when available."""
+class TestV2PoolTrackerWithBot:
+    """UniswapV2PoolTracker delegates to Bot when available."""
 
-    def test_manager_uses_bot_build_v2_pool(self, tmp_path: pathlib.Path) -> None:
+    def test_tracker_uses_bot_build_v2_pool(self, tmp_path: pathlib.Path) -> None:
         """When a manager has a bot, get_pool delegates to bot.build_v2_pool."""
 
         config = _make_test_config(tmp_path)
@@ -297,13 +297,13 @@ class TestV2PoolManagerWithBot:
         bot.connections.set_default_chain(1)
 
         factory = "0x5C69bEe701ef814E44274f655e7632cB715C14B6"
-        manager = bot.add_manager(
-            UniswapV2PoolManager,
+        manager = bot.add_tracker(
+            UniswapV2PoolTracker,
             factory_address=factory,
             chain_id=1,
         )
 
-        # The manager's bot reference should be set
+        # The tracker's bot reference should be set
         assert manager._bot is bot
 
         # Calling get_pool should call bot.build_v2_pool under the hood
@@ -379,8 +379,8 @@ class TestV2PoolManagerWithBot:
 
         provider.call = MagicMock(side_effect=mock_call)
 
-        manager = bot.add_manager(
-            UniswapV2PoolManager,
+        manager = bot.add_tracker(
+            UniswapV2PoolTracker,
             factory_address=factory_addr,
             chain_id=1,
         )

@@ -1,6 +1,6 @@
 import pytest
 
-from degenbot.aerodrome.managers import AerodromeV2PoolManager, AerodromeV3PoolManager
+from degenbot.aerodrome.trackers import AerodromeV2PoolTracker, AerodromeV3PoolTracker
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 
@@ -17,23 +17,23 @@ BASE_AERO_WETH_V3_POOL_TICK_SPACING = 200
 pytestmark = pytest.mark.base
 
 
-def test_create_base_chain_aerodrome_managers(fork_base_full: AnvilFork):
+def test_create_base_chain_aerodrome_trackers(fork_base_full: AnvilFork):
 
-    aerodrome_v2_pool_manager = AerodromeV2PoolManager(factory_address=BASE_AERODROME_V2_FACTORY)
-    assert aerodrome_v2_pool_manager._factory_address == BASE_AERODROME_V2_FACTORY
+    aerodrome_v2_pool_tracker = AerodromeV2PoolTracker(factory_address=BASE_AERODROME_V2_FACTORY)
+    assert aerodrome_v2_pool_tracker._factory_address == BASE_AERODROME_V2_FACTORY
 
-    aerodrome_v3_pool_manager = AerodromeV3PoolManager(factory_address=BASE_AERODROME_V3_FACTORY)
-    assert aerodrome_v3_pool_manager._factory_address == BASE_AERODROME_V3_FACTORY
+    aerodrome_v3_pool_tracker = AerodromeV3PoolTracker(factory_address=BASE_AERODROME_V3_FACTORY)
+    assert aerodrome_v3_pool_tracker._factory_address == BASE_AERODROME_V3_FACTORY
 
-    aerodrome_v2_lp = aerodrome_v2_pool_manager.get_pool(BASE_AERO_WETH_V2_POOL)
-    aerodrome_v2_lp_from_tokens = aerodrome_v2_pool_manager.get_volatile_pool(
+    aerodrome_v2_lp = aerodrome_v2_pool_tracker.get_pool(BASE_AERO_WETH_V2_POOL)
+    aerodrome_v2_lp_from_tokens = aerodrome_v2_pool_tracker.get_volatile_pool(
         token_addresses=(BASE_WETH_TOKEN, BASE_AERO_TOKEN)
     )
     assert aerodrome_v2_lp is aerodrome_v2_lp_from_tokens
 
-    aerodrome_v3_lp = aerodrome_v3_pool_manager.get_pool(BASE_AERO_WETH_V3_POOL)
+    aerodrome_v3_lp = aerodrome_v3_pool_tracker.get_pool(BASE_AERO_WETH_V3_POOL)
     aerodrome_v3_lp_from_tokens_and_tick_spacing = (
-        aerodrome_v3_pool_manager.get_pool_from_tokens_and_tick_spacing(
+        aerodrome_v3_pool_tracker.get_pool_from_tokens_and_tick_spacing(
             token_addresses=(BASE_WETH_TOKEN, BASE_AERO_TOKEN),
             tick_spacing=BASE_AERO_WETH_V3_POOL_TICK_SPACING,
         )

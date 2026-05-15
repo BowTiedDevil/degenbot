@@ -5,7 +5,7 @@ that access them. No calculation logic — calculations live in
 UniswapV4PoolCalc.
 
 V4-specific state:
-- pool_id: the PoolManager-tracked pool identifier
+- pool_id: the pool identifier tracked by the V4 PoolManager contract
 - pool_key: the V4 PoolKey struct (currency0, currency1, fee, tick_spacing, hooks)
 - hook_address: the hooks contract address
 - active_hooks: which hook flags are set

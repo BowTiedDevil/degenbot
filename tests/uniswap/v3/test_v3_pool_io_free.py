@@ -14,7 +14,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.functions import encode_function_calldata
-from degenbot.uniswap.managers import UniswapV3PoolManager
+from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
     UniswapV3BitmapAtWord,
@@ -285,10 +285,10 @@ class TestBotBuildV3Pool:
         assert bot.pools.get(pool_address=pool.address, chain_id=1) is pool
 
 
-class TestV3PoolManagerWithBot:
-    """UniswapV3PoolManager delegates to Bot when available."""
+class TestV3PoolTrackerWithBot:
+    """UniswapV3PoolTracker delegates to Bot when available."""
 
-    def test_manager_uses_bot_pools_registry(self, tmp_path: pathlib.Path) -> None:
+    def test_tracker_uses_bot_pools_registry(self, tmp_path: pathlib.Path) -> None:
         """When a manager has a bot, get_pool checks bot.pools first."""
 
         config = _make_test_config(tmp_path)
@@ -302,8 +302,8 @@ class TestV3PoolManagerWithBot:
         bot.connections.set_default_chain(1)
 
         factory = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
-        manager = bot.add_manager(
-            UniswapV3PoolManager,
+        manager = bot.add_tracker(
+            UniswapV3PoolTracker,
             factory_address=factory,
             chain_id=1,
         )

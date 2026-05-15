@@ -38,7 +38,7 @@ from degenbot.exceptions.pool import ManagerAlreadyInitialized
 from degenbot.functions import async_raw_call, encode_function_calldata
 from degenbot.logging import logger
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
-from degenbot.types.abstract import AbstractPoolManager
+from degenbot.types.abstract import AbstractPoolTracker
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
@@ -75,19 +75,19 @@ class AsyncBot:
         self.pools = PoolRegistry()
         self.tokens = TokenRegistry()
         self.managed_pools = ManagedPoolRegistry()
-        self._managers: dict[tuple[ChainId, str], Any] = {}
+        self._trackers: dict[tuple[ChainId, str], Any] = {}
 
     @classmethod
     def from_config_file(cls) -> AsyncBot:
         return cls(config=_init_config())
 
-    def add_manager[M: AbstractPoolManager](
+    def add_tracker[M: AbstractPoolTracker](
         self,
         manager_cls: type[M],
         *args: Any,
         **kwargs: Any,
     ) -> M:
-        """Add a pool manager to this bot session. Same as Bot.add_manager."""
+        """Add a pool manager to this bot session. Same as Bot.add_tracker."""
         # Inject bot reference
         kwargs["bot"] = self
 
@@ -96,12 +96,12 @@ class AsyncBot:
         factory_address = kwargs.get("factory_address")
         if chain_id is not None and factory_address is not None:
             key = (chain_id, get_checksum_address(factory_address))
-            if key in self._managers:
+            if key in self._trackers:
                 raise ManagerAlreadyInitialized(
                     message=f"A {manager_cls.__name__} is already registered for chain {chain_id}, factory {factory_address}"
                 )
             manager = manager_cls(*args, **kwargs)
-            self._managers[key] = manager
+            self._trackers[key] = manager
             return manager
 
         manager = manager_cls(*args, **kwargs)

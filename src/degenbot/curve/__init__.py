@@ -1,6 +1,6 @@
 from .curve_stableswap_liquidity_pool import CurveStableswapPool
 from .fetcher_factory import CurveFetcherFactory
-from .managers import CurveStableswapPoolManager
+from .trackers import CurveStableswapPoolTracker
 from .types import (
     CurveStableswapPoolSimulationResult,
     CurveStableswapPoolState,
@@ -11,7 +11,7 @@ __all__ = (
     "CurveFetcherFactory",
     "CurveStableSwapPoolStateUpdated",
     "CurveStableswapPool",
-    "CurveStableswapPoolManager",
+    "CurveStableswapPoolTracker",
     "CurveStableswapPoolSimulationResult",
     "CurveStableswapPoolState",
 )

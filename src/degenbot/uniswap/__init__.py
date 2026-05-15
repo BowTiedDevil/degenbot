@@ -4,7 +4,7 @@ from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from . import (
     abi as abi,
 )  # excluded from __all__ so it doesn't bubble back up to the top level package namespace
-from .managers import UniswapV2PoolManager, UniswapV3PoolManager
+from .trackers import UniswapV2PoolTracker, UniswapV3PoolTracker
 from .v2_liquidity_pool import UniswapV2Pool
 from .v2_types import (
     UniswapV2PoolExternalUpdate,
@@ -67,14 +67,14 @@ _register_uniswap_deployments()
 __all__ = (
     "UniswapV2Pool",
     "UniswapV2PoolExternalUpdate",
-    "UniswapV2PoolManager",
+    "UniswapV2PoolTracker",
     "UniswapV2PoolSimulationResult",
     "UniswapV2PoolState",
     "UniswapV2PoolStateUpdated",
     "UniswapV3LiquiditySnapshot",
     "UniswapV3Pool",
     "UniswapV3PoolExternalUpdate",
-    "UniswapV3PoolManager",
+    "UniswapV3PoolTracker",
     "UniswapV3PoolSimulationResult",
     "UniswapV3PoolState",
     "UniswapV3PoolStateUpdated",
