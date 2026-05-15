@@ -30,6 +30,7 @@ from degenbot.functions import encode_function_calldata
 from degenbot.logging import logger
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.registry.pool_type import pool_type_registry
+from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
 from degenbot.types.pool_type import (
     PoolFamily,
     PoolTypeDescriptor,
@@ -105,6 +106,17 @@ class Bot:
             erc20_builder=self._erc20_builder,
         )
 
+        # Builder registry: concrete pool type → builder
+        # Used by update() for O(1) dict lookup instead of isinstance chain
+        self._builders: dict[type, V2PoolBuilder | V3PoolBuilder | V4PoolBuilder | CurvePoolBuilder] = {}
+        self.register_builder(UniswapV2Pool, self._v2_builder)
+        self.register_builder(UniswapV3Pool, self._v3_builder)
+        self.register_builder(UniswapV4Pool, self._v4_builder)
+        self.register_builder(CurveStableswapPool, self._curve_builder)
+        self.register_builder(AerodromeV2Pool, self._v2_builder)
+        # CamelotLiquidityPool, SushiswapV2Pool, etc. inherit UniswapV2Pool
+        # so they are handled by the V2 builder via isinstance dispatch
+
         # Check database migration version
         self._check_database_version()
 
@@ -169,6 +181,23 @@ class Bot:
         self._managers[key] = manager
         return manager
 
+    def register_builder(
+        self,
+        pool_class: type[AbstractLiquidityPool],
+        builder: V2PoolBuilder | V3PoolBuilder | V4PoolBuilder | CurvePoolBuilder,
+    ) -> None:
+        """Register a builder for a concrete pool type.
+
+        After registration, ``update()`` will use ``type(pool)`` dict lookup
+        instead of isinstance chains to find the right builder.
+
+        Args:
+            pool_class: The concrete pool class (e.g. UniswapV2Pool, AerodromeV2Pool).
+            builder: The builder instance that handles construction and updates
+                for this pool type.
+        """
+        self._builders[pool_class] = builder
+
     def build_erc20token(
         self,
         address: str,
@@ -221,41 +250,34 @@ class Bot:
         if existing is not None:
             return existing
 
-        # Resolve the pool type and dispatch
+        # Resolve the pool type and dispatch to the appropriate builder
         pool_type = self._resolve_pool_type(address, chain_id=chain_id)
 
-        match pool_type.family:
-            case PoolFamily.CONSTANT_PRODUCT:
-                return self.build_v2_pool(
-                    address,
-                    chain_id=chain_id,
-                    deployer_address=deployer_address,
-                    init_hash=init_hash,
-                    state_block=state_block,
-                    silent=silent,
-                )
-            case PoolFamily.CONCENTRATED_LIQUIDITY:
-                return self.build_v3_pool(
-                    address,
-                    chain_id=chain_id,
-                    deployer_address=deployer_address,
-                    init_hash=init_hash,
-                    state_block=state_block,
-                    tick_bitmap=tick_bitmap,
-                    tick_data=tick_data,
-                    silent=silent,
-                )
-            case PoolFamily.STABLESWAP:
-                return self.build_curve_pool(
-                    address,
-                    chain_id=chain_id,
-                    state_block=state_block,
-                    silent=silent,
-                )
-            case _:
-                raise DegenbotValueError(
-                    message=f"No builder for pool family {pool_type.family.value!r}"
-                )
+        # Look up the concrete pool class from the registry
+        pool_class = self._pool_class_for_descriptor(pool_type, chain_id=chain_id)
+        builder = self._builders.get(pool_class)
+        if builder is None:
+            # Fallback: walk MRO of pool_class looking for a registered builder
+            for base in pool_class.__mro__:
+                builder = self._builders.get(base)
+                if builder is not None:
+                    break
+
+        if builder is None:
+            raise DegenbotValueError(
+                message=f"No builder for pool class {pool_class.__name__}"
+            )
+
+        return builder.build(
+            address,
+            chain_id=chain_id,
+            deployer_address=deployer_address,
+            init_hash=init_hash,
+            state_block=state_block,
+            tick_bitmap=tick_bitmap,
+            tick_data=tick_data,
+            silent=silent,
+        )
 
     def _resolve_pool_type(
         self,
@@ -369,6 +391,35 @@ class Bot:
             kind=derive_kind(PoolFamily.STABLESWAP, None),
             factory=factory,
         )
+
+    def _pool_class_for_descriptor(
+        self,
+        pool_type: PoolTypeDescriptor,
+        *,
+        chain_id: ChainId,
+    ) -> type[AbstractLiquidityPool]:
+        """Resolve a PoolTypeDescriptor to a concrete pool class.
+
+        Consults the pool_type_registry to find the registered class
+        for this factory on this chain. Falls back to a default class
+        based on the family if no specific registration exists.
+        """
+        if pool_type.factory is not None:
+            pool_class = pool_type_registry.get_class(chain_id, pool_type.factory)
+            if pool_class is not None:
+                return pool_class
+
+        # Default classes when no factory-specific registration exists
+        match pool_type.family:
+            case PoolFamily.CONSTANT_PRODUCT:
+                return pool_type_registry.get_v2_class(chain_id, pool_type.factory or "") or UniswapV2Pool
+            case PoolFamily.CONCENTRATED_LIQUIDITY:
+                return pool_type_registry.get_v3_class(chain_id, pool_type.factory or "") or UniswapV3Pool
+            case PoolFamily.STABLESWAP:
+                return CurveStableswapPool
+            case _:
+                msg = f"No pool class for family {pool_type.family.value!r}"
+                raise DegenbotValueError(message=msg)
 
     def _fetch_factory_from_chain(
         self, address: ChecksumAddress, *, chain_id: ChainId
@@ -535,14 +586,23 @@ class Bot:
         return builder.update(pool, block_number=block_number)
 
     def _builder_for_pool(self, pool: Any) -> V2PoolBuilder | V3PoolBuilder | V4PoolBuilder | CurvePoolBuilder:
-        """Select the appropriate builder for the pool type."""
-        if isinstance(pool, (UniswapV2Pool, AerodromeV2Pool)):
-            return self._v2_builder
-        if isinstance(pool, UniswapV3Pool) and not isinstance(pool, UniswapV4Pool):
-            return self._v3_builder
-        if isinstance(pool, UniswapV4Pool):
-            return self._v4_builder
-        if isinstance(pool, CurveStableswapPool):
-            return self._curve_builder
+        """Select the appropriate builder for the pool type.
+
+        Uses the builder registry (dict lookup on type(pool)) first, then
+        falls back to isinstance checks for subclasses not explicitly registered
+        (e.g. SushiswapV2Pool inherits from UniswapV2Pool).
+        """
+        # Fast path: exact type match in the registry
+        builder = self._builders.get(type(pool))
+        if builder is not None:
+            return builder
+
+        # Slow path: subclass match (e.g. SushiswapV2Pool is subclass of UniswapV2Pool)
+        # Walk the MRO looking for a registered builder
+        for base in type(pool).__mro__:
+            builder = self._builders.get(base)
+            if builder is not None:
+                return builder
+
         msg = f"update() not implemented for pool type {type(pool).__name__}"
         raise TypeError(msg)
