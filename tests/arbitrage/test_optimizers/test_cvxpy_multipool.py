@@ -9,7 +9,7 @@ from fractions import Fraction
 import hypothesis
 import hypothesis.strategies as st
 
-from degenbot.arbitrage.uniswap_multipool_cycle_testing import _UniswapMultiPoolCycleTesting
+from degenbot.arbitrage._legacy import _UniswapMultiPoolCycleTesting
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate

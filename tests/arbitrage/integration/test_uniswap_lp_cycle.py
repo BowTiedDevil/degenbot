@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from degenbot.anvil_fork import AnvilFork
-from degenbot.arbitrage import UniswapLpCycle
+from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20.erc20 import Erc20Token
@@ -40,7 +40,7 @@ from tests.fakes.subscribers import FakeSubscriber
 from tests.helpers.bot_factory import make_bot_with_provider
 
 if TYPE_CHECKING:
-    from degenbot.arbitrage.uniswap_lp_cycle import Pool, PoolState
+    from degenbot.arbitrage._legacy._uniswap_lp_cycle import Pool, PoolState
 
 WBTC_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -481,8 +481,6 @@ def test_arbitrage_helper_subscriptions(
 ):
     assert wbtc_weth_arb in wbtc_weth_v2_lp._subscribers
     assert wbtc_weth_arb in wbtc_weth_v3_lp._subscribers
-    assert wbtc_weth_arb in wbtc_weth_v2_lp.get_arbitrage_helpers()
-    assert wbtc_weth_arb in wbtc_weth_v3_lp.get_arbitrage_helpers()
 
     pool_subscriber = FakeSubscriber()
     pool_subscriber.subscribe(publisher=wbtc_weth_v2_lp)

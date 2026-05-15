@@ -16,7 +16,7 @@ the test can be skipped or the logic can verify both systems reject.
 import pytest
 
 from degenbot.anvil_fork import AnvilFork
-from degenbot.arbitrage import UniswapLpCycle
+from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
 from degenbot.arbitrage.optimizers.solver import BrentSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.arbitrage.types import UniswapV3PoolSwapAmounts

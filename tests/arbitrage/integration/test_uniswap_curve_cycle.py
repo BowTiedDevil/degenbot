@@ -10,7 +10,7 @@ import pytest
 from eth_typing import ChainId
 
 from degenbot.anvil_fork import AnvilFork
-from degenbot.arbitrage.uniswap_curve_cycle import UniswapCurveCycle
+from degenbot.arbitrage._legacy import _UniswapCurveCycle as UniswapCurveCycle
 from degenbot.bot import Bot
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20.erc20 import Erc20Token

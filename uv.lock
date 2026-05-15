@@ -7,7 +7,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-04-29T18:51:07.78672918Z"
+exclude-newer = "2026-05-01T19:27:51.098695393Z"
 exclude-newer-span = "P14D"
 
 [[package]]
@@ -670,7 +670,6 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "click" },
-    { name = "cvxpy" },
     { name = "networkx" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -681,6 +680,11 @@ dependencies = [
     { name = "tqdm" },
     { name = "ujson" },
     { name = "web3" },
+]
+
+[package.optional-dependencies]
+legacy-cycles = [
+    { name = "cvxpy" },
 ]
 
 [package.dev-dependencies]
@@ -704,7 +708,7 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = "~=1.18" },
     { name = "click", specifier = "~=8.3" },
-    { name = "cvxpy", specifier = "~=1.8" },
+    { name = "cvxpy", marker = "extra == 'legacy-cycles'", specifier = "~=1.8" },
     { name = "networkx", specifier = "~=3.6" },
     { name = "pydantic", specifier = "~=2.12" },
     { name = "pydantic-settings", specifier = "~=2.13" },
@@ -716,6 +720,7 @@ requires-dist = [
     { name = "ujson", specifier = "~=5.12" },
     { name = "web3", specifier = "~=7.14" },
 ]
+provides-extras = ["legacy-cycles"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -123,7 +123,7 @@ class TestArbSolverParityWithLpCycle:
         """ArbSolver and _calculate() should agree on V2-V2 cycle."""
         from degenbot.arbitrage.optimizers.solver import ArbSolver
         from degenbot.arbitrage.optimizers.solver_hop_builders import pools_to_solve_input
-        from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
+        from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
         from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
         usdc = Erc20Token(
@@ -266,7 +266,7 @@ class TestArbSolverParityWithLpCycle:
 
     def test_v2_v2_profit_verified_by_pool_walk(self):
         """Walk through V2 pools manually to verify the solver's optimal input produces real profit."""
-        from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
+        from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
         from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
         usdc = Erc20Token(

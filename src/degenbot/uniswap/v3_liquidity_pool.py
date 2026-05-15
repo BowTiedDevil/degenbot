@@ -19,7 +19,7 @@ from degenbot.exceptions.pool import (
     ExternalUpdateError,
     LiquidityPoolError,
 )
-from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
+from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
@@ -598,19 +598,6 @@ class UniswapV3Pool(
             self._notify_subscribers(
                 message=UniswapV3PoolStateUpdated(working_state),
             )
-
-    def get_arbitrage_helpers(
-        self,
-    ) -> tuple[AbstractArbitrage, ...]:
-        """
-        Get all arbitrage helpers subscribed to this pool.
-        """
-        return tuple(
-            subscriber
-            for subscriber in self._subscribers
-            if isinstance(subscriber, AbstractArbitrage)
-            if self in subscriber.swap_pools
-        )
 
     def discard_states_before_block(self, block: BlockNumber) -> None:
         """Discard cached states earlier than the given block."""

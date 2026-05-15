@@ -1,6 +1,5 @@
 import dataclasses
 
-from .arbitrage import AbstractArbitrage
 from .deployment import AbstractExchangeDeployment
 from .erc20_token import AbstractErc20Token
 from .liquidity_pool import AbstractLiquidityPool
@@ -20,7 +19,6 @@ class AbstractRegistry: ...
 
 
 __all__ = (
-    "AbstractArbitrage",
     "AbstractErc20Token",
     "AbstractExchangeDeployment",
     "AbstractLiquidityPool",

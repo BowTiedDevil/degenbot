@@ -1,6 +1,6 @@
 # Plan 038: Deprecate Legacy Arbitrage Cycle Classes
 
-## Status: PROPOSED
+## Status: COMPLETE
 
 **Supersedes**: Plan 034 (Delete Legacy Arbitrage Cycle Classes)
 

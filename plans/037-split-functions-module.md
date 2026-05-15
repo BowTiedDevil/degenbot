@@ -1,6 +1,6 @@
 # Plan 037: Split `functions.py` into Domain-Aligned Modules
 
-## Status: PROPOSED
+## Status: COMPLETE
 
 ## Overview
 

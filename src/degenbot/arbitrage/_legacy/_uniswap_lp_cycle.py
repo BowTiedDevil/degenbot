@@ -28,7 +28,7 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import ArbitrageError, RateOfExchangeBelowMinimum
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
-from degenbot.types.abstract import AbstractArbitrage
+
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import (
     AbstractPublisherMessage,
@@ -58,7 +58,7 @@ UNISWAP_V3_SWAP_FUNCTION_SELECTOR = Web3.keccak(text="swap(address,bool,int256,u
 ERC20_TOKEN_TRANSFER_FUNCTION_SELECTOR = Web3.keccak(text="transfer(address,uint256)")[:4]
 
 
-class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
+class _UniswapLpCycle(PublisherMixin):
     def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
         for subscriber in self._subscribers:
             subscriber.notify(publisher=self, message=message)
