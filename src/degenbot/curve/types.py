@@ -8,7 +8,6 @@ from degenbot.types.abstract import AbstractPoolState
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PoolStateMessage
 
-
 # ── Variant Enums ──
 # These enums identify calculation variants for Curve StableSwap pools.
 # They are resolved at construction time from the pool address and

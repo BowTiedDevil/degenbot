@@ -14,10 +14,12 @@ from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
 from degenbot.calculations.solidly_stable import (
-    calc_d as _calc_d,
     calc_exact_in_stable as _calc_exact_in_stable,
-    calc_f as _f_aerodrome,
+)
+from degenbot.calculations.solidly_stable import (
     calc_k as _k_aerodrome,
+)
+from degenbot.calculations.solidly_stable import (
     get_y_solidly as _get_y_aerodrome,
 )
 from degenbot.contract.addresses import eip_1167_clone_address

@@ -10,13 +10,10 @@ get_y_camelot) instead of the standard Solidly ones.
 
 from __future__ import annotations
 
-from fractions import Fraction
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from degenbot.calculations.camelot import get_y_camelot, k_camelot
-from degenbot.calculations.solidly_stable import calc_exact_in_stable
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import InvalidSwapInputAmount
 from degenbot.uniswap.v2_pool_calc import UniswapV2PoolCalc
 
 if TYPE_CHECKING:

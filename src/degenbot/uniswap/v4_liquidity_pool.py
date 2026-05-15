@@ -19,8 +19,8 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import EVMRevertError
 from degenbot.exceptions.pool import (
+    EVMRevertError,
     ExternalUpdateError,
     IncompleteSwap,
     LiquidityPoolError,

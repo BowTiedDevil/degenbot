@@ -20,6 +20,14 @@ from degenbot import abi_decode
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
+from degenbot.cli.pool_updater_configs import (
+    V2PoolUpdateConfig,
+    V3PoolUpdateConfig,
+    V4PoolUpdateConfig,
+    update_v2_pools,
+    update_v3_pools,
+    update_v4_pools,
+)
 from degenbot.cli.utils import get_provider_from_config
 from degenbot.constants import MAX_UINT256
 from degenbot.database.models.base import ExchangeTable
@@ -43,18 +51,10 @@ from degenbot.database.models.pools import (
     UniswapV4PoolTable,
     UniswapV4PoolTableBase,
 )
-from degenbot.cli.pool_updater_configs import (
-    V2PoolUpdateConfig,
-    V3PoolUpdateConfig,
-    V4PoolUpdateConfig,
-    update_v2_pools,
-    update_v3_pools,
-    update_v4_pools,
-)
-from degenbot.provider.block_helpers import get_number_for_block_identifier
-from degenbot.provider.log_fetching import fetch_logs_retrying
 from degenbot.logging import logger
 from degenbot.provider import ProviderAdapter
+from degenbot.provider.block_helpers import get_number_for_block_identifier
+from degenbot.provider.log_fetching import fetch_logs_retrying
 from degenbot.types.aliases import ChainId, Tick, Word
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
@@ -607,7 +607,6 @@ def apply_v4_liquidity_updates(
             session.execute(stmt)
 
 
-
 # --- Pool updater configurations ---
 
 _V2_CONFIGS: dict[str, V2PoolUpdateConfig] = {
@@ -727,6 +726,7 @@ def _pool_updater(
     else:
         msg = f"No updater configuration for exchange {exchange_name!r}"
         raise ValueError(msg)
+
 
 @cli.group()
 def pool() -> None:

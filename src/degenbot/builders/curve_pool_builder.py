@@ -20,8 +20,8 @@ from degenbot.curve.fetcher_factory import CurveFetcherFactory
 from degenbot.curve.types import CurveStableswapPoolExternalUpdate
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.pool import BrokenPool
-from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.logging import logger
+from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.provider.interface import ProviderAdapter
 from degenbot.registry import PoolRegistry, TokenRegistry
 from degenbot.types.aliases import ChainId

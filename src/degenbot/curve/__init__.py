@@ -11,7 +11,7 @@ __all__ = (
     "CurveFetcherFactory",
     "CurveStableSwapPoolStateUpdated",
     "CurveStableswapPool",
-    "CurveStableswapPoolTracker",
     "CurveStableswapPoolSimulationResult",
     "CurveStableswapPoolState",
+    "CurveStableswapPoolTracker",
 )

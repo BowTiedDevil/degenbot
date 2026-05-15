@@ -9,13 +9,9 @@ DEX-specific wrappers that capture fee/decimals via closures remain in their DEX
 
 from collections.abc import Callable
 from fractions import Fraction
-from typing import TYPE_CHECKING
 
-from degenbot.exceptions.pool import EVMRevertError
 from degenbot.calculations.evm_math import raise_if_invalid_uint256
-
-if TYPE_CHECKING:
-    from typing import Literal
+from degenbot.exceptions.pool import EVMRevertError
 
 
 def calc_d(x0: int, y: int) -> int:

@@ -2,8 +2,6 @@
 
 from fractions import Fraction
 
-import pytest
-
 from degenbot.calculations.camelot import f_camelot, get_y_camelot, k_camelot
 from degenbot.calculations.constant_product import get_amount_out
 from degenbot.calculations.solidly_stable import (
@@ -16,13 +14,14 @@ from degenbot.calculations.solidly_stable import (
 )
 from degenbot.calculations.stableswap import (
     calc_d as curve_calc_d,
+)
+from degenbot.calculations.stableswap import (
     calc_d_variant_alpha,
     calc_dp,
     calc_dp_variant_alpha,
     calc_dp_variant_beta,
     calc_dp_variant_gamma,
 )
-
 
 # ── constant_product tests ──
 

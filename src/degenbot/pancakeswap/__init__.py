@@ -4,8 +4,8 @@ from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from . import (
     abi as abi,
 )  # excluded from __all__ so it doesn't bubble back up to the top level package namespace
-from .trackers import PancakeswapV2PoolTracker, PancakeswapV3PoolTracker
 from .pools import PancakeswapV2Pool, PancakeswapV3Pool
+from .trackers import PancakeswapV2PoolTracker, PancakeswapV3PoolTracker
 
 
 def _register_pancakeswap_deployments() -> None:

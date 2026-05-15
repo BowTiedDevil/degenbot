@@ -14,8 +14,8 @@ This ensures that:
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.provider import ProviderAdapter
-from degenbot.sushiswap.trackers import SushiswapV2PoolTracker
 from degenbot.sushiswap.pools import SushiswapV2Pool
+from degenbot.sushiswap.trackers import SushiswapV2PoolTracker
 from degenbot.uniswap.trackers import UniswapV2PoolTracker, UniswapV3PoolTracker
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool

@@ -3,7 +3,7 @@ from eth_typing import ChainId
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.exceptions.pool import TrackerAlreadyInitialized, TrackerError, PoolNotAssociated
+from degenbot.exceptions.pool import PoolNotAssociated, TrackerAlreadyInitialized, TrackerError
 from degenbot.pancakeswap.trackers import PancakeswapV3PoolTracker
 from degenbot.provider import ProviderAdapter
 from degenbot.sushiswap.trackers import SushiswapV2PoolTracker, SushiswapV3PoolTracker

@@ -4,28 +4,25 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, ClassVar, Literal
 
 import cvxpy.settings
-
+import eth_abi.abi
+import numpy as np
+import web3
 from cvxpy import Maximize, Parameter, Problem, Variable
 from cvxpy.atoms.affine.binary_operators import multiply
 from cvxpy.atoms.affine.bmat import bmat
 from cvxpy.atoms.affine.hstack import hstack
 from cvxpy.atoms.geo_mean import geo_mean
 from cvxpy.error import SolverError
-
-import eth_abi.abi
-import numpy as np
-import web3
 from eth_typing import ChecksumAddress
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.aerodrome.types import AerodromeV2PoolState
-from degenbot.arbitrage.types import ArbitrageCalculationResult, UniswapV2PoolSwapAmounts
 from degenbot.arbitrage._legacy._uniswap_lp_cycle import _UniswapLpCycle
+from degenbot.arbitrage.types import ArbitrageCalculationResult, UniswapV2PoolSwapAmounts
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.arbitrage import ArbitrageError, NoSolverSolution, Unprofitable
-from degenbot.exceptions.pool import EVMRevertError
-from degenbot.exceptions.pool import LiquidityPoolError
+from degenbot.exceptions.pool import EVMRevertError, LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState

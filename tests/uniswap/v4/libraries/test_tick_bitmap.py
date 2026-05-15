@@ -1,8 +1,8 @@
 import hypothesis
 import hypothesis.strategies
 
-from degenbot.constants import MAX_INT24, MIN_INT24
 from degenbot.calculations.evm_math import evm_divide
+from degenbot.constants import MAX_INT24, MIN_INT24
 from degenbot.uniswap.v4_libraries.tick_bitmap import compress, position
 
 # All tests ported from Foundry tests on Uniswap V4 Github repo

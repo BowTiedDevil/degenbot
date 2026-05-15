@@ -6,7 +6,6 @@ provider.call_raw() based on the method selector in the calldata.
 
 from typing import Any
 
-import eth_abi.abi
 from hexbytes import HexBytes
 
 from degenbot.provider.interface import ProviderAdapter
@@ -89,7 +88,7 @@ def make_fake_curve_provider(call_responses: dict[bytes, Any]) -> ProviderAdapte
     backend = FakeCurveBackend(call_responses)
     # Bypass factory methods — inject the backend directly
     adapter = ProviderAdapter.__new__(ProviderAdapter)
-    adapter._backend = backend  # noqa: SLF001
+    adapter._backend = backend
     adapter._provider_type = "alloy"  # not "web3" — we're testing the abstracted path
     adapter._raw_provider = None
     return adapter

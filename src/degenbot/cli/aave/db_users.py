@@ -14,8 +14,8 @@ from degenbot.cli.aave.constants import GHO_DISCOUNT_DEPRECATION_REVISION
 from degenbot.cli.aave.types import TransactionContext
 from degenbot.database.models.aave import AaveGhoToken, AaveV3Asset, AaveV3Market, AaveV3User
 from degenbot.database.models.erc20 import Erc20TokenTable
-from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.logging import logger
+from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 
 
 def get_gho_vtoken_revision(

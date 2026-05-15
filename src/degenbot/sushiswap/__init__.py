@@ -4,8 +4,8 @@ from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from . import (
     abi as abi,
 )  # excluded from __all__ so it doesn't bubble back up to the top level package namespace
-from .trackers import SushiswapV2PoolTracker, SushiswapV3PoolTracker
 from .pools import SushiswapV2Pool, SushiswapV3Pool
+from .trackers import SushiswapV2PoolTracker, SushiswapV3PoolTracker
 
 
 # Register Sushiswap V2 and V3 factories with the unified pool type registry.

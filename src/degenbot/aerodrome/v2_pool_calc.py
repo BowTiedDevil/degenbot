@@ -12,7 +12,7 @@ Two calculation strategies:
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING, Callable, Literal
+from typing import TYPE_CHECKING, Literal
 
 from degenbot.calculations.solidly_stable import (
     calc_exact_in_stable,
@@ -195,8 +195,8 @@ class AerodromeV2PoolCalc:
         token_in: Literal[0, 1],
         reserves0: int,
         reserves1: int,
-        decimals0: int,  # noqa: ARG001
-        decimals1: int,  # noqa: ARG001
+        decimals0: int,
+        decimals1: int,
         fee: Fraction,
     ) -> int:
         """Volatile (constant-product) exact-in calculation."""
@@ -251,10 +251,10 @@ class AerodromeV2PoolCalc:
     @staticmethod
     def _calc_tokens_in_stable(
         *,
-        token_out_quantity: int,  # noqa: ARG001
-        reserves_in: int,  # noqa: ARG001
-        reserves_out: int,  # noqa: ARG001
-        fee: Fraction,  # noqa: ARG001
+        token_out_quantity: int,
+        reserves_in: int,
+        reserves_out: int,
+        fee: Fraction,
     ) -> int:
         """Stable exact-out calculation — not yet implemented."""
         raise NotImplementedError

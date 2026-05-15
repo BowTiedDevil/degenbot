@@ -10,6 +10,7 @@ from fractions import Fraction
 import pytest
 
 from degenbot.anvil_fork import AnvilFork
+from degenbot.arbitrage._legacy import _UniswapCurveCycle as UniswapCurveCycle
 from degenbot.arbitrage.optimizers._solver_utils import _simulate_path
 from degenbot.arbitrage.optimizers.hop_types import SolveInput
 from degenbot.arbitrage.optimizers.solidly_stable import (
@@ -17,7 +18,6 @@ from degenbot.arbitrage.optimizers.solidly_stable import (
     _simulate_mixed_path_int,
 )
 from degenbot.arbitrage.optimizers.solver import BrentSolver
-from degenbot.arbitrage._legacy import _UniswapCurveCycle as UniswapCurveCycle
 from degenbot.provider import ProviderAdapter
 from degenbot.types.hop_types import ConstantProductHop, CurveStableswapHop
 from degenbot.uniswap.v2_types import UniswapV2PoolState

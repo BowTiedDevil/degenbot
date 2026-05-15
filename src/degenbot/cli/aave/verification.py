@@ -20,8 +20,8 @@ from degenbot.database.models.aave import (
     AaveV3Market,
     AaveV3User,
 )
-from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.logging import logger
+from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.provider.interface import ProviderAdapter
 
 
