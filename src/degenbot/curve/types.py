@@ -129,7 +129,7 @@ class PoolStrategies:
 
 # ── Fetcher Protocols ──
 # These protocols define the interface for callbacks that fetch on-chain data
-# for Curve pools. They are injected by Bot.build_curve_pool() to enable
+# for Curve pools. They are injected by Bot.build_pool() to enable
 # on-demand data fetching while keeping the pool class I/O-free.
 
 
