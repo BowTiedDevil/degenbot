@@ -3,7 +3,7 @@ from eth_typing import ChainId
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.exceptions.pool import ManagerAlreadyInitialized, ManagerError, PoolNotAssociated
+from degenbot.exceptions.pool import TrackerAlreadyInitialized, TrackerError, PoolNotAssociated
 from degenbot.pancakeswap.trackers import PancakeswapV3PoolTracker
 from degenbot.provider import ProviderAdapter
 from degenbot.sushiswap.trackers import SushiswapV2PoolTracker, SushiswapV3PoolTracker
@@ -96,9 +96,9 @@ def test_create_base_chain_trackers(fork_base_full: AnvilFork):
     assert uniswap_v2_lp.address == BASE_UNISWAP_V2_WETH_DEGEN_ADDRESS
     assert uniswap_v3_lp.address == BASE_UNISWAP_V3_WETH_DEGEN_ADDRESS
 
-    with pytest.raises(ManagerAlreadyInitialized):
+    with pytest.raises(TrackerAlreadyInitialized):
         UniswapV2PoolTracker(factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS, bot=bot)
-    with pytest.raises(ManagerAlreadyInitialized):
+    with pytest.raises(TrackerAlreadyInitialized):
         UniswapV3PoolTracker(factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS, bot=bot)
 
 
@@ -176,7 +176,7 @@ def test_create_mainnet_trackers(fork_mainnet_full: AnvilFork):
 
     # Calling get_pool at the wrong pool manager should raise an exception
     with pytest.raises(
-        ManagerError, match=f"Pool {uniswap_v2_lp.address} is not associated with this DEX"
+        TrackerError, match=f"Pool {uniswap_v2_lp.address} is not associated with this DEX"
     ):
         sushiswap_v2_pool_tracker.get_pool(pool_address=uniswap_v2_lp.address)
 
@@ -186,7 +186,7 @@ def test_create_mainnet_trackers(fork_mainnet_full: AnvilFork):
         sushiswap_v2_pool_tracker.get_pool(pool_address=uniswap_v2_lp.address)
 
     with pytest.raises(
-        ManagerError, match=f"Pool {sushiswap_v2_lp.address} is not associated with this DEX"
+        TrackerError, match=f"Pool {sushiswap_v2_lp.address} is not associated with this DEX"
     ):
         uniswap_v2_pool_tracker.get_pool(pool_address=sushiswap_v2_lp.address)
     with pytest.raises(PoolNotAssociated):

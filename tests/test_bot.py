@@ -12,7 +12,7 @@ from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.connection.async_connection_manager import AsyncConnectionManager
 from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.exceptions.pool import ManagerAlreadyInitialized
+from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
 
@@ -113,7 +113,7 @@ class TestBotAddTracker:
         factory = "0x5C69bEe701ef814E44274f655e7632cB715C14B6"
         bot.add_tracker(UniswapV2PoolTracker, factory_address=factory, chain_id=1)
 
-        with pytest.raises(ManagerAlreadyInitialized):
+        with pytest.raises(TrackerAlreadyInitialized):
             bot.add_tracker(UniswapV2PoolTracker, factory_address=factory, chain_id=1)
 
 

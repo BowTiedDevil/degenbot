@@ -25,7 +25,7 @@ from degenbot.erc20.erc20 import (
     Erc20Token,
 )
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.exceptions.pool import ManagerAlreadyInitialized
+from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.functions import encode_function_calldata
 from degenbot.logging import logger
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
@@ -167,7 +167,7 @@ class Bot:
 
         key = (chain_id, factory_address)
         if key in self._trackers:
-            raise ManagerAlreadyInitialized(
+            raise TrackerAlreadyInitialized(
                 message="A manager has already been initialized for this address. "
                 "Access it using the bot's manager registry."
             )
