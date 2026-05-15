@@ -10,7 +10,7 @@ See the [skill vocabulary](https://github.com/user/skills/improve-codebase-archi
 |---|------|---------|
 | 014 | [Async REPL](14-async-repl.md) | `python -m degenbot` with top-level `await`. |
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
-| 033 | [Consolidate Dual Pool-to-Hop Conversion](033-dual-hop-conversion-consolidation.md) | Inline thin wrappers (`_pool_to_hop_state`, `_extract_fee`, `_check_pool_compatibility`), remove `PoolCompatibility` enum, delete `solver_hop_builders.py`. Depends on Plan 038. |
+| 033 | [Consolidate Dual Pool-to-Hop Conversion](033-dual-hop-conversion-consolidation.md) | **COMPLETE** — Inlined thin wrappers, removed `PoolCompatibility` enum, deleted `solver_hop_builders.py`. |
 | 034 | [Delete Legacy Arbitrage Cycle Classes](034-delete-legacy-arbitrage-cycles.md) | **REJECTED** — superseded by Plan 038. |
 | 035 | [Builder Protocol — Replace Union Type with Shared Interface](035-builder-protocol.md) | `PoolBuilder` protocol replaces 4× union type annotation. `_dispatch_build()` isinstance chain → `**kwargs` forwarding one-liner. Typed `build_xxx_pool()` methods stay as delegates (60+ test sites). |
 | 036 | [Consolidate SwapAmounts Dispatch into Self-Contained Subclasses](036-swap-amounts-consolidation.md) | `AbstractSwapAmounts` gets `input_amount()`/`output_amount()` methods (avoids V3/V4 `amount_in` field collision). `_extract_amount_in/out` deleted. Pool `build_swap_amount()` replaces isinstance chain. Depends on Plan 038. |
