@@ -105,8 +105,8 @@ class AbstractUniswapV2PoolManager[Pool: UniswapV2Pool](AbstractPoolManager[Pool
             raise PoolNotAssociated(pool_address)
 
         try:
-            new_pool = self._bot.build_v2_pool(
-                pool_address=pool_address,
+            new_pool = self._bot.build_pool(
+                pool_address,
                 chain_id=self.chain_id,
                 deployer_address=self._deployer_address,
                 init_hash=self._pool_init_hash,
@@ -255,8 +255,8 @@ class AbstractUniswapV3PoolManager[Pool: UniswapV3Pool](AbstractPoolManager[Pool
             raise PoolNotAssociated(pool_address)
 
         try:
-            new_pool = self._bot.build_v3_pool(
-                pool_address=pool_address,
+            new_pool = self._bot.build_pool(
+                pool_address,
                 chain_id=self.chain_id,
                 deployer_address=self._deployer_address,
                 init_hash=self._pool_init_hash,

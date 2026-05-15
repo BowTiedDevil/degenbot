@@ -83,6 +83,7 @@ class V3PoolBuilder:
         tick_bitmap: dict[int, UniswapV3BitmapAtWord] | None = None,
         tick_data: dict[int, UniswapV3LiquidityAtTick] | None = None,
         silent: bool = False,
+        state_cache_depth: int = 8,
     ) -> UniswapV3Pool:
         """Fetch pool data from DB/RPC and construct an I/O-free UniswapV3Pool."""
 

@@ -60,6 +60,7 @@ class V2PoolBuilder:
         init_hash: str | None = None,
         state_block: int | None = None,
         silent: bool = False,
+        state_cache_depth: int = 8,
     ) -> UniswapV2Pool:  # type: ignore[name-defined]
         """Fetch pool data from DB/RPC and construct an I/O-free UniswapV2Pool."""
 

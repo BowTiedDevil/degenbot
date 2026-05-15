@@ -94,6 +94,7 @@ class V4PoolBuilder:
         tick_bitmap: dict[int, UniswapV4BitmapAtWord] | None = None,
         tick_data: dict[int, UniswapV4LiquidityAtTick] | None = None,
         silent: bool = False,
+        state_cache_depth: int = 8,
     ) -> UniswapV4Pool:
         """Fetch pool data from DB/RPC and construct an I/O-free UniswapV4Pool."""
 
