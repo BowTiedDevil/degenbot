@@ -1183,10 +1183,13 @@ Additional documentation is available in the [`docs/`](docs/) directory:
 
 Each module has a `CONTEXT.md` defining domain terminology:
 
-- [Pool Types & Managers](src/degenbot/types/CONTEXT.md) — Pool, Pool State, Reserves, Tick, Fee representations
+- [Pool Types & Trackers](src/degenbot/types/CONTEXT.md) — Pool, Pool State, Reserves, Tick, Fee representations
+- [Uniswap](src/degenbot/uniswap/CONTEXT.md) — V2/V3/V4 pools, Pool Tracker, Managed Pool, Pool ID
 - [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — Metapools, lending pools, fetchers, A coefficient
 - [Aave](src/degenbot/aave/CONTEXT.md) — Market, Asset, Reserve, Enrichment, Liquidation
 - [Arbitrage](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Solver, Optimizer, Hop State
+- [Registries](src/degenbot/registry/CONTEXT.md) — Pool, Token, Managed Pool registries
+- [Connection](src/degenbot/connection/CONTEXT.md) — Provider management, RPC routing
 - [Context Map](CONTEXT-MAP.md) — Cross-module relationships and ambiguity rulings
 
 ## Contributing
