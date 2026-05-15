@@ -1,7 +1,7 @@
 import pytest
 
 from degenbot.constants import MAX_UINT128, MAX_UINT160, MAX_UINT256
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.v4_libraries.constants import (
     SQRT_PRICE_1_1,
     SQRT_PRICE_2_1,

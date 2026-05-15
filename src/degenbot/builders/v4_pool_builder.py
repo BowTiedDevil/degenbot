@@ -15,7 +15,7 @@ from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.database.models.pools import PoolManagerTable, UniswapV4PoolTable
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.exceptions.liquidity_pool import LiquidityPoolError
+from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.functions import encode_function_calldata, raw_call
 from degenbot.logging import logger
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry

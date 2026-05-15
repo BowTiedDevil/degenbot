@@ -1,7 +1,7 @@
 from degenbot.balancer.libraries import log_exp_math
 from degenbot.balancer.libraries.constants import FOUR, MAX_POW_RELATIVE_ERROR, ONE, TWO
 from degenbot.constants import MAX_UINT256
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 
 _ZERO = 0
 

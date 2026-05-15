@@ -11,7 +11,7 @@ from degenbot.database.operations import (
     get_alembic_config,
     upgrade_existing_sqlite_database,
 )
-from degenbot.exceptions.database import BackupExists
+from degenbot.exceptions.infrastructure import BackupExists
 from degenbot.version import __version__
 
 

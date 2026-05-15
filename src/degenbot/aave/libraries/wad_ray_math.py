@@ -1,7 +1,7 @@
 from enum import Enum
 
 from degenbot.constants import MAX_UINT256
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 
 # Wad: decimal numbers with 18 digits of precision
 WAD = 10**18

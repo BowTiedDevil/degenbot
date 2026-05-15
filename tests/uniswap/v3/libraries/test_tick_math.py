@@ -7,7 +7,7 @@ import hypothesis.strategies
 import pytest
 
 from degenbot.constants import MAX_UINT160, MIN_UINT160
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.v3_libraries import (
     MAX_SQRT_RATIO,
     MAX_TICK,

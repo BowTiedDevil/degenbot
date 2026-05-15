@@ -13,7 +13,7 @@ from web3.exceptions import ContractLogicError
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT128, ZERO_ADDRESS
-from degenbot.exceptions.liquidity_pool import (
+from degenbot.exceptions.pool import (
     IncompleteSwap,
     LiquidityPoolError,
     PossibleInaccurateResult,

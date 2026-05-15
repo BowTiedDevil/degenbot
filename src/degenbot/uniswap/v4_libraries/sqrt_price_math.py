@@ -1,7 +1,7 @@
 import functools
 
 from degenbot.constants import MAX_UINT160, MAX_UINT256
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.v4_libraries._config import V4_LIB_CACHE_SIZE
 from degenbot.uniswap.v4_libraries.fixed_point_96 import Q96, RESOLUTION
 from degenbot.uniswap.v4_libraries.full_math import muldiv, muldiv_rounding_up

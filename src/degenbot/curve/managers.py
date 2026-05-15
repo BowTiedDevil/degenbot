@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from degenbot.exceptions.manager import PoolCreationFailed, PoolNotAssociated
+from degenbot.exceptions.pool import PoolCreationFailed, PoolNotAssociated
 from degenbot.types.abstract import AbstractPoolManager
 
 if TYPE_CHECKING:

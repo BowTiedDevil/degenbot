@@ -18,7 +18,7 @@ from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.pools import LiquidityPoolTable, UniswapV3PoolTableBase
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.exceptions.liquidity_pool import UnknownPool
+from degenbot.exceptions.pool import UnknownPool
 from degenbot.functions import fetch_logs_retrying, fetch_logs_retrying_async
 from degenbot.logging import logger
 from degenbot.provider.interface import AsyncProviderAdapter

@@ -15,7 +15,7 @@ from degenbot.aerodrome.types import (
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotError
-from degenbot.exceptions.liquidity_pool import ExternalUpdateError
+from degenbot.exceptions.pool import ExternalUpdateError
 from degenbot.provider import ProviderAdapter
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from tests.helpers.bot_factory import make_bot_with_provider

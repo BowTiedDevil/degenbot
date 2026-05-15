@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import deque
 from typing import TYPE_CHECKING, Protocol
 
-from degenbot.exceptions.liquidity_pool import NoPoolStateAvailable
+from degenbot.exceptions.pool import NoPoolStateAvailable
 from degenbot.uniswap.v3_libraries.tick_math import (
     MAX_SQRT_RATIO,
     MIN_SQRT_RATIO,

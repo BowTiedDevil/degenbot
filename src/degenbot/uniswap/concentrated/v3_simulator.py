@@ -10,7 +10,7 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING, cast
 
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.concentrated.types import SwapResult
 from degenbot.uniswap.v3_libraries.swap_math import compute_swap_step
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio

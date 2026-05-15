@@ -22,8 +22,8 @@ from degenbot.arbitrage.uniswap_lp_cycle import UniswapLpCycle
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.arbitrage import ArbitrageError, NoSolverSolution, Unprofitable
-from degenbot.exceptions.evm import EVMRevertError
-from degenbot.exceptions.liquidity_pool import LiquidityPoolError
+from degenbot.exceptions.pool import EVMRevertError
+from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState

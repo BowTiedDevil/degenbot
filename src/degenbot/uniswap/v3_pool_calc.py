@@ -18,12 +18,12 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.liquidity_pool import IncompleteSwap, LiquidityPoolError
+from degenbot.exceptions.pool import IncompleteSwap, LiquidityPoolError
 from degenbot.uniswap.v3_libraries.tick_math import (
     MAX_SQRT_RATIO,
     MIN_SQRT_RATIO,
 )
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.v3_functions import exchange_rate_from_sqrt_price_x96
 
 if TYPE_CHECKING:

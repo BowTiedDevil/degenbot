@@ -17,7 +17,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT256
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.exceptions.liquidity_pool import (
+from degenbot.exceptions.pool import (
     ExternalUpdateError,
     IncompleteSwap,
     LiquidityPoolError,

@@ -33,8 +33,8 @@ from degenbot.erc20.erc20 import (
 )
 from degenbot.erc20.ether_placeholder import EtherPlaceholder
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.exceptions.liquidity_pool import LiquidityPoolError
-from degenbot.exceptions.manager import ManagerAlreadyInitialized
+from degenbot.exceptions.pool import LiquidityPoolError
+from degenbot.exceptions.pool import ManagerAlreadyInitialized
 from degenbot.functions import async_raw_call, encode_function_calldata
 from degenbot.logging import logger
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry

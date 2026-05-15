@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Literal
 from degenbot.calculations.camelot import get_y_camelot, k_camelot
 from degenbot.calculations.solidly_stable import calc_exact_in_stable
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.liquidity_pool import InvalidSwapInputAmount
+from degenbot.exceptions.pool import InvalidSwapInputAmount
 from degenbot.uniswap.v2_pool_calc import UniswapV2PoolCalc
 
 if TYPE_CHECKING:

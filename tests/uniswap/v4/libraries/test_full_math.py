@@ -3,7 +3,7 @@ import hypothesis.strategies
 import pytest
 
 from degenbot.constants import MAX_UINT256, MIN_UINT256
-from degenbot.exceptions.evm import EVMRevertError
+from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.v4_libraries.full_math import muldiv, muldiv_rounding_up
 from degenbot.uniswap.v4_libraries.functions import mulmod
 

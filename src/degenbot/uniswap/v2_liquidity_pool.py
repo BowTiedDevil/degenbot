@@ -15,7 +15,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import UniswapV2PoolTable
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.liquidity_pool import (
+from degenbot.exceptions.pool import (
     ExternalUpdateError,
     NoPoolStateAvailable,
 )

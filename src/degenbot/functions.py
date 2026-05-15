@@ -24,8 +24,8 @@ from web3.types import BlockIdentifier, LogReceipt
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.evm import InvalidUint256
-from degenbot.exceptions.fetching import LogFetchingTimeout
+from degenbot.exceptions.pool import InvalidUint256
+from degenbot.exceptions.infrastructure import LogFetchingTimeout
 from degenbot.logging import logger
 from degenbot.provider import ProviderAdapter
 from degenbot.provider.interface import AsyncProviderAdapter

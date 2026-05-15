@@ -2,7 +2,7 @@ import bisect
 from collections.abc import Generator
 from itertools import count
 
-from degenbot.exceptions.liquidity_pool import LiquidityMapWordMissing
+from degenbot.exceptions.pool import LiquidityMapWordMissing
 from degenbot.functions import evm_divide
 from degenbot.types.aliases import BlockNumber
 from degenbot.uniswap.v3_types import Tick
