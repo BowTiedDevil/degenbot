@@ -10,7 +10,6 @@ Camelot's k invariant) define their own calc mixin instead of using this one.
 
 from __future__ import annotations
 
-import dataclasses
 from fractions import Fraction
 from typing import TYPE_CHECKING
 

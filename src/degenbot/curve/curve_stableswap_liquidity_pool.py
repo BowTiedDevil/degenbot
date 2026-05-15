@@ -15,6 +15,7 @@ from eth_typing import ChecksumAddress
 from web3.types import BlockIdentifier
 
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.curve.stableswap_pool_state import StableswapPoolState
 from degenbot.curve.types import (
     AdminBalancesFetcher,
     CurveStableswapPoolExternalUpdate,
@@ -36,13 +37,10 @@ from degenbot.curve.types import (
     YDVariant,
     YVariant,
 )
-from degenbot.curve.stableswap_pool_state import StableswapPoolState
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import NoLiquidity
-from degenbot.exceptions.pool import MissingCurveData
-from degenbot.exceptions.pool import EVMRevertError
-from degenbot.exceptions.pool import InvalidSwapInputAmount
+from degenbot.exceptions.pool import EVMRevertError, InvalidSwapInputAmount, MissingCurveData
 from degenbot.logging import logger
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
@@ -1013,9 +1011,6 @@ class CurveStableswapPool(
                 )
 
             return dy
-
-        elif self._strategies.metapool_underlying_style == MetapoolUnderlyingStyle.STANDARD:
-            pass
 
         working_rates = list(self.rate_multipliers)
 

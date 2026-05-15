@@ -3,10 +3,7 @@ from typing import cast
 
 from eth_typing import ChecksumAddress, HexAddress
 
-try:
-    from degenbot.degenbot_rs import to_checksum_address
-except ImportError:
-    to_checksum_address = None  # type: ignore[assignment]
+from degenbot.degenbot_rs import to_checksum_address
 
 
 @functools.lru_cache(maxsize=512)

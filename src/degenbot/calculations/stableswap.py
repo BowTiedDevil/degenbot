@@ -14,9 +14,6 @@ All functions are pure: numeric inputs → numeric outputs, no self, no class re
 
 from collections.abc import Sequence
 
-from degenbot.exceptions.pool import EVMRevertError
-
-
 # ── D calculation variants ──
 # Each computes a single Newton step: d_new = d_func(d, d_p, s, a_nn, n_coins, a_precision)
 

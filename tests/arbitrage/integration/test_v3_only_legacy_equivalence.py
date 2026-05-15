@@ -16,10 +16,10 @@ from fractions import Fraction
 
 import pytest
 
+from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
 from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.arbitrage.types import UniswapV3PoolSwapAmounts
-from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.arbitrage import ArbitrageError, OptimizationError
 from degenbot.types.hop_types import BoundedProductHop

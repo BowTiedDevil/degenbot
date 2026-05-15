@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import eth_abi.abi
 import numpy as np
 import web3
-
 from cvxpy import Maximize, Parameter, Problem, Variable
 from cvxpy.atoms.affine.binary_operators import multiply
 from cvxpy.atoms.affine.bmat import bmat

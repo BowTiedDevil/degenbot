@@ -1,4 +1,3 @@
-# ruff: noqa: PLR0904
 
 from __future__ import annotations
 
@@ -30,7 +29,6 @@ from degenbot.exceptions.pool import (
     NoPoolStateAvailable,
 )
 from degenbot.provider.call_helpers import encode_function_calldata
-from degenbot.logging import logger
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop

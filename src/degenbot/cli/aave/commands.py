@@ -55,9 +55,9 @@ from degenbot.database.models.aave import (
 )
 from degenbot.database.operations import backup_sqlite_database
 from degenbot.exceptions import DegenbotValueError
-from degenbot.provider.call_helpers import encode_function_calldata, raw_call
-from degenbot.provider.block_helpers import get_number_for_block_identifier
 from degenbot.logging import logger
+from degenbot.provider.block_helpers import get_number_for_block_identifier
+from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.provider.interface import ProviderAdapter
 
 if TYPE_CHECKING:

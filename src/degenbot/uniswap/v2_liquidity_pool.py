@@ -20,7 +20,6 @@ from degenbot.exceptions.pool import (
     ExternalUpdateError,
     NoPoolStateAvailable,
 )
-from degenbot.logging import logger
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber

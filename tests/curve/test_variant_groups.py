@@ -4,7 +4,6 @@ Plan 029: Externalize variant group addresses from the pool class into
 a configuration module with typed resolver functions.
 """
 
-import pytest
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve._variant_groups import (
@@ -13,7 +12,6 @@ from degenbot.curve._variant_groups import (
     resolve_yd_variant,
 )
 from degenbot.curve.types import DVariant, YDVariant, YVariant
-
 
 # ── D-variant tests ──
 

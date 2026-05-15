@@ -68,7 +68,7 @@ from pathlib import Path
 from eth_abi.abi import decode
 from web3 import Web3
 
-from degenbot.functions import encode_function_calldata
+from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK
 
 

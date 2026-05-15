@@ -9,8 +9,9 @@ Each accepts a configuration dataclass that captures the DEX-specific variations
 (database table, event hash, fee values, optional RPC calls).
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import tqdm
 from eth_typing import ChecksumAddress
@@ -23,9 +24,8 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.pools import PoolManagerTable
-from degenbot.provider.call_helpers import encode_function_calldata, raw_call
-from degenbot.logging import logger
 from degenbot.provider import ProviderAdapter
+from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 
 
 @dataclass(frozen=True)

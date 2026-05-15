@@ -14,9 +14,12 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions.arbitrage import NoLiquidity
-from degenbot.exceptions.pool import MissingCurveData
-from degenbot.exceptions.pool import EVMRevertError
-from degenbot.exceptions.pool import BrokenPool, InvalidSwapInputAmount
+from degenbot.exceptions.pool import (
+    BrokenPool,
+    EVMRevertError,
+    InvalidSwapInputAmount,
+    MissingCurveData,
+)
 from degenbot.provider import ProviderAdapter
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.bot_factory import make_bot_with_provider

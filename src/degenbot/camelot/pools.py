@@ -128,5 +128,3 @@ class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
             fee=fee_in,
             fee_out=fee_out,
         )
-
-

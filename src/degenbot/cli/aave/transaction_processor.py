@@ -63,8 +63,8 @@ from degenbot.cli.aave_transaction_operations import (
 )
 from degenbot.cli.aave_utils import decode_address
 from degenbot.database.models.aave import AaveV3User
-from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.logging import logger
+from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 
 
 def _process_transaction(tx_context: TransactionContext) -> None:

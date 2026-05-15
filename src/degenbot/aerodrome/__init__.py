@@ -4,8 +4,8 @@ from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from . import (
     abi as abi,
 )  # excluded from __all__ so it doesn't bubble back up to the top level package namespace
-from .trackers import AerodromeV2PoolTracker, AerodromeV3PoolTracker
 from .pools import AerodromeV2Pool, AerodromeV3Pool
+from .trackers import AerodromeV2PoolTracker, AerodromeV3PoolTracker
 from .types import AerodromeV2PoolState, AerodromeV3PoolState
 
 # Register Aerodrome V3 factory with the unified pool type registry.
@@ -35,9 +35,9 @@ pool_type_registry.register(
 
 __all__ = (
     "AerodromeV2Pool",
-    "AerodromeV2PoolTracker",
     "AerodromeV2PoolState",
+    "AerodromeV2PoolTracker",
     "AerodromeV3Pool",
-    "AerodromeV3PoolTracker",
     "AerodromeV3PoolState",
+    "AerodromeV3PoolTracker",
 )

@@ -4,18 +4,18 @@ from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
 from degenbot.anvil_fork import AnvilFork
+from degenbot.calculations.evm_math import next_base_fee
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import ConnectionManager
-from degenbot.exceptions import DegenbotValueError
-from degenbot.calculations.evm_math import next_base_fee
 from degenbot.contract.addresses import create2_address
+from degenbot.exceptions import DegenbotValueError
+from degenbot.provider import ProviderAdapter
 from degenbot.provider.block_helpers import get_number_for_block_identifier
 from degenbot.provider.call_helpers import (
     encode_function_calldata,
     extract_argument_types_from_function_prototype,
     raw_call,
 )
-from degenbot.provider import ProviderAdapter
 from degenbot.types.aliases import BlockNumber
 
 

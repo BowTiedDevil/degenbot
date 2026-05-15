@@ -12,11 +12,6 @@ from degenbot.pancakeswap.pools import PancakeswapV2Pool, PancakeswapV3Pool
 from degenbot.sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
 from degenbot.swapbased.pools import SwapbasedV2Pool
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.types.pool_protocols import (
-    ConcentratedLiquidityPool,
-    ConstantProductPool,
-    StableswapPool,
-)
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool

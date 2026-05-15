@@ -13,7 +13,6 @@ import pathlib
 
 from degenbot.exceptions.base import DegenbotError
 
-
 # --- Connections ---
 
 

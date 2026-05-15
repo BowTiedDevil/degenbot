@@ -16,8 +16,8 @@ from degenbot.database.models.pools import PoolManagerTable, UniswapV4PoolTable
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
-from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.logging import logger
+from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.types.aliases import ChainId
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position

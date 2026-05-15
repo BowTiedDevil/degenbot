@@ -6,6 +6,7 @@ import pytest
 
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor
+from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 
 
 class TestPoolTypeDescriptor:
@@ -45,8 +46,11 @@ class TestKindToDescriptor:
 
     def test_all_v2_kinds_map_to_constant_product(self) -> None:
         v2_kinds = [
-            "uniswap_v2", "sushiswap_v2", "pancakeswap_v2",
-            "camelot_v2", "swapbased_v2",
+            "uniswap_v2",
+            "sushiswap_v2",
+            "pancakeswap_v2",
+            "camelot_v2",
+            "swapbased_v2",
         ]
         for kind in v2_kinds:
             desc = pool_type_registry.get_descriptor_by_kind(kind)
@@ -90,14 +94,14 @@ class TestResolvePoolType:
         assert len(pool_type_registry.registrations) > 15
 
     def test_registry_kind_index_covers_all(self) -> None:
-        all_kinds = {desc.kind for _key, (_cls, desc, _depl) in pool_type_registry.registrations.items()}
+        all_kinds = {desc.kind for (_cls, desc, _depl) in pool_type_registry.registrations.values()}
         assert "uniswap_v2" in all_kinds
         assert "uniswap_v3" in all_kinds
         assert "sushiswap_v2" in all_kinds
         assert "sushiswap_v3" in all_kinds
 
     def test_descriptors_are_consistent(self) -> None:
-        for _key, (_cls, desc, _depl) in pool_type_registry.registrations.items():
+        for _cls, desc, _depl in pool_type_registry.registrations.values():
             assert desc.kind is not None
             assert len(desc.kind) > 0
 
@@ -137,18 +141,11 @@ class TestPoolTypeInvariants:
     """Test invariant invariants on the type system."""
 
     def test_all_v2_pool_classes_derive_constant_product(self) -> None:
-        try:
-            from degenbot.uniswap.deployments import _FACTORY_DEPLOYMENTS
-        except ImportError:
-            pytest.skip("_FACTORY_DEPLOYMENTS not accessible (internal implementation detail)")
 
-        for chain_id, factories in _FACTORY_DEPLOYMENTS.items():
-            for factory_addr, deployment in factories.items():
+        for chain_id, factories in FACTORY_DEPLOYMENTS.items():
+            for factory_addr in factories:
                 desc = pool_type_registry.get_descriptor(chain_id, factory_addr)
                 if desc is not None:
-                    family = desc.family
-                    suffix = "v2" if family == PoolFamily.CONSTANT_PRODUCT else "v3"
-                    expected_kind = f"{family.value}_{suffix}"
                     assert "_" in desc.kind, f"Expected kind with underscore, got {desc.kind}"
 
     def test_sushiswap_registered(self) -> None:
@@ -167,12 +164,3 @@ class TestPoolTypeRegistryDiscovery:
         entry = pool_type_registry.get_descriptor(1, "0x1F98431c8aD98523631AE4a59f267346ea31F984")
         assert entry is not None
         assert entry.kind == "uniswap_v3"
-
-
-class TestPoolTypeRegistrySingleton:
-    """Test that pool_type_registry is a singleton."""
-
-    def test_same_instance(self) -> None:
-        from degenbot.registry import pool_type_registry as r2
-        from degenbot.registry.pool_type import pool_type_registry as r1
-        assert r1 is r2

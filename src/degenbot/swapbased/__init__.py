@@ -1,8 +1,8 @@
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 
-from .trackers import SwapbasedV2PoolTracker
 from .pools import SwapbasedV2Pool
+from .trackers import SwapbasedV2PoolTracker
 
 # Register Swapbased V2 factory
 _factory_address = "0x04C9f118d21e8B767D2e50C946f0cC9F6C367300"

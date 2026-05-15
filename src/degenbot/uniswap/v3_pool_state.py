@@ -15,14 +15,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections import deque
 
     from degenbot.erc20 import Erc20Token
-    from degenbot.uniswap.v3_types import (
-        InitializedTickMap,
-        LiquidityMap,
-        UniswapV3PoolState,
-    )
 
 
 class V3PoolState:

@@ -25,12 +25,8 @@ from eth_abi.exceptions import DecodingError as EthAbiDecodingError
 from eth_abi.exceptions import EncodingError as EthAbiEncodingError
 from eth_abi.exceptions import ParseError as EthAbiParseError
 
-try:
-    from degenbot.degenbot_rs import decode as rs_decode
-    from degenbot.degenbot_rs import decode_single as rs_decode_single
-except ImportError:
-    rs_decode = None  # type: ignore[assignment]
-    rs_decode_single = None  # type: ignore[assignment]
+from degenbot.degenbot_rs import decode as rs_decode
+from degenbot.degenbot_rs import decode_single as rs_decode_single
 from degenbot.exceptions.base import DegenbotError
 from degenbot.utils.bytes import HexBytesLike, to_bytes
 

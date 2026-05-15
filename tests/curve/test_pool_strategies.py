@@ -1,7 +1,6 @@
 """Tests for Curve pool strategy resolution."""
 
 import pytest
-from eth_typing import ChecksumAddress
 
 from degenbot.curve._pool_strategies import resolve_pool_strategies
 from degenbot.curve.types import (
