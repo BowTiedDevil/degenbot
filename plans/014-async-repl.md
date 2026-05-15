@@ -1,7 +1,5 @@
 # Plan 014: Async REPL — `python -m degenbot` with Top-Level `await`
 
-## Status: NOT STARTED
-
 ## Summary
 
 Provide an async REPL entry point so users can interactively use async degenbot APIs without wrapping every call in `asyncio.run()`. The REPL compiles input with

@@ -1,7 +1,5 @@
 # Plan 029: Externalize Curve Variant Group Addresses from Pool Class to Configuration
 
-## Status: COMPLETE ✅
-
 Committed as `586579ff`.
 
 ## Overview

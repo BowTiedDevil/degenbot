@@ -1,7 +1,5 @@
 # Plan 027: Convert Curve Lending-Rate Methods to Typed Fetcher Protocols
 
-## Status: COMPLETE ✅
-
 Committed as `0fe5d9ed` (alongside Plan 026). See also bug fix `a03b3295` (sUSD pool LendingRateStyle).
 
 ## Overview

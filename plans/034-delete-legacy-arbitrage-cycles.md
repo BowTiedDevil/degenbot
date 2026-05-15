@@ -1,7 +1,5 @@
 # Plan 034: Delete Legacy Arbitrage Cycle Classes
 
-## Status: REJECTED
-
 **Superseded by Plan 038** — hard delete replaced by gradual deprecation with `_legacy/` sub-package, underscore class renaming, migration guide, and optional `cvxpy` dependency group.
 
 ## Overview

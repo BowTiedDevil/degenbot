@@ -1,7 +1,5 @@
 # Plan 033: Consolidate Dual Pool-to-Hop Conversion
 
-## Status: COMPLETE
-
 ## Overview
 
 Eliminate the duplicate pool→hop conversion path in `solver_hop_builders.py`, making each pool's own `to_hop_state()` method the single source of truth. The external `pool_to_hop()` / `pool_state_to_hop()` / `pools_to_solve_input()` functions are removed; all callers are routed through the `ArbitrageCapablePool` / `ArbitragePathPool` protocol's `to_hop_state()` method.

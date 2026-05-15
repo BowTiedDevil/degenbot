@@ -1,7 +1,5 @@
 # Plan 037: Split `functions.py` into Domain-Aligned Modules
 
-## Status: COMPLETE
-
 ## Overview
 
 Decompose the `functions.py` utility grab-bag (~350 lines, 14 public functions + 1 internal class) into domain-aligned modules. Each module has a coherent interface providing one category of functionality: ABI encoding/call helpers, log fetching, contract address derivation, and EVM math/validation.
