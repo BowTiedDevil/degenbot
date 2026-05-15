@@ -11,6 +11,7 @@ from sqlalchemy import select
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
+from degenbot.builders.protocol import PoolBuilder
 from degenbot.builders.v2_pool_builder import V2PoolBuilder
 from degenbot.builders.v3_pool_builder import V3PoolBuilder
 from degenbot.builders.v4_pool_builder import V4PoolBuilder
@@ -110,9 +111,7 @@ class Bot:
 
         # Builder registry: concrete pool type → builder
         # Used by update() for O(1) dict lookup instead of isinstance chain
-        self._builders: dict[
-            type, V2PoolBuilder | V3PoolBuilder | V4PoolBuilder | CurvePoolBuilder
-        ] = {}
+        self._builders: dict[type, PoolBuilder] = {}
         self.register_builder(UniswapV2Pool, self._v2_builder)
         self.register_builder(UniswapV3Pool, self._v3_builder)
         self.register_builder(UniswapV4Pool, self._v4_builder)
@@ -188,7 +187,7 @@ class Bot:
     def register_builder(
         self,
         pool_class: type[AbstractLiquidityPool],
-        builder: V2PoolBuilder | V3PoolBuilder | V4PoolBuilder | CurvePoolBuilder,
+        builder: PoolBuilder,
     ) -> None:
         """Register a builder for a concrete pool type.
 
@@ -284,64 +283,46 @@ class Bot:
         if builder is None:
             raise DegenbotValueError(message=f"No builder for pool class {pool_class.__name__}")
 
+        # Build kwargs dict — only include non-None optional params
+        # so builders that don't accept tick_bitmap/tick_data etc.
+        # don't get unexpected keyword arguments.
+        dispatch_kwargs: dict[str, Any] = {
+            "silent": silent,
+            "state_cache_depth": state_cache_depth,
+        }
+        if deployer_address is not None:
+            dispatch_kwargs["deployer_address"] = deployer_address
+        if init_hash is not None:
+            dispatch_kwargs["init_hash"] = init_hash
+        if state_block is not None:
+            dispatch_kwargs["state_block"] = state_block
+        if tick_bitmap is not None:
+            dispatch_kwargs["tick_bitmap"] = tick_bitmap
+        if tick_data is not None:
+            dispatch_kwargs["tick_data"] = tick_data
+
         return self._dispatch_build(
             builder=builder,
             address=address,
             chain_id=chain_id,
-            deployer_address=deployer_address,
-            init_hash=init_hash,
-            state_block=state_block,
-            tick_bitmap=tick_bitmap,
-            tick_data=tick_data,
-            silent=silent,
-            state_cache_depth=state_cache_depth,
+            **dispatch_kwargs,
         )
 
     def _dispatch_build(
         self,
         *,
-        builder: V2PoolBuilder | V3PoolBuilder | V4PoolBuilder | CurvePoolBuilder,
+        builder: PoolBuilder,
         address: ChecksumAddress,
         chain_id: ChainId,
-        deployer_address: str | None,
-        init_hash: str | None,
-        state_block: int | None,
-        tick_bitmap: dict[int, Any] | None,
-        tick_data: dict[int, Any] | None,
-        silent: bool,
-        state_cache_depth: int,
+        **kwargs: Any,
     ) -> AbstractLiquidityPool:
-        """Dispatch to the builder with only the kwargs it accepts."""
-        if isinstance(builder, V3PoolBuilder):
-            return builder.build(
-                address,
-                chain_id=chain_id,
-                deployer_address=deployer_address,
-                init_hash=init_hash,
-                state_block=state_block,
-                tick_bitmap=tick_bitmap,
-                tick_data=tick_data,
-                silent=silent,
-                state_cache_depth=state_cache_depth,
-            )
-        if isinstance(builder, CurvePoolBuilder):
-            return builder.build(
-                address,
-                chain_id=chain_id,
-                state_block=state_block,
-                silent=silent,
-                state_cache_depth=state_cache_depth,
-            )
-        # V2 builder (also handles Aerodrome, Camelot, etc.)
-        return builder.build(
-            address,
-            chain_id=chain_id,
-            deployer_address=deployer_address,
-            init_hash=init_hash,
-            state_block=state_block,
-            silent=silent,
-            state_cache_depth=state_cache_depth,
-        )
+        """Dispatch to the builder, forwarding all kwargs.
+
+        Each builder's build() accepts the kwargs it recognizes and raises
+        TypeError for unrecognized ones — which is correct behavior if
+        build_pool() routes to the wrong builder.
+        """
+        return builder.build(address, chain_id=chain_id, **kwargs)
 
     def _resolve_pool_type(
         self,
@@ -662,8 +643,9 @@ class Bot:
         return builder.update(pool, block_number=block_number)
 
     def _builder_for_pool(
-        self, pool: Any
-    ) -> V2PoolBuilder | V3PoolBuilder | V4PoolBuilder | CurvePoolBuilder:
+        self,
+        pool: Any,
+    ) -> PoolBuilder:
         """Select the appropriate builder for the pool type.
 
         Uses the builder registry (dict lookup on type(pool)) first, then
