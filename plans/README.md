@@ -10,7 +10,7 @@ See the [skill vocabulary](https://github.com/user/skills/improve-codebase-archi
 
 | # | Plan | Summary |
 |---|------|---------|
-| 023 | [Consolidate CLI Pool Update Functions into Parameterized Processor](023-consolidate-pool-update-functions.md) | Extract 12+ near-identical pool update functions from `pool.py` (~1900 lines) into a parameterized `PoolEventProcessor` with pluggable decoders. |
+| 030 | [Consolidate Exception Module Files](completed/030-consolidate-exceptions.md) | Merge 12 exception files (583 lines) into 4 domain-aligned files: `base.py`, `pool.py`, `arbitrage.py`, `infrastructure.py`. Public API unchanged. |
 
 ### Aave
 
