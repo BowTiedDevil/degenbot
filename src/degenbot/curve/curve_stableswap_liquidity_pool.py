@@ -163,7 +163,7 @@ class CurveStableswapPool(
         """
         A Curve V1 (StableSwap) pool.
 
-        Constructed from pre-fetched data only. Use Bot.build_curve_pool() to fetch from chain.
+        Constructed from pre-fetched data only. Use Bot.build_pool() to fetch from chain.
         """
 
         self.address = get_checksum_address(address)
@@ -291,7 +291,7 @@ class CurveStableswapPool(
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
         # I/O access for on-chain data fetching
-        # I/O is done via fetcher callbacks injected by Bot.build_curve_pool()
+        # I/O is done via fetcher callbacks injected by Bot.build_pool()
 
     def __repr__(self) -> str:  # pragma: no cover
         token_string = "-".join([token.symbol for token in self._tokens])
@@ -444,7 +444,7 @@ class CurveStableswapPool(
                     self.address,
                     "block_timestamp",
                     "Block timestamp requires a timestamp_fetcher callback. "
-                    "Provide one via Bot.build_curve_pool().",
+                    "Provide one via Bot.build_pool().",
                 )
             self._block_timestamps[block_number] = self._timestamp_fetcher(block_number)
 
@@ -480,7 +480,7 @@ class CurveStableswapPool(
                     self.address,
                     "block_timestamp",
                     "Block timestamp requires a timestamp_fetcher callback. "
-                    "Provide one via Bot.build_curve_pool().",
+                    "Provide one via Bot.build_pool().",
                 )
             self._block_timestamps[block_number] = self._timestamp_fetcher(block_number)
 
@@ -518,7 +518,7 @@ class CurveStableswapPool(
             self.address,
             "redemption_price",
             "Redemption price requires a redemption_price_fetcher callback. "
-            "Provide one via Bot.build_curve_pool().",
+            "Provide one via Bot.build_pool().",
         )
 
     def get_dy(
@@ -560,7 +560,7 @@ class CurveStableswapPool(
                     self.address,
                     "block_timestamp",
                     "Block timestamp requires a timestamp_fetcher callback. "
-                    "Provide one via Bot.build_curve_pool().",
+                    "Provide one via Bot.build_pool().",
                 )
             self._block_timestamps[block_number] = self._timestamp_fetcher(block_number)
 
@@ -1103,7 +1103,7 @@ class CurveStableswapPool(
             self.address,
             "base_cache_updated",
             "base_cache_updated requires a base_cache_updated_fetcher callback "
-            "via Bot.build_curve_pool().",
+            "via Bot.build_pool().",
         )
 
     def _get_base_virtual_price(self, block_number: BlockNumber) -> int:
@@ -1119,7 +1119,7 @@ class CurveStableswapPool(
             self.address,
             "base_virtual_price",
             "Base virtual price requires a base_virtual_price_fetcher callback. "
-            "Provide one via Bot.build_curve_pool().",
+            "Provide one via Bot.build_pool().",
         )
 
     def _get_virtual_price(self, block_number: BlockNumber) -> int:
@@ -1143,7 +1143,7 @@ class CurveStableswapPool(
                     self.address,
                     "virtual_price",
                     "Virtual price requires a virtual_price_fetcher callback. "
-                    "Provide one via Bot.build_curve_pool().",
+                    "Provide one via Bot.build_pool().",
                 )
         else:
             # Cache is still valid — use the cached base_virtual_price
@@ -1166,7 +1166,7 @@ class CurveStableswapPool(
             self.address,
             "admin_balances",
             "Admin balances require an admin_balances_fetcher callback. "
-            "Provide one via Bot.build_curve_pool().",
+            "Provide one via Bot.build_pool().",
         )
 
     def _get_d(self, _xp: Sequence[int], _amp: int) -> int:
@@ -1393,7 +1393,7 @@ class CurveStableswapPool(
                 self.address,
                 "lending_rate",
                 "Lending rate fetcher is required for pools with lending tokens. "
-                "Provide one via Bot.build_curve_pool().",
+                "Provide one via Bot.build_pool().",
             )
         return self._lending_rate_fetcher(block_number)
 
