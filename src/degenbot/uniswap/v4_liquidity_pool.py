@@ -14,6 +14,7 @@ from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from web3 import Web3
 
+from degenbot.arbitrage.types import UniswapV4PoolSwapAmounts, V4PoolKey
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20 import Erc20Token
@@ -795,3 +796,32 @@ class UniswapV4Pool(
         state_override: UniswapV4PoolState | None = None,
     ) -> HopType:
         return super().to_hop_state(zero_for_one=zero_for_one, state_override=state_override)  # type: ignore[misc, no-any-return]
+
+    def build_swap_amount(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        amount_in: int,
+        amount_out: int,
+    ) -> UniswapV4PoolSwapAmounts:
+        from degenbot.uniswap.v3_libraries.tick_math import (  # noqa: PLC0415
+            MAX_SQRT_RATIO,
+            MIN_SQRT_RATIO,
+        )
+
+        limit = MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1
+        return UniswapV4PoolSwapAmounts(
+            address=self.address,
+            id=self.pool_id,
+            pool_key=V4PoolKey(
+                currency0=self.token0.address,
+                currency1=self.token1.address,
+                fee=self.fee,
+                tick_spacing=self.tick_spacing,
+                hooks=self.hook_address,
+            ),
+            amount_in=amount_in,
+            amount_out=amount_out,
+            amount_specified=amount_in,
+            zero_for_one=zero_for_one,
+            sqrt_price_limit_x96=limit,
+        )

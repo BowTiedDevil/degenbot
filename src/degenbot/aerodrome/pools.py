@@ -22,6 +22,7 @@ from degenbot.aerodrome.types import (
 )
 from degenbot.aerodrome.v2_pool_calc import AerodromeV2PoolCalc
 from degenbot.aerodrome.v2_pool_state import AerodromeV2PoolState as AerodromeV2PoolStateMixin
+from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
@@ -435,6 +436,18 @@ class AerodromeV2Pool(
             reserve_in=reserve_in,
             reserve_out=reserve_out,
             fee=fee,
+        )
+
+    def build_swap_amount(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        amount_in: int,
+        amount_out: int,
+    ) -> UniswapV2PoolSwapAmounts:
+        return UniswapV2PoolSwapAmounts(
+            pool=self.address,
+            amounts_in=(amount_in, 0) if zero_for_one else (0, amount_in),
+            amounts_out=(0, amount_out) if zero_for_one else (amount_out, 0),
         )
 
 

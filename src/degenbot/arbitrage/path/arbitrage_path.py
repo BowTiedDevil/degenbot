@@ -5,14 +5,10 @@ from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakSet
 
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult
-from degenbot.arbitrage.path.swap_amount_builder import build_swap_amount
 from degenbot.arbitrage.path.types import PathValidationError, SwapVector
 from degenbot.arbitrage.types import (
     AbstractSwapAmounts,
     ArbitrageCalculationResult,
-    UniswapV2PoolSwapAmounts,
-    UniswapV3PoolSwapAmounts,
-    UniswapV4PoolSwapAmounts,
 )
 from degenbot.exceptions import OptimizationError
 from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
@@ -281,13 +277,13 @@ class ArbitragePath(PublisherMixin):
                 token_in_quantity=token_in_quantity,
                 override_state=pool_state,
             )
-            swap_amounts.append(build_swap_amount(pool, sv, token_in_quantity, token_out_quantity))
+            swap_amounts.append(pool.build_swap_amount(sv.zero_for_one, token_in_quantity, token_out_quantity))
             token_in_quantity = token_out_quantity
 
         input_swap = swap_amounts[0]
         output_swap = swap_amounts[-1]
-        input_amount = _extract_amount_in(input_swap)
-        output_amount = _extract_amount_out(output_swap)
+        input_amount = input_swap.input_amount()
+        output_amount = output_swap.output_amount()
         profit_amount = output_amount - input_amount
 
         return ArbitrageCalculationResult(
@@ -319,29 +315,3 @@ class ArbitragePath(PublisherMixin):
             self._notify_subscribers(_ProfitableStateDiscovered(result, self))
         except OptimizationError:
             self._notify_subscribers(_StateUpdatedNoProfit(self))
-
-
-def _extract_amount_in(swap: AbstractSwapAmounts) -> int:
-
-    match swap:
-        case UniswapV2PoolSwapAmounts():
-            return max(swap.amounts_in)
-        case UniswapV3PoolSwapAmounts():
-            return swap.amount_in
-        case UniswapV4PoolSwapAmounts():
-            return swap.amount_in
-    msg = f"Unsupported swap amount type: {type(swap).__name__}"
-    raise PathValidationError(msg)
-
-
-def _extract_amount_out(swap: AbstractSwapAmounts) -> int:
-
-    match swap:
-        case UniswapV2PoolSwapAmounts():
-            return max(swap.amounts_out)
-        case UniswapV3PoolSwapAmounts():
-            return swap.amount_out
-        case UniswapV4PoolSwapAmounts():
-            return swap.amount_out
-    msg = f"Unsupported swap amount type: {type(swap).__name__}"
-    raise PathValidationError(msg)

@@ -44,5 +44,6 @@ class TestProtocolDeclarations:
             "calculate_tokens_out_from_tokens_in",
             "to_hop_state",
             "extract_fee",
+            "build_swap_amount",
         }
         assert expected == attrs

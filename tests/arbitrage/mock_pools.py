@@ -222,6 +222,18 @@ class MockV2Pool:
             fee=fee,
         )
 
+    def build_swap_amount(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        amount_in: int,
+        amount_out: int,
+    ) -> UniswapV2PoolSwapAmounts:
+        return UniswapV2PoolSwapAmounts(
+            pool=self.address,
+            amounts_in=(amount_in, 0) if zero_for_one else (0, amount_in),
+            amounts_out=(0, amount_out) if zero_for_one else (amount_out, 0),
+        )
+
     def __hash__(self) -> int:
         return hash(self.address)
 
