@@ -1,6 +1,6 @@
 # Uniswap Module
 
-Domain terms for Uniswap V2, V3, and V4 liquidity pools and pool managers.
+Domain terms for Uniswap V2, V3, and V4 liquidity pools and pool trackers.
 
 ## Term Table
 
