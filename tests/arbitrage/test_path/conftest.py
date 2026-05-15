@@ -3,6 +3,10 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 from weakref import WeakSet
 
+from degenbot.arbitrage.types import (
+    UniswapV2PoolSwapAmounts,
+    UniswapV3PoolSwapAmounts,
+)
 from degenbot.types.abstract import (
     AbstractPoolState,
 )
@@ -104,6 +108,18 @@ class FakeUniswapV2Pool(PublisherMixin):
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
         return self.fee_token0 if zero_for_one else self.fee_token1
+
+    def build_swap_amount(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        amount_in: int,
+        amount_out: int,
+    ) -> UniswapV2PoolSwapAmounts:
+        return UniswapV2PoolSwapAmounts(
+            pool=self.address,
+            amounts_in=(amount_in, 0) if zero_for_one else (0, amount_in),
+            amounts_out=(0, amount_out) if zero_for_one else (amount_out, 0),
+        )
 
     def simulate_swap(
         self,
@@ -245,6 +261,27 @@ class FakeConcentratedLiquidityPool(PublisherMixin):
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
         return Fraction(self.fee, self.FEE_DENOMINATOR)
 
+    def build_swap_amount(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        amount_in: int,
+        amount_out: int,
+    ) -> UniswapV3PoolSwapAmounts:
+        from degenbot.uniswap.v3_libraries.tick_math import (  # noqa: PLC0415
+            MAX_SQRT_RATIO,
+            MIN_SQRT_RATIO,
+        )
+
+        limit = MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1
+        return UniswapV3PoolSwapAmounts(
+            pool=self.address,
+            amount_in=amount_in,
+            amount_out=amount_out,
+            amount_specified=amount_in,
+            zero_for_one=zero_for_one,
+            sqrt_price_limit_x96=limit,
+        )
+
     def simulate_swap(
         self,
         token_in: str,
@@ -355,6 +392,18 @@ class FakeAerodromeV2Pool(PublisherMixin):
             reserve_in=reserve_in,
             reserve_out=reserve_out,
             fee=self.fee,
+        )
+
+    def build_swap_amount(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        amount_in: int,
+        amount_out: int,
+    ) -> UniswapV2PoolSwapAmounts:
+        return UniswapV2PoolSwapAmounts(
+            pool=self.address,
+            amounts_in=(amount_in, 0) if zero_for_one else (0, amount_in),
+            amounts_out=(0, amount_out) if zero_for_one else (amount_out, 0),
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
@@ -482,6 +531,18 @@ class FakeCamelotPool(PublisherMixin):
             reserve_out=reserve_out,
             fee=self.fee_token0 if zero_for_one else self.fee_token1,
             fee_out=fee_out,
+        )
+
+    def build_swap_amount(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        amount_in: int,
+        amount_out: int,
+    ) -> UniswapV2PoolSwapAmounts:
+        return UniswapV2PoolSwapAmounts(
+            pool=self.address,
+            amounts_in=(amount_in, 0) if zero_for_one else (0, amount_in),
+            amounts_out=(0, amount_out) if zero_for_one else (amount_out, 0),
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001

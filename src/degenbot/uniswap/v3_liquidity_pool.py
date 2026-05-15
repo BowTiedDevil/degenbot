@@ -11,6 +11,7 @@ from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
 
+from degenbot.arbitrage.types import UniswapV3PoolSwapAmounts
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
@@ -905,4 +906,25 @@ class UniswapV3Pool(
             sqrt_price=state.sqrt_price_x96,
             tick_lower=state.tick,
             tick_upper=state.tick,
+        )
+
+    def build_swap_amount(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        amount_in: int,
+        amount_out: int,
+    ) -> UniswapV3PoolSwapAmounts:
+        from degenbot.uniswap.v3_libraries.tick_math import (  # noqa: PLC0415
+            MAX_SQRT_RATIO,
+            MIN_SQRT_RATIO,
+        )
+
+        limit = MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1
+        return UniswapV3PoolSwapAmounts(
+            pool=self.address,
+            amount_in=amount_in,
+            amount_out=amount_out,
+            amount_specified=amount_in,
+            zero_for_one=zero_for_one,
+            sqrt_price_limit_x96=limit,
         )

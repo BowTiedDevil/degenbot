@@ -10,7 +10,23 @@ from degenbot.erc20 import Erc20Token
 from degenbot.types.aliases import BlockNumber
 
 
-class AbstractSwapAmounts: ...
+class AbstractSwapAmounts:
+    """Base class for per-pool swap parameters and encoding."""
+
+    def input_amount(self) -> int:
+        """Return the input amount for this swap."""
+        msg = f"{type(self).__name__} must implement input_amount()"
+        raise NotImplementedError(msg)
+
+    def output_amount(self) -> int:
+        """Return the output amount for this swap."""
+        msg = f"{type(self).__name__} must implement output_amount()"
+        raise NotImplementedError(msg)
+
+    def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:
+        """Encode this swap into an EVM call."""
+        msg = f"{type(self).__name__} must implement encode()"
+        raise NotImplementedError(msg)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -57,6 +73,12 @@ class CurveStableSwapPoolSwapAmounts(AbstractSwapAmounts):
     def __post_init__(self) -> None:
         assert self.token_in != self.token_out
 
+    def input_amount(self) -> int:
+        return self.amount_in
+
+    def output_amount(self) -> int:
+        return self.min_amount_out
+
     def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:  # noqa: ARG002
         """Encode a Curve exchange() or exchange_underlying() call."""
         if self.underlying:
@@ -88,6 +110,12 @@ class UniswapV2PoolSwapAmounts(AbstractSwapAmounts):
         assert 0 in self.amounts_in
         assert 0 in self.amounts_out
 
+    def input_amount(self) -> int:
+        return max(self.amounts_in)
+
+    def output_amount(self) -> int:
+        return max(self.amounts_out)
+
     def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:
         """Encode a Uniswap V2 swap() call."""
         selector = Web3.keccak(text="swap(uint256,uint256,address,bytes)")[:4]
@@ -110,6 +138,12 @@ class UniswapV3PoolSwapAmounts(AbstractSwapAmounts):
 
     def __post_init__(self) -> None:
         assert self.amount_specified != 0
+
+    def input_amount(self) -> int:
+        return self.amount_in
+
+    def output_amount(self) -> int:
+        return self.amount_out
 
     def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:
         """Encode a Uniswap V3 swap() call."""
@@ -146,6 +180,12 @@ class UniswapV4PoolSwapAmounts(AbstractSwapAmounts):
 
     def __post_init__(self) -> None:
         assert self.amount_specified != 0
+
+    def input_amount(self) -> int:
+        return self.amount_in
+
+    def output_amount(self) -> int:
+        return self.amount_out
 
     def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:
         """Encode a Uniswap V4 swap() call.

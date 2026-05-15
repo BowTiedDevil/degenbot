@@ -17,7 +17,6 @@ import pytest
 from degenbot.arbitrage.optimizers.hop_types import SolverMethod
 from degenbot.arbitrage.optimizers.solver import MobiusSolver, NewtonSolver
 from degenbot.arbitrage.path import ArbitragePath
-from degenbot.arbitrage.path.swap_amount_builder import build_swap_amount
 from degenbot.arbitrage.path.types import SwapVector
 from degenbot.arbitrage.types import (
     ArbitrageCalculationResult,
@@ -121,7 +120,7 @@ def _legacy_build_swap_amounts(
     swap_amounts: list[Any] = []
     for pool, sv in zip(pools, vectors, strict=True):
         token_out_qty = _calculate_tokens_out_via_simulate(pool, sv.token_in, token_in_qty)
-        swap_amounts.append(build_swap_amount(pool, sv, token_in_qty, token_out_qty))
+        swap_amounts.append(pool.build_swap_amount(sv.zero_for_one, token_in_qty, token_out_qty))
         token_in_qty = token_out_qty
     return ArbitrageCalculationResult(
         id="legacy",
@@ -158,7 +157,7 @@ def _new_arbitrage_path(
         token_out_quantity = _calculate_tokens_out_via_simulate(
             pool, sv.token_in, token_in_quantity
         )
-        swap_amounts.append(build_swap_amount(pool, sv, token_in_quantity, token_out_quantity))
+        swap_amounts.append(pool.build_swap_amount(sv.zero_for_one, token_in_quantity, token_out_quantity))
         token_in_quantity = token_out_quantity
 
     input_swap = swap_amounts[0]

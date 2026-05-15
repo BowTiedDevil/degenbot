@@ -15,6 +15,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from degenbot.arbitrage.types import AbstractSwapAmounts
+
+if TYPE_CHECKING:
     from fractions import Fraction
 
     from eth_typing import ChecksumAddress
@@ -281,3 +284,10 @@ class ArbitragePathPool(PoolSimulation, Protocol):
     ) -> HopType: ...
 
     def extract_fee(self, zero_for_one: bool) -> Fraction: ...  # noqa: FBT001
+
+    def build_swap_amount(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        amount_in: int,
+        amount_out: int,
+    ) -> AbstractSwapAmounts: ...
