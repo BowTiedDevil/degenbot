@@ -34,7 +34,7 @@ _Avoid_: Fork, local chain
 ## Cross-module relationships
 
 - **Bot** owns all session state: Connection Manager, Pool Registry, Token Registry, Managed Pool Registry, config, database
-- **Bot.build_pool()** resolves the pool type automatically via DB `kind` column, Pool Type Registry, or on-chain probing, then dispatches to typed builders
+- **Bot.build_pool()** resolves the pool type automatically via DB `kind` column, Pool Type Registry, or on-chain probing, then dispatches to the **Builder Registry** (`dict[type, PoolBuilder]`) keyed by concrete pool class
 - A **Pool Type Registry** (module-level singleton) maps (chain ID, factory address) → pool class + identity + deployment data; each DEX module self-registers at import time; auto-derives invariant, variant, and kind from the class
 - A **Pool Registry** (class, owned by Bot) indexes all **Pools** across all chains; a **Token Registry** indexes all **Tokens**
 - A **Managed Pool Registry** indexes **V4 Managed Pools** by (chain ID, PoolManager address, Pool ID)
@@ -44,7 +44,7 @@ _Avoid_: Fork, local chain
 - An **Arbitrage Path** subscribes to **Pool State Messages**
 - An **Aave Market** contains many **Assets**, each wrapping an **Erc20Token** plus lending state
 - A **Curve Pool Tracker** tracks **Curve StableSwap Pools** and delegates construction to **Bot**
-- **Fetcher Callbacks** are injected into **Curve Pools** by **Bot.build_curve_pool()**; pools never access connections directly
+- **Fetcher Callbacks** are injected into **Curve Pools** by the **Curve Pool Builder** (invoked via `Bot.build_pool()`); pools never access connections directly
 - V2/V3/V4/Aerodrome **Pools** are fully I/O-free — **Builders** fetch all data from DB/RPC and pass values; no pool class imports `ProviderAdapter` or carries provider-dependent methods
 - **PoolFamily** (identity enum in `types/pool_type.py`) is the sole identity enum; **Pool Invariant** (in `types/hop_types.py`) is the solver-dispatch enum
 - **CacheablePool** protocol enables **Pool Cache Adapter** registration without introspection

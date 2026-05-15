@@ -57,7 +57,7 @@
 
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|
-| **CurveStableswapPoolManager** | A Pool Tracker that tracks Curve StableSwap pools and delegates construction to Bot | Curve manager |
+| **CurveStableswapPoolTracker** | A Pool Tracker that tracks Curve StableSwap pools and delegates construction to Bot | Curve manager |
 
 ## Relationships
 
@@ -66,7 +66,7 @@
 - A **Lending Pool** has **Stored Rates** for each lending token
 - A **Crypto Pool** uses **DFetcher**, **GammaFetcher**, and **PriceScaleFetcher**
 - **A Coefficient** ramping uses **TimestampFetcher**
-- A **CurveStableswapPoolManager** tracks Curve pools and delegates construction to **Bot**
+- A **CurveStableswapPoolTracker** tracks Curve pools and delegates construction to **Bot**
 
 ## Resolved Ambiguities
 

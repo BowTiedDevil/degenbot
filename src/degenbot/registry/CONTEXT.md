@@ -23,7 +23,7 @@
 
 **Ruling: **Registry** = passive index. **Manager** = active controller.**
 
-A Registry is a simple lookup table. A Pool Tracker (e.g., `UniswapV2PoolManager`, `CurveStableswapPoolManager`) actively discovers, creates, and tracks pools for a specific DEX. Registries hold all pools; trackers hold a subset for one DEX.
+A Registry is a simple lookup table. A Pool Tracker (e.g., `UniswapV2PoolTracker`, `CurveStableswapPoolTracker`) actively discovers, creates, and tracks pools for a specific DEX. Registries hold all pools; trackers hold a subset for one DEX.
 
 ### Bot-owned registry vs module-level Pool Type Registry
 

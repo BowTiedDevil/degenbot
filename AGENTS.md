@@ -122,6 +122,46 @@ raise ValueError(msg)
 ## Refactoring
 - Unless directed otherwise, design standalone features without a backwards compatibility layer.
 
+## Pool Class Architecture
+
+Pool classes use a 3-mixin composition: `class Pool(AbstractLiquidityPool, StateMixin, CalcMixin)`. The MRO is:
+
+```
+PoolClass -> PublisherMixin -> PoolPickleMixin -> StateMixin -> CalcMixin -> AbstractLiquidityPool -> AddressComparable -> ABC -> object
+```
+
+### State and Calc Mixins
+
+| Pool | State Mixin | Calc Mixin | Notes |
+|------|-------------|------------|-------|
+| UniswapV2Pool | `V2PoolState` | `UniswapV2PoolCalc` | Base V2 |
+| AerodromeV2Pool | `AerodromeV2PoolState` | `AerodromeV2PoolCalc` | `if self._stable` eliminated |
+| CamelotLiquidityPool | (inherits V2) | `CamelotPoolCalc` | `if self.stable_swap` eliminated |
+| UniswapV3Pool | `V3PoolState` | `UniswapV3PoolCalc` | Base V3 |
+| UniswapV4Pool | `V4PoolState` | `UniswapV4PoolCalc` | V4-specific swap calc stays in pool |
+| CurveStableswapPool | `StableswapPoolState` | (not extracted) | Deep fetcher/cache coupling |
+
+### Protocols (replacing ABCs)
+
+Three `runtime_checkable` protocols replace removed ABCs:
+- `ConstantProductPool` — 6 properties (reserves, fees)
+- `ConcentratedLiquidityPool` — 7 properties (sqrt_price, tick, liquidity)
+- `StableswapPool` — 1 property (tokens)
+
+Use `hasattr()` structural checks for class-level dispatch (not `issubclass()` — Python's `runtime_checkable` protocols with `@property` raise `TypeError` on `issubclass()`).
+
+### Calculations Module
+
+Standalone pure-math functions in `src/degenbot/calculations/`: `constant_product`, `solidly_stable`, `camelot`, `stableswap`, `concentrated_liquidity`. No `self`, no class references. V3/V4 libraries remain in `uniswap/v3_libraries/` and `v4_libraries/`.
+
+### Exception Module Structure
+
+4 domain-aligned files in `src/degenbot/exceptions/`:
+- `base.py` — `DegenbotError`, `DegenbotValueError`, `DegenbotTypeError`, `ExternalServiceError`
+- `pool.py` — EVM, Curve, Tracker, and LiquidityPool exceptions
+- `arbitrage.py` — Solver and swap encoding exceptions
+- `infrastructure.py` — Connection, Fetching, Registry, Database, Anvil, ERC20 exceptions
+
 ## Ubiquitous Language
 
 Each module has a `CONTEXT.md` defining domain terms, aliases to avoid, and resolved ambiguities. The root [`CONTEXT-MAP.md`](CONTEXT-MAP.md) indexes all modules and holds cross-cutting content (relationships, ambiguity rulings). Read the relevant module context before naming variables, classes, or docstrings in that area.
@@ -130,7 +170,7 @@ Each module has a `CONTEXT.md` defining domain terms, aliases to avoid, and reso
 
 ### The Bot Session Pattern
 
-All pool and token creation flows through the `Bot` class. `Bot` owns registries (`pools`, `tokens`, `managed_pools`) and connection managers.
+All pool and token creation flows through the `Bot` class. `Bot` owns registries (`pools`, `tokens`, `managed_pools`) and connection managers. Pool updates use a **Builder Registry** (`dict[type, PoolBuilder]`) keyed by concrete pool class — no isinstance chains.
 
 ```python
 # Correct: Bot handles I/O and injects data into I/O-free pools
@@ -150,18 +190,18 @@ token = bot.build_erc20token("0x...")  # Fetches metadata, registers in token re
 3. **Pool Type Registry** — a module-level singleton mapping `(chain_id, factory_address) → pool class + identity + deployment data`; each DEX module self-registers at import time via `pool_type_registry.register()`
 4. **On-chain probing** — fallback: call `slot0()`, `getReserves()`, or `coins()` to identify the invariant
 
-V4 pools are identified by passing `pool_id` to `build_pool(address, pool_id=...)`, which routes to `build_v4_pool`.
+V4 pools are identified by passing `pool_id` to `build_pool(address, pool_id=...)`.
 
-Typed builders (`build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`) remain public for callers who already know the type.
+Typed builders (`build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`) remain public as convenience pass-throughs, but `build_pool()` is the preferred entry point. Adding a new pool family now requires only creating a builder and registering it via `register_builder()`, down from 5 touch points.
 
 ### Fetcher Protocols
 
 **Curve pools** use **fetcher callbacks** for fully I/O-free operation — all on-chain data access flows through injected closures:
 
 ```python
-# Bot creates fetcher closures (handles I/O internally)
+# Bot creates fetcher closures (handles I/O internally) via the Curve Pool Builder
 # Pool calls fetchers on-demand via RateFetcher, VirtualPriceFetcher protocols
-pool = bot.build_curve_pool("0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7")
+pool = bot.build_pool("0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7")
 ```
 
 **V2/V3/V4/Aerodrome/Camelot pools** are fully I/O-free — builders fetch all data from DB/RPC, pass it to the pool constructor, and no provider references remain on the pool object. All updates flow through `external_update()` (pure logic). No pool class imports `ProviderAdapter` or carries provider-dependent methods (ADR-001 Phase 3 complete).
@@ -206,14 +246,7 @@ Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` f
 
 ## Architecture Plans
 
-Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Key active plans:
-
-| # | Plan | Summary |
-|---|------|---------|
-| 018 | Decompose CurvePoolBuilder.build() into Detection Sub-Modules | Break 400-line `build()` into 5 focused detectors. |
-| 022 | Remove Backward Compatibility Shims and Aliases | Remove `*_legacy` functions, `hop_factory`/`Hop` alias, `pool_hop_adapter`, stale re-exports, and legacy `register_web3()`. Steps 1–4 complete; Steps 5–6 pending. |
-
-See `plans/README.md` for the full list with dependencies and recommended implementation order.
+Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–032 are all complete; the only remaining plan is 014 (Async REPL). See `plans/README.md` for the full list.
 
 ## Solidity
 

@@ -93,10 +93,10 @@ class VirtualPriceFetcher(Protocol):
 
 ### Fetcher Factory Pattern
 
-`Bot.build_curve_pool()` creates fetcher closures:
+The builder creates fetcher closures:
 
 ```python
-def build_curve_pool(self, pool_address):
+def build(self, pool_address):
     provider = self.get_provider_for_chain(chain_id)
     
     # Create fetcher closures

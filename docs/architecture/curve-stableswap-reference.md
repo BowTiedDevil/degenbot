@@ -126,7 +126,7 @@ where f = _reduction_coefficient(xp, fee_gamma)
 
 ### Crypto pool detection
 
-A pool with `fee_gamma > 0` is identified as a crypto pool during `Bot.build_curve_pool()`. This triggers creation of the D, gamma, and price_scale fetchers.
+A pool with `fee_gamma > 0` is identified as a crypto pool during `the Curve Pool Builder (invoked via Bot.build_pool())`. This triggers creation of the D, gamma, and price_scale fetchers.
 
 ### Contract parameters
 

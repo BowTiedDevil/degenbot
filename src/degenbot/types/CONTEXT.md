@@ -95,7 +95,7 @@
 
 **Ruling: **Factory** = on-chain contract only. **Pool Tracker** = off-chain class only. Never use one to mean the other.**
 
-These are two distinct layers. The Factory creates Pool contracts on-chain. The Pool Tracker discovers and tracks Pools off-chain. The `AbstractPoolManager` attribute `pool_factory` refers to the *class* of Pool the tracker handles, not the on-chain Factory — that's `factory_address`.
+These are two distinct layers. The Factory creates Pool contracts on-chain. The Pool Tracker discovers and tracks Pools off-chain. The `AbstractPoolTracker` attribute `pool_factory` refers to the *class* of Pool the tracker handles, not the on-chain Factory — that's `factory_address`.
 
 - ✅ "The Uniswap V2 **Factory** is at 0x5C69…"
 - ✅ "The **Pool Tracker** tracks 1200 **Pools** for this **Exchange Deployment**"

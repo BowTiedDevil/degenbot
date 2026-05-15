@@ -108,7 +108,7 @@ class VirtualPriceFetcher(Protocol):
 - Keep old I/O paths as fallback for backwards compatibility
 
 ### Phase 2: Bot Integration ✅
-- `Bot.build_curve_pool()` creates closures and injects them
+- The Curve Pool Builder creates closures and injects them
 - Remove provider from pool constructor
 - Builder extraction complete (`CurvePoolBuilder`)
 
@@ -147,7 +147,7 @@ def test_stableswap_swap():
 ```python
 def test_curve_pool_live(bot):
     # Bot creates pool with real fetchers
-    pool = bot.build_curve_pool("0xbEbc4...")
+    pool = bot.build_pool("0xbEbc4...")
     # Pool calls fetchers internally on-demand
     assert pool.virtual_price &gt; 0
 ```
