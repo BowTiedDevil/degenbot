@@ -58,7 +58,7 @@ def test_curve_pool_manager_tracks_pools() -> None:
     )
 
     bot = MagicMock()
-    bot.build_curve_pool.return_value = pool
+    bot.build_pool.return_value = pool
     bot.pools.get.return_value = None
     bot.connections.default_chain_id = 1
 
@@ -92,7 +92,7 @@ def test_curve_pool_manager_returns_cached_pool() -> None:
     )
 
     bot = MagicMock()
-    bot.build_curve_pool.return_value = pool
+    bot.build_pool.return_value = pool
     bot.pools.get.return_value = None
     bot.connections.default_chain_id = 1
 
@@ -101,7 +101,7 @@ def test_curve_pool_manager_returns_cached_pool() -> None:
     second = manager.get_pool("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
     assert first is second
     # build_curve_pool should only be called once
-    bot.build_curve_pool.assert_called_once()
+    bot.build_pool.assert_called_once()
 
 
 def test_curve_pool_manager_fork_tripool(fork_mainnet_full: AnvilFork) -> None:

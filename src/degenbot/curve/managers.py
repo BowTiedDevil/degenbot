@@ -75,8 +75,8 @@ class CurveStableswapPoolManager(
             raise PoolNotAssociated(pool_address)
 
         try:
-            new_pool = self._bot.build_curve_pool(
-                address=pool_address,
+            new_pool = self._bot.build_pool(
+                pool_address,
                 chain_id=self._chain_id,
                 silent=silent,
             )

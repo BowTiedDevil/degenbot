@@ -224,6 +224,7 @@ class Bot:
         init_hash: str | None = None,
         tick_bitmap: dict[int, Any] | None = None,
         tick_data: dict[int, Any] | None = None,
+        state_cache_depth: int = 8,
     ) -> AbstractLiquidityPool:
         """
         Build a pool from an address, automatically resolving its type.
@@ -251,7 +252,20 @@ class Bot:
             return existing
 
         # Resolve the pool type and dispatch to the appropriate builder
-        pool_type = self._resolve_pool_type(address, chain_id=chain_id)
+        #
+        # If type resolution fails (e.g. Curve pools lack a factory() method),
+        # fall back to the typed builder methods which handle their own discovery.
+        try:
+            pool_type = self._resolve_pool_type(address, chain_id=chain_id)
+        except DegenbotValueError:
+            # Fallback: try Curve builder as last resort
+            return self.build_curve_pool(
+                address,
+                chain_id=chain_id,
+                state_block=state_block,
+                silent=silent,
+                state_cache_depth=state_cache_depth,
+            )
 
         # Look up the concrete pool class from the registry
         pool_class = self._pool_class_for_descriptor(pool_type, chain_id=chain_id)
@@ -268,8 +282,9 @@ class Bot:
                 message=f"No builder for pool class {pool_class.__name__}"
             )
 
-        return builder.build(
-            address,
+        return self._dispatch_build(
+            builder=builder,
+            address=address,
             chain_id=chain_id,
             deployer_address=deployer_address,
             init_hash=init_hash,
@@ -277,6 +292,53 @@ class Bot:
             tick_bitmap=tick_bitmap,
             tick_data=tick_data,
             silent=silent,
+            state_cache_depth=state_cache_depth,
+        )
+
+    def _dispatch_build(
+        self,
+        *,
+        builder: V2PoolBuilder | V3PoolBuilder | V4PoolBuilder | CurvePoolBuilder,
+        address: ChecksumAddress,
+        chain_id: ChainId,
+        deployer_address: str | None,
+        init_hash: str | None,
+        state_block: int | None,
+        tick_bitmap: dict[int, Any] | None,
+        tick_data: dict[int, Any] | None,
+        silent: bool,
+        state_cache_depth: int,
+    ) -> AbstractLiquidityPool:
+        """Dispatch to the builder with only the kwargs it accepts."""
+        if isinstance(builder, V3PoolBuilder):
+            return builder.build(
+                address,
+                chain_id=chain_id,
+                deployer_address=deployer_address,
+                init_hash=init_hash,
+                state_block=state_block,
+                tick_bitmap=tick_bitmap,
+                tick_data=tick_data,
+                silent=silent,
+                state_cache_depth=state_cache_depth,
+            )
+        if isinstance(builder, CurvePoolBuilder):
+            return builder.build(
+                address,
+                chain_id=chain_id,
+                state_block=state_block,
+                silent=silent,
+                state_cache_depth=state_cache_depth,
+            )
+        # V2 builder (also handles Aerodrome, Camelot, etc.)
+        return builder.build(
+            address,
+            chain_id=chain_id,
+            deployer_address=deployer_address,
+            init_hash=init_hash,
+            state_block=state_block,
+            silent=silent,
+            state_cache_depth=state_cache_depth,
         )
 
     def _resolve_pool_type(
@@ -328,7 +390,7 @@ class Bot:
         raise DegenbotValueError(
             message=f"Cannot resolve pool type for address {address} on chain {chain_id}. "
             f"The factory() call failed and no database entry exists. "
-            f"Specify the pool type explicitly via build_v2_pool, build_v3_pool, or build_curve_pool."
+            f"Cannot resolve pool type. Use build_v2_pool, build_v3_pool, or build_curve_pool for explicit type selection."
         )
 
     def _resolve_pool_type_by_probing(
