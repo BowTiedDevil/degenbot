@@ -4,10 +4,7 @@ from typing import TYPE_CHECKING
 from weakref import WeakSet
 
 from degenbot.types.abstract import (
-    AbstractAerodromeV2Pool,
-    AbstractConcentratedLiquidityPool,
     AbstractPoolState,
-    AbstractUniswapV2Pool,
 )
 from degenbot.types.concrete import PublisherMixin
 from degenbot.types.hop_types import (
@@ -31,7 +28,7 @@ class FakeV2PoolState(AbstractPoolState):
     reserves_token1: int = 0
 
 
-class FakeUniswapV2Pool(AbstractUniswapV2Pool, PublisherMixin):
+class FakeUniswapV2Pool(PublisherMixin):
     def __init__(
         self,
         token0: FakeToken,
@@ -143,7 +140,7 @@ class FakeCLPoolState(AbstractPoolState):
     tick: int = 0
 
 
-class FakeConcentratedLiquidityPool(AbstractConcentratedLiquidityPool, PublisherMixin):
+class FakeConcentratedLiquidityPool(PublisherMixin):
     FEE_DENOMINATOR = 1_000_000
 
     def __init__(
@@ -269,7 +266,7 @@ class FakeConcentratedLiquidityPool(AbstractConcentratedLiquidityPool, Publisher
         self._subscribers.discard(subscriber)
 
 
-class FakeAerodromeV2Pool(AbstractAerodromeV2Pool, PublisherMixin):
+class FakeAerodromeV2Pool(PublisherMixin):
     def __init__(
         self,
         token0: FakeToken,
@@ -391,7 +388,7 @@ class FakeAerodromeV2Pool(AbstractAerodromeV2Pool, PublisherMixin):
         self._subscribers.discard(subscriber)
 
 
-class FakeCamelotPool(AbstractUniswapV2Pool, PublisherMixin):
+class FakeCamelotPool(PublisherMixin):
     """Fake Camelot pool with split fees and optional stable_swap."""
 
     def __init__(

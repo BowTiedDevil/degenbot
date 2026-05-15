@@ -19,7 +19,7 @@ from degenbot.exceptions.liquidity_pool import (
     ExternalUpdateError,
     LiquidityPoolError,
 )
-from degenbot.types.abstract import AbstractArbitrage, AbstractConcentratedLiquidityPool
+from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
@@ -81,7 +81,7 @@ class UniswapV3Pool(
     PoolPickleMixin,
     V3PoolState,
     UniswapV3PoolCalc,
-    AbstractConcentratedLiquidityPool,
+    AbstractLiquidityPool,
 ):
     variant: ClassVar[str | None] = None
     type PoolState = UniswapV3PoolState

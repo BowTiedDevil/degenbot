@@ -17,12 +17,10 @@ from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.liquidity_pool import (
     ExternalUpdateError,
-    InvalidSwapInputAmount,
-    LiquidityPoolError,
     NoPoolStateAvailable,
 )
 from degenbot.logging import logger
-from degenbot.types.abstract import AbstractArbitrage, AbstractUniswapV2Pool
+from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType
@@ -31,10 +29,10 @@ from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_functions import (
-    constant_product_calc_exact_in,
-    constant_product_calc_exact_out,
     generate_v2_pool_address,
 )
+from degenbot.uniswap.v2_pool_calc import UniswapV2PoolCalc
+from degenbot.uniswap.v2_pool_state import V2PoolState
 from degenbot.uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
@@ -43,7 +41,7 @@ from degenbot.uniswap.v2_types import (
 )
 
 
-class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
+class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
     """
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
@@ -56,8 +54,6 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
     _state: PoolState
     _state_cache: deque[PoolState]
 
-    FEE = Fraction(3, 1000)
-    RESERVES_STRUCT_TYPES = ("uint112", "uint112")
     UNISWAP_V2_MAINNET_POOL_INIT_HASH = (
         "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
     )
@@ -91,7 +87,7 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
         """
         An I/O-free representation of an x*y=k invariant automatic matchmaker, based on Uniswap V2.
 
-        Construct via Bot.build_v2_pool() or manager.get_pool() to fetch data from the chain.
+        Construct via Bot.build_pool() or manager.get_pool() to fetch data from the chain.
         """
 
         self.address = get_checksum_address(address)
@@ -159,27 +155,6 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
         return self.state.block
 
     @property
-    def token0(self) -> Erc20Token:
-        return self._token0
-
-    @property
-    def token1(self) -> Erc20Token:
-        return self._token1
-
-    @property
-    def fee_token0(self) -> Fraction:
-        return self._fee_token0
-
-    @property
-    def fee_token1(self) -> Fraction:
-        return self._fee_token1
-
-    @property
-    def fee(self) -> tuple[Fraction, Fraction]:
-        """Return the pool fees as a tuple (fee_token0, fee_token1)."""
-        return (self._fee_token0, self._fee_token1)
-
-    @property
     def reserves_token0(self) -> int:
         return self.state.reserves_token0
 
@@ -191,10 +166,6 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
     def state(self) -> PoolState:
         return self._state_cache[-1]
 
-    @property
-    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
-        return self._token0, self._token1
-
     @staticmethod
     def swap_is_viable(
         state: PoolState,
@@ -203,155 +174,6 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
         if state.reserves_token0 == 0 or state.reserves_token1 == 0:
             return False
         return state.reserves_token1 > 1 if vector.zero_for_one else state.reserves_token0 > 1
-
-    def calculate_tokens_in_from_ratio_out(
-        self,
-        token_in: Erc20Token,
-        ratio_absolute: Fraction,
-    ) -> int:
-        """
-        Calculates the maximum token input for the target output ratio after
-        fees, defined as (quantity out / quantity in), at current pool
-        reserves. The ratio must be passed as an absolute value reflecting the
-        decimal amounts specified by the ERC-20 token contract
-        (e.g. 10 * 10 ** (18-8) ETH/BTC).
-        """
-
-        if token_in not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError(message=f"Token in {token_in} not held by this pool.")
-
-        if token_in == self._token0:
-            # formula: dx = y0/C - x0/(1-FEE), where C = token1/token0
-            return max(
-                0,
-                int(
-                    self.reserves_token1 / ratio_absolute
-                    - self.reserves_token0 / (1 - self._fee_token0)
-                ),
-            )
-
-        # formula: dy = x0/C - y0/(1-FEE), where C = token0/token1
-        return max(
-            0,
-            int(
-                self.reserves_token0 / ratio_absolute
-                - self.reserves_token1 / (1 - self._fee_token1)
-            ),
-        )
-
-    def calculate_tokens_in_from_tokens_out(
-        self,
-        token_out_quantity: int,
-        token_out: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> int:
-        """
-        Calculates the required token INPUT of token_in for a target OUTPUT at current pool
-        reserves.
-
-        Accepts a `PoolState` state override for calculation against an arbitrary state
-        in lieu of the recorded state.
-        """
-
-        if token_out_quantity <= 0:  # pragma: no cover
-            raise InvalidSwapInputAmount
-
-        if override_state:  # pragma: no cover
-            logger.debug(f"State overrides applied: {override_state}")
-
-        if token_out == self._token1:
-            reserves_in = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-            reserves_out = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-            fee = self._fee_token0
-        elif token_out == self._token0:
-            reserves_in = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-            reserves_out = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-            fee = self._fee_token1
-        else:  # pragma: no cover
-            raise DegenbotValueError(
-                message=f"Could not identify token_out: {token_out}! This pool holds: {self._token0} {self._token1}"  # noqa:E501
-            )
-
-        # last token becomes infinitely expensive, so largest possible swap out is reserves - 1
-        if token_out_quantity > reserves_out - 1:
-            raise LiquidityPoolError(
-                message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})"  # noqa:E501
-            )
-
-        return constant_product_calc_exact_out(
-            amount_out=token_out_quantity,
-            reserves_in=reserves_in,
-            reserves_out=reserves_out,
-            fee=fee,
-        )
-
-    def calculate_tokens_out_from_tokens_in(
-        self,
-        token_in: Erc20Token,
-        token_in_quantity: int,
-        override_state: PoolState | None = None,
-    ) -> int:
-        """
-        Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
-        """
-
-        if token_in_quantity <= 0:  # pragma: no cover
-            raise InvalidSwapInputAmount
-
-        if override_state:  # pragma: no cover
-            logger.debug(f"State overrides applied: {override_state}")
-
-        if token_in == self._token0:
-            reserves_in = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-            reserves_out = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-            fee = self._fee_token0
-        elif token_in == self._token1:
-            reserves_in = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-            reserves_out = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-            fee = self._fee_token1
-        else:  # pragma: no cover
-            raise DegenbotValueError(
-                message=f"Could not identify token_in: {token_in}! Pool holds: {self._token0} {self._token1}"  # noqa:E501
-            )
-
-        return constant_product_calc_exact_in(
-            amount_in=token_in_quantity,
-            reserves_in=reserves_in,
-            reserves_out=reserves_out,
-            fee=fee,
-        )
 
     def external_update(
         self,
@@ -387,73 +209,6 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
                 message=UniswapV2PoolStateUpdated(self.state),
             )
 
-    def get_absolute_price(
-        self,
-        token: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the absolute price for the given token, expressed in units of the other.
-        """
-
-        return 1 / self.get_absolute_exchange_rate(token, override_state=override_state)
-
-    def get_absolute_exchange_rate(
-        self,
-        token: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the absolute exchange rate for the given token, expressed in terms of a unit amount of
-        its paired token.
-
-        e.g. taking the USDC-WETH pool in https://blog.uniswap.org/uniswap-v3-math-primer — the
-        WETH/USDC exchange rate is 649004842.70137. Rounding down, this signifies that the smallest
-        swap (1 USDC) results in a 649004842 WETH output.
-
-        The exchange rate for a V2 pool is a simple ratio of the output token reserves to the input
-        token reserves.
-        """
-
-        if token not in self.tokens:
-            raise DegenbotValueError(message=f"Unknown token {token}")
-
-        state = self.state if override_state is None else override_state
-
-        return (
-            Fraction(state.reserves_token1, state.reserves_token0)
-            if token == self._token1
-            else Fraction(state.reserves_token0, state.reserves_token1)
-        )
-
-    def get_nominal_price(
-        self,
-        token: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the nominal price for the given token, expressed per nominal unit of its paired token.
-        The price is corrected for the decimal place values of both tokens.
-        """
-
-        return 1 / self.get_nominal_exchange_rate(token=token, override_state=override_state)
-
-    def get_nominal_exchange_rate(
-        self,
-        token: Erc20Token,
-        override_state: PoolState | None = None,
-    ) -> Fraction:
-        """
-        Get the nominal rate for the given token, expressed in units of the other, corrected for
-        decimal place values.
-        """
-
-        return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
-            Fraction(10**self._token1.decimals, 10**self._token0.decimals)
-            if token == self._token0
-            else Fraction(10**self._token0.decimals, 10**self._token1.decimals)
-        )
-
     def discard_states_before_block(
         self,
         block: BlockNumber,
@@ -484,11 +239,6 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
     ) -> None:
         """
         Restore the last pool state recorded prior to a target block.
-
-        Use this method to maintain consistent state data following a chain re-organization.
-
-        The pool will notify all subscribers of the new state with a `UniswapV2PoolStateUpdated`
-        event.
         """
 
         with self._state_lock:
@@ -690,9 +440,6 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, AbstractUniswapV2Pool):
             for subscriber in self._subscribers
             if isinstance(subscriber, AbstractArbitrage)
         )
-
-    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
-        return self._fee_token0 if zero_for_one else self._fee_token1
 
     def reserves_for_cache(self) -> tuple[int, int]:
         """Return (reserve_token0, reserve_token1) for the Rust solver cache."""

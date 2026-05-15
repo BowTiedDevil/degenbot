@@ -2,6 +2,11 @@
 
 Define structural interfaces for pool behavior. Pools satisfy these
 protocols by implementing the required methods — no inheritance needed.
+
+Three pool-shape protocols replace the former ABCs:
+- ConstantProductPool: replaces AbstractUniswapV2Pool + AbstractAerodromeV2Pool
+- ConcentratedLiquidityPool: replaces AbstractConcentratedLiquidityPool
+- StableswapPool: replaces direct CurveStableswapPool references
 """
 
 from __future__ import annotations
@@ -18,6 +23,90 @@ if TYPE_CHECKING:
     from degenbot.types.abstract import AbstractPoolState
     from degenbot.types.concrete import Subscriber
     from degenbot.types.hop_types import HopType
+
+
+# ── Pool-shape protocols (replace ABCs) ─────────────────────────────
+#
+# These structural protocols identify pool families by the attributes
+# they expose, not by inheritance. A pool satisfies ConstantProductPool
+# if it has token0, token1, fee_token0, fee_token1, reserves_token0,
+# reserves_token1 — regardless of its class hierarchy.
+#
+# This replaces the former ABC-based dispatch:
+#   isinstance(pool, AbstractUniswapV2Pool)  → isinstance(pool, ConstantProductPool)
+#   isinstance(pool, AbstractAerodromeV2Pool) → isinstance(pool, ConstantProductPool) + stable check
+#   isinstance(pool, AbstractConcentratedLiquidityPool) → isinstance(pool, ConcentratedLiquidityPool)
+
+
+@runtime_checkable
+class ConstantProductPool(Protocol):
+    """Any pool using the x*y=k invariant (V2-style, Aerodrome volatile/stable).
+
+    Replaces AbstractUniswapV2Pool and AbstractAerodromeV2Pool for
+    isinstance dispatch. Aerodrome pools satisfy this protocol too —
+    they have the same structural shape (directional fees, reserves).
+    The stable flag is accessed separately when needed.
+    """
+
+    @property
+    def token0(self) -> Erc20Token: ...
+
+    @property
+    def token1(self) -> Erc20Token: ...
+
+    @property
+    def fee_token0(self) -> Fraction: ...
+
+    @property
+    def fee_token1(self) -> Fraction: ...
+
+    @property
+    def reserves_token0(self) -> int: ...
+
+    @property
+    def reserves_token1(self) -> int: ...
+
+
+@runtime_checkable
+class ConcentratedLiquidityPool(Protocol):
+    """Any pool using concentrated liquidity (tick-based: V3, V4).
+
+    Replaces AbstractConcentratedLiquidityPool for isinstance dispatch.
+    """
+
+    @property
+    def token0(self) -> Erc20Token: ...
+
+    @property
+    def token1(self) -> Erc20Token: ...
+
+    @property
+    def fee(self) -> int: ...
+
+    @property
+    def liquidity(self) -> int: ...
+
+    @property
+    def sqrt_price_x96(self) -> int: ...
+
+    @property
+    def tick(self) -> int: ...
+
+    @property
+    def tick_spacing(self) -> int: ...
+
+
+@runtime_checkable
+class StableswapPool(Protocol):
+    """Any pool using the Curve StableSwap invariant.
+
+    Structural check for multi-token stable pools. Used sparingly
+    since Curve pools are typically dispatched by concrete type
+    in the builder registry.
+    """
+
+    @property
+    def tokens(self) -> tuple[Erc20Token, ...]: ...
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)

@@ -31,22 +31,40 @@ class PoolDeploymentData:
 
 
 def _derive_family(pool_class: type[AbstractLiquidityPool]) -> PoolFamily:
-    """Derive the pool family from the class hierarchy."""
-    from degenbot.types.abstract.liquidity_pool import (  # noqa: PLC0415
-        AbstractAerodromeV2Pool,
-        AbstractConcentratedLiquidityPool,
-        AbstractUniswapV2Pool,
-    )
+    """Derive the pool family from the class's structural shape.
 
-    if issubclass(pool_class, AbstractConcentratedLiquidityPool):
+    Uses duck-typing checks on the class's annotation/attribute signatures
+    instead of ABC inheritance. This matches the protocol-based approach
+    (ConstantProductPool, ConcentratedLiquidityPool, StableswapPool)
+    but works with issubclass() which protocols-with-properties don't support.
+
+    Checking strategy:
+    - ConcentratedLiquidityPool shape: has sqrt_price_x96, tick, tick_spacing, liquidity
+    - ConstantProductPool shape: has reserves_token0, reserves_token1, fee_token0, fee_token1
+    - StableswapPool shape: has tokens (multi-token)
+    """
+    # Check for concentrated liquidity attributes (V3/V4)
+    if all(
+        hasattr(pool_class, attr)
+        for attr in ("sqrt_price_x96", "tick", "tick_spacing", "liquidity")
+    ):
         return PoolFamily.CONCENTRATED_LIQUIDITY
-    if issubclass(pool_class, (AbstractUniswapV2Pool, AbstractAerodromeV2Pool)):
+
+    # Check for constant product attributes (V2/Aerodrome)
+    if all(
+        hasattr(pool_class, attr)
+        for attr in ("reserves_token0", "reserves_token1", "fee_token0", "fee_token1")
+    ):
         return PoolFamily.CONSTANT_PRODUCT
+
+    # Check for StableSwap attributes (Curve)
+    if hasattr(pool_class, "tokens") and not hasattr(pool_class, "fee_token0"):
+        return PoolFamily.STABLESWAP
 
     msg = (
         f"Cannot derive pool family for {pool_class.__name__}. "
-        f"The class must inherit from AbstractUniswapV2Pool, "
-        f"AbstractConcentratedLiquidityPool, or AbstractAerodromeV2Pool."
+        f"The class must satisfy ConstantProductPool, "
+        f"ConcentratedLiquidityPool, or StableswapPool protocol."
     )
     raise ValueError(msg)
 
@@ -66,8 +84,10 @@ class PoolTypeRegistry:
     --------------------------------
     Library users who want to register a custom DEX pool class should:
 
-    1. Subclass an abstract pool base (``AbstractUniswapV2Pool`` or
-       ``AbstractConcentratedLiquidityPool``).
+    1. Subclass a pool shape protocol (``ConstantProductPool``,
+       ``ConcentratedLiquidityPool``, or ``StableswapPool``). This is
+       typically done by inheriting from an existing pool class that
+       already satisfies the protocol (e.g., ``UniswapV2Pool``).
 
     2. Add a ``variant: ClassVar[str | None] = "your_dex_name"`` class
        attribute. Use the bare DEX name without a ``_v2``/``_v3`` suffix
