@@ -30,7 +30,7 @@ from degenbot.exceptions.liquidity_pool import (
 )
 from degenbot.functions import encode_function_calldata
 from degenbot.logging import logger
-from degenbot.types.abstract import AbstractAerodromeV2Pool
+from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
 from degenbot.types.pool_pickle import PoolPickleMixin
@@ -52,7 +52,7 @@ class AerodromeV2Pool(
     PoolPickleMixin,
     AerodromeV2PoolStateMixin,
     AerodromeV2PoolCalc,
-    AbstractAerodromeV2Pool,
+    AbstractLiquidityPool,
 ):
     variant: ClassVar[str | None] = "aerodrome"
 

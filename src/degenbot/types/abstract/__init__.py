@@ -3,12 +3,7 @@ import dataclasses
 from .arbitrage import AbstractArbitrage
 from .deployment import AbstractExchangeDeployment
 from .erc20_token import AbstractErc20Token
-from .liquidity_pool import (
-    AbstractAerodromeV2Pool,
-    AbstractConcentratedLiquidityPool,
-    AbstractLiquidityPool,
-    AbstractUniswapV2Pool,
-)
+from .liquidity_pool import AbstractLiquidityPool
 from .pool_manager import AbstractPoolManager
 from .pool_state import AbstractPoolState
 
@@ -25,9 +20,7 @@ class AbstractRegistry: ...
 
 
 __all__ = (
-    "AbstractAerodromeV2Pool",
     "AbstractArbitrage",
-    "AbstractConcentratedLiquidityPool",
     "AbstractErc20Token",
     "AbstractExchangeDeployment",
     "AbstractLiquidityPool",
@@ -35,5 +28,4 @@ __all__ = (
     "AbstractPoolState",
     "AbstractRegistry",
     "AbstractSimulationResult",
-    "AbstractUniswapV2Pool",
 )

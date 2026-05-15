@@ -25,7 +25,7 @@ from degenbot.exceptions.liquidity_pool import (
     LiquidityPoolError,
     PossibleInaccurateResult,
 )
-from degenbot.types.abstract import AbstractArbitrage, AbstractConcentratedLiquidityPool
+from degenbot.types.abstract import AbstractArbitrage, AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import (
     PublisherMixin,
@@ -125,7 +125,7 @@ class UniswapV4Pool(
     PoolPickleMixin,
     V4PoolState,
     UniswapV4PoolCalc,
-    AbstractConcentratedLiquidityPool,
+    AbstractLiquidityPool,
 ):
     _state_mgr: ConcentratedLiquidityStateManager[UniswapV4PoolState]
 
