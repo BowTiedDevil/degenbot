@@ -11,7 +11,7 @@ from hexbytes import HexBytes
 from degenbot.functions import create2_address
 
 if TYPE_CHECKING:
-    from degenbot.uniswap.managers import UniswapV2PoolManager
+    from degenbot.uniswap.trackers import UniswapV2PoolTracker
     from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 
@@ -45,11 +45,11 @@ def generate_v2_pool_address(
 
 def get_v2_pools_from_token_path(
     tx_path: Iterable[ChecksumAddress | str],
-    pool_manager: "UniswapV2PoolManager",
+    pool_tracker: "UniswapV2PoolTracker",
 ) -> list["UniswapV2Pool"]:
     result: list[UniswapV2Pool] = []
     for token_addresses in itertools.pairwise(tx_path):
-        pool = pool_manager.get_pool_from_tokens(
+        pool = pool_tracker.get_pool_from_tokens(
             token_addresses=token_addresses,
             silent=True,
         )

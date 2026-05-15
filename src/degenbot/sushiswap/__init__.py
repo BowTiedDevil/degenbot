@@ -4,7 +4,7 @@ from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from . import (
     abi as abi,
 )  # excluded from __all__ so it doesn't bubble back up to the top level package namespace
-from .managers import SushiswapV2PoolManager, SushiswapV3PoolManager
+from .trackers import SushiswapV2PoolTracker, SushiswapV3PoolTracker
 from .pools import SushiswapV2Pool, SushiswapV3Pool
 
 
@@ -47,7 +47,7 @@ _register_sushiswap_deployments()
 
 __all__ = (
     "SushiswapV2Pool",
-    "SushiswapV2PoolManager",
+    "SushiswapV2PoolTracker",
     "SushiswapV3Pool",
-    "SushiswapV3PoolManager",
+    "SushiswapV3PoolTracker",
 )

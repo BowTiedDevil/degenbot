@@ -4,7 +4,7 @@ from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from . import (
     abi as abi,
 )  # excluded from __all__ so it doesn't bubble back up to the top level package namespace
-from .managers import PancakeswapV2PoolManager, PancakeswapV3PoolManager
+from .trackers import PancakeswapV2PoolTracker, PancakeswapV3PoolTracker
 from .pools import PancakeswapV2Pool, PancakeswapV3Pool
 
 
@@ -43,7 +43,7 @@ _register_pancakeswap_deployments()
 
 __all__ = (
     "PancakeswapV2Pool",
-    "PancakeswapV2PoolManager",
+    "PancakeswapV2PoolTracker",
     "PancakeswapV3Pool",
-    "PancakeswapV3PoolManager",
+    "PancakeswapV3PoolTracker",
 )

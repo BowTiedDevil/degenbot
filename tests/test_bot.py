@@ -14,7 +14,7 @@ from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.pool import ManagerAlreadyInitialized
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
-from degenbot.uniswap.managers import UniswapV2PoolManager
+from degenbot.uniswap.trackers import UniswapV2PoolTracker
 
 
 def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
@@ -58,10 +58,10 @@ class TestBotInit:
         bot = Bot(config)
         assert bot.config is config
 
-    def test_bot_managers_empty_at_start(self, tmp_path: pathlib.Path) -> None:
+    def test_bot_trackers_empty_at_start(self, tmp_path: pathlib.Path) -> None:
         config = _make_test_config(tmp_path)
         bot = Bot(config)
-        assert bot._managers == {}
+        assert bot._trackers == {}
 
 
 class TestBotFromConfigFile:
@@ -75,10 +75,10 @@ class TestBotFromConfigFile:
             mock_init.assert_called_once()
 
 
-class TestBotAddManager:
-    """Bot.add_manager() tests."""
+class TestBotAddTracker:
+    """Bot.add_tracker() tests."""
 
-    def test_add_manager_stores_manager(self, tmp_path: pathlib.Path) -> None:
+    def test_add_tracker_stores_manager(self, tmp_path: pathlib.Path) -> None:
         config = _make_test_config(tmp_path)
         bot = Bot(config)
 
@@ -88,19 +88,19 @@ class TestBotAddManager:
         bot.connections.register_provider(provider)
         bot.connections.set_default_chain(1)
 
-        manager = bot.add_manager(
-            UniswapV2PoolManager,
+        manager = bot.add_tracker(
+            UniswapV2PoolTracker,
             factory_address="0x5C69bEe701ef814E44274f655e7632cB715C14B6",
             chain_id=1,
         )
-        assert isinstance(manager, UniswapV2PoolManager)
-        assert ("0x5C69bEe701ef814E44274f655e7632cB715C14B6".lower(),) not in bot._managers
+        assert isinstance(manager, UniswapV2PoolTracker)
+        assert ("0x5C69bEe701ef814E44274f655e7632cB715C14B6".lower(),) not in bot._trackers
         # Manager is stored keyed by (chain_id, factory_address)
         key = (1, get_checksum_address("0x5C69bEe701ef814E44274f655e7632cB715C14B6"))
-        assert key in bot._managers
-        assert bot._managers[key] is manager
+        assert key in bot._trackers
+        assert bot._trackers[key] is manager
 
-    def test_add_manager_rejects_duplicate(self, tmp_path: pathlib.Path) -> None:
+    def test_add_tracker_rejects_duplicate(self, tmp_path: pathlib.Path) -> None:
         config = _make_test_config(tmp_path)
         bot = Bot(config)
 
@@ -111,10 +111,10 @@ class TestBotAddManager:
         bot.connections.set_default_chain(1)
 
         factory = "0x5C69bEe701ef814E44274f655e7632cB715C14B6"
-        bot.add_manager(UniswapV2PoolManager, factory_address=factory, chain_id=1)
+        bot.add_tracker(UniswapV2PoolTracker, factory_address=factory, chain_id=1)
 
         with pytest.raises(ManagerAlreadyInitialized):
-            bot.add_manager(UniswapV2PoolManager, factory_address=factory, chain_id=1)
+            bot.add_tracker(UniswapV2PoolTracker, factory_address=factory, chain_id=1)
 
 
 class TestMultipleBots:
@@ -133,7 +133,7 @@ class TestMultipleBots:
         assert bot1.connections is not bot2.connections
         assert bot1.db is not bot2.db
 
-    def test_independent_managers(self, tmp_path: pathlib.Path) -> None:
+    def test_independent_trackers(self, tmp_path: pathlib.Path) -> None:
         config1 = _make_test_config(tmp_path / "bot1")
         config2 = _make_test_config(tmp_path / "bot2")
 
@@ -149,9 +149,9 @@ class TestMultipleBots:
         bot2.connections.set_default_chain(1)
 
         factory = "0x5C69bEe701ef814E44274f655e7632cB715C14B6"
-        manager1 = bot1.add_manager(UniswapV2PoolManager, factory_address=factory, chain_id=1)
+        manager1 = bot1.add_tracker(UniswapV2PoolTracker, factory_address=factory, chain_id=1)
         # Second bot can add a manager for the same factory without error
-        manager2 = bot2.add_manager(UniswapV2PoolManager, factory_address=factory, chain_id=1)
+        manager2 = bot2.add_tracker(UniswapV2PoolTracker, factory_address=factory, chain_id=1)
         assert manager1 is not manager2
 
 

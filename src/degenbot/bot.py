@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
     from web3.types import BlockIdentifier
 
-    from degenbot.types.abstract.pool_manager import AbstractPoolManager
+    from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
     from degenbot.types.aliases import ChainId
 
 
@@ -83,7 +83,7 @@ class Bot:
         self.pools = PoolRegistry()
         self.tokens = TokenRegistry()
         self.managed_pools = ManagedPoolRegistry()
-        self._managers: dict[tuple[ChainId, str], AbstractPoolManager] = {}
+        self._trackers: dict[tuple[ChainId, str], AbstractPoolTracker] = {}
 
         # Builders own I/O orchestration; Bot hands them its I/O dependencies
         self._erc20_builder = Erc20Builder(
@@ -153,7 +153,7 @@ class Bot:
     def from_config_file(cls) -> Bot:
         return cls(config=_init_config())
 
-    def add_manager[M: AbstractPoolManager](
+    def add_tracker[M: AbstractPoolTracker](
         self,
         manager_cls: type[M],
         *,
@@ -166,7 +166,7 @@ class Bot:
         chain_id = chain_id or self.connections.default_chain_id
 
         key = (chain_id, factory_address)
-        if key in self._managers:
+        if key in self._trackers:
             raise ManagerAlreadyInitialized(
                 message="A manager has already been initialized for this address. "
                 "Access it using the bot's manager registry."
@@ -178,7 +178,7 @@ class Bot:
             bot=self,
             **kwargs,
         )
-        self._managers[key] = manager
+        self._trackers[key] = manager
         return manager
 
     def register_builder(

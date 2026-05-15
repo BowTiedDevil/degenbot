@@ -16,9 +16,9 @@ from degenbot.exceptions.pool import (
     PoolNotAssociated,
 )
 from degenbot.logging import logger
-from degenbot.types.abstract.pool_manager import AbstractPoolManager
+from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
-from degenbot.uniswap.managers import AbstractUniswapV3PoolManager
+from degenbot.uniswap.trackers import AbstractUniswapV3PoolTracker
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 if TYPE_CHECKING:
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from degenbot.types.aliases import ChainId
 
 
-class _AbstractAerodromeV2PoolManager[Pool: AerodromeV2Pool](AbstractPoolManager[Pool]):
+class _AbstractAerodromeV2PoolTracker[Pool: AerodromeV2Pool](AbstractPoolTracker[Pool]):
     """
     Abstract class used to inject the AerodromeV2Pool class into the parent abstract pool manager
     class where the tracking dicts are defined.
@@ -83,8 +83,8 @@ class _AbstractAerodromeV2PoolManager[Pool: AerodromeV2Pool](AbstractPoolManager
             return new_pool
 
 
-class AerodromeV2PoolManager(
-    _AbstractAerodromeV2PoolManager[AerodromeV2Pool], pool_factory=AerodromeV2Pool
+class AerodromeV2PoolTracker(
+    _AbstractAerodromeV2PoolTracker[AerodromeV2Pool], pool_factory=AerodromeV2Pool
 ):
     """
     A class that generates and tracks concrete instances of a Uniswap V2 liquidity pool helper or
@@ -187,8 +187,8 @@ class AerodromeV2PoolManager(
         )
 
 
-class AerodromeV3PoolManager(
-    AbstractUniswapV3PoolManager[AerodromeV3Pool], pool_factory=AerodromeV3Pool
+class AerodromeV3PoolTracker(
+    AbstractUniswapV3PoolTracker[AerodromeV3Pool], pool_factory=AerodromeV3Pool
 ):
     POOL_IMPLEMENTATION_ADDRESS = get_checksum_address("0xeC8E5342B19977B4eF8892e02D8DAEcfa1315831")
 

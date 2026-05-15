@@ -13,9 +13,9 @@ if TYPE_CHECKING:
     from degenbot.bot import Bot
 
 
-class AbstractPoolManager[Pool: AbstractLiquidityPool]:
+class AbstractPoolTracker[Pool: AbstractLiquidityPool]:
     """
-    Base class for liquidity pool managers.
+    Base class for liquidity trackers.
     """
 
     # Class variables

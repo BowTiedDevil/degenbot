@@ -7,7 +7,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions.pool import UnknownPool
 from degenbot.provider import ProviderAdapter
-from degenbot.uniswap.managers import UniswapV3PoolManager
+from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v3_snapshot import (
     DatabaseSnapshot,
     IndividualJsonFileSnapshot,
@@ -293,7 +293,7 @@ def test_apply_update_to_snapshot(
         tick_bitmap=tick_bitmap,
     )
 
-    pool_manager = UniswapV3PoolManager(
+    pool_manager = UniswapV3PoolTracker(
         factory_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
         bot=bot,
         snapshot=empty_mainnet_snapshot_from_file,
@@ -352,7 +352,7 @@ def test_pool_manager_applies_snapshot_from_file(
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
 
     # Build a pool manager to inject the liquidity events into the new pools as they are created
-    pool_manager = UniswapV3PoolManager(
+    pool_manager = UniswapV3PoolTracker(
         factory_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
         bot=bot,
         snapshot=empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870,
@@ -521,7 +521,7 @@ def test_pool_manager_applies_snapshot_from_dir(
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
 
     # Build a pool manager to inject the liquidity events into the new pools as they are created
-    pool_manager = UniswapV3PoolManager(
+    pool_manager = UniswapV3PoolTracker(
         factory_address="0x1F98431c8aD98523631AE4a59f267346ea31F984",
         bot=bot,
         snapshot=mainnet_snapshot_at_block_12_369_870_from_dir,
