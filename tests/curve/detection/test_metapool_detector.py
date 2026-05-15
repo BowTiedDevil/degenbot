@@ -4,7 +4,7 @@ import eth_abi.abi
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.metapool_detector import detect_metapool
-from degenbot.functions import encode_function_calldata
+from degenbot.provider.call_helpers import encode_function_calldata
 
 POOL_ADDR = get_checksum_address("0xbEbc44782C7DB0a1A60Cb6fe97d0b483032FF1C7")
 TRIPOOL_ADDR = get_checksum_address("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7")

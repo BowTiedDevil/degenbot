@@ -4,7 +4,7 @@ import eth_abi.abi
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.coin_discovery import discover_coins
-from degenbot.functions import encode_function_calldata
+from degenbot.provider.call_helpers import encode_function_calldata
 
 # Well-known token addresses for tests
 USDC = get_checksum_address("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")

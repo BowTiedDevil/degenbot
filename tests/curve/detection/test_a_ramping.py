@@ -4,7 +4,7 @@ import eth_abi.abi
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.a_ramping import detect_a_ramping
-from degenbot.functions import encode_function_calldata
+from degenbot.provider.call_helpers import encode_function_calldata
 
 POOL_ADDR = get_checksum_address("0xbEbc44782C7DB0a1A60Cb6fe97d0b483032FF1C7")
 

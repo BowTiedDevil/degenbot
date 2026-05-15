@@ -21,32 +21,16 @@ from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.database.models.pools import LiquidityPoolTable
 from degenbot.database.operations import get_alembic_config, get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.erc20.erc20 import (
-    Erc20Token,
-)
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
-from degenbot.functions import encode_function_calldata
 from degenbot.logging import logger
+from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
-from degenbot.types.pool_type import (
-    PoolFamily,
-    PoolTypeDescriptor,
-    derive_kind,
-)
+from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
-)
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-from degenbot.uniswap.v4_types import (
-    UniswapV4BitmapAtWord,
-    UniswapV4LiquidityAtTick,
-)
 from degenbot.version import __version__
 
 if TYPE_CHECKING:
@@ -55,8 +39,12 @@ if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
     from web3.types import BlockIdentifier
 
+    from degenbot.erc20.erc20 import Erc20Token
+    from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
     from degenbot.types.aliases import ChainId
+    from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
+    from degenbot.uniswap.v4_types import UniswapV4BitmapAtWord, UniswapV4LiquidityAtTick
 
 
 class Bot:
@@ -90,25 +78,41 @@ class Bot:
             connections=self.connections, db=self.db, tokens=self.tokens
         )
         self._v2_builder = V2PoolBuilder(
-            connections=self.connections, db=self.db, pools=self.pools, tokens=self.tokens,
+            connections=self.connections,
+            db=self.db,
+            pools=self.pools,
+            tokens=self.tokens,
             erc20_builder=self._erc20_builder,
         )
         self._v3_builder = V3PoolBuilder(
-            connections=self.connections, db=self.db, pools=self.pools, tokens=self.tokens,
-            managed_pools=self.managed_pools, erc20_builder=self._erc20_builder,
+            connections=self.connections,
+            db=self.db,
+            pools=self.pools,
+            tokens=self.tokens,
+            managed_pools=self.managed_pools,
+            erc20_builder=self._erc20_builder,
         )
         self._v4_builder = V4PoolBuilder(
-            connections=self.connections, db=self.db, pools=self.pools, tokens=self.tokens,
-            managed_pools=self.managed_pools, erc20_builder=self._erc20_builder,
+            connections=self.connections,
+            db=self.db,
+            pools=self.pools,
+            tokens=self.tokens,
+            managed_pools=self.managed_pools,
+            erc20_builder=self._erc20_builder,
         )
         self._curve_builder = CurvePoolBuilder(
-            connections=self.connections, db=self.db, pools=self.pools, tokens=self.tokens,
+            connections=self.connections,
+            db=self.db,
+            pools=self.pools,
+            tokens=self.tokens,
             erc20_builder=self._erc20_builder,
         )
 
         # Builder registry: concrete pool type → builder
         # Used by update() for O(1) dict lookup instead of isinstance chain
-        self._builders: dict[type, V2PoolBuilder | V3PoolBuilder | V4PoolBuilder | CurvePoolBuilder] = {}
+        self._builders: dict[
+            type, V2PoolBuilder | V3PoolBuilder | V4PoolBuilder | CurvePoolBuilder
+        ] = {}
         self.register_builder(UniswapV2Pool, self._v2_builder)
         self.register_builder(UniswapV3Pool, self._v3_builder)
         self.register_builder(UniswapV4Pool, self._v4_builder)
@@ -278,9 +282,7 @@ class Bot:
                     break
 
         if builder is None:
-            raise DegenbotValueError(
-                message=f"No builder for pool class {pool_class.__name__}"
-            )
+            raise DegenbotValueError(message=f"No builder for pool class {pool_class.__name__}")
 
         return self._dispatch_build(
             builder=builder,
@@ -474,9 +476,15 @@ class Bot:
         # Default classes when no factory-specific registration exists
         match pool_type.family:
             case PoolFamily.CONSTANT_PRODUCT:
-                return pool_type_registry.get_v2_class(chain_id, pool_type.factory or "") or UniswapV2Pool
+                return (
+                    pool_type_registry.get_v2_class(chain_id, pool_type.factory or "")
+                    or UniswapV2Pool
+                )
             case PoolFamily.CONCENTRATED_LIQUIDITY:
-                return pool_type_registry.get_v3_class(chain_id, pool_type.factory or "") or UniswapV3Pool
+                return (
+                    pool_type_registry.get_v3_class(chain_id, pool_type.factory or "")
+                    or UniswapV3Pool
+                )
             case PoolFamily.STABLESWAP:
                 return CurveStableswapPool
             case _:
@@ -525,7 +533,9 @@ class Bot:
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
         """Retrieve the ERC-20 balance for the given address."""
-        return self._erc20_builder.get_token_balance(token, address, block_identifier=block_identifier)
+        return self._erc20_builder.get_token_balance(
+            token, address, block_identifier=block_identifier
+        )
 
     def get_token_approval(
         self,
@@ -535,7 +545,9 @@ class Bot:
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
         """Retrieve the amount that can be spent by `spender` on behalf of `owner`."""
-        return self._erc20_builder.get_token_approval(token, owner, spender, block_identifier=block_identifier)
+        return self._erc20_builder.get_token_approval(
+            token, owner, spender, block_identifier=block_identifier
+        )
 
     def get_token_total_supply(
         self,
@@ -552,7 +564,9 @@ class Bot:
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
         """Retrieve the native ETH balance for the given address."""
-        return self._erc20_builder.get_ether_balance(chain_id, address, block_identifier=block_identifier)
+        return self._erc20_builder.get_ether_balance(
+            chain_id, address, block_identifier=block_identifier
+        )
 
     def build_v3_pool(
         self,
@@ -633,7 +647,7 @@ class Bot:
 
     def get_web3(self, *, chain_id: ChainId) -> Any:
         """.. deprecated:: 0.x
-            Use ``get_provider(chain_id)`` instead.
+        Use ``get_provider(chain_id)`` instead.
         """
         return self.connections.get_web3(chain_id)
 
@@ -647,7 +661,9 @@ class Bot:
         builder = self._builder_for_pool(pool)
         return builder.update(pool, block_number=block_number)
 
-    def _builder_for_pool(self, pool: Any) -> V2PoolBuilder | V3PoolBuilder | V4PoolBuilder | CurvePoolBuilder:
+    def _builder_for_pool(
+        self, pool: Any
+    ) -> V2PoolBuilder | V3PoolBuilder | V4PoolBuilder | CurvePoolBuilder:
         """Select the appropriate builder for the pool type.
 
         Uses the builder registry (dict lookup on type(pool)) first, then

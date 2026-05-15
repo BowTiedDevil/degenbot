@@ -16,7 +16,7 @@ import eth_abi.abi
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.types import MetapoolDetectionResult
-from degenbot.functions import encode_function_calldata
+from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress

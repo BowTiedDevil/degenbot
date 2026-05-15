@@ -16,8 +16,8 @@ from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.arbitrage import ArbitrageError, NoLiquidity
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.functions import encode_function_calldata
 from degenbot.provider import ProviderAdapter
+from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.tick_bitmap import position

@@ -12,7 +12,7 @@ from degenbot.aave.events import (
     AaveV3StkAaveEvent,
     ERC20Event,
 )
-from degenbot.functions import fetch_logs_retrying
+from degenbot.provider.log_fetching import fetch_logs_retrying
 from degenbot.provider.interface import ProviderAdapter
 
 

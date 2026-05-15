@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import eth_abi.abi
 
 from degenbot.curve.detection.types import CryptoDetectionResult
-from degenbot.functions import encode_function_calldata
+from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress

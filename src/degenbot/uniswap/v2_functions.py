@@ -8,7 +8,7 @@ from eth_typing import ChecksumAddress
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
-from degenbot.functions import create2_address
+from degenbot.contract.addresses import create2_address
 
 if TYPE_CHECKING:
     from degenbot.uniswap.trackers import UniswapV2PoolTracker

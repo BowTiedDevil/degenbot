@@ -28,7 +28,7 @@ from degenbot.exceptions.pool import (
     ExternalUpdateError,
     NoPoolStateAvailable,
 )
-from degenbot.functions import encode_function_calldata
+from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.logging import logger
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.concrete import PublisherMixin, Subscriber

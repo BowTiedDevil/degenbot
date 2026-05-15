@@ -20,7 +20,7 @@ from degenbot.calculations.solidly_stable import (
     calc_k as _k_aerodrome,
     get_y_solidly as _get_y_aerodrome,
 )
-from degenbot.functions import eip_1167_clone_address
+from degenbot.contract.addresses import eip_1167_clone_address
 
 
 def calc_exact_in_stable(*args, **kwargs):

@@ -9,7 +9,7 @@ from degenbot.cli.aave.types import TransactionContext
 from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.database.models.aave import AaveV3User
-from degenbot.functions import encode_function_calldata, raw_call
+from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.logging import logger
 
 

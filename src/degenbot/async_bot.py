@@ -33,10 +33,9 @@ from degenbot.erc20.erc20 import (
 )
 from degenbot.erc20.ether_placeholder import EtherPlaceholder
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.exceptions.pool import LiquidityPoolError
-from degenbot.exceptions.pool import TrackerAlreadyInitialized
-from degenbot.functions import async_raw_call, encode_function_calldata
+from degenbot.exceptions.pool import LiquidityPoolError, TrackerAlreadyInitialized
 from degenbot.logging import logger
+from degenbot.provider.call_helpers import async_raw_call, encode_function_calldata
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.types.abstract import AbstractPoolTracker
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
@@ -876,6 +875,6 @@ class AsyncBot:
 
     def get_web3(self, *, chain_id: ChainId) -> Any:
         """.. deprecated:: 0.x
-            Use ``get_provider(chain_id)`` instead.
+        Use ``get_provider(chain_id)`` instead.
         """
         return self.connections.get_web3(chain_id)

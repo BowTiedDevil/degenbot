@@ -51,10 +51,8 @@ from degenbot.cli.pool_updater_configs import (
     update_v3_pools,
     update_v4_pools,
 )
-from degenbot.functions import (
-    fetch_logs_retrying,
-    get_number_for_block_identifier,
-)
+from degenbot.provider.block_helpers import get_number_for_block_identifier
+from degenbot.provider.log_fetching import fetch_logs_retrying
 from degenbot.logging import logger
 from degenbot.provider import ProviderAdapter
 from degenbot.types.aliases import ChainId, Tick, Word

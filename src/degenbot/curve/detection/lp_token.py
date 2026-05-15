@@ -12,7 +12,7 @@ import eth_abi.abi
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
-from degenbot.functions import encode_function_calldata
+from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress

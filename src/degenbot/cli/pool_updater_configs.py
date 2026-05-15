@@ -23,7 +23,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.pools import PoolManagerTable
-from degenbot.functions import encode_function_calldata, raw_call
+from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.logging import logger
 from degenbot.provider import ProviderAdapter
 

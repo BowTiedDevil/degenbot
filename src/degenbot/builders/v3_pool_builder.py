@@ -14,7 +14,7 @@ from degenbot.database.models.pools import LiquidityPoolTable
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
-from degenbot.functions import encode_function_calldata, raw_call
+from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.logging import logger
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.registry.pool_type import pool_type_registry

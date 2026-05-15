@@ -9,7 +9,7 @@ The get_y solver is also Camelot-specific (different convergence check).
 
 from degenbot.calculations.solidly_stable import calc_d as solidly_calc_d
 from degenbot.exceptions.pool import EVMRevertError
-from degenbot.functions import raise_if_invalid_uint256
+from degenbot.calculations.evm_math import raise_if_invalid_uint256
 
 
 def f_camelot(x0: int, y: int) -> int:

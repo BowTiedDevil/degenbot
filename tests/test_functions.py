@@ -7,12 +7,12 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import ConnectionManager
 from degenbot.exceptions import DegenbotValueError
-from degenbot.functions import (
-    create2_address,
+from degenbot.calculations.evm_math import next_base_fee
+from degenbot.contract.addresses import create2_address
+from degenbot.provider.block_helpers import get_number_for_block_identifier
+from degenbot.provider.call_helpers import (
     encode_function_calldata,
     extract_argument_types_from_function_prototype,
-    get_number_for_block_identifier,
-    next_base_fee,
     raw_call,
 )
 from degenbot.provider import ProviderAdapter

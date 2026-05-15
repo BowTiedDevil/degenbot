@@ -11,7 +11,7 @@ import pytest
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
-from degenbot.functions import encode_function_calldata, raw_call
+from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 

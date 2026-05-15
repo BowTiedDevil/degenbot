@@ -7,9 +7,10 @@ from eth_typing import ChecksumAddress
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
+from degenbot.calculations.evm_math import evm_divide
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.contract.addresses import create2_address
 from degenbot.exceptions import DegenbotValueError
-from degenbot.functions import create2_address, evm_divide
 from degenbot.uniswap.v3_libraries import tick_bitmap
 from degenbot.uniswap.v3_types import Pip
 
