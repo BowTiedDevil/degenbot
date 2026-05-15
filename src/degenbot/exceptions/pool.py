@@ -64,27 +64,27 @@ class MissingCurveData(CurveError):
 # --- Pool Trackers ---
 
 
-class ManagerError(DegenbotError):
+class TrackerError(DegenbotError):
     """
-    Exception raised inside manager helpers
+    Exception raised inside pool tracker helpers
     """
 
 
-class PoolNotAssociated(ManagerError):
+class PoolNotAssociated(TrackerError):
     """
-    Raised by a Uniswap pool manager if a requested pool address is not associated with the DEX.
+    Raised by a pool tracker if a requested pool address is not associated with the DEX.
     """
 
     def __init__(self, pool_address: str) -> None:
         super().__init__(message=f"Pool {pool_address} is not associated with this DEX")
 
 
-class PoolCreationFailed(ManagerError): ...
+class PoolCreationFailed(TrackerError): ...
 
 
-class ManagerAlreadyInitialized(ManagerError):
+class TrackerAlreadyInitialized(TrackerError):
     """
-    Raised by a Uniswap pool manager if a caller attempts to create from a known factory address.
+    Raised by a pool tracker if a caller attempts to create from a known factory address.
     """
 
 

@@ -34,7 +34,7 @@ from degenbot.erc20.erc20 import (
 from degenbot.erc20.ether_placeholder import EtherPlaceholder
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
-from degenbot.exceptions.pool import ManagerAlreadyInitialized
+from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.functions import async_raw_call, encode_function_calldata
 from degenbot.logging import logger
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
@@ -97,7 +97,7 @@ class AsyncBot:
         if chain_id is not None and factory_address is not None:
             key = (chain_id, get_checksum_address(factory_address))
             if key in self._trackers:
-                raise ManagerAlreadyInitialized(
+                raise TrackerAlreadyInitialized(
                     message=f"A {manager_cls.__name__} is already registered for chain {chain_id}, factory {factory_address}"
                 )
             manager = manager_cls(*args, **kwargs)
