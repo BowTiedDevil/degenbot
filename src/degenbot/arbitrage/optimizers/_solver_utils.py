@@ -131,9 +131,6 @@ def _rust_integer_refinement(
     to search around the float optimum with U256 simulation, and
     returns the best integer result.
     """
-    if _rs_mobius is None:
-        return 0, 0
-
     rust_int_hops: list[Any] = []
     for hop in hops:
         fee_numer = hop.fee.numerator
