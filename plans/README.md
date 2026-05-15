@@ -10,12 +10,6 @@ See the [skill vocabulary](https://github.com/user/skills/improve-codebase-archi
 |---|------|---------|
 | 014 | [Async REPL](14-async-repl.md) | `python -m degenbot` with top-level `await`. |
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
-| 033 | [Consolidate Dual Pool-to-Hop Conversion](033-dual-hop-conversion-consolidation.md) | **COMPLETE** — Inlined thin wrappers, removed `PoolCompatibility` enum, deleted `solver_hop_builders.py`. |
-| 034 | [Delete Legacy Arbitrage Cycle Classes](034-delete-legacy-arbitrage-cycles.md) | **REJECTED** — superseded by Plan 038. |
-| 035 | [Builder Protocol — Replace Union Type with Shared Interface](035-builder-protocol.md) | **COMPLETE** — `PoolBuilder` protocol replaces 4× union type annotation. `_dispatch_build()` isinstance chain → `**kwargs` forwarding. |
-| 036 | [Consolidate SwapAmounts Dispatch into Self-Contained Subclasses](036-swap-amounts-consolidation.md) | **COMPLETE** — `input_amount()`/`output_amount()` on AbstractSwapAmounts. `build_swap_amount()` on pool classes. Deleted `_extract_amount_in/out`. Protocol dispatch replaces isinstance chain. |
-| 037 | [Split `functions.py` into Domain-Aligned Modules](037-split-functions-module.md) | ~~14-function grab-bag → 5 domain-aligned modules. `eip_191_hash` deleted (dead code, zero imports). 56 import sites to migrate. No circular import risk. Independent of 033–038.~~ **COMPLETE** |
-| 038 | [Deprecate Legacy Arbitrage Cycle Classes](038-deprecate-legacy-arbitrage-cycles.md) | **COMPLETE** — Legacy cycles moved to `_legacy/` with underscore names + `DeprecationWarning`. Deleted `AbstractArbitrage`/`get_arbitrage_helpers()`. Migration guide. |
 
 ## Completed Plans
 
@@ -52,3 +46,9 @@ See the [skill vocabulary](https://github.com/user/skills/improve-codebase-archi
 | 030 | [Consolidate Exception Module Files](completed/030-consolidate-exceptions.md) | 12 exception files → 4 domain-aligned files (`base`, `pool`, `arbitrage`, `infrastructure`). Public API unchanged. |
 | 031 | [Context Docs Cleanup](completed/031-context-docs-cleanup.md) | Align all CONTEXT.md files with grill-with-docs format. |
 | 032 | [Rename PoolManager → PoolTracker](completed/032-rename-pool-manager-to-tracker.md) | 14 classes, 8 module files, Bot API renamed. Eliminates naming collision with V4 on-chain PoolManager contract. |
+| 033 | [Consolidate Dual Pool-to-Hop Conversion](033-dual-hop-conversion-consolidation.md) | Inlined thin wrappers, removed `PoolCompatibility` enum, deleted `solver_hop_builders.py`. Pool `to_hop_state()` is single source of truth. |
+| 034 | [Delete Legacy Arbitrage Cycle Classes](034-delete-legacy-arbitrage-cycles.md) | **REJECTED** — superseded by Plan 038. |
+| 035 | [Builder Protocol — Replace Union Type with Shared Interface](035-builder-protocol.md) | `PoolBuilder` protocol replaces 4× union type annotation. `_dispatch_build()` isinstance chain → `**kwargs` forwarding. Typed `build_xxx_pool()` methods kept as delegates. |
+| 036 | [Consolidate SwapAmounts Dispatch into Self-Contained Subclasses](036-swap-amounts-consolidation.md) | `input_amount()`/`output_amount()` on AbstractSwapAmounts. `build_swap_amount()` on pool classes. Deleted `_extract_amount_in/out`. Protocol dispatch replaces isinstance chain. |
+| 037 | [Split `functions.py` into Domain-Aligned Modules](037-split-functions-module.md) | 5 domain-aligned modules: `provider/call_helpers.py`, `provider/log_fetching.py`, `contract/addresses.py`, `calculations/evm_math.py`, `provider/block_helpers.py`. `eip_191_hash` deleted (dead code). `functions.py` deleted. |
+| 038 | [Deprecate Legacy Arbitrage Cycle Classes](038-deprecate-legacy-arbitrage-cycles.md) | Legacy cycles moved to `_legacy/` with underscore names + `DeprecationWarning`. Deleted `AbstractArbitrage`/`get_arbitrage_helpers()`. `cvxpy` moved to optional `legacy-cycles` extra. Migration guide. |

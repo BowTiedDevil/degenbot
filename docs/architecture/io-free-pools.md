@@ -130,6 +130,11 @@ def build(self, pool_address):
 - **All pool construction** — `Bot.build_*_pool()` methods fetch data from DB/RPC and pass values to pool constructors; no provider references on pool objects after construction
 - **Builder extraction** — pool construction I/O has been extracted from `Bot` into typed builder classes (`V2PoolBuilder`, `V3PoolBuilder`, `V4PoolBuilder`, `CurvePoolBuilder`, `Erc20Builder`)
 - **V2/V3/V4/Aerodrome pool classes** — all `ProviderAdapter`-taking methods removed; I/O for construction and updates lives entirely in builders (ADR-001 Phase 3 complete, Plan 017)
+- **Builder Protocol** — `PoolBuilder` protocol replaces the 4-way union type annotation; `_dispatch_build()` isinstance chain eliminated via `**kwargs` forwarding (Plan 035)
+- **Pool → Hop conversion** — each pool's `to_hop_state()` is the single source of truth; `solver_hop_builders.py` deleted (Plan 033)
+- **SwapAmounts consolidation** — `input_amount()`/`output_amount()` on `AbstractSwapAmounts`; `build_swap_amount()` on pool classes via `ArbitragePathPool` protocol; `_extract_amount_in/out` deleted (Plan 036)
+- **Legacy arbitrage cycles** — moved to `_legacy/` with deprecation warnings; `AbstractArbitrage` and `get_arbitrage_helpers()` deleted (Plan 038)
+- **Functions module** — `functions.py` split into domain-aligned modules: `provider/call_helpers.py`, `provider/log_fetching.py`, `contract/addresses.py`, `calculations/evm_math.py`, `provider/block_helpers.py`; `eip_191_hash` deleted as dead code (Plan 037)
 
 ## Migration Guide
 
@@ -279,4 +284,4 @@ Pools participating in the Rust solver cache implement the `CacheablePool` proto
 
 ---
 
-*Last updated: 2026-05-11*
+*Last updated: 2026-05-15*

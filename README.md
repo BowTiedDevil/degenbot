@@ -619,7 +619,7 @@ crvUSD/USDC Curve Metapool
 
 ### Uniswap Arbitrage
 
-Calculate optimal arbitrage amounts for a cyclic sequence of pools using `ArbitragePath`, the modern replacement for the deprecated `UniswapLpCycle`:
+Calculate optimal arbitrage amounts for a cyclic sequence of pools using `ArbitragePath`, the replacement for the deprecated `UniswapLpCycle`:
 
 <!-- skip: start "requires live RPC node; mixed output" -->
 
@@ -656,11 +656,11 @@ SolveResult(
 
 <!-- skip: end -->
 
-> **Note:** `UniswapLpCycle` is deprecated and emits a `DeprecationWarning`. Use `ArbitragePath` for all new code.
+> **Note:** `UniswapLpCycle` and `UniswapCurveCycle` are deprecated. They have been moved to `degenbot.arbitrage._legacy/` and emit `DeprecationWarning` on import. Use `ArbitragePath` for all new code. See the [migration guide](docs/migration-guides/legacy-cycles-to-arbitrage-path.md) for transitioning.
 
 #### Swap Encoding & On-Chain Execution
 
-Each `SwapAmounts` subclass (V2, V3, V4, Curve) encodes its own per-hop calldata via `encode(recipient=)` that produces an `EncodedCall(to, data, value)`. The `generate_payloads()` function wires a three-layer pipeline:
+Each `SwapAmounts` subclass (V2, V3, V4, Curve) encodes its own per-hop calldata via `encode(recipient=)` that produces an `EncodedCall(to, data, value)`. Generic amount extraction is available via `input_amount()` / `output_amount()` methods on the base class. Pool classes implement `build_swap_amount()` from the `ArbitragePathPool` protocol, keeping per-pool swap-amount construction local. The `generate_payloads()` function wires a three-layer pipeline:
 
 1. **Per-hop encoding** — `SwapAmounts.encode()` (pool-type-specific ABI encoding)
 2. **Approval injection** — `ApprovalStrategy` protocol (default: `NoApprovals`)

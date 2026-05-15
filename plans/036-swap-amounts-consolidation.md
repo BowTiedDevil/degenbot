@@ -1,6 +1,6 @@
 # Plan 036: Consolidate SwapAmounts Dispatch into Self-Contained Subclasses
 
-## Status: PROPOSED
+## Status: COMPLETE
 
 ## Overview
 

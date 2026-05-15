@@ -10,16 +10,19 @@ tags:
  - uniswap-v2
  - aerodrome
 related_files:
-  - ../../src/degenbot/arbitrage/uniswap_lp_cycle.py
-  - ../../src/degenbot/arbitrage/uniswap_2pool_cycle_testing.py
-  - ../../src/degenbot/arbitrage/uniswap_curve_cycle.py
+  - ../../src/degenbot/arbitrage/_legacy/_uniswap_lp_cycle.py
+  - ../../src/degenbot/arbitrage/_legacy/_uniswap_2pool_cycle_testing.py
+  - ../../src/degenbot/arbitrage/_legacy/_uniswap_curve_cycle.py
+  - ../../src/degenbot/arbitrage/path/arbitrage_path.py
   - ../../src/degenbot/arbitrage/types.py
   - ../../src/degenbot/uniswap/v2_liquidity_pool.py
   - ../../src/degenbot/aerodrome/pools.py
 complexity: complex
 ---
 
-# Uniswap Multi-Pool Cycle Arbitrage
+> **⚠️ DEPRECATED**: The legacy cycle classes described in this document have been moved to
+> `degenbot.arbitrage._legacy/` with `DeprecationWarning`. Use `ArbitragePath` + `ArbSolver` instead.
+> See the [migration guide](../migration-guides/legacy-cycles-to-arbitrage-path.md) for transitioning.
 
 ## Overview
 

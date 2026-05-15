@@ -170,7 +170,7 @@ Each module has a `CONTEXT.md` defining domain terms, aliases to avoid, and reso
 
 ### The Bot Session Pattern
 
-All pool and token creation flows through the `Bot` class. `Bot` owns registries (`pools`, `tokens`, `managed_pools`) and connection managers. Pool updates use a **Builder Registry** (`dict[type, PoolBuilder]`) keyed by concrete pool class — no isinstance chains.
+All pool and token creation flows through the `Bot` class. `Bot` owns registries (`pools`, `tokens`, `managed_pools`) and connection managers. Pool updates use a **Builder Registry** (`dict[type, PoolBuilder]`) keyed by concrete pool class — no isinstance chains. The `PoolBuilder` protocol (`src/degenbot/builders/protocol.py`) replaces the former 4-way union type, and `_dispatch_build()` forwards all kwargs uniformly instead of branching on builder type.
 
 ```python
 # Correct: Bot handles I/O and injects data into I/O-free pools
@@ -222,7 +222,7 @@ Pools that register with the Rust solver cache implement the `CacheablePool` pro
 
 ### Swap Encoding Pipeline
 
-Each `SwapAmounts` subclass (V2, V3, Curve, V4) has an `encode(recipient=)` method that produces an `EncodedCall(to, data, value)`. The `generate_payloads()` function wires a three-layer pipeline:
+Each `SwapAmounts` subclass (V2, V3, Curve, V4) has an `encode(recipient=)` method that produces an `EncodedCall(to, data, value)`, plus `input_amount()` / `output_amount()` for generic amount extraction (replacing the former match/case dispatch). Pool classes implement `build_swap_amount()` from the `ArbitragePathPool` protocol, making the per-pool swap-amount construction fully local. The `generate_payloads()` function wires a three-layer pipeline:
 
 1. **Per-hop encoding** — `SwapAmounts.encode()` (pool-type-specific ABI encoding)
 2. **Approval injection** — `ApprovalStrategy` protocol (default: `NoApprovals`)
@@ -246,7 +246,29 @@ Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` f
 
 ## Architecture Plans
 
-Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–032 are all complete; the only remaining plan is 014 (Async REPL). See `plans/README.md` for the full list.
+Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–038 are all complete; the only remaining plan is 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
+
+### Legacy Arbitrage Cycles (Deprecated)
+
+The legacy cycle classes (`UniswapLpCycle`, `UniswapCurveCycle`, etc.) have been moved to `src/degenbot/arbitrage/_legacy/` with underscore-prefixed names and `DeprecationWarning` on import. They are replaced by `ArbitragePath` + `ArbSolver`. `AbstractArbitrage` and `get_arbitrage_helpers()` have been deleted (dead code — `ArbitragePath` never inherited `AbstractArbitrage`). The `cvxpy` dependency is now optional (`pip install degenbot[legacy-cycles]`). See `docs/migration-guides/legacy-cycles-to-arbitrage-path.md` for the migration guide.
+
+### Functions Module Decomposition
+
+`src/degenbot/functions.py` has been split into domain-aligned modules:
+
+| New Module | Contents |
+|---|---|
+| `provider/call_helpers.py` | `raw_call`, `async_raw_call`, `encode_function_calldata`, `extract_argument_types_from_function_prototype` |
+| `provider/log_fetching.py` | `fetch_logs_retrying`, `fetch_logs_retrying_async` |
+| `contract/addresses.py` | `create2_address`, `eip_1167_clone_address` |
+| `calculations/evm_math.py` | `evm_divide`, `next_base_fee`, `raise_if_invalid_uint256` |
+| `provider/block_helpers.py` | `get_number_for_block_identifier`, `get_number_for_block_identifier_async` |
+
+`eip_191_hash` was deleted (dead code, zero imports). The original `functions.py` no longer exists — all callers have been migrated.
+
+### Pool-to-Hop Conversion
+
+`solver_hop_builders.py` has been deleted — each pool's `to_hop_state()` method is the single source of truth for pool→hop conversion. The `PoolCompatibility` enum has been removed. The thin free functions `_pool_to_hop_state`, `_extract_fee`, and `_check_pool_compatibility` have been inlined in `arbitrage_path.py`.
 
 ## Solidity
 
