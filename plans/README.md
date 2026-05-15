@@ -12,10 +12,10 @@ See the [skill vocabulary](https://github.com/user/skills/improve-codebase-archi
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
 | 033 | [Consolidate Dual Pool-to-Hop Conversion](033-dual-hop-conversion-consolidation.md) | **COMPLETE** — Inlined thin wrappers, removed `PoolCompatibility` enum, deleted `solver_hop_builders.py`. |
 | 034 | [Delete Legacy Arbitrage Cycle Classes](034-delete-legacy-arbitrage-cycles.md) | **REJECTED** — superseded by Plan 038. |
-| 035 | [Builder Protocol — Replace Union Type with Shared Interface](035-builder-protocol.md) | `PoolBuilder` protocol replaces 4× union type annotation. `_dispatch_build()` isinstance chain → `**kwargs` forwarding one-liner. Typed `build_xxx_pool()` methods stay as delegates (60+ test sites). |
+| 035 | [Builder Protocol — Replace Union Type with Shared Interface](035-builder-protocol.md) | **COMPLETE** — `PoolBuilder` protocol replaces 4× union type annotation. `_dispatch_build()` isinstance chain → `**kwargs` forwarding. |
 | 036 | [Consolidate SwapAmounts Dispatch into Self-Contained Subclasses](036-swap-amounts-consolidation.md) | **COMPLETE** — `input_amount()`/`output_amount()` on AbstractSwapAmounts. `build_swap_amount()` on pool classes. Deleted `_extract_amount_in/out`. Protocol dispatch replaces isinstance chain. |
 | 037 | [Split `functions.py` into Domain-Aligned Modules](037-split-functions-module.md) | ~~14-function grab-bag → 5 domain-aligned modules. `eip_191_hash` deleted (dead code, zero imports). 56 import sites to migrate. No circular import risk. Independent of 033–038.~~ **COMPLETE** |
-| 038 | [Deprecate Legacy Arbitrage Cycle Classes](038-deprecate-legacy-arbitrage-cycles.md) | Move legacy cycles to `_legacy/` with underscore class names + `DeprecationWarning`. Delete dead `AbstractArbitrage`/`get_arbitrage_helpers()`. Migration guide. cvxpy → optional dep. Prerequisite for Plan 033. |
+| 038 | [Deprecate Legacy Arbitrage Cycle Classes](038-deprecate-legacy-arbitrage-cycles.md) | **COMPLETE** — Legacy cycles moved to `_legacy/` with underscore names + `DeprecationWarning`. Deleted `AbstractArbitrage`/`get_arbitrage_helpers()`. Migration guide. |
 
 ## Completed Plans
 
