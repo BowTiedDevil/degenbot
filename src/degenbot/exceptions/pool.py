@@ -4,7 +4,7 @@ Includes exceptions for:
 - Generic pool operations (LiquidityPoolError, BrokenPool, ...)
 - EVM execution (EVMRevertError, InvalidUint256)
 - Curve StableSwap (CurveError, MissingCurveData)
-- Pool trackers (ManagerError, PoolNotAssociated, ...)
+- Pool trackers (TrackerError, PoolNotAssociated, ...)
 """
 
 from typing import TYPE_CHECKING, Any
