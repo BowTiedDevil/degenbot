@@ -23,7 +23,6 @@ from degenbot.cli import cli
 from degenbot.cli.utils import get_provider_from_config
 from degenbot.constants import MAX_UINT256
 from degenbot.database.models.base import ExchangeTable
-from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.pools import (
     AerodromeV2PoolTable,
     AerodromeV3PoolTable,
@@ -44,11 +43,17 @@ from degenbot.database.models.pools import (
     UniswapV4PoolTable,
     UniswapV4PoolTableBase,
 )
+from degenbot.cli.pool_updater_configs import (
+    V2PoolUpdateConfig,
+    V3PoolUpdateConfig,
+    V4PoolUpdateConfig,
+    update_v2_pools,
+    update_v3_pools,
+    update_v4_pools,
+)
 from degenbot.functions import (
-    encode_function_calldata,
     fetch_logs_retrying,
     get_number_for_block_identifier,
-    raw_call,
 )
 from degenbot.logging import logger
 from degenbot.provider import ProviderAdapter
@@ -604,1038 +609,126 @@ def apply_v4_liquidity_updates(
             session.execute(stmt)
 
 
-def _get_or_create_token(
-    session: Session,
-    chain_id: int,
-    address: ChecksumAddress,
-) -> Erc20TokenTable:
-    if (
-        token := session.scalar(
-            select(Erc20TokenTable).where(
-                Erc20TokenTable.chain == chain_id,
-                Erc20TokenTable.address == address,
-            )
-        )
-    ) is None:
-        token = Erc20TokenTable(chain=chain_id, address=address)
-        session.add(token)
-        session.flush()
 
-    return token
+# --- Pool updater configurations ---
 
-
-def base_aerodrome_v2_pool_updater(
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    exchange: ExchangeTable,
-    session: Session,
-) -> None:
-    """
-    Fetch new Aerodrome V2 liquidity pools deployed on Base mainnet and add their metadata to the
-    DB.
-    """
-
-    database_type = AerodromeV2PoolTable
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
+_V2_CONFIGS: dict[str, V2PoolUpdateConfig] = {
+    "aerodrome_v2": V2PoolUpdateConfig(
+        name="aerodrome_v2",
+        database_type=AerodromeV2PoolTable,
         event_hash=AERODROME_V2_POOLCREATED_EVENT_HASH,
-    )
-
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
-            (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
-            token0 = get_checksum_address(token0)
-            token1 = get_checksum_address(token1)
-
-            (stable,) = abi_decode(["bool"], new_pool_event["topics"][3])
-
-            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
-            pool_address, _ = abi_decode(
-                types=["address", "uint256"],
-                data=new_pool_event["data"],
-            )
-
-            (fee,) = raw_call(
-                provider=provider,
-                address=get_checksum_address(exchange.factory),
-                calldata=encode_function_calldata(
-                    function_prototype="getFee(address,bool)",
-                    function_arguments=[pool_address, stable],
-                ),
-                return_types=["uint256"],
-            )
-
-            session.add(
-                database_type(
-                    exchange_id=exchange.id,
-                    address=get_checksum_address(pool_address),
-                    chain=provider.chain_id,
-                    stable=stable,
-                    token0_id=token0_in_db.id,
-                    token1_id=token1_in_db.id,
-                    fee_token0=fee,
-                    fee_token1=fee,
-                    fee_denominator=10_000,
-                )
-            )
-
-
-def base_aerodrome_v3_pool_updater(
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    exchange: ExchangeTable,
-    session: Session,
-) -> None:
-    """
-    Fetch new Aerodrome V3 liquidity pools deployed on Base mainnet and add their metadata to the
-    DB.
-    """
-
-    database_type = AerodromeV3PoolTable
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
-        event_hash=AERODROME_V3_POOLCREATED_EVENT_HASH,
-    )
-
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
-            (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
-            token0 = get_checksum_address(token0)
-            token1 = get_checksum_address(token1)
-
-            (tick_spacing,) = abi_decode(["int24"], new_pool_event["topics"][3])
-
-            (pool_address,) = abi_decode(types=["address"], data=new_pool_event["data"])
-            pool_address = get_checksum_address(pool_address)
-
-            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
-            (fee,) = raw_call(
-                provider=provider,
-                address=get_checksum_address(exchange.factory),
-                calldata=encode_function_calldata(
-                    function_prototype="getSwapFee(address)",
-                    function_arguments=[pool_address],
-                ),
-                return_types=["uint24"],
-            )
-
-            session.add(
-                database_type(
-                    exchange_id=exchange.id,
-                    address=pool_address,
-                    chain=provider.chain_id,
-                    token0_id=token0_in_db.id,
-                    token1_id=token1_in_db.id,
-                    fee_token0=fee,
-                    fee_token1=fee,
-                    fee_denominator=1_000_000,
-                    tick_spacing=tick_spacing,
-                )
-            )
-
-
-def base_pancakeswap_v2_pool_updater(
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    exchange: ExchangeTable,
-    session: Session,
-) -> None:
-    """
-    Fetch new Pancakeswap V2 liquidity pools deployed on Base mainnet and add their metadata to the
-    DB.
-    """
-
-    database_type = PancakeswapV2PoolTable
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
+        fee_token0=0,  # Overridden by RPC
+        fee_token1=0,  # Overridden by RPC
+        fee_denominator=10_000,
+        has_stable_flag=True,
+        rpc_fee_call="getFee(address,bool)",
+        rpc_fee_return_types=["uint256"],
+        rpc_fee_includes_stable=True,
+    ),
+    "pancakeswap_v2": V2PoolUpdateConfig(
+        name="pancakeswap_v2",
+        database_type=PancakeswapV2PoolTable,
         event_hash=PANCAKESWAP_V2_PAIRCREATED_EVENT_HASH,
-    )
-
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
-            (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
-            token0 = get_checksum_address(token0)
-            token1 = get_checksum_address(token1)
-
-            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
-            pool_address, _ = abi_decode(
-                types=["address", "uint256"],
-                data=new_pool_event["data"],
-            )
-
-            session.add(
-                database_type(
-                    exchange_id=exchange.id,
-                    address=get_checksum_address(pool_address),
-                    chain=provider.chain_id,
-                    token0_id=token0_in_db.id,
-                    token1_id=token1_in_db.id,
-                    fee_token0=25,
-                    fee_token1=25,
-                    fee_denominator=10000,
-                )
-            )
-
-
-def base_pancakeswap_v3_pool_updater(
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    exchange: ExchangeTable,
-    session: Session,
-) -> None:
-    """
-    Fetch new Pancakeswap V3 liquidity pools deployed on Base mainnet and add their metadata to the
-    DB.
-    """
-
-    database_type = PancakeswapV3PoolTable
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
-        event_hash=PANCAKESWAP_V3_POOLCREATED_EVENT_HASH,
-    )
-
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
-            (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
-            token0 = get_checksum_address(token0)
-            token1 = get_checksum_address(token1)
-
-            (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
-
-            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
-            tick_spacing, pool_address = abi_decode(
-                types=["int24", "address"],
-                data=new_pool_event["data"],
-            )
-
-            session.add(
-                database_type(
-                    exchange_id=exchange.id,
-                    address=get_checksum_address(pool_address),
-                    chain=exchange.chain_id,
-                    token0_id=token0_in_db.id,
-                    token1_id=token1_in_db.id,
-                    fee_token0=fee,
-                    fee_token1=fee,
-                    fee_denominator=1_000_000,
-                    tick_spacing=tick_spacing,
-                )
-            )
-
-
-def base_sushiswap_v2_pool_updater(
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    exchange: ExchangeTable,
-    session: Session,
-) -> None:
-    """
-    Fetch new Sushiswap V2 liquidity pools deployed on Base mainnet and add their metadata to the
-    DB.
-    """
-
-    database_type = SushiswapV2PoolTable
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
+        fee_token0=25,
+        fee_token1=25,
+        fee_denominator=10000,
+    ),
+    "sushiswap_v2": V2PoolUpdateConfig(
+        name="sushiswap_v2",
+        database_type=SushiswapV2PoolTable,
         event_hash=SUSHISWAP_V2_PAIRCREATED_EVENT_HASH,
-    )
-
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
-            (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
-            token0 = get_checksum_address(token0)
-            token1 = get_checksum_address(token1)
-
-            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
-            pool_address, _ = abi_decode(
-                types=["address", "uint256"],
-                data=new_pool_event["data"],
-            )
-
-            session.add(
-                database_type(
-                    exchange_id=exchange.id,
-                    address=get_checksum_address(pool_address),
-                    chain=provider.chain_id,
-                    token0_id=token0_in_db.id,
-                    token1_id=token1_in_db.id,
-                    fee_token0=3,
-                    fee_token1=3,
-                    fee_denominator=1000,
-                )
-            )
-
-
-def base_sushiswap_v3_pool_updater(
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    exchange: ExchangeTable,
-    session: Session,
-) -> None:
-    """
-    Fetch new Sushiswap V3 liquidity pools deployed on Base mainnet and add their metadata to the
-    DB.
-    """
-
-    database_type = SushiswapV3PoolTable
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
-        event_hash=SUSHISWAP_V3_POOLCREATED_EVENT_HASH,
-    )
-
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
-            (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
-            token0 = get_checksum_address(token0)
-            token1 = get_checksum_address(token1)
-
-            (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
-
-            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
-            tick_spacing, pool_address = abi_decode(
-                types=["int24", "address"],
-                data=new_pool_event["data"],
-            )
-
-            session.add(
-                database_type(
-                    exchange_id=exchange.id,
-                    address=get_checksum_address(pool_address),
-                    chain=exchange.chain_id,
-                    token0_id=token0_in_db.id,
-                    token1_id=token1_in_db.id,
-                    fee_token0=fee,
-                    fee_token1=fee,
-                    fee_denominator=1_000_000,
-                    tick_spacing=tick_spacing,
-                )
-            )
-
-
-def base_swapbased_v2_pool_updater(
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    exchange: ExchangeTable,
-    session: Session,
-) -> None:
-    """
-    Fetch new Swapbased V2 liquidity pools deployed on Base mainnet and add their metadata to the
-    DB.
-    """
-
-    database_type = SwapbasedV2PoolTable
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
+        fee_token0=3,
+        fee_token1=3,
+        fee_denominator=1000,
+    ),
+    "swapbased_v2": V2PoolUpdateConfig(
+        name="swapbased_v2",
+        database_type=SwapbasedV2PoolTable,
         event_hash=SWAPBASED_V2_PAIRCREATED_EVENT_HASH,
-    )
-
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
-            (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
-            token0 = get_checksum_address(token0)
-            token1 = get_checksum_address(token1)
-
-            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
-            pool_address, _ = abi_decode(
-                types=["address", "uint256"],
-                data=new_pool_event["data"],
-            )
-
-            session.add(
-                database_type(
-                    exchange_id=exchange.id,
-                    address=get_checksum_address(pool_address),
-                    chain=provider.chain_id,
-                    token0_id=token0_in_db.id,
-                    token1_id=token1_in_db.id,
-                    fee_token0=3,
-                    fee_token1=3,
-                    fee_denominator=1000,
-                )
-            )
-
-
-def base_uniswap_v2_pool_updater(
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    exchange: ExchangeTable,
-    session: Session,
-) -> None:
-    """
-    Fetch new Uniswap V2 liquidity pools deployed on Base mainnet and add their metadata to DB.
-    """
-
-    database_type = UniswapV2PoolTable
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
+        fee_token0=3,
+        fee_token1=3,
+        fee_denominator=1000,
+    ),
+    "uniswap_v2": V2PoolUpdateConfig(
+        name="uniswap_v2",
+        database_type=UniswapV2PoolTable,
         event_hash=UNISWAP_V2_PAIRCREATED_EVENT_HASH,
-    )
+        fee_token0=3,
+        fee_token1=3,
+        fee_denominator=1000,
+    ),
+}
 
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
-            (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
-            token0 = get_checksum_address(token0)
-            token1 = get_checksum_address(token1)
-
-            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
-            pool_address, _ = abi_decode(
-                types=["address", "uint256"],
-                data=new_pool_event["data"],
-            )
-
-            session.add(
-                database_type(
-                    exchange_id=exchange.id,
-                    address=get_checksum_address(pool_address),
-                    chain=provider.chain_id,
-                    token0_id=token0_in_db.id,
-                    token1_id=token1_in_db.id,
-                    fee_token0=3,
-                    fee_token1=3,
-                    fee_denominator=1000,
-                )
-            )
-
-
-def base_uniswap_v3_pool_updater(
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    exchange: ExchangeTable,
-    session: Session,
-) -> None:
-    """
-    Fetch new Uniswap V3 liquidity pools deployed on Base mainnet and add their metadata to the
-    DB.
-    """
-
-    database_type = UniswapV3PoolTable
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
-        event_hash=UNISWAP_V3_POOLCREATED_EVENT_HASH,
-    )
-
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
-            (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
-            token0 = get_checksum_address(token0)
-            token1 = get_checksum_address(token1)
-
-            (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
-
-            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
-            tick_spacing, pool_address = abi_decode(
-                types=["int24", "address"],
-                data=new_pool_event["data"],
-            )
-
-            session.add(
-                database_type(
-                    exchange_id=exchange.id,
-                    address=get_checksum_address(pool_address),
-                    chain=exchange.chain_id,
-                    token0_id=token0_in_db.id,
-                    token1_id=token1_in_db.id,
-                    fee_token0=fee,
-                    fee_token1=fee,
-                    fee_denominator=1_000_000,
-                    tick_spacing=tick_spacing,
-                )
-            )
-
-
-def base_uniswap_v4_pool_updater(
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    exchange: ExchangeTable,
-    session: Session,
-) -> None:
-    """
-    Fetch new Uniswap V4 liquidity pools deployed on Base mainnet and add their metadata to the
-    DB.
-    """
-
-    database_type = UniswapV4PoolTable
-
-    manager_in_db = session.scalar(
-        select(PoolManagerTable).where(PoolManagerTable.address == exchange.factory)
-    )
-    assert manager_in_db is not None
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
-        event_hash=UNISWAP_V4_POOLCREATED_EVENT_HASH,
-    )
-
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (pool_hash,) = abi_decode(["bytes32"], new_pool_event["topics"][1])
-            (currency0,) = abi_decode(["address"], new_pool_event["topics"][2])
-            (currency1,) = abi_decode(["address"], new_pool_event["topics"][3])
-
-            pool_hash = HexBytes(pool_hash).to_0x_hex()
-            currency0 = get_checksum_address(currency0)
-            currency1 = get_checksum_address(currency1)
-
-            currency0_in_db = _get_or_create_token(session, exchange.chain_id, currency0)
-            currency1_in_db = _get_or_create_token(session, exchange.chain_id, currency1)
-
-            fee, tick_spacing, hooks = abi_decode(
-                ["uint24", "int24", "address"],
-                new_pool_event["data"],
-            )
-            hooks = get_checksum_address(hooks)
-
-            session.add(
-                database_type(
-                    manager_id=manager_in_db.id,
-                    pool_hash=pool_hash,
-                    hooks=hooks,
-                    currency0_id=currency0_in_db.id,
-                    currency1_id=currency1_in_db.id,
-                    fee_currency0=fee,
-                    fee_currency1=fee,
-                    fee_denominator=1_000_000,
-                    tick_spacing=tick_spacing,
-                )
-            )
-
-
-def ethereum_pancakeswap_v2_pool_updater(
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    exchange: ExchangeTable,
-    session: Session,
-) -> None:
-    """
-    Fetch new Pancakeswap V2 liquidity pools deployed on Ethereum mainnet and add their metadata to
-    the DB.
-    """
-
-    database_type = PancakeswapV2PoolTable
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
-        event_hash=PANCAKESWAP_V2_PAIRCREATED_EVENT_HASH,
-    )
-
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
-            (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
-            token0 = get_checksum_address(token0)
-            token1 = get_checksum_address(token1)
-
-            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
-            pool_address, _ = abi_decode(
-                types=["address", "uint256"],
-                data=new_pool_event["data"],
-            )
-
-            session.add(
-                database_type(
-                    exchange_id=exchange.id,
-                    address=get_checksum_address(pool_address),
-                    chain=provider.chain_id,
-                    token0_id=token0_in_db.id,
-                    token1_id=token1_in_db.id,
-                    fee_token0=25,
-                    fee_token1=25,
-                    fee_denominator=10000,
-                )
-            )
-
-
-def ethereum_pancakeswap_v3_pool_updater(
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    exchange: ExchangeTable,
-    session: Session,
-) -> None:
-    """
-    Fetch new Pancakeswap V3 liquidity pools deployed on Ethereum mainnet and add their metadata to
-    the DB.
-    """
-
-    database_type = PancakeswapV3PoolTable
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
+_V3_CONFIGS: dict[str, V3PoolUpdateConfig] = {
+    "aerodrome_v3": V3PoolUpdateConfig(
+        name="aerodrome_v3",
+        database_type=AerodromeV3PoolTable,
+        event_hash=AERODROME_V3_POOLCREATED_EVENT_HASH,
+        fee_denominator=1_000_000,
+        rpc_fee_call="getSwapFee(address)",
+        rpc_fee_return_types=["uint24"],
+    ),
+    "pancakeswap_v3": V3PoolUpdateConfig(
+        name="pancakeswap_v3",
+        database_type=PancakeswapV3PoolTable,
         event_hash=PANCAKESWAP_V3_POOLCREATED_EVENT_HASH,
-    )
-
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
-            (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
-            token0 = get_checksum_address(token0)
-            token1 = get_checksum_address(token1)
-
-            (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
-
-            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
-            tick_spacing, pool_address = abi_decode(
-                types=["int24", "address"],
-                data=new_pool_event["data"],
-            )
-
-            session.add(
-                database_type(
-                    exchange_id=exchange.id,
-                    address=get_checksum_address(pool_address),
-                    chain=exchange.chain_id,
-                    token0_id=token0_in_db.id,
-                    token1_id=token1_in_db.id,
-                    fee_token0=fee,
-                    fee_token1=fee,
-                    fee_denominator=1_000_000,
-                    tick_spacing=tick_spacing,
-                )
-            )
-
-
-def ethereum_sushiswap_v2_pool_updater(
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    exchange: ExchangeTable,
-    session: Session,
-) -> None:
-    """
-    Fetch new Sushiswap V2 liquidity pools deployed on Ethereum mainnet and add their metadata to
-    the DB.
-    """
-
-    database_type = SushiswapV2PoolTable
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
-        event_hash=SUSHISWAP_V2_PAIRCREATED_EVENT_HASH,
-    )
-
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
-            (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
-            token0 = get_checksum_address(token0)
-            token1 = get_checksum_address(token1)
-
-            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
-            pool_address, _ = abi_decode(
-                types=["address", "uint256"],
-                data=new_pool_event["data"],
-            )
-
-            session.add(
-                database_type(
-                    exchange_id=exchange.id,
-                    address=get_checksum_address(pool_address),
-                    chain=provider.chain_id,
-                    token0_id=token0_in_db.id,
-                    token1_id=token1_in_db.id,
-                    fee_token0=3,
-                    fee_token1=3,
-                    fee_denominator=1000,
-                )
-            )
-
-
-def ethereum_sushiswap_v3_pool_updater(
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    exchange: ExchangeTable,
-    session: Session,
-) -> None:
-    """
-    Fetch new Sushiswap V3 liquidity pools deployed on Ethereum mainnet and add their metadata to
-    the DB.
-    """
-
-    database_type = SushiswapV3PoolTable
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
+        fee_denominator=1_000_000,
+    ),
+    "sushiswap_v3": V3PoolUpdateConfig(
+        name="sushiswap_v3",
+        database_type=SushiswapV3PoolTable,
         event_hash=SUSHISWAP_V3_POOLCREATED_EVENT_HASH,
-    )
-
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
-            (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
-            token0 = get_checksum_address(token0)
-            token1 = get_checksum_address(token1)
-
-            (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
-
-            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
-            tick_spacing, pool_address = abi_decode(
-                types=["int24", "address"],
-                data=new_pool_event["data"],
-            )
-
-            session.add(
-                database_type(
-                    exchange_id=exchange.id,
-                    address=get_checksum_address(pool_address),
-                    chain=exchange.chain_id,
-                    token0_id=token0_in_db.id,
-                    token1_id=token1_in_db.id,
-                    fee_token0=fee,
-                    fee_token1=fee,
-                    fee_denominator=1_000_000,
-                    tick_spacing=tick_spacing,
-                )
-            )
-
-
-def ethereum_uniswap_v2_pool_updater(
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    exchange: ExchangeTable,
-    session: Session,
-) -> None:
-    """
-    Fetch new Uniswap V2 liquidity pools deployed on Ethereum mainnet and add their metadata to the
-    DB.
-    """
-
-    database_type = UniswapV2PoolTable
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
-        event_hash=UNISWAP_V2_PAIRCREATED_EVENT_HASH,
-    )
-
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
-            (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
-            token0 = get_checksum_address(token0)
-            token1 = get_checksum_address(token1)
-
-            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
-            pool_address, _ = abi_decode(
-                types=["address", "uint256"],
-                data=new_pool_event["data"],
-            )
-
-            session.add(
-                database_type(
-                    exchange_id=exchange.id,
-                    address=get_checksum_address(pool_address),
-                    chain=provider.chain_id,
-                    token0_id=token0_in_db.id,
-                    token1_id=token1_in_db.id,
-                    fee_token0=3,
-                    fee_token1=3,
-                    fee_denominator=1000,
-                )
-            )
-
-
-def ethereum_uniswap_v3_pool_updater(
-    provider: ProviderAdapter,
-    start_block: int,
-    end_block: int,
-    exchange: ExchangeTable,
-    session: Session,
-) -> None:
-    """
-    Fetch new Uniswap V3 liquidity pools deployed on Ethereum mainnet and add their metadata to
-    DB.
-    """
-
-    database_type = UniswapV3PoolTable
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
+        fee_denominator=1_000_000,
+    ),
+    "uniswap_v3": V3PoolUpdateConfig(
+        name="uniswap_v3",
+        database_type=UniswapV3PoolTable,
         event_hash=UNISWAP_V3_POOLCREATED_EVENT_HASH,
-    )
+        fee_denominator=1_000_000,
+    ),
+}
 
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (token0,) = abi_decode(["address"], new_pool_event["topics"][1])
-            (token1,) = abi_decode(["address"], new_pool_event["topics"][2])
-            token0 = get_checksum_address(token0)
-            token1 = get_checksum_address(token1)
-
-            (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
-
-            token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-            token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
-            tick_spacing, pool_address = abi_decode(
-                types=["int24", "address"],
-                data=new_pool_event["data"],
-            )
-
-            session.add(
-                database_type(
-                    exchange_id=exchange.id,
-                    address=get_checksum_address(pool_address),
-                    chain=exchange.chain_id,
-                    token0_id=token0_in_db.id,
-                    token1_id=token1_in_db.id,
-                    fee_token0=fee,
-                    fee_token1=fee,
-                    fee_denominator=1_000_000,
-                    tick_spacing=tick_spacing,
-                )
-            )
+_V4_CONFIGS: dict[str, V4PoolUpdateConfig] = {
+    "uniswap_v4": V4PoolUpdateConfig(
+        name="uniswap_v4",
+        database_type=UniswapV4PoolTable,
+        event_hash=UNISWAP_V4_POOLCREATED_EVENT_HASH,
+        fee_denominator=1_000_000,
+    ),
+}
 
 
-def ethereum_uniswap_v4_pool_updater(
+def _pool_updater(
     provider: ProviderAdapter,
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
     session: Session,
 ) -> None:
-    """
-    Fetch new Uniswap V4 liquidity pools deployed on Ethereum mainnet and add their metadata to the
-    DB.
-    """
+    """Dispatch to the appropriate parameterized pool updater."""
+    exchange_name = exchange.name
 
-    database_type = UniswapV4PoolTable
-
-    manager_in_db = session.scalar(
-        select(PoolManagerTable).where(PoolManagerTable.address == exchange.factory)
-    )
-    assert manager_in_db is not None
-
-    new_pool_events = get_events_from_contract(
-        provider=provider,
-        start_block=start_block,
-        end_block=end_block,
-        address=get_checksum_address(exchange.factory),
-        event_hash=UNISWAP_V4_POOLCREATED_EVENT_HASH,
-    )
-
-    if new_pool_events:
-        for new_pool_event in tqdm.tqdm(
-            new_pool_events,
-            desc="Adding new pools",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            (pool_hash,) = abi_decode(["bytes32"], new_pool_event["topics"][1])
-            (currency0,) = abi_decode(["address"], new_pool_event["topics"][2])
-            (currency1,) = abi_decode(["address"], new_pool_event["topics"][3])
-
-            pool_hash = HexBytes(pool_hash).to_0x_hex()
-            currency0 = get_checksum_address(currency0)
-            currency1 = get_checksum_address(currency1)
-
-            currency0_in_db = _get_or_create_token(session, exchange.chain_id, currency0)
-            currency1_in_db = _get_or_create_token(session, exchange.chain_id, currency1)
-
-            fee, tick_spacing, hooks = abi_decode(
-                ["uint24", "int24", "address"],
-                new_pool_event["data"],
-            )
-            hooks = get_checksum_address(hooks)
-
-            session.add(
-                database_type(
-                    manager_id=manager_in_db.id,
-                    pool_hash=pool_hash,
-                    hooks=hooks,
-                    currency0_id=currency0_in_db.id,
-                    currency1_id=currency1_in_db.id,
-                    fee_currency0=fee,
-                    fee_currency1=fee,
-                    fee_denominator=1_000_000,
-                    tick_spacing=tick_spacing,
-                )
-            )
-
+    if exchange_name in _V2_CONFIGS:
+        update_v2_pools(
+            provider, start_block, end_block, exchange, session,
+            config=_V2_CONFIGS[exchange_name],
+            get_events_fn=get_events_from_contract,
+        )
+    elif exchange_name in _V3_CONFIGS:
+        update_v3_pools(
+            provider, start_block, end_block, exchange, session,
+            config=_V3_CONFIGS[exchange_name],
+            get_events_fn=get_events_from_contract,
+        )
+    elif exchange_name in _V4_CONFIGS:
+        update_v4_pools(
+            provider, start_block, end_block, exchange, session,
+            config=_V4_CONFIGS[exchange_name],
+            get_events_fn=get_events_from_contract,
+        )
+    else:
+        msg = f"No updater configuration for exchange {exchange_name!r}"
+        raise ValueError(msg)
 
 @cli.group()
 def pool() -> None:
@@ -1914,21 +1007,21 @@ def get_v4_liquidity_events(
 POOL_UPDATER: dict[
     tuple[ChainId, str], Callable[[ProviderAdapter, int, int, ExchangeTable, Session], None]
 ] = {
-    (eth_typing.ChainId.BASE, "aerodrome_v2"): base_aerodrome_v2_pool_updater,
-    (eth_typing.ChainId.BASE, "aerodrome_v3"): base_aerodrome_v3_pool_updater,
-    (eth_typing.ChainId.BASE, "pancakeswap_v2"): base_pancakeswap_v2_pool_updater,
-    (eth_typing.ChainId.BASE, "pancakeswap_v3"): base_pancakeswap_v3_pool_updater,
-    (eth_typing.ChainId.BASE, "sushiswap_v2"): base_sushiswap_v2_pool_updater,
-    (eth_typing.ChainId.BASE, "sushiswap_v3"): base_sushiswap_v3_pool_updater,
-    (eth_typing.ChainId.BASE, "swapbased_v2"): base_swapbased_v2_pool_updater,
-    (eth_typing.ChainId.BASE, "uniswap_v2"): base_uniswap_v2_pool_updater,
-    (eth_typing.ChainId.BASE, "uniswap_v3"): base_uniswap_v3_pool_updater,
-    (eth_typing.ChainId.BASE, "uniswap_v4"): base_uniswap_v4_pool_updater,
-    (eth_typing.ChainId.ETH, "pancakeswap_v2"): ethereum_pancakeswap_v2_pool_updater,
-    (eth_typing.ChainId.ETH, "pancakeswap_v3"): ethereum_pancakeswap_v3_pool_updater,
-    (eth_typing.ChainId.ETH, "sushiswap_v2"): ethereum_sushiswap_v2_pool_updater,
-    (eth_typing.ChainId.ETH, "sushiswap_v3"): ethereum_sushiswap_v3_pool_updater,
-    (eth_typing.ChainId.ETH, "uniswap_v2"): ethereum_uniswap_v2_pool_updater,
-    (eth_typing.ChainId.ETH, "uniswap_v3"): ethereum_uniswap_v3_pool_updater,
-    (eth_typing.ChainId.ETH, "uniswap_v4"): ethereum_uniswap_v4_pool_updater,
+    (eth_typing.ChainId.BASE, "aerodrome_v2"): _pool_updater,
+    (eth_typing.ChainId.BASE, "aerodrome_v3"): _pool_updater,
+    (eth_typing.ChainId.BASE, "pancakeswap_v2"): _pool_updater,
+    (eth_typing.ChainId.BASE, "pancakeswap_v3"): _pool_updater,
+    (eth_typing.ChainId.BASE, "sushiswap_v2"): _pool_updater,
+    (eth_typing.ChainId.BASE, "sushiswap_v3"): _pool_updater,
+    (eth_typing.ChainId.BASE, "swapbased_v2"): _pool_updater,
+    (eth_typing.ChainId.BASE, "uniswap_v2"): _pool_updater,
+    (eth_typing.ChainId.BASE, "uniswap_v3"): _pool_updater,
+    (eth_typing.ChainId.BASE, "uniswap_v4"): _pool_updater,
+    (eth_typing.ChainId.ETH, "pancakeswap_v2"): _pool_updater,
+    (eth_typing.ChainId.ETH, "pancakeswap_v3"): _pool_updater,
+    (eth_typing.ChainId.ETH, "sushiswap_v2"): _pool_updater,
+    (eth_typing.ChainId.ETH, "sushiswap_v3"): _pool_updater,
+    (eth_typing.ChainId.ETH, "uniswap_v2"): _pool_updater,
+    (eth_typing.ChainId.ETH, "uniswap_v3"): _pool_updater,
+    (eth_typing.ChainId.ETH, "uniswap_v4"): _pool_updater,
 }
