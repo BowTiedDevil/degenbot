@@ -11,10 +11,11 @@ from typing import TYPE_CHECKING, Any, Self, override
 
 from eth_typing import ChecksumAddress
 
-from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
 from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
+from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.arbitrage import ArbitrageError
+from degenbot.types.hop_types import ConstantProductHop, HopType
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_types import UniswapV3PoolState
@@ -198,6 +199,28 @@ class MockV2Pool:
         if state.reserves_token0 == 0:
             return Fraction(0)
         return Fraction(state.reserves_token1, state.reserves_token0)
+
+    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
+        return self.fee_token0 if zero_for_one else self.fee_token1
+
+    def to_hop_state(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        state_override: UniswapV2PoolState | None = None,
+    ) -> HopType:
+        state = state_override or self.state
+        fee = self.extract_fee(zero_for_one=zero_for_one)
+        if zero_for_one:
+            reserve_in = state.reserves_token0
+            reserve_out = state.reserves_token1
+        else:
+            reserve_in = state.reserves_token1
+            reserve_out = state.reserves_token0
+        return ConstantProductHop(
+            reserve_in=reserve_in,
+            reserve_out=reserve_out,
+            fee=fee,
+        )
 
     def __hash__(self) -> int:
         return hash(self.address)

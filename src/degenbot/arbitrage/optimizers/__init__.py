@@ -16,11 +16,6 @@ from degenbot.arbitrage.optimizers.newton_solver import NewtonSolver
 from degenbot.arbitrage.optimizers.piecewise_mobius_solver import PiecewiseMobiusSolver
 from degenbot.arbitrage.optimizers.solidly_stable import SolidlyStableSolver
 from degenbot.arbitrage.optimizers.solver import ArbSolver
-from degenbot.arbitrage.optimizers.solver_hop_builders import (
-    pool_state_to_hop,
-    pool_to_hop,
-    pools_to_solve_input,
-)
 
 __all__ = [
     "ArbSolver",
@@ -33,7 +28,4 @@ __all__ = [
     "SolveInput",
     "SolveResult",
     "SolverMethod",
-    "pool_state_to_hop",
-    "pool_to_hop",
-    "pools_to_solve_input",
 ]
