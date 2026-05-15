@@ -38,10 +38,13 @@ _Avoid_: Fork, local chain
 - A **Pool Type Registry** (module-level singleton) maps (chain ID, factory address) → pool class + identity + deployment data; each DEX module self-registers at import time; auto-derives invariant, variant, and kind from the class
 - A **Pool Registry** (class, owned by Bot) indexes all **Pools** across all chains; a **Token Registry** indexes all **Tokens**
 - A **Managed Pool Registry** indexes **V4 Managed Pools** by (chain ID, PoolManager address, Pool ID)
-- An **Arbitrage Cycle** contains an ordered sequence of **Pools** that form a closed token loop
-- A **Pool Adapter** translates a **Pool** into a **Hop State** for a **Solver**
+- An **Arbitrage Cycle** (deprecated) was an ordered sequence of **Pools** that form a closed token loop; replaced by **Arbitrage Path**
+- An **Arbitrage Path** contains an ordered sequence of **Pools** that form a closed token loop, wraps them with a **Solver**, and subscribes to **Pool State Messages**
+- A **Pool Adapter** translates a **Pool** into a **Hop State** for a **Solver** (inline in `ArbitragePath`; `solver_hop_builders.py` deleted)
 - A **Pool Cache Adapter** subscribes to **Pool State Messages** and auto-registers both reserve orientations in the Rust solver cache
 - An **Arbitrage Path** subscribes to **Pool State Messages**
+- **Swap Amounts** carry per-pool swap parameters and self-encode into **EncodedCall**s; `input_amount()`/`output_amount()` provide generic extraction; `build_swap_amount()` on pool classes replaces instanceof-chain factory; `generate_payloads()` wires encoding → **ApprovalStrategy** → **PayloadComposer**
+- **Pool → Hop conversion** flows through each pool's `to_hop_state()` method (single source of truth; `solver_hop_builders.py` deleted)
 - An **Aave Market** contains many **Assets**, each wrapping an **Erc20Token** plus lending state
 - A **Curve Pool Tracker** tracks **Curve StableSwap Pools** and delegates construction to **Bot**
 - **Fetcher Callbacks** are injected into **Curve Pools** by the **Curve Pool Builder** (invoked via `Bot.build_pool()`); pools never access connections directly
@@ -117,7 +120,7 @@ The following were previously module-level singletons; they are now classes inst
 >
 > **Domain expert:** "V4 **Managed Pools** live inside a **PoolManager** contract and are identified by **Pool ID**, not address. Call `build_pool(address, pool_id=...)` — the `pool_id` argument is the V4 discriminator. Without it, `address` is treated as a pool contract."
 >
-> **Dev:** "And for the **Arbitrage Cycle**, I just add the V4 pool to `swap_pools`?"
+> **Dev:** "And for the **Arbitrage Path**, I just add the V4 pool to `swap_pools`?"
 >
 > **Domain expert:** "Yes, but make sure the **Swap Vectors** line up — each pool's **Token Out** must equal the next pool's **Token In**, and the last pool must return the **Input Token**. The **Solver** will compute the optimal **Input Amount** for that single path, and you'll get back a **Calculation Result** with per-pool **Swap Amounts**. If you're comparing multiple paths, that's the **Optimizer**'s job — it delegates to the **Solver** per path and picks the best."
 >

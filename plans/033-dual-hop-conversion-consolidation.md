@@ -1,6 +1,6 @@
 # Plan 033: Consolidate Dual Pool-to-Hop Conversion
 
-## Status: PROPOSED
+## Status: COMPLETE
 
 ## Overview
 

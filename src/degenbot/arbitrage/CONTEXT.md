@@ -4,15 +4,15 @@
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
-| **Arbitrage Cycle** | A sequence of pools forming a closed loop where an input token is swapped through intermediate tokens and back to the original | Arb cycle, circular path, cycle |
-| **Arbitrage Path** | An event-driven wrapper around a sequence of pools that validates token flow, subscribes to state updates, and delegates solving | Arb path |
+| **Arbitrage Cycle** | ~~Deprecated.~~ An ordered sequence of pools forming a closed loop. Use **Arbitrage Path** instead. Legacy implementations live in `_legacy/` with `DeprecationWarning`. | Arb cycle, circular path, cycle |
+| **Arbitrage Path** | An event-driven wrapper around a sequence of pools that validates token flow, subscribes to state updates, and delegates solving; the replacement for the deprecated **Arbitrage Cycle** classes | Arb path, path |
 | **Input Token** | The token supplied to the first swap in an arbitrage cycle | Starting token |
 | **Profit Token** | The token in which arbitrage profit is measured (always equals the Input Token for a cycle) | Output token |
 | **Input Amount** | The quantity of Input Token to be swapped into the first pool | Swap amount, trade size |
 | **Profit Amount** | The net token gain after completing all swaps in the cycle (negative = unprofitable) | PnL, gain |
 | **Rate of Exchange** | The ratio of output to input across the entire cycle; values > 1 indicate a profitable opportunity | Exchange rate, arb rate |
 | **Swap Vector** | A directed pair (token_in, token_out) plus a zero_for_one flag describing the direction of a single swap within a path | Swap direction, flow |
-| **Swap Amounts** | The per-pool input/output amounts and parameters needed to execute the swaps in an arbitrage cycle | Swap details |
+| **Swap Amounts** | The per-pool input/output amounts and parameters needed to execute the swaps in an arbitrage cycle. `input_amount()` / `output_amount()` provide generic extraction; `build_swap_amount()` on pool classes replaces isinstance-chain factory. | Swap details |
 | **Calculation Result** | The complete output of an arbitrage calculation: input amount, profit amount, per-pool swap amounts, and state block | Arb result |
 
 ## Solvers & Optimizers
@@ -28,7 +28,7 @@
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
-| **Pool Adapter** | A protocol object that translates a specific pool type into solver-compatible Hop State, extracts fees, and builds Swap Amounts | Adapter, bridge |
+| **Pool Adapter** | A protocol object that translates a specific pool type into solver-compatible Hop State; pool `to_hop_state()` is the single source of truth (the external `solver_hop_builders.py` has been deleted) | Adapter, bridge |
 | **Pool Cache Adapter** | A subscriber that auto-registers pools in the Rust solver cache on state updates; uses **CacheablePool** protocol methods | ArbPoolCacheAdapter, cache adapter |
 | **SwapEncoder** | The swap encoding layer: each `SwapAmounts` subclass self-encodes into an `EncodedCall`; the pipeline function `generate_payloads()` wires encoding → approval → composition | Calldata builder, payload encoder |
 | **EncodedCall** | A minimal EVM call fragment (`to`, `data`, `value`) ready for on-chain submission; produced by `SwapAmounts.encode()` | Payload, call tuple |
@@ -38,12 +38,13 @@
 
 ## Relationships
 
-- An **Arbitrage Cycle** contains an ordered sequence of **Pools** that form a closed token loop
+- An **Arbitrage Cycle** (deprecated) was an ordered sequence of **Pools** that form a closed token loop; replaced by **Arbitrage Path**
 - An **Arbitrage Path** wraps a sequence of pools with a **Solver** and subscribes to **Pool State Messages**
 - A **Swap Vector** describes the direction of a single hop within an **Arbitrage Path**
-- A **Pool Adapter** translates a **Pool** into a **Hop State** for a **Solver**
+- A **Pool Adapter** translates a **Pool** into a **Hop State** for a **Solver** (implemented by each pool's `to_hop_state()` method)
 - A **Pool Cache Adapter** subscribes to **Pool State Messages** and auto-registers both orientations in the Rust pool cache
 - **Swap Amounts** self-encode into **EncodedCall**s; `generate_payloads()` wires encoding → **ApprovalStrategy** → **PayloadComposer**
+- **Swap Amounts** provide `input_amount()` / `output_amount()` for generic amount extraction; pool classes implement `build_swap_amount()` from the `ArbitragePathPool` protocol
 - A **V4PoolKey** is available to custom **PayloadComposers** for V4's unlock/swap callback dispatch
 
 ## Resolved ambiguities

@@ -1,6 +1,6 @@
 # Plan 035: Builder Protocol — Replace Union Type with Shared Interface
 
-## Status: PROPOSED
+## Status: COMPLETE
 
 ## Overview
 
