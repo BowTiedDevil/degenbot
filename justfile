@@ -64,6 +64,13 @@ format:
     cargo fmt --manifest-path rust/Cargo.toml
     uv run ruff format src/
 
+# ========== Dependency Updates ==========
+
+# Upgrade Python and Rust dependencies
+update-deps:
+    uv sync --upgrade
+    cargo update --manifest-path rust/Cargo.toml
+
 # ========== CI/CD ==========
 
 # Simulate CI Rust checks
