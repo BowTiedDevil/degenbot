@@ -1,7 +1,5 @@
 # Plan 025: Remove Web3 Bypass — Route All RPC Through ProviderAdapter
 
-## Status: COMPLETE
-
 ## Problem
 
 Multiple call sites reach past `ProviderAdapter` to use raw `Web3`/`w3` objects directly (`w3.eth.call()`, `w3.eth.get_block()`, `w3.eth.contract()`, `w3.batch_requests()`). This means:

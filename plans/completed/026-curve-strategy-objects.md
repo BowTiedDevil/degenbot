@@ -1,7 +1,5 @@
 # Plan 026: Replace Address-Dispatched Behaviour in CurveStableswapPool with Strategy Objects
 
-## Status: COMPLETE ✅
-
 Committed as `0fe5d9ed`. See also bug fix `a03b3295` (sUSD pool LendingRateStyle) and docs commit `efd56594` (provenance warnings, debugging workflow).
 
 ## Overview

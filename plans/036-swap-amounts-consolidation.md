@@ -1,7 +1,5 @@
 # Plan 036: Consolidate SwapAmounts Dispatch into Self-Contained Subclasses
 
-## Status: COMPLETE
-
 ## Overview
 
 Give `AbstractSwapAmounts` virtual methods (`input_amount()`, `output_amount()`) so callers can extract amounts generically, and refactor `build_swap_amount()` from an isinstance chain to a protocol dispatch on pools. This eliminates the scattered match/case dispatch in `arbitrage_path.py` and the isinstance chain in `swap_amount_builder.py`, concentrating "how to build and destructure swap amounts for pool X" in the pool type itself.

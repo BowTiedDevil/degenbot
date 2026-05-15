@@ -1,7 +1,5 @@
 # Plan 013: Curve StableSwap Pool I/O-Free Architecture Migration
 
-## Status: COMPLETE ✅
-
 All Curve StableSwap pool I/O has been migrated from `_get_provider_for_chain()` to fetcher callbacks. All 14/14 Curve tests pass, including the tricrypto crypto pool.
 
 ## Summary

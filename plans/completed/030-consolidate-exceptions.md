@@ -1,7 +1,5 @@
 # Plan 030: Consolidate Exception Module Files
 
-## Status: COMPLETE
-
 ## Overview
 
 Consolidate the 12 exception sub-files in `src/degenbot/exceptions/` into 3-4 domain-aligned files. The current split creates a shallow module for every 2-3 exception classes —12 files totaling 583 lines, with 6 files under 26 lines each. Related exceptions are distributed across files by technical category rather than by domain, forcing readers to open 12 files to understand what can go wrong in one area.
