@@ -25,8 +25,7 @@ class MobiusSolver(Solver):
 
     Zero-iteration closed-form solution. Works for V2 paths and V3
     single-range paths (where the swap stays within one tick range).
-
-    Tries Rust acceleration first, falls back to pure Python.
+    Rust-accelerated, with Python fallback.
 
     Performance: ~0.86μs (Python), ~0.19μs (Rust)
     """
@@ -40,9 +39,7 @@ class MobiusSolver(Solver):
     }
 
     def __init__(self) -> None:
-        self._rust_solver: Any = None
-        if _rs_mobius is not None:
-            self._rust_solver = _rs_mobius.RustArbSolver()
+        self._rust_solver = _rs_mobius.RustArbSolver()
 
     def __getstate__(self) -> dict[str, Any]:
         """Omit the non-pickleable Rust solver; it will be recreated on unpickle."""
@@ -51,10 +48,9 @@ class MobiusSolver(Solver):
         return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
-        """Recreate the Rust solver after unpickling if Rust is available."""
+        """Recreate the Rust solver after unpickling."""
         self.__dict__.update(state)
-        if _rs_mobius is not None:
-            self._rust_solver = _rs_mobius.RustArbSolver()
+        self._rust_solver = _rs_mobius.RustArbSolver()
 
     @override
     def supports(self, solve_input: SolveInput) -> bool:
@@ -85,11 +81,10 @@ class MobiusSolver(Solver):
                 method=SolverMethod.MOBIUS.name,
             )
 
-        if self._rust_solver is not None:
-            try:
-                return self._try_rust_solve(solve_input, start_ns)
-            except OptimizationError:
-                pass
+        try:
+            return self._try_rust_solve(solve_input, start_ns)
+        except OptimizationError:
+            pass
 
         return self._solve_python(solve_input, start_ns)
 

@@ -50,8 +50,8 @@ class ArbSolver(Solver):
     """
     Top-level solver that dispatches to the best method.
 
-    Each sub-solver owns its own Rust acceleration and falls back to
-    Python internally. ArbSolver is a pure dispatcher.
+    Each sub-solver tries Rust first and falls back to Python internally.
+    ArbSolver is a pure dispatcher.
 
     Dispatch order:
     1. MobiusSolver (V2 + single-range V3, Rust-accelerated)
@@ -80,7 +80,7 @@ class ArbSolver(Solver):
     }
 
     def __init__(self) -> None:
-        self._pool_cache: Any = None
+        self._pool_cache = _rs_mobius.RustPoolCache()
         self._next_pool_id: int = 1
         self._pool_id_map: dict[int, int] = {}
         self._mobius = MobiusSolver()
@@ -88,8 +88,7 @@ class ArbSolver(Solver):
         self._solidly = SolidlyStableSolver()
         self._balancer_multi = BalancerMultiTokenSolver()
         self._brent = BrentSolver()
-        if _rs_mobius is not None:
-            self._pool_cache = _rs_mobius.RustPoolCache()
+        self._pool_cache = _rs_mobius.RustPoolCache()
 
     # ------------------------------------------------------------------
     # Rust pool cache helpers (ArbSolver-only concern)
@@ -102,9 +101,6 @@ class ArbSolver(Solver):
         then solve by pool ID reference without any Python object
         construction on the solve path.
         """
-        if self._pool_cache is None:
-            msg = "Pool cache requires the Rust extension (degenbot_rs)"
-            raise RuntimeError(msg)
         return self._pool_cache
 
     def register_pool(

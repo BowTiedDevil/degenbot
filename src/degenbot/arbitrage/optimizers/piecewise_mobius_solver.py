@@ -1,6 +1,5 @@
 """Piecewise-Möbius solver for V3 multi-range paths with tick crossings."""
 
-import importlib.util
 import math
 import time
 from collections.abc import Callable
@@ -32,8 +31,6 @@ from degenbot.types.hop_types import (
 )
 from degenbot.uniswap.v3_libraries.constants import Q96
 
-_NUMPY_AVAILABLE = importlib.util.find_spec("numpy") is not None
-
 
 class PiecewiseMobiusSolver(Solver):
     """
@@ -54,12 +51,10 @@ class PiecewiseMobiusSolver(Solver):
     PHI = (math.sqrt(5) - 1) / 2  # ~0.618
 
     def __init__(self) -> None:
-        self._rust_optimizer: Any = None
+        self._rust_optimizer = _rs_mobius.RustMobiusOptimizer()
         self._mobius_solver: MobiusSolver | None = None
         self._rust_hop_cache: dict[int, list] = {}
         self._rust_sequence_cache: dict[tuple[tuple[int, ...], int, bool], Any] = {}
-        if _rs_mobius is not None:
-            self._rust_optimizer = _rs_mobius.RustMobiusOptimizer()
 
     def __getstate__(self) -> dict[str, Any]:
         """Omit the non-pickleable Rust optimizer and solver caches."""
@@ -71,10 +66,9 @@ class PiecewiseMobiusSolver(Solver):
         return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
-        """Recreate the Rust optimizer after unpickling if Rust is available."""
+        """Recreate the Rust optimizer after unpickling."""
         self.__dict__.update(state)
-        if _rs_mobius is not None:
-            self._rust_optimizer = _rs_mobius.RustMobiusOptimizer()
+        self._rust_optimizer = _rs_mobius.RustMobiusOptimizer()
 
     @override
     def supports(self, solve_input: SolveInput) -> bool:
@@ -123,7 +117,7 @@ class PiecewiseMobiusSolver(Solver):
             )
 
         # V3-V3 fast path: 2-hop path with both V3 multi-range
-        if solve_input.num_hops == self.MIN_HOPS and self._rust_optimizer is not None:
+        if solve_input.num_hops == self.MIN_HOPS:
             try:
                 v3_v3_result = self._try_rust_v3_v3(solve_input, start_ns)
                 if v3_v3_result is not None:
@@ -141,15 +135,14 @@ class PiecewiseMobiusSolver(Solver):
         v3_hop_index, v3_hop = v3_result
 
         # Multi-range V3: try Rust first with caching
-        if self._rust_optimizer is not None:
-            try:
-                rust_result = self._try_rust_multi_range(
-                    solve_input, v3_hop_index, v3_hop, start_ns
-                )
-                if rust_result is not None:
-                    return rust_result
-            except OptimizationError:
-                pass  # Fall through to Python implementation
+        try:
+            rust_result = self._try_rust_multi_range(
+                solve_input, v3_hop_index, v3_hop, start_ns
+            )
+            if rust_result is not None:
+                return rust_result
+        except OptimizationError:
+            pass  # Fall through to Python implementation
 
         # Fall back to Python implementation
         return self._solve_multi_range(solve_input, start_ns)
@@ -405,15 +398,14 @@ class PiecewiseMobiusSolver(Solver):
         assert v3_hop.tick_ranges is not None
 
         # Try Rust implementation first for speed
-        if self._rust_optimizer is not None:
-            try:
-                rust_result = self._try_rust_candidate_range(
-                    solve_input, v3_hop_index, v3_hop, start_idx, end_idx
-                )
-                if rust_result is not None:
-                    return rust_result
-            except OptimizationError:
-                pass  # Fall through to Python implementation
+        try:
+            rust_result = self._try_rust_candidate_range(
+                solve_input, v3_hop_index, v3_hop, start_idx, end_idx
+            )
+            if rust_result is not None:
+                return rust_result
+        except OptimizationError:
+            pass  # Fall through to Python implementation
 
         # Convert V3TickRangeInfo to _V3TickRangeHop
         # Determine swap direction from hop reserves
@@ -554,17 +546,13 @@ class PiecewiseMobiusSolver(Solver):
 
         # Try vectorized batch evaluation for initial bracket refinement
         # This uses NumPy to evaluate multiple points simultaneously
-        if _NUMPY_AVAILABLE:
-            try:
-                vectorized_result = self._vectorized_bracket_search(
-                    x_low=x_low,
-                    x_high=x_high,
-                    eval_profit_scalar=eval_profit,
-                )
-                if vectorized_result is not None:
-                    return vectorized_result
-            except ImportError:
-                pass
+        vectorized_result = self._vectorized_bracket_search(
+            x_low=x_low,
+            x_high=x_high,
+            eval_profit_scalar=eval_profit,
+        )
+        if vectorized_result is not None:
+            return vectorized_result
 
         # Golden section search with adaptive convergence
         phi = self.PHI
@@ -704,13 +692,6 @@ class PiecewiseMobiusSolver(Solver):
 
         Raises OptimizationError on failure.
         """
-        if self._rust_optimizer is None:
-            raise OptimizationError(
-                message="Rust optimizer not available",
-                iterations=0,
-                method=SolverMethod.PIECEWISE_MOBIUS.name,
-            )
-
         rust_hops = [
             _rs_mobius.RustHopState(
                 float(hop.reserve_in),
@@ -867,13 +848,6 @@ class PiecewiseMobiusSolver(Solver):
 
         Raises OptimizationError on failure.
         """
-        if self._rust_optimizer is None:
-            raise OptimizationError(
-                message="Rust optimizer not available",
-                iterations=0,
-                method=SolverMethod.PIECEWISE_MOBIUS.name,
-            )
-
         # Check both hops are V3 with tick range data
         v3_hops: list[BoundedProductHop] = []
         for hop in solve_input.hops:
@@ -938,13 +912,6 @@ class PiecewiseMobiusSolver(Solver):
         Uses cached Rust objects to minimize Python-Rust marshalling overhead.
         Raises OptimizationError on failure.
         """
-        if self._rust_optimizer is None:
-            raise OptimizationError(
-                message="Rust optimizer not available",
-                iterations=0,
-                method=SolverMethod.PIECEWISE_MOBIUS.name,
-            )
-
         # Get cached Rust objects
         rust_hops = self._get_cached_rust_hops(solve_input)
         rust_sequence = self._get_cached_rust_sequence(v3_hop)
