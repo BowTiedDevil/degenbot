@@ -1,6 +1,6 @@
 # Plan 028: Builder Registry & Pool Class Restructuring
 
-## Status: PENDING
+## Status: COMPLETE
 
 ## Overview
 
