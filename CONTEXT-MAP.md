@@ -1,6 +1,17 @@
 # Context Map
 
-Module-level context files (terms, aliases, relationships, and ambiguity rulings):
+## Language
+
+**Bot**: The central session class that owns all I/O, registries, config, and database connections; single entry point for all pool and token operations; resolves pool types automatically via `build_pool()`; delegates I/O orchestration to typed **Builders**.
+_Avoid_: Bot session, session, orchestrator, bot instance
+
+**Pool State Message**: A publisher/subscriber message notifying that a pool's state has changed.
+_Avoid_: State update message, state update
+
+**Anvil Fork**: A local forked blockchain instance running via Foundry's Anvil client for testing.
+_Avoid_: Fork, local chain
+
+## Module contexts
 
 - [Pool Types & Trackers](src/degenbot/types/CONTEXT.md) — pool types, type resolution, trackers, fee representations, and I/O-free architecture terms
 - [Uniswap](src/degenbot/uniswap/CONTEXT.md) — V2/V3/V4 pools, concentrated liquidity, tick mechanics, and event types
@@ -9,7 +20,7 @@ Module-level context files (terms, aliases, relationships, and ambiguity rulings
 - [Arbitrage, Solvers & Adapters](src/degenbot/arbitrage/CONTEXT.md) — arbitrage cycles, solvers, adapters, and swap encoding
 - [Aave](src/degenbot/aave/CONTEXT.md) — lending markets, assets, collateral, debt, and liquidation
 - [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — StableSwap pools, fetcher protocols, variant and strategy enums
-- [Infrastructure](src/degenbot/connection/CONTEXT.md) — providers, connection management, and the Bot session
+- [Connection Management](src/degenbot/connection/CONTEXT.md) — connection managers and provider references
 
 ## Instructions
 
@@ -18,7 +29,7 @@ Module-level context files (terms, aliases, relationships, and ambiguity rulings
 3. **Relationships follow the same rule.** If all terms in a relationship belong to one module, put it in that module's `## Relationships`. Only cross-module seams (where a term from one module relates to a term from another) go in root's `## Cross-module relationships`.
 4. **When adding a module**, create its `CONTEXT.md` with term table, `## Relationships`, and `## Resolved ambiguities` sections as needed, then add a link to this map.
 5. **Keep this map in sync.** When a module context changes (new terms, new rulings), update the bullet summary in this map to reflect it.
-6. **Root contains only cross-cutting content:** module index, cross-module relationships, cross-module ambiguity rulings, and the example dialogue.
+6. **Root contains only cross-cutting content:** shared term definitions, module index, cross-module relationships, cross-module ambiguity rulings, and the example dialogue.
 
 ## Cross-module relationships
 
