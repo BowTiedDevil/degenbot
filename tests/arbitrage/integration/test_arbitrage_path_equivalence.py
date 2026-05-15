@@ -3,12 +3,6 @@ Equivalence tests: ArbitragePath + Solver vs. legacy UniswapLpCycle.
 
 Uses real pools on a fork to verify calculation equivalence for production
 path types.
-
-Status:
-- V2+V3 mixed: RED
-- V2-only: green via unit tests in verify_legacy_equivalence.py
-- V3-only: skipped pending investigation
-- Curve: skipped
 """
 
 import pytest

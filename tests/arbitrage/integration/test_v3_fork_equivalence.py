@@ -8,9 +8,6 @@ Key pools:
 - WETH/USDC 0.05%: 0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640
 - USDC/USDT 0.01%: 0x3416cF6C708Da44DB2624D63ea0AAef7113527C6
 - WETH/USDT 0.30%: 0x4e68Ccd3E89f51C3074ca5072bbAC773960dFa36
-
-Status: RED — test asserts equivalence; if mainnet state is unprofitable,
-the test can be skipped or the logic can verify both systems reject.
 """
 
 import pytest
