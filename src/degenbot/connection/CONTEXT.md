@@ -11,7 +11,7 @@
 ## Relationships
 
 - A **Bot** owns a **Connection Manager** (via `bot.connections`)
-- A **Bot** owns **Pool**, **Token**, and **Managed Pool Registries**
+- A **Bot** owns a **Pool Registry**, **Token Registry**, and **Managed Pool Registry**
 - A **Bot** owns a **DatabaseSessionManager** (via `bot.db()`)
 - There are no module-level singletons — all state flows through **Bot**
 
@@ -24,3 +24,14 @@
 - ✅ "Create a `ConnectionManager` instance"
 - ✅ "Bot's `connections` attribute is a `ConnectionManager`"
 - ❌ "Import the connection_manager" (import the class, not the module as a singleton proxy)
+
+## Example dialogue
+
+> **Dev:** "I need to make an RPC call. Should I grab the **connection_manager** module?"
+> **Domain expert:** "No — that's the module, not an instance. Create a **Connection Manager** (the class) and pass it to **Bot**. Bot owns the instance via `bot.connections`."
+>
+> **Dev:** "And how do pools get notified when their state changes?"
+> **Domain expert:** "Through **Pool State Messages**. Pools publish state changes; subscribers like **Arbitrage Paths** and **Pool Cache Adapters** listen and react."
+>
+> **Dev:** "So **Bot** is the single entry point for everything?"
+> **Domain expert:** "Yes. **Bot** owns all I/O, registries, config, and database connections. You call `bot.build_pool()` or `bot.build_erc20token()` — never instantiate pools or tokens directly."

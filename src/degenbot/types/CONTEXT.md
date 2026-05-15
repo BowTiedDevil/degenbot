@@ -7,8 +7,8 @@
 | **Pool** | A DEX smart contract holding paired token reserves that enables swaps via an automated market-making invariant; **never** used as a synonym for an Aave Market | Liquidity pool, pair, market, lending pool |
 | **Pool State** | A frozen snapshot of a pool's on-chain data at a specific block | Pool snapshot, pool data |
 | **Pool Address** | The unique on-chain checksummed address identifying a pool contract | Contract address, pair address |
-| **Pool ID** | A hash identifying a V4 managed pool within a PoolManager, used in place of an address for singleton architectures pools | Pool hash, managed pool ID |
-| **Reserves** | The token balances held by a constant-product pool (V2-style); always plural to distinguish from Aave **Asset** | Balances, inventory, reserve (singular) |
+| **Pool ID** | A hash identifying a V4 **Managed Pool** within a PoolManager, used in place of an address; see [Managed Pool](../uniswap/CONTEXT.md) in the Uniswap context | Pool hash, managed pool ID |
+| **Reserves** | The token balances held by a constant-product pool; always plural to distinguish from Aave **Asset** | Balances, inventory, reserve (singular) |
 | **Liquidity** | The concentrated liquidity value governing swap price impact in a V3/V4 pool | L, liquidityActive |
 | **Sqrt Price** | The √price value in X96 format representing the current exchange ratio in a V3/V4 pool | sqrtPriceX96, current price |
 | **Tick** | An integer index representing a specific price point in a concentrated liquidity pool's range | Price tick |
@@ -38,59 +38,39 @@
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
-| **Pool Invariant** | An enum value identifying which mathematical invariant governs a pool's swap pricing: `CONSTANT_PRODUCT`, `CONCENTRATED_LIQUIDITY`, `STABLESWAP`, or `WEIGHTED` | Pool family, pool category |
+| **Pool Invariant** | A solver-dispatch enum identifying which mathematical invariant governs a pool's swap pricing for the arbitrage solver: `CONSTANT_PRODUCT`, `BOUNDED_PRODUCT`, `SOLIDLY_STABLE`, `CURVE_STABLESWAP`, `BALANCER_WEIGHTED`, `BALANCER_MULTI_TOKEN`; see [Arbitrage CONTEXT.md](../arbitrage/CONTEXT.md) | Pool family, pool category |
 | **Pool Type Descriptor** | A frozen dataclass carrying the resolved pool identity: `PoolFamily` + variant name (e.g., `"sushiswap"`) + factory address | Type descriptor, pool descriptor |
-| **Pool Variant** | A string identifying the DEX-specific subclass within an invariant family; bare DEX name without `_v2`/`_v3` suffix; `None` for the canonical Uniswap variant (e.g., `"sushiswap"`, `"camelot"`, `"aerodrome"`); the suffix is added by `derive_kind()` based on the invariant | DEX variant, subclass name |
+| **Pool Variant** | A string identifying the DEX-specific subclass within an invariant family (e.g., `"sushiswap"`, `"camelot"`, `"aerodrome"`); `None` for the canonical Uniswap variant | DEX variant, subclass name |
 | **Type Resolution** | The process of determining a pool's `PoolTypeDescriptor` from its address, consulting DB `kind` column → Pool Type Registry → on-chain probing | Pool discovery, type detection |
 | **Kind** | The polymorphic identity string stored in the database `kind` column (e.g., `"uniswap_v2"`, `"sushiswap_v3"`, `"camelot_v2"`); derived from `derive_kind(family, variant)` — the family adds the `_v2`/`_v3` suffix | Polymorphic type, DB type |
-| **Builder variant method** | A method on a pool builder that fetches class-specific state from chain and constructs variant pools (e.g., `V2PoolBuilder._build_aerodrome_v2()`, `V2PoolBuilder._build_camelot()`); replaces the former `from_chain` classmethod pattern | Variant builder, chain constructor |
+| **Builder variant method** | A method on a pool builder that fetches class-specific state from chain and constructs variant pools | Variant builder, chain constructor |
 
-## Pool Managers
+## Pool Trackers
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
-| **Pool Manager** | An off-chain helper class that discovers, creates, and tracks Pools for a specific DEX factory on a chain; **never** called "factory" | Factory manager, pool factory |
-| **Pool Factory** | The on-chain contract that creates Pools for a given DEX; a distinct concept from the off-chain **Pool Manager** | Factory (when ambiguous with Pool Manager) |
+| **Pool Tracker** | An off-chain helper class that discovers, creates, and tracks Pools for a specific DEX factory on a chain; **never** called "manager" or "factory" | Pool Manager, factory manager, pool factory |
+| **Pool Factory** | The on-chain contract that creates Pools for a given DEX; a distinct concept from off-chain **Pool Tracker** | Factory (when ambiguous with Pool Tracker) |
 | **Factory Address** | The on-chain address of the DEX factory contract | — |
-| **Tracked Pool** | A pool currently monitored by a Pool Manager | Active pool |
-| **Untracked Pool** | A pool known to the Pool Manager but not currently monitored | Inactive pool |
+| **Tracked Pool** | A pool currently monitored by a Pool Tracker | Active pool |
+| **Untracked Pool** | A pool known to the Pool Tracker but not currently monitored | Inactive pool |
 
 ## Relationships
 
-- A **Pool** holds exactly two tokens: **Token0** and **Token1**
+- A **Pool** holds paired tokens for swapping
 - A **Pool State** belongs to exactly one **Pool** and is captured at one **State Block**
-- A **Pool Manager** tracks many **Pools** for one **Exchange Deployment**
+- A **Pool Tracker** tracks many **Pools** for one **Exchange Deployment**
 - A **Pool State** may be updated via **Fetcher Callbacks** (e.g., Curve pools call RateFetcher, VirtualPriceFetcher on-demand)
 
-## I/O-Free Architecture Pattern (Fetcher Protocol)
+## I/O-Free Architecture Terms
 
-Some pool types (e.g., Curve StableSwap) follow an **I/O-free architecture** where on-chain data access is decoupled via injected callbacks:
-
-| Term | Definition |
-|------|------------|
-| **Fetcher** | A callable protocol injected at pool construction that fetches on-chain data on-demand (e.g., `RateFetcher`, `VirtualPriceFetcher`) |
-| **Fetcher Callback** | The actual function passed to the pool; called lazily when data is needed, not at construction |
-| **I/O Decoupling** | Pool class has no direct provider/connection dependencies; all I/O flows through injected fetchers |
-| **PoolFamily** | An enum identifying a pool's mathematical invariant family for type resolution: `CONSTANT_PRODUCT`, `CONCENTRATED_LIQUIDITY`, `STABLESWAP`, `WEIGHTED`. Renamed from the former `PoolInvariant` in this module to avoid confusion with the solver-dispatch `PoolInvariant` in `types/hop_types.py` (Plan 020) |
-| **CacheablePool** | A protocol for pools that register with the Rust solver cache, requiring `reserves_for_cache()` and `fee_for_cache()` methods (Plan 019) |
-| **V4PoolKey** | A frozen dataclass carrying the V4 pool identification struct (`currency0`, `currency1`, `fee`, `tick_spacing`, `hooks`); stored on `UniswapV4PoolSwapAmounts` and used by custom PayloadComposers for V4 dispatch (Plan 021) |
-
-**Benefits:**
-- **Testability**: Fake fetchers enable unit testing without network I/O
-- **Async Flexibility**: Fetchers can be sync or async depending on caller needs
-- **Separation of Concerns**: Pool logic is pure; I/O is externalized
-
-**Example:**
-```python
-# Bot.build_curve_pool() creates and injects fetchers
-pool = CurveStableswapPool(
-    address=pool_address,
-    lending_rate_fetcher=make_lending_rate_fetcher(pool_address, tokens, use_lending, precision_multipliers, rate_multipliers, lending_rate_style),  # Typed lending rate fetcher
-    virtual_price_fetcher=VirtualPriceFetcher(get_base_pool_virtual_price),
-    D_fetcher=DFetcher(get_crypto_pool_D),  # Crypto pool fetchers
-    ...
-)
-```
+| Term | Definition | Aliases to avoid |
+|------|------------|------------------|
+| **Fetcher** | A callable protocol injected at pool construction that fetches on-chain data on-demand | Data fetcher |
+| **Fetcher Callback** | The actual function passed to a pool as a Fetcher; called lazily when data is needed | Fetcher function |
+| **PoolFamily** | An enum identifying a pool's mathematical invariant family for type resolution: `CONSTANT_PRODUCT`, `CONCENTRATED_LIQUIDITY`, `STABLESWAP`, `WEIGHTED` | Pool family (lowercase) |
+| **CacheablePool** | A protocol for pools that register with the Rust solver cache, requiring `reserves_for_cache()` and `fee_for_cache()` methods | Cacheable adapter |
+| **V4PoolKey** | A frozen dataclass carrying the V4 pool identification struct (currency0, currency1, fee, tick_spacing, hooks) | Pool key, V4 key |
 
 ## DEX Protocols (Supported)
 
@@ -111,16 +91,16 @@ pool = CurveStableswapPool(
 
 ## Resolved ambiguities
 
-### Factory (on-chain) vs Pool Manager (off-chain)
+### Factory (on-chain) vs Pool Tracker (off-chain)
 
-**Ruling: **Factory** = on-chain contract only. **Pool Manager** = off-chain class only. Never use one to mean the other.**
+**Ruling: **Factory** = on-chain contract only. **Pool Tracker** = off-chain class only. Never use one to mean the other.**
 
-These are two distinct layers. The Factory creates Pool contracts on-chain. The Pool Manager discovers and tracks Pools off-chain. The `AbstractPoolManager` attribute `pool_factory` refers to the *class* of Pool the manager creates, not the on-chain Factory — that's `factory_address`.
+These are two distinct layers. The Factory creates Pool contracts on-chain. The Pool Tracker discovers and tracks Pools off-chain. The `AbstractPoolManager` attribute `pool_factory` refers to the *class* of Pool the tracker handles, not the on-chain Factory — that's `factory_address`.
 
 - ✅ "The Uniswap V2 **Factory** is at 0x5C69…"
-- ✅ "The **Pool Manager** tracks 1200 **Pools** for this **Exchange Deployment**"
-- ❌ "The factory tracks 1200 pools" (use **Pool Manager**)
-- ❌ "The pool manager creates new pools" (the **Factory** creates them on-chain)
+- ✅ "The **Pool Tracker** tracks 1200 **Pools** for this **Exchange Deployment**"
+- ❌ "The factory tracks 1200 pools" (use **Pool Tracker**)
+- ❌ "The pool manager creates new pools" (use **Pool Tracker** — the **Factory** creates them on-chain)
 
 ### Fee representations
 
@@ -137,3 +117,17 @@ When discussing fee values in code, always specify which representation. When di
 - ✅ "The V3 **Pip Fee** is 3000"
 - ✅ "The **Fee** makes this swap unprofitable" (conceptual usage is fine)
 - ❌ "The fee is 3" (ambiguous — is that a fraction numerator? pips? basis points?)
+
+## Example dialogue
+
+> **Dev:** "The **Pool Tracker** created a new pool for SushiSwap."
+> **Domain expert:** "The **Pool Tracker** *tracks* pools — it discovers and monitors them off-chain. The on-chain **Factory** *creates* them. The Pool Tracker is a Bot-owned helper; the Factory is the smart contract."
+>
+> **Dev:** "And **PoolFamily** vs **Pool Invariant** — aren't those the same thing?"
+> **Domain expert:** "They map 1:1 for V2/V3, but they're different concepts. **PoolFamily** is the identity enum — it says what a pool *is* (constant-product, concentrated-liquidity, stableswap, weighted). **Pool Invariant** is the solver dispatch enum — it says which math the solver uses. They diverge for Curve and Balancer, where one PoolFamily maps to multiple Pool Invariants."
+>
+> **Dev:** "When I call `bot.build_pool()`, how does it know the PoolFamily?"
+> **Domain expert:** "**Type Resolution** checks three sources: the database **Kind** column first, then the **Pool Type Registry** (factory→class mapping), then on-chain probing as a fallback. The Kind string like `sushiswap_v3` is derived from PoolFamily plus the **Pool Variant**."
+>
+> **Dev:** "What about the fee — V2 says `Fraction(3,1000)`, V3 says 3000. Which is right?"
+> **Domain expert:** "Both are right for their version — they're different representations. V2 uses a **Directional Fee** as a Fraction; V3/V4 uses a **Pip Fee** as an integer over 1,000,000. Just say '**Fee**' when you mean the concept; qualify the representation when precision matters."
