@@ -1,11 +1,6 @@
 """
 Verify that ArbitragePath + Solver produces computationally equivalent results
 to legacy UniswapLpCycle for identical pool sequences and states.
-
-This is the equivalence contract: when this suite passes, ArbitragePath can
-replace UniswapLpCycle for all supported path types.
-
-Status: RED — tests assert equivalence; failures identify behavioral gaps.
 """
 
 from collections.abc import Sequence
