@@ -14,6 +14,8 @@ from hexbytes import HexBytes
 from web3 import Web3
 
 from degenbot.aerodrome import AerodromeV2Pool, AerodromeV2PoolState, AerodromeV3Pool
+from degenbot.arbitrage.optimizers.hop_types import SolveInput
+from degenbot.arbitrage.optimizers.solver import ArbSolver
 from degenbot.arbitrage.types import (
     ArbitrageCalculationResult,
     UniswapV2PoolSwapAmounts,
@@ -28,7 +30,6 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import ArbitrageError, RateOfExchangeBelowMinimum
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
-
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import (
     AbstractPublisherMessage,
@@ -416,31 +417,32 @@ class _UniswapLpCycle(PublisherMixin):
 
         Raises OptimizationError if no profitable solution is found.
         """
-        from degenbot.arbitrage.optimizers.hop_types import SolveInput
-        from degenbot.arbitrage.optimizers.solver import ArbSolver
-        from degenbot.arbitrage.optimizers.solver_hop_builders import (
-            pool_state_to_hop,
-            pools_to_solve_input,
-        )
 
         if state_overrides is None:
             state_overrides = {}
 
-        # Convert pools → hops, applying state overrides if any
+        # Convert pools → hops via to_hop_state(), applying state overrides if any
         if state_overrides:
             hops = []
             current_token = self.input_token
             for pool in self.swap_pools:
-                hop = pool_state_to_hop(pool, current_token, state_overrides.get(pool))
+                zero_for_one = current_token == pool.token0
+                hop = pool.to_hop_state(
+                    zero_for_one=zero_for_one,
+                    state_override=state_overrides.get(pool),
+                )
                 hops.append(hop)
                 current_token = pool.token1 if current_token == pool.token0 else pool.token0
             solve_input = SolveInput(hops=tuple(hops), max_input=self.max_input)
         else:
-            solve_input = pools_to_solve_input(
-                pools=list(self.swap_pools),
-                input_token=self.input_token,
-                max_input=self.max_input,
-            )
+            hops = []
+            current_token = self.input_token
+            for pool in self.swap_pools:
+                zero_for_one = current_token == pool.token0
+                hop = pool.to_hop_state(zero_for_one=zero_for_one)
+                hops.append(hop)
+                current_token = pool.token1 if current_token == pool.token0 else pool.token0
+            solve_input = SolveInput(hops=tuple(hops), max_input=self.max_input)
 
         # Optimize via ArbSolver
         solver = ArbSolver()

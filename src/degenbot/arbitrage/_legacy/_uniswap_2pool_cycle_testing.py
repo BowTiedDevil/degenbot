@@ -28,15 +28,9 @@ from scipy.optimize import OptimizeResult, minimize_scalar
 
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from degenbot.aerodrome.types import AerodromeV2PoolState
-from degenbot.arbitrage.optimizers.solver import (
-    ArbSolver as _ArbSolver,
-)
-from degenbot.arbitrage.optimizers.solver import (
-    SolveInput as _SolveInput,
-)
-from degenbot.arbitrage.optimizers.solver_hop_builders import (
-    pool_state_to_hop as _pool_state_to_hop,
-)
+from degenbot.arbitrage._legacy._uniswap_lp_cycle import _UniswapLpCycle
+from degenbot.arbitrage.optimizers.solver import ArbSolver as _ArbSolver
+from degenbot.arbitrage.optimizers.solver import SolveInput as _SolveInput
 from degenbot.arbitrage.types import (
     ArbitrageCalculationResult,
     UniswapV2PoolSwapAmounts,
@@ -44,7 +38,6 @@ from degenbot.arbitrage.types import (
     UniswapV4PoolSwapAmounts,
     V4PoolKey,
 )
-from degenbot.arbitrage._legacy._uniswap_lp_cycle import _UniswapLpCycle
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT256, WRAPPED_NATIVE_TOKENS
 from degenbot.erc20.erc20 import Erc20Token
@@ -55,16 +48,13 @@ from degenbot.exceptions.arbitrage import (
     NoSolverSolution,
     Unprofitable,
 )
-from degenbot.exceptions.pool import EVMRevertError
 from degenbot.exceptions.pool import (
+    EVMRevertError,
     IncompleteSwap,
     LiquidityPoolError,
     PossibleInaccurateResult,
 )
 from degenbot.logging import logger
-from degenbot.types.hop_types import (
-    HopType as _HopType,
-)
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
@@ -72,6 +62,9 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import UniswapV3PoolState
 from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS, UniswapV4Pool
 from degenbot.uniswap.v4_types import UniswapV4PoolState
+
+if TYPE_CHECKING:
+    from degenbot.types.hop_types import HopType
 
 SLOW_ARB_CALC_THRESHOLD = 0.25
 SLOW_LOOP_TIME = 0.05
@@ -276,7 +269,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             return None
 
         try:
-            hops: list[_HopType] = []
+            hops: list[HopType] = []
             current_token = input_token
 
             for pool in pools:
@@ -284,9 +277,8 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                 if state_overrides is not None:
                     state_override = state_overrides.get(pool)
 
-                hop = _pool_state_to_hop(
-                    pool=pool,
-                    input_token=current_token,
+                hop = pool.to_hop_state(
+                    zero_for_one=current_token == pool.token0,
                     state_override=state_override,
                 )
                 hops.append(hop)

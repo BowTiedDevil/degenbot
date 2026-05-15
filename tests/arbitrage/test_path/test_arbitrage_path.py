@@ -9,17 +9,9 @@ from fractions import Fraction
 import pytest
 
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, SolveResult
-from degenbot.arbitrage.optimizers.solver import (
-    ArbSolver,
-    MobiusSolver,
-)
+from degenbot.arbitrage.optimizers.solver import ArbSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath, PathValidationError, SwapVector
-from degenbot.arbitrage.path.arbitrage_path import (
-    PoolCompatibility,
-    _check_pool_compatibility,
-    _extract_fee,
-    _pool_to_hop_state,
-)
+from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
 from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop
 from degenbot.uniswap.v3_libraries.constants import Q96
 from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves as _v3_virtual_reserves
@@ -68,38 +60,38 @@ class TestPoolCompatibility:
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         pool = FakeUniswapV2Pool(t0, t1)
-        assert _check_pool_compatibility(pool) == PoolCompatibility.COMPATIBLE
+        pool.to_hop_state(zero_for_one=True)  # should not raise
 
     def test_v3_compatible(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         pool = FakeConcentratedLiquidityPool(t0, t1)
-        assert _check_pool_compatibility(pool) == PoolCompatibility.COMPATIBLE
+        pool.to_hop_state(zero_for_one=True)  # should not raise
 
     def test_v4_compatible(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         pool = FakeConcentratedLiquidityPool(t0, t1)
-        assert _check_pool_compatibility(pool) == PoolCompatibility.COMPATIBLE
+        pool.to_hop_state(zero_for_one=True)  # should not raise
 
     def test_aerodrome_volatile_compatible(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         pool = FakeAerodromeV2Pool(t0, t1, stable=False)
-        assert _check_pool_compatibility(pool) == PoolCompatibility.COMPATIBLE
+        pool.to_hop_state(zero_for_one=True)  # should not raise
 
     def test_aerodrome_stable_compatible(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         pool = FakeAerodromeV2Pool(t0, t1, stable=True)
-        assert _check_pool_compatibility(pool) == PoolCompatibility.COMPATIBLE
+        pool.to_hop_state(zero_for_one=True)  # should not raise
 
     def test_unknown_incompatible(self):
-
         class _UnknownPool:
             pass
 
-        assert _check_pool_compatibility(_UnknownPool()) == PoolCompatibility.INCOMPATIBLE_INVARIANT
+        with pytest.raises((IncompatiblePoolInvariant, AttributeError)):
+            _UnknownPool().to_hop_state(zero_for_one=True)
 
 
 class TestFeeExtraction:
@@ -107,7 +99,7 @@ class TestFeeExtraction:
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         pool = FakeConcentratedLiquidityPool(t0, t1, fee=3000)
-        fee = _extract_fee(pool, zero_for_one=True)
+        fee = pool.extract_fee(zero_for_one=True)
         assert fee == Fraction(3000, 1_000_000)
 
     def test_v2_fee_zero_for_one(self):
@@ -115,7 +107,7 @@ class TestFeeExtraction:
         t1 = _make_token("0xt1")
         pool = FakeUniswapV2Pool(t0, t1, fee=Fraction(3, 1000))
         pool._fee_token1 = Fraction(5, 1000)
-        fee = _extract_fee(pool, zero_for_one=True)
+        fee = pool.extract_fee(zero_for_one=True)
         assert fee == Fraction(3, 1000)
 
     def test_v2_fee_one_for_zero(self):
@@ -123,7 +115,7 @@ class TestFeeExtraction:
         t1 = _make_token("0xt1")
         pool = FakeUniswapV2Pool(t0, t1, fee=Fraction(3, 1000))
         pool._fee_token1 = Fraction(5, 1000)
-        fee = _extract_fee(pool, zero_for_one=False)
+        fee = pool.extract_fee(zero_for_one=False)
         assert fee == Fraction(5, 1000)
 
 
@@ -132,7 +124,7 @@ class TestPoolToHopState:
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         pool = _make_v2_pool(t0, t1)
-        hop = _pool_to_hop_state(pool, zero_for_one=True)
+        hop = pool.to_hop_state(zero_for_one=True)
         assert isinstance(hop, ConstantProductHop)
         assert hop.reserve_in == 10**18
         assert hop.reserve_out == 2 * 10**18
@@ -142,18 +134,18 @@ class TestPoolToHopState:
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         pool = _make_v3_pool(t0, t1)
-        hop = _pool_to_hop_state(pool, zero_for_one=True)
+        hop = pool.to_hop_state(zero_for_one=True)
         assert isinstance(hop, BoundedProductHop)
 
     def test_v2_direction(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         pool = _make_v2_pool(t0, t1, reserve0=1000, reserve1=2000)
-        hop_forward = _pool_to_hop_state(pool, zero_for_one=True)
+        hop_forward = pool.to_hop_state(zero_for_one=True)
         assert hop_forward.reserve_in == 1000
         assert hop_forward.reserve_out == 2000
 
-        hop_reverse = _pool_to_hop_state(pool, zero_for_one=False)
+        hop_reverse = pool.to_hop_state(zero_for_one=False)
         assert hop_reverse.reserve_in == 2000
         assert hop_reverse.reserve_out == 1000
 
