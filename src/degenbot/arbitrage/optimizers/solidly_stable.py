@@ -10,7 +10,7 @@ from degenbot.arbitrage.optimizers._solver_utils import (
 )
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult, SolverMethod
 from degenbot.exceptions import OptimizationError
-from degenbot.types.hop_types import ConstantProductHop, HopType, PoolInvariant
+from degenbot.types.hop_types import BalancerMultiTokenHop, ConstantProductHop, HopType, PoolInvariant, SolidlyStableHop
 
 
 def _solidly_swap_output_float(
@@ -118,25 +118,11 @@ def _simulate_mixed_path(
         if amount <= 0:
             return 0.0
 
-        # Prefer exact callable if available (Solidly, Curve, etc.)
-        swap_fn = getattr(hop, "swap_fn", None)
-        if swap_fn is not None:
-            amount = float(swap_fn(int(amount)))
-            continue
-
-        if hop.invariant in {
-            PoolInvariant.CONSTANT_PRODUCT,
-            PoolInvariant.BOUNDED_PRODUCT,
-        }:
-            r_i = float(hop.reserve_in)
-            s_i = float(hop.reserve_out)
-            g_i = hop.gamma
-            denom = r_i + amount * g_i
-            if denom <= 0:
-                return 0.0
-            amount = amount * g_i * s_i / denom
-
-        elif hop.invariant == PoolInvariant.SOLIDLY_STABLE:
+        if isinstance(hop, SolidlyStableHop):
+            # Prefer exact callable if available
+            if hop.swap_fn is not None:
+                amount = float(hop.swap_fn(int(amount)))
+                continue
             amount = _solidly_swap_output_float(
                 reserve_in=float(hop.reserve_in),
                 reserve_out=float(hop.reserve_out),
@@ -145,6 +131,15 @@ def _simulate_mixed_path(
                 decimals_in=hop.decimals_in,
                 decimals_out=hop.decimals_out,
             )
+
+        elif not isinstance(hop, BalancerMultiTokenHop):
+            r_i = float(hop.reserve_in)
+            s_i = float(hop.reserve_out)
+            g_i = hop.gamma
+            denom = r_i + amount * g_i
+            if denom <= 0:
+                return 0.0
+            amount = amount * g_i * s_i / denom
 
         else:
             # Unsupported invariant
@@ -169,28 +164,11 @@ def _simulate_mixed_path_int(
         if amount <= 0:
             return 0
 
-        # Prefer exact callable if available (Solidly, Curve, etc.)
-        swap_fn = getattr(hop, "swap_fn", None)
-        if swap_fn is not None:
-            amount = swap_fn(amount)
-            continue
-
-        if hop.invariant in {
-            PoolInvariant.CONSTANT_PRODUCT,
-            PoolInvariant.BOUNDED_PRODUCT,
-        }:
-            r_i = hop.reserve_in
-            s_i = hop.reserve_out
-            g_num = hop.fee.denominator - hop.fee.numerator
-            g_den = hop.fee.denominator
-            # V2 formula: y = (gamma * s * x) / (r + gamma * x)
-            gamma_x = amount * g_num // g_den
-            denom = r_i + gamma_x
-            if denom <= 0:
-                return 0
-            amount = gamma_x * s_i // denom
-
-        elif hop.invariant == PoolInvariant.SOLIDLY_STABLE:
+        if isinstance(hop, SolidlyStableHop):
+            # Prefer exact callable if available
+            if hop.swap_fn is not None:
+                amount = hop.swap_fn(amount)
+                continue
             # Fall back to float (less accurate)
             out = _solidly_swap_output_float(
                 reserve_in=float(hop.reserve_in),
@@ -201,6 +179,18 @@ def _simulate_mixed_path_int(
                 decimals_out=hop.decimals_out,
             )
             amount = int(out)
+
+        elif not isinstance(hop, BalancerMultiTokenHop):
+            r_i = hop.reserve_in
+            s_i = hop.reserve_out
+            g_num = hop.fee.denominator - hop.fee.numerator
+            g_den = hop.fee.denominator
+            # V2 formula: y = (gamma * s * x) / (r + gamma * x)
+            gamma_x = amount * g_num // g_den
+            denom = r_i + gamma_x
+            if denom <= 0:
+                return 0
+            amount = gamma_x * s_i // denom
 
         else:
             return 0
@@ -261,7 +251,7 @@ class SolidlyStableSolver(Solver):
         # --- Profitability check via V2-equivalent Möbius ---
         v2_equiv_hops: list[HopType] = []
         for hop in solve_input.hops:
-            if hop.invariant == PoolInvariant.SOLIDLY_STABLE:
+            if isinstance(hop, SolidlyStableHop):
                 v2_equiv_hops.append(
                     ConstantProductHop(
                         reserve_in=hop.reserve_in,
@@ -285,7 +275,7 @@ class SolidlyStableSolver(Solver):
         has_swap_fn = all(
             hop.swap_fn is not None
             for hop in solve_input.hops
-            if hop.invariant == PoolInvariant.SOLIDLY_STABLE
+            if isinstance(hop, SolidlyStableHop)
         )
 
         if has_swap_fn:
@@ -303,7 +293,7 @@ class SolidlyStableSolver(Solver):
 
         # Bracket: [1, max_reserve] # noqa: ERA001
         x_low = 1
-        max_reserve = max(h.reserve_in for h in hops)
+        max_reserve = max(h.reserve_in for h in hops if not isinstance(h, BalancerMultiTokenHop))
         x_high = max_reserve
         if solve_input.max_input is not None:
             x_high = min(x_high, solve_input.max_input)
