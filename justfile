@@ -54,10 +54,13 @@ test-all: test-rust test-python
 lint-markdown:
     npx --yes markdownlint-cli2 "**/*.md" "!node_modules/**" "!.opencode/node_modules/**" "!.venv/**"
 
-# Run all linters (Rust + Python + Markdown)
-lint: lint-rust lint-markdown
-    uv run ruff check src/
+# Lint Python files
+lint-python:
+    uv run ruff check src/ --fix
     uv run mypy src/
+
+# Run all linters (Rust + Python + Markdown)
+lint: lint-rust lint-python lint-markdown    
 
 # Format all code
 format: 
