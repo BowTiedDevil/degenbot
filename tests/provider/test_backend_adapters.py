@@ -210,6 +210,7 @@ class TestAlloyAdapter:
         alloy = MagicMock()
         alloy.chain_id = 1
         alloy.block_number = 18_000_000
+        alloy.get_chain_id.return_value = 1
         alloy.get_block_number.return_value = 18_000_000
         alloy.get_block.return_value = TEST_BLOCK
         alloy.get_logs.return_value = [TEST_LOG]
