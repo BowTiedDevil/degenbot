@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 
-class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):  # type: ignore[override]
+class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
     variant: ClassVar[str | None] = "camelot"
 
     CAMELOT_ARBITRUM_POOL_INIT_HASH = (
@@ -90,23 +90,24 @@ class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):  # type: ignore[over
 
             def _camelot_stable_swap_fn(
                 amount_in: int,
-                __reserves0: int = reserves0,
-                __reserves1: int = reserves1,
-                __decimals0: int = decimals0,
-                __decimals1: int = decimals1,
-                __fee: Fraction = fee_in,
-                __token_in: int = token_in,
+                /,
+                _reserves0: int = reserves0,
+                _reserves1: int = reserves1,
+                _decimals0: int = decimals0,
+                _decimals1: int = decimals1,
+                _fee: Fraction = fee_in,
+                _token_in: int = token_in,
             ) -> int:
                 return calc_exact_in_stable(
                     amount_in=amount_in,
-                    token_in=__token_in,
-                    reserves0=__reserves0,
-                    reserves1=__reserves1,
-                    decimals0=__decimals0,
-                    decimals1=__decimals1,
-                    fee=__fee,
+                    token_in=_token_in,
+                    reserves0=_reserves0,
+                    reserves1=_reserves1,
+                    decimals0=_decimals0,
+                    decimals1=_decimals1,
+                    fee=_fee,
                     k_func=k_camelot,
-                    get_y_func=get_y_camelot,  # type: ignore[arg-type]
+                    get_y_func=get_y_camelot,
                 )
 
             return SolidlyStableHop(
