@@ -64,14 +64,14 @@ def make_tick_data_fetcher(
         working_tick_bitmap = dict(pool.tick_bitmap)
         working_tick_data = dict(pool.tick_data)
 
-        if isinstance(pool, UniswapV4Pool):
+        if is_v4:
             _fetch_v4(
                 provider=provider,
                 state_view_address=cast("str", state_view_address),
                 pool_id=cast("bytes", pool_id),
                 word_position=word_position,
                 block_number=block_number,
-                pool=pool,
+                pool=pool,  # type: ignore[arg-type]
                 working_tick_bitmap=working_tick_bitmap,
                 working_tick_data=working_tick_data,
                 types=types,
@@ -79,7 +79,7 @@ def make_tick_data_fetcher(
         else:
             _fetch_v3(
                 provider=provider,
-                pool=pool,
+                pool=pool,  # type: ignore[arg-type]
                 word_position=word_position,
                 block_number=block_number,
                 working_tick_bitmap=working_tick_bitmap,
