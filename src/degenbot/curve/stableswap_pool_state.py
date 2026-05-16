@@ -20,6 +20,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+    from degenbot.curve.types import PoolStrategies
     from degenbot.erc20 import Erc20Token
 
 
@@ -43,7 +45,7 @@ class StableswapPoolState:
     _admin_fee: int
     _rate_multipliers: tuple[int, ...]
     _precision_multipliers: tuple[int, ...]
-    _base_pool: CurveStableswapPool | None  # type: ignore[name-defined]
+    _base_pool: CurveStableswapPool | None
     _tokens_underlying: tuple[Erc20Token, ...] | None
     _lp_token: Erc20Token
     _use_lending: tuple[bool, ...]
@@ -57,7 +59,7 @@ class StableswapPoolState:
     _out_fee: int
     _gamma: int
     _offpeg_fee_multiplier: int
-    _strategies: PoolStrategies  # type: ignore[name-defined]
+    _strategies: PoolStrategies
     _coin_index_type: str
     _name: str
 
@@ -88,7 +90,7 @@ class StableswapPoolState:
         return self._precision_multipliers
 
     @property
-    def base_pool(self) -> CurveStableswapPool | None:  # type: ignore[name-defined]
+    def base_pool(self) -> CurveStableswapPool | None:
         return self._base_pool
 
     @property

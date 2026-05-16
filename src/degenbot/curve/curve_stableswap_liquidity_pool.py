@@ -31,7 +31,7 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import NoLiquidity
 from degenbot.exceptions.pool import EVMRevertError, InvalidSwapInputAmount, MissingCurveData
 from degenbot.logging import logger
-from degenbot.types.abstract import AbstractLiquidityPool
+from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import (
     BoundedCache,
@@ -43,7 +43,7 @@ from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 
 
-class CurveStableswapPool(
+class CurveStableswapPool(  # type: ignore[override]
     PublisherMixin,
     PoolPickleMixin,
     StableswapPoolState,
@@ -237,7 +237,7 @@ class CurveStableswapPool(
         return self.state.balances
 
     @property
-    def chain_id(self) -> int:
+    def chain_id(self) -> int | None:
         return self._chain_id
 
     @property
@@ -318,6 +318,7 @@ class CurveStableswapPool(
             assert self.initial_a_coefficient_time is not None
             assert self.future_a_coefficient_time is not None
             assert self.future_a_coefficient is not None
+            assert self._create_timestamp is not None
 
         if self._create_timestamp >= self.future_a_coefficient_time:
             return self.future_a_coefficient
@@ -494,28 +495,28 @@ class CurveStableswapPool(
         if self.base_pool is not None:
             calculator = self._strategies.metapool_dy_calculator
             if calculator is not None:
-                return cast("int", calculator.calculate(
+                return calculator.calculate(
                     i, j, dx, pool=self, block_number=block_number, override_state=override_state,
-                ))
+                )
             # Fallback: lazily construct metapool calculator
             from degenbot.curve._pool_strategies import _make_metapool_dy_calculator
             calculator = _make_metapool_dy_calculator(self._strategies.metapool_rate_style)
-            return cast("int", calculator.calculate(
+            return calculator.calculate(
                 i, j, dx, pool=self, block_number=block_number, override_state=override_state,
-            ))
+            )
 
         if self._strategies.dy_calculator is not None:
-            return cast("int", self._strategies.dy_calculator.calculate(
+            return self._strategies.dy_calculator.calculate(
                 i, j, dx, pool=self, block_number=block_number, override_state=override_state,
-            ))
+            )
 
         # Fallback: no calculator on PoolStrategies — construct lazily.
         # This handles pools constructed directly (without Bot.build_pool)
         # or constructed before the calculator migration.
         calculator = _make_dy_calculator(self._strategies.swap_style)
-        return cast("int", calculator.calculate(
+        return calculator.calculate(
             i, j, dx, pool=self, block_number=block_number, override_state=override_state,
-        ))
+        )
 
     def _get_dy_underlying(
         self,
@@ -529,15 +530,15 @@ class CurveStableswapPool(
 
         calculator = self._strategies.metapool_underlying_dy_calculator
         if calculator is not None:
-            return cast("int", calculator.calculate(
+            return calculator.calculate(
                 i, j, dx, pool=self, block_number=block_number, override_state=override_state,
-            ))
+            )
         # Fallback: lazily construct metapool underlying calculator
         from degenbot.curve._pool_strategies import _make_metapool_underlying_dy_calculator
         calculator = _make_metapool_underlying_dy_calculator(self._strategies.metapool_underlying_style)
-        return cast("int", calculator.calculate(
+        return calculator.calculate(
             i, j, dx, pool=self, block_number=block_number, override_state=override_state,
-        ))
+        )
 
     def _get_base_cache_updated(self, block_number: BlockNumber) -> int:
         with contextlib.suppress(KeyError):
@@ -779,6 +780,7 @@ class CurveStableswapPool(
         if any(tokens_used_this_pool) and any(tokens_used_in_base_pool):
             if TYPE_CHECKING:
                 assert self.base_pool is not None
+                assert self.tokens_underlying is not None
 
             # TODO: see if any of these checks are unnecessary (partial zero balance OK?)
             if any(balance == 0 for balance in self.base_pool.balances):
@@ -826,6 +828,8 @@ class CurveStableswapPool(
                 override_state=override_state,
             )
         if all(tokens_used_in_base_pool):
+            if TYPE_CHECKING:
+                assert self.tokens_underlying is not None
             token_in_from_basepool = token_in in self.tokens_underlying
             token_out_from_basepool = token_out in self.tokens_underlying
             assert token_in_from_basepool or token_out_from_basepool
@@ -847,8 +851,14 @@ class CurveStableswapPool(
         token_in: ChecksumAddress,
         amount_in: int,
         token_out: ChecksumAddress,
-        state_override: CurveStableswapPoolState | None = None,
+        state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
+        curve_state: CurveStableswapPoolState | None = None
+        if state_override is not None:
+            if not isinstance(state_override, CurveStableswapPoolState):
+                msg = f"Expected CurveStableswapPoolState, got {type(state_override).__name__}"
+                raise DegenbotValueError(message=msg)
+            curve_state = state_override
         token_in_obj = next((t for t in self._tokens if t.address == token_in), None)
         if token_in_obj is None:
             all_tokens = list(self._tokens)
@@ -865,12 +875,12 @@ class CurveStableswapPool(
             if token_out not in {t.address for t in all_tokens}:
                 raise DegenbotValueError(message=f"token_out {token_out} not in pool")
 
-        initial_state = state_override or self.state
+        initial_state = curve_state or self.state
         amount_out = self.calculate_tokens_out_from_tokens_in(
             token_in=token_in_obj,  # type: ignore[arg-type]
             token_out=token_out_obj,  # type: ignore[arg-type]
             token_in_quantity=amount_in,
-            override_state=state_override,
+            override_state=curve_state,
         )
         return SimulationResult(
             amount_in=amount_in,
