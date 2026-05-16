@@ -78,7 +78,9 @@ class ConnectionManager:
         provider = self.get_provider(chain_id)
         if provider.provider_type != "web3":
             raise DegenbotValueError(message="Provider is not a Web3 provider.") from None
-        return cast("Web3", provider.underlying)
+        w3 = provider.as_web3()
+        assert w3 is not None
+        return w3
 
     def register_provider(
         self,
@@ -106,13 +108,14 @@ class ConnectionManager:
             raise DegenbotValueError(message="Provider is not connected.") from exc
 
         # Get the underlying Web3 instance for optimization if needed
-        if optimize and provider.provider_type == "web3":
-            w3 = provider.underlying
-            # Remove all middleware and monkey-patch the JSON decoding for RPC responses
-            w3.middleware_onion.clear()
-            if TYPE_CHECKING:
-                assert isinstance(w3.provider, JSONBaseProvider)
-            w3.provider.decode_rpc_response = _fast_decode_rpc_response  # type:ignore[method-assign]
+        if optimize:
+            w3 = provider.as_web3()
+            if w3 is not None:
+                # Remove all middleware and monkey-patch the JSON decoding for RPC responses
+                w3.middleware_onion.clear()
+                if TYPE_CHECKING:
+                    assert isinstance(w3.provider, JSONBaseProvider)
+                w3.provider.decode_rpc_response = _fast_decode_rpc_response  # type:ignore[method-assign]
 
         self.connections[provider.chain_id] = provider
 
