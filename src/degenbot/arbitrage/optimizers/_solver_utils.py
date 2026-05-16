@@ -4,7 +4,10 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from degenbot.degenbot_rs import mobius as _rs_mobius
+from degenbot.degenbot_rs import (
+    RustIntHopState as _RustIntHopState,
+    py_mobius_refine_int as _py_mobius_refine_int,
+)
 from degenbot.types.hop_types import BalancerMultiTokenHop, BoundedProductHop, HopType
 from degenbot.uniswap.v3_libraries.constants import Q96
 
@@ -144,11 +147,11 @@ def _rust_integer_refinement(
         gamma_numer = fee_denom - fee_numer
         gamma_denom = fee_denom
         rust_int_hops.append(
-            _rs_mobius.RustIntHopState(hop.reserve_in, hop.reserve_out, gamma_numer, gamma_denom)
+            _RustIntHopState(hop.reserve_in, hop.reserve_out, gamma_numer, gamma_denom)
         )
 
     max_input_float = float(max_input) if max_input is not None else None
-    result = _rs_mobius.py_mobius_refine_int(x_opt, rust_int_hops, max_input_float)
+    result = _py_mobius_refine_int(x_opt, rust_int_hops, max_input_float)
 
     if result.success:
         return int(result.optimal_input), int(result.profit)

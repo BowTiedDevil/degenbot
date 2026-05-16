@@ -26,7 +26,13 @@ from degenbot.arbitrage.optimizers.mobius import (
 from degenbot.arbitrage.optimizers.mobius import simulate_path as _mobius_simulate_path
 from degenbot.arbitrage.optimizers.mobius_solver import MobiusSolver
 from degenbot.arbitrage.optimizers.v3_tick_predictor import estimate_price_impact
-from degenbot.degenbot_rs import mobius as _rs_mobius
+from degenbot.degenbot_rs import (
+    RustHopState as _RustHopState,
+    RustMobiusOptimizer as _RustMobiusOptimizer,
+    RustTickRangeCrossing as _RustTickRangeCrossing,
+    RustV3TickRangeHop as _RustV3TickRangeHop,
+    RustV3TickRangeSequence as _RustV3TickRangeSequence,
+)
 from degenbot.exceptions import OptimizationError
 from degenbot.logging import logger
 from degenbot.types.hop_types import (
@@ -56,7 +62,7 @@ class PiecewiseMobiusSolver(Solver):
     PHI = (math.sqrt(5) - 1) / 2  # ~0.618
 
     def __init__(self) -> None:
-        self._rust_optimizer = _rs_mobius.RustMobiusOptimizer()
+        self._rust_optimizer = _RustMobiusOptimizer()
         self._mobius_solver: MobiusSolver | None = None
         self._rust_hop_cache: dict[int, list[Any]] = {}
         self._rust_sequence_cache: dict[tuple[tuple[int, ...], int, bool], Any] = {}
@@ -73,7 +79,7 @@ class PiecewiseMobiusSolver(Solver):
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Recreate the Rust optimizer after unpickling."""
         self.__dict__.update(state)
-        self._rust_optimizer = _rs_mobius.RustMobiusOptimizer()
+        self._rust_optimizer = _RustMobiusOptimizer()
 
     @override
     def supports(self, solve_input: SolveInput) -> bool:
@@ -698,7 +704,7 @@ class PiecewiseMobiusSolver(Solver):
         Raises OptimizationError on failure.
         """
         rust_hops = [
-            _rs_mobius.RustHopState(
+            _RustHopState(
                 float(hop.reserve_in),
                 float(hop.reserve_out),
                 float(hop.fee),
@@ -722,7 +728,7 @@ class PiecewiseMobiusSolver(Solver):
         else:
             entry_sqrt_price = float(ending_range_info.sqrt_price_lower) / Q96
 
-        rust_ending_range = _rs_mobius.RustV3TickRangeHop(
+        rust_ending_range = _RustV3TickRangeHop(
             liquidity=float(ending_range_info.liquidity),
             sqrt_price_current=entry_sqrt_price,
             sqrt_price_lower=float(ending_range_info.sqrt_price_lower) / Q96,
@@ -754,7 +760,7 @@ class PiecewiseMobiusSolver(Solver):
             crossing_output += output
 
         # Build TickRangeCrossing for Rust
-        rust_crossing = _rs_mobius.RustTickRangeCrossing(
+        rust_crossing = _RustTickRangeCrossing(
             crossing_gross_input=crossing_input,
             crossing_output=crossing_output,
             ending_range=rust_ending_range,
@@ -797,7 +803,7 @@ class PiecewiseMobiusSolver(Solver):
 
         if cache_key not in self._rust_hop_cache:
             rust_hops = [
-                _rs_mobius.RustHopState(
+                _RustHopState(
                     float(hop.reserve_in),
                     float(hop.reserve_out),
                     float(hop.fee),
@@ -833,7 +839,7 @@ class PiecewiseMobiusSolver(Solver):
                     sqrt_p_current = float(range_info.sqrt_price_lower) / Q96
 
                 rust_ranges.append(
-                    _rs_mobius.RustV3TickRangeHop(
+                    _RustV3TickRangeHop(
                         liquidity=float(range_info.liquidity),
                         sqrt_price_current=sqrt_p_current,
                         sqrt_price_lower=float(range_info.sqrt_price_lower) / Q96,
@@ -843,7 +849,7 @@ class PiecewiseMobiusSolver(Solver):
                     )
                 )
 
-            self._rust_sequence_cache[cache_key] = _rs_mobius.RustV3TickRangeSequence(rust_ranges)
+            self._rust_sequence_cache[cache_key] = _RustV3TickRangeSequence(rust_ranges)
 
         return self._rust_sequence_cache[cache_key]
 

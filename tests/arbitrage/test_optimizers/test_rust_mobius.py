@@ -2,7 +2,7 @@
 
 from itertools import starmap
 
-from degenbot.degenbot_rs import mobius as rs_mobius
+import degenbot.degenbot_rs as rs_mobius
 
 from degenbot.arbitrage.optimizers.mobius import MobiusFloatHop
 from degenbot.arbitrage.optimizers.mobius import mobius_solve as py_solve

@@ -11,7 +11,7 @@ from degenbot.arbitrage.optimizers._solver_utils import (
     _simulate_path,
 )
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult, SolverMethod
-from degenbot.degenbot_rs import mobius as _rs_mobius
+from degenbot.degenbot_rs import RustArbSolver as _RustArbSolver, RustIntHopState as _RustIntHopState
 from degenbot.exceptions import OptimizationError
 from degenbot.types.hop_types import (
     BalancerMultiTokenHop,
@@ -44,7 +44,7 @@ class MobiusSolver(Solver):
     }
 
     def __init__(self) -> None:
-        self._rust_solver = _rs_mobius.RustArbSolver()
+        self._rust_solver = _RustArbSolver()
 
     def __getstate__(self) -> dict[str, Any]:
         """Omit the non-pickleable Rust solver; it will be recreated on unpickle."""
@@ -55,7 +55,7 @@ class MobiusSolver(Solver):
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Recreate the Rust solver after unpickling."""
         self.__dict__.update(state)
-        self._rust_solver = _rs_mobius.RustArbSolver()
+        self._rust_solver = _RustArbSolver()
 
     @override
     def supports(self, solve_input: SolveInput) -> bool:
@@ -164,7 +164,7 @@ class MobiusSolver(Solver):
                     fee_denom = hop.fee.denominator
                     gamma_numer = fee_denom - fee_numer
                     rust_hops.append(
-                        _rs_mobius.RustIntHopState(
+                        _RustIntHopState(
                             hop.reserve_in, hop.reserve_out, gamma_numer, fee_denom
                         )
                     )

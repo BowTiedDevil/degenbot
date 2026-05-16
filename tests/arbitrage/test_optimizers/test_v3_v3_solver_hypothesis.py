@@ -10,7 +10,7 @@ from typing import Any
 
 import hypothesis
 import hypothesis.strategies as st
-from degenbot.degenbot_rs import mobius
+import degenbot.degenbot_rs as mobius
 
 from degenbot.uniswap.v3_libraries.tick_math import (
     MAX_TICK,
