@@ -406,6 +406,24 @@ class ProviderAdapter:  # noqa:PLR0904
         """Get the underlying provider, or None if not set (e.g., after unpickling)."""
         return self._raw_provider
 
+    def as_web3(self) -> Web3 | None:
+        """Return the underlying provider as Web3, or None if not a Web3 provider."""
+        if self._provider_type == "web3" and isinstance(self._raw_provider, Web3):
+            return self._raw_provider
+        return None
+
+    def as_alloy(self) -> AlloyProvider | None:
+        """Return the underlying provider as AlloyProvider, or None if not an Alloy provider."""
+        if self._provider_type == "alloy" and isinstance(self._raw_provider, AlloyProvider):
+            return self._raw_provider
+        return None
+
+    def as_offline(self) -> OfflineProvider | None:
+        """Return the underlying provider as OfflineProvider, or None if not an Offline provider."""
+        if self._provider_type == "offline" and isinstance(self._raw_provider, OfflineProvider):
+            return self._raw_provider
+        return None
+
     # -------------------------------------------------------------------------
     # Properties (delegated)
     # -------------------------------------------------------------------------
@@ -824,6 +842,18 @@ class AsyncProviderAdapter:
             stacklevel=2,
         )
         return self._raw_provider
+
+    def as_web3(self) -> AsyncWeb3 | None:
+        """Return the underlying provider as AsyncWeb3, or None if not a Web3 provider."""
+        if self._provider_type == "web3" and isinstance(self._raw_provider, AsyncWeb3):
+            return self._raw_provider
+        return None
+
+    def as_alloy(self) -> AlloyProvider | None:
+        """Return the underlying provider as AlloyProvider, or None if not an Alloy provider."""
+        if self._provider_type == "alloy" and isinstance(self._raw_provider, AlloyProvider):
+            return self._raw_provider
+        return None
 
     # Note: Async provider properties raise NotImplementedError intentionally.
     # Callers must use the async get_* methods instead.

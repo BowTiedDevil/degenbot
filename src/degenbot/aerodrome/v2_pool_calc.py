@@ -12,7 +12,7 @@ Two calculation strategies:
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 from degenbot.calculations.solidly_stable import (
     calc_exact_in_stable,
@@ -43,6 +43,17 @@ class AerodromeV2PoolCalc:
     - _calc_tokens_in_from_tokens_out: bound calc function for exact-out
     - _calc_tokens_out_from_tokens_in: bound calc function for exact-in
     """
+
+    # Attributes provided by AerodromeV2PoolState in the MRO
+    _token0: Erc20Token
+    _token1: Erc20Token
+    _fee: Fraction
+
+    # Attributes provided by the concrete pool class in the MRO
+    reserves_token0: int
+    reserves_token1: int
+    state: AerodromeV2PoolState
+    tokens: tuple[Erc20Token, Erc20Token]
 
     def _wire_stable_calculations(self, stable: bool) -> None:
         """Wire calculation functions based on the stable flag.
@@ -184,7 +195,7 @@ class AerodromeV2PoolCalc:
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
-        return cast("Fraction", self._fee)
+        return self._fee
 
     # ── Private: calculation strategy methods ──
 
