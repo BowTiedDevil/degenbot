@@ -131,12 +131,12 @@ class Bot:
         # Builder registry: concrete pool type → builder
         # Used by update() for O(1) dict lookup instead of isinstance chain
         self._builders: dict[type, PoolBuilder] = {}
-        self.register_builder(UniswapV2Pool, self._v2_builder)
-        self.register_builder(UniswapV3Pool, self._v3_builder)
-        self.register_builder(UniswapV4Pool, self._v4_builder)
-        self.register_builder(CurveStableswapPool, self._curve_builder)
-        self.register_builder(AerodromeV2Pool, self._aerodrome_v2_builder)
-        self.register_builder(CamelotLiquidityPool, self._camelot_builder)
+        self.register_builder(UniswapV2Pool, self._v2_builder)  # type: ignore[arg-type]
+        self.register_builder(UniswapV3Pool, self._v3_builder)  # type: ignore[arg-type]
+        self.register_builder(UniswapV4Pool, self._v4_builder)  # type: ignore[arg-type]
+        self.register_builder(CurveStableswapPool, self._curve_builder)  # type: ignore[arg-type]
+        self.register_builder(AerodromeV2Pool, self._aerodrome_v2_builder)  # type: ignore[arg-type]
+        self.register_builder(CamelotLiquidityPool, self._camelot_builder)  # type: ignore[arg-type]
         # SushiswapV2Pool, PancakeSwapV2Pool, SwapbasedV2Pool, etc. inherit
         # UniswapV2Pool so they are handled by the V2 builder via MRO fallback
 
@@ -195,7 +195,7 @@ class Bot:
                 "Access it using the bot's manager registry."
             )
 
-        manager = manager_cls(
+        manager = manager_cls(  # type: ignore[call-arg]
             factory_address=factory_address,
             chain_id=chain_id,
             bot=self,
@@ -499,15 +499,9 @@ class Bot:
         # Default classes when no factory-specific registration exists
         match pool_type.family:
             case PoolFamily.CONSTANT_PRODUCT:
-                return (
-                    pool_type_registry.get_v2_class(chain_id, pool_type.factory or "")
-                    or UniswapV2Pool
-                )
+                return pool_type_registry.get_v2_class(chain_id, pool_type.factory or "") or UniswapV2Pool  # type: ignore[return-value]
             case PoolFamily.CONCENTRATED_LIQUIDITY:
-                return (
-                    pool_type_registry.get_v3_class(chain_id, pool_type.factory or "")
-                    or UniswapV3Pool
-                )
+                return pool_type_registry.get_v3_class(chain_id, pool_type.factory or "") or UniswapV3Pool  # type: ignore[return-value]
             case PoolFamily.STABLESWAP:
                 return CurveStableswapPool
             case _:
@@ -555,7 +549,7 @@ class Bot:
         factory = self._fetch_factory_from_chain(pool_address, chain_id=chain_id)
         if factory is not None:
             pool_class = pool_type_registry.get_v2_class(chain_id, factory)
-            if issubclass(pool_class, AerodromeV2Pool):
+            if pool_class is not None and issubclass(pool_class, AerodromeV2Pool):
                 return self._aerodrome_v2_builder.build(
                     pool_address,
                     chain_id=chain_id,
@@ -564,7 +558,7 @@ class Bot:
                     state_block=state_block,
                     silent=silent,
                 )
-            if issubclass(pool_class, CamelotLiquidityPool):
+            if pool_class is not None and issubclass(pool_class, CamelotLiquidityPool):
                 return self._camelot_builder.build(
                     pool_address,
                     chain_id=chain_id,
@@ -739,7 +733,11 @@ class Bot:
         Returns True if the state changed, False if unchanged.
         """
         builder = self._builder_for_pool(pool)
-        return builder.update(pool, block_number=block_number)
+        _block_number = (
+            int(block_number) if block_number is not None and not isinstance(block_number, int)
+            else block_number
+        )
+        return builder.update(pool, block_number=_block_number)
 
     def _builder_for_pool(
         self,
