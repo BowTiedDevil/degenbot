@@ -22,18 +22,13 @@
 | **Precision Multipliers** | Scaling factors normalizing token decimals to 18 | Decimals adjustment |
 | **Admin Balances** | Accumulated fees held by pool admin before distribution | Fee balances |
 
-## Fetcher Protocols
+## Data Provider
 
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|
-| **VirtualPriceFetcher** | A fetcher callback returning the base pool's virtual price | VP fetcher |
-| **TimestampFetcher** | A fetcher callback returning the block timestamp for A-ramping calculations | Time fetcher |
-| **RedemptionPriceFetcher** | A fetcher callback returning the LSD redemption price | Redemption fetcher |
-| **AdminBalancesFetcher** | A fetcher callback returning admin fee balances | Admin fetcher |
-| **DFetcher** | A fetcher callback returning the on-chain invariant D for crypto pools | D fetcher |
-| **GammaFetcher** | A fetcher callback returning the on-chain gamma parameter for crypto pools | Gamma fetcher |
-| **PriceScaleFetcher** | A fetcher callback returning on-chain price_scale values for crypto pools | Price scale fetcher |
-| **LendingRateFetcher** | A fetcher callback returning per-token lending rates for a block | Rate fetcher |
+| **CurveDataProvider** | A `@runtime_checkable` protocol with 13 methods (`D()`, `gamma()`, `virtual_price()`, `base_virtual_price()`, `price_scale()`, `admin_balances()`, `lending_rate()`, `redemption_price()`, `block_timestamp()`, `block_number()`, `token_balance()`, `token_total_supply()`, `is_crypto()`) that serves as the single I/O seam for Curve pools | Data provider, provider |
+| **_CurveDataProviderImpl** | The production implementation of `CurveDataProvider` that wraps existing fetcher closures from `CurveFetcherFactory`; created by the builder via `fetchers.create_provider()` | Impl |
+| **FakeCurveDataProvider** | A test double implementing `CurveDataProvider` with fixed return values | Fake provider |
 
 ## Variant Enums
 
@@ -51,7 +46,26 @@
 | **MetapoolRateStyle** | An enum identifying how a metapool constructs its rate tuple | Metapool rate |
 | **MetapoolUnderlyingStyle** | An enum identifying how a metapool computes `get_dy_underlying()` | Underlying style |
 | **LendingRateStyle** | An enum identifying which rate source provides lending rates | Rate source, rate style |
-| **PoolStrategies** | A frozen dataclass combining all strategy enums into a single value object | Strategies, pool config |
+| **PoolStrategies** | A frozen dataclass combining all strategy enums and DyCalculator instances into a single value object | Strategies, pool config |
+
+## DyCalculator Protocol
+
+| Term | Definition | Aliases to avoid |
+|------|------------|------------------|
+| **DyCalculator** | A runtime-checkable protocol defining `calculate(i, j, dx, *, pool, block_number, override_state) -> int` | Dy strategy, dy solver |
+| **StandardDyCalculator** | Computes dy for STANDARD swap style (plain pool, no rate adjustment) | Basic calculator |
+| **RateAdjustedDyCalculator** | Computes dy for RATE_ADJUSTED swap style using `rate_multipliers` | Lending calculator |
+| **RateAdjustedNoOneDyCalculator** | Computes dy for RATE_ADJUSTED_NO_ONE (no `-1` minimum) | No-one rate calculator |
+| **RawBalanceDyCalculator** | Computes dy from raw balances without rate adjustment | Balance calculator |
+| **CryptoDyCalculator** | Computes dy using CryptoSwap invariant (Newton's method, dynamic fee, price_scale) | Crypto calculator |
+| **LiveAdminDyCalculator** | Computes dy with admin balance subtraction (live A amplification) | Admin calculator |
+| **LiveAdminDynamicDyCalculator** | Computes dy with admin balances and dynamic fee | Dynamic admin calculator |
+| **LiveAdminDynamicPrecisionDyCalculator** | Computes dy with admin balances, dynamic fee, and precision adjustment | Precision admin calculator |
+| **LiveAdminOracleDyCalculator** | Computes dy with admin balances and oracle price | Oracle admin calculator |
+| **NoOneFeeRateDyCalculator** | Computes dy without the `-1` slip on fee calculation | No-one fee calculator |
+| **CytokenDyCalculator** | Computes dy for cyToken pools with cyToken rate conversion | Cytoken calculator |
+| **Metapool*DyCalculator** | A family of calculators (PrecisionVp, RedemptionVp, Standard) for metapool `get_dy` | Metapool rate calculator |
+| **MetapoolUnderlying*DyCalculator** | A family of calculators (Redemption, PrecisionVp, Standard) for `get_dy_underlying` | Metapool underlying calculator |
 
 ## Pool Tracker
 
@@ -64,9 +78,12 @@
 - A **Metapool** has exactly one **Base Pool**
 - A **Pool** has 2–8 coins
 - A **Lending Pool** has **Stored Rates** for each lending token
-- A **Crypto Pool** uses **DFetcher**, **GammaFetcher**, and **PriceScaleFetcher**
-- **A Coefficient** ramping uses **TimestampFetcher**
+- A **Crypto Pool** uses **CurveDataProvider** methods `D()`, `gamma()`, and `price_scale()`
+- **A Coefficient** ramping uses **CurveDataProvider** `block_timestamp()`
 - A **CurveStableswapPoolTracker** tracks Curve pools and delegates construction to **Bot**
+- A **Pool** holds a single **CurveDataProvider** (injected by builder), replacing the former 13 individual fetcher callbacks
+- **DyCalculator** objects are held by **PoolStrategies** and replace dispatch branches in `get_dy()` / `_get_dy_underlying()`
+- Pure math functions in `calculations/stableswap.py` raise `ValueError`; pool wrappers catch and re-raise as `EVMRevertError`
 
 ## Resolved Ambiguities
 
@@ -103,9 +120,9 @@
 
 **Ruling:** A ramping uses **block timestamps**, not block numbers.
 
-### 7. LendingRateFetcher vs provider_call
+### 7. CurveDataProvider methods vs provider_call
 
-**Ruling:** Use **LendingRateFetcher** for all lending rate-fetching. The old `provider_call` backdoor has been removed.
+**Ruling:** Use `self._data_provider.lending_rate()` for all lending rate-fetching. The old `provider_call` backdoor has been removed. All I/O flows through the single `CurveDataProvider` seam.
 
 ### 8. Crypto pool vs Stableswap pool
 
@@ -123,7 +140,7 @@
 > **Domain expert:** "No — use the **Base Pool's** virtual price when valuing the base pool LP token coin. The metapool's own virtual price is for the metapool's LP token, which is a different thing."
 >
 > **Dev:** "I need to fetch lending rates. Should I use **provider_call**?"
-> **Domain expert:** "No — `provider_call` has been removed. Use a **LendingRateFetcher** — it's a typed fetcher callback injected at construction. Each lending variant (cToken, yToken, cyToken, aETH, rETH, oracle) has its own fetcher closure. The pool calls it on-demand; it never accesses connections directly."
+> **Domain expert:** "No — `provider_call` has been removed. The pool calls `self._data_provider.lending_rate()`, which is part of the **CurveDataProvider** seam. The builder creates a `_CurveDataProviderImpl` that wraps fetcher closures; the pool never accesses connections directly. For tests, use a **FakeCurveDataProvider** with fixed return values."
 >
 > **Dev:** "What are all the **variant enums** for?"
 > **Domain expert:** "Mainnet Curve pools use different calculation formulas depending on the contract version. **DVariant**, **YVariant**, and **YDVariant** identify which formula a pool uses for D, y, and y_D calculations respectively. They replace the old class-level address frozensets that coupled configuration data to pool behavior."

@@ -2,7 +2,7 @@
 
 ## Status
 
-**Implemented** — All pool types (Curve, V2, V3, V4, Aerodrome, Camelot) are I/O-free.
+**Implemented** — All pool types (Curve, V2, V3, V4, Aerodrome, Camelot) are I/O-free. Phase 4 cleanup complete.
 
 ## Context
 
@@ -43,9 +43,9 @@ Separate I/O from pool logic using **fetcher callbacks** injected at constructio
 └─────────────┘     │  • Manages RPC  │     └─────────────────┘
                     │  • Builds pools  │              │
                     │  • Creates       │              │
-                    │    fetchers      │              ▼
+                    │  data_providers  │              ▼
                     └─────────────────┘     ┌─────────────────┐
-                              │              │ Fetcher Closures│
+                              │              │ CurveDataProvider│
                               │              │  (I/O here)     │
                               ▼              └─────────────────┘
                     ┌─────────────────┐
@@ -58,27 +58,27 @@ Separate I/O from pool logic using **fetcher callbacks** injected at constructio
 
 ### Fetcher Protocols
 
-A **Fetcher** is a callable injected into the pool at construction. The pool calls it on-demand; the closure handles the I/O:
+A **Data Provider** is an object implementing the `CurveDataProvider` protocol, injected into the pool at construction. The pool calls its methods on-demand; the provider implementation handles the I/O:
 
 ```python
-from collections.abc import Callable
 from typing import Protocol
 
-class RateFetcher(Protocol):
-    def __call__(self) -&gt; list[int] | list[float]: ...
+class CurveDataProvider(Protocol):
+    def D(self, block_number: int) -> int: ...
+    def virtual_price(self, block_number: int) -> int: ...
+    def lending_rate(self, block_number: int, token_address: str) -> int: ...
+    # ... 13 methods total
 
-class VirtualPriceFetcher(Protocol):
-    def __call__(self) -&gt; int: ...
-
-# Bot creates the closure (handles I/O)
-# Pool just calls it (pure logic)
+# Bot creates the _CurveDataProviderImpl (handles I/O)
+# Pool just calls data_provider methods (pure logic)
 ```
 
-### Why Callbacks Instead of Dependency Injection?
+### Why Data Providers Instead of Dependency Injection?
 
 | Approach | Pros | Cons | Decision |
 |----------|------|------|----------|
-| **Fetcher callbacks** (chosen) | Simple, no inheritance needed, easy to mock with lambdas | Closures capture state less explicitly | ✅ Chosen — matches Python idioms, works with `Protocol` |
+| **Data provider protocol** (chosen) | Single seam, easy to mock with fakes, coarser-grained than individual callbacks | Slightly larger interface | ✅ Chosen — single point of injection, cleaner pickle, simpler builder code |
+| Fetcher callbacks (earlier version) | Simple, no inheritance needed, easy to mock with lambdas | 13 constructor parameters, 13 pickle drops+reconstructs, complex builder | ❌ Replaced by `CurveDataProvider` (Plan 040) |
 | Constructor-injected provider | Explicit dependency | Forces provider abstraction into pool signature | ❌ Rejected — pool shouldn't know about providers |
 | Abstract base class | Standard OOP | Requires subclassing, overkill for simple fetch | ❌ Rejected — not Pythonic for this use case |
 | Event stream | Decoupled, reactive | Complex state synchronization | ❌ Rejected — overkill for current needs |
@@ -98,7 +98,7 @@ class VirtualPriceFetcher(Protocol):
 - **More boilerplate**: `Bot.build_pool()` is longer than direct instantiation
 - **Learning curve**: Users must understand the Bot session pattern
 - **Migration effort**: All existing pool creation code needs updating
-- **Constructor bloat**: Pool `__init__` gains many optional fetcher parameters
+- **Constructor bloat**: Resolved — Curve pool now has a single `data_provider` parameter instead of 13 fetcher callbacks (Plan 040)
 
 ## Migration Path
 
@@ -117,10 +117,12 @@ class VirtualPriceFetcher(Protocol):
 - All `ProviderAdapter`-taking methods removed from pool classes (`get_reserves()`, `get_immutable_pool_values()`, `from_chain` classmethods, etc.)
 - Plan 017 complete
 
-### Phase 4: Cleanup 🔄
-- Deprecate direct pool instantiation
-- Update all tests to use `Fake*` fetchers
+### Phase 4: Cleanup ✅
+- Typed pool builders (`build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`) emit `DeprecationWarning` — use `build_pool()` instead (Plan 044)
 - `PoolFamily`/`PoolInvariant` enum naming resolved (Plan 020)
+- Curve fetcher callbacks collapsed into single `CurveDataProvider` seam (Plan 040)
+- V2 variant builders extracted from `V2PoolBuilder` into per-variant builders (Plan 043)
+- `ProviderBackend` protocol replaces `EthereumProvider` + `_SyncProviderBackend` mirror (Plan 042)
 
 ## Testing Patterns
 
@@ -130,11 +132,9 @@ class VirtualPriceFetcher(Protocol):
 def test_stableswap_swap():
     pool = CurveStableswapPool(
         address="0x1234...",
+        data_provider=FakeCurveDataProvider(),  # Fixed-return test double
         tokens=[FAKE_DAI, FAKE_USDC],
         A=1000,
-        # Inject fetchers directly
-        rate_fetcher=lambda: [10**18] * 2,
-        virtual_price_fetcher=lambda: 10**18,
     )
     result = pool.calculate_tokens_out_from_tokens_in(
         token_in=FAKE_DAI, token_in_quantity=1000000

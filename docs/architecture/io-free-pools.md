@@ -2,7 +2,7 @@
 
 ## Overview
 
-The I/O-free architecture is a design pattern for pool implementations that decouples on-chain data fetching from pool logic. Instead of calling provider methods directly, pools receive **fetcher callbacks** at construction time and call them on-demand when data is needed.
+The I/O-free architecture is a design pattern for pool implementations that decouples on-chain data fetching from pool logic. Instead of calling provider methods directly, pools receive a **data provider** (or fetcher callbacks, in earlier versions) at construction time and call them on-demand when data is needed.
 
 ## Motivation
 
@@ -54,86 +54,91 @@ class IoFreePool:
 ┌───────────────────────────────────────┐
 │  Client Code (e.g., Arbitrage Cycle)  │
 │  - Calls pool methods                 │
-│  - Doesn't see fetcher calls          │
+│  - Doesn't see data_provider calls     │
 ├───────────────────────────────────────┤
 │  Pool Class (e.g., CurveStableswapPool)│
 │  - Pure swap calculation logic         │
-│  - Calls fetcher callbacks on-demand   │
+│  - Calls data_provider on-demand       │
 │  - No provider/connection imports      │
 ├───────────────────────────────────────┤
-│  Fetcher Protocols (types.py)          │
-│  - RateFetcher, VirtualPriceFetcher, etc│
-│  - Pure type signatures                │
+│  CurveDataProvider Protocol            │
+│  - 13 methods: D, gamma, virtual_price,│
+│    base_virtual_price, price_scale,    │
+│    admin_balances, lending_rate, etc.  │
+│  - Single seam replaces 13 fetchers    │
 ├───────────────────────────────────────┤
-│  Fetcher Factories (e.g., Bot.build_pool)│
-│  - Create closures capturing provider  │
-│  - Handle I/O, error handling, caching  │
-│  - Return callables matching protocols  │
+│  _CurveDataProviderImpl (fetcher_factory)│
+│  - Wraps fetcher closures from factory │
+│  - Handles I/O, error handling, caching │
+│  - Created via fetchers.create_provider()│
 └───────────────────────────────────────┘
 ```
 
 ### Protocol Definitions
 
-Fetchers are `Protocol` types (structural subtyping), not ABCs:
+Curve uses a single `CurveDataProvider` protocol (structural subtyping), not ABCs:
 
 ```python
-class RateFetcher(Protocol):
-    """Fetch rates for lending tokens at a given block."""
-    def __call__(self, block_number: int) -> tuple[int, ...]: ...
-
-class VirtualPriceFetcher(Protocol):
-    """Fetch virtual price from a base pool."""
-    def __call__(self, block_number: int) -> int: ...
+@runtime_checkable
+class CurveDataProvider(Protocol):
+    """Single I/O seam for Curve pools."""
+    def D(self, block_number: int) -> int: ...
+    def gamma(self, block_number: int) -> int: ...
+    def virtual_price(self, block_number: int) -> int: ...
+    def base_virtual_price(self, block_number: int) -> int: ...
+    def price_scale(self, block_number: int) -> tuple[int, ...]: ...
+    def admin_balances(self, block_number: int) -> tuple[int, ...]: ...
+    def lending_rate(self, block_number: int, token_address: str) -> int: ...
+    def redemption_price(self, block_number: int) -> int: ...
+    def block_timestamp(self, block_number: int) -> int: ...
+    def block_number(self) -> int: ...
+    def token_balance(self, block_number: int, token_address: str) -> int: ...
+    def token_total_supply(self, block_number: int, token_address: str) -> int: ...
+    def is_crypto(self) -> bool: ...
 ```
 
 **Why Protocols?**
 - No inheritance required
-- Any callable with matching signature works
-- Natural fit for closure-based implementations
+- Any object with matching methods works
+- Natural fit for `_CurveDataProviderImpl` wrapping existing fetcher closures
+- Tests use `FakeCurveDataProvider` with fixed return values
 
-### Fetcher Factory Pattern
+### Data Provider Factory Pattern
 
-The builder creates fetcher closures:
+The builder creates a `_CurveDataProviderImpl` via the fetcher factory:
 
 ```python
 def build(self, pool_address):
-    provider = self.get_provider_for_chain(chain_id)
+    # Create data provider (wraps all 13 fetcher closures into a single object)
+    fetchers = CurveFetcherFactory(connections=self._connections, chain_id=chain_id)
+    data_provider = fetchers.create_provider(pool_address)
     
-    # Create fetcher closures
-    def rate_fetcher(block_number: int) -> tuple[int, ...]:
-        # Provider captured in closure
-        results = []
-        for i, token in enumerate(lending_tokens):
-            rate = provider.call(token.address, "exchangeRateStored", block_number)
-            results.append(rate)
-        return tuple(results)
-    
-    def virtual_price_fetcher(block_number: int) -> int:
-        return provider.call(base_pool_address, "get_virtual_price", block_number)
-    
-    # Inject fetchers into pool
+    # Inject single data_provider into pool
     return CurveStableswapPool(
         address=pool_address,
-        rate_fetcher=rate_fetcher,
-        virtual_price_fetcher=virtual_price_fetcher,
-        ...
+        data_provider=data_provider,  # Single parameter replaces 13 fetcher callbacks
+        ...,
     )
 ```
 
-**Key insight**: The pool never touches `provider` or `connection_manager`. I/O lives in the injected closures.
+**Key insight**: The pool never touches `provider` or `connection_manager`. I/O lives in the `_CurveDataProviderImpl` which wraps fetcher closures that capture the provider.
 
 ## Migration Status
 
 ### Completed
 
-- **Curve StableSwap Pools** — fully I/O-free with fetcher callbacks (ADR-001 Phase 1–2)
+- **Curve StableSwap Pools** — fully I/O-free with `CurveDataProvider` seam (ADR-001 Phase 1–2, Plan 040 collapsed 13 fetchers → 1 data provider)
 - **All pool construction** — `Bot.build_*_pool()` methods fetch data from DB/RPC and pass values to pool constructors; no provider references on pool objects after construction
-- **Builder extraction** — pool construction I/O has been extracted from `Bot` into typed builder classes (`V2PoolBuilder`, `V3PoolBuilder`, `V4PoolBuilder`, `CurvePoolBuilder`, `Erc20Builder`)
+- **Builder extraction** — pool construction I/O has been extracted from `Bot` into typed builder classes (`V2PoolBuilder`, `V3PoolBuilder`, `V4PoolBuilder`, `CurvePoolBuilder`, `Erc20Builder`); V2 variant builders extracted into `V2BuilderBase`, `AerodromeV2Builder`, `CamelotBuilder` (Plan 043)
 - **V2/V3/V4/Aerodrome pool classes** — all `ProviderAdapter`-taking methods removed; I/O for construction and updates lives entirely in builders (ADR-001 Phase 3 complete, Plan 017)
+- **Curve DyCalculator seam** — 14 `match`/`if` dispatch branches in `get_dy()` replaced by injectable calculator objects; pure math functions in `calculations/stableswap.py` (Plan 039)
+- **Curve state mixin** — 25 attributes + 22 properties with `_xxx` private pattern; `StableswapPoolState` (Plan 041)
+- **ProviderBackend** — merged `EthereumProvider` + `_SyncProviderBackend` → `ProviderBackend` protocol; `__getattr__` dispatch replaces 15× delegation methods (Plan 042)
 - **Builder Protocol** — `PoolBuilder` protocol replaces the 4-way union type annotation; `_dispatch_build()` isinstance chain eliminated via `**kwargs` forwarding (Plan 035)
 - **Pool → Hop conversion** — each pool's `to_hop_state()` is the single source of truth; `solver_hop_builders.py` deleted (Plan 033)
 - **SwapAmounts consolidation** — `input_amount()`/`output_amount()` on `AbstractSwapAmounts`; `build_swap_amount()` on pool classes via `ArbitragePathPool` protocol; `_extract_amount_in/out` deleted (Plan 036)
 - **Legacy arbitrage cycles** — moved to `_legacy/` with deprecation warnings; `AbstractArbitrage` and `get_arbitrage_helpers()` deleted (Plan 038)
+- **Bot typed builders deprecated** — `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool` emit `DeprecationWarning`; use `build_pool()` (Plan 044)
 - **Functions module** — `functions.py` split into domain-aligned modules: `provider/call_helpers.py`, `provider/log_fetching.py`, `contract/addresses.py`, `calculations/evm_math.py`, `provider/block_helpers.py`; `eip_191_hash` deleted as dead code (Plan 037)
 
 ## Migration Guide
@@ -160,15 +165,19 @@ class PoolWithIo:
 **After (Fetcher Pattern):**
 ```python
 class IoFreePool:
-    def __init__(self, address, rate_fetcher: RateFetcher | None = None):
+    def __init__(self, address, data_provider: CurveDataProvider | None = None):
         self.address = address
-        self._rate_fetcher = rate_fetcher  # ✅ Injected callback
+        self._data_provider = data_provider  # ✅ Injected seam
     
     def _get_stored_rates(self, block_number) -> tuple[int, ...]:
-        if self._rate_fetcher is None:
-            raise MissingCurveData("No rate_fetcher provided")
+        if self._data_provider is None:
+            raise MissingCurveData("No data_provider provided")
         # ✅ Pure delegation: pool doesn't know about providers
-        return self._rate_fetcher(block_number)
+        rates = []
+        for token in self.lending_tokens:
+            rate = self._data_provider.lending_rate(block_number, token.address)
+            rates.append(rate)
+        return tuple(rates)
 ```
 
 **Builder-side (Bot delegates to builders, not pools):**
@@ -189,15 +198,14 @@ class V2PoolBuilder:
             # No provider reference passed to pool
         )
 
-# Curve construction: builder creates fetcher closures, injects into pool
+# Curve construction: builder creates data_provider, injects into pool
 class CurvePoolBuilder:
     def build(self, address, *, chain_id, ...):
         fetchers = CurveFetcherFactory(connections=self._connections, chain_id=chain_id)
+        data_provider = fetchers.create_provider(pool_address)  # Single seam
         pool = CurveStableswapPool(
             ...,
-            virtual_price_fetcher=fetchers.virtual_price_fetcher(pool_address),
-            timestamp_fetcher=fetchers.timestamp_fetcher(),
-            # Fetchers are closures — pool calls them, doesn't know about providers
+            data_provider=data_provider,  # Single parameter replaces 13 fetcher callbacks
         )
 ```
 
@@ -206,7 +214,7 @@ class CurvePoolBuilder:
 ### Use I/O-Free Architecture When:
 
 1. **Testing matters**: You need deterministic unit tests without network
-2. **Multiple I/O sites**: Pool needs rates, virtual prices, timestamps, balances, etc.
+2. **Multiple I/O sites**: Pool needs rates, virtual prices, timestamps, balances, etc. (Curve uses a single `CurveDataProvider` with 13 methods instead of 13 separate callbacks)
 3. **Cross-cutting concerns**: A single pool type needs different fetch strategies (e.g., cached vs real-time)
 4. **Separation of concerns**: Core logic should be pure, testable
 5. **Async complexity**: Pool doesn't care if fetcher is sync or async (caller manages)
@@ -217,16 +225,34 @@ class CurvePoolBuilder:
 2. **Simple fetch**: No complex error handling or caching needed
 3. **Performance**: Avoids function call overhead (marginal in practice)
 
-## Testing with Fake Fetchers
+## Testing with Fake Data Providers
 
 ```python
 def test_pool_calculation():
     # Pure test: no mocking, no providers
-    pool = IoFreePool(
+    from degenbot.curve.types import CurveDataProvider
+    
+    class FakeCurveDataProvider:
+        """Fixed-return test double for CurveDataProvider."""
+        def D(self, block_number): return 3 * 10**18
+        def gamma(self, block_number): return 10**18
+        def virtual_price(self, block_number): return 10**18 + 10**16
+        def base_virtual_price(self, block_number): return 10**18
+        def price_scale(self, block_number): return (10**18,)
+        def admin_balances(self, block_number): return (0, 0, 0)
+        def lending_rate(self, block_number, token_address): return 10**18
+        def redemption_price(self, block_number): return 10**18
+        def block_timestamp(self, block_number): return 1234567890
+        def block_number(self): return 100
+        def token_balance(self, block_number, token_address): return 10**18
+        def token_total_supply(self, block_number, token_address): return 10**18
+        def is_crypto(self): return False
+    
+    pool = CurveStableswapPool(
         address="0x1234...",
-        rate_fetcher=lambda block: (PRECISION, PRECISION * 2),  # Fake rates
-        virtual_price_fetcher=lambda block: PRECISION + PRECISION // 100,  # Fake VP
-        timestamp_fetcher=lambda block: 1234567890,
+        data_provider=FakeCurveDataProvider(),
+        A=1000,
+        tokens=[FAKE_DAI, FAKE_USDC],
     )
     
     # Test calculation logic only
@@ -236,7 +262,7 @@ def test_pool_calculation():
 
 ## Error Handling
 
-Fetchers should handle I/O errors and return appropriate values or raise domain exceptions:
+Fetchers (accessed via `CurveDataProvider` methods) should handle I/O errors and return appropriate values or raise domain exceptions:
 
 ```python
 def rate_fetcher(block_number: int) -> tuple[int, ...]:
@@ -251,17 +277,25 @@ The pool catches `MissingCurveData` (not `ContractLogicError` or `ConnectionErro
 
 ## Curve-Specific Implementation
 
-The Curve I/O-free refactor introduced these fetchers:
+Curve pools use a **CurveDataProvider** seam — a single `@runtime_checkable` protocol with 13 methods that replaces the former 13 individual fetcher callback parameters. The pool calls `self._data_provider.xxx()` on-demand; the builder creates a `_CurveDataProviderImpl` that wraps existing fetcher closures.
 
-| Fetcher | Purpose | When Injected |
-|---------|---------|---------------|
-| `RateFetcher` | Lending token rates (cToken/yToken) | Pool has `is_lending=True` tokens |
-| `VirtualPriceFetcher` | Base pool virtual price | Pool is a metapool |
-| `TimestampFetcher` | Block timestamps for A ramping | Pool has ramping A coefficient |
-| `RedemptionPriceFetcher` | LSD redemption price | Pool wraps stETH, frxETH, etc. |
-| `AdminBalancesFetcher` | Admin fee balances | Pool tracks admin fees |
+| Method | Purpose | When Needed |
+|--------|---------|-------------|
+| `D()` | On-chain invariant D value | Crypto pools |
+| `gamma()` | Gamma parameter | Crypto pools |
+| `virtual_price()` | Base pool virtual price | Metapools |
+| `base_virtual_price()` | Base pool virtual price (alternate) | Metapools |
+| `price_scale()` | On-chain price_scale values | Crypto pools |
+| `admin_balances()` | Admin fee balances | Pools tracking admin fees |
+| `lending_rate()` | Per-token lending rates | Lending pools |
+| `redemption_price()` | LSD redemption price | Pools wrapping stETH, frxETH |
+| `block_timestamp()` | Block timestamps for A ramping | Pools with ramping A |
+| `block_number()` | Current block number | All pools |
+| `token_balance()` | Token balance at block | Metapools |
+| `token_total_supply()` | Token total supply | Metapools |
+| `is_crypto()` | Whether pool uses CryptoSwap | All pools (flag) |
 
-See `src/degenbot/curve/types.py` for protocol definitions.
+See `src/degenbot/curve/types.py` for protocol definition and `src/degenbot/curve/fetcher_factory.py` for the `_CurveDataProviderImpl`.
 
 ## Related Pool Types
 
@@ -276,7 +310,7 @@ Pools participating in the Rust solver cache implement the `CacheablePool` proto
 ## References
 
 - `src/degenbot/curve/CONTEXT.md` — Curve domain terminology
-- `src/degenbot/curve/types.py` — Fetcher protocol definitions
+- `src/degenbot/curve/types.py` — CurveDataProvider protocol definition
 - `src/degenbot/types/pool_protocols.py` — Pool simulation and cacheable protocols
 - `plans/completed/017-v2-v3-io-free-migration.md` — Plan to complete ADR-001 Phase 3 (complete)
 - `plans/019-pool-cache-adapter-protocol.md` — CacheablePool protocol plan

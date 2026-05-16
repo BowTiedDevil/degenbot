@@ -581,7 +581,7 @@ Users wanting fine-grained control over **all** client options may pass them thr
 
 ### Curve StableSwap Pools (I/O-Free)
 
-Curve pools follow the I/O-free architecture with fetcher callbacks. The Bot handles metapool detection, lending token identification, and fetcher injection:
+Curve pools follow the I/O-free architecture with a single `CurveDataProvider` seam. The Bot handles metapool detection, lending token identification, and data provider injection:
 
 <!-- skip: start "requires live RPC node; mixed output" -->
 
@@ -611,8 +611,8 @@ crvUSD/USDC Curve Metapool
 ... )
 987654321098765432109  # ~987 3Crv LP tokens
 
-# For lending pools (cTokens), rates are fetched on-demand via the injected RateFetcher
-# No I/O during calculation - pool calls fetcher when needed
+# For lending pools (cTokens), rates are fetched on-demand via the injected CurveDataProvider
+# No I/O during calculation - pool calls data_provider methods when needed
 ```
 
 <!-- skip: end -->
@@ -1172,7 +1172,7 @@ just dev  # Build and install Python extension
 Additional documentation is available in the [`docs/`](docs/) directory:
 
 - **[Architecture](docs/architecture/)**: High-level architectural patterns
-  - [I/O-Free Pool Architecture](docs/architecture/io-free-pools.md) — The fetcher callback pattern for decoupled I/O
+  - [I/O-Free Pool Architecture](docs/architecture/io-free-pools.md) — The CurveDataProvider seam for decoupled I/O
   - [Semantic Matching](docs/architecture/semantic-matching.md) — Event processing patterns for Aave
 - **[Aave V3](docs/aave/)**: Comprehensive control flow diagrams and amount transformations for Aave operations
 - **[Arbitrage](docs/arbitrage/)**: Multi-pool cycle testing documentation
@@ -1185,7 +1185,7 @@ Each module has a `CONTEXT.md` defining domain terminology:
 
 - [Pool Types & Trackers](src/degenbot/types/CONTEXT.md) — Pool, Pool State, Reserves, Tick, Fee representations
 - [Uniswap](src/degenbot/uniswap/CONTEXT.md) — V2/V3/V4 pools, Pool Tracker, Managed Pool, Pool ID
-- [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — Metapools, lending pools, fetchers, A coefficient
+- [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — Metapools, lending pools, CurveDataProvider seam, A coefficient
 - [Aave](src/degenbot/aave/CONTEXT.md) — Market, Asset, Reserve, Enrichment, Liquidation
 - [Arbitrage](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Solver, Optimizer, Hop State
 - [Registries](src/degenbot/registry/CONTEXT.md) — Pool, Token, Managed Pool registries
