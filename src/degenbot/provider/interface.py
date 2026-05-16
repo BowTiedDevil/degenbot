@@ -27,15 +27,17 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, cast, runtime_checkable
 
+from web3 import AsyncWeb3, Web3
+
+from degenbot.degenbot_rs import AlloyProvider
+from degenbot.provider.offline_provider import OfflineProvider
+
 if TYPE_CHECKING:
     from eth_typing import BlockIdentifier
     from hexbytes import HexBytes
-    from web3 import AsyncWeb3, Web3
-    from web3.types import BlockData, LogReceipt, TxParams
+    from web3.types import BlockData, FilterParams, LogReceipt, TxParams
 
     from degenbot.degenbot_rs import AsyncAlloyProvider
-    from degenbot.provider import AlloyProvider
-    from degenbot.provider.offline_provider import OfflineProvider
 
 # ruff: noqa: ERA001
 
@@ -73,7 +75,7 @@ class ProviderBackend(Protocol):
 
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes: ...
 
-    def call_raw(self, tx: TxParams, block: int | None = None) -> HexBytes: ...
+    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes: ...
 
     def get_code(self, address: str, block: int | None = None) -> HexBytes: ...
 
@@ -114,17 +116,17 @@ class _Web3Adapter:
 
     @property
     def chain_id(self) -> int:
-        return cast("int", self._w3.eth.chain_id)
+        return self._w3.eth.chain_id
 
     @property
     def block_number(self) -> int:
-        return cast("int", self._w3.eth.block_number)
+        return self._w3.eth.block_number
 
     def get_block_number(self) -> int:
-        return cast("int", self._w3.eth.get_block_number())
+        return self._w3.eth.get_block_number()
 
     def get_block(self, block_identifier: int | str) -> BlockData | None:
-        return cast("BlockData | None", self._w3.eth.get_block(block_identifier))
+        return self._w3.eth.get_block(block_identifier)  # type: ignore[arg-type]
 
     def get_logs(
         self,
@@ -133,34 +135,34 @@ class _Web3Adapter:
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
     ) -> list[LogReceipt]:
-        filter_param: dict[str, object] = {"fromBlock": from_block, "toBlock": to_block}
+        filter_param: FilterParams = {"fromBlock": from_block, "toBlock": to_block}
         if addresses:
-            filter_param["address"] = addresses
+            filter_param["address"] = addresses  # type: ignore[typeddict-item]
         if topics:
             filter_param["topics"] = topics
-        return cast("list[LogReceipt]", self._w3.eth.get_logs(filter_param))
+        return self._w3.eth.get_logs(filter_param)
 
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         tx: TxParams = {"to": to, "data": data}
-        return cast("HexBytes", self._w3.eth.call(tx, block))
+        return self._w3.eth.call(tx, block)
 
-    def call_raw(self, tx: TxParams, block: int | None = None) -> HexBytes:
-        return cast("HexBytes", self._w3.eth.call(tx, block))
+    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
+        return self._w3.eth.call(tx, block)
 
     def get_code(self, address: str, block: int | None = None) -> HexBytes:
-        return cast("HexBytes", self._w3.eth.get_code(address, block))
+        return self._w3.eth.get_code(address, block)  # type: ignore[arg-type]
 
     def get_balance(self, address: str, block: int | None = None) -> int:
-        return cast("int", self._w3.eth.get_balance(address, block))
+        return self._w3.eth.get_balance(address, block)  # type: ignore[arg-type]
 
     def get_storage_at(self, address: str, position: int, block: int | None = None) -> HexBytes:
-        return cast("HexBytes", self._w3.eth.get_storage_at(address, position, block))
+        return self._w3.eth.get_storage_at(address, position, block)  # type: ignore[arg-type]
 
     def get_transaction_count(self, address: str, block: int | None = None) -> int:
-        return cast("int", self._w3.eth.get_transaction_count(address, block))
+        return self._w3.eth.get_transaction_count(address, block)  # type: ignore[arg-type]
 
     def is_connected(self) -> bool:
-        return cast("bool", self._w3.is_connected())
+        return self._w3.is_connected()
 
     def close(self) -> None:
         if hasattr(self._w3, "close"):
@@ -175,14 +177,14 @@ class _AlloyAdapter:
 
     @property
     def chain_id(self) -> int:
-        return cast("int", self._alloy.chain_id)
+        return self._alloy.get_chain_id()
 
     @property
     def block_number(self) -> int:
-        return cast("int", self._alloy.block_number)
+        return self._alloy.get_block_number()
 
     def get_block_number(self) -> int:
-        return cast("int", self._alloy.get_block_number())
+        return self._alloy.get_block_number()
 
     def get_block(self, block_identifier: int | str) -> BlockData | None:
         # AlloyProvider only supports integer block numbers
@@ -193,7 +195,7 @@ class _AlloyAdapter:
                 block_identifier = 0
             elif block_identifier == "pending":
                 block_identifier = self._alloy.get_block_number() + 1
-        return cast("BlockData | None", self._alloy.get_block(block_identifier))
+        return self._alloy.get_block(block_identifier)  # type: ignore[arg-type,return-value]
 
     def get_logs(
         self,
@@ -202,33 +204,30 @@ class _AlloyAdapter:
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
     ) -> list[LogReceipt]:
-        return cast(
-            "list[LogReceipt]",
-            self._alloy.get_logs(
-                from_block=from_block,
-                to_block=to_block,
-                addresses=addresses,
-                topics=topics,
-            ),
+        return self._alloy.get_logs(  # type: ignore[return-value]
+            from_block=from_block,
+            to_block=to_block,
+            addresses=addresses,
+            topics=topics,
         )
 
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
-        return cast("HexBytes", self._alloy.call(to, data, block_number=block))
+        return self._alloy.call(to, data, block_number=block)
 
-    def call_raw(self, tx: TxParams, block: int | None = None) -> HexBytes:
-        return cast("HexBytes", self._alloy.call(tx["to"], tx["data"], block_number=block))
+    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
+        return self._alloy.call(tx["to"], tx["data"], block_number=block)  # type: ignore[arg-type]
 
     def get_code(self, address: str, block: int | None = None) -> HexBytes:
-        return cast("HexBytes", self._alloy.get_code(address, block_number=block))
+        return self._alloy.get_code(address, block_number=block)
 
     def get_balance(self, address: str, block: int | None = None) -> int:
-        return cast("int", self._alloy.get_balance(address, block_number=block))
+        return self._alloy.get_balance(address, block_number=block)
 
     def get_storage_at(self, address: str, position: int, block: int | None = None) -> HexBytes:
-        return cast("HexBytes", self._alloy.get_storage_at(address, position, block_number=block))
+        return self._alloy.get_storage_at(address, position, block_number=block)
 
     def get_transaction_count(self, address: str, block: int | None = None) -> int:
-        return cast("int", self._alloy.get_transaction_count(address, block_number=block))
+        return self._alloy.get_transaction_count(address, block_number=block)
 
     def is_connected(self) -> bool:  # noqa: PLR6301
         return True
@@ -246,17 +245,17 @@ class _OfflineAdapter:
 
     @property
     def chain_id(self) -> int:
-        return cast("int", self._offline.chain_id)
+        return self._offline.chain_id
 
     @property
     def block_number(self) -> int:
-        return cast("int", self._offline.block_number)
+        return self._offline.block_number
 
     def get_block_number(self) -> int:
-        return cast("int", self._offline.get_block_number())
+        return self._offline.get_block_number()
 
     def get_block(self, block_identifier: int | str) -> BlockData | None:
-        return cast("BlockData | None", self._offline.get_block(block_identifier))
+        return self._offline.get_block(block_identifier)  # type: ignore[return-value]
 
     def get_logs(
         self,
@@ -265,33 +264,30 @@ class _OfflineAdapter:
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
     ) -> list[LogReceipt]:
-        return cast(
-            "list[LogReceipt]",
-            self._offline.get_logs(
-                from_block=from_block,
-                to_block=to_block,
-                addresses=addresses,
-                topics=topics,
-            ),
+        return self._offline.get_logs(  # type: ignore[return-value]
+            from_block=from_block,
+            to_block=to_block,
+            addresses=addresses,
+            topics=topics,
         )
 
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
-        return cast("HexBytes", self._offline.call(to, data, block_number=block))
+        return self._offline.call(to, data, block_number=block)
 
-    def call_raw(self, tx: TxParams, block: int | None = None) -> HexBytes:
-        return cast("HexBytes", self._offline.call(tx["to"], tx["data"], block_number=block))
+    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
+        return self._offline.call(tx["to"], tx["data"], block_number=block)  # type: ignore[arg-type]
 
     def get_code(self, address: str, block: int | None = None) -> HexBytes:
-        return cast("HexBytes", self._offline.get_code(address, block_number=block))
+        return self._offline.get_code(address, block_number=block)
 
     def get_balance(self, address: str, block: int | None = None) -> int:
-        return cast("int", self._offline.get_balance(address, block_number=block))
+        return self._offline.get_balance(address, block_number=block)
 
     def get_storage_at(self, address: str, position: int, block: int | None = None) -> HexBytes:
-        return cast("HexBytes", self._offline.get_storage_at(address, position, block_number=block))
+        return self._offline.get_storage_at(address, position, block_number=block)
 
     def get_transaction_count(self, address: str, block: int | None = None) -> int:
-        return cast("int", self._offline.get_transaction_count(address, block_number=block))
+        return self._offline.get_transaction_count(address, block_number=block)
 
     def is_connected(self) -> bool:  # noqa: PLR6301
         return True
@@ -485,7 +481,7 @@ class ProviderAdapter:  # noqa:PLR0904
         if block_data is None:
             msg = f"Block {block} not found"
             raise ValueError(msg)
-        return cast("int", block_data["timestamp"])
+        return block_data["timestamp"]
 
     def make_request(self, method: str, params: list[Any]) -> Any:  # noqa: ANN401
         """Make a raw JSON-RPC request.
@@ -503,8 +499,9 @@ class ProviderAdapter:  # noqa:PLR0904
         Raises:
             AttributeError: If the underlying provider doesn't support make_request
         """
-        if hasattr(self._raw_provider, "make_request"):
-            return self._raw_provider.make_request(method, params)
+        raw = self._raw_provider
+        if raw is not None and hasattr(raw, "make_request"):
+            return raw.make_request(method, params)
         msg = f"Provider type '{self._provider_type}' does not support make_request"
         raise AttributeError(msg)
 
@@ -664,17 +661,17 @@ class AsyncProviderBackend(Protocol):
 class _AsyncWeb3Adapter:
     """Adapter wrapping an AsyncWeb3 instance to satisfy AsyncProviderBackend."""
 
-    def __init__(self, w3: AsyncWeb3) -> None:
+    def __init__(self, w3: AsyncWeb3[Any]) -> None:
         self._w3 = w3
 
     async def get_block_number(self) -> int:
-        return cast("int", await self._w3.eth.get_block_number())
+        return await self._w3.eth.get_block_number()
 
     async def get_chain_id(self) -> int:
-        return cast("int", await self._w3.eth.chain_id)
+        return await self._w3.eth.chain_id
 
     async def get_block(self, block_identifier: int | str) -> BlockData | None:
-        return cast("BlockData | None", await self._w3.eth.get_block(block_identifier))
+        return await self._w3.eth.get_block(block_identifier)  # type: ignore[arg-type]
 
     async def get_logs(
         self,
@@ -683,30 +680,30 @@ class _AsyncWeb3Adapter:
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
     ) -> list[LogReceipt]:
-        filter_param: dict[str, object] = {"fromBlock": from_block, "toBlock": to_block}
+        filter_param: FilterParams = {"fromBlock": from_block, "toBlock": to_block}
         if addresses:
-            filter_param["address"] = addresses
+            filter_param["address"] = addresses  # type: ignore[typeddict-item]
         if topics:
             filter_param["topics"] = topics
-        return cast("list[LogReceipt]", await self._w3.eth.get_logs(filter_param))
+        return await self._w3.eth.get_logs(filter_param)
 
     async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         tx: TxParams = {"to": to, "data": data}
-        return cast("HexBytes", await self._w3.eth.call(tx, block))
+        return await self._w3.eth.call(tx, block)
 
     async def get_code(self, address: str, block: int | None = None) -> HexBytes:
-        return cast("HexBytes", await self._w3.eth.get_code(address, block))
+        return await self._w3.eth.get_code(address, block)  # type: ignore[arg-type]
 
     async def get_balance(self, address: str, block: int | None = None) -> int:
-        return cast("int", await self._w3.eth.get_balance(address, block))
+        return await self._w3.eth.get_balance(address, block)  # type: ignore[arg-type]
 
     async def get_storage_at(
         self, address: str, position: int, block: int | None = None
     ) -> HexBytes:
-        return cast("HexBytes", await self._w3.eth.get_storage_at(address, position, block))
+        return await self._w3.eth.get_storage_at(address, position, block)  # type: ignore[arg-type]
 
     async def get_transaction_count(self, address: str, block: int | None = None) -> int:
-        return cast("int", await self._w3.eth.get_transaction_count(address, block))
+        return await self._w3.eth.get_transaction_count(address, block)  # type: ignore[arg-type]
 
     def is_connected(self) -> bool:  # noqa: PLR6301
         return True
@@ -723,10 +720,10 @@ class _AsyncAlloyAdapter:
         self._alloy = alloy
 
     async def get_block_number(self) -> int:
-        return cast("int", await self._alloy.get_block_number())
+        return await self._alloy.get_block_number()
 
     async def get_chain_id(self) -> int:
-        return cast("int", await self._alloy.get_chain_id())
+        return await self._alloy.get_chain_id()
 
     async def get_block(self, block_identifier: int | str) -> BlockData | None:
         if isinstance(block_identifier, str):
@@ -736,7 +733,7 @@ class _AsyncAlloyAdapter:
                 block_identifier = 0
             elif block_identifier == "pending":
                 block_identifier = await self._alloy.get_block_number() + 1
-        return cast("BlockData | None", await self._alloy.get_block(block_identifier))
+        return await self._alloy.get_block(block_identifier)  # type: ignore[arg-type,return-value]
 
     async def get_logs(
         self,
@@ -745,32 +742,29 @@ class _AsyncAlloyAdapter:
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
     ) -> list[LogReceipt]:
-        return cast(
-            "list[LogReceipt]",
-            await self._alloy.get_logs(
-                from_block=from_block,
-                to_block=to_block,
-                addresses=addresses,
-                topics=topics,
-            ),
+        return await self._alloy.get_logs(  # type: ignore[return-value]
+            from_block=from_block,
+            to_block=to_block,
+            addresses=addresses,
+            topics=topics,
         )
 
     async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
-        return cast("HexBytes", await self._alloy.call(to, data, block_number=block))
+        return await self._alloy.call(to, data, block_number=block)
 
     async def get_code(self, address: str, block: int | None = None) -> HexBytes:
-        return cast("HexBytes", await self._alloy.get_code(address, block))
+        return await self._alloy.get_code(address, block)
 
     async def get_balance(self, address: str, block: int | None = None) -> int:
-        return cast("int", await self._alloy.get_balance(address, block))
+        return await self._alloy.get_balance(address, block)
 
     async def get_storage_at(
         self, address: str, position: int, block: int | None = None
     ) -> HexBytes:
-        return cast("HexBytes", await self._alloy.get_storage_at(address, position, block))
+        return await self._alloy.get_storage_at(address, position, block)
 
     async def get_transaction_count(self, address: str, block: int | None = None) -> int:
-        return cast("int", await self._alloy.get_transaction_count(address, block))
+        return await self._alloy.get_transaction_count(address, block)
 
     def is_connected(self) -> bool:  # noqa: PLR6301
         return True
@@ -785,7 +779,7 @@ class _AsyncAlloyAdapter:
 # ============================================================================
 
 
-class AsyncProviderAdapter:
+class AsyncProviderAdapter:  # noqa:PLR0904
     """
     Async adapter that wraps either AsyncWeb3 or AsyncAlloyProvider.
 
@@ -802,19 +796,19 @@ class AsyncProviderAdapter:
         backend: AsyncProviderBackend,
         *,
         provider_type: Literal["web3", "alloy"],
-        raw_provider: AsyncWeb3 | AlloyProvider | OfflineProvider | None = None,
+        raw_provider: AsyncWeb3[Any] | AlloyProvider | AsyncAlloyProvider | OfflineProvider | None = None,
     ) -> None:
         self._backend = backend
         self._provider_type = provider_type
         self._raw_provider = raw_provider
 
     @classmethod
-    def from_web3(cls, async_w3: AsyncWeb3) -> Self:
+    def from_web3(cls, async_w3: AsyncWeb3[Any]) -> Self:
         """Create an adapter wrapping an AsyncWeb3 instance."""
         return cls(_AsyncWeb3Adapter(async_w3), provider_type="web3", raw_provider=async_w3)
 
     @classmethod
-    def from_alloy(cls, async_alloy: AlloyProvider) -> Self:
+    def from_alloy(cls, async_alloy: AsyncAlloyProvider) -> Self:
         """Create an adapter wrapping a Rust AsyncAlloyProvider."""
         return cls(
             _AsyncAlloyAdapter(async_alloy),
@@ -828,7 +822,7 @@ class AsyncProviderAdapter:
         return self._provider_type
 
     @property
-    def underlying(self) -> AsyncWeb3 | AlloyProvider | OfflineProvider | None:
+    def underlying(self) -> AsyncWeb3[Any] | AlloyProvider | AsyncAlloyProvider | OfflineProvider | None:
         """Get the underlying provider instance.
 
         .. deprecated:: 0.x
@@ -843,7 +837,7 @@ class AsyncProviderAdapter:
         )
         return self._raw_provider
 
-    def as_web3(self) -> AsyncWeb3 | None:
+    def as_web3(self) -> AsyncWeb3[Any] | None:
         """Return the underlying provider as AsyncWeb3, or None if not a Web3 provider."""
         if self._provider_type == "web3" and isinstance(self._raw_provider, AsyncWeb3):
             return self._raw_provider
@@ -1012,11 +1006,11 @@ def _backend_for_type(
     """Create the correct backend adapter for a provider type label."""
     match provider_type:
         case "web3":
-            return _Web3Adapter(provider)
+            return _Web3Adapter(cast("Web3", provider))
         case "alloy":
-            return _AlloyAdapter(provider)
+            return _AlloyAdapter(cast("AlloyProvider", provider))
         case "offline":
-            return _OfflineAdapter(provider)
+            return _OfflineAdapter(cast("OfflineProvider", provider))
         case _:
             msg = f"Unknown provider type: {provider_type}"
             raise ValueError(msg)

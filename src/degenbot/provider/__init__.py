@@ -30,7 +30,7 @@ Example:
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Self, cast
+from typing import Any, Self
 
 from hexbytes import HexBytes
 
@@ -177,7 +177,7 @@ class AlloyProvider:
         Returns:
             Contract bytecode as HexBytes
         """
-        return cast("HexBytes", self._provider.get_code(address, block_number))
+        return self._provider.get_code(address, block_number)
 
     def call(
         self,
@@ -204,7 +204,7 @@ class AlloyProvider:
             >>> result = provider.call("0xTokenAddress", calldata)
             >>> balance = int.from_bytes(result, "big")
         """
-        return cast("HexBytes", self._provider.call(to, data, block_number))
+        return self._provider.call(to, data, block_number)
 
     def get_logs(
         self,
@@ -348,10 +348,7 @@ class AlloyProvider:
         Returns:
             Storage value at the position as HexBytes (32 bytes)
         """
-        return cast(
-            "HexBytes",
-            self._provider.get_storage_at(address, position, block_number),
-        )
+        return self._provider.get_storage_at(address, position, block_number)
 
     def close(self) -> None:
         """Close connection pool and release resources."""
@@ -378,7 +375,7 @@ class AlloyProvider:
         Returns:
             Balance in wei as int
         """
-        return cast("int", self._provider.get_balance(address, block_number))
+        return self._provider.get_balance(address, block_number)
 
     def get_transaction_count(
         self,
@@ -394,7 +391,7 @@ class AlloyProvider:
         Returns:
             Transaction count as int
         """
-        return cast("int", self._provider.get_transaction_count(address, block_number))
+        return self._provider.get_transaction_count(address, block_number)
 
     def make_request(
         self,
