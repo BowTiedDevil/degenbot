@@ -14,7 +14,7 @@ allowing us to predict which V3 tick range will be active after arbitrage.
 import math
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from degenbot.arbitrage.optimizers.base import OptimizerType
 from degenbot.arbitrage.optimizers.v3_tick_predictor import (
@@ -133,7 +133,7 @@ def estimate_equilibrium_price(
     avg_fee = (v2_state.fee + v3_state.fee) / 2
     fee_adjustment = (1 - avg_fee) ** 0.5
 
-    return p_eq * fee_adjustment
+    return cast("float", p_eq * fee_adjustment)
 
 
 def estimate_equilibrium_sqrt_price(

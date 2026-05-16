@@ -12,7 +12,7 @@ Two calculation strategies:
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from degenbot.calculations.solidly_stable import (
     calc_exact_in_stable,
@@ -184,7 +184,7 @@ class AerodromeV2PoolCalc:
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
-        return self._fee
+        return cast("Fraction", self._fee)
 
     # ── Private: calculation strategy methods ──
 

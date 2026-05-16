@@ -78,7 +78,7 @@ class ConnectionManager:
         provider = self.get_provider(chain_id)
         if provider.provider_type != "web3":
             raise DegenbotValueError(message="Provider is not a Web3 provider.") from None
-        return provider.underlying
+        return cast("Web3", provider.underlying)
 
     def register_provider(
         self,

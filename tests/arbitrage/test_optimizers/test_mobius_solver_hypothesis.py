@@ -76,26 +76,22 @@ def make_n_pool_path(n: int, profit_factor: float = 1.1, base_reserve: float = 1
     """
     Generate an n-pool cycle with guaranteed profitability.
 
-    Creates a cycle where each pool has mispriced reserves, accumulating
-    to an overall profitable cycle.
+    Creates a cycle where each pool has mispriced reserves in the same
+    direction, so the product of marginal exchange rates (after fees)
+    exceeds 1. The per-hop marginal rate equals profit_factor^(1/n),
+    so the cycle product equals profit_factor.
     """
-    # Per-hop profit factor (geometric mean)
-    per_hop_factor = profit_factor ** (1.0 / n)
+    gamma = 1.0 - fee
+
+    # Per-hop target marginal rate after fees: gamma * reserve_out / reserve_in = per_hop
+    per_hop = profit_factor ** (1.0 / n)
 
     pools = []
-    current_reserve = base_reserve
-
     for i in range(n):
-        # Alternating direction to create cycle
-        if i % 2 == 0:
-            reserve_in = current_reserve
-            reserve_out = current_reserve * per_hop_factor
-        else:
-            reserve_in = current_reserve * per_hop_factor
-            reserve_out = current_reserve
-
+        reserve_in = base_reserve * (1.05**i)
+        # Set reserve_out so that gamma * reserve_out / reserve_in = per_hop
+        reserve_out = reserve_in * per_hop / gamma
         pools.append(PoolDef(reserve_in=reserve_in, reserve_out=reserve_out, fee=fee))
-        current_reserve = reserve_out if i % 2 == 0 else reserve_in
 
     return pools
 

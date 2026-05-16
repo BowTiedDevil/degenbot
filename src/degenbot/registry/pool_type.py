@@ -14,18 +14,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
+
+from eth_typing import ChecksumAddress
 
 if TYPE_CHECKING:
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
+    from degenbot.types.pool_protocols import ConcentratedLiquidityPool, ConstantProductPool
 
 
 @dataclass(frozen=True)
 class PoolDeploymentData:
     """Per-chain deployment data for a pool factory."""
 
-    factory_address: str
+    factory_address: ChecksumAddress
     deployer: str
     pool_init_hash: str | None
 
@@ -125,8 +129,8 @@ class PoolTypeRegistry:
     def __init__(self) -> None:
         self._entries: dict[tuple[int, str], _RegistryEntry] = {}
         self._kind_index: dict[str, PoolTypeDescriptor] = {}
-        self._default_v2_class: type[AbstractLiquidityPool] | None = None
-        self._default_v3_class: type[AbstractLiquidityPool] | None = None
+        self._default_v2_class: type[ConstantProductPool] | None = None
+        self._default_v3_class: type[ConcentratedLiquidityPool] | None = None
 
     # --- Registration ---
 
@@ -153,6 +157,8 @@ class PoolTypeRegistry:
             pool_init_hash: The CREATE2 init code hash (V2 only).
             deployer: The CREATE2 deployer address (defaults to factory_address).
         """
+        checksummed_factory = get_checksum_address(factory_address)
+
         key = (chain_id, factory_address)
         if key in self._entries:
             msg = f"Factory {factory_address} on chain {chain_id} is already registered."
@@ -168,7 +174,7 @@ class PoolTypeRegistry:
             variant=variant,
             kind=kind,
             deployment=PoolDeploymentData(
-                factory_address=factory_address,
+                factory_address=checksummed_factory,
                 deployer=deployer if deployer is not None else factory_address,
                 pool_init_hash=pool_init_hash,
             ),
@@ -181,14 +187,14 @@ class PoolTypeRegistry:
             family=family,
             variant=variant,
             kind=kind,
-            factory=factory_address,
+            factory=checksummed_factory,
         )
 
-    def set_default_v2_class(self, pool_class: type[AbstractLiquidityPool]) -> None:
+    def set_default_v2_class(self, pool_class: type[ConstantProductPool]) -> None:
         """Set the default V2 pool class when no factory-specific mapping exists."""
         self._default_v2_class = pool_class
 
-    def set_default_v3_class(self, pool_class: type[AbstractLiquidityPool]) -> None:
+    def set_default_v3_class(self, pool_class: type[ConcentratedLiquidityPool]) -> None:
         """Set the default V3 pool class when no factory-specific mapping exists."""
         self._default_v3_class = pool_class
 
@@ -212,20 +218,24 @@ class PoolTypeRegistry:
 
     def get_v2_class(
         self, chain_id: ChainId, factory_address: str
-    ) -> type[AbstractLiquidityPool] | None:
+    ) -> type[ConstantProductPool] | None:
         """Get the V2 pool class for (chain_id, factory), with default fallback."""
         entry = self._entries.get((chain_id, factory_address))
         if entry is not None:
-            return entry.pool_class
+            # Type narrowing: entry.pool_class satisfies ConstantProductPool
+            # because _derive_family validated the structural shape at registration
+            return entry.pool_class  # type: ignore[return-value]
         return self._default_v2_class
 
     def get_v3_class(
         self, chain_id: ChainId, factory_address: str
-    ) -> type[AbstractLiquidityPool] | None:
+    ) -> type[ConcentratedLiquidityPool] | None:
         """Get the V3 pool class for (chain_id, factory), with default fallback."""
         entry = self._entries.get((chain_id, factory_address))
         if entry is not None:
-            return entry.pool_class
+            # Type narrowing: entry.pool_class satisfies ConcentratedLiquidityPool
+            # because _derive_family validated the structural shape at registration
+            return entry.pool_class  # type: ignore[return-value]
         return self._default_v3_class
 
     def get_descriptor(self, chain_id: ChainId, factory_address: str) -> PoolTypeDescriptor | None:
@@ -237,7 +247,7 @@ class PoolTypeRegistry:
             family=entry.family,
             variant=entry.variant,
             kind=entry.kind,
-            factory=factory_address,
+            factory=entry.deployment.factory_address,
         )
 
     def get_deployment(self, chain_id: ChainId, factory_address: str) -> PoolDeploymentData | None:

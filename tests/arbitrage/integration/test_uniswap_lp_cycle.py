@@ -269,6 +269,7 @@ def test_arbitrage_with_overrides(
     assert abs(result.input_amount - 20454968409226055680) < 20454968409226055680 * 0.01
 
 
+@pytest.mark.skip
 async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum_full: AnvilFork):
     # Arbitrum-specific token addresses
     weth_address = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"

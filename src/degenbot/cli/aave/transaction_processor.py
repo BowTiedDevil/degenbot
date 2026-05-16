@@ -15,6 +15,7 @@ from operator import itemgetter
 from typing import assert_never
 
 import eth_abi.abi
+from eth_typing import ChecksumAddress
 from sqlalchemy import select
 
 from degenbot.aave.enrichment import ScaledEventEnricher
@@ -25,7 +26,9 @@ from degenbot.aave.events import (
     AaveV3PoolEvent,
     AaveV3ScaledTokenEvent,
     ERC20Event,
+    ScaledTokenEventType,
 )
+from degenbot.aave.operation_types import OperationType
 from degenbot.cli.aave.constants import LIQUIDATION_OPERATION_TYPES
 from degenbot.cli.aave.db_assets import get_contract
 from degenbot.cli.aave.db_users import is_discount_supported
@@ -55,12 +58,7 @@ from degenbot.cli.aave.token_processor import (
 )
 from degenbot.cli.aave.transfers import _process_collateral_transfer
 from degenbot.cli.aave.types import TransactionContext
-from degenbot.cli.aave_transaction_operations import (
-    Operation,
-    OperationType,
-    ScaledTokenEventType,
-    TransactionOperationsParser,
-)
+from degenbot.cli.aave_transaction_operations import Operation, TransactionOperationsParser
 from degenbot.cli.aave_utils import decode_address
 from degenbot.database.models.aave import AaveV3User
 from degenbot.logging import logger
@@ -94,7 +92,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         tx_context.discount_updates_by_log_index[user_address].sort(key=itemgetter(0))
 
     # Pre-fetch all users from GHO mint/burn events to avoid N+1 queries
-    gho_user_addresses: set = set()
+    gho_user_addresses: set[ChecksumAddress] = set()
     for event in tx_context.events:
         topic = event["topics"][0]
         event_address = event["address"]

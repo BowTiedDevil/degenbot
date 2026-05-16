@@ -416,7 +416,7 @@ def find_paths(
             )
             if start_token_id is None:
                 msg = f"Start token {start_token} was not found in the database."
-                raise DegenbotValueError(msg)
+                raise DegenbotValueError(message=msg)
 
             end_token_id = session.scalar(
                 sqlalchemy.select(Erc20TokenTable.id).where(
@@ -426,7 +426,7 @@ def find_paths(
             )
             if end_token_id is None:
                 msg = f"End token {end_token} was not found in the database."
-                raise DegenbotValueError(msg)
+                raise DegenbotValueError(message=msg)
 
             working_path: list[tuple[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]]] = []
 
@@ -491,7 +491,7 @@ async def find_paths_async(
             )
             if start_token_id is None:
                 msg = f"Start token {start_token} was not found in the database."
-                raise DegenbotValueError(msg)
+                raise DegenbotValueError(message=msg)
 
             end_token_id = session.scalar(
                 sqlalchemy.select(Erc20TokenTable.id).where(
@@ -501,7 +501,7 @@ async def find_paths_async(
             )
             if end_token_id is None:
                 msg = f"End token {end_token} was not found in the database."
-                raise DegenbotValueError(msg)
+                raise DegenbotValueError(message=msg)
 
             working_path: list[tuple[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]]] = []
 

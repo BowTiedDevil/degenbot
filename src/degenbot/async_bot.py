@@ -9,7 +9,7 @@ from __future__ import annotations
 import contextlib
 import warnings
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
@@ -37,6 +37,7 @@ from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError, TrackerAlreadyInitialized
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import async_raw_call, encode_function_calldata
+from degenbot.provider.interface import ProviderAdapter
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.types.abstract import AbstractPoolTracker
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
@@ -81,7 +82,7 @@ class AsyncBot:
     def from_config_file(cls) -> AsyncBot:
         return cls(config=_init_config())
 
-    def add_tracker[M: AbstractPoolTracker](
+    def add_tracker[M: AbstractPoolTracker[Any]](
         self,
         manager_cls: type[M],
         *args: Any,
@@ -196,7 +197,7 @@ class AsyncBot:
     async def _fetch_name_symbol_decimals_batched(
         self,
         address: str,
-        provider: Any,
+        provider: ProviderAdapter,
     ) -> tuple[str, str, int]:
         """Fetch name, symbol, decimals from chain in three async calls."""
         name_result = await provider.call(
@@ -238,7 +239,7 @@ class AsyncBot:
         silent: bool = False,
     ) -> Any:
         """.. deprecated:: 0.x
-            Use ``build_pool(address)`` instead.
+        Use ``build_pool(address)`` instead.
         """
         warnings.warn(
             "build_v2_pool() is deprecated — use build_pool(address) instead.",
@@ -369,7 +370,7 @@ class AsyncBot:
         silent: bool = False,
     ) -> Any:
         """.. deprecated:: 0.x
-            Use ``build_pool(address)`` instead.
+        Use ``build_pool(address)`` instead.
         """
         warnings.warn(
             "build_v3_pool() is deprecated — use build_pool(address) instead.",
@@ -574,7 +575,7 @@ class AsyncBot:
         silent: bool = False,
     ) -> Any:
         """.. deprecated:: 0.x
-            Use ``build_pool(address, pool_id=...)`` instead.
+        Use ``build_pool(address, pool_id=...)`` instead.
         """
         warnings.warn(
             "build_v4_pool() is deprecated — use build_pool(address, pool_id=...) instead.",
@@ -792,8 +793,8 @@ class AsyncBot:
             ),
         )
 
-        token.set_cached_balance(holder_address, block_number, balance)
-        return balance
+        token.set_cached_balance(holder_address, block_number, cast("int", balance))
+        return cast("int", balance)
 
     async def get_token_approval(
         self,
@@ -831,8 +832,8 @@ class AsyncBot:
             ),
         )
 
-        token.set_cached_approval(block_number, owner, spender, approval)
-        return approval
+        token.set_cached_approval(block_number, owner, spender, cast("int", approval))
+        return cast("int", approval)
 
     async def get_token_total_supply(
         self,
@@ -865,8 +866,8 @@ class AsyncBot:
             ),
         )
 
-        token.set_cached_total_supply(block_number, total_supply)
-        return total_supply
+        token.set_cached_total_supply(block_number, cast("int", total_supply))
+        return cast("int", total_supply)
 
     async def get_ether_balance(
         self,
@@ -880,17 +881,19 @@ class AsyncBot:
         chain_id = chain_id or self.connections.default_chain_id
         provider = self.connections.get_provider(chain_id)
         block = block_identifier if isinstance(block_identifier, int) else None
-        return await provider.get_balance(address, block=block)
+        return cast("int", await provider.get_balance(address, block=block))
 
     @staticmethod
-    async def _resolve_block_number(provider: Any, block_identifier: BlockIdentifier | None) -> int:
+    async def _resolve_block_number(
+        provider: Any, block_identifier: BlockIdentifier | None
+    ) -> int:
         """Resolve a block identifier to a block number."""
         if block_identifier is None:
-            return await provider.get_block_number()
+            return cast("int", await provider.get_block_number())
         if isinstance(block_identifier, int):
             return block_identifier
         # For string identifiers like 'latest', 'earliest', 'pending'
-        return await provider.get_block_number()
+        return cast("int", await provider.get_block_number())
 
     def get_provider(self, *, chain_id: ChainId) -> Any:
         return self.connections.get_provider(chain_id)

@@ -13,6 +13,7 @@ from eth_utils.crypto import keccak
 from web3.types import BlockIdentifier
 
 from degenbot.provider import ProviderAdapter
+from degenbot.provider.interface import AsyncProviderAdapter
 
 
 def encode_function_calldata(
@@ -76,7 +77,7 @@ def raw_call(
 
 
 async def async_raw_call(
-    provider: ProviderAdapter,
+    provider: AsyncProviderAdapter,
     address: ChecksumAddress,
     calldata: bytes,
     return_types: list[str],

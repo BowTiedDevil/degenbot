@@ -34,6 +34,8 @@ class CamelotPoolCalc(UniswapV2PoolCalc):
     is replaced by pre-wired _calc_tokens_out_fn set at construction time.
     """
 
+    token0: Erc20Token
+    token1: Erc20Token
     fee_denominator: int
     stable_swap: bool
 

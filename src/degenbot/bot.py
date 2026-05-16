@@ -32,6 +32,7 @@ from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.registry.pool_type import pool_type_registry
+from degenbot.types.pool_protocols import ConcentratedLiquidityPool, ConstantProductPool
 from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -76,7 +77,7 @@ class Bot:
         self.pools = PoolRegistry()
         self.tokens = TokenRegistry()
         self.managed_pools = ManagedPoolRegistry()
-        self._trackers: dict[tuple[ChainId, str], AbstractPoolTracker] = {}
+        self._trackers: dict[tuple[ChainId, str], AbstractPoolTracker[Any]] = {}
 
         # Builders own I/O orchestration; Bot hands them its I/O dependencies
         self._erc20_builder = Erc20Builder(
@@ -175,7 +176,7 @@ class Bot:
     def from_config_file(cls) -> Bot:
         return cls(config=_init_config())
 
-    def add_tracker[M: AbstractPoolTracker](
+    def add_tracker[M: AbstractPoolTracker[Any]](
         self,
         manager_cls: type[M],
         *,
@@ -537,10 +538,10 @@ class Bot:
         init_hash: str | None = None,
         state_block: int | None = None,
         silent: bool = False,
-    ) -> UniswapV2Pool:  # type: ignore[name-defined]
+    ) -> ConstantProductPool:
         """.. deprecated:: 0.x
-            Use ``build_pool(address)`` instead. Type resolution automatically
-            selects the correct builder.
+        Use ``build_pool(address)`` instead. Type resolution automatically
+        selects the correct builder.
         """
         warnings.warn(
             "build_v2_pool() is deprecated — use build_pool(address) instead.",
@@ -635,10 +636,10 @@ class Bot:
         tick_bitmap: dict[int, UniswapV3BitmapAtWord] | None = None,
         tick_data: dict[int, UniswapV3LiquidityAtTick] | None = None,
         silent: bool = False,
-    ) -> UniswapV3Pool:
+    ) -> ConcentratedLiquidityPool:
         """.. deprecated:: 0.x
-            Use ``build_pool(address)`` instead. Type resolution automatically
-            selects the correct builder.
+        Use ``build_pool(address)`` instead. Type resolution automatically
+        selects the correct builder.
         """
         warnings.warn(
             "build_v3_pool() is deprecated — use build_pool(address) instead.",
@@ -673,7 +674,7 @@ class Bot:
         silent: bool = False,
     ) -> UniswapV4Pool:
         """.. deprecated:: 0.x
-            Use ``build_pool(address, pool_id=...)`` instead.
+        Use ``build_pool(address, pool_id=...)`` instead.
         """
         warnings.warn(
             "build_v4_pool() is deprecated — use build_pool(address, pool_id=...) instead.",
@@ -705,8 +706,8 @@ class Bot:
         state_cache_depth: int = 8,
     ) -> CurveStableswapPool:
         """.. deprecated:: 0.x
-            Use ``build_pool(address)`` instead. Type resolution automatically
-            selects the correct builder.
+        Use ``build_pool(address)`` instead. Type resolution automatically
+        selects the correct builder.
         """
         warnings.warn(
             "build_curve_pool() is deprecated — use build_pool(address) instead.",

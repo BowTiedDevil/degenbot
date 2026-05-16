@@ -2,29 +2,32 @@
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import TYPE_CHECKING, Any
 
 import eth_abi.abi
-from eth_typing import ChecksumAddress
 from sqlalchemy import select
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.database.models.pools import LiquidityPoolTable
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
-from degenbot.provider.call_helpers import encode_function_calldata
-from degenbot.registry import PoolRegistry, TokenRegistry
+from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.types.aliases import ChainId
+from degenbot.types.pool_protocols import ConcentratedLiquidityPool, ConstantProductPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 if TYPE_CHECKING:
-    from degenbot.builders.erc20_builder import Erc20Builder
-    from degenbot.provider.interface import ProviderAdapter
+    from eth_typing import ChecksumAddress
 
-from fractions import Fraction
+    from degenbot.builders.erc20_builder import Erc20Builder
+    from degenbot.connection.connection_manager import ConnectionManager
+    from degenbot.database.session_manager import DatabaseSessionManager
+    from degenbot.provider.interface import ProviderAdapter
+    from degenbot.registry import PoolRegistry, TokenRegistry
+    from degenbot.types.aliases import ChainId
 
 
 @dataclass(frozen=True)
@@ -49,8 +52,9 @@ class V2CommonData:
     state_block: int
 
 
-class V2BuilderBase:
-    """Base class for V2-style pool builders.
+class V2BuilderBase:  # noqa: B903
+    """
+    Base class for V2-style pool builders.
 
     Provides shared I/O orchestration (DB lookup, chain fetch,
     token construction, reserve fetch, registry lookup).
@@ -87,9 +91,6 @@ class V2BuilderBase:
         Returns a frozen dataclass with all values needed
         for variant-specific construction.
         """
-        import contextlib
-
-        from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
         pool_address = get_checksum_address(pool_address)
 
@@ -141,7 +142,6 @@ class V2BuilderBase:
             fee_token1 = Fraction(3, 1000)
 
         # Fetch reserves
-        from degenbot.provider.call_helpers import raw_call
 
         reserves0, reserves1 = raw_call(
             provider,
@@ -179,10 +179,24 @@ class V2BuilderBase:
             state_block=state_block,
         )
 
-    def _register_pool(self, pool: Any, *, chain_id: ChainId) -> None:
+    def _register_pool(
+        self,
+        pool: ConstantProductPool | ConcentratedLiquidityPool,
+        *,
+        chain_id: ChainId,
+    ) -> None:
         self._pools.add(pool_address=pool.address, chain_id=chain_id, pool=pool)
 
-    def _log_pool(self, pool: Any, *, silent: bool, token0: Any, token1: Any, reserves0: int, reserves1: int) -> None:
+    @staticmethod
+    def _log_pool(
+        pool: Any,
+        *,
+        silent: bool,
+        token0: Any,
+        token1: Any,
+        reserves0: int,
+        reserves1: int,
+    ) -> None:
         if not silent:
             logger.info(pool.name)
             logger.info(f"• Token 0: {token0} - Reserves: {reserves0}")
@@ -196,7 +210,6 @@ class V2BuilderBase:
         block_identifier: int,
     ) -> tuple[int, int]:
         """Fetch current reserves from chain."""
-        from degenbot.provider.call_helpers import raw_call
 
         return raw_call(
             provider,

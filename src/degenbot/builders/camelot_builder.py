@@ -97,9 +97,17 @@ class CamelotBuilder(V2BuilderBase):
             state_block=common.state_block,
             deployer_address=common.deployer,
         )
+        assert isinstance(pool, CamelotLiquidityPool)
 
         self._register_pool(pool, chain_id=chain_id)
-        self._log_pool(pool, silent=silent, token0=token0, token1=token1, reserves0=common.reserves0, reserves1=common.reserves1)
+        self._log_pool(
+            pool,
+            silent=silent,
+            token0=token0,
+            token1=token1,
+            reserves0=common.reserves0,
+            reserves1=common.reserves1,
+        )
         return pool
 
     def update(
@@ -114,7 +122,9 @@ class CamelotBuilder(V2BuilderBase):
 
         provider = self._connections.get_provider(pool.chain_id)
         _block_number = block_number if block_number is not None else provider.get_block_number()
-        reserves0, reserves1 = self._fetch_reserves(pool.address, provider, block_identifier=_block_number)
+        reserves0, reserves1 = self._fetch_reserves(
+            pool.address, provider, block_identifier=_block_number
+        )
 
         if pool.reserves_token0 == reserves0 and pool.reserves_token1 == reserves1:
             return False

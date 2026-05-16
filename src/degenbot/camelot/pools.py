@@ -3,11 +3,10 @@ from __future__ import annotations
 from fractions import Fraction
 from typing import TYPE_CHECKING, ClassVar
 
+from degenbot.calculations.camelot import get_y_camelot, k_camelot
 from degenbot.calculations.solidly_stable import calc_exact_in_stable
-from degenbot.camelot.functions import get_y_camelot, k_camelot
 from degenbot.camelot.v2_pool_calc import CamelotPoolCalc
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database.models import CamelotV2PoolTable
 from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
@@ -19,8 +18,6 @@ if TYPE_CHECKING:
 
 class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
     variant: ClassVar[str | None] = "camelot"
-
-    type DatabasePoolType = CamelotV2PoolTable
 
     CAMELOT_ARBITRUM_POOL_INIT_HASH = (
         "0xa856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1"
@@ -102,7 +99,7 @@ class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
             ) -> int:
                 return calc_exact_in_stable(
                     amount_in=amount_in,
-                    token_in=__token_in,  # type: ignore[arg-type]
+                    token_in=__token_in,
                     reserves0=__reserves0,
                     reserves1=__reserves1,
                     decimals0=__decimals0,

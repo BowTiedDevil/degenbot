@@ -147,7 +147,9 @@ class CurvePoolBuilder:
             base_pool_address=metapool.base_pool_address if metapool.is_meta else None,
             tokens=list(tokens),
             use_lending=list(lending.use_lending) if lending.use_lending else [False] * len(tokens),
-            precision_multipliers=list(lending.precision_multipliers) if lending.precision_multipliers else [1] * len(tokens),
+            precision_multipliers=list(lending.precision_multipliers)
+            if lending.precision_multipliers
+            else [1] * len(tokens),
             rate_multipliers=tuple(
                 pm * 10**18 for pm in (lending.precision_multipliers or [1] * len(tokens))
             ),
@@ -245,7 +247,7 @@ class CurvePoolBuilder:
 
         # Fetch balances for each token in the pool
         new_balances: list[int] = []
-        for i, token in enumerate(pool.tokens):
+        for i, _ in enumerate(pool.tokens):
             (balance,) = cast(
                 "tuple[int]",
                 eth_abi.abi.decode(

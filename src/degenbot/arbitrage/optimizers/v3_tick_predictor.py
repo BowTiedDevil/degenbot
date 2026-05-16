@@ -15,7 +15,7 @@ This module provides:
 import math
 import operator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -65,7 +65,7 @@ def tick_to_sqrt_price(tick: int) -> float:
 
     sqrt_price = sqrt(1.0001^tick) = 1.0001^(tick/2)
     """
-    return 1.0001 ** (tick / 2)
+    return cast("float", 1.0001 ** (tick / 2))
 
 
 def sqrt_price_to_tick(sqrt_price: float) -> int:

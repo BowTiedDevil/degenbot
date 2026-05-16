@@ -15,13 +15,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from degenbot.arbitrage.types import AbstractSwapAmounts
-
-if TYPE_CHECKING:
     from fractions import Fraction
 
     from eth_typing import ChecksumAddress
 
+    from degenbot.arbitrage.types import AbstractSwapAmounts
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types.abstract import AbstractPoolState
     from degenbot.types.concrete import Subscriber
@@ -52,6 +50,12 @@ class ConstantProductPool(Protocol):
     """
 
     @property
+    def address(self) -> ChecksumAddress: ...
+
+    @property
+    def name(self) -> str: ...
+
+    @property
     def token0(self) -> Erc20Token: ...
 
     @property
@@ -76,6 +80,12 @@ class ConcentratedLiquidityPool(Protocol):
 
     Replaces AbstractConcentratedLiquidityPool for isinstance dispatch.
     """
+
+    @property
+    def address(self) -> ChecksumAddress: ...
+
+    @property
+    def name(self) -> str: ...
 
     @property
     def token0(self) -> Erc20Token: ...

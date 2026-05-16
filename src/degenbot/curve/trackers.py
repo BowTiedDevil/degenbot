@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 class CurveStableswapPoolTracker(
     AbstractPoolTracker["CurveStableswapPool"],
-    pool_factory=None,  # type: ignore[assignment]
+    pool_factory=None,
 ):
     """
     Manages Curve StableSwap pool instances.

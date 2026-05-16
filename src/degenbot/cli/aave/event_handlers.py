@@ -1,6 +1,6 @@
 """Event processing handlers for Aave V3 configuration and contract updates."""
 
-from typing import assert_never
+from typing import Any, assert_never
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -127,7 +127,7 @@ def _process_collateral_configuration_changed_event(
     return config
 
 
-def _decode_reserve_configuration_bitmap(config_bitmap: int) -> dict:
+def _decode_reserve_configuration_bitmap(config_bitmap: int) -> dict[str, Any]:
     """Decode Aave reserve configuration bitmap into human-readable values."""
     # LTV: bits 0-15
     ltv = config_bitmap & 0xFFFF

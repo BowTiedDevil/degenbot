@@ -494,28 +494,28 @@ class CurveStableswapPool(
         if self.base_pool is not None:
             calculator = self._strategies.metapool_dy_calculator
             if calculator is not None:
-                return calculator.calculate(
+                return cast("int", calculator.calculate(
                     i, j, dx, pool=self, block_number=block_number, override_state=override_state,
-                )
+                ))
             # Fallback: lazily construct metapool calculator
             from degenbot.curve._pool_strategies import _make_metapool_dy_calculator
             calculator = _make_metapool_dy_calculator(self._strategies.metapool_rate_style)
-            return calculator.calculate(
+            return cast("int", calculator.calculate(
                 i, j, dx, pool=self, block_number=block_number, override_state=override_state,
-            )
+            ))
 
         if self._strategies.dy_calculator is not None:
-            return self._strategies.dy_calculator.calculate(
+            return cast("int", self._strategies.dy_calculator.calculate(
                 i, j, dx, pool=self, block_number=block_number, override_state=override_state,
-            )
+            ))
 
         # Fallback: no calculator on PoolStrategies — construct lazily.
         # This handles pools constructed directly (without Bot.build_pool)
         # or constructed before the calculator migration.
         calculator = _make_dy_calculator(self._strategies.swap_style)
-        return calculator.calculate(
+        return cast("int", calculator.calculate(
             i, j, dx, pool=self, block_number=block_number, override_state=override_state,
-        )
+        ))
 
     def _get_dy_underlying(
         self,
@@ -529,15 +529,15 @@ class CurveStableswapPool(
 
         calculator = self._strategies.metapool_underlying_dy_calculator
         if calculator is not None:
-            return calculator.calculate(
+            return cast("int", calculator.calculate(
                 i, j, dx, pool=self, block_number=block_number, override_state=override_state,
-            )
+            ))
         # Fallback: lazily construct metapool underlying calculator
         from degenbot.curve._pool_strategies import _make_metapool_underlying_dy_calculator
         calculator = _make_metapool_underlying_dy_calculator(self._strategies.metapool_underlying_style)
-        return calculator.calculate(
+        return cast("int", calculator.calculate(
             i, j, dx, pool=self, block_number=block_number, override_state=override_state,
-        )
+        ))
 
     def _get_base_cache_updated(self, block_number: BlockNumber) -> int:
         with contextlib.suppress(KeyError):
