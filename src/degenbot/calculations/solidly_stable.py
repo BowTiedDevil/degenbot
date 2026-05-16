@@ -11,6 +11,7 @@ from collections.abc import Callable
 from fractions import Fraction
 
 from degenbot.calculations.evm_math import raise_if_invalid_uint256
+from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import EVMRevertError
 
 
@@ -67,8 +68,6 @@ def calc_exact_in_stable(
     Generic over the k() and get_y() implementations to accommodate
     DEX-specific variants (Aerodrome, Camelot).
     """
-    from degenbot.exceptions.base import DegenbotValueError
-
     if token_in not in {0, 1}:  # pragma: no cover
         msg = "Invalid token_in identifier"
         raise DegenbotValueError(message=msg)
@@ -105,8 +104,6 @@ def calc_exact_in_volatile(
     fee: Fraction,
 ) -> int:
     """Calculate the amount out for an exact input to a Solidly volatile pool (x*y>=k)."""
-    from degenbot.exceptions.base import DegenbotValueError
-
     if token_in not in {0, 1}:  # pragma: no cover
         msg = "Invalid token_in identifier"
         raise DegenbotValueError(message=msg)

@@ -111,7 +111,6 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         assert token_in_quantity - fee_amount == amount_new
 
         if override_state is not None:
-            # TODO: add functionality
             raise NotImplementedError
         balances = list(self.balances)  # make a copy because _upscale_array will mutate it
 
@@ -166,7 +165,7 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
             final_state=initial_state,
         )
 
-    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
+    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
         return self.fee
 
     def to_hop_state(

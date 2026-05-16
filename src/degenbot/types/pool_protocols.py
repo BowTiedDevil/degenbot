@@ -31,12 +31,7 @@ if TYPE_CHECKING:
 # These structural protocols identify pool families by the attributes
 # they expose, not by inheritance. A pool satisfies ConstantProductPool
 # if it has token0, token1, fee_token0, fee_token1, reserves_token0,
-# reserves_token1 — regardless of its class hierarchy.
-#
-# This replaces the former ABC-based dispatch:
-#   isinstance(pool, AbstractUniswapV2Pool)  → isinstance(pool, ConstantProductPool)
-#   isinstance(pool, AbstractAerodromeV2Pool) → isinstance(pool, ConstantProductPool) + stable check
-#   isinstance(pool, AbstractConcentratedLiquidityPool) → isinstance(pool, ConcentratedLiquidityPool)
+# reserves_token1 -- regardless of its class hierarchy.
 
 
 @runtime_checkable

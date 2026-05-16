@@ -155,7 +155,8 @@ class TestStableswapGetY:
         xp = [1_000_000_000_000_000_000, 1_000_000_000_000_000_000]
         # With A=100 (in A_PRECISION units), amp=100
         y = stableswap_get_y(
-            0, 1, 1_500_000_000_000_000_000, xp,
+            0, 1,
+            x=1_500_000_000_000_000_000, xp=xp,
             amp=100, n_coins=2, a_precision=100,
             y_variant=YVariant.STANDARD, d_variant=DVariant.STANDARD,
         )
@@ -169,12 +170,14 @@ class TestStableswapGetY:
 
         xp = [1_000_000_000_000_000_000, 1_000_000_000_000_000_000]
         y_small = stableswap_get_y(
-            0, 1, 1_100_000_000_000_000_000, xp,
+            0, 1,
+            x=1_100_000_000_000_000_000, xp=xp,
             amp=100, n_coins=2, a_precision=100,
             y_variant=YVariant.STANDARD, d_variant=DVariant.STANDARD,
         )
         y_large = stableswap_get_y(
-            0, 1, 1_500_000_000_000_000_000, xp,
+            0, 1,
+            x=1_500_000_000_000_000_000, xp=xp,
             amp=100, n_coins=2, a_precision=100,
             y_variant=YVariant.STANDARD, d_variant=DVariant.STANDARD,
         )
@@ -187,7 +190,8 @@ class TestStableswapGetY:
 
         xp = [1_000_000_000_000_000_000, 1_000_000_000_000_000_000]
         y = stableswap_get_y(
-            0, 1, 1_500_000_000_000_000_000, xp,
+            0, 1,
+            x=1_500_000_000_000_000_000, xp=xp,
             amp=10000, n_coins=2, a_precision=100,  # amp=100*100 for VARIANT_1
             y_variant=YVariant.VARIANT_1, d_variant=DVariant.STANDARD,
         )
@@ -199,7 +203,8 @@ class TestStableswapGetY:
 
         xp = [2_000_000_000_000_000_000, 1_000_000_000_000_000_000]
         y = stableswap_get_y(
-            0, 1, 2_500_000_000_000_000_000, xp,
+            0, 1,
+            x=2_500_000_000_000_000_000, xp=xp,
             amp=100, n_coins=2, a_precision=100,
             y_variant=YVariant.STANDARD, d_variant=DVariant.STANDARD,
         )
@@ -216,7 +221,8 @@ class TestStableswapGetYD:
         xp = [1_000_000_000_000_000_000, 1_000_000_000_000_000_000]
         d = 2_000_000_000_000_000_000
         y_d = stableswap_get_y_d(
-            100, 0, xp, d, n_coins=2, a_precision=100, yd_variant=YDVariant.STANDARD,
+            100, 0,
+            xp=xp, d=d, n_coins=2, a_precision=100, yd_variant=YDVariant.STANDARD,
         )
         assert y_d == 1_000_000_000_000_000_000
 
@@ -227,7 +233,8 @@ class TestStableswapGetYD:
         xp = [2_000_000_000_000_000_000, 1_000_000_000_000_000_000]
         d = 2_800_000_000_000_000_000
         y_d = stableswap_get_y_d(
-            100, 0, xp, d, n_coins=2, a_precision=100, yd_variant=YDVariant.STANDARD,
+            100, 0,
+            xp=xp, d=d, n_coins=2, a_precision=100, yd_variant=YDVariant.STANDARD,
         )
         assert y_d > 0
 
@@ -238,6 +245,7 @@ class TestStableswapGetYD:
         xp = [1_000_000_000_000_000_000, 1_000_000_000_000_000_000]
         d = 2_000_000_000_000_000_000
         y_d = stableswap_get_y_d(
-            100, 0, xp, d, n_coins=2, a_precision=100, yd_variant=YDVariant.VARIANT_0,
+            100, 0,
+            xp=xp, d=d, n_coins=2, a_precision=100, yd_variant=YDVariant.VARIANT_0,
         )
         assert y_d > 0

@@ -654,9 +654,12 @@ class CurveStableswapPool(  # type: ignore[override]
         )
         try:
             return stableswap_get_y(
-                i, j, x, xp, amp, len(self._tokens),
-                self.A_PRECISION, self._strategies.y_variant,
-                self._strategies.d_variant,
+                i, j,
+                x=x, xp=xp, amp=amp,
+                n_coins=len(self._tokens),
+                a_precision=self.A_PRECISION,
+                y_variant=self._strategies.y_variant,
+                d_variant=self._strategies.d_variant,
             )
         except ValueError as e:
             raise EVMRevertError(error=str(e)) from e
@@ -670,8 +673,11 @@ class CurveStableswapPool(  # type: ignore[override]
 
         try:
             return stableswap_get_y_d(
-                a, i, xp, d, len(self._tokens),
-                self.A_PRECISION, self._strategies.yd_variant,
+                a, i,
+                xp=xp, d=d,
+                n_coins=len(self._tokens),
+                a_precision=self.A_PRECISION,
+                yd_variant=self._strategies.yd_variant,
             )
         except ValueError as e:
             raise EVMRevertError(error=str(e)) from e
@@ -715,8 +721,10 @@ class CurveStableswapPool(  # type: ignore[override]
 
         try:
             return stableswap_newton_y(
-                ann, gamma, xp, d, token_index,
-                len(self._tokens), self.A_PRECISION,
+                ann, gamma,
+                xp=xp, d=d, token_index=token_index,
+                n_coins=len(self._tokens),
+                a_multiplier=self.A_PRECISION,
             )
         except ValueError as e:
             raise EVMRevertError(

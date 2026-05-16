@@ -14,12 +14,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from eth_typing import ChecksumAddress
-
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
 
 if TYPE_CHECKING:
+    from eth_typing import ChecksumAddress
+
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
     from degenbot.types.pool_protocols import ConcentratedLiquidityPool, ConstantProductPool

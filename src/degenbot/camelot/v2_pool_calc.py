@@ -10,7 +10,6 @@ get_y_camelot) instead of the standard Solidly ones.
 
 from __future__ import annotations
 
-from fractions import Fraction
 from typing import TYPE_CHECKING
 
 from degenbot.calculations.camelot import get_y_camelot, k_camelot
@@ -18,6 +17,8 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.uniswap.v2_pool_calc import UniswapV2PoolCalc
 
 if TYPE_CHECKING:
+    from fractions import Fraction
+
     from degenbot.erc20 import Erc20Token
     from degenbot.uniswap.v2_types import UniswapV2PoolState
 
@@ -42,7 +43,7 @@ class CamelotPoolCalc(UniswapV2PoolCalc):
     fee_token1: Fraction
     stable_swap: bool
 
-    def _wire_camelot_calculations(self, stable_swap: bool) -> None:
+    def _wire_camelot_calculations(self, *, stable_swap: bool) -> None:
         """Wire calculation functions based on the stable_swap flag."""
         self.stable_swap = stable_swap
         if stable_swap:

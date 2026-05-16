@@ -3,11 +3,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from eth_typing import ChecksumAddress
-
 from degenbot.types.address_comparable import AddressComparable
 
 if TYPE_CHECKING:
+    from eth_typing import ChecksumAddress
+
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types.abstract.pool_state import AbstractPoolState
     from degenbot.types.pool_protocols import SimulationResult
