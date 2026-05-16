@@ -4,7 +4,12 @@ import pytest
 from hexbytes import HexBytes
 
 from degenbot.anvil_fork import AnvilFork
-from degenbot.provider import AlloyProvider, EthereumProvider, LogFilter, ProviderAdapter
+from degenbot.provider import (
+    AlloyProvider,
+    LogFilter,
+    ProviderAdapter,
+    ProviderBackend,
+)
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -164,11 +169,12 @@ class TestAlloyProvider:
         assert hasattr(AlloyProvider, "get_code")
         assert hasattr(AlloyProvider, "is_connected")
 
-    def test_provider_satisfies_protocol(self):
-        """Test that AlloyProvider satisfies EthereumProvider protocol."""
-        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as provider:
-            # Should be recognized as implementing the protocol
-            assert isinstance(provider, EthereumProvider)
+    def test_adapter_satisfies_protocol(self):
+        """Test that _AlloyAdapter satisfies ProviderBackend protocol."""
+        with AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI) as alloy_provider:
+            adapter = ProviderAdapter.from_alloy(alloy_provider)
+            # The adapter's backend should satisfy the protocol
+            assert isinstance(adapter._backend, ProviderBackend)
 
     def test_provider_direct_access(self):
         """Test accessing methods directly on AlloyProvider."""
