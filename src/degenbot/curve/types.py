@@ -1,6 +1,6 @@
 import dataclasses
 from enum import Enum, auto
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from eth_typing import HexAddress
 
@@ -112,6 +112,31 @@ class LendingRateStyle(Enum):
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
+class DyCalculator(Protocol):
+    """Calculates dy (output amount) for a Curve StableSwap swap.
+
+    Each SwapStyle variant maps to a frozen dataclass implementing this
+    protocol. The pool's get_dy() delegates to the injected calculator
+    via PoolStrategies.dy_calculator.
+
+    Calculators resolve data from the pool (amp, balances, rates) in
+    the first few lines, then call pure invariant-solver functions for
+    the math. The pool parameter is read-only.
+    """
+
+    def calculate(
+        self,
+        i: int,
+        j: int,
+        dx: int,
+        *,
+        pool: "CurveStableswapPool",
+        block_number: int,
+        override_state: "CurveStableswapPoolState | None" = None,
+    ) -> int: ...
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
 class PoolStrategies:
     """Resolved calculation strategies for a Curve pool instance.
 
@@ -126,8 +151,47 @@ class PoolStrategies:
     metapool_underlying_style: MetapoolUnderlyingStyle = MetapoolUnderlyingStyle.STANDARD
     lending_rate_style: LendingRateStyle = LendingRateStyle.NONE
 
-# ── Fetcher Protocols ──
-# These protocols define the interface for callbacks that fetch on-chain data
+    # Calculator instances — carry the actual swap formula implementation.
+    # Enum values remain for introspection (e.g., logging).
+    dy_calculator: DyCalculator = dataclasses.field(default=None)  # type: ignore[assignment]
+    metapool_dy_calculator: DyCalculator | None = None
+    metapool_underlying_dy_calculator: DyCalculator | None = None
+
+# ── Data Provider Protocol ──
+
+
+@runtime_checkable
+class CurveDataProvider(Protocol):
+    """On-chain data access for a Curve StableSwap pool.
+
+    Consolidates the 13 individual fetcher callbacks into a single interface.
+    The pool checks provider availability before calling; a provider that
+    doesn't support a method should raise MissingCurveData.
+
+    All methods accepting `block_number` may use block-specific data.
+    """
+
+    # Pool-state fetchers
+    def virtual_price(self, block_number: int) -> int: ...
+    def base_virtual_price(self, block_number: int) -> int: ...
+    def base_cache_updated(self, block_number: int) -> int: ...
+    def admin_balances(self, block_number: int) -> tuple[int, ...]: ...
+    def D(self, block_number: int) -> int: ...  # crypto only
+    def gamma(self, block_number: int) -> int: ...  # crypto only
+    def price_scale(self, block_number: int) -> tuple[int, ...]: ...  # crypto only
+
+    # Chain-state fetchers
+    def block_timestamp(self, block_number: int) -> int: ...
+    def block_number(self) -> int: ...
+
+    # Helper fetchers
+    def token_balance(self, token_address: str, holder_address: str, block_number: int) -> int: ...
+    def token_total_supply(self, token_address: str, block_number: int) -> int: ...
+    def lending_rates(self, block_number: int) -> tuple[int, ...]: ...
+    def redemption_price(self, block_number: int) -> int: ...
+
+
+# ── Fetcher Protocols (deprecated — use CurveDataProvider) ──# These protocols define the interface for callbacks that fetch on-chain data
 # for Curve pools. They are injected by Bot.build_pool() to enable
 # on-demand data fetching while keeping the pool class I/O-free.
 

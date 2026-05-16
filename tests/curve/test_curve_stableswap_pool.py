@@ -40,7 +40,7 @@ def _build_pool(fork: AnvilFork, address: str) -> CurveStableswapPool:
     """Helper to build a Curve pool using the Bot builder."""
     # Schedule set_web3 for any code that still relies on the legacy singleton
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
-    return bot.build_curve_pool(address)
+    return bot.build_pool(address)
 
 
 @pytest.fixture
@@ -206,7 +206,7 @@ def test_bot_update_curve_pool(fork_mainnet_archive: AnvilFork):
     block_number = fork_mainnet_archive.w3.eth.block_number
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_archive.w3))
 
-    tripool = bot.build_curve_pool(TRIPOOL_ADDRESS)
+    tripool = bot.build_pool(TRIPOOL_ADDRESS)
     assert tripool.update_block == block_number
     initial_balances = tripool.balances
 
@@ -227,7 +227,7 @@ def test_bot_update_curve_pool(fork_mainnet_archive: AnvilFork):
     assert tripool.update_block == block_number + 1
 
     # Verify balances match what a fresh build would give
-    fresh_pool = advanced_bot.build_curve_pool(TRIPOOL_ADDRESS)
+    fresh_pool = advanced_bot.build_pool(TRIPOOL_ADDRESS)
     assert tripool.balances == fresh_pool.balances
 
     # Updating again at the same block should return False

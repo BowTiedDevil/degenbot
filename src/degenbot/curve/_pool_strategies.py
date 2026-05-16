@@ -337,6 +337,85 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
 }
 
 
+def _make_dy_calculator(swap_style: SwapStyle) -> "DyCalculator":
+    """Construct the appropriate DyCalculator for the given SwapStyle."""
+    from degenbot.curve.calculators.crypto import CryptoDyCalculator
+    from degenbot.curve.calculators.live_admin import (
+        LiveAdminDyCalculator,
+        LiveAdminDynamicDyCalculator,
+        LiveAdminDynamicPrecisionDyCalculator,
+        LiveAdminOracleDyCalculator,
+    )
+    from degenbot.curve.calculators.standard import (
+        CytokenDyCalculator,
+        NoOneFeeRateDyCalculator,
+        RateAdjustedDyCalculator,
+        RateAdjustedNoOneDyCalculator,
+        RawBalanceDyCalculator,
+        StandardDyCalculator,
+    )
+
+    match swap_style:
+        case SwapStyle.STANDARD:
+            return StandardDyCalculator()
+        case SwapStyle.RATE_ADJUSTED:
+            return RateAdjustedDyCalculator()
+        case SwapStyle.RATE_ADJUSTED_NO_ONE:
+            return RateAdjustedNoOneDyCalculator()
+        case SwapStyle.RAW_BALANCE:
+            return RawBalanceDyCalculator()
+        case SwapStyle.CRYPTO:
+            return CryptoDyCalculator()
+        case SwapStyle.LIVE_ADMIN:
+            return LiveAdminDyCalculator()
+        case SwapStyle.LIVE_ADMIN_DYNAMIC:
+            return LiveAdminDynamicDyCalculator()
+        case SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION:
+            return LiveAdminDynamicPrecisionDyCalculator()
+        case SwapStyle.LIVE_ADMIN_ORACLE:
+            return LiveAdminOracleDyCalculator()
+        case SwapStyle.NO_ONE_FEE_RATE:
+            return NoOneFeeRateDyCalculator()
+        case SwapStyle.CYTOKEN:
+            return CytokenDyCalculator()
+
+
+def _make_metapool_dy_calculator(metapool_rate_style: MetapoolRateStyle) -> "DyCalculator":
+    """Construct the appropriate metapool DyCalculator for the given MetapoolRateStyle."""
+    from degenbot.curve.calculators.metapool import (
+        MetapoolPrecisionVpDyCalculator,
+        MetapoolRedemptionVpDyCalculator,
+        MetapoolStandardDyCalculator,
+    )
+
+    match metapool_rate_style:
+        case MetapoolRateStyle.PRECISION_VP:
+            return MetapoolPrecisionVpDyCalculator()
+        case MetapoolRateStyle.REDEMPTION_VP:
+            return MetapoolRedemptionVpDyCalculator()
+        case MetapoolRateStyle.STANDARD:
+            return MetapoolStandardDyCalculator()
+
+
+def _make_metapool_underlying_dy_calculator(
+    metapool_underlying_style: MetapoolUnderlyingStyle,
+) -> "DyCalculator":
+    """Construct the appropriate metapool underlying DyCalculator for the given MetapoolUnderlyingStyle."""
+    from degenbot.curve.calculators.metapool import (
+        MetapoolUnderlyingPrecisionVpDyCalculator,
+        MetapoolUnderlyingRedemptionDyCalculator,
+        MetapoolUnderlyingStandardDyCalculator,
+    )
+
+    match metapool_underlying_style:
+        case MetapoolUnderlyingStyle.PRECISION_VP:
+            return MetapoolUnderlyingPrecisionVpDyCalculator()
+        case MetapoolUnderlyingStyle.REDEMPTION:
+            return MetapoolUnderlyingRedemptionDyCalculator()
+        case MetapoolUnderlyingStyle.STANDARD:
+            return MetapoolUnderlyingStandardDyCalculator()
+
+
 def resolve_pool_strategies(pool_address: ChecksumAddress | str) -> PoolStrategies:
     """Resolve the complete PoolStrategies for a Curve pool address.
 
@@ -355,7 +434,14 @@ def resolve_pool_strategies(pool_address: ChecksumAddress | str) -> PoolStrategi
     mapped = _POOL_STRATEGIES.get(pool_address)
 
     if mapped is not None:
-        # Merge: variant groups + mapped strategies
+        # Merge: variant groups + mapped strategies + calculators
+        dy_calculator = _make_dy_calculator(mapped.swap_style)
+        metapool_dy_calculator: DyCalculator | None = None
+        metapool_underlying_dy_calculator: DyCalculator | None = None
+        if mapped.metapool_rate_style is not None:
+            metapool_dy_calculator = _make_metapool_dy_calculator(mapped.metapool_rate_style)
+        if mapped.metapool_underlying_style is not None:
+            metapool_underlying_dy_calculator = _make_metapool_underlying_dy_calculator(mapped.metapool_underlying_style)
         return PoolStrategies(
             d_variant=d_variant,
             y_variant=y_variant,
@@ -364,11 +450,17 @@ def resolve_pool_strategies(pool_address: ChecksumAddress | str) -> PoolStrategi
             metapool_rate_style=mapped.metapool_rate_style,
             metapool_underlying_style=mapped.metapool_underlying_style,
             lending_rate_style=mapped.lending_rate_style,
+            dy_calculator=dy_calculator,
+            metapool_dy_calculator=metapool_dy_calculator,
+            metapool_underlying_dy_calculator=metapool_underlying_dy_calculator,
         )
 
-    # No mapping found — use defaults
+    # No mapping found — use defaults (StandardDyCalculator)
+    from degenbot.curve.calculators.standard import StandardDyCalculator
+
     return PoolStrategies(
         d_variant=d_variant,
         y_variant=y_variant,
         yd_variant=yd_variant,
+        dy_calculator=StandardDyCalculator(),
     )
