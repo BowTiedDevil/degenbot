@@ -103,7 +103,7 @@ class AsyncConnectionManager:
             retry=tenacity.retry_if_result(lambda result: result is False),
         )
         try:
-            await async_w3_connected_check_with_retry(provider.is_connected)
+            await async_w3_connected_check_with_retry(provider.is_connected)  # ty:ignore[invalid-argument-type]
         except tenacity.RetryError as exc:
             raise DegenbotValueError(message="Provider is not connected.") from exc
 

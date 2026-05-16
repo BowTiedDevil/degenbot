@@ -69,6 +69,6 @@ def get_provider_from_config(
         w3.middleware_onion.clear()
         if TYPE_CHECKING:
             assert isinstance(w3.provider, JSONBaseProvider)
-        w3.provider.decode_rpc_response = _fast_decode_rpc_response
+        w3.provider.decode_rpc_response = _fast_decode_rpc_response  # ty:ignore[invalid-assignment]
 
     return ProviderAdapter.from_web3(w3)

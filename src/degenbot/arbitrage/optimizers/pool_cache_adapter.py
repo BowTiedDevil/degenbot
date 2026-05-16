@@ -89,7 +89,7 @@ class ArbPoolCacheAdapter(Subscriber):
 
         if not isinstance(pool, CacheablePool):
             logger.warning(
-                f"Pool {pool.address} no longer implements CacheablePool; skipping cache update."
+                f"Pool {id(pool)} no longer implements CacheablePool; skipping cache update."
             )
             return
 

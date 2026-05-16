@@ -12,7 +12,7 @@ statements continue to work.
 
 import time
 from fractions import Fraction
-from typing import ClassVar, cast, override
+from typing import ClassVar, override
 
 # Re-export internal helpers so existing test imports keep working
 from degenbot.arbitrage.optimizers.balancer_multi_token_solver import (
@@ -153,7 +153,7 @@ class ArbSolver(Solver):
         Returns True if the pool was found and removed.
         """
         cache = self.get_pool_cache()
-        return cast("bool", cache.remove(pool_id))
+        return cache.remove(pool_id)
 
     def solve_cached(
         self,

@@ -34,14 +34,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from degenbot.arbitrage.optimizers.base import (
-    OptimizerResult,
-    OptimizerType,
-)
-from degenbot.arbitrage.optimizers.mobius import (
-    MobiusFloatHop,
-    mobius_solve,
-)
+from degenbot.arbitrage.optimizers.base import OptimizerResult, OptimizerType
+from degenbot.arbitrage.optimizers.mobius import MobiusFloatHop, mobius_solve
 
 
 @dataclass(frozen=True)
@@ -509,7 +503,7 @@ class BatchMobiusOptimizer:
                     optimizer_type=result.optimizer_type,
                 )
 
-        return list(results)
+        return list(results)  # ty:ignore[invalid-return-type]
 
     def solve_batch_hops(
         self,

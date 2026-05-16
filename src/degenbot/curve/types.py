@@ -171,8 +171,8 @@ class DyCalculationInputs:
     base_pool: CurveStableswapPool | None = None
 
     # ── Callable: invariant solver closures ──
-    get_y: Callable[[int, int, int, Sequence[int]], int] = dataclasses.field(default=None)
-    newton_y: Callable[[int, int, Sequence[int], int, int], int] = dataclasses.field(default=None)
+    get_y: Callable[[int, int, int, Sequence[int]], int] = dataclasses.field(default=None)  # ty:ignore[invalid-assignment]
+    newton_y: Callable[[int, int, Sequence[int], int, int], int] = dataclasses.field(default=None)  # ty:ignore[invalid-assignment]
 
 
 class DyCalculator(Protocol):

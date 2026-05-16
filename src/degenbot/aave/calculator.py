@@ -68,4 +68,4 @@ class ScaledAmountCalculator:
     def get_method_name(self, event_type: ScaledTokenEventType) -> str:
         """Get the TokenMath method name for debugging."""
         method = self._get_calculation_method(event_type)
-        return method.__name__
+        return method.__name__  # ty:ignore[unresolved-attribute]

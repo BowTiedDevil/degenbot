@@ -68,8 +68,8 @@ def upgrade() -> None:
             assert isinstance(pool, (UniswapV2PoolTableBase, UniswapV3PoolTableBase))
             assert isinstance(base_pool, LiquidityPoolTable)
 
-            base_pool.token0_id_ = pool.token0_id
-            base_pool.token1_id_ = pool.token1_id
+            base_pool.token0_id_ = pool.token0_id  # type: ignore
+            base_pool.token1_id_ = pool.token1_id  # type: ignore
 
     session.commit()
 

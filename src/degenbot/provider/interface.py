@@ -126,7 +126,7 @@ class _Web3Adapter:
         return self._w3.eth.get_block_number()
 
     def get_block(self, block_identifier: int | str) -> BlockData | None:
-        return self._w3.eth.get_block(block_identifier)
+        return self._w3.eth.get_block(block_identifier)  # ty:ignore[invalid-argument-type]
 
     def get_logs(
         self,
@@ -137,7 +137,7 @@ class _Web3Adapter:
     ) -> list[LogReceipt]:
         filter_param: FilterParams = {"fromBlock": from_block, "toBlock": to_block}
         if addresses:
-            filter_param["address"] = addresses
+            filter_param["address"] = addresses  # ty:ignore[invalid-assignment]
         if topics:
             filter_param["topics"] = topics
         return self._w3.eth.get_logs(filter_param)
@@ -150,23 +150,23 @@ class _Web3Adapter:
         return self._w3.eth.call(tx, block)
 
     def get_code(self, address: str, block: int | None = None) -> HexBytes:
-        return self._w3.eth.get_code(address, block)
+        return self._w3.eth.get_code(address, block)  # ty:ignore[invalid-argument-type]
 
     def get_balance(self, address: str, block: int | None = None) -> int:
-        return self._w3.eth.get_balance(address, block)
+        return self._w3.eth.get_balance(address, block)  # ty:ignore[invalid-argument-type]
 
     def get_storage_at(self, address: str, position: int, block: int | None = None) -> HexBytes:
-        return self._w3.eth.get_storage_at(address, position, block)
+        return self._w3.eth.get_storage_at(address, position, block)  # ty:ignore[invalid-argument-type]
 
     def get_transaction_count(self, address: str, block: int | None = None) -> int:
-        return self._w3.eth.get_transaction_count(address, block)
+        return self._w3.eth.get_transaction_count(address, block)  # ty:ignore[invalid-argument-type]
 
     def is_connected(self) -> bool:
         return self._w3.is_connected()
 
     def close(self) -> None:
         if hasattr(self._w3, "close"):
-            self._w3.close()
+            self._w3.close()  # ty:ignore[call-non-callable]
 
 
 class _AlloyAdapter:
@@ -195,7 +195,7 @@ class _AlloyAdapter:
                 block_identifier = 0
             elif block_identifier == "pending":
                 block_identifier = self._alloy.get_block_number() + 1
-        return self._alloy.get_block(block_identifier)
+        return self._alloy.get_block(block_identifier)  # ty:ignore[invalid-argument-type, invalid-return-type]
 
     def get_logs(
         self,
@@ -209,13 +209,13 @@ class _AlloyAdapter:
             to_block=to_block,
             addresses=addresses,
             topics=topics,
-        )
+        )  # ty:ignore[invalid-return-type]
 
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         return self._alloy.call(to, data, block_number=block)
 
     def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
-        return self._alloy.call(tx["to"], tx["data"], block_number=block)
+        return self._alloy.call(tx["to"], tx["data"], block_number=block)  # ty:ignore[invalid-argument-type]
 
     def get_code(self, address: str, block: int | None = None) -> HexBytes:
         return self._alloy.get_code(address, block_number=block)
@@ -255,7 +255,7 @@ class _OfflineAdapter:
         return self._offline.get_block_number()
 
     def get_block(self, block_identifier: int | str) -> BlockData | None:
-        return self._offline.get_block(block_identifier)
+        return self._offline.get_block(block_identifier)  # ty:ignore[invalid-return-type]
 
     def get_logs(
         self,
@@ -269,13 +269,13 @@ class _OfflineAdapter:
             to_block=to_block,
             addresses=addresses,
             topics=topics,
-        )
+        )  # ty:ignore[invalid-return-type]
 
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         return self._offline.call(to, data, block_number=block)
 
     def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
-        return self._offline.call(tx["to"], tx["data"], block_number=block)
+        return self._offline.call(tx["to"], tx["data"], block_number=block)  # ty:ignore[invalid-argument-type]
 
     def get_code(self, address: str, block: int | None = None) -> HexBytes:
         return self._offline.get_code(address, block_number=block)
@@ -294,7 +294,7 @@ class _OfflineAdapter:
 
     def close(self) -> None:
         if hasattr(self._offline, "close"):
-            self._offline.close()
+            self._offline.close()  # ty:ignore[call-non-callable]
 
 
 # ============================================================================
@@ -501,7 +501,7 @@ class ProviderAdapter:
         """
         raw = self._raw_provider
         if raw is not None and hasattr(raw, "make_request"):
-            return raw.make_request(method, params)
+            return raw.make_request(method, params)  # ty:ignore[call-non-callable]
         msg = f"Provider type '{self._provider_type}' does not support make_request"
         raise AttributeError(msg)
 
@@ -671,7 +671,7 @@ class _AsyncWeb3Adapter:
         return await self._w3.eth.chain_id
 
     async def get_block(self, block_identifier: int | str) -> BlockData | None:
-        return await self._w3.eth.get_block(block_identifier)
+        return await self._w3.eth.get_block(block_identifier)  # ty:ignore[invalid-argument-type]
 
     async def get_logs(
         self,
@@ -682,7 +682,7 @@ class _AsyncWeb3Adapter:
     ) -> list[LogReceipt]:
         filter_param: FilterParams = {"fromBlock": from_block, "toBlock": to_block}
         if addresses:
-            filter_param["address"] = addresses
+            filter_param["address"] = addresses  # ty:ignore[invalid-assignment]
         if topics:
             filter_param["topics"] = topics
         return await self._w3.eth.get_logs(filter_param)
@@ -692,25 +692,25 @@ class _AsyncWeb3Adapter:
         return await self._w3.eth.call(tx, block)
 
     async def get_code(self, address: str, block: int | None = None) -> HexBytes:
-        return await self._w3.eth.get_code(address, block)
+        return await self._w3.eth.get_code(address, block)  # ty:ignore[invalid-argument-type]
 
     async def get_balance(self, address: str, block: int | None = None) -> int:
-        return await self._w3.eth.get_balance(address, block)
+        return await self._w3.eth.get_balance(address, block)  # ty:ignore[invalid-argument-type]
 
     async def get_storage_at(
         self, address: str, position: int, block: int | None = None
     ) -> HexBytes:
-        return await self._w3.eth.get_storage_at(address, position, block)
+        return await self._w3.eth.get_storage_at(address, position, block)  # ty:ignore[invalid-argument-type]
 
     async def get_transaction_count(self, address: str, block: int | None = None) -> int:
-        return await self._w3.eth.get_transaction_count(address, block)
+        return await self._w3.eth.get_transaction_count(address, block)  # ty:ignore[invalid-argument-type]
 
     def is_connected(self) -> bool:  # noqa: PLR6301
         return True
 
     def close(self) -> None:
         if hasattr(self._w3, "close"):
-            self._w3.close()
+            self._w3.close()  # ty:ignore[call-non-callable]
 
 
 class _AsyncAlloyAdapter:
@@ -733,7 +733,7 @@ class _AsyncAlloyAdapter:
                 block_identifier = 0
             elif block_identifier == "pending":
                 block_identifier = await self._alloy.get_block_number() + 1
-        return await self._alloy.get_block(block_identifier)
+        return await self._alloy.get_block(block_identifier)  # ty:ignore[invalid-argument-type, invalid-return-type]
 
     async def get_logs(
         self,
@@ -747,7 +747,7 @@ class _AsyncAlloyAdapter:
             to_block=to_block,
             addresses=addresses,
             topics=topics,
-        )
+        )  # ty:ignore[invalid-return-type]
 
     async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         return await self._alloy.call(to, data, block_number=block)

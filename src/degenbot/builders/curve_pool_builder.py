@@ -227,6 +227,7 @@ class CurvePoolBuilder:
             silent=silent,
             state_cache_depth=state_cache_depth,
         )
+        assert isinstance(base_pool, CurveStableswapPool)
 
         if metapool.tokens_underlying is None:
             return base_pool, None

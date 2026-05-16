@@ -51,7 +51,7 @@ def log_function_call[**P, R](func: Callable[P, R]) -> Callable[P, R]:
             logger.debug("%s -> %r", func_name, result)
             return result
 
-        return async_wrapper
+        return async_wrapper  # ty:ignore[invalid-return-type]
 
     @functools.wraps(func)
     def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:

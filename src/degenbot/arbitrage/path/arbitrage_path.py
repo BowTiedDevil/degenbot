@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 from weakref import WeakSet
 
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult
@@ -12,6 +12,7 @@ from degenbot.arbitrage.types import (
 )
 from degenbot.exceptions import OptimizationError
 from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
+from degenbot.types.pool_protocols import ArbitragePathPool
 from degenbot.types.concrete import (
     AbstractPublisherMessage,
     PoolStateMessage,
@@ -30,7 +31,6 @@ if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
     from degenbot.types.abstract import AbstractPoolState
     from degenbot.types.hop_types import HopType
-    from degenbot.types.pool_protocols import ArbitrageCapablePool, ArbitragePathPool
 
 
 _MIN_POOLS_FOR_ARBITRAGE_PATH = 2
@@ -305,11 +305,17 @@ class ArbitragePath(PublisherMixin):
     def notify(self, publisher: Publisher, message: AbstractPublisherMessage) -> None:
         if not isinstance(message, PoolStateMessage):
             return
-        if publisher not in self._pool_index:
+
+        pool: ArbitragePathPool | None = None
+        for p in self._pool_index:
+            if p is publisher:
+                pool = p
+                break
+        if pool is None:
             return
 
-        idx = self._pool_index[publisher]
-        self._hop_states[idx] = cast("ArbitrageCapablePool", publisher).to_hop_state(
+        idx = self._pool_index[pool]
+        self._hop_states[idx] = pool.to_hop_state(
             zero_for_one=self._swap_vectors[idx].zero_for_one,
         )
         try:
