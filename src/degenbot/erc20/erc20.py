@@ -218,6 +218,5 @@ class Erc20Token(AbstractErc20Token):
         return self._price_oracle.price
 
     @property
-    def chain_id(self) -> int:
-        assert self._chain_id is not None
+    def chain_id(self) -> int | None:
         return self._chain_id
