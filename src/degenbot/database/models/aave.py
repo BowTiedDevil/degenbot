@@ -220,6 +220,8 @@ class AaveV3Asset(Base):
 
     # Protocol state - updated every block
     last_update_block: Mapped[int | None]
+    last_known_price: Mapped[int | None]
+    last_price_block: Mapped[int | None]
     liquidity_index: Mapped[BigInteger]  # Scaled by ray (1e27)
     liquidity_rate: Mapped[BigInteger]
     borrow_index: Mapped[BigInteger]  # Scaled by ray (1e27)

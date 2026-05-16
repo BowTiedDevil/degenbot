@@ -5,8 +5,6 @@ This module provides functions to extract user addresses from Aave event logs,
 used for batch prefetching users to avoid N+1 queries during transaction processing.
 """
 
-from typing import assert_never
-
 import eth_abi.abi
 from eth_typing import ChecksumAddress
 from web3.types import LogReceipt
@@ -237,6 +235,7 @@ def extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress]
         pass
 
     else:
-        assert_never(topic)
+        msg = f"Unexpected topic: {topic!r}"
+        raise ValueError(msg)
 
     return user_addresses
