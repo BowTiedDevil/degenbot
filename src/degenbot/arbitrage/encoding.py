@@ -97,10 +97,7 @@ def generate_payloads(
         composer = FlatComposer()
 
     # Step 1: Encode each swap
-    swap_calls = [
-        swap.encode(recipient=recipient)
-        for swap in swap_amounts
-    ]
+    swap_calls = [swap.encode(recipient=recipient) for swap in swap_amounts]
 
     # Step 2: Inject approvals
     approval_calls = approval_strategy.approvals_for(

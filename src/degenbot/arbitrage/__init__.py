@@ -1,3 +1,6 @@
+import importlib
+import warnings
+
 from .encoding import (
     ApprovalStrategy,
     EncodedCall,
@@ -16,9 +19,6 @@ _DEPRECATED_NAMES = {
 
 def __getattr__(name: str) -> object:
     if name in _DEPRECATED_NAMES:
-        import importlib
-        import warnings
-
         warnings.warn(
             f"{name} is deprecated. Use ArbitragePath + ArbSolver instead. "
             "See docs/migration-guides/legacy-cycles-to-arbitrage-path.md",

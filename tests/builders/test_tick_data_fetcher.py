@@ -12,6 +12,7 @@ import eth_abi.abi
 import pytest
 
 from degenbot.builders.tick_data_fetcher import TickDataTypes, make_tick_data_fetcher
+from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.concentrated.state_manager import (
     ConcentratedLiquidityStateManager,
 )
@@ -253,6 +254,5 @@ class TestBitmapFetchRaises:
 
 def _encode_ticks_calldata(tick: int) -> bytes:
     """Encode a ticks(int24) call for the given tick value."""
-    from degenbot.provider.call_helpers import encode_function_calldata
 
     return encode_function_calldata("ticks(int24)", [tick])

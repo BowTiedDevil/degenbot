@@ -14,6 +14,8 @@ from degenbot.aave.enrichment.handlers.liquidation import LiquidationHandler
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
+import eth_abi.abi
+from degenbot.aave.enrichment.context import EnrichmentContext
 
 if TYPE_CHECKING:
     from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
@@ -274,7 +276,6 @@ def _create_mock_scaled_event(
 
 def _create_mock_liquidation_pool_event(debt_to_cover: int, collateral_liquidated: int) -> LogReceipt:
     """Create a mock LiquidationCall Pool event."""
-    import eth_abi.abi
 
     # LiquidationCall event:
     # (debtToCover, liquidatedCollateralAmount, liquidator, receiveAToken)
@@ -311,7 +312,6 @@ def _create_mock_operation(
 
 
 def _create_mock_context_debt() -> MagicMock:
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
@@ -325,7 +325,6 @@ def _create_mock_context_debt() -> MagicMock:
         return ChecksumAddress("0x1111111111111111111111111111111111111111")
 
     def mock_extract_pool_amount(pool_event: LogReceipt, event_type: ScaledTokenEventType | None = None, operation_type: OperationType | None = None) -> int:
-        import eth_abi.abi
         # Debt events extract debtToCover
         if event_type in {ScaledTokenEventType.DEBT_BURN, ScaledTokenEventType.GHO_DEBT_BURN}:
             (debt_to_cover, _, _, _) = eth_abi.abi.decode(["uint256", "uint256", "address", "bool"], pool_event["data"])
@@ -370,7 +369,6 @@ def _create_mock_context_debt() -> MagicMock:
 
 def _create_mock_context_debt_rev9() -> MagicMock:
     """Context for Pool rev 9+ which pre-scales debt amounts."""
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
@@ -384,7 +382,6 @@ def _create_mock_context_debt_rev9() -> MagicMock:
         return ChecksumAddress("0x1111111111111111111111111111111111111111")
 
     def mock_extract_pool_amount(pool_event: LogReceipt, event_type: ScaledTokenEventType | None = None, operation_type: OperationType | None = None) -> int:
-        import eth_abi.abi
         (debt_to_cover, _, _, _) = eth_abi.abi.decode(["uint256", "uint256", "address", "bool"], pool_event["data"])
         return debt_to_cover
 
@@ -420,7 +417,6 @@ def _create_mock_context_debt_rev9() -> MagicMock:
 
 
 def _create_mock_context_collateral() -> MagicMock:
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
@@ -434,7 +430,6 @@ def _create_mock_context_collateral() -> MagicMock:
         return ChecksumAddress("0x1111111111111111111111111111111111111111")
 
     def mock_extract_pool_amount(pool_event: LogReceipt, event_type: ScaledTokenEventType | None = None, operation_type: OperationType | None = None) -> int:
-        import eth_abi.abi
         (_, collateral, _, _) = eth_abi.abi.decode(["uint256", "uint256", "address", "bool"], pool_event["data"])
         return collateral
 
@@ -471,7 +466,6 @@ def _create_mock_context_collateral() -> MagicMock:
 
 def _create_mock_context_debt_mint() -> MagicMock:
     """Context for net debt increase case."""
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
@@ -485,7 +479,6 @@ def _create_mock_context_debt_mint() -> MagicMock:
         return ChecksumAddress("0x1111111111111111111111111111111111111111")
 
     def mock_extract_pool_amount(pool_event: LogReceipt, event_type: ScaledTokenEventType | None = None, operation_type: OperationType | None = None) -> int:
-        import eth_abi.abi
         (debt_to_cover, _, _, _) = eth_abi.abi.decode(["uint256", "uint256", "address", "bool"], pool_event["data"])
         return debt_to_cover
 
@@ -521,7 +514,6 @@ def _create_mock_context_debt_mint() -> MagicMock:
 
 def _create_mock_context_erc20_transfer() -> MagicMock:
     """Context for ERC20 transfer events within liquidation (no index, no scaling)."""
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
@@ -564,7 +556,6 @@ def _create_mock_context_erc20_transfer() -> MagicMock:
 
 
 def _create_mock_context_gho_debt() -> MagicMock:
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
@@ -578,7 +569,6 @@ def _create_mock_context_gho_debt() -> MagicMock:
         return ChecksumAddress("0x1111111111111111111111111111111111111111")
 
     def mock_extract_pool_amount(pool_event: LogReceipt, event_type: ScaledTokenEventType | None = None, operation_type: OperationType | None = None) -> int:
-        import eth_abi.abi
         (debt_to_cover, _, _, _) = eth_abi.abi.decode(["uint256", "uint256", "address", "bool"], pool_event["data"])
         return debt_to_cover
 

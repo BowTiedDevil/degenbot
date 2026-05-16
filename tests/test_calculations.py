@@ -12,6 +12,7 @@ from degenbot.calculations.solidly_stable import (
     calc_k,
     get_y_solidly,
 )
+from degenbot.calculations.solidly_stable import calc_k as solidly_calc_k
 from degenbot.calculations.stableswap import (
     calc_d as curve_calc_d,
 )
@@ -195,7 +196,6 @@ class TestCamelot:
 
     def test_k_camelot_matches_solidly_k(self):
         """Camelot's k should give the same result as Solidly's calc_k for same inputs."""
-        from degenbot.calculations.solidly_stable import calc_k as solidly_calc_k
 
         b0 = 1_000_000_000_000_000_000
         b1 = 2_000_000_000_000_000_000

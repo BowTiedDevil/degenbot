@@ -14,6 +14,7 @@ from degenbot.aave.enrichment.handlers.interest_accrual import InterestAccrualHa
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
+from degenbot.aave.enrichment.context import EnrichmentContext
 
 if TYPE_CHECKING:
     from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
@@ -171,7 +172,6 @@ def _create_mock_context() -> MagicMock:
 
     The mock delegates build_enriched_event to the real implementation.
     """
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     mock_session = MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)

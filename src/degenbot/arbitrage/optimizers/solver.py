@@ -12,7 +12,7 @@ statements continue to work.
 
 import time
 from fractions import Fraction
-from typing import Any, ClassVar, cast, override
+from typing import ClassVar, cast, override
 
 # Re-export internal helpers so existing test imports keep working
 from degenbot.arbitrage.optimizers.balancer_multi_token_solver import (

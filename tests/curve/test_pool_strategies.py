@@ -2,7 +2,10 @@
 
 import pytest
 
+import pickle
+
 from degenbot.curve._pool_strategies import resolve_pool_strategies
+from degenbot.curve.calculators.standard import StandardDyCalculator
 from degenbot.curve.types import (
     DVariant,
     LendingRateStyle,
@@ -19,7 +22,6 @@ class TestResolvePoolStrategies:
     """Test resolve_pool_strategies() for known pool addresses."""
 
     def test_default_for_unknown_address(self):
-        from degenbot.curve.calculators.standard import StandardDyCalculator
 
         strategies = resolve_pool_strategies("0x0000000000000000000000000000000000000001")
         # Unknown address gets defaults with StandardDyCalculator
@@ -152,7 +154,6 @@ class TestPoolStrategiesDataclass:
         assert s1 != s2
 
     def test_picklable(self):
-        import pickle
 
         s = PoolStrategies(
             d_variant=DVariant.VARIANT_ALPHA,

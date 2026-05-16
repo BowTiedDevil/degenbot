@@ -6,6 +6,7 @@ import tomlkit
 from pydantic import BaseModel, HttpUrl, PlainSerializer, WebsocketUrl, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from degenbot.database.operations import create_new_sqlite_database
 from degenbot.logging import logger
 from degenbot.types.aliases import ChainId
 
@@ -84,8 +85,6 @@ def _init_config() -> DegenbotConfig:
 
     # Skip database creation for in-memory databases
     if config.database.path.name != ":memory:" and not config.database.path.exists():
-        from degenbot.database.operations import create_new_sqlite_database  # noqa: PLC0415
-
         create_new_sqlite_database(db_path=config.database.path)
 
     return config

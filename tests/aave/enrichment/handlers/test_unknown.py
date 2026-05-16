@@ -14,6 +14,7 @@ from degenbot.aave.enrichment.handlers.unknown import UnknownHandler
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.models import EnrichmentError
 from degenbot.aave.operation_types import OperationType
+from degenbot.aave.enrichment.context import EnrichmentContext
 
 if TYPE_CHECKING:
     from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
@@ -47,7 +48,6 @@ class TestUnknownHandler:
         When an operation cannot be classified, enrichment should fail
         rather than produce incorrect results.
         """
-        from degenbot.aave.enrichment.context import EnrichmentContext
 
         scaled_event = _create_mock_scaled_event(
             event_type=ScaledTokenEventType.COLLATERAL_MINT,

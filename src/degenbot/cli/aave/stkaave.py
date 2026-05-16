@@ -17,7 +17,7 @@ def get_or_init_stk_aave_balance(
     *,
     user: AaveV3User,
     tx_context: TransactionContext,
-    log_index: int | None = None,
+    log_index: int | None = None,  # noqa: ARG001
 ) -> int:
     """
     Get user's last-known stkAAVE balance.

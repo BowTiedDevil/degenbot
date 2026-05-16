@@ -302,7 +302,7 @@ class _OfflineAdapter:
 # ============================================================================
 
 
-class ProviderAdapter:  # noqa:PLR0904
+class ProviderAdapter:
     """
     Adapter that wraps Web3, AlloyProvider, or OfflineProvider.
 
@@ -779,7 +779,7 @@ class _AsyncAlloyAdapter:
 # ============================================================================
 
 
-class AsyncProviderAdapter:  # noqa:PLR0904
+class AsyncProviderAdapter:
     """
     Async adapter that wraps either AsyncWeb3 or AsyncAlloyProvider.
 
@@ -796,7 +796,9 @@ class AsyncProviderAdapter:  # noqa:PLR0904
         backend: AsyncProviderBackend,
         *,
         provider_type: Literal["web3", "alloy"],
-        raw_provider: AsyncWeb3[Any] | AlloyProvider | AsyncAlloyProvider | OfflineProvider | None = None,
+        raw_provider: (
+            AsyncWeb3[Any] | AlloyProvider | AsyncAlloyProvider | OfflineProvider | None
+        ) = None,
     ) -> None:
         self._backend = backend
         self._provider_type = provider_type
@@ -822,7 +824,9 @@ class AsyncProviderAdapter:  # noqa:PLR0904
         return self._provider_type
 
     @property
-    def underlying(self) -> AsyncWeb3[Any] | AlloyProvider | AsyncAlloyProvider | OfflineProvider | None:
+    def underlying(
+        self,
+    ) -> AsyncWeb3[Any] | AlloyProvider | AsyncAlloyProvider | OfflineProvider | None:
         """Get the underlying provider instance.
 
         .. deprecated:: 0.x

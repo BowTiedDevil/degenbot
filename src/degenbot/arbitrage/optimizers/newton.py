@@ -270,7 +270,7 @@ class NewtonV2Optimizer(ArbitrageOptimizer):
     def solve(
         self,
         pools: list[Any],
-        input_token: "Erc20Token",
+        input_token: Erc20Token,
         max_input: int | None = None,
     ) -> OptimizerResult:
         """

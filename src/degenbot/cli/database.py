@@ -81,7 +81,7 @@ def database_upgrade(bot: Bot, *, force: bool) -> None:
     Upgrade the database to the latest schema.
     """
 
-    with bot.db() as session:
+    with bot.db() as _:
         current_version = MigrationContext.configure(
             connection=bot.db.connection()
         ).get_current_revision()

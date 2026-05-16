@@ -1,4 +1,5 @@
 from web3.exceptions import Web3Exception
+from tests.curve.detection.fake_provider import make_fake_curve_provider
 
 """Tests for Curve pool LP token discovery."""
 
@@ -26,7 +27,6 @@ def _encode_address(addr: str) -> bytes:
 class TestFindLpToken:
     def testLpTokenFromFirstRegistry(self):
         """LP token found via the first registry."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         def handle_get_lp_token(to: str, data: bytes, block: int) -> bytes:
             return _encode_address(THREE_CRV_LP)
@@ -45,7 +45,6 @@ class TestFindLpToken:
 
     def testLpTokenFromSecondRegistry(self):
         """First registry returns zero address, second registry finds the LP token."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         call_count = {"count": 0}
 
@@ -69,7 +68,6 @@ class TestFindLpToken:
 
     def testNoLpTokenFound(self):
         """Both registries revert or return zero — no LP token found."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         provider = make_fake_curve_provider({})  # All calls revert
 
@@ -83,7 +81,6 @@ class TestFindLpToken:
 
     def testFirstRegistryReverts(self):
         """First registry reverts, second registry finds LP token."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         def handle_get_lp_token(to: str, data: bytes, block: int) -> bytes:
             if to == CURVE_V1_REGISTRY_ADDRESS:

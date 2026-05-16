@@ -26,7 +26,6 @@ from degenbot.constants import ZERO_ADDRESS
 def _should_skip_collateral_transfer(
     scaled_event: ScaledTokenEvent,
     operation: Operation | None,
-    tx_context: TransactionContext,
 ) -> bool:
     """
     Determine if this collateral transfer event should be skipped.
@@ -136,7 +135,7 @@ def _process_collateral_transfer(
     assert scaled_event.target_address is not None
 
     # Skip events that are handled elsewhere (paired BalanceTransfers, mints, burns)
-    if _should_skip_collateral_transfer(scaled_event, operation, tx_context):
+    if _should_skip_collateral_transfer(scaled_event, operation):
         return
 
     # Get sender and their position

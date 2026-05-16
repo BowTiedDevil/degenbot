@@ -14,6 +14,8 @@ from degenbot.aave.enrichment.handlers.repay_with_atokens import RepayWithAtoken
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
+import eth_abi.abi
+from degenbot.aave.enrichment.context import EnrichmentContext
 
 if TYPE_CHECKING:
     from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
@@ -191,7 +193,6 @@ def _create_mock_scaled_event(
 
 
 def _create_mock_pool_event(amount: int) -> LogReceipt:
-    import eth_abi.abi
     data = eth_abi.abi.encode(["uint256", "bool"], [amount, True])  # useATokens=True
     return LogReceipt({
         "address": "0x" + "p" * 40,
@@ -220,7 +221,6 @@ def _create_mock_operation(
 
 
 def _create_mock_context_collateral() -> MagicMock:
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
@@ -234,7 +234,6 @@ def _create_mock_context_collateral() -> MagicMock:
         return ChecksumAddress("0x1111111111111111111111111111111111111111")
 
     def mock_extract_pool_amount(pool_event: LogReceipt, **kwargs) -> int:
-        import eth_abi.abi
         (amount, _) = eth_abi.abi.decode(["uint256", "bool"], pool_event["data"])
         return amount
 
@@ -270,7 +269,6 @@ def _create_mock_context_collateral() -> MagicMock:
 
 
 def _create_mock_context_collateral_mint() -> MagicMock:
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
@@ -284,7 +282,6 @@ def _create_mock_context_collateral_mint() -> MagicMock:
         return ChecksumAddress("0x1111111111111111111111111111111111111111")
 
     def mock_extract_pool_amount(pool_event: LogReceipt, **kwargs) -> int:
-        import eth_abi.abi
         (amount, _) = eth_abi.abi.decode(["uint256", "bool"], pool_event["data"])
         return amount
 
@@ -319,7 +316,6 @@ def _create_mock_context_collateral_mint() -> MagicMock:
 
 
 def _create_mock_context_debt() -> MagicMock:
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
@@ -333,7 +329,6 @@ def _create_mock_context_debt() -> MagicMock:
         return ChecksumAddress("0x1111111111111111111111111111111111111111")
 
     def mock_extract_pool_amount(pool_event: LogReceipt, **kwargs) -> int:
-        import eth_abi.abi
         (amount, _) = eth_abi.abi.decode(["uint256", "bool"], pool_event["data"])
         return amount
 
@@ -369,7 +364,6 @@ def _create_mock_context_debt() -> MagicMock:
 
 
 def _create_mock_context_debt_mint() -> MagicMock:
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
@@ -383,7 +377,6 @@ def _create_mock_context_debt_mint() -> MagicMock:
         return ChecksumAddress("0x1111111111111111111111111111111111111111")
 
     def mock_extract_pool_amount(pool_event: LogReceipt, **kwargs) -> int:
-        import eth_abi.abi
         (amount, _) = eth_abi.abi.decode(["uint256", "bool"], pool_event["data"])
         return amount
 

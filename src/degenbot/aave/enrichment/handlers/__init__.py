@@ -16,17 +16,13 @@ from degenbot.aave.enrichment.handlers.supply import SupplyHandler
 from degenbot.aave.enrichment.handlers.transfer import BalanceTransferHandler
 from degenbot.aave.enrichment.handlers.unknown import UnknownHandler
 from degenbot.aave.enrichment.handlers.withdraw import WithdrawHandler
-
-if TYPE_CHECKING:
-    from degenbot.aave.operation_types import OperationType
+from degenbot.aave.operation_types import OperationType
 
 # Registry mapping OperationType to handler instances
 HANDLER_REGISTRY: dict["OperationType", OperationHandler] = {}
 
 
 def _register_handlers() -> None:
-    from degenbot.aave.operation_types import OperationType  # noqa: PLC0415, F401
-
     for handler_class in [
         InterestAccrualHandler,
         MintToTreasuryHandler,

@@ -17,9 +17,10 @@ from fractions import Fraction
 import pytest
 
 from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
-from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
+from degenbot.arbitrage.optimizers.hop_types import SolveInput
+from degenbot.arbitrage.optimizers.solver import ArbSolver, BrentSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
-from degenbot.arbitrage.types import UniswapV3PoolSwapAmounts
+from degenbot.arbitrage.types import ArbitrageCalculationResult, UniswapV3PoolSwapAmounts
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.arbitrage import ArbitrageError, OptimizationError
 from degenbot.types.hop_types import BoundedProductHop
@@ -286,8 +287,6 @@ def _make_patched_legacy_cycle(
         state_overrides: dict | None = None,
     ):
         """Use pool's to_hop_state() to build SolveInput, then solve via ArbSolver."""
-        from degenbot.arbitrage.optimizers.hop_types import SolveInput
-        from degenbot.arbitrage.optimizers.solver import ArbSolver
 
         if state_overrides is None:
             state_overrides = {}
@@ -315,7 +314,6 @@ def _make_patched_legacy_cycle(
         input_swap_amount = input_swap.amount_in
         best_profit_amount = output_swap.amount_out - input_swap_amount
 
-        from degenbot.arbitrage.types import ArbitrageCalculationResult
         return ArbitrageCalculationResult(
             id=self.id,
             input_token=self.input_token,

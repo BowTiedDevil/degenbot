@@ -56,9 +56,11 @@ class OfflineCallReverted(Exception):
     def __init__(self, to: str, data: bytes) -> None:
         self.to = to
         self.data = data
-        super().__init__(
-            f"Recorded call reverted or contract not deployed for call to {to} with data 0x{data.hex()[:40]}..."
+        msg = (
+            f"Recorded call reverted or contract not deployed"
+            f" for call to {to} with data 0x{data.hex()[:40]}..."
         )
+        super().__init__(msg)
 
 
 class OfflineProvider:

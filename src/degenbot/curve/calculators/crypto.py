@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from degenbot.curve.types import CurveStableswapPoolState
 
+from degenbot.calculations.stableswap import stableswap_reduction_coefficient
 from degenbot.curve.types import DyCalculationInputs, SwapStyle
 
 
@@ -32,8 +33,6 @@ class CryptoDyCalculator:
         inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        from degenbot.calculations.stableswap import stableswap_reduction_coefficient
-
         assert inputs.d is not None, "Crypto pool requires d in inputs"
         assert inputs.gamma is not None, "Crypto pool requires gamma in inputs"
         assert inputs.price_scale is not None, "Crypto pool requires price_scale in inputs"

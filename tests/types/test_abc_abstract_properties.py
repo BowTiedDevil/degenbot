@@ -15,13 +15,15 @@ from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+import pytest
+from degenbot.registry.pool_type import _derive_family
+from degenbot.types.pool_type import PoolFamily
 
 
 class TestAbstractLiquidityPoolCannotInstantiate:
     """AbstractLiquidityPool with abstract properties should reject direct instantiation."""
 
     def test_cannot_instantiate(self):
-        import pytest
 
         with pytest.raises(TypeError, match="abstract method"):
             AbstractLiquidityPool()
@@ -101,31 +103,19 @@ class TestPoolFamilyDerivation:
     """Verify that _derive_family correctly identifies pool families via structural checks."""
 
     def test_v2_is_constant_product(self):
-        from degenbot.registry.pool_type import _derive_family
-        from degenbot.types.pool_type import PoolFamily
         assert _derive_family(UniswapV2Pool) == PoolFamily.CONSTANT_PRODUCT
 
     def test_v3_is_concentrated_liquidity(self):
-        from degenbot.registry.pool_type import _derive_family
-        from degenbot.types.pool_type import PoolFamily
         assert _derive_family(UniswapV3Pool) == PoolFamily.CONCENTRATED_LIQUIDITY
 
     def test_v4_is_concentrated_liquidity(self):
-        from degenbot.registry.pool_type import _derive_family
-        from degenbot.types.pool_type import PoolFamily
         assert _derive_family(UniswapV4Pool) == PoolFamily.CONCENTRATED_LIQUIDITY
 
     def test_aerodrome_is_constant_product(self):
-        from degenbot.registry.pool_type import _derive_family
-        from degenbot.types.pool_type import PoolFamily
         assert _derive_family(AerodromeV2Pool) == PoolFamily.CONSTANT_PRODUCT
 
     def test_curve_is_stableswap(self):
-        from degenbot.registry.pool_type import _derive_family
-        from degenbot.types.pool_type import PoolFamily
         assert _derive_family(CurveStableswapPool) == PoolFamily.STABLESWAP
 
     def test_camelot_is_constant_product(self):
-        from degenbot.registry.pool_type import _derive_family
-        from degenbot.types.pool_type import PoolFamily
         assert _derive_family(CamelotLiquidityPool) == PoolFamily.CONSTANT_PRODUCT

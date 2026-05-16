@@ -1,4 +1,3 @@
-# ruff: noqa: PLR0904
 
 
 import dataclasses
@@ -42,6 +41,7 @@ from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import (
     get_tick_word_and_bit_position,
 )
+from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from degenbot.uniswap.v3_types import BitmapWord, Pip, Tick
 from degenbot.uniswap.v4_libraries.tick_bitmap import flip_tick
 from degenbot.uniswap.v4_libraries.tick_math import MAX_SQRT_PRICE, MIN_SQRT_PRICE
@@ -810,11 +810,6 @@ class UniswapV4Pool(  # type: ignore[override]
         amount_in: int,
         amount_out: int,
     ) -> UniswapV4PoolSwapAmounts:
-        from degenbot.uniswap.v3_libraries.tick_math import (  # noqa: PLC0415
-            MAX_SQRT_RATIO,
-            MIN_SQRT_RATIO,
-        )
-
         limit = MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1
         return UniswapV4PoolSwapAmounts(
             address=self.address,

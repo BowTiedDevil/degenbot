@@ -25,6 +25,18 @@ from degenbot.provider.interface import AsyncProviderAdapter
 from degenbot.types.aliases import BlockNumber
 
 
+def _build_topics_list(
+    topic_signature: Sequence[Sequence[HexBytes] | HexBytes] | None,
+) -> list[list[str]] | None:
+    """Convert topic signature to the list format expected by the RPC call."""
+    if not topic_signature:
+        return None
+    return [
+        [t.to_0x_hex() if isinstance(t, HexBytes) else str(t) for t in topic]
+        for topic in topic_signature
+    ]
+
+
 class _ChunkedLogFetcher:
     """
     Internal: shared chunking and span-management logic for log fetching.
@@ -225,46 +237,42 @@ async def fetch_logs_retrying_async(
         leave=False,
     )
 
+    async def _fetch_chunk(attempt: object, chunk_end: int) -> None:  # type: ignore[arg-type]
+        """Fetch a single chunk of logs within a retry attempt."""
+        with attempt:
+            try:
+                logger.debug(
+                    f"Fetching logs for range {fetcher.start_block}-{chunk_end} "
+                    f" ({fetcher.chunk_size} blocks)"
+                )
+                addresses_arg: list[str] | None = (
+                    [address] if address is not None else None
+                )
+                topics_list = _build_topics_list(topic_signature)
+                logs = await provider.get_logs(
+                    from_block=fetcher.start_block,
+                    to_block=chunk_end,
+                    addresses=addresses_arg,
+                    topics=topics_list,
+                )
+                event_logs.extend(logs)
+            except (Timeout, Web3Exception):
+                old_working_span = fetcher.working_span
+                fetcher.on_timeout()
+                logger.debug(
+                    f"Attempt {attempt.retry_state.attempt_number} timed out "  # type: ignore[union-attr]
+                    f"fetching {old_working_span} blocks. "
+                    f"Reducing to {fetcher.working_span}..."
+                )
+                raise
+            else:
+                pbar.update(fetcher.chunk_size)
+                fetcher.on_success()
+
     while not fetcher.is_complete:
         try:
             async for attempt in retrier:
-                chunk_end = fetcher.chunk_end
-
-                with attempt:
-                    try:
-                        logger.debug(
-                            f"Fetching logs for range {fetcher.start_block}-{chunk_end} "
-                            f" ({fetcher.chunk_size} blocks)"
-                        )
-                        addresses_arg: list[str] | None = (
-                            [address] if address is not None else None
-                        )
-                        topics_list: list[list[str]] | None = None
-                        if topic_signature:
-                            topics_list = []
-                            for topic in topic_signature:
-                                topics_list.append(
-                                    [t.to_0x_hex() if isinstance(t, HexBytes) else str(t) for t in topic]
-                                )
-                        logs = await provider.get_logs(
-                            from_block=fetcher.start_block,
-                            to_block=chunk_end,
-                            addresses=addresses_arg,
-                            topics=topics_list,
-                        )
-                        event_logs.extend(logs)
-                    except (Timeout, Web3Exception):
-                        old_working_span = fetcher.working_span
-                        fetcher.on_timeout()
-                        logger.debug(
-                            f"Attempt {attempt.retry_state.attempt_number} timed out "
-                            f"fetching {old_working_span} blocks. "
-                            f"Reducing to {fetcher.working_span}..."
-                        )
-                        raise
-                    else:
-                        pbar.update(fetcher.chunk_size)
-                        fetcher.on_success()
+                await _fetch_chunk(attempt, fetcher.chunk_end)
 
             fetcher.advance()
             if fetcher.is_complete:

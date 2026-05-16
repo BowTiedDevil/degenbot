@@ -1,9 +1,12 @@
 """Parameterized pool creation event updaters.
 
 Replaces 14 near-identical updater functions with 3 parameterized functions:
-- ``update_v2_pools``: V2-style events (token0/token1 from topics, pool_address from data)
-- ``update_v3_pools``: V3-style events (token0/token1/fee from topics, tick_spacing/pool_address from data)
-- ``update_v4_pools``: V4-style events (pool_hash/currency0/currency1 from topics, fee/tick_spacing/hooks from data)
+- ``update_v2_pools``: V2-style events
+  (token0/token1 from topics, pool_address from data)
+- ``update_v3_pools``: V3-style events
+  (token0/token1/fee from topics, tick_spacing/pool_address from data)
+- ``update_v4_pools``: V4-style events
+  (pool_hash/currency0/currency1 from topics, fee/tick_spacing/hooks from data)
 
 Each accepts a configuration dataclass that captures the DEX-specific variations
 (database table, event hash, fee values, optional RPC calls).
@@ -119,6 +122,7 @@ def update_v2_pools(
     end_block: int,
     exchange: ExchangeTable,
     session: Session,
+    *,
     config: V2PoolUpdateConfig,
     get_events_fn: Callable[..., list[LogReceipt]],
 ) -> None:
@@ -159,10 +163,7 @@ def update_v2_pools(
 
         # Determine fee: either from RPC call or constant
         if config.rpc_fee_call is not None:
-            if config.rpc_fee_includes_stable:
-                rpc_args = [pool_address, stable]
-            else:
-                rpc_args = [pool_address]
+            rpc_args = [pool_address, stable] if config.rpc_fee_includes_stable else [pool_address]
             (fee,) = raw_call(
                 provider=provider,
                 address=get_checksum_address(exchange.factory),
@@ -201,6 +202,7 @@ def update_v3_pools(
     end_block: int,
     exchange: ExchangeTable,
     session: Session,
+    *,
     config: V3PoolUpdateConfig,
     get_events_fn: Callable[..., list[LogReceipt]],
 ) -> None:
@@ -270,6 +272,7 @@ def update_v4_pools(
     end_block: int,
     exchange: ExchangeTable,
     session: Session,
+    *,
     config: V4PoolUpdateConfig,
     get_events_fn: Callable[..., list[LogReceipt]],
 ) -> None:

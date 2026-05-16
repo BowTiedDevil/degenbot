@@ -15,8 +15,19 @@ from weakref import WeakSet
 from eth_typing import ChecksumAddress
 from web3.types import BlockIdentifier
 
+from degenbot.calculations.stableswap import (
+    stableswap_get_d,
+    stableswap_get_y,
+    stableswap_get_y_d,
+    stableswap_newton_y,
+    stableswap_reduction_coefficient,
+)
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.curve._pool_strategies import _make_dy_calculator
+from degenbot.curve._pool_strategies import (
+    _make_dy_calculator,
+    _make_metapool_dy_calculator,
+    _make_metapool_underlying_dy_calculator,
+)
 from degenbot.curve.stableswap_pool_state import StableswapPoolState
 from degenbot.curve.types import (
     CurveDataProvider,
@@ -669,8 +680,6 @@ class CurveStableswapPool(  # type: ignore[override]
             inputs = self._build_metapool_inputs(block_number, override_state)
             calculator = self._strategies.metapool_dy_calculator
             if calculator is None:
-                from degenbot.curve._pool_strategies import _make_metapool_dy_calculator
-
                 calculator = _make_metapool_dy_calculator(self._strategies.metapool_rate_style)
             return calculator.calculate(
                 i, j, dx, inputs=inputs, override_state=override_state,
@@ -727,8 +736,6 @@ class CurveStableswapPool(  # type: ignore[override]
 
         calculator = self._strategies.metapool_underlying_dy_calculator
         if calculator is None:
-            from degenbot.curve._pool_strategies import _make_metapool_underlying_dy_calculator
-
             calculator = _make_metapool_underlying_dy_calculator(
                 self._strategies.metapool_underlying_style
             )
@@ -818,8 +825,6 @@ class CurveStableswapPool(  # type: ignore[override]
         Delegates to the pure function stableswap_get_d. Kept as a thin
         wrapper for backwards compatibility with callers that access pool state.
         """
-        from degenbot.calculations.stableswap import stableswap_get_d
-
         try:
             return stableswap_get_d(
                 xp=_xp,
@@ -837,8 +842,6 @@ class CurveStableswapPool(  # type: ignore[override]
         Delegates to the pure function stableswap_get_y. Resolves amp from
         the pool's A-ramping state and block timestamps before calling.
         """
-        from degenbot.calculations.stableswap import stableswap_get_y
-
         amp = (
             self._a(timestamp=self._block_timestamps[self.update_block]) // self.A_PRECISION
             if self._strategies.y_variant == YVariant.VARIANT_0
@@ -864,8 +867,6 @@ class CurveStableswapPool(  # type: ignore[override]
 
         Delegates to the pure function stableswap_get_y_d.
         """
-        from degenbot.calculations.stableswap import stableswap_get_y_d
-
         try:
             return stableswap_get_y_d(
                 a,
@@ -914,8 +915,6 @@ class CurveStableswapPool(  # type: ignore[override]
         Delegates to the pure function stableswap_newton_y.
         Used by crypto (volatile) Curve pools.
         """
-        from degenbot.calculations.stableswap import stableswap_newton_y
-
         try:
             return stableswap_newton_y(
                 ann,
@@ -937,8 +936,6 @@ class CurveStableswapPool(  # type: ignore[override]
 
         Delegates to the pure function stableswap_reduction_coefficient.
         """
-        from degenbot.calculations.stableswap import stableswap_reduction_coefficient
-
         return stableswap_reduction_coefficient(x, fee_gamma, n_coins)
 
     def calculate_tokens_out_from_tokens_in(

@@ -94,8 +94,8 @@ class TestV3TickRangeHop:
         V3 MobiusFloatHop with effective reserves L/sqrt_p and L*sqrt_p
         matches V2 behavior where r = L/sqrt_p, s = L*sqrt_p.
 
-        The α and β are implicitly included in the virtual reserves:
-        r_eff = R₀ + α = L/sqrt_p, s_eff = R₁ + β = L*sqrt_p.
+        The alpha and beta are implicitly included in the virtual reserves:
+        r_eff = R0 + alpha = L/sqrt_p, s_eff = R1 + beta = L*sqrt_p.
         """
         L = 1_000_000.0
         sqrt_p = 2000.0  # WETH/USDC-like price
@@ -139,9 +139,9 @@ class TestV3MobiusSwapFormula:
     """
     Verify that the V3 bounded product swap matches the Möbius form.
 
-    The swap: y = γ·(R₁+β)·x / ((R₀+α) + γ·x)
+    The swap: y = gamma*(R1+beta)*x / ((R0+alpha) + gamma*x)
     Should produce the same output as: simulate_path(x, [hop]) where hop has
-    effective reserves r_eff = R₀+α, s_eff = R₁+β.
+    effective reserves r_eff = R0+alpha, s_eff = R1+beta.
     """
 
     @pytest.mark.parametrize("current_tick", [0, -30, 30, 100, -100])

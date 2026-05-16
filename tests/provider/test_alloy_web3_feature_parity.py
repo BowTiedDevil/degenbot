@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from degenbot.provider import AlloyProvider
+from degenbot.provider import ProviderAdapter
 
 # =============================================================================
 # Web3 methods discovered in the codebase
@@ -406,7 +407,6 @@ class TestProviderAdapterIntegration:
 
     def test_provider_adapter_from_alloy(self):
         """ProviderAdapter can be created from AlloyProvider."""
-        from degenbot.provider import ProviderAdapter
 
         # Just test that the factory method exists and works
         # (we use a mock URL since we're not making real calls)

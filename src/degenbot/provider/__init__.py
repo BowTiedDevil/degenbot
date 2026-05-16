@@ -397,7 +397,7 @@ class AlloyProvider:
         self,
         method: str,
         params: list[Any],
-    ) -> Any:
+    ) -> Any:  # noqa: ANN401
         """Make a raw JSON-RPC request.
 
         This allows calling arbitrary RPC methods that don't have typed wrappers,

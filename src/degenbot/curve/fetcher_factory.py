@@ -18,8 +18,11 @@ from typing import TYPE_CHECKING, Any, cast
 import eth_abi.abi
 from hexbytes import HexBytes
 from web3 import Web3
+from web3.exceptions import ContractLogicError
 
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.curve.types import LendingRateStyle
+from degenbot.exceptions.pool import EVMRevertError
 from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
@@ -589,8 +592,6 @@ class CurveFetcherFactory:
 
         Returns None for pools without lending tokens.
         """
-        from degenbot.curve.types import LendingRateStyle
-
         if lending_rate_style is None or lending_rate_style == LendingRateStyle.NONE:
             return None
 
@@ -766,45 +767,53 @@ class _CurveDataProviderImpl:
         self._gamma_fn = _gamma_fn
         self._price_scale_fn = _price_scale_fn
 
+    @staticmethod
+    def _wrap_revert(callable_fn: Any, *args: Any, **kwargs: Any) -> Any:
+        """Call a fetcher closure, converting ContractLogicError to EVMRevertError."""
+        try:
+            return callable_fn(*args, **kwargs)
+        except ContractLogicError as e:
+            raise EVMRevertError(error=str(e)) from e
+
     # Pool-state fetchers
 
     def virtual_price(self, block_number: int) -> int:
-        return cast("int", self._virtual_price_fn(block_number))
+        return cast("int", self._wrap_revert(self._virtual_price_fn, block_number))
 
     def base_virtual_price(self, block_number: int) -> int:
-        return cast("int", self._base_virtual_price_fn(block_number))
+        return cast("int", self._wrap_revert(self._base_virtual_price_fn, block_number))
 
     def base_cache_updated(self, block_number: int) -> int:
-        return cast("int", self._base_cache_updated_fn(block_number))
+        return cast("int", self._wrap_revert(self._base_cache_updated_fn, block_number))
 
     def admin_balances(self, block_number: int) -> tuple[int, ...]:
-        return cast("tuple[int, ...]", self._admin_balances_fn(block_number))
+        return cast("tuple[int, ...]", self._wrap_revert(self._admin_balances_fn, block_number))
 
     def D(self, block_number: int) -> int:
         if self._d_fn is None:
             msg = "D() not available for this pool type"
             raise ValueError(msg)
-        return cast("int", self._d_fn(block_number))
+        return cast("int", self._wrap_revert(self._d_fn, block_number))
 
     def gamma(self, block_number: int) -> int:
         if self._gamma_fn is None:
             msg = "gamma() not available for this pool type"
             raise ValueError(msg)
-        return cast("int", self._gamma_fn(block_number))
+        return cast("int", self._wrap_revert(self._gamma_fn, block_number))
 
     def price_scale(self, block_number: int) -> tuple[int, ...]:
         if self._price_scale_fn is None:
             msg = "price_scale() not available for this pool type"
             raise ValueError(msg)
-        return cast("tuple[int, ...]", self._price_scale_fn(block_number))
+        return cast("tuple[int, ...]", self._wrap_revert(self._price_scale_fn, block_number))
 
     # Chain-state fetchers
 
     def block_timestamp(self, block_number: int) -> int:
-        return cast("int", self._timestamp_fn(block_number))
+        return cast("int", self._wrap_revert(self._timestamp_fn, block_number))
 
     def block_number(self) -> int:
-        return cast("int", self._block_number_fn())
+        return cast("int", self._wrap_revert(self._block_number_fn))
 
     # Helper fetchers
 
@@ -813,21 +822,26 @@ class _CurveDataProviderImpl:
         token = _SimpleToken(token_address)
         return cast(
             "int",
-            self._token_balance_fn(token, holder_address, block_identifier=block_number),
+            self._wrap_revert(
+                self._token_balance_fn, token, holder_address, block_identifier=block_number
+            ),
         )
 
     def token_total_supply(self, token_address: str, block_number: int) -> int:
         token = _SimpleToken(token_address)
-        return cast("int", self._total_supply_fn(token, block_identifier=block_number))
+        return cast(
+            "int",
+            self._wrap_revert(self._total_supply_fn, token, block_identifier=block_number),
+        )
 
     def lending_rates(self, block_number: int) -> tuple[int, ...]:
         if self._lending_rate_fn is None:
             msg = "lending_rates() not available for this pool type"
             raise ValueError(msg)
-        return cast("tuple[int, ...]", self._lending_rate_fn(block_number))
+        return cast("tuple[int, ...]", self._wrap_revert(self._lending_rate_fn, block_number))
 
     def redemption_price(self, block_number: int) -> int:
-        return cast("int", self._redemption_price_fn(block_number))
+        return cast("int", self._wrap_revert(self._redemption_price_fn, block_number))
 
 
 @dataclass(frozen=True, slots=True)
