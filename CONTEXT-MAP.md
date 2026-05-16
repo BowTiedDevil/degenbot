@@ -19,7 +19,7 @@ _Avoid_: Fork, local chain
 - [Pool Registries](src/degenbot/registry/CONTEXT.md) — address-based registries and the pool type registry
 - [Arbitrage, Solvers & Adapters](src/degenbot/arbitrage/CONTEXT.md) — arbitrage cycles, solvers, adapters, and swap encoding
 - [Aave](src/degenbot/aave/CONTEXT.md) — lending markets, assets, collateral, debt, and liquidation
-- [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — StableSwap pools, fetcher protocols, variant and strategy enums
+- [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — StableSwap pools, CurveDataProvider seam, DyCalculator, variant and strategy enums
 - [Connection Management](src/degenbot/connection/CONTEXT.md) — connection managers and provider references
 
 ## Instructions
@@ -47,7 +47,7 @@ _Avoid_: Fork, local chain
 - **Pool → Hop conversion** flows through each pool's `to_hop_state()` method (single source of truth; `solver_hop_builders.py` deleted)
 - An **Aave Market** contains many **Assets**, each wrapping an **Erc20Token** plus lending state
 - A **Curve Pool Tracker** tracks **Curve StableSwap Pools** and delegates construction to **Bot**
-- **Fetcher Callbacks** are injected into **Curve Pools** by the **Curve Pool Builder** (invoked via `Bot.build_pool()`); pools never access connections directly
+- A **CurveDataProvider** is injected into **Curve Pools** by the **Curve Pool Builder** (invoked via `Bot.build_pool()`); pools never access connections directly. The former 13 individual fetcher callbacks have been collapsed into a single `CurveDataProvider` seam (Plan 040)
 - V2/V3/V4/Aerodrome **Pools** are fully I/O-free — **Builders** fetch all data from DB/RPC and pass values; no pool class imports `ProviderAdapter` or carries provider-dependent methods
 - **PoolFamily** (identity enum in `types/pool_type.py`) is the sole identity enum; **Pool Invariant** (in `types/hop_types.py`) is the solver-dispatch enum
 - **CacheablePool** protocol enables **Pool Cache Adapter** registration without introspection

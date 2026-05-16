@@ -4,6 +4,14 @@
 An adapter wrapping an RPC connection for blockchain reads (sync or async). Implemented in `degenbot.provider` as `ProviderAdapter` and `AsyncProviderAdapter`; defined here because Connection Manager cannot be explained without it.
 _Avoid_: RPC client, web3
 
+**ProviderBackend**:
+A `@runtime_checkable` protocol defining the contract for sync RPC backends (methods like `get_block_number`, `eth_call`, `get_logs`, etc.). `ProviderAdapter` wraps any `ProviderBackend` and delegates via `__getattr__` for methods that don't need extra logic. Formerly split into `EthereumProvider` protocol + `_SyncProviderBackend` adapter; collapsed via Plan 042. `EthereumProvider` remains as a backward-compatible alias for `ProviderBackend`.
+_Avoid_: Backend, sync backend, Ethereum provider (use **ProviderBackend**)
+
+**AsyncProviderBackend**:
+The async counterpart of `ProviderBackend` — a `@runtime_checkable` protocol for async RPC backends. Formerly `_AsyncProviderBackend`; made public via Plan 042.
+_Avoid_: Async backend
+
 **Connection Manager**:
 A class managing provider instances keyed by chain ID; instances owned by Bot.
 _Avoid_: Connection

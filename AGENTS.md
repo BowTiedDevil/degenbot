@@ -139,7 +139,7 @@ PoolClass -> PublisherMixin -> PoolPickleMixin -> StateMixin -> CalcMixin -> Abs
 | CamelotLiquidityPool | (inherits V2) | `CamelotPoolCalc` | `if self.stable_swap` eliminated |
 | UniswapV3Pool | `V3PoolState` | `UniswapV3PoolCalc` | Base V3 |
 | UniswapV4Pool | `V4PoolState` | `UniswapV4PoolCalc` | V4-specific swap calc stays in pool |
-| CurveStableswapPool | `StableswapPoolState` | (not extracted) | Deep fetcher/cache coupling |
+| CurveStableswapPool | `StableswapPoolState` | `DyCalculator` seam | Calculators in `curve/calculators/`; pure math in `calculations/stableswap.py` |
 
 ### Protocols (replacing ABCs)
 
@@ -192,17 +192,21 @@ token = bot.build_erc20token("0x...")  # Fetches metadata, registers in token re
 
 V4 pools are identified by passing `pool_id` to `build_pool(address, pool_id=...)`.
 
-Typed builders (`build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`) remain public as convenience pass-throughs, but `build_pool()` is the preferred entry point. Adding a new pool family now requires only creating a builder and registering it via `register_builder()`, down from 5 touch points.
+Typed builders (`build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`) emit `DeprecationWarning` (Plan 044) — use `build_pool()` instead. Adding a new pool family now requires only creating a builder and registering it via `register_builder()`, down from 5 touch points.
 
 ### Fetcher Protocols
 
-**Curve pools** use **fetcher callbacks** for fully I/O-free operation — all on-chain data access flows through injected closures:
+**Curve pools** use a **CurveDataProvider** seam for fully I/O-free operation — all on-chain data access flows through a single injected object with 13 methods (`D()`, `gamma()`, `virtual_price()`, `base_virtual_price()`, `price_scale()`, `admin_balances()`, `lending_rate()`, `redemption_price()`, `block_timestamp()`, `block_number()`, `token_balance()`, `token_total_supply()`, `is_crypto()`). The pool calls `self._data_provider.xxx()` on-demand:
 
 ```python
-# Bot creates fetcher closures (handles I/O internally) via the Curve Pool Builder
-# Pool calls fetchers on-demand via RateFetcher, VirtualPriceFetcher protocols
+# Bot creates a _CurveDataProviderImpl via the Curve Pool Builder's fetcher factory
+# Pool calls data_provider methods on-demand
 pool = bot.build_pool("0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7")
 ```
+
+The former 13 individual fetcher callback constructor parameters (`_D_fetcher`, `_gamma_fetcher`, `_virtual_price_fetcher`, etc.) have been collapsed into a single `data_provider: CurveDataProvider | None` parameter (Plan 040). Pickle config simplified from 13 drops+reconstructs to 1. Builders call `fetchers.create_provider()` instead of 13 individual fetcher closures. Tests use `FakeCurveDataProvider` instead of individual lambda fetchers.
+
+The `DyCalculator` seam (Plan 039) replaces 14 `match`/`if` dispatch branches in `get_dy()` with injectable calculator objects keyed on `SwapStyle`, `MetapoolRateStyle`, and `MetapoolUnderlyingStyle` enums. Pure math functions in `calculations/stableswap.py` raise `ValueError`; pool wrappers catch and re-raise as `EVMRevertError` for backward compat.
 
 **V2/V3/V4/Aerodrome/Camelot pools** are fully I/O-free — builders fetch all data from DB/RPC, pass it to the pool constructor, and no provider references remain on the pool object. All updates flow through `external_update()` (pure logic). No pool class imports `ProviderAdapter` or carries provider-dependent methods (ADR-001 Phase 3 complete).
 
@@ -246,7 +250,9 @@ Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` f
 
 ## Architecture Plans
 
-Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–038 are all complete; the only remaining plan is 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
+Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–044 are all complete; the only remaining active plan is 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
+
+When a plan is marked complete: (1) move its file from `plans/` to `plans/completed/`, (2) move its row in `plans/README.md` from the Active Plans table to the Completed Plans table, and (3) update the link to point to the new `completed/` path.
 
 ### Legacy Arbitrage Cycles (Deprecated)
 
