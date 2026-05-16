@@ -100,7 +100,7 @@ def detect_liquidation_patterns(
 
         key = (event.user_address, event.event["address"])
 
-        # TODO: see if these events can be pre-filtered
+        # Note: these events could potentially be pre-filtered
         if key not in groups:
             continue
 

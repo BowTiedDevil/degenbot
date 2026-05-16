@@ -8,6 +8,7 @@ test overrides with an in-memory database) without rebinding the module-level
 
 from typing import Any
 
+from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session, scoped_session
 
 
@@ -39,13 +40,13 @@ class DatabaseSessionManager:
     def __call__(self, **kwargs: Any) -> Session:
         return self._session(**kwargs)
 
-    def connection(self, **kwargs: Any) -> Any:
+    def connection(self, **kwargs: Any) -> Connection:
         return self._session.connection(**kwargs)
 
     def remove(self) -> None:
         self._session.remove()
 
-    def __getattr__(self, name: str) -> Any:
+    def __getattr__(self, name: str) -> Any:  # noqa: ANN401
         return getattr(self._session, name)
 
     def __repr__(self) -> str:

@@ -45,7 +45,7 @@ class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):  # type: ignore[over
         self.stable_swap = stable_swap
 
         # Wire calculation strategy at construction
-        self._wire_camelot_calculations(stable_swap)
+        self._wire_camelot_calculations(stable_swap=stable_swap)
 
         super().__init__(
             address=address,

@@ -3,13 +3,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, overload
 
 from degenbot.registry.base import AddressRegistry, MultiKeyAddressRegistry
+from degenbot.types.pool_protocols import ConcentratedLiquidityPool
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
     from degenbot.types.abstract import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
-    from degenbot.types.pool_protocols import ConcentratedLiquidityPool
 
 
 type PoolId = bytes

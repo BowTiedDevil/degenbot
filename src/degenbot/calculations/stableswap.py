@@ -21,10 +21,11 @@ All functions are pure: numeric inputs → numeric outputs, no self, no class re
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from degenbot.curve.types import DVariant, YDVariant, YVariant
 
 # ── D calculation variants ──
@@ -186,6 +187,7 @@ def stableswap_get_d(
 def stableswap_get_y(
     i: int,
     j: int,
+    *,
     x: int,
     xp: Sequence[int],
     amp: int,
@@ -240,7 +242,7 @@ def stableswap_get_y(
         c = c * d // (x_ * n_coins)
 
     a_nn = amp * n_coins
-    if y_variant in (y_variant.VARIANT_0, y_variant.VARIANT_1):
+    if y_variant in {y_variant.VARIANT_0, y_variant.VARIANT_1}:
         c = c * d // (a_nn * n_coins)
         b = s + d // a_nn
     else:
@@ -263,6 +265,7 @@ def stableswap_get_y(
 def stableswap_get_y_d(
     a: int,
     i: int,
+    *,
     xp: Sequence[int],
     d: int,
     n_coins: int,
@@ -329,6 +332,7 @@ def stableswap_get_y_d(
 def stableswap_newton_y(
     ann: int,
     gamma: int,
+    *,
     xp: Sequence[int],
     d: int,
     token_index: int,

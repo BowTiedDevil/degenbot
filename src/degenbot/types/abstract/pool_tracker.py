@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-from threading import Lock
 from typing import TYPE_CHECKING, Any
 
-from eth_typing import ChecksumAddress
-
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
-from degenbot.types.aliases import ChainId
 
 if TYPE_CHECKING:
+    from threading import Lock
+
+    from eth_typing import ChecksumAddress
+
     from degenbot.bot import Bot
+    from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
+    from degenbot.types.aliases import ChainId
 
 
 class AbstractPoolTracker[Pool: AbstractLiquidityPool]:
