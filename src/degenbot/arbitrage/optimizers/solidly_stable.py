@@ -10,7 +10,14 @@ from degenbot.arbitrage.optimizers._solver_utils import (
 )
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult, SolverMethod
 from degenbot.exceptions import OptimizationError
-from degenbot.types.hop_types import BalancerMultiTokenHop, ConstantProductHop, HopType, PoolInvariant, SolidlyStableHop
+from degenbot.types.hop_types import (
+    BalancerMultiTokenHop,
+    ConstantProductHop,
+    CurveStableswapHop,
+    HopType,
+    PoolInvariant,
+    SolidlyStableHop,
+)
 
 
 def _solidly_swap_output_float(
@@ -132,6 +139,20 @@ def _simulate_mixed_path(
                 decimals_out=hop.decimals_out,
             )
 
+        elif isinstance(hop, CurveStableswapHop):
+            # Prefer exact callable if available
+            if hop.swap_fn is not None:
+                amount = float(hop.swap_fn(int(amount)))
+                continue
+            # Fall back to float approximation
+            r_i = float(hop.reserve_in)
+            s_i = float(hop.reserve_out)
+            g_i = 1.0 - float(hop.fee)
+            denom = r_i + amount * g_i
+            if denom <= 0:
+                return 0.0
+            amount = amount * g_i * s_i / denom
+
         elif not isinstance(hop, BalancerMultiTokenHop):
             r_i = float(hop.reserve_in)
             s_i = float(hop.reserve_out)
@@ -179,6 +200,20 @@ def _simulate_mixed_path_int(
                 decimals_out=hop.decimals_out,
             )
             amount = int(out)
+
+        elif isinstance(hop, CurveStableswapHop):
+            # Prefer exact callable if available
+            if hop.swap_fn is not None:
+                amount = hop.swap_fn(amount)
+                continue
+            # Fall back to float approximation
+            r_i = float(hop.reserve_in)
+            s_i = float(hop.reserve_out)
+            g_i = 1.0 - float(hop.fee)
+            denom = r_i + float(amount) * g_i
+            if denom <= 0:
+                return 0
+            amount = int(float(amount) * g_i * s_i / denom)
 
         elif not isinstance(hop, BalancerMultiTokenHop):
             r_i = hop.reserve_in
@@ -273,9 +308,7 @@ class SolidlyStableSolver(Solver):
 
         # Check whether all Solidly hops have swap_fn (integer path)
         has_swap_fn = all(
-            hop.swap_fn is not None
-            for hop in solve_input.hops
-            if isinstance(hop, SolidlyStableHop)
+            hop.swap_fn is not None for hop in solve_input.hops if isinstance(hop, SolidlyStableHop)
         )
 
         if has_swap_fn:
