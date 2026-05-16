@@ -1,10 +1,12 @@
 """Piecewise-Möbius solver for V3 multi-range paths with tick crossings."""
 
+from __future__ import annotations
+
 import math
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, override
+from typing import TYPE_CHECKING, Any, override
 
 import numpy as np
 
@@ -53,7 +55,7 @@ class PiecewiseMobiusSolver(Solver):
     def __init__(self) -> None:
         self._rust_optimizer = _rs_mobius.RustMobiusOptimizer()
         self._mobius_solver: MobiusSolver | None = None
-        self._rust_hop_cache: dict[int, list[_rs_mobius.RustHopState]] = {}
+        self._rust_hop_cache: dict[int, list[Any]] = {}
         self._rust_sequence_cache: dict[tuple[tuple[int, ...], int, bool], Any] = {}
 
     def __getstate__(self) -> dict[str, Any]:
@@ -623,7 +625,7 @@ class PiecewiseMobiusSolver(Solver):
         x_low: float,
         x_high: float,
         eval_profit_scalar: Callable[[float], float],
-    ) -> SolveResult:
+    ) -> SolveResult | None:
         """
         Vectorized bracket search using NumPy for parallel evaluation.
 
@@ -649,7 +651,7 @@ class PiecewiseMobiusSolver(Solver):
         profits = np.array([eval_profit_scalar(x) for x in x_points])
 
         # Find best point
-        best_idx = np.argmax(profits)
+        best_idx = int(np.argmax(profits))
         best_profit = profits[best_idx]
 
         if best_profit <= 0:
@@ -662,7 +664,7 @@ class PiecewiseMobiusSolver(Solver):
         x_refined = np.linspace(x_points[idx_low], x_points[idx_high], 5)
         profits_refined = np.array([eval_profit_scalar(x) for x in x_refined])
 
-        best_idx_refined = np.argmax(profits_refined)
+        best_idx_refined = int(np.argmax(profits_refined))
         best_profit_refined = profits_refined[best_idx_refined]
         best_x_refined = x_refined[best_idx_refined]
 
@@ -781,9 +783,13 @@ class PiecewiseMobiusSolver(Solver):
             method=SolverMethod.PIECEWISE_MOBIUS.name,
         )
 
-    def _get_cached_rust_hops(self, solve_input: SolveInput) -> list[_rs_mobius.RustHopState]:
+    def _get_cached_rust_hops(self, solve_input: SolveInput) -> list[Any]:
         cache_key = hash(
-            tuple((hop.reserve_in, hop.reserve_out, float(hop.fee)) for hop in solve_input.hops)
+            tuple(
+                (hop.reserve_in, hop.reserve_out, float(hop.fee))
+                for hop in solve_input.hops
+                if isinstance(hop, ConstantProductHop | BoundedProductHop)
+            )
         )
 
         if cache_key not in self._rust_hop_cache:
