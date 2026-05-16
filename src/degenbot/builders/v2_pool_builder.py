@@ -10,6 +10,7 @@ from degenbot.logging import logger
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.aliases import ChainId
 from degenbot.types.pool_protocols import ConstantProductPool
+from degenbot.types.pool_protocols import ConstantProductPool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 
@@ -60,8 +61,13 @@ class V2PoolBuilder(V2BuilderBase):
 
         # Determine pool class from registry
         pool_class = pool_type_registry.get_v2_class(chain_id, common.factory)
+        if pool_class is None:
+            msg = f"No V2 pool class registered for chain {chain_id}, factory {common.factory}"
+            raise ValueError(msg)
 
-        pool = pool_class(
+        # pool_class is type[ConstantProductPool] (a Protocol) so mypy
+        # cannot verify constructor args. Cast to the concrete default.
+        pool = pool_class(  # type: ignore[call-arg]
             address=pool_address,
             chain_id=common.chain_id,
             token0=token0,
@@ -77,7 +83,7 @@ class V2PoolBuilder(V2BuilderBase):
         )
 
         # Register pool
-        self._register_pool(pool, chain_id=chain_id)
+        self._register_pool(pool, chain_id=chain_id)  # type: ignore[arg-type]
 
         if not silent:
             logger.info(pool.name)
@@ -97,8 +103,10 @@ class V2PoolBuilder(V2BuilderBase):
             msg = f"V2PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 
+        assert pool.chain_id is not None
         provider = self._connections.get_provider(pool.chain_id)
-        _block_number = block_number if block_number is not None else provider.get_block_number()
+        raw_block = block_number if block_number is not None else provider.get_block_number()
+        _block_number = int(raw_block) if not isinstance(raw_block, int) else raw_block
         reserves0, reserves1 = self._fetch_reserves(pool.address, provider, block_identifier=_block_number)
 
         if pool.reserves_token0 == reserves0 and pool.reserves_token1 == reserves1:
