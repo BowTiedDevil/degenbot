@@ -19,7 +19,7 @@ from degenbot.exceptions.pool import (
     ExternalUpdateError,
     NoPoolStateAvailable,
 )
-from degenbot.types.abstract import AbstractLiquidityPool
+from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType
@@ -40,7 +40,7 @@ from degenbot.uniswap.v2_types import (
 )
 
 
-class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
+class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):  # type: ignore[override]
     """
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
@@ -74,13 +74,13 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolC
         init_hash: str | None = None,
         state_block: BlockNumber | None = None,
         state_cache_depth: int = 8,
-        token0: Erc20Token = ...,
-        token1: Erc20Token = ...,
-        factory: str = ...,
-        fee_token0: Fraction = ...,
-        fee_token1: Fraction = ...,
-        reserves_token0: int = ...,
-        reserves_token1: int = ...,
+        token0: Erc20Token = ...,  # type: ignore[assignment]
+        token1: Erc20Token = ...,  # type: ignore[assignment]
+        factory: str = ...,  # type: ignore[assignment]
+        fee_token0: Fraction = ...,  # type: ignore[assignment]
+        fee_token1: Fraction = ...,  # type: ignore[assignment]
+        reserves_token0: int = ...,  # type: ignore[assignment]
+        reserves_token1: int = ...,  # type: ignore[assignment]
     ) -> None:
         """
         An I/O-free representation of an x*y=k invariant automatic matchmaker, based on Uniswap V2.
@@ -103,6 +103,7 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolC
         self.deployer = get_checksum_address(deployer_address or self.factory)
 
         with contextlib.suppress(KeyError):
+            assert self._chain_id is not None
             factory_deployment = FACTORY_DEPLOYMENTS[self._chain_id][self.factory]
             self.init_hash = factory_deployment.pool_init_hash
             if factory_deployment.deployer is not None:
@@ -133,7 +134,7 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolC
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
     @property
-    def chain_id(self) -> int:
+    def chain_id(self) -> int | None:
         return self._chain_id
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -153,15 +154,15 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolC
         return self.state.block
 
     @property
-    def reserves_token0(self) -> int:
+    def reserves_token0(self) -> int:  # type: ignore[override]
         return self.state.reserves_token0
 
     @property
-    def reserves_token1(self) -> int:
+    def reserves_token1(self) -> int:  # type: ignore[override]
         return self.state.reserves_token1
 
     @property
-    def state(self) -> PoolState:
+    def state(self) -> PoolState:  # type: ignore[override]
         return self._state_cache[-1]
 
     @staticmethod
@@ -381,8 +382,15 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolC
         token_in: ChecksumAddress,
         amount_in: int,
         token_out: ChecksumAddress,
-        state_override: UniswapV2PoolState | None = None,
+        state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
+        v2_state: UniswapV2PoolState | None = None
+        if state_override is not None:
+            if not isinstance(state_override, UniswapV2PoolState):
+                msg = f"Expected UniswapV2PoolState, got {type(state_override).__name__}"
+                raise DegenbotValueError(message=msg)
+            v2_state = state_override
+
         if token_in == self._token0.address:
             token_in_obj = self._token0
         elif token_in == self._token1.address:
@@ -393,7 +401,7 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolC
         result = self.simulate_exact_input_swap(
             token_in=token_in_obj,
             token_in_quantity=amount_in,
-            override_state=state_override,
+            override_state=v2_state,
         )
         zero_for_one = token_in_obj == self._token0
         amount_out = -result.amount1_delta if zero_for_one else -result.amount0_delta
