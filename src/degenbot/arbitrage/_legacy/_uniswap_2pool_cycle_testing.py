@@ -56,7 +56,9 @@ from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS, UniswapV
 from degenbot.uniswap.v4_types import UniswapV4PoolState
 
 if TYPE_CHECKING:
-    from degenbot.types.hop_types import BalancerMultiTokenHop, HopType
+    from degenbot.types.hop_types import HopType
+
+from degenbot.types.hop_types import BalancerMultiTokenHop
 
 SLOW_ARB_CALC_THRESHOLD = 0.25
 SLOW_LOOP_TIME = 0.05
