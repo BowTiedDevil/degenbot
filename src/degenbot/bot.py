@@ -10,15 +10,15 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import select
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
+from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
+from degenbot.builders.camelot_builder import CamelotBuilder
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.protocol import PoolBuilder
-from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
-from degenbot.builders.camelot_builder import CamelotBuilder
-from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.builders.v2_pool_builder import V2PoolBuilder
 from degenbot.builders.v3_pool_builder import V3PoolBuilder
 from degenbot.builders.v4_pool_builder import V4PoolBuilder
+from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
 from degenbot.connection.connection_manager import ConnectionManager

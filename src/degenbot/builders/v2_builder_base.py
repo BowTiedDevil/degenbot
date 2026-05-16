@@ -87,9 +87,9 @@ class V2BuilderBase:
         Returns a frozen dataclass with all values needed
         for variant-specific construction.
         """
-        from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-
         import contextlib
+
+        from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
         pool_address = get_checksum_address(pool_address)
 

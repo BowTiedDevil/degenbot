@@ -18,6 +18,8 @@ from degenbot.uniswap.v3_libraries import (
 )
 from degenbot.uniswap.v3_libraries.tick_math import (
     get_sqrt_ratio_at_tick as get_sqrt_ratio_at_tick_py,
+)
+from degenbot.uniswap.v3_libraries.tick_math import (
     get_tick_at_sqrt_ratio as get_tick_at_sqrt_ratio_py,
 )
 

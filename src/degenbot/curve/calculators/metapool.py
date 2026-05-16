@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 
 from degenbot.curve.types import MetapoolRateStyle, MetapoolUnderlyingStyle
 
-
 # ── Metapool rate-style calculators (for get_dy metapool fast-path) ──
 
 

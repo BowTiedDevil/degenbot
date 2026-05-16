@@ -4,19 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from degenbot.builders.v2_builder_base import V2BuilderBase
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection.connection_manager import ConnectionManager
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.logging import logger
-from degenbot.provider.call_helpers import encode_function_calldata
-from degenbot.registry import PoolRegistry, TokenRegistry
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.aliases import ChainId
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
-
-from degenbot.builders.erc20_builder import Erc20Builder
-from degenbot.builders.v2_builder_base import V2BuilderBase
 
 if TYPE_CHECKING:
     from web3.types import BlockIdentifier

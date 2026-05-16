@@ -15,22 +15,17 @@ from eth_typing import ChecksumAddress
 from web3.types import BlockIdentifier
 
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.curve._pool_strategies import _make_dy_calculator
 from degenbot.curve.stableswap_pool_state import StableswapPoolState
 from degenbot.curve.types import (
     CurveDataProvider,
     CurveStableswapPoolExternalUpdate,
     CurveStableswapPoolState,
     CurveStableSwapPoolStateUpdated,
-    DVariant,
     LendingRateStyle,
-    MetapoolRateStyle,
-    MetapoolUnderlyingStyle,
     PoolStrategies,
-    SwapStyle,
-    YDVariant,
     YVariant,
 )
-from degenbot.curve._pool_strategies import _make_dy_calculator
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import NoLiquidity
@@ -543,7 +538,6 @@ class CurveStableswapPool(
         return calculator.calculate(
             i, j, dx, pool=self, block_number=block_number, override_state=override_state,
         )
-
 
     def _get_base_cache_updated(self, block_number: BlockNumber) -> int:
         with contextlib.suppress(KeyError):
