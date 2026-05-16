@@ -1,7 +1,6 @@
 """Retry-aware log fetching with adaptive chunk sizing."""
 
 from collections.abc import Sequence
-from typing import cast
 
 import tqdm
 from eth_typing import ChecksumAddress
@@ -148,12 +147,12 @@ def fetch_logs_retrying(
                 topics_str.append([topic.to_0x_hex()])
             else:
                 topics_str.append([t.to_0x_hex() for t in topic])
-        return cast("list[LogReceipt]", provider.get_logs(
+        return provider.get_logs(
             from_block=from_block,
             to_block=to_block,
-            addresses=addr or None,
+            addresses=addr or None,  # type: ignore[arg-type]
             topics=topics_str or None,
-        ))
+        )
 
     while not fetcher.is_complete:
         try:
@@ -237,17 +236,21 @@ async def fetch_logs_retrying_async(
                             f"Fetching logs for range {fetcher.start_block}-{chunk_end} "
                             f" ({fetcher.chunk_size} blocks)"
                         )
-                        addresses_arg = [address] if address is not None else None
-                        topics_arg = (
-                            [list(t) for t in topic_signature]
-                            if topic_signature
-                            else None
+                        addresses_arg: list[str] | None = (
+                            [address] if address is not None else None
                         )
+                        topics_list: list[list[str]] | None = None
+                        if topic_signature:
+                            topics_list = []
+                            for topic in topic_signature:
+                                topics_list.append(
+                                    [t.to_0x_hex() if isinstance(t, HexBytes) else str(t) for t in topic]
+                                )
                         logs = await provider.get_logs(
                             from_block=fetcher.start_block,
                             to_block=chunk_end,
                             addresses=addresses_arg,
-                            topics=topics_arg,
+                            topics=topics_list,
                         )
                         event_logs.extend(logs)
                     except (Timeout, Web3Exception):
