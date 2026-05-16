@@ -1,5 +1,6 @@
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
+from degenbot.checksum_cache import get_checksum_address
 
 from . import (
     abi as abi,
@@ -23,7 +24,7 @@ def _register_sushiswap_deployments() -> None:
     ]
 
     for chain_id, factory in v2_factories:
-        deployment = FACTORY_DEPLOYMENTS.get(chain_id, {}).get(factory)
+        deployment = FACTORY_DEPLOYMENTS.get(chain_id, {}).get(get_checksum_address(factory))
         pool_type_registry.register(
             SushiswapV2Pool,
             chain_id=chain_id,
@@ -33,7 +34,7 @@ def _register_sushiswap_deployments() -> None:
         )
 
     for chain_id, factory in v3_factories:
-        deployment = FACTORY_DEPLOYMENTS.get(chain_id, {}).get(factory)
+        deployment = FACTORY_DEPLOYMENTS.get(chain_id, {}).get(get_checksum_address(factory))
         pool_type_registry.register(
             SushiswapV3Pool,
             chain_id=chain_id,

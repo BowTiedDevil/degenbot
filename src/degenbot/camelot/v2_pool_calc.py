@@ -22,6 +22,10 @@ if TYPE_CHECKING:
 
 
 class CamelotPoolCalc(UniswapV2PoolCalc):
+    # MRO-provided attributes
+    fee_token0: int
+    fee_token1: int
+
     """Camelot calculations — extends V2PoolCalc with stable swap support.
 
     Adds:
