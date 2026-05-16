@@ -13,7 +13,12 @@ from degenbot.arbitrage.optimizers._solver_utils import (
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult, SolverMethod
 from degenbot.degenbot_rs import mobius as _rs_mobius
 from degenbot.exceptions import OptimizationError
-from degenbot.types.hop_types import BalancerMultiTokenHop, BoundedProductHop, ConstantProductHop, PoolInvariant
+from degenbot.types.hop_types import (
+    BalancerMultiTokenHop,
+    BoundedProductHop,
+    ConstantProductHop,
+    PoolInvariant,
+)
 
 USE_MERGED_INT_REFINEMENT = bool(os.environ.get("DEGENBOT_MERGED_INT_REFINEMENT", "1"))
 USE_RAW_ARRAY_MARSHALLING = bool(os.environ.get("DEGENBOT_RAW_ARRAY_MARSHALLING", "1"))

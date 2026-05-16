@@ -18,8 +18,8 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.provider.interface import ProviderAdapter
     from degenbot.erc20.erc20 import Erc20Token
+    from degenbot.provider.interface import ProviderAdapter
 
 
 def detect_lending_tokens(

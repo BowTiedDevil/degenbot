@@ -1,6 +1,6 @@
 """Position verification module for on-chain validation of Aave positions."""
 
-from typing import assert_never, cast
+from typing import cast
 
 import tqdm
 from eth_typing import ChecksumAddress
