@@ -42,7 +42,9 @@ class BrentSolver(Solver):
             return -(output - x)
 
         # Estimate upper bound from largest input reserve
-        max_reserve = max(h.reserve_in for h in solve_input.hops if not isinstance(h, BalancerMultiTokenHop))
+        max_reserve = max(
+            h.reserve_in for h in solve_input.hops if not isinstance(h, BalancerMultiTokenHop)
+        )
         upper = float(max_reserve)
 
         if solve_input.max_input is not None:

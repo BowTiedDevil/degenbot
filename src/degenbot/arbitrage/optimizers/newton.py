@@ -307,7 +307,9 @@ class NewtonV2Optimizer(ArbitrageOptimizer):
         pool_a, pool_b = pools
 
         # Accept both real V2 pools and mock pools for testing
-        is_v2_pool: Callable[[Any], bool] = lambda p: isinstance(p, UniswapV2Pool) or type(p).__name__ == "MockV2Pool"  # noqa: E731
+        is_v2_pool: Callable[[Any], bool] = (  # noqa: E731
+            lambda p: isinstance(p, UniswapV2Pool) or type(p).__name__ == "MockV2Pool"
+        )
 
         if not is_v2_pool(pool_a) or not is_v2_pool(pool_b):
             raise OptimizationError(

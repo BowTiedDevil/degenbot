@@ -72,9 +72,7 @@ class CurveFetcherFactory:
 
         return fetcher
 
-    def base_virtual_price_fetcher(
-        self, pool_address: ChecksumAddress
-    ) -> Any:
+    def base_virtual_price_fetcher(self, pool_address: ChecksumAddress) -> Any:
         """Create a base virtual price fetcher closure for a Curve metapool.
 
         Calls base_virtual_price() on the metapool contract, which returns the
@@ -95,9 +93,7 @@ class CurveFetcherFactory:
 
         return fetcher
 
-    def base_cache_updated_fetcher(
-        self, pool_address: ChecksumAddress
-    ) -> Any:
+    def base_cache_updated_fetcher(self, pool_address: ChecksumAddress) -> Any:
         """Create a base_cache_updated fetcher closure for a Curve metapool.
 
         Calls base_cache_updated() on the metapool contract, which returns the
@@ -128,9 +124,7 @@ class CurveFetcherFactory:
 
         return fetcher
 
-    def redemption_price_fetcher(
-        self, pool_address: ChecksumAddress
-    ) -> Any:
+    def redemption_price_fetcher(self, pool_address: ChecksumAddress) -> Any:
         """Create a redemption price fetcher closure for a Curve pool."""
         chain_id = self._chain_id
         redemption_price_scale = 10**9
@@ -160,9 +154,7 @@ class CurveFetcherFactory:
 
         return fetcher
 
-    def admin_balances_fetcher(
-        self, pool_address: ChecksumAddress
-    ) -> Any:
+    def admin_balances_fetcher(self, pool_address: ChecksumAddress) -> Any:
         """Create an admin balances fetcher closure for a Curve pool."""
         chain_id = self._chain_id
 
@@ -232,9 +224,7 @@ class CurveFetcherFactory:
         """
         chain_id = self._chain_id
 
-        def fetcher(
-            token: Any, address: Any, *, block_identifier: int | None = None
-        ) -> int:
+        def fetcher(token: Any, address: Any, *, block_identifier: int | None = None) -> int:
             provider = self._connections.get_provider(chain_id)
             (balance,) = eth_abi.abi.decode(
                 types=["uint256"],
@@ -356,9 +346,7 @@ class CurveFetcherFactory:
                         data=provider.call_raw(
                             {
                                 "to": token.address,
-                                "data": Web3.keccak(text="getPricePerFullShare()")[
-                                    :4
-                                ],
+                                "data": Web3.keccak(text="getPricePerFullShare()")[:4],
                             },
                             block=block_number,
                         ),
@@ -397,9 +385,7 @@ class CurveFetcherFactory:
 
             provider = self._connections.get_provider(chain_id)
             result: list[int] = []
-            for token, precision_multiplier in zip(
-                tokens, precision_multipliers, strict=True
-            ):
+            for token, precision_multiplier in zip(tokens, precision_multipliers, strict=True):
                 rate: int
                 (rate,) = eth_abi.abi.decode(
                     types=["uint256"],
@@ -574,9 +560,7 @@ class CurveFetcherFactory:
                     types=["uint256"],
                     data=provider.call_raw(
                         {
-                            "to": get_checksum_address(
-                                HexBytes(oracle_method % 2**160)
-                            ),
+                            "to": get_checksum_address(HexBytes(oracle_method % 2**160)),
                             "data": HexBytes(oracle_method & oracle_bit_mask),
                         },
                         block=block_number,
@@ -673,9 +657,7 @@ class CurveFetcherFactory:
 
         return fetcher
 
-    def price_scale_fetcher(
-        self, pool_address: ChecksumAddress, n_coins: int
-    ) -> Any:
+    def price_scale_fetcher(self, pool_address: ChecksumAddress, n_coins: int) -> Any:
         """Create a price_scale() fetcher closure for a crypto Curve pool."""
         chain_id = self._chain_id
 
@@ -720,9 +702,7 @@ class CurveFetcherFactory:
         The provider bundles all fetcher closures behind a single object
         implementing the CurveDataProvider protocol.
         """
-        vp_fn = self.virtual_price_fetcher(
-            pool_address, base_pool_address=base_pool_address
-        )
+        vp_fn = self.virtual_price_fetcher(pool_address, base_pool_address=base_pool_address)
         return _CurveDataProviderImpl(
             _virtual_price_fn=vp_fn,
             _base_virtual_price_fn=self.base_virtual_price_fetcher(pool_address),
@@ -831,7 +811,10 @@ class _CurveDataProviderImpl:
     def token_balance(self, token_address: str, holder_address: str, block_number: int) -> int:
         # The underlying closure expects a token-like object with .address
         token = _SimpleToken(token_address)
-        return cast("int", self._token_balance_fn(token, holder_address, block_identifier=block_number))
+        return cast(
+            "int",
+            self._token_balance_fn(token, holder_address, block_identifier=block_number),
+        )
 
     def token_total_supply(self, token_address: str, block_number: int) -> int:
         token = _SimpleToken(token_address)

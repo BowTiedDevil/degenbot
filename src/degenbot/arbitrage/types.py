@@ -150,7 +150,13 @@ class UniswapV3PoolSwapAmounts(AbstractSwapAmounts):
         selector = Web3.keccak(text="swap(address,bool,int256,uint160,bytes)")[:4]
         data = selector + eth_abi.abi.encode(
             types=["address", "bool", "int256", "uint160", "bytes"],
-            args=[recipient, self.zero_for_one, self.amount_specified, self.sqrt_price_limit_x96, b""],
+            args=[
+                recipient,
+                self.zero_for_one,
+                self.amount_specified,
+                self.sqrt_price_limit_x96,
+                b"",
+            ],
         )
         return EncodedCall(to=self.pool, data=data)
 
