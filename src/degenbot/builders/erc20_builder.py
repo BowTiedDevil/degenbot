@@ -10,8 +10,6 @@ from web3 import Web3
 from web3.exceptions import Web3Exception
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection.connection_manager import ConnectionManager
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.erc20 import EtherPlaceholder
 from degenbot.erc20.erc20 import (
     UNKNOWN_DECIMALS,
@@ -22,12 +20,14 @@ from degenbot.erc20.erc20 import (
 )
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
-from degenbot.provider.interface import ProviderAdapter
-from degenbot.registry import TokenRegistry
 
 if TYPE_CHECKING:
     from web3.types import BlockIdentifier
 
+    from degenbot.connection.connection_manager import ConnectionManager
+    from degenbot.database.session_manager import DatabaseSessionManager
+    from degenbot.provider.interface import ProviderAdapter
+    from degenbot.registry import TokenRegistry
     from degenbot.types.aliases import ChainId
 
 

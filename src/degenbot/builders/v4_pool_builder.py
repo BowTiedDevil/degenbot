@@ -7,19 +7,14 @@ import eth_abi.abi
 from hexbytes import HexBytes
 from sqlalchemy import select
 
-from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.tick_data_fetcher import TickDataTypes, make_tick_data_fetcher
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.database.models.pools import PoolManagerTable, UniswapV4PoolTable
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
-from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
-from degenbot.types.aliases import ChainId
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.uniswap.v4_types import (
@@ -29,9 +24,15 @@ from degenbot.uniswap.v4_types import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from web3.types import BlockIdentifier
+
+    from degenbot.builders.erc20_builder import Erc20Builder
+    from degenbot.connection.connection_manager import ConnectionManager
+    from degenbot.database.session_manager import DatabaseSessionManager
+    from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
+    from degenbot.types.aliases import ChainId
 
 
 class V4PoolBuilder:
@@ -61,13 +62,13 @@ class V4PoolBuilder:
 
     def _make_tick_data_fetcher(
         self, pool_id: HexBytes, pool_manager_address: str, state_view_address: str, chain_id: int
-    ) -> Any:
+    ) -> Callable[[int, int], None]:
         """Create a tick data fetcher callback for a V4 pool."""
-        _pool_manager_address = get_checksum_address(pool_manager_address)
+        pool_manager_address_ = get_checksum_address(pool_manager_address)
         return make_tick_data_fetcher(
             pool_lookup=lambda _: self._managed_pools.get(  # type: ignore[arg-type,return-value]
                 chain_id=chain_id,
-                pool_manager_address=_pool_manager_address,
+                pool_manager_address=pool_manager_address_,
                 pool_id=pool_id,
             ),
             provider_lookup=lambda: self._connections.get_provider(chain_id),
@@ -314,6 +315,7 @@ class V4PoolBuilder:
             tick_data_fetcher=self._make_tick_data_fetcher(
                 pool_id_bytes, pool_manager_address, state_view_address, chain_id
             ),
+            state_cache_depth=state_cache_depth,
         )
 
         # Register pool in managed pool registry
@@ -337,7 +339,7 @@ class V4PoolBuilder:
 
     def update(
         self,
-        pool: Any,
+        pool: UniswapV4Pool,
         *,
         block_number: BlockIdentifier | None = None,
     ) -> bool:
@@ -349,15 +351,15 @@ class V4PoolBuilder:
         assert pool.chain_id is not None
         provider = self._connections.get_provider(pool.chain_id)
         raw_block = block_number if block_number is not None else provider.get_block_number()
-        _block_number = int(raw_block) if not isinstance(raw_block, int) else raw_block
+        block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block
 
         slot0_calldata = encode_function_calldata("getSlot0(bytes32)", [pool.pool_id])
         slot0_result = provider.call(
             to=pool._state_view_address,  # noqa: SLF001
             data=slot0_calldata,
-            block=_block_number,
+            block=block_number_,
         )
-        price, tick, protocol_fee, lp_fee = cast(
+        price, tick, _protocol_fee, _lp_fee = cast(
             "tuple[int, ...]",
             eth_abi.abi.decode(types=["uint160", "int24", "uint24", "uint24"], data=slot0_result),
         )
@@ -370,7 +372,7 @@ class V4PoolBuilder:
                 data=provider.call(
                     to=pool._state_view_address,  # noqa: SLF001
                     data=liquidity_calldata,
-                    block=_block_number,
+                    block=block_number_,
                 ),
             ),
         )
@@ -379,7 +381,7 @@ class V4PoolBuilder:
             return False
 
         update = UniswapV4PoolExternalUpdate(
-            block_number=_block_number,
+            block_number=block_number_,
             sqrt_price_x96=price,
             tick=tick,
             liquidity=liquidity_val,

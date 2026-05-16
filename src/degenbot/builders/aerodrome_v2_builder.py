@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import eth_abi.abi
 
@@ -13,10 +13,11 @@ from degenbot.builders.v2_builder_base import V2BuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.types.aliases import ChainId
 
 if TYPE_CHECKING:
     from web3.types import BlockIdentifier
+
+    from degenbot.types.aliases import ChainId
 
 
 class AerodromeV2Builder(V2BuilderBase):
@@ -88,6 +89,7 @@ class AerodromeV2Builder(V2BuilderBase):
             chain_id=common.chain_id,
             deployer_address=common.deployer,
             state_block=common.state_block,
+            state_cache_depth=state_cache_depth,
         )
         assert isinstance(pool, AerodromeV2Pool)
 
@@ -104,7 +106,7 @@ class AerodromeV2Builder(V2BuilderBase):
 
     def update(
         self,
-        pool: Any,
+        pool: AerodromeV2Pool,
         *,
         block_number: BlockIdentifier | None = None,
     ) -> bool:
@@ -115,16 +117,16 @@ class AerodromeV2Builder(V2BuilderBase):
         assert pool.chain_id is not None
         provider = self._connections.get_provider(pool.chain_id)
         raw_block = block_number if block_number is not None else provider.get_block_number()
-        _block_number = int(raw_block) if not isinstance(raw_block, int) else raw_block
+        block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block
         reserves0, reserves1 = self._fetch_reserves(
-            pool.address, provider, block_identifier=_block_number
+            pool.address, provider, block_identifier=block_number_
         )
 
         if pool.reserves_token0 == reserves0 and pool.reserves_token1 == reserves1:
             return False
 
         update = AerodromeV2PoolExternalUpdate(
-            block_number=_block_number,
+            block_number=block_number_,
             reserves_token0=reserves0,
             reserves_token1=reserves1,
         )

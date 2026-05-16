@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import dataclasses
 from collections import deque
-from fractions import Fraction
 from threading import Lock
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from weakref import WeakSet
@@ -37,6 +36,8 @@ from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
+    from fractions import Fraction
+
     from eth_typing import ChecksumAddress
 
     from degenbot.erc20 import Erc20Token
@@ -102,7 +103,7 @@ class AerodromeV2Pool(  # type: ignore[override]
         self._token1 = token1
 
         # Wire calculation strategy at construction — no runtime if self._stable dispatch
-        self._wire_stable_calculations(stable)
+        self._wire_stable_calculations(stable=stable)
 
         self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee.numerator / self._fee.denominator:.2f}%)"  # noqa:E501
 
@@ -329,10 +330,16 @@ class AerodromeV2Pool(  # type: ignore[override]
 
         if token_in == self._token0.address:
             token_in_obj = self._token0
+            expected_token_out = self._token1.address
         elif token_in == self._token1.address:
             token_in_obj = self._token1
+            expected_token_out = self._token0.address
         else:
             raise DegenbotValueError(message=f"token_in {token_in} not in pool")
+
+        if token_out != expected_token_out:
+            msg = f"token_out {token_out} does not match expected {expected_token_out}"
+            raise DegenbotValueError(message=msg)
 
         initial_state = aero_state or self.state
         amount_out = self.calculate_tokens_out_from_tokens_in(
@@ -356,10 +363,16 @@ class AerodromeV2Pool(  # type: ignore[override]
     ) -> SimulationResult:
         if token_out == self._token0.address:
             token_out_obj = self._token0
+            expected_token_in = self._token1.address
         elif token_out == self._token1.address:
             token_out_obj = self._token1
+            expected_token_in = self._token0.address
         else:
             raise DegenbotValueError(message=f"token_out {token_out} not in pool")
+
+        if token_in != expected_token_in:
+            msg = f"token_in {token_in} does not match expected {expected_token_in}"
+            raise DegenbotValueError(message=msg)
 
         initial_state = state_override or self.state
         amount_in = self.calculate_tokens_in_from_tokens_out(

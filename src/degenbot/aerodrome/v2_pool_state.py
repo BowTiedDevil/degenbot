@@ -9,10 +9,11 @@ No calculation logic — calculations live in AerodromeV2PoolCalc.
 
 from __future__ import annotations
 
-from fractions import Fraction
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from fractions import Fraction
+
     from degenbot.erc20 import Erc20Token
 
 

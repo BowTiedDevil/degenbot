@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
 
-from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.curve._pool_strategies import resolve_pool_strategies
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
@@ -18,16 +16,21 @@ from degenbot.curve.detection.lp_token import find_lp_token
 from degenbot.curve.detection.metapool_detector import detect_metapool
 from degenbot.curve.fetcher_factory import CurveFetcherFactory
 from degenbot.curve.types import CurveStableswapPoolExternalUpdate
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.pool import BrokenPool
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
-from degenbot.provider.interface import ProviderAdapter
-from degenbot.registry import PoolRegistry, TokenRegistry
-from degenbot.types.aliases import ChainId
 
 if TYPE_CHECKING:
     from web3.types import BlockIdentifier
+
+    from degenbot.builders.erc20_builder import Erc20Builder
+    from degenbot.connection.connection_manager import ConnectionManager
+    from degenbot.curve.detection.types import MetapoolDetectionResult
+    from degenbot.database.session_manager import DatabaseSessionManager
+    from degenbot.erc20 import Erc20Token
+    from degenbot.provider.interface import ProviderAdapter
+    from degenbot.registry import PoolRegistry, TokenRegistry
+    from degenbot.types.aliases import ChainId
 
 
 _REGISTRY_ADDRESSES = (CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS)
@@ -122,8 +125,8 @@ class CurvePoolBuilder:
             metapool,
             chain_id,
             state_block,
-            silent,
-            state_cache_depth,
+            silent=silent,
+            state_cache_depth=state_cache_depth,
         )
 
         # 11. Build LP token
@@ -134,8 +137,9 @@ class CurvePoolBuilder:
         )
 
         # 12. Skip broken pools
-        if len(tokens) < 2:
-            raise BrokenPool()
+        min_tokens = 2
+        if len(tokens) < min_tokens:
+            raise BrokenPool
 
         # 13. Resolve strategies from pool address
         strategies = resolve_pool_strategies(pool_address)
@@ -200,12 +204,13 @@ class CurvePoolBuilder:
 
     def _resolve_metapool(
         self,
-        metapool: Any,
+        metapool: MetapoolDetectionResult,
         chain_id: ChainId,
         state_block: int,
+        *,
         silent: bool,
         state_cache_depth: int,
-    ) -> tuple[CurveStableswapPool | None, tuple[Any, ...] | None]:
+    ) -> tuple[CurveStableswapPool | None, tuple[Erc20Token, ...] | None]:
         """Build base pool and underlying tokens for a metapool."""
         if not metapool.is_meta:
             return None, None
@@ -233,7 +238,7 @@ class CurvePoolBuilder:
 
     def update(
         self,
-        pool: Any,
+        pool: CurveStableswapPool,
         *,
         block_number: BlockIdentifier | None = None,
     ) -> bool:
@@ -244,8 +249,14 @@ class CurvePoolBuilder:
 
         assert pool.chain_id is not None
         provider = self._connections.get_provider(pool.chain_id)
-        _raw_block_number = block_number if block_number is not None else provider.get_block_number()
-        _block_number: int = _raw_block_number if isinstance(_raw_block_number, int) else int(_raw_block_number)
+        raw_block_number = (
+            block_number if block_number is not None else provider.get_block_number()
+        )
+        block_number_: int = (
+            raw_block_number
+            if isinstance(raw_block_number, int)
+            else int(raw_block_number)
+        )
 
         # Fetch balances for each token in the pool
         new_balances: list[int] = []
@@ -262,7 +273,7 @@ class CurvePoolBuilder:
                                 function_arguments=[i],
                             ),
                         },
-                        block=_block_number,
+                        block=block_number_,
                     ),
                 ),
             )
@@ -272,7 +283,7 @@ class CurvePoolBuilder:
             return False
 
         update = CurveStableswapPoolExternalUpdate(
-            block_number=_block_number,
+            block_number=block_number_,
             balances=tuple(new_balances),
         )
         pool.external_update(update)
