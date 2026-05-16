@@ -63,10 +63,11 @@ class V4PoolBuilder:
         self, pool_id: HexBytes, pool_manager_address: str, state_view_address: str, chain_id: int
     ) -> Any:
         """Create a tick data fetcher callback for a V4 pool."""
+        _pool_manager_address = get_checksum_address(pool_manager_address)
         return make_tick_data_fetcher(
-            pool_lookup=lambda _: self._managed_pools.get(
+            pool_lookup=lambda _: self._managed_pools.get(  # type: ignore[arg-type,return-value]
                 chain_id=chain_id,
-                pool_manager_address=pool_manager_address,
+                pool_manager_address=_pool_manager_address,
                 pool_id=pool_id,
             ),
             provider_lookup=lambda: self._connections.get_provider(chain_id),
@@ -124,8 +125,8 @@ class V4PoolBuilder:
 
         # Get immutable values
         if pool_from_db is not None:
-            currency0_address = pool_from_db.currency0.address
-            currency1_address = pool_from_db.currency1.address
+            currency0_address = get_checksum_address(pool_from_db.currency0.address)
+            currency1_address = get_checksum_address(pool_from_db.currency1.address)
             hook_address = get_checksum_address(pool_from_db.hooks)
             tick_spacing_for_pool = pool_from_db.tick_spacing
             fee_for_pool = pool_from_db.fee_currency0
@@ -174,6 +175,7 @@ class V4PoolBuilder:
                 [pool_id_bytes],
             )
 
+            assert state_view_address is not None
             slot0_result = provider.call(
                 to=state_view_address,
                 data=slot0_calldata,
@@ -243,6 +245,7 @@ class V4PoolBuilder:
                     tick=int(tick_val), tick_spacing=tick_spacing_for_pool
                 )
 
+                assert state_view_address is not None
                 (bitmap_at_word,) = raw_call(
                     provider,
                     address=state_view_address,
@@ -289,6 +292,7 @@ class V4PoolBuilder:
         tick_bitmap_arg = working_tick_bitmap if working_tick_data else None
         tick_data_arg = working_tick_data or None
 
+        assert state_view_address is not None
         pool = UniswapV4Pool(
             pool_id=pool_id_bytes,
             pool_manager_address=pool_manager_address,
@@ -342,8 +346,10 @@ class V4PoolBuilder:
             msg = f"V4PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 
+        assert pool.chain_id is not None
         provider = self._connections.get_provider(pool.chain_id)
-        _block_number = block_number if block_number is not None else provider.get_block_number()
+        raw_block = block_number if block_number is not None else provider.get_block_number()
+        _block_number = int(raw_block) if not isinstance(raw_block, int) else raw_block
 
         slot0_calldata = encode_function_calldata("getSlot0(bytes32)", [pool.pool_id])
         slot0_result = provider.call(
