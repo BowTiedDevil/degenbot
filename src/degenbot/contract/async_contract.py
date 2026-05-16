@@ -20,6 +20,7 @@ Example:
 
 from collections.abc import Sequence
 
+from degenbot.degenbot_rs import AlloyProvider as _AlloyProvider
 from degenbot.degenbot_rs import AsyncContract as _AsyncContract
 
 
@@ -66,7 +67,10 @@ class AsyncContract:
             provider_url: RPC provider URL
         """
         self._address = address
-        self._contract = _AsyncContract(address, provider_url)
+        self._contract = _AsyncContract.from_provider(
+            address,
+            _AlloyProvider(provider_url),
+        )
 
     @property
     def address(self) -> str:

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
 
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.provider.interface import ProviderAdapter
 
@@ -63,11 +64,11 @@ def make_tick_data_fetcher(
         working_tick_bitmap = dict(pool.tick_bitmap)
         working_tick_data = dict(pool.tick_data)
 
-        if is_v4:
+        if isinstance(pool, UniswapV4Pool):
             _fetch_v4(
                 provider=provider,
-                state_view_address=state_view_address,  # type: ignore[arg-type]
-                pool_id=pool_id,  # type: ignore[arg-type]
+                state_view_address=cast("str", state_view_address),
+                pool_id=cast("bytes", pool_id),
                 word_position=word_position,
                 block_number=block_number,
                 pool=pool,
@@ -88,11 +89,11 @@ def make_tick_data_fetcher(
 
         new_state = dataclasses.replace(
             pool.state,
-            tick_bitmap=working_tick_bitmap,
-            tick_data=working_tick_data,
+            tick_bitmap=working_tick_bitmap,  # type: ignore[arg-type]
+            tick_data=working_tick_data,  # type: ignore[arg-type]
             block=max(pool.update_block, block_number),
         )
-        pool._state_mgr.push_state(new_state)  # noqa: SLF001
+        pool._state_mgr.push_state(new_state)  # type: ignore[arg-type]  # noqa: SLF001
 
     return fetcher
 
@@ -167,7 +168,7 @@ def _fetch_v4(
     try:
         (bitmap_value,) = raw_call(
             provider,
-            address=state_view_address,
+            address=get_checksum_address(state_view_address),
             calldata=encode_function_calldata(
                 "getTickBitmap(bytes32,int16)", [pool_id, word_position]
             ),

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from degenbot.degenbot_rs import mobius as _rs_mobius
-from degenbot.types.hop_types import BoundedProductHop, HopType
+from degenbot.types.hop_types import BalancerMultiTokenHop, BoundedProductHop, HopType
 from degenbot.uniswap.v3_libraries.constants import Q96
 
 
@@ -31,7 +31,10 @@ def _infer_zero_for_one(v3_hop: BoundedProductHop) -> bool:
 
 
 def _hop_to_float_state(hop: HopType) -> tuple[float, float, float]:
-    """Convert any Hop variant to (reserve_in, reserve_out, gamma) as floats."""
+    """Convert any pairwise Hop variant to (reserve_in, reserve_out, gamma) as floats."""
+    if isinstance(hop, BalancerMultiTokenHop):
+        msg = "BalancerMultiTokenHop has no pairwise reserves"
+        raise TypeError(msg)
     return float(hop.reserve_in), float(hop.reserve_out), hop.gamma
 
 
@@ -133,6 +136,9 @@ def _rust_integer_refinement(
     """
     rust_int_hops: list[Any] = []
     for hop in hops:
+        if isinstance(hop, BalancerMultiTokenHop):
+            msg = "BalancerMultiTokenHop has no pairwise reserves"
+            raise TypeError(msg)
         fee_numer = hop.fee.numerator
         fee_denom = hop.fee.denominator
         gamma_numer = fee_denom - fee_numer

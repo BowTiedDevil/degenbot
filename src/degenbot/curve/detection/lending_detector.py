@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
     from degenbot.provider.interface import ProviderAdapter
-    from degenbot.tokens.erc20_token import Erc20Token
+    from degenbot.erc20.erc20 import Erc20Token
 
 
 def detect_lending_tokens(
