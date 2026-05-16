@@ -44,7 +44,6 @@ class LiveAdminDyCalculator:
         block_number: int,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        pool_balances = override_state.balances if override_state is not None else pool.balances
         rates = pool.rate_multipliers
 
         live_balances = [
@@ -174,7 +173,6 @@ class LiveAdminOracleDyCalculator:
         block_number: int,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        pool_balances = override_state.balances if override_state is not None else pool.balances
         rates = pool.rate_multipliers
 
         live_balances = [

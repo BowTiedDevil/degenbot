@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import math
 import time
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, override
+from typing import TYPE_CHECKING, Any, override
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 import numpy as np
 
@@ -86,7 +88,8 @@ class PiecewiseMobiusSolver(Solver):
                 return False
         return solve_input.has_v3
 
-    def _has_multi_range(self, solve_input: SolveInput) -> bool:
+    @staticmethod
+    def _has_multi_range(solve_input: SolveInput) -> bool:
         """Check if any V3 hop has multi-range data for tick crossing."""
         for hop in solve_input.hops:
             if (
@@ -97,7 +100,8 @@ class PiecewiseMobiusSolver(Solver):
                 return True
         return False
 
-    def _find_v3_hop_index(self, solve_input: SolveInput) -> tuple[int, BoundedProductHop] | None:
+    @staticmethod
+    def _find_v3_hop_index(solve_input: SolveInput) -> tuple[int, BoundedProductHop] | None:
         """Find the first V3 hop with multi-range data."""
         for i, hop in enumerate(solve_input.hops):
             if not isinstance(hop, BoundedProductHop):
@@ -619,8 +623,8 @@ class PiecewiseMobiusSolver(Solver):
             solve_time_ns=0,  # Will be set by caller
         )
 
+    @staticmethod
     def _vectorized_bracket_search(
-        self,
         *,
         x_low: float,
         x_high: float,
@@ -950,8 +954,8 @@ class PiecewiseMobiusSolver(Solver):
             method=SolverMethod.PIECEWISE_MOBIUS.name,
         )
 
+    @staticmethod
     def _estimate_final_sqrt_price(
-        self,
         amount_in: float,
         ending_range: V3TickRangeHop,
     ) -> float:
