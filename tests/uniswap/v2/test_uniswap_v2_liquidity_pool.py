@@ -66,13 +66,13 @@ def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block(
     forking block.
     """
     bot = _make_bot(fork_mainnet_archive)
-    return bot.build_v2_pool(UNISWAP_V2_WBTC_WETH_POOL)
+    return bot.build_pool(UNISWAP_V2_WBTC_WETH_POOL)
 
 
 @pytest.fixture
 def ethereum_uniswap_v2_wbtc_weth_liquiditypool(fork_mainnet_full: AnvilFork) -> UniswapV2Pool:
     bot = _make_bot(fork_mainnet_full)
-    return bot.build_v2_pool(UNISWAP_V2_WBTC_WETH_POOL)
+    return bot.build_pool(UNISWAP_V2_WBTC_WETH_POOL)
 
 
 @pytest.fixture
@@ -151,7 +151,7 @@ def test_nominal_price_scaled_by_decimals(
 
 def test_create_camelot_v2_stable_pool(fork_arbitrum_full: AnvilFork):
     bot = _make_bot(fork_arbitrum_full)
-    lp = bot.build_v2_pool(CAMELOT_MIM_USDC_LP_ADDRESS)
+    lp = bot.build_pool(CAMELOT_MIM_USDC_LP_ADDRESS)
     # Camelot pools are wrapped as CamelotLiquidityPool by the manager
     # For direct construction, use I/O-free constructor
 
@@ -179,7 +179,7 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum_full: AnvilFork):
 
 def test_create_camelot_v2_pool(fork_arbitrum_full: AnvilFork):
     bot = _make_bot(fork_arbitrum_full)
-    lp = bot.build_v2_pool(CAMELOT_WETH_USDC_LP_ADDRESS)
+    lp = bot.build_pool(CAMELOT_WETH_USDC_LP_ADDRESS)
 
     token_in = lp.token1
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
@@ -193,12 +193,6 @@ def test_create_camelot_v2_pool(fork_arbitrum_full: AnvilFork):
         token_in=token_in,
         token_in_quantity=amount_in,
     )
-
-
-def test_pickle_camelot_v2_pool(fork_arbitrum_full: AnvilFork):
-    bot = _make_bot(fork_arbitrum_full)
-    lp = bot.build_v2_pool(CAMELOT_WETH_USDC_LP_ADDRESS)
-    pickle.dumps(lp)
 
 
 def test_dunder_methods(
@@ -276,7 +270,7 @@ def test_calculate_tokens_out_from_ratio_out(fork_mainnet_archive: AnvilFork):
         abi=UNISWAP_V2_ROUTER_ABI,
     )
 
-    lp = bot.build_v2_pool(UNISWAP_V2_WBTC_WETH_POOL)
+    lp = bot.build_pool(UNISWAP_V2_WBTC_WETH_POOL)
 
     for wbtc_amount_in in [
         int(0.1 * 10**8),

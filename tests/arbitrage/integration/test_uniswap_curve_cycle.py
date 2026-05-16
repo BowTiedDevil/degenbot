@@ -46,12 +46,12 @@ FAKE_ADDRESS = "0x6942000000000000000000000000000000000000"
 
 def _build_v2_pool(fork: AnvilFork, address: str) -> UniswapV2Pool:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
-    return bot.build_v2_pool(address)
+    return bot.build_pool(address)
 
 
 def _build_v3_pool(fork: AnvilFork, address: str) -> UniswapV3Pool:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
-    return bot.build_v3_pool(address)
+    return bot.build_pool(address)
 
 
 def _build_v3_pool_with_tick_data(fork: AnvilFork, address: str) -> UniswapV3Pool:
@@ -115,13 +115,13 @@ def _build_v3_pool_with_tick_data(fork: AnvilFork, address: str) -> UniswapV3Poo
             )
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
-    return bot.build_v3_pool(address, tick_bitmap=tick_bitmap_data, tick_data=tick_data)
+    return bot.build_pool(address, tick_bitmap=tick_bitmap_data, tick_data=tick_data)
 
 
 def _build_curve_pool(fork: AnvilFork, address: str, bot: Bot | None = None) -> CurveStableswapPool:
     if bot is None:
         bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
-    return bot.build_curve_pool(address)
+    return bot.build_pool(address)
 
 
 @pytest.fixture

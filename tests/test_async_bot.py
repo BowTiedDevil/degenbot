@@ -120,6 +120,7 @@ class TestAsyncBotBuildErc20Token:
         assert bot.tokens.get(token_address=WETH_ADDR, chain_id=1) is token
 
 
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 class TestAsyncBotBuildV2Pool:
     """AsyncBot.build_v2_pool() fetches pool data async."""
 
@@ -171,6 +172,7 @@ class TestAsyncBotBuildV2Pool:
         assert pool.address == get_checksum_address(USDC_WETH_V2_POOL)
 
 
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 class TestAsyncBotBuildV3Pool:
     """AsyncBot.build_v3_pool() fetches pool data async."""
 
@@ -245,6 +247,7 @@ class TestAsyncBotBuildV3Pool:
         assert pool.liquidity == liquidity
 
 
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 class TestAsyncBotBuildV4Pool:
     """AsyncBot.build_v4_pool() fetches pool data async."""
 

@@ -265,10 +265,10 @@ class TestV4PoolIOFreeConstructor:
 
 
 class TestBotBuildV4Pool:
-    """Bot.build_v4_pool() constructs I/O-free V4 pools from on-chain data."""
+    """Bot.build_pool() constructs I/O-free V4 pools from on-chain data."""
 
     def test_build_v4_pool_with_mock_provider(self, tmp_path: pathlib.Path) -> None:
-        """build_v4_pool fetches immutable + mutable values and constructs an I/O-free pool."""
+        """build_pool fetches immutable + mutable values and constructs an I/O-free pool."""
 
         config = _make_test_config(tmp_path)
         bot = Bot(config)
@@ -325,9 +325,9 @@ class TestBotBuildV4Pool:
 
         provider.call = MagicMock(side_effect=mock_call)
 
-        pool = bot.build_v4_pool(
+        pool = bot.build_pool(
+            V4_POOL_MANAGER,
             pool_id=V4_POOL_ID,
-            pool_manager_address=V4_POOL_MANAGER,
             state_view_address=V4_STATE_VIEW,
             chain_id=1,
             fee=V4_FEE,

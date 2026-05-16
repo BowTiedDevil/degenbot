@@ -169,10 +169,10 @@ class TestV2PoolIOFreeConstructor:
 
 
 class TestBotBuildV2Pool:
-    """Bot.build_v2_pool() constructs I/O-free pools from on-chain data."""
+    """Bot.build_pool() constructs I/O-free pools from on-chain data."""
 
-    def test_build_v2_pool_with_mock_provider(self, tmp_path: pathlib.Path) -> None:
-        """build_v2_pool fetches immutable values and reserves, constructs an I/O-free pool."""
+    def test_build_pool_with_mock_provider(self, tmp_path: pathlib.Path) -> None:
+        """build_pool fetches immutable values and reserves, constructs an I/O-free pool."""
 
         weth_addr = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
         usdc_addr = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
@@ -196,7 +196,7 @@ class TestBotBuildV2Pool:
             return b""  # default
 
         # Instead of mocking individual calls, mock the provider responses
-        # in the order Bot.build_v2_pool calls them
+        # in the order Bot.build_pool calls them
         #
         # The bot calls:
         #   1. factory() -> address
@@ -233,7 +233,7 @@ class TestBotBuildV2Pool:
             args=[1000 * 10**18, 2_000_000 * 10**6],
         )
 
-        # The bot's build_v2_pool will call provider.call() 4 times for:
+        # The bot's build_pool will call provider.call() 4 times for:
         # - `factory()`
         # - `token0()`
         # - `token1()`
@@ -263,8 +263,8 @@ class TestBotBuildV2Pool:
 
         provider.call = MagicMock(side_effect=mock_get_reserves_call)
 
-        pool = bot.build_v2_pool(
-            pool_address=WETH_USDC_V2_POOL,
+        pool = bot.build_pool(
+            WETH_USDC_V2_POOL,
             chain_id=1,
         )
 
@@ -283,8 +283,8 @@ class TestBotBuildV2Pool:
 class TestV2PoolTrackerWithBot:
     """UniswapV2PoolTracker delegates to Bot when available."""
 
-    def test_tracker_uses_bot_build_v2_pool(self, tmp_path: pathlib.Path) -> None:
-        """When a manager has a bot, get_pool delegates to bot.build_v2_pool."""
+    def test_tracker_uses_bot_build_pool(self, tmp_path: pathlib.Path) -> None:
+        """When a manager has a bot, get_pool delegates to bot.build_pool."""
 
         config = _make_test_config(tmp_path)
         bot = Bot(config)
@@ -306,8 +306,8 @@ class TestV2PoolTrackerWithBot:
         # The tracker's bot reference should be set
         assert manager._bot is bot
 
-        # Calling get_pool should call bot.build_v2_pool under the hood
-        # We'll verify this by mocking bot.build_v2_pool
+        # Calling get_pool should call bot.build_pool under the hood
+        # We'll verify this by mocking bot.build_pool
         weth = _make_weth()
         usdc = _make_usdc()
         mock_pool = UniswapV2Pool(
@@ -332,7 +332,7 @@ class TestV2PoolTrackerWithBot:
         assert pool.address == get_checksum_address(WETH_USDC_V2_POOL)
 
     def test_manager_builds_pool_via_bot(self, tmp_path: pathlib.Path) -> None:
-        """Manager builds a new pool via bot.build_v2_pool when not in registry."""
+        """Manager builds a new pool via bot.build_pool when not in registry."""
 
         weth_addr = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
         usdc_addr = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
@@ -385,7 +385,7 @@ class TestV2PoolTrackerWithBot:
             chain_id=1,
         )
 
-        # Call get_pool — should call bot.build_v2_pool internally
+        # Call get_pool — should call bot.build_pool internally
         pool = manager.get_pool(WETH_USDC_V2_POOL)
         assert isinstance(pool, UniswapV2Pool)
         assert pool.address == get_checksum_address(WETH_USDC_V2_POOL)

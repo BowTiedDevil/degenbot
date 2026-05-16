@@ -59,9 +59,9 @@ SNAPSHOT_BLOCK = 21883665
 @pytest.fixture
 def eth_usdc_v4(fork_mainnet_full: AnvilFork) -> UniswapV4Pool:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    return bot.build_v4_pool(
+    return bot.build_pool(
+        V4_POOL_MANAGER_ADDRESS,
         pool_id=ETH_USDC_V4_POOL_ID,
-        pool_manager_address=V4_POOL_MANAGER_ADDRESS,
         state_view_address=STATE_VIEW_ADDRESS,
         fee=ETH_USDC_V4_POOL_FEE,
         tick_spacing=ETH_USDC_V4_POOL_TICK_SPACING,
@@ -104,9 +104,9 @@ def _test_pool_exact_input(
     )
     if lp is None:
         try:
-            lp = bot.build_v4_pool(
+            lp = bot.build_pool(
+                V4_POOL_MANAGER_ADDRESS,
                 pool_id=pool_id,
-                pool_manager_address=V4_POOL_MANAGER_ADDRESS,
                 state_view_address=STATE_VIEW_ADDRESS,
                 tokens=[pool["token0"], pool["token1"]],
                 fee=pool["fee"],
@@ -222,9 +222,9 @@ def _test_pool_exact_output(
     )
     if lp is None:
         try:
-            lp = bot.build_v4_pool(
+            lp = bot.build_pool(
+                V4_POOL_MANAGER_ADDRESS,
                 pool_id=pool_id,
-                pool_manager_address=V4_POOL_MANAGER_ADDRESS,
                 state_view_address=STATE_VIEW_ADDRESS,
                 tokens=[pool["token0"], pool["token1"]],
                 fee=pool["fee"],

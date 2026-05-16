@@ -48,7 +48,7 @@ def weth_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
 @pytest.fixture
 def wbtc_weth_v2_lp(fork_mainnet_full: AnvilFork) -> UniswapV2Pool:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    pool = bot.build_v2_pool(WBTC_WETH_V2_POOL_ADDRESS)
+    pool = bot.build_pool(WBTC_WETH_V2_POOL_ADDRESS)
     pool.external_update(
         UniswapV2PoolExternalUpdate(
             block_number=pool.update_block,
@@ -64,7 +64,7 @@ def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     # Initialize from chain with auto-fetched tick data. This is simpler
     # than duplicating the hardcoded bitmap from test_uniswap_lp_cycle.py.
-    pool = bot.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
+    pool = bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
     return pool
 
 

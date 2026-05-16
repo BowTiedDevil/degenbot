@@ -216,7 +216,7 @@ class UniswapV3Pool(
         )
 
         # Tick data fetcher for sparse liquidity maps
-        # Set by Bot.build_v3_pool() to delegate on-chain tick fetching
+        # Set by Bot builder to delegate on-chain tick fetching
         self._tick_data_fetcher = tick_data_fetcher
 
         initial_state = self.PoolState.__value__(

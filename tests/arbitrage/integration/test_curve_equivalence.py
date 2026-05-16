@@ -287,9 +287,9 @@ def test_curve_fork_equivalence(fork_mainnet_full: AnvilFork) -> None:
     weth = bot.build_erc20token(WETH_ADDRESS)
     dai = bot.build_erc20token(DAI_ADDRESS)
 
-    curve_tripool = bot.build_curve_pool(CURVE_TRIPOOL_ADDRESS)
-    uniswap_v2_weth_dai_lp = bot.build_v2_pool(UNISWAP_V2_WETH_DAI_ADDRESS)
-    uniswap_v2_weth_usdc_lp = bot.build_v2_pool(UNISWAP_V2_WETH_USDC_ADDRESS)
+    curve_tripool = bot.build_pool(CURVE_TRIPOOL_ADDRESS)
+    uniswap_v2_weth_dai_lp = bot.build_pool(UNISWAP_V2_WETH_DAI_ADDRESS)
+    uniswap_v2_weth_usdc_lp = bot.build_pool(UNISWAP_V2_WETH_USDC_ADDRESS)
 
     # Override V2 pool state to create a profitable arbitrage condition
     v2_weth_dai_override = UniswapV2PoolState(

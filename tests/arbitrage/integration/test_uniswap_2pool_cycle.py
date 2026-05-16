@@ -62,21 +62,21 @@ def ether_placeholder(fork_mainnet_full: AnvilFork) -> Erc20Token:
 @pytest.fixture
 def wbtc_weth_v2_lp(fork_mainnet_full: AnvilFork) -> UniswapV2Pool:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    return bot.build_v2_pool(WBTC_WETH_V2_POOL_ADDRESS)
+    return bot.build_pool(WBTC_WETH_V2_POOL_ADDRESS)
 
 
 @pytest.fixture
 def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    return bot.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
+    return bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
 @pytest.fixture
 def wbtc_ether_v4_lp(fork_mainnet_full: AnvilFork) -> UniswapV4Pool:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    return bot.build_v4_pool(
+    return bot.build_pool(
+        V4_POOL_MANAGER,
         pool_id=WBTC_ETH_V4_POOL_ID,
-        pool_manager_address=V4_POOL_MANAGER,
         state_view_address=V4_STATE_VIEW_ADDRESS,
         tokens=[WBTC_ADDRESS, NATIVE_ADDRESS],
         fee=WBTC_ETH_V4_POOL_FEE,
