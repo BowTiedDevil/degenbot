@@ -72,8 +72,11 @@ class AerodromeV2Builder(V2BuilderBase):
 
         # Determine pool class from registry
         pool_class = pool_type_registry.get_v2_class(chain_id, common.factory)
+        if pool_class is None:
+            msg = f"No V2 pool class registered for chain {chain_id}, factory {common.factory}"
+            raise ValueError(msg)
 
-        pool = pool_class(
+        pool = pool_class(  # type: ignore[call-arg]
             address=pool_address,
             token0=token0,
             token1=token1,
@@ -109,8 +112,10 @@ class AerodromeV2Builder(V2BuilderBase):
             msg = f"AerodromeV2Builder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 
+        assert pool.chain_id is not None
         provider = self._connections.get_provider(pool.chain_id)
-        _block_number = block_number if block_number is not None else provider.get_block_number()
+        raw_block = block_number if block_number is not None else provider.get_block_number()
+        _block_number = int(raw_block) if not isinstance(raw_block, int) else raw_block
         reserves0, reserves1 = self._fetch_reserves(
             pool.address, provider, block_identifier=_block_number
         )
