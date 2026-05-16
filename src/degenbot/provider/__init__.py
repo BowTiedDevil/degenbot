@@ -35,7 +35,13 @@ from typing import Any, Self, cast
 from hexbytes import HexBytes
 
 from degenbot.degenbot_rs import AlloyProvider as _AlloyProvider
-from degenbot.provider.interface import AsyncProviderAdapter, EthereumProvider, ProviderAdapter
+from degenbot.provider.interface import (
+    AsyncProviderAdapter,
+    AsyncProviderBackend,
+    EthereumProvider,
+    ProviderAdapter,
+    ProviderBackend,
+)
 from degenbot.provider.offline_provider import (
     BlockNotRecordedError,
     OfflineDataMissing,
@@ -433,10 +439,12 @@ class AlloyProvider:
 __all__ = [
     "AlloyProvider",
     "AsyncProviderAdapter",
+    "AsyncProviderBackend",
     "BlockNotRecordedError",
     "EthereumProvider",
     "LogFilter",
     "OfflineDataMissing",
     "OfflineProvider",
     "ProviderAdapter",
+    "ProviderBackend",
 ]
