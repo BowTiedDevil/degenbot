@@ -28,7 +28,7 @@ from degenbot.arbitrage.optimizers.piecewise_mobius_solver import (
 from degenbot.arbitrage.optimizers.solidly_stable import (
     SolidlyStableSolver,
 )
-from degenbot.degenbot_rs import mobius as _rs_mobius
+from degenbot.degenbot_rs import RustPoolCache as _RustPoolCache
 from degenbot.exceptions import OptimizationError
 
 # Explicit exports for type checker and IDE completion
@@ -80,7 +80,7 @@ class ArbSolver(Solver):
     }
 
     def __init__(self) -> None:
-        self._pool_cache = _rs_mobius.RustPoolCache()
+        self._pool_cache = _RustPoolCache()
         self._next_pool_id: int = 1
         self._pool_id_map: dict[int, int] = {}
         self._mobius = MobiusSolver()
@@ -88,13 +88,13 @@ class ArbSolver(Solver):
         self._solidly = SolidlyStableSolver()
         self._balancer_multi = BalancerMultiTokenSolver()
         self._brent = BrentSolver()
-        self._pool_cache = _rs_mobius.RustPoolCache()
+        self._pool_cache = _RustPoolCache()
 
     # ------------------------------------------------------------------
     # Rust pool cache helpers (ArbSolver-only concern)
     # ------------------------------------------------------------------
 
-    def get_pool_cache(self) -> _rs_mobius.RustPoolCache:
+    def get_pool_cache(self) -> _RustPoolCache:
         """Return the Rust-side pool state cache.
 
         The cache can be used to register pool states at update time,

@@ -1,6 +1,6 @@
 from fractions import Fraction
 
-from degenbot.degenbot_rs import mobius as rs_mobius
+import degenbot.degenbot_rs as rs_mobius
 from scipy.optimize import minimize_scalar
 
 from degenbot.arbitrage.optimizers.mobius import MobiusFloatHop, V3TickRangeHop, simulate_path

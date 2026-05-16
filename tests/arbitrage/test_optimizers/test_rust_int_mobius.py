@@ -1,6 +1,6 @@
 """Tests for the Rust integer Möbius optimizer (EVM-exact)."""
 
-from degenbot.degenbot_rs import mobius as rs_mobius
+import degenbot.degenbot_rs as rs_mobius
 
 
 class TestRustIntHopState:

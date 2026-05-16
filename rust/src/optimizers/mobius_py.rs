@@ -1295,33 +1295,30 @@ impl PyPoolCache {
 }
 
 pub fn add_mobius_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let submod = pyo3::types::PyModule::new(m.py(), "mobius")?;
-
-    submod.add_class::<PyHopState>()?;
-    submod.add_class::<PyMobiusCoefficients>()?;
-    submod.add_class::<PyV3TickRangeHop>()?;
-    submod.add_class::<PyV3TickRangeSequence>()?;
-    submod.add_class::<PyTickRangeCrossing>()?;
-    submod.add_class::<PyMobiusResult>()?;
-    submod.add_class::<PyMobiusOptimizer>()?;
-    submod.add_class::<PyArbResult>()?;
-    submod.add_class::<PyArbSolver>()?;
-    submod.add_class::<PyPoolCache>()?;
+    m.add_class::<PyHopState>()?;
+    m.add_class::<PyMobiusCoefficients>()?;
+    m.add_class::<PyV3TickRangeHop>()?;
+    m.add_class::<PyV3TickRangeSequence>()?;
+    m.add_class::<PyTickRangeCrossing>()?;
+    m.add_class::<PyMobiusResult>()?;
+    m.add_class::<PyMobiusOptimizer>()?;
+    m.add_class::<PyArbResult>()?;
+    m.add_class::<PyArbSolver>()?;
+    m.add_class::<PyPoolCache>()?;
 
     // Standalone functions
-    submod.add_function(wrap_pyfunction!(py_compute_mobius_coefficients, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(py_mobius_solve, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(py_simulate_path, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(py_estimate_v3_final_sqrt_price, &submod)?)?;
+    m.add_function(wrap_pyfunction!(py_compute_mobius_coefficients, m)?)?;
+    m.add_function(wrap_pyfunction!(py_mobius_solve, m)?)?;
+    m.add_function(wrap_pyfunction!(py_simulate_path, m)?)?;
+    m.add_function(wrap_pyfunction!(py_estimate_v3_final_sqrt_price, m)?)?;
 
     // Integer Möbius solver
-    submod.add_class::<PyIntHopState>()?;
-    submod.add_class::<PyIntMobiusResult>()?;
-    submod.add_function(wrap_pyfunction!(py_int_mobius_solve, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(py_int_simulate_path, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(py_mobius_refine_int, &submod)?)?;
+    m.add_class::<PyIntHopState>()?;
+    m.add_class::<PyIntMobiusResult>()?;
+    m.add_function(wrap_pyfunction!(py_int_mobius_solve, m)?)?;
+    m.add_function(wrap_pyfunction!(py_int_simulate_path, m)?)?;
+    m.add_function(wrap_pyfunction!(py_mobius_refine_int, m)?)?;
 
-    m.add_submodule(&submod)?;
     Ok(())
 }
 
