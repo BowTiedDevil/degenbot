@@ -247,7 +247,7 @@ class LiquidationHandler:
             raise EnrichmentError(msg)
 
         # Calculate net increase
-        raw_amount = event.balance_increase - event.amount  # type: ignore[operator]
+        raw_amount = event.balance_increase - event.amount
 
         logger.debug(
             f"ENRICHMENT: LIQUIDATION net debt increase - using DEBT_BURN "

@@ -19,7 +19,5 @@ def build_swap_amount(
 ) -> AbstractSwapAmounts:
     return cast(
         "AbstractSwapAmounts",
-        pool.build_swap_amount(  # type: ignore[attr-defined]
-            swap_vector.zero_for_one, amount_in, amount_out
-        ),
+        pool.build_swap_amount(swap_vector.zero_for_one, amount_in, amount_out),
     )

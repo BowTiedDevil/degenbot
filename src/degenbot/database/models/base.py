@@ -18,8 +18,8 @@ class IntMappedToString(TypeDecorator[int]):
     cache_ok = True
     impl = String(78)
 
-    @staticmethod
     def process_bind_param(
+        self,
         value: int | None,
         dialect: Dialect,  # noqa: ARG004
     ) -> str | None:
@@ -29,8 +29,8 @@ class IntMappedToString(TypeDecorator[int]):
 
         return None if value is None else str(value)
 
-    @staticmethod
     def process_result_value(
+        self,
         value: str | None,
         dialect: Dialect,  # noqa: ARG004
     ) -> int | None:

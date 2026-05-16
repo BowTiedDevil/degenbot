@@ -64,7 +64,7 @@ class CryptoDyCalculator:
             xp_[k + 1] = xp_[k + 1] * price_scale[k] * precisions[k + 1] // inputs.PRECISION
 
         amp = inputs.amp
-        y = inputs.newton_y(amp, gamma_val, xp_, d, j)  # type: ignore[misc]
+        y = inputs.newton_y(amp, gamma_val, xp_, d, j)
         dy = xp_[j] - y - 1
 
         xp_[j] = y

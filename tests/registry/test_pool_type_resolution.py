@@ -23,7 +23,7 @@ class TestPoolTypeDescriptor:
             family=PoolFamily.CONSTANT_PRODUCT, variant=None, kind="uniswap_v2", factory=None
         )
         with pytest.raises(AttributeError):
-            desc.variant = "sushiswap"  # type: ignore[misc]
+            desc.variant = "sushiswap"
 
     def test_descriptor_equality(self) -> None:
         a = PoolTypeDescriptor(

@@ -224,7 +224,7 @@ class PoolTypeRegistry:
         if entry is not None:
             # Type narrowing: entry.pool_class satisfies ConstantProductPool
             # because _derive_family validated the structural shape at registration
-            return entry.pool_class  # type: ignore[return-value]
+            return entry.pool_class
         return self._default_v2_class
 
     def get_v3_class(
@@ -235,7 +235,7 @@ class PoolTypeRegistry:
         if entry is not None:
             # Type narrowing: entry.pool_class satisfies ConcentratedLiquidityPool
             # because _derive_family validated the structural shape at registration
-            return entry.pool_class  # type: ignore[return-value]
+            return entry.pool_class
         return self._default_v3_class
 
     def get_descriptor(self, chain_id: ChainId, factory_address: str) -> PoolTypeDescriptor | None:

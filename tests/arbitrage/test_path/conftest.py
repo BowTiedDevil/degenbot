@@ -44,7 +44,7 @@ class FakeUniswapV2Pool(PublisherMixin):
     ) -> None:
         self._token0 = token0
         self._token1 = token1
-        self.address: ChecksumAddress = address  # type: ignore[assignment]
+        self.address: ChecksumAddress = address
         self.name = f"FakeV2({address})"
         self._fee_token0 = fee
         self._fee_token1 = fee
@@ -172,7 +172,7 @@ class FakeConcentratedLiquidityPool(PublisherMixin):
     ) -> None:
         self._token0 = token0
         self._token1 = token1
-        self.address: ChecksumAddress = address  # type: ignore[assignment]
+        self.address: ChecksumAddress = address
         self.name = f"FakeCL({address})"
         self._fee = fee
         self._tick_spacing = tick_spacing
@@ -317,7 +317,7 @@ class FakeAerodromeV2Pool(PublisherMixin):
     ) -> None:
         self._token0 = token0
         self._token1 = token1
-        self.address: ChecksumAddress = address  # type: ignore[assignment]
+        self.address: ChecksumAddress = address
         self.name = f"FakeAero({address})"
         self._fee = fee
         self._stable = stable
@@ -453,7 +453,7 @@ class FakeCamelotPool(PublisherMixin):
     ) -> None:
         self._token0 = token0
         self._token1 = token1
-        self.address: ChecksumAddress = address  # type: ignore[assignment]
+        self.address: ChecksumAddress = address
         self.name = f"FakeCamelot({address})"
         self._fee_token0 = fee
         self._fee_token1 = fee

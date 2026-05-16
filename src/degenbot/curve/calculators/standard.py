@@ -41,7 +41,7 @@ class StandardDyCalculator:
         rates = inputs.resolved_rates
         xp = inputs.xp
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
+        y = inputs.get_y(i, j, x, xp)
         dy = xp[j] - y - 1
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return (dy - fee) * inputs.PRECISION // rates[j]
@@ -68,7 +68,7 @@ class RateAdjustedDyCalculator:
         rates = inputs.resolved_rates
         xp = inputs.xp
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
+        y = inputs.get_y(i, j, x, xp)
         dy = (xp[j] - y - 1) * inputs.PRECISION // rates[j]
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return dy - fee
@@ -95,7 +95,7 @@ class RateAdjustedNoOneDyCalculator:
         rates = inputs.resolved_rates
         xp = inputs.xp
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
+        y = inputs.get_y(i, j, x, xp)
         dy = (xp[j] - y) * inputs.PRECISION // rates[j]
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return dy - fee
@@ -121,7 +121,7 @@ class RawBalanceDyCalculator:
     ) -> int:
         xp = inputs.balances
         x = xp[i] + dx
-        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
+        y = inputs.get_y(i, j, x, xp)
         dy = xp[j] - y - 1
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return dy - fee
@@ -148,7 +148,7 @@ class NoOneFeeRateDyCalculator:
         rates = inputs.resolved_rates
         xp = inputs.xp
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
+        y = inputs.get_y(i, j, x, xp)
         dy = xp[j] - y
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return (dy - fee) * inputs.PRECISION // rates[j]
@@ -175,6 +175,6 @@ class CytokenDyCalculator:
         rates = inputs.resolved_rates
         xp = inputs.xp
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
+        y = inputs.get_y(i, j, x, xp)
         dy = xp[j] - y - 1
         return (dy - (inputs.fee * dy // inputs.FEE_DENOMINATOR)) * inputs.PRECISION // rates[j]

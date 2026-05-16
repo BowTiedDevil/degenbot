@@ -98,15 +98,13 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         """
         if len(tokens) != len(balances):
             msg = f"Token count ({len(tokens)}) must match balance count ({len(balances)})"
-            raise ValueError(
-                msg
-            )
+            raise ValueError(msg)
         if len(tokens) < 2 or len(tokens) > self.MAX_COINS:
             msg = f"Curve pools require 2-{self.MAX_COINS} tokens, got {len(tokens)}"
             raise ValueError(msg)
 
         self._tokens: tuple[FakeToken, ...] = tuple(tokens)
-        self.address: ChecksumAddress = address  # type: ignore[assignment]
+        self.address: ChecksumAddress = address
         self.name = f"FakeCurve({len(tokens)}coins)"
 
         self.a_coefficient = a_coefficient

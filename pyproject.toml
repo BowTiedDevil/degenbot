@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "degenbot"
-version = "0.6.0a2"
+version = "0.6.0a3"
 authors = [
     { name="BowTiedDevil", email="devil@bowtieddevil.com" },
 ]
@@ -212,6 +212,7 @@ dev = [
     "python-dotenv",
     "ruff",
     "sybil",
+    "ty",
 ]
 
 [tool.uv]

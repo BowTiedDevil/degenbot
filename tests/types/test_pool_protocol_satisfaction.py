@@ -15,7 +15,7 @@ from degenbot.types.pool_protocols import (
 class TestProtocolDeclarations:
     def test_pool_simulation_declares_required_interface(self):
         """PoolSimulation declares the required pool interface."""
-        attrs = PoolSimulation.__protocol_attrs__  # type: ignore[attr-defined]
+        attrs = PoolSimulation.__protocol_attrs__
         assert "address" in attrs
         assert "simulate_swap" in attrs
         assert "subscribe" in attrs
@@ -23,7 +23,7 @@ class TestProtocolDeclarations:
 
     def test_arbitrage_capable_pool_extends_pool_simulation(self):
         """ArbitrageCapablePool extends PoolSimulation with hop/fee methods."""
-        attrs = ArbitrageCapablePool.__protocol_attrs__  # type: ignore[attr-defined]
+        attrs = ArbitrageCapablePool.__protocol_attrs__
         # From PoolSimulation
         assert "address" in attrs
         assert "simulate_swap" in attrs
@@ -33,7 +33,7 @@ class TestProtocolDeclarations:
 
     def test_arbitrage_path_pool_declares_required_interface(self):
         """ArbitragePathPool declares all methods needed by ArbitragePath."""
-        attrs = ArbitragePathPool.__protocol_attrs__  # type: ignore[attr-defined]
+        attrs = ArbitragePathPool.__protocol_attrs__
         expected = {
             "address",
             "simulate_swap",

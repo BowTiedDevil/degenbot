@@ -449,7 +449,7 @@ def test_bad_pool_in_constructor(
         UniswapLpCycle(
             id="test_arb",
             input_token=weth_token,
-            swap_pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp, None],  # type: ignore[list-item]
+            swap_pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp, None],
             max_input=100 * 10**18,
         )
 

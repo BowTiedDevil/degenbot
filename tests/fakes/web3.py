@@ -76,7 +76,7 @@ class FakeAsyncW3Eth(FakeW3Eth):
     """
 
     @property
-    def chain_id(self):  # type: ignore[override]
+    def chain_id(self):
         async def _inner() -> int:  # noqa: RUF029
             return 1
 

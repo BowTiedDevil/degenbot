@@ -71,7 +71,7 @@ class _AbstractAerodromeV2PoolTracker[Pool: AerodromeV2Pool](AbstractPoolTracker
         try:
             new_pool = self.pool_factory(
                 address=pool_address,
-                silent=silent,  # type: ignore[call-arg]
+                silent=silent,
                 **(pool_class_kwargs or {}),
             )
         except LiquidityPoolError as exc:

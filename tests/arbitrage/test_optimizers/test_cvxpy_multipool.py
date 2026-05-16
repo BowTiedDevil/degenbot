@@ -85,7 +85,7 @@ class TestMultiPoolCycleProperties:
             seed=seed,
             num_pools=3,
             pool_types=["v2", "v2", "v2"],
-            liquidity_depth=liquidity_depth,  # type: ignore[arg-type]
+            liquidity_depth=liquidity_depth,
             price_ratio_range=(1.01, 1.03),
         )
 

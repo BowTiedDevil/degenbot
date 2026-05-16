@@ -17,7 +17,7 @@ class TestArbitragePathPoolProtocol:
         """ArbitragePathPool declares all methods needed by ArbitragePath."""
         # Protocol doesn't expose __protocol_attrs__ reliably across Python versions,
         # so we verify the class has the expected annotations instead
-        annotations = ArbitragePathPool.__protocol_attrs__  # type: ignore[attr-defined]
+        annotations = ArbitragePathPool.__protocol_attrs__
         expected = {
             "address",
             "simulate_swap",

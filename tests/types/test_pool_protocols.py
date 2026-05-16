@@ -157,7 +157,7 @@ class TestSimulationResult:
             final_state=AbstractPoolState(address="0x" + "a" * 40, block=2),
         )
         with pytest.raises(AttributeError):
-            result.amount_in = 999  # type: ignore[misc]
+            result.amount_in = 999
 
     def test_fields(self):
 

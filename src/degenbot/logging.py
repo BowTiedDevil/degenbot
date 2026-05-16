@@ -36,6 +36,8 @@ def log_function_call[**P, R](func: Callable[P, R]) -> Callable[P, R]:
     if not _FUNCTION_CALL_LOGGING_ENABLED:
         return func
 
+    func_name = getattr(func, "__name__", repr(func))
+
     if inspect.iscoroutinefunction(func):
 
         @functools.wraps(func)
@@ -44,12 +46,12 @@ def log_function_call[**P, R](func: Callable[P, R]) -> Callable[P, R]:
             bound = sig.bind(*args, **kwargs)
             bound.apply_defaults()
             arg_str = ", ".join(f"{k}={v!r}" for k, v in bound.arguments.items())
-            logger.debug("%s(%s)", func.__name__, arg_str)
+            logger.debug("%s(%s)", func_name, arg_str)
             result: R = await func(*args, **kwargs)
-            logger.debug("%s -> %r", func.__name__, result)
+            logger.debug("%s -> %r", func_name, result)
             return result
 
-        return async_wrapper  # type: ignore[return-value]
+        return async_wrapper
 
     @functools.wraps(func)
     def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -57,9 +59,9 @@ def log_function_call[**P, R](func: Callable[P, R]) -> Callable[P, R]:
         bound = sig.bind(*args, **kwargs)
         bound.apply_defaults()
         arg_str = ", ".join(f"{k}={v!r}" for k, v in bound.arguments.items())
-        logger.debug("%s(%s)", func.__name__, arg_str)
+        logger.debug("%s(%s)", func_name, arg_str)
         result: R = func(*args, **kwargs)
-        logger.debug("%s -> %r", func.__name__, result)
+        logger.debug("%s -> %r", func_name, result)
         return result
 
     return sync_wrapper
