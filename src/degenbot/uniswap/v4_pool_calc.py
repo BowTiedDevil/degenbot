@@ -27,6 +27,14 @@ class UniswapV4PoolCalc:
     - TICK_LIQUIDITY_STRUCT_TYPES
     """
 
+    # MRO-provided attributes (declared for type checking;
+    # actual definitions live on V4PoolState and the pool class)
+    tokens: tuple[Erc20Token, Erc20Token]
+    state: UniswapV4PoolState
+    _token0: Erc20Token
+    _token1: Erc20Token
+    fee: int
+
     FEE_DENOMINATOR = 1_000_000
 
     def get_absolute_price(
