@@ -54,17 +54,17 @@ def usdt_token(_bot) -> Erc20Token:
 
 @pytest.fixture
 def weth_usdc_005_lp(_bot) -> UniswapV3Pool:
-    return _bot.build_v3_pool(WETH_USDC_005_POOL)
+    return _bot.build_pool(WETH_USDC_005_POOL)
 
 
 @pytest.fixture
 def usdc_usdt_001_lp(_bot) -> UniswapV3Pool:
-    return _bot.build_v3_pool(USDC_USDT_001_POOL)
+    return _bot.build_pool(USDC_USDT_001_POOL)
 
 
 @pytest.fixture
 def weth_usdt_030_lp(_bot) -> UniswapV3Pool:
-    return _bot.build_v3_pool(WETH_USDT_030_POOL)
+    return _bot.build_pool(WETH_USDT_030_POOL)
 
 
 class TestV3OnlyForkEquivalence:

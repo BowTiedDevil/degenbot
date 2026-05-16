@@ -195,10 +195,10 @@ class TestV3PoolIOFreeConstructor:
 
 
 class TestBotBuildV3Pool:
-    """Bot.build_v3_pool() constructs I/O-free V3 pools from on-chain data."""
+    """Bot.build_pool() constructs I/O-free V3 pools from on-chain data."""
 
-    def test_build_v3_pool_with_mock_provider(self, tmp_path: pathlib.Path) -> None:
-        """build_v3_pool fetches immutable + mutable values and constructs an I/O-free pool."""
+    def test_build_pool_with_mock_provider(self, tmp_path: pathlib.Path) -> None:
+        """build_pool fetches immutable + mutable values and constructs an I/O-free pool."""
 
         weth_addr = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
         usdc_addr = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
@@ -265,8 +265,8 @@ class TestBotBuildV3Pool:
 
         provider.call = MagicMock(side_effect=mock_call)
 
-        pool = bot.build_v3_pool(
-            pool_address=USDC_WETH_V3_POOL,
+        pool = bot.build_pool(
+            USDC_WETH_V3_POOL,
             chain_id=1,
         )
 

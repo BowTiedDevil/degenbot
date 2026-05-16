@@ -133,8 +133,8 @@ def test_adapter_get_pool_ids() -> None:
 def test_adapter_fork_v2_pool(fork_mainnet_full: AnvilFork) -> None:
     """Integration: register a real V2 pool and verify cache update."""
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    pool = bot.build_v2_pool(
-        pool_address="0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc",
+    pool = bot.build_pool(
+        "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc",
     )
 
     solver = ArbSolver()

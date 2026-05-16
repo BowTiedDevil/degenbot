@@ -106,13 +106,13 @@ def weth(bot_mainnet_full: Bot) -> Erc20Token:
 @pytest.fixture
 def wbtc_weth_v3_lp_at_historical_block(fork_mainnet_archive: AnvilFork) -> UniswapV3Pool:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_archive.w3))
-    return bot.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
+    return bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
 @pytest.fixture
 def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    return bot.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
+    return bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
 @pytest.fixture
@@ -157,7 +157,7 @@ def test_first_200_pools(
     for pool in testing_pools:
         pool_address: str = pool["pool_address"]
 
-        lp = bot.build_v3_pool(pool_address)
+        lp = bot.build_pool(pool_address)
 
         max_reserves_token0 = 1 * 10**lp.token0.decimals
         max_reserves_token1 = 1 * 10**lp.token1.decimals
@@ -242,7 +242,7 @@ def test_first_200_pools_with_snapshot(
 
         pool_tick_data = liquidity_snapshot[pool_address]["tick_data"]
         pool_tick_bitmap = liquidity_snapshot[pool_address]["tick_bitmap"]
-        lp = bot.build_v3_pool(
+        lp = bot.build_pool(
             pool_address,
             tick_bitmap=pool_tick_bitmap,
             tick_data=pool_tick_data,
@@ -307,12 +307,12 @@ def test_first_200_pools_with_snapshot(
 
 
 def test_pool_creation(bot_mainnet_full: Bot) -> None:
-    bot_mainnet_full.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
+    bot_mainnet_full.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
 def test_pool_creation_with_liquidity_map(bot_mainnet_full: Bot) -> None:
     # Pools built without explicit tick data have sparse liquidity maps
-    pool = bot_mainnet_full.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
+    pool = bot_mainnet_full.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
     assert pool.sparse_liquidity_map is True
 
 
@@ -322,18 +322,18 @@ def test_creation_with_wrong_pool_type(fork_base_full: AnvilFork) -> None:
 
     pancake_pool_address = "0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E"
     with pytest.raises(LiquidityPoolError):
-        bot.build_v3_pool(pancake_pool_address)
+        bot.build_pool(pancake_pool_address)
 
 
 @pytest.mark.base
 def test_pancake_v3_pool_creation(fork_base_full: AnvilFork) -> None:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
-    bot.build_v3_pool("0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E")
+    bot.build_pool("0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E")
 
 
 def test_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    lp = bot.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
+    lp = bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
     current_word, _ = get_tick_word_and_bit_position(MIN_TICK, lp.tick_spacing)
     assert lp.sparse_liquidity_map is True
     assert current_word + 1 not in lp.tick_bitmap
@@ -347,7 +347,7 @@ def test_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
 
 def test_external_update_with_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    lp = bot.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
+    lp = bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
     print(f"{lp.tick_bitmap.keys()=}")
     current_word, _ = get_tick_word_and_bit_position(
         tick=MIN_TICK,
@@ -1034,7 +1034,7 @@ def test_mint_and_burn_in_empty_word(fork_mainnet_archive: AnvilFork) -> None:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_archive.w3))
     block_number = fork_mainnet_archive.w3.eth.block_number
 
-    lp = bot.build_v3_pool(WBTC_WETH_V3_POOL_ADDRESS)
+    lp = bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
     assert lp.sparse_liquidity_map is True
 
     empty_word = -57
@@ -1086,7 +1086,7 @@ def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
 
     state_block = fork_mainnet_archive.w3.eth.block_number
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_archive.w3))
-    lp = bot.build_v3_pool("0x3416cF6C708Da44DB2624D63ea0AAef7113527C6")
+    lp = bot.build_pool("0x3416cF6C708Da44DB2624D63ea0AAef7113527C6")
 
     # Verify initial state
     assert lp.liquidity == 14421592867765366
@@ -1161,7 +1161,7 @@ def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
     lp_address = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_archive.w3))
-    lp = bot.build_v3_pool(lp_address)
+    lp = bot.build_pool(lp_address)
 
     # Verify initial state
     assert lp.liquidity == 14823044070524674
@@ -1223,5 +1223,5 @@ def test_base_pancakeswap_v3(fork_base_full: AnvilFork):
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
 
     # Build a PancakeSwap V3 pool, which extends UniswapV3Pool
-    lp = bot.build_v3_pool(BASE_CBETH_WETH_V3_POOL_ADDRESS)
+    lp = bot.build_pool(BASE_CBETH_WETH_V3_POOL_ADDRESS)
     assert lp is not None

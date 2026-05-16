@@ -70,7 +70,7 @@ def weth_token(_bot) -> Erc20Token:
 def wbtc_weth_v2_lp(
     _bot,
 ) -> UniswapV2Pool:
-    pool = _bot.build_v2_pool(WBTC_WETH_V2_POOL_ADDRESS)
+    pool = _bot.build_pool(WBTC_WETH_V2_POOL_ADDRESS)
     pool.external_update(
         UniswapV2PoolExternalUpdate(
             block_number=pool.update_block,
@@ -107,7 +107,7 @@ _WBTC_WETH_V3_TICK_DATA = {
 
 @pytest.fixture
 def wbtc_weth_v3_lp(_bot) -> UniswapV3Pool:
-    pool = _bot.build_v3_pool(
+    pool = _bot.build_pool(
         WBTC_WETH_V3_POOL_ADDRESS,
         tick_bitmap=_WBTC_WETH_V3_TICK_BITMAP,
         tick_data=_WBTC_WETH_V3_TICK_DATA,
@@ -279,8 +279,8 @@ async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum_full: Anv
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_arbitrum_full.w3))
     weth = bot.build_erc20token(weth_address)
-    camelot_lp = bot.build_v2_pool(camelot_weth_wbtc_pool_address)
-    sushi_lp = bot.build_v2_pool(sushi_v2_weth_wbtc_pool_address)
+    camelot_lp = bot.build_pool(camelot_weth_wbtc_pool_address)
+    sushi_lp = bot.build_pool(sushi_v2_weth_wbtc_pool_address)
 
     arb = UniswapLpCycle(
         id="test_arb",
