@@ -175,11 +175,11 @@ class UniswapV3Pool(
         )
 
         with contextlib.suppress(KeyError):
-            assert self._chain_id is not None
-            factory_deployment = _FACTORY_DEPLOYMENTS[self._chain_id][self.factory]
-            self.init_hash = factory_deployment.pool_init_hash
-            if factory_deployment.deployer is not None:
-                self.deployer_address = factory_deployment.deployer
+            if self._chain_id is not None:
+                factory_deployment = _FACTORY_DEPLOYMENTS[self._chain_id][self.factory]
+                self.init_hash = factory_deployment.pool_init_hash
+                if factory_deployment.deployer is not None:
+                    self.deployer_address = factory_deployment.deployer
 
         self.name = (
             f"{self._token0}-{self._token1} ({self.__class__.__name__}, "
