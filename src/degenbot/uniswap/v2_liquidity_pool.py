@@ -103,11 +103,11 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolC
         self.deployer = get_checksum_address(deployer_address or self.factory)
 
         with contextlib.suppress(KeyError):
-            assert self._chain_id is not None
-            factory_deployment = FACTORY_DEPLOYMENTS[self._chain_id][self.factory]
-            self.init_hash = factory_deployment.pool_init_hash
-            if factory_deployment.deployer is not None:
-                self.deployer = factory_deployment.deployer
+            if self._chain_id is not None:
+                factory_deployment = FACTORY_DEPLOYMENTS[self._chain_id][self.factory]
+                self.init_hash = factory_deployment.pool_init_hash
+                if factory_deployment.deployer is not None:
+                    self.deployer = factory_deployment.deployer
 
         _state_block = state_block if state_block is not None else 0
 
