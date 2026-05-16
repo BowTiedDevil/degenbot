@@ -156,7 +156,7 @@ class VectorizedNewtonSolver:
         max_iterations: int = 10,
         tolerance: float = 1e-9,
         initial_guess_fraction: float = 0.01,
-    ):
+    ) -> None:
         self.max_iterations = max_iterations
         self.tolerance = tolerance
         self.initial_guess_fraction = initial_guess_fraction
@@ -313,7 +313,7 @@ class BatchNewtonOptimizer:
         self,
         max_iterations: int = 10,
         min_paths_for_batch: int = 20,
-    ):
+    ) -> None:
         """
         Parameters
         ----------

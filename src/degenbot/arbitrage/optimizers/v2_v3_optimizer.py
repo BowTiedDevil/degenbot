@@ -506,7 +506,7 @@ class V2V3Optimizer:
         max_candidates: int = 3,
         max_iterations: int = 50,
         tolerance: float = 1e-9,
-    ):
+    ) -> None:
         """
         Parameters
         ----------
