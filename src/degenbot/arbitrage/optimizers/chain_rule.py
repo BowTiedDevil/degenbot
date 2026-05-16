@@ -178,7 +178,7 @@ class ChainRuleNewtonOptimizer:
         self,
         max_iterations: int = 50,
         tolerance: float = 1e-8,
-    ):
+    ) -> None:
         self.max_iterations = max_iterations
         self.tolerance = tolerance
         self._last_solve_time_ms = 0.0
