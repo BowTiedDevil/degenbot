@@ -1,6 +1,4 @@
 # ruff: noqa: PLR0904
-
-# TODO: add event prototype exporter method and handler for callbacks
 import contextlib
 import dataclasses
 from collections import deque
@@ -163,8 +161,8 @@ class UniswapV3Pool(
         self._fee = fee
         self._tick_spacing = tick_spacing
 
-        _state_block = state_block if state_block is not None else 0
-        self._initial_state_block = _state_block
+        state_block_ = state_block if state_block is not None else 0
+        self._initial_state_block = state_block_
 
         # Derive deployer/init_hash from factory deployments or fallback
         self.deployer_address = (
@@ -227,7 +225,7 @@ class UniswapV3Pool(
             tick=tick,
             tick_bitmap=working_tick_bitmap,
             tick_data=working_tick_data,
-            block=_state_block,
+            block=state_block_,
         )
         self._state_lock = Lock()
         self._state_mgr = ConcentratedLiquidityStateManager(

@@ -12,6 +12,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 from degenbot.exceptions import DegenbotValueError
+from degenbot.uniswap.v3_functions import exchange_rate_from_sqrt_price_x96
 
 if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
@@ -51,8 +52,6 @@ class UniswapV4PoolCalc:
         override_state: UniswapV4PoolState | None = None,
     ) -> Fraction:
         """Get the absolute exchange rate for the given token."""
-        from degenbot.uniswap.v3_functions import exchange_rate_from_sqrt_price_x96
-
         if token not in self.tokens:
             raise DegenbotValueError(message=f"Unknown token {token}")
 

@@ -40,7 +40,9 @@ from degenbot.uniswap.v2_types import (
 )
 
 
-class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):  # type: ignore[override]
+class UniswapV2Pool(  # type: ignore[override]
+    PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool
+):
     """
     A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant.
     """
@@ -109,7 +111,7 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolC
                 if factory_deployment.deployer is not None:
                     self.deployer = factory_deployment.deployer
 
-        _state_block = state_block if state_block is not None else 0
+        state_block_ = state_block if state_block is not None else 0
 
         fee_string = (
             f"{100 * self._fee_token0.numerator / self._fee_token0.denominator:.2f}"
@@ -126,7 +128,7 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolC
             address=self.address,
             reserves_token0=reserves_token0,
             reserves_token1=reserves_token1,
-            block=_state_block,
+            block=state_block_,
         )
         self._state_cache: deque[UniswapV2PoolState] = deque(maxlen=max(1, state_cache_depth))
         self._state_cache.append(initial_state)
@@ -393,10 +395,16 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolC
 
         if token_in == self._token0.address:
             token_in_obj = self._token0
+            expected_token_out = self._token1.address
         elif token_in == self._token1.address:
             token_in_obj = self._token1
+            expected_token_out = self._token0.address
         else:
             raise DegenbotValueError(message=f"token_in {token_in} not in pool")
+
+        if token_out != expected_token_out:
+            msg = f"token_out {token_out} does not match expected {expected_token_out}"
+            raise DegenbotValueError(message=msg)
 
         result = self.simulate_exact_input_swap(
             token_in=token_in_obj,
@@ -421,10 +429,16 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolC
     ) -> SimulationResult:
         if token_out == self._token0.address:
             token_out_obj = self._token0
+            expected_token_in = self._token1.address
         elif token_out == self._token1.address:
             token_out_obj = self._token1
+            expected_token_in = self._token0.address
         else:
             raise DegenbotValueError(message=f"token_out {token_out} not in pool")
+
+        if token_in != expected_token_in:
+            msg = f"token_in {token_in} does not match expected {expected_token_in}"
+            raise DegenbotValueError(message=msg)
 
         result = self.simulate_exact_output_swap(
             token_out=token_out_obj,
