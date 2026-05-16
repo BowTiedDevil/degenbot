@@ -220,7 +220,7 @@ class AerodromeV2Pool(
                 ),
             },
         ]
-        factory_data, token0_data, token1_data, stable_data = provider.batch_call(immutable_calls)
+        factory_data, token0_data, token1_data, stable_data = provider.batch_call(immutable_calls)  # ty:ignore[invalid-argument-type]
 
         # This call uses a specific block so the reserve values are consistent
         reserves_data = provider.call_raw(

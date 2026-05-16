@@ -1084,6 +1084,10 @@ class CurveStableswapPool(
             if token_out not in {t.address for t in all_tokens}:
                 raise DegenbotValueError(message=f"token_out {token_out} not in pool")
 
+        if token_in_obj is None or token_out_obj is None:
+            msg = f"token_in {token_in} or token_out {token_out} not found in pool tokens"
+            raise DegenbotValueError(message=msg)
+
         initial_state = curve_state or self.state
         amount_out = self.calculate_tokens_out_from_tokens_in(
             token_in=token_in_obj,

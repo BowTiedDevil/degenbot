@@ -62,7 +62,7 @@ def upgrade() -> None:
                 )
             )
             for chain_id, token_address in tokens
-        }
+        }  # type: ignore
 
         with op.batch_alter_table(table.__tablename__, schema=None) as batch_op:
             batch_op.add_column(sa.Column("token0_id", sa.Integer(), nullable=True))

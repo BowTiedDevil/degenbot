@@ -162,7 +162,7 @@ def fetch_logs_retrying(
         return provider.get_logs(
             from_block=from_block,
             to_block=to_block,
-            addresses=addr or None,
+            addresses=addr or None,  # ty:ignore[invalid-argument-type]
             topics=topics_str or None,
         )
 
@@ -239,7 +239,7 @@ async def fetch_logs_retrying_async(
 
     async def _fetch_chunk(attempt: object, chunk_end: int) -> None:
         """Fetch a single chunk of logs within a retry attempt."""
-        with attempt:
+        with attempt:  # ty:ignore[invalid-context-manager]
             try:
                 logger.debug(
                     f"Fetching logs for range {fetcher.start_block}-{chunk_end} "
@@ -258,7 +258,7 @@ async def fetch_logs_retrying_async(
                 old_working_span = fetcher.working_span
                 fetcher.on_timeout()
                 logger.debug(
-                    f"Attempt {attempt.retry_state.attempt_number} timed out "
+                    f"Attempt {attempt.retry_state.attempt_number} timed out "  # ty:ignore[unresolved-attribute]
                     f"fetching {old_working_span} blocks. "
                     f"Reducing to {fetcher.working_span}..."
                 )
