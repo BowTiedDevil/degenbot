@@ -79,6 +79,11 @@ Bypass with `--no-verify` if needed, but CI will still reject non-conforming mes
 
 ## Python Design
 
+### Imports
+- Add imports at the top level of each module
+- Do not import inside classes or functions
+- If a circular import is found, fix it immediately
+
 ### Patterns
 - Prefer frozen `dataclass` for value objects passed between functions
 - Prefer `TypedDict` if key and value types are known
