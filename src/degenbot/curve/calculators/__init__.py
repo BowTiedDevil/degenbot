@@ -5,8 +5,8 @@ The pool's get_dy() method delegates to the calculator injected via
 PoolStrategies.dy_calculator (non-metapool) or
 PoolStrategies.metapool_dy_calculator / metapool_underlying_dy_calculator (metapool).
 
-Calculators resolve data from the pool (amp, balances, rates) in the
-first few lines, then call pure invariant-solver functions from
-calculations/stableswap.py for the math. The pool parameter is
-read-only — calculators never mutate pool state.
+Calculators receive a DyCalculationInputs object carrying all pre-resolved data
+(balances, rates, xp, closures for invariant solving). All I/O and cache lookups
+happen in the pool's get_dy() before the calculator is called — calculators are
+pure math consumers of the inputs snapshot.
 """

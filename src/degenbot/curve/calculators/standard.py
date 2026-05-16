@@ -15,10 +15,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
     from degenbot.curve.types import CurveStableswapPoolState
 
-from degenbot.curve.types import SwapStyle
+from degenbot.curve.types import DyCalculationInputs, SwapStyle
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,22 +35,16 @@ class StandardDyCalculator:
         j: int,
         dx: int,
         *,
-        pool: CurveStableswapPool,
-        block_number: int,
+        inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        pool_balances = override_state.balances if override_state is not None else pool.balances
-        rates = pool._resolve_rates(
-            rates=pool.rate_multipliers,
-            block_number=block_number,
-            pool_balances=pool_balances,
-        )
-        xp = pool._xp(rates=rates, balances=pool_balances)
-        x = xp[i] + (dx * rates[i] // pool.PRECISION)
-        y = pool._get_y(i, j, x, xp)
+        rates = inputs.resolved_rates
+        xp = inputs.xp
+        x = xp[i] + (dx * rates[i] // inputs.PRECISION)
+        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
         dy = xp[j] - y - 1
-        fee = pool.fee * dy // pool.FEE_DENOMINATOR
-        return (dy - fee) * pool.PRECISION // rates[j]
+        fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
+        return (dy - fee) * inputs.PRECISION // rates[j]
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,21 +62,15 @@ class RateAdjustedDyCalculator:
         j: int,
         dx: int,
         *,
-        pool: CurveStableswapPool,
-        block_number: int,
+        inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        pool_balances = override_state.balances if override_state is not None else pool.balances
-        rates = pool._resolve_rates(
-            rates=pool.rate_multipliers,
-            block_number=block_number,
-            pool_balances=pool_balances,
-        )
-        xp = pool._xp(rates=rates, balances=pool_balances)
-        x = xp[i] + (dx * rates[i] // pool.PRECISION)
-        y = pool._get_y(i, j, x, xp)
-        dy = (xp[j] - y - 1) * pool.PRECISION // rates[j]
-        fee = pool.fee * dy // pool.FEE_DENOMINATOR
+        rates = inputs.resolved_rates
+        xp = inputs.xp
+        x = xp[i] + (dx * rates[i] // inputs.PRECISION)
+        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
+        dy = (xp[j] - y - 1) * inputs.PRECISION // rates[j]
+        fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return dy - fee
 
 
@@ -102,21 +89,15 @@ class RateAdjustedNoOneDyCalculator:
         j: int,
         dx: int,
         *,
-        pool: CurveStableswapPool,
-        block_number: int,
+        inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        pool_balances = override_state.balances if override_state is not None else pool.balances
-        rates = pool._resolve_rates(
-            rates=pool.rate_multipliers,
-            block_number=block_number,
-            pool_balances=pool_balances,
-        )
-        xp = pool._xp(rates=rates, balances=pool_balances)
-        x = xp[i] + (dx * rates[i] // pool.PRECISION)
-        y = pool._get_y(i, j, x, xp)
-        dy = (xp[j] - y) * pool.PRECISION // rates[j]
-        fee = pool.fee * dy // pool.FEE_DENOMINATOR
+        rates = inputs.resolved_rates
+        xp = inputs.xp
+        x = xp[i] + (dx * rates[i] // inputs.PRECISION)
+        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
+        dy = (xp[j] - y) * inputs.PRECISION // rates[j]
+        fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return dy - fee
 
 
@@ -135,16 +116,14 @@ class RawBalanceDyCalculator:
         j: int,
         dx: int,
         *,
-        pool: CurveStableswapPool,
-        block_number: int,
+        inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        pool_balances = override_state.balances if override_state is not None else pool.balances
-        xp = tuple(pool_balances)
+        xp = inputs.balances
         x = xp[i] + dx
-        y = pool._get_y(i, j, x, xp)
+        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
         dy = xp[j] - y - 1
-        fee = pool.fee * dy // pool.FEE_DENOMINATOR
+        fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return dy - fee
 
 
@@ -163,22 +142,16 @@ class NoOneFeeRateDyCalculator:
         j: int,
         dx: int,
         *,
-        pool: CurveStableswapPool,
-        block_number: int,
+        inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        pool_balances = override_state.balances if override_state is not None else pool.balances
-        rates = pool._resolve_rates(
-            rates=pool.rate_multipliers,
-            block_number=block_number,
-            pool_balances=pool_balances,
-        )
-        xp = pool._xp(rates=rates, balances=pool_balances)
-        x = xp[i] + (dx * rates[i] // pool.PRECISION)
-        y = pool._get_y(i, j, x, xp)
+        rates = inputs.resolved_rates
+        xp = inputs.xp
+        x = xp[i] + (dx * rates[i] // inputs.PRECISION)
+        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
         dy = xp[j] - y
-        fee = pool.fee * dy // pool.FEE_DENOMINATOR
-        return (dy - fee) * pool.PRECISION // rates[j]
+        fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
+        return (dy - fee) * inputs.PRECISION // rates[j]
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,18 +169,12 @@ class CytokenDyCalculator:
         j: int,
         dx: int,
         *,
-        pool: CurveStableswapPool,
-        block_number: int,
+        inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        pool_balances = override_state.balances if override_state is not None else pool.balances
-        rates = pool._resolve_rates(
-            rates=pool.rate_multipliers,
-            block_number=block_number,
-            pool_balances=pool_balances,
-        )
-        xp = pool._xp(rates=rates, balances=pool_balances)
-        x = xp[i] + (dx * rates[i] // pool.PRECISION)
-        y = pool._get_y(i, j, x, xp)
+        rates = inputs.resolved_rates
+        xp = inputs.xp
+        x = xp[i] + (dx * rates[i] // inputs.PRECISION)
+        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
         dy = xp[j] - y - 1
-        return (dy - (pool.fee * dy // pool.FEE_DENOMINATOR)) * pool.PRECISION // rates[j]
+        return (dy - (inputs.fee * dy // inputs.FEE_DENOMINATOR)) * inputs.PRECISION // rates[j]

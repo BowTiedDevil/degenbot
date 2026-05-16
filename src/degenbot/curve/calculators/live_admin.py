@@ -12,10 +12,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
     from degenbot.curve.types import CurveStableswapPoolState
 
-from degenbot.curve.types import SwapStyle
+from degenbot.curve.types import DyCalculationInputs, SwapStyle
 
 
 def _dynamic_fee(xpi: int, xpj: int, _fee: int, _feemul: int, fee_denominator: int) -> int:
@@ -40,29 +39,16 @@ class LiveAdminDyCalculator:
         j: int,
         dx: int,
         *,
-        pool: CurveStableswapPool,
-        block_number: int,
+        inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        rates = pool.rate_multipliers
-
-        live_balances = [
-            pool._fetch_token_balance(token, pool.address, block_identifier=block_number)
-            for token in pool._tokens
-        ]
-        admin_balances = pool._get_admin_balances(block_number=block_number)
-
-        balances = [
-            pool_balance - admin_balance
-            for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
-        ]
-
-        xp = pool._xp(rates=rates, balances=balances)
-        x = xp[i] + (dx * rates[i] // pool.PRECISION)
-        y = pool._get_y(i, j, x, xp)
+        rates = inputs.rate_multipliers
+        xp = inputs.xp
+        x = xp[i] + (dx * rates[i] // inputs.PRECISION)
+        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
         dy = xp[j] - y - 1
-        fee = pool.fee * dy // pool.FEE_DENOMINATOR
-        return (dy - fee) * pool.PRECISION // rates[j]
+        fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
+        return (dy - fee) * inputs.PRECISION // rates[j]
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,33 +63,24 @@ class LiveAdminDynamicDyCalculator:
         j: int,
         dx: int,
         *,
-        pool: CurveStableswapPool,
-        block_number: int,
+        inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        live_balances = [
-            pool._fetch_token_balance(token, pool.address, block_identifier=block_number)
-            for token in pool._tokens
-        ]
-        admin_balances = pool._get_admin_balances(block_number=block_number)
-
-        xp_ = [
-            pool_balance - admin_balance
-            for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
-        ]
+        assert inputs.effective_balances is not None
+        xp_ = list(inputs.effective_balances)
         x = xp_[i] + dx
-        y = pool._get_y(i, j, x, xp_)
+        y = inputs.get_y(i, j, x, xp_)  # type: ignore[misc]
         dy = xp_[j] - y
         fee_ = (
             _dynamic_fee(
                 xpi=(xp_[i] + x) // 2,
                 xpj=(xp_[j] + y) // 2,
-                _fee=pool.fee,
-                _feemul=pool.offpeg_fee_multiplier,
-                fee_denominator=pool.FEE_DENOMINATOR,
+                _fee=inputs.fee,
+                _feemul=inputs.offpeg_fee_multiplier,
+                fee_denominator=inputs.FEE_DENOMINATOR,
             )
             * dy
-            // pool.FEE_DENOMINATOR
+            // inputs.FEE_DENOMINATOR
         )
         return dy - fee_
 
@@ -120,39 +97,30 @@ class LiveAdminDynamicPrecisionDyCalculator:
         j: int,
         dx: int,
         *,
-        pool: CurveStableswapPool,
-        block_number: int,
+        inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        live_balances = [
-            pool._fetch_token_balance(token, pool.address, block_identifier=block_number)
-            for token in pool._tokens
-        ]
-        admin_balances = pool._get_admin_balances(block_number=block_number)
-        balances = [
-            pool_balance - admin_balance
-            for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
-        ]
-
+        assert inputs.effective_balances is not None
+        balances = inputs.effective_balances
         xp_ = [
             balance * rate
-            for balance, rate in zip(balances, pool.precision_multipliers, strict=True)
+            for balance, rate in zip(balances, inputs.precision_multipliers, strict=True)
         ]
 
-        x = xp_[i] + dx * pool.precision_multipliers[i]
-        y = pool._get_y(i, j, x, xp_)
-        dy = (xp_[j] - y) // pool.precision_multipliers[j]
+        x = xp_[i] + dx * inputs.precision_multipliers[i]
+        y = inputs.get_y(i, j, x, xp_)  # type: ignore[misc]
+        dy = (xp_[j] - y) // inputs.precision_multipliers[j]
 
         fee_ = (
             _dynamic_fee(
                 xpi=(xp_[i] + x) // 2,
                 xpj=(xp_[j] + y) // 2,
-                _fee=pool.fee,
-                _feemul=pool.offpeg_fee_multiplier,
-                fee_denominator=pool.FEE_DENOMINATOR,
+                _fee=inputs.fee,
+                _feemul=inputs.offpeg_fee_multiplier,
+                fee_denominator=inputs.FEE_DENOMINATOR,
             )
             * dy
-            // pool.FEE_DENOMINATOR
+            // inputs.FEE_DENOMINATOR
         )
         return dy - fee_
 
@@ -169,29 +137,13 @@ class LiveAdminOracleDyCalculator:
         j: int,
         dx: int,
         *,
-        pool: CurveStableswapPool,
-        block_number: int,
+        inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        rates = pool.rate_multipliers
-
-        live_balances = [
-            pool._fetch_token_balance(token, pool.address, block_identifier=block_number)
-            for token in pool._tokens
-        ]
-        admin_balances = pool._get_admin_balances(block_number=block_number)
-        balances = [
-            pool_balance - admin_balance
-            for pool_balance, admin_balance in zip(live_balances, admin_balances, strict=True)
-        ]
-        rates = pool._resolve_rates(
-            rates=rates,
-            block_number=block_number,
-            pool_balances=pool_balances,
-        )
-        xp = pool._xp(rates=rates, balances=balances)
-        x = xp[i] + (dx * rates[i] // pool.PRECISION)
-        y = pool._get_y(i, j, x, xp)
+        rates = inputs.resolved_rates
+        xp = inputs.xp
+        x = xp[i] + (dx * rates[i] // inputs.PRECISION)
+        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
         dy = xp[j] - y - 1
-        fee = pool.fee * dy // pool.FEE_DENOMINATOR
-        return (dy - fee) * pool.PRECISION // rates[j]
+        fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
+        return (dy - fee) * inputs.PRECISION // rates[j]

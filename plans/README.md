@@ -9,6 +9,7 @@ See the [skill vocabulary](https://github.com/user/skills/improve-codebase-archi
 | # | Plan | Summary |
 |---|------|---------|
 | 014 | [Async REPL](14-async-repl.md) | `python -m degenbot` with top-level `await`. |
+| 045 | [Calculator Explicit Data](completed/045-calculator-explicit-data.md) | Replace `pool` param with `DyCalculationInputs` to eliminate 77 SLF001 errors |
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
 
 ## Completed Plans

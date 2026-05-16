@@ -13,10 +13,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
     from degenbot.curve.types import CurveStableswapPoolState
 
-from degenbot.curve.types import MetapoolRateStyle, MetapoolUnderlyingStyle
+from degenbot.curve.types import DyCalculationInputs, MetapoolRateStyle, MetapoolUnderlyingStyle
 
 # ── Metapool rate-style calculators (for get_dy metapool fast-path) ──
 
@@ -33,21 +32,24 @@ class MetapoolPrecisionVpDyCalculator:
         j: int,
         dx: int,
         *,
-        pool: CurveStableswapPool,
-        block_number: int,
+        inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        pool_balances = override_state.balances if override_state is not None else pool.balances
+        pool_balances = override_state.balances if override_state is not None else inputs.balances
+        assert inputs.virtual_price is not None
         rates = (
-            pool.PRECISION,
-            pool._get_virtual_price(block_number=block_number),
+            inputs.PRECISION,
+            inputs.virtual_price,
         )
-        xp = pool._xp(rates=rates, balances=pool_balances)
-        x = xp[i] + (dx * rates[i] // pool.PRECISION)
-        y = pool._get_y(i, j, x, xp)
+        xp = tuple(
+            rate * balance // inputs.PRECISION
+            for rate, balance in zip(rates, pool_balances, strict=True)
+        )
+        x = xp[i] + (dx * rates[i] // inputs.PRECISION)
+        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
         dy = xp[j] - y - 1
-        fee = pool.fee * dy // pool.FEE_DENOMINATOR
-        return (dy - fee) * pool.PRECISION // rates[j]
+        fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
+        return (dy - fee) * inputs.PRECISION // rates[j]
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,21 +64,25 @@ class MetapoolRedemptionVpDyCalculator:
         j: int,
         dx: int,
         *,
-        pool: CurveStableswapPool,
-        block_number: int,
+        inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        pool_balances = override_state.balances if override_state is not None else pool.balances
+        pool_balances = override_state.balances if override_state is not None else inputs.balances
+        assert inputs.scaled_redemption_price is not None
+        assert inputs.virtual_price is not None
         rates = (
-            pool._get_scaled_redemption_price(block_number=block_number),
-            pool._get_virtual_price(block_number=block_number),
+            inputs.scaled_redemption_price,
+            inputs.virtual_price,
         )
-        xp = pool._xp(rates=rates, balances=pool_balances)
-        x = xp[i] + (dx * rates[i] // pool.PRECISION)
-        y = pool._get_y(i, j, x, xp)
+        xp = tuple(
+            rate * balance // inputs.PRECISION
+            for rate, balance in zip(rates, pool_balances, strict=True)
+        )
+        x = xp[i] + (dx * rates[i] // inputs.PRECISION)
+        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
         dy = xp[j] - y - 1
-        fee = pool.fee * dy // pool.FEE_DENOMINATOR
-        return (dy - fee) * pool.PRECISION // rates[j]
+        fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
+        return (dy - fee) * inputs.PRECISION // rates[j]
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,21 +97,24 @@ class MetapoolStandardDyCalculator:
         j: int,
         dx: int,
         *,
-        pool: CurveStableswapPool,
-        block_number: int,
+        inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        pool_balances = override_state.balances if override_state is not None else pool.balances
+        pool_balances = override_state.balances if override_state is not None else inputs.balances
+        assert inputs.virtual_price is not None
         rates = (
-            pool.rate_multipliers[0],
-            pool._get_virtual_price(block_number=block_number),
+            inputs.rate_multipliers[0],
+            inputs.virtual_price,
         )
-        xp = pool._xp(rates=rates, balances=pool_balances)
-        x = xp[i] + (dx * rates[i] // pool.PRECISION)
-        y = pool._get_y(i, j, x, xp)
+        xp = tuple(
+            rate * balance // inputs.PRECISION
+            for rate, balance in zip(rates, pool_balances, strict=True)
+        )
+        x = xp[i] + (dx * rates[i] // inputs.PRECISION)
+        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
         dy = xp[j] - y - 1
-        fee = pool.fee * dy // pool.FEE_DENOMINATOR
-        return (dy - fee) * pool.PRECISION // rates[j]
+        fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
+        return (dy - fee) * inputs.PRECISION // rates[j]
 
 
 # ── Metapool underlying-style calculators (for _get_dy_underlying) ──
@@ -123,23 +132,26 @@ class MetapoolUnderlyingRedemptionDyCalculator:
         j: int,
         dx: int,
         *,
-        pool: CurveStableswapPool,
-        block_number: int,
+        inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        # Re-implemented from _get_dy_underlying REDEMPTION branch
-        assert pool.base_pool is not None
-        pool_balances = override_state.balances if override_state is not None else pool.balances
+        assert inputs.base_pool is not None
+        pool_balances = override_state.balances if override_state is not None else inputs.balances
+        assert inputs.scaled_redemption_price is not None
+        assert inputs.virtual_price is not None
 
-        base_n_coins = len(pool.base_pool._tokens)
-        max_coin = len(pool._tokens) - 1
+        base_n_coins = len(inputs.base_pool.tokens)
+        max_coin = inputs.n_coins - 1
         redemption_coin = 0
 
         rates = (
-            pool._get_scaled_redemption_price(block_number=block_number),
-            (vp_rate := pool._get_virtual_price(block_number=block_number)),
+            inputs.scaled_redemption_price,
+            (vp_rate := inputs.virtual_price),
         )
-        xp = pool._xp(rates=rates, balances=pool_balances)
+        xp = tuple(
+            rate * balance // inputs.PRECISION
+            for rate, balance in zip(rates, pool_balances, strict=True)
+        )
 
         base_i = i - max_coin
         base_j = j - max_coin
@@ -152,49 +164,43 @@ class MetapoolUnderlyingRedemptionDyCalculator:
 
         if base_i < 0:
             x = xp[i] + (
-                dx
-                * pool._get_scaled_redemption_price(block_number=block_number)
-                // pool.PRECISION
+                dx * inputs.scaled_redemption_price // inputs.PRECISION
             )
         elif base_j < 0:
             base_inputs = [0] * base_n_coins
             base_inputs[base_i] = dx
             x = (
-                pool.base_pool.calc_token_amount(
+                inputs.base_pool.calc_token_amount(
                     amounts=base_inputs,
                     deposit=True,
-                    block_identifier=block_number,
-                    override_state=(
-                        override_state.base if override_state is not None else None
-                    ),
+                    block_identifier=inputs.block_number,
+                    override_state=(override_state.base if override_state is not None else None),
                 )
                 * vp_rate
-                // pool.PRECISION
+                // inputs.PRECISION
             )
-            x -= x * pool.base_pool.fee // (2 * pool.FEE_DENOMINATOR)
+            x -= x * inputs.base_pool.fee // (2 * inputs.FEE_DENOMINATOR)
             x += xp[max_coin]
         else:
-            return pool.base_pool.get_dy(
+            return inputs.base_pool.get_dy(
                 i=base_i,
                 j=base_j,
                 dx=dx,
-                block_identifier=block_number,
+                block_identifier=inputs.block_number,
                 override_state=(override_state.base if override_state is not None else None),
             )
 
-        y = pool._get_y(meta_i, meta_j, x, xp)
+        y = inputs.get_y(meta_i, meta_j, x, xp)  # type: ignore[misc]
         dy = xp[meta_j] - y - 1
-        dy -= pool.fee * dy // pool.FEE_DENOMINATOR
+        dy -= inputs.fee * dy // inputs.FEE_DENOMINATOR
         if j == redemption_coin:
-            dy = (dy * pool.PRECISION) // pool._get_scaled_redemption_price(
-                block_number=block_number
-            )
+            dy = (dy * inputs.PRECISION) // inputs.scaled_redemption_price
 
         if base_j >= 0:
-            dy, *_ = pool.base_pool.calc_withdraw_one_coin(
-                _token_amount=dy * pool.PRECISION // vp_rate,
+            dy, *_ = inputs.base_pool.calc_withdraw_one_coin(
+                _token_amount=dy * inputs.PRECISION // vp_rate,
                 i=base_j,
-                block_identifier=block_number,
+                block_identifier=inputs.block_number,
             )
 
         return dy
@@ -212,18 +218,21 @@ class MetapoolUnderlyingPrecisionVpDyCalculator:
         j: int,
         dx: int,
         *,
-        pool: CurveStableswapPool,
-        block_number: int,
+        inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        assert pool.base_pool is not None
-        pool_balances = override_state.balances if override_state is not None else pool.balances
+        assert inputs.base_pool is not None
+        pool_balances = override_state.balances if override_state is not None else inputs.balances
+        assert inputs.virtual_price is not None
 
-        base_n_coins = len(pool.base_pool._tokens)
-        max_coin = len(pool._tokens) - 1
+        base_n_coins = len(inputs.base_pool.tokens)
+        max_coin = inputs.n_coins - 1
 
-        rates = (pool.PRECISION, pool._get_virtual_price(block_number=block_number))
-        xp = pool._xp(rates=rates, balances=pool_balances)
+        rates = (inputs.PRECISION, inputs.virtual_price)
+        xp = tuple(
+            rate * balance // inputs.PRECISION
+            for rate, balance in zip(rates, pool_balances, strict=True)
+        )
 
         base_i: int = 0
         base_j: int = 0
@@ -243,39 +252,37 @@ class MetapoolUnderlyingPrecisionVpDyCalculator:
             base_inputs = [0] * base_n_coins
             base_inputs[base_i] = dx
             x = (
-                pool.base_pool.calc_token_amount(
+                inputs.base_pool.calc_token_amount(
                     amounts=base_inputs,
                     deposit=True,
-                    block_identifier=block_number,
-                    override_state=(
-                        override_state.base if override_state is not None else None
-                    ),
+                    block_identifier=inputs.block_number,
+                    override_state=(override_state.base if override_state is not None else None),
                 )
                 * rates[1]
-                // pool.PRECISION
+                // inputs.PRECISION
             )
-            x -= x * pool.base_pool.fee // (2 * pool.FEE_DENOMINATOR)
+            x -= x * inputs.base_pool.fee // (2 * inputs.FEE_DENOMINATOR)
             x += xp[max_coin]
         else:
-            return pool.base_pool.get_dy(
+            return inputs.base_pool.get_dy(
                 i=base_i,
                 j=base_j,
                 dx=dx,
-                block_identifier=block_number,
+                block_identifier=inputs.block_number,
                 override_state=(override_state.base if override_state is not None else None),
             )
 
-        y = pool._get_y(meta_i, meta_j, x, xp)
+        y = inputs.get_y(meta_i, meta_j, x, xp)  # type: ignore[misc]
         dy = xp[meta_j] - y - 1
-        dy -= pool.fee * dy // pool.FEE_DENOMINATOR
+        dy -= inputs.fee * dy // inputs.FEE_DENOMINATOR
 
         if j == 0:
             dy //= rates[0] // 10**18
         else:
-            dy, *_ = pool.base_pool.calc_withdraw_one_coin(
-                _token_amount=dy * pool.PRECISION // rates[1],
+            dy, *_ = inputs.base_pool.calc_withdraw_one_coin(
+                _token_amount=dy * inputs.PRECISION // rates[1],
                 i=base_j,
-                block_identifier=block_number,
+                block_identifier=inputs.block_number,
             )
 
         return dy
@@ -293,22 +300,25 @@ class MetapoolUnderlyingStandardDyCalculator:
         j: int,
         dx: int,
         *,
-        pool: CurveStableswapPool,
-        block_number: int,
+        inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        assert pool.base_pool is not None
-        pool_balances = override_state.balances if override_state is not None else pool.balances
+        assert inputs.base_pool is not None
+        pool_balances = override_state.balances if override_state is not None else inputs.balances
+        assert inputs.virtual_price is not None
 
-        working_rates = list(pool.rate_multipliers)
-        vp_rate = pool._get_virtual_price(block_number=block_number)
+        working_rates = list(inputs.rate_multipliers)
+        vp_rate = inputs.virtual_price
         working_rates[-1] = vp_rate
 
-        xp = pool._xp(rates=tuple(working_rates), balances=pool_balances)
-        precisions = pool.precision_multipliers
+        xp = tuple(
+            rate * balance // inputs.PRECISION
+            for rate, balance in zip(working_rates, pool_balances, strict=True)
+        )
+        precisions = inputs.precision_multipliers
 
-        base_n_coins = len(pool.base_pool._tokens)
-        max_coin = len(pool._tokens) - 1
+        base_n_coins = len(inputs.base_pool.tokens)
+        max_coin = inputs.n_coins - 1
 
         base_i = i - max_coin
         base_j = j - max_coin
@@ -325,37 +335,37 @@ class MetapoolUnderlyingStandardDyCalculator:
             base_inputs = [0] * base_n_coins
             base_inputs[base_i] = dx
             x = (
-                pool.base_pool.calc_token_amount(
+                inputs.base_pool.calc_token_amount(
                     amounts=base_inputs,
                     deposit=True,
-                    block_identifier=block_number,
+                    block_identifier=inputs.block_number,
                     override_state=(override_state.base if override_state is not None else None),
                 )
                 * vp_rate
-                // pool.PRECISION
+                // inputs.PRECISION
             )
-            x -= x * pool.base_pool.fee // (2 * pool.FEE_DENOMINATOR)
+            x -= x * inputs.base_pool.fee // (2 * inputs.FEE_DENOMINATOR)
             x += xp[max_coin]
         else:
-            return pool.base_pool.get_dy(
+            return inputs.base_pool.get_dy(
                 i=base_i,
                 j=base_j,
                 dx=dx,
-                block_identifier=block_number,
+                block_identifier=inputs.block_number,
                 override_state=(override_state.base if override_state is not None else None),
             )
 
-        y = pool._get_y(meta_i, meta_j, x, xp)
+        y = inputs.get_y(meta_i, meta_j, x, xp)  # type: ignore[misc]
         dy = xp[meta_j] - y - 1
-        dy -= pool.fee * dy // pool.FEE_DENOMINATOR
+        dy -= inputs.fee * dy // inputs.FEE_DENOMINATOR
 
         if base_j < 0:
             dy //= precisions[meta_j]
         else:
-            dy, *_ = pool.base_pool.calc_withdraw_one_coin(
-                _token_amount=dy * pool.PRECISION // vp_rate,
+            dy, *_ = inputs.base_pool.calc_withdraw_one_coin(
+                _token_amount=dy * inputs.PRECISION // vp_rate,
                 i=base_j,
-                block_identifier=block_number,
+                block_identifier=inputs.block_number,
             )
 
         return dy
