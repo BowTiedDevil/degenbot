@@ -6,7 +6,7 @@ Provides strict validation with detailed plain-text error reporting.
 import operator
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Literal, assert_never
+from typing import Literal
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress
@@ -576,7 +576,8 @@ class TransactionOperationsParser:
         elif token_type == TokenType.V_TOKEN:
             relationship = AaveV3Asset.v_token
         else:
-            assert_never(token_type)
+            msg = f"Unexpected token type: {token_type}"
+            raise ValueError(msg)
 
         return self.session.scalar(
             select(AaveV3Asset)
@@ -613,7 +614,8 @@ class TransactionOperationsParser:
                 return ScaledTokenEventType.COLLATERAL_MINT
             if token_type == TokenType.V_TOKEN:
                 return ScaledTokenEventType.DEBT_MINT
-            assert_never(token_type)
+            msg = f"Unexpected token type: {token_type}"
+            raise ValueError(msg)
 
         if event_category == "burn":
             if token_address == self.gho_vtoken_address:
@@ -623,7 +625,8 @@ class TransactionOperationsParser:
                 return ScaledTokenEventType.COLLATERAL_BURN
             if token_type == TokenType.V_TOKEN:
                 return ScaledTokenEventType.DEBT_BURN
-            assert_never(token_type)
+            msg = f"Unexpected token type: {token_type}"
+            raise ValueError(msg)
 
         # Fall through to transfer handling
         token_type = self._get_token_type(token_address)
@@ -631,7 +634,8 @@ class TransactionOperationsParser:
             return ScaledTokenEventType.COLLATERAL_TRANSFER
         if token_type == TokenType.V_TOKEN:
             return ScaledTokenEventType.DEBT_TRANSFER
-        assert_never(token_type)
+        msg = f"Unexpected token type: {token_type}"
+        raise ValueError(msg)
 
     @staticmethod
     def _amounts_match(
@@ -1037,7 +1041,8 @@ class TransactionOperationsParser:
                 pool_revision=pool_revision,
             )
 
-        assert_never(topic)
+        msg = f"Unexpected topic: {topic!r}"
+        raise ValueError(msg)
 
     def _create_supply_operation(
         self,
@@ -1102,6 +1107,7 @@ class TransactionOperationsParser:
             # see TX: 0x46dfb37518cad8e8749d858c7f166385e74aaeaa1775d4ab99804761b709d63a
             # for an example of a supply event amount=285000000000000000, but the associated
             # Mint has a principal amount=284999999999999998
+            assert ev.balance_increase is not None
             calculated_principal = ev.amount - ev.balance_increase
             if not self._amounts_match(calculated_principal, supply_amount, pool_revision):
                 continue
@@ -1202,6 +1208,7 @@ class TransactionOperationsParser:
             # see TX: 0x8a4bc3d8f386c0d754d98766caf9033202a65a932f0f3ede035d95f039a56abe
             # for an example of a withdraw event amount=500000000000000000000000, but the
             # associated Burn has a principal amount=500000000000000000000001
+            assert ev.balance_increase is not None
             calculated_burn = ev.amount + ev.balance_increase
             if not self._amounts_match(calculated_burn, withdraw_amount, pool_revision):
                 continue
@@ -1339,6 +1346,7 @@ class TransactionOperationsParser:
             assert reserve_asset is not None
 
             # Match borrow amount to debt mint principal
+            assert ev.balance_increase is not None
             calculated_borrow = ev.amount - ev.balance_increase
             if not self._amounts_match(calculated_borrow, borrow_amount, pool_revision):
                 continue
@@ -1603,7 +1611,8 @@ class TransactionOperationsParser:
 
             return ev
 
-        assert_never()
+        msg = "No matching scaled token event found"
+        raise ValueError(msg)
 
     def _find_collateral_adjustment_event(
         self,
@@ -1659,9 +1668,11 @@ class TransactionOperationsParser:
             if ev.event_type == ScaledTokenEventType.COLLATERAL_MINT:
                 # For mints in REPAY_WITH_ATOKENS, the amount field is net interest
                 # The actual burn amount = balance_increase - amount
+                assert ev.balance_increase is not None
                 adjustment = ev.balance_increase - ev.amount
             else:
                 # For burns, total adjustment = principal + interest
+                assert ev.balance_increase is not None
                 adjustment = ev.amount + ev.balance_increase
 
             if not self._amounts_match(adjustment, expected_amount, pool_revision):
@@ -1669,7 +1680,8 @@ class TransactionOperationsParser:
 
             return ev
 
-        assert_never()
+        msg = "No matching scaled token event found"
+        raise ValueError(msg)
 
     @staticmethod
     def _find_debt_transfer_to_zero(
@@ -2676,7 +2688,7 @@ class TransactionOperationsParser:
 
     def _validate_operation(self, op: Operation) -> None:
         """Strict validation of operation completeness."""
-        errors = []
+        errors: list[str] = []
 
         validators = {
             OperationType.SUPPLY: self._validate_supply,
@@ -2703,12 +2715,13 @@ class TransactionOperationsParser:
             # (e.g., DEFICIT_CREATED events that are part of liquidations)
             pass
         else:
-            assert_never()
+            msg = f"Unexpected operation type: {op.operation_type}"
+            raise ValueError(msg)
 
     @staticmethod
     def _validate_supply(op: Operation) -> list[str]:
         """Validate SUPPLY operation."""
-        errors = []
+        errors: list[str] = []
 
         assert op.pool_event is not None, "Missing SUPPLY pool event"
 
@@ -2723,7 +2736,7 @@ class TransactionOperationsParser:
     @staticmethod
     def _validate_withdraw(op: Operation) -> list[str]:
         """Validate WITHDRAW operation."""
-        errors = []
+        errors: list[str] = []
 
         assert op.pool_event is not None, "Missing WITHDRAW pool event"
 
@@ -2738,7 +2751,7 @@ class TransactionOperationsParser:
     @staticmethod
     def _validate_borrow(op: Operation) -> list[str]:
         """Validate BORROW operation."""
-        errors = []
+        errors: list[str] = []
 
         assert op.pool_event is not None, "Missing BORROW pool event"
 
@@ -2762,7 +2775,7 @@ class TransactionOperationsParser:
     @staticmethod
     def _validate_repay(op: Operation) -> list[str]:
         """Validate REPAY operation."""
-        errors = []
+        errors: list[str] = []
 
         assert op.pool_event is not None, "Missing REPAY pool event"
 
@@ -2774,7 +2787,7 @@ class TransactionOperationsParser:
     @staticmethod
     def _validate_repay_with_atokens(op: Operation) -> list[str]:
         """Validate REPAY_WITH_ATOKENS operation."""
-        errors = []
+        errors: list[str] = []
 
         assert op.pool_event is not None, "Missing REPAY pool event"
 
@@ -2815,7 +2828,7 @@ class TransactionOperationsParser:
     @staticmethod
     def _validate_liquidation(op: Operation) -> list[str]:
         """Validate LIQUIDATION operation."""
-        errors = []
+        errors: list[str] = []
 
         assert op.pool_event is not None, "Missing LIQUIDATION_CALL pool event"
 
@@ -2843,7 +2856,7 @@ class TransactionOperationsParser:
         Also includes dust mints (balance_increase == 0) from discount updates
         that still need to update the user's last_index.
         """
-        errors = []
+        errors: list[str] = []
 
         assert op.pool_event is None, "INTEREST_ACCRUAL should not have a pool event"
         assert len(op.scaled_token_events) == 1, (
@@ -2855,7 +2868,7 @@ class TransactionOperationsParser:
     @staticmethod
     def _validate_balance_transfer(op: Operation) -> list[str]:
         """Validate BALANCE_TRANSFER operation."""
-        errors = []
+        errors: list[str] = []
 
         assert op.pool_event is None, "BALANCE_TRANSFER should not have a pool event"
         assert len(op.scaled_token_events) == 1, (
@@ -2883,7 +2896,7 @@ class TransactionOperationsParser:
         that occur during Umbrella protocol's deficit coverage operations.
         May include both ERC20 Transfer and BalanceTransfer events for the same transfer.
         """
-        errors = []
+        errors: list[str] = []
 
         assert op.pool_event is None, "DEFICIT_COVERAGE should not have a pool event"
 
@@ -2919,7 +2932,7 @@ class TransactionOperationsParser:
     @staticmethod
     def _validate_mint_to_treasury(op: Operation) -> list[str]:
         """Validate MINT_TO_TREASURY operation."""
-        errors = []
+        errors: list[str] = []
 
         # Should have no pool event (treasury mints are standalone)
         assert op.pool_event is None, "MINT_TO_TREASURY should not have a pool event"
@@ -2940,7 +2953,7 @@ class TransactionOperationsParser:
     @staticmethod
     def _validate_stkaave_transfer(op: Operation) -> list[str]:
         """Validate STKAAVE_TRANSFER operation."""
-        errors = []
+        errors: list[str] = []
 
         # Should have no pool event (transfers are standalone ERC20 events)
         assert op.pool_event is None, "STKAAVE_TRANSFER should not have a pool event"
