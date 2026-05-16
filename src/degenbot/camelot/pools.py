@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 
-class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
+class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):  # type: ignore[override]
     variant: ClassVar[str | None] = "camelot"
 
     CAMELOT_ARBITRUM_POOL_INIT_HASH = (

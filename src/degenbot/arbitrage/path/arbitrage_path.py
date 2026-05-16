@@ -303,10 +303,10 @@ class ArbitragePath(PublisherMixin):
     def notify(self, publisher: Publisher, message: AbstractPublisherMessage) -> None:
         if not isinstance(message, PoolStateMessage):
             return
-        if publisher not in self._pool_index:
+        if publisher not in self._pool_index:  # type: ignore[comparison-overlap]
             return
 
-        idx = self._pool_index[publisher]
+        idx = self._pool_index[publisher]  # type: ignore[index]
         self._hop_states[idx] = cast("ArbitrageCapablePool", publisher).to_hop_state(
             zero_for_one=self._swap_vectors[idx].zero_for_one,
         )

@@ -1,3 +1,4 @@
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 
@@ -7,7 +8,7 @@ from .trackers import SwapbasedV2PoolTracker
 # Register Swapbased V2 factory
 _factory_address = "0x04C9f118d21e8B767D2e50C946f0cC9F6C367300"
 _chain_id = 8453
-_deployment = FACTORY_DEPLOYMENTS.get(_chain_id, {}).get(_factory_address)
+_deployment = FACTORY_DEPLOYMENTS.get(_chain_id, {}).get(get_checksum_address(_factory_address))
 pool_type_registry.register(
     SwapbasedV2Pool,
     chain_id=_chain_id,

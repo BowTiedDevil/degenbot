@@ -8,6 +8,7 @@ from scipy.optimize import minimize_scalar
 from degenbot.arbitrage.optimizers._solver_utils import _simulate_path
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult, SolverMethod
 from degenbot.exceptions import OptimizationError
+from degenbot.types.hop_types import BalancerMultiTokenHop
 
 
 class BrentSolver(Solver):
@@ -41,7 +42,7 @@ class BrentSolver(Solver):
             return -(output - x)
 
         # Estimate upper bound from largest input reserve
-        max_reserve = max(h.reserve_in for h in solve_input.hops)
+        max_reserve = max(h.reserve_in for h in solve_input.hops if not isinstance(h, BalancerMultiTokenHop))
         upper = float(max_reserve)
 
         if solve_input.max_input is not None:

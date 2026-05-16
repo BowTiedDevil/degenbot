@@ -813,7 +813,11 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
                     + block_offset
                 )
 
-            if last_block > provider.get_block("latest")["number"]:
+            latest_block = provider.get_block("latest")
+            if latest_block is None:
+                msg = "Could not fetch latest block"
+                raise ValueError(msg)
+            if last_block > latest_block["number"]:
                 msg = f"{to_block} is ahead of the current chain tip."
                 raise ValueError(msg)
 

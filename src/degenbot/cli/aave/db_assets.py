@@ -132,7 +132,8 @@ def get_asset_by_token_type(
                 .options(joinedload(AaveV3Asset.v_token))
             )
         case _ as unreachable:
-            assert_never(unreachable)
+            msg = f"Unexpected token type: {unreachable}"
+            raise ValueError(msg)
 
 
 def get_asset_identifier(asset: AaveV3Asset) -> str:
