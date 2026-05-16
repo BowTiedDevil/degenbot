@@ -1,11 +1,16 @@
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import eth_abi.abi
 import pydantic_core
 from web3 import Web3
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.types.aliases import ChainId
+
+if TYPE_CHECKING:
+    from degenbot.bot import Bot
+    from degenbot.types.aliases import ChainId
 
 CHAINLINK_PRICE_FEED_ABI = pydantic_core.from_json(
     """
@@ -31,7 +36,7 @@ class ChainlinkPriceContract:
         *,
         chain_id: ChainId | None = None,
         decimals: int | None = None,
-        bot: Any | None = None,
+        bot: Bot | None = None,
     ) -> None:
         self.address = get_checksum_address(address)
         self._chain_id = chain_id
