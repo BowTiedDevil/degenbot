@@ -296,13 +296,13 @@ def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
 def test_aerodrome_v3_pool_creation(fork_base_full: AnvilFork) -> None:
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
-    bot.build_v3_pool(AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
+    bot.build_pool(AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
 
 
 def test_aerodrome_v3_state(fork_base_full: AnvilFork) -> None:
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
-    lp = bot.build_v3_pool(AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
+    lp = bot.build_pool(AERODROME_V3_CBETH_WETH_POOL_ADDRESS)
     assert isinstance(lp.state, AerodromeV3PoolState), f"{type(lp.state)=}"
 
 
@@ -312,7 +312,7 @@ def test_aerodrome_v3_pool_calculation(fork_base_full: AnvilFork) -> None:
         address=AERODROME_V3_QUOTER_ADDRESS, abi=AERODROME_V3_QUOTER_ABI
     )
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
-    lp = bot.build_v3_pool("0x98c7A2338336d2d354663246F64676009c7bDa97")
+    lp = bot.build_pool("0x98c7A2338336d2d354663246F64676009c7bDa97")
 
     max_reserves_token0 = bot.get_token_balance(lp.token0, lp.address)
     max_reserves_token1 = bot.get_token_balance(lp.token1, lp.address)

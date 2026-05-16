@@ -73,7 +73,7 @@ def _init_hash(deployment: object) -> str | None:
 # ---------------------------------------------------------------------------
 
 # Each entry: (pool_class, deployment_object, expected_variant, expected_kind)
-# Excludes AerodromeV2 (not buildable via build_v2_pool) and V4 deployments.
+# Excludes AerodromeV2 (not buildable via build_pool) and V4 deployments.
 REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
     # Ethereum Mainnet (chain_id=1)
     (1, _factory(EthereumMainnetUniswapV2)): (

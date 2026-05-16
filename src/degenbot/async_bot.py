@@ -7,6 +7,7 @@ Returns the same I/O-free domain objects as Bot.
 from __future__ import annotations
 
 import contextlib
+import warnings
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any
 
@@ -236,7 +237,14 @@ class AsyncBot:
         state_block: int | None = None,
         silent: bool = False,
     ) -> Any:
-        """Fetch pool data from DB/RPC and construct an I/O-free UniswapV2Pool."""
+        """.. deprecated:: 0.x
+            Use ``build_pool(address)`` instead.
+        """
+        warnings.warn(
+            "build_v2_pool() is deprecated — use build_pool(address) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
         pool_address = get_checksum_address(pool_address)
         chain_id = chain_id or self.connections.default_chain_id
@@ -360,7 +368,14 @@ class AsyncBot:
         state_block: int | None = None,
         silent: bool = False,
     ) -> Any:
-        """Fetch pool data from DB/RPC and construct an I/O-free UniswapV3Pool."""
+        """.. deprecated:: 0.x
+            Use ``build_pool(address)`` instead.
+        """
+        warnings.warn(
+            "build_v3_pool() is deprecated — use build_pool(address) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
         pool_address = get_checksum_address(pool_address)
         chain_id = chain_id or self.connections.default_chain_id
@@ -558,7 +573,14 @@ class AsyncBot:
         state_block: int | None = None,
         silent: bool = False,
     ) -> Any:
-        """Fetch pool data from DB/RPC and construct an I/O-free UniswapV4Pool."""
+        """.. deprecated:: 0.x
+            Use ``build_pool(address, pool_id=...)`` instead.
+        """
+        warnings.warn(
+            "build_v4_pool() is deprecated — use build_pool(address, pool_id=...) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
         pool_manager_address = get_checksum_address(pool_manager_address)
         pool_id_bytes = HexBytes(pool_id)

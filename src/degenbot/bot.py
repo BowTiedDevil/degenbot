@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import warnings
 from typing import TYPE_CHECKING, Any
 
 import eth_abi.abi
@@ -12,6 +13,9 @@ from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.protocol import PoolBuilder
+from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
+from degenbot.builders.camelot_builder import CamelotBuilder
+from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.builders.v2_pool_builder import V2PoolBuilder
 from degenbot.builders.v3_pool_builder import V3PoolBuilder
 from degenbot.builders.v4_pool_builder import V4PoolBuilder
@@ -85,6 +89,20 @@ class Bot:
             tokens=self.tokens,
             erc20_builder=self._erc20_builder,
         )
+        self._aerodrome_v2_builder = AerodromeV2Builder(
+            connections=self.connections,
+            db=self.db,
+            pools=self.pools,
+            tokens=self.tokens,
+            erc20_builder=self._erc20_builder,
+        )
+        self._camelot_builder = CamelotBuilder(
+            connections=self.connections,
+            db=self.db,
+            pools=self.pools,
+            tokens=self.tokens,
+            erc20_builder=self._erc20_builder,
+        )
         self._v3_builder = V3PoolBuilder(
             connections=self.connections,
             db=self.db,
@@ -116,9 +134,10 @@ class Bot:
         self.register_builder(UniswapV3Pool, self._v3_builder)
         self.register_builder(UniswapV4Pool, self._v4_builder)
         self.register_builder(CurveStableswapPool, self._curve_builder)
-        self.register_builder(AerodromeV2Pool, self._v2_builder)
-        # CamelotLiquidityPool, SushiswapV2Pool, etc. inherit UniswapV2Pool
-        # so they are handled by the V2 builder via isinstance dispatch
+        self.register_builder(AerodromeV2Pool, self._aerodrome_v2_builder)
+        self.register_builder(CamelotLiquidityPool, self._camelot_builder)
+        # SushiswapV2Pool, PancakeSwapV2Pool, SwapbasedV2Pool, etc. inherit
+        # UniswapV2Pool so they are handled by the V2 builder via MRO fallback
 
         # Check database migration version
         self._check_database_version()
@@ -228,6 +247,12 @@ class Bot:
         tick_bitmap: dict[int, Any] | None = None,
         tick_data: dict[int, Any] | None = None,
         state_cache_depth: int = 8,
+        # V4-specific kwargs
+        state_view_address: str | None = None,
+        tokens: Sequence[str] | None = None,
+        fee: int | None = None,
+        tick_spacing: int | None = None,
+        hook_address: str | None = None,
     ) -> AbstractLiquidityPool:
         """
         Build a pool from an address, automatically resolving its type.
@@ -241,13 +266,28 @@ class Bot:
 
         # V4 fast path: pool_id discriminates V4 managed pools
         if pool_id is not None:
-            return self.build_v4_pool(
-                pool_id=pool_id,
-                pool_manager_address=address,
-                chain_id=chain_id,
-                state_block=state_block,
-                silent=silent,
-            )
+            v4_kwargs: dict[str, Any] = {
+                "pool_id": pool_id,
+                "pool_manager_address": address,
+                "chain_id": chain_id,
+                "state_block": state_block,
+                "silent": silent,
+            }
+            if state_view_address is not None:
+                v4_kwargs["state_view_address"] = state_view_address
+            if tokens is not None:
+                v4_kwargs["tokens"] = tokens
+            if fee is not None:
+                v4_kwargs["fee"] = fee
+            if tick_spacing is not None:
+                v4_kwargs["tick_spacing"] = tick_spacing
+            if hook_address is not None:
+                v4_kwargs["hook_address"] = hook_address
+            if tick_bitmap is not None:
+                v4_kwargs["tick_bitmap"] = tick_bitmap
+            if tick_data is not None:
+                v4_kwargs["tick_data"] = tick_data
+            return self._v4_builder.build(**v4_kwargs)
 
         # Check pool registry — return existing pool if already built
         existing = self.pools.get(chain_id=chain_id, pool_address=address)
@@ -262,7 +302,7 @@ class Bot:
             pool_type = self._resolve_pool_type(address, chain_id=chain_id)
         except DegenbotValueError:
             # Fallback: try Curve builder as last resort
-            return self.build_curve_pool(
+            return self._curve_builder.build(
                 address,
                 chain_id=chain_id,
                 state_block=state_block,
@@ -373,7 +413,8 @@ class Bot:
         raise DegenbotValueError(
             message=f"Cannot resolve pool type for address {address} on chain {chain_id}. "
             f"The factory() call failed and no database entry exists. "
-            f"Cannot resolve pool type. Use build_v2_pool, build_v3_pool, or build_curve_pool for explicit type selection."
+            f"Cannot resolve pool type for address {address} on chain {chain_id}. "
+            f"The factory() call failed and no database entry exists."
         )
 
     def _resolve_pool_type_by_probing(
@@ -497,7 +538,41 @@ class Bot:
         state_block: int | None = None,
         silent: bool = False,
     ) -> UniswapV2Pool:  # type: ignore[name-defined]
-        """Fetch pool data from DB/RPC and construct an I/O-free UniswapV2Pool."""
+        """.. deprecated:: 0.x
+            Use ``build_pool(address)`` instead. Type resolution automatically
+            selects the correct builder.
+        """
+        warnings.warn(
+            "build_v2_pool() is deprecated — use build_pool(address) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        pool_address = get_checksum_address(pool_address)
+        chain_id = chain_id or self.connections.default_chain_id
+
+        # Determine the factory to identify the correct builder
+        factory = self._fetch_factory_from_chain(pool_address, chain_id=chain_id)
+        if factory is not None:
+            pool_class = pool_type_registry.get_v2_class(chain_id, factory)
+            if issubclass(pool_class, AerodromeV2Pool):
+                return self._aerodrome_v2_builder.build(
+                    pool_address,
+                    chain_id=chain_id,
+                    deployer_address=deployer_address,
+                    init_hash=init_hash,
+                    state_block=state_block,
+                    silent=silent,
+                )
+            if issubclass(pool_class, CamelotLiquidityPool):
+                return self._camelot_builder.build(
+                    pool_address,
+                    chain_id=chain_id,
+                    deployer_address=deployer_address,
+                    init_hash=init_hash,
+                    state_block=state_block,
+                    silent=silent,
+                )
+
         return self._v2_builder.build(
             pool_address,
             chain_id=chain_id,
@@ -561,7 +636,15 @@ class Bot:
         tick_data: dict[int, UniswapV3LiquidityAtTick] | None = None,
         silent: bool = False,
     ) -> UniswapV3Pool:
-        """Fetch pool data from DB/RPC and construct an I/O-free UniswapV3Pool."""
+        """.. deprecated:: 0.x
+            Use ``build_pool(address)`` instead. Type resolution automatically
+            selects the correct builder.
+        """
+        warnings.warn(
+            "build_v3_pool() is deprecated — use build_pool(address) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self._v3_builder.build(
             pool_address,
             chain_id=chain_id,
@@ -589,7 +672,14 @@ class Bot:
         tick_data: dict[int, UniswapV4LiquidityAtTick] | None = None,
         silent: bool = False,
     ) -> UniswapV4Pool:
-        """Fetch pool data from DB/RPC and construct an I/O-free UniswapV4Pool."""
+        """.. deprecated:: 0.x
+            Use ``build_pool(address, pool_id=...)`` instead.
+        """
+        warnings.warn(
+            "build_v4_pool() is deprecated — use build_pool(address, pool_id=...) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self._v4_builder.build(
             pool_id=pool_id,
             pool_manager_address=pool_manager_address,
@@ -614,7 +704,15 @@ class Bot:
         silent: bool = False,
         state_cache_depth: int = 8,
     ) -> CurveStableswapPool:
-        """Fetch pool data from RPC and construct an I/O-free CurveStableswapPool."""
+        """.. deprecated:: 0.x
+            Use ``build_pool(address)`` instead. Type resolution automatically
+            selects the correct builder.
+        """
+        warnings.warn(
+            "build_curve_pool() is deprecated — use build_pool(address) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self._curve_builder.build(
             address,
             chain_id=chain_id,
