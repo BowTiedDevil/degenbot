@@ -253,7 +253,8 @@ class SolidlyStableSolver(Solver):
     NEWTON_MAX_ITERATIONS = 30
     NEWTON_TOLERANCE = 1e-6
 
-    def _adaptive_step(self, x: float) -> float:
+    @staticmethod
+    def _adaptive_step(x: float) -> float:
         """Compute an adaptive finite-difference step size."""
         return max(min(x * 1e-4, 1e12), 1e6)
 

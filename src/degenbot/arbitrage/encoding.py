@@ -12,9 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from eth_typing import ChecksumAddress
-
 if TYPE_CHECKING:
+    from eth_typing import ChecksumAddress
+
     from degenbot.arbitrage.types import AbstractSwapAmounts
 
 

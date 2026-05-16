@@ -32,9 +32,13 @@ Convergence: Quadratic (error roughly squares each iteration)
 Typical iterations: 3-4 for machine precision
 """
 
+from __future__ import annotations
+
 import time
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from degenbot.arbitrage.optimizers.base import (
     ArbitrageOptimizer,

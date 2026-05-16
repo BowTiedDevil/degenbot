@@ -476,9 +476,6 @@ class CurveStableswapPool(  # type: ignore[override]
         Reference: https://github.com/curveresearch/notes/blob/main/stableswap.pdf
         """
 
-        pool_balances = override_state.balances if override_state is not None else self.balances
-        rates = self.rate_multipliers
-
         block_number = self._resolve_block_number(block_identifier)
 
         # Fetch and cache block timestamp for A ramping calculations
