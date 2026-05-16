@@ -143,14 +143,14 @@ class UniswapV3Pool(
         ) = None,
         state_block: BlockNumber | None = None,
         state_cache_depth: int = 8,
-        token0: Erc20Token = ...,  # type: ignore[assignment]
-        token1: Erc20Token = ...,  # type: ignore[assignment]
-        factory: str = ...,  # type: ignore[assignment]
-        fee: int = ...,  # type: ignore[assignment]
-        tick_spacing: int = ...,  # type: ignore[assignment]
-        sqrt_price_x96: int = ...,  # type: ignore[assignment]
-        tick: int = ...,  # type: ignore[assignment]
-        liquidity: int = ...,  # type: ignore[assignment]
+        token0: Erc20Token,
+        token1: Erc20Token,
+        factory: str,
+        fee: int,
+        tick_spacing: int,
+        sqrt_price_x96: int,
+        tick: int,
+        liquidity: int,
         tick_data_fetcher: Callable[[int, int], None] | None = None,
     ) -> None:
         self.address = get_checksum_address(address)

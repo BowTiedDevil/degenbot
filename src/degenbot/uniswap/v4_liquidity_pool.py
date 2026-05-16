@@ -1,5 +1,3 @@
-
-
 import dataclasses
 from collections import deque
 from collections.abc import Callable
@@ -27,10 +25,7 @@ from degenbot.exceptions.pool import (
 )
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber, ChainId
-from degenbot.types.concrete import (
-    PublisherMixin,
-    Subscriber,
-)
+from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import HopType
 from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
@@ -38,9 +33,7 @@ from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot, Mi
 from degenbot.uniswap.concentrated.state_manager import ConcentratedLiquidityStateManager
 from degenbot.uniswap.concentrated.v4_simulator import calculate_swap as _v4_swap
 from degenbot.uniswap.types import UniswapPoolSwapVector
-from degenbot.uniswap.v3_functions import (
-    get_tick_word_and_bit_position,
-)
+from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from degenbot.uniswap.v3_types import BitmapWord, Pip, Tick
 from degenbot.uniswap.v4_libraries.tick_bitmap import flip_tick
@@ -121,7 +114,7 @@ class Hooks(Enum):
     AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA = 1 << 0
 
 
-class UniswapV4Pool(  # type: ignore[override]
+class UniswapV4Pool(
     PublisherMixin,
     PoolPickleMixin,
     V4PoolState,
@@ -163,12 +156,12 @@ class UniswapV4Pool(  # type: ignore[override]
         state_view_address: str | None = None,
         hook_address: str | None = None,
         chain_id: ChainId | None = None,
-        sqrt_price_x96: int = ...,  # type: ignore[assignment]
-        tick: int = ...,  # type: ignore[assignment]
-        liquidity: int = ...,  # type: ignore[assignment]
-        protocol_fee_zero_for_one: int = ...,  # type: ignore[assignment]
-        protocol_fee_one_for_zero: int = ...,  # type: ignore[assignment]
-        lp_fee: int = ...,  # type: ignore[assignment]
+        sqrt_price_x96: int,
+        tick: int,
+        liquidity: int,
+        protocol_fee_zero_for_one: int,
+        protocol_fee_one_for_zero: int,
+        lp_fee: int,
         tick_data: dict[Tick, dict[str, Any] | UniswapV4LiquidityAtTick] | None = None,
         tick_bitmap: dict[BitmapWord, dict[str, Any] | UniswapV4BitmapAtWord] | None = None,
         state_block: BlockNumber | int | None = None,
@@ -184,8 +177,8 @@ class UniswapV4Pool(  # type: ignore[override]
         state_block = state_block if state_block is not None else 0
         self._initial_state_block = state_block
 
-        self._token0: Final[Erc20Token] = token0  # type: ignore[misc]
-        self._token1: Final[Erc20Token] = token1  # type: ignore[misc]
+        self._token0: Final[Erc20Token] = token0
+        self._token1: Final[Erc20Token] = token1
         self.hook_address = (
             get_checksum_address(hook_address) if hook_address is not None else ZERO_ADDRESS
         )
@@ -500,7 +493,7 @@ class UniswapV4Pool(  # type: ignore[override]
         return swap_delta.amount_out
 
     @property
-    def address(self) -> ChecksumAddress:  # type: ignore[override]
+    def address(self) -> ChecksumAddress:
         return self._pool_manager_address
 
     @property
@@ -536,7 +529,7 @@ class UniswapV4Pool(  # type: ignore[override]
         return self._state_mgr.sqrt_price_x96
 
     @property
-    def state(self) -> UniswapV4PoolState:  # type: ignore[override]
+    def state(self) -> UniswapV4PoolState:
         return self._state_mgr.state
 
     @property
@@ -556,7 +549,7 @@ class UniswapV4Pool(  # type: ignore[override]
         return self.pool_key.tick_spacing
 
     @property
-    def fee(self) -> int:  # type: ignore[override]
+    def fee(self) -> int:
         return self.pool_key.fee
 
     @property
@@ -802,7 +795,7 @@ class UniswapV4Pool(  # type: ignore[override]
         zero_for_one: bool,  # noqa: FBT001
         state_override: UniswapV4PoolState | None = None,
     ) -> HopType:
-        return super().to_hop_state(zero_for_one=zero_for_one, state_override=state_override)  # type: ignore[misc, no-any-return]
+        return super().to_hop_state(zero_for_one=zero_for_one, state_override=state_override)
 
     def build_swap_amount(
         self,

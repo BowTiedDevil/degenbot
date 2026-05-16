@@ -1,5 +1,3 @@
-
-
 import contextlib
 import dataclasses
 from collections import deque
@@ -39,7 +37,7 @@ from degenbot.uniswap.v2_types import (
 )
 
 
-class UniswapV2Pool(  # type: ignore[override]
+class UniswapV2Pool(
     PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool
 ):
     """
@@ -75,13 +73,13 @@ class UniswapV2Pool(  # type: ignore[override]
         init_hash: str | None = None,
         state_block: BlockNumber | None = None,
         state_cache_depth: int = 8,
-        token0: Erc20Token = ...,  # type: ignore[assignment]
-        token1: Erc20Token = ...,  # type: ignore[assignment]
-        factory: str = ...,  # type: ignore[assignment]
-        fee_token0: Fraction = ...,  # type: ignore[assignment]
-        fee_token1: Fraction = ...,  # type: ignore[assignment]
-        reserves_token0: int = ...,  # type: ignore[assignment]
-        reserves_token1: int = ...,  # type: ignore[assignment]
+        token0: Erc20Token,
+        token1: Erc20Token,
+        factory: str,
+        fee_token0: Fraction,
+        fee_token1: Fraction,
+        reserves_token0: int,
+        reserves_token1: int,
     ) -> None:
         """
         An I/O-free representation of an x*y=k invariant automatic matchmaker, based on Uniswap V2.
@@ -155,15 +153,15 @@ class UniswapV2Pool(  # type: ignore[override]
         return self.state.block
 
     @property
-    def reserves_token0(self) -> int:  # type: ignore[override]
+    def reserves_token0(self) -> int:
         return self.state.reserves_token0
 
     @property
-    def reserves_token1(self) -> int:  # type: ignore[override]
+    def reserves_token1(self) -> int:
         return self.state.reserves_token1
 
     @property
-    def state(self) -> PoolState:  # type: ignore[override]
+    def state(self) -> PoolState:
         return self._state_cache[-1]
 
     @staticmethod
