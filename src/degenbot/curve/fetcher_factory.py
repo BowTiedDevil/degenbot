@@ -124,7 +124,7 @@ class CurveFetcherFactory:
 
         def fetcher(block_number: int) -> int:
             provider = self._connections.get_provider(chain_id)
-            return cast("int", provider.get_block_timestamp(block=block_number))
+            return provider.get_block_timestamp(block=block_number)
 
         return fetcher
 
@@ -195,7 +195,7 @@ class CurveFetcherFactory:
 
         def fetcher() -> int:
             provider = self._connections.get_provider(chain_id)
-            return cast("int", provider.get_block_number())
+            return provider.get_block_number()
 
         return fetcher
 
@@ -563,6 +563,7 @@ class CurveFetcherFactory:
                 oracle_method_cache[0] = oracle_method_value
 
             oracle_method = oracle_method_cache[0]
+            assert oracle_method is not None
 
             if oracle_method == 0:
                 rates = rate_multipliers
@@ -631,6 +632,7 @@ class CurveFetcherFactory:
                     pool_address, tokens, use_lending, precision_multipliers
                 )
             case LendingRateStyle.ORACLE:
+                assert rate_multipliers is not None
                 return self.oracle_rate_fetcher(
                     pool_address, tokens, use_lending, precision_multipliers, rate_multipliers
                 )

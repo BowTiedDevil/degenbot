@@ -1,6 +1,9 @@
 import dataclasses
 from enum import Enum, auto
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 
 from eth_typing import HexAddress
 
