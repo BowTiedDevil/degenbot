@@ -20,7 +20,7 @@ from degenbot.exceptions.pool import (
     ExternalUpdateError,
     LiquidityPoolError,
 )
-from degenbot.types.abstract import AbstractLiquidityPool
+from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
@@ -145,14 +145,14 @@ class UniswapV3Pool(
         ) = None,
         state_block: BlockNumber | None = None,
         state_cache_depth: int = 8,
-        token0: Erc20Token = ...,
-        token1: Erc20Token = ...,
-        factory: str = ...,
-        fee: int = ...,
-        tick_spacing: int = ...,
-        sqrt_price_x96: int = ...,
-        tick: int = ...,
-        liquidity: int = ...,
+        token0: Erc20Token = ...,  # type: ignore[assignment]
+        token1: Erc20Token = ...,  # type: ignore[assignment]
+        factory: str = ...,  # type: ignore[assignment]
+        fee: int = ...,  # type: ignore[assignment]
+        tick_spacing: int = ...,  # type: ignore[assignment]
+        sqrt_price_x96: int = ...,  # type: ignore[assignment]
+        tick: int = ...,  # type: ignore[assignment]
+        liquidity: int = ...,  # type: ignore[assignment]
         tick_data_fetcher: Callable[[int, int], None] | None = None,
     ) -> None:
         self.address = get_checksum_address(address)
@@ -175,6 +175,7 @@ class UniswapV3Pool(
         )
 
         with contextlib.suppress(KeyError):
+            assert self._chain_id is not None
             factory_deployment = _FACTORY_DEPLOYMENTS[self._chain_id][self.factory]
             self.init_hash = factory_deployment.pool_init_hash
             if factory_deployment.deployer is not None:
@@ -362,7 +363,7 @@ class UniswapV3Pool(
         )
 
     @property
-    def chain_id(self) -> int:
+    def chain_id(self) -> int | None:
         return self._chain_id
 
     @property
@@ -712,8 +713,14 @@ class UniswapV3Pool(
         token_in: ChecksumAddress,
         amount_in: int,
         token_out: ChecksumAddress,  # noqa: ARG002
-        state_override: UniswapV3PoolState | None = None,
+        state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
+        v3_state: UniswapV3PoolState | None = None
+        if state_override is not None:
+            if not isinstance(state_override, UniswapV3PoolState):
+                msg = f"Expected UniswapV3PoolState, got {type(state_override).__name__}"
+                raise DegenbotValueError(message=msg)
+            v3_state = state_override
         if token_in == self._token0.address:
             token_in_obj = self._token0
         elif token_in == self._token1.address:
@@ -724,7 +731,7 @@ class UniswapV3Pool(
         result = self.simulate_exact_input_swap(
             token_in=token_in_obj,
             token_in_quantity=amount_in,
-            override_state=state_override,
+            override_state=v3_state,
         )
         zero_for_one = token_in_obj == self._token0
         amount_out = -result.amount1_delta if zero_for_one else -result.amount0_delta
