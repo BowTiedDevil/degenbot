@@ -2,10 +2,15 @@
 Base classes and types for arbitrage optimizers.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from degenbot.erc20.erc20 import Erc20Token
 
 
 class OptimizerType(Enum):
@@ -58,7 +63,7 @@ class ArbitrageOptimizer(ABC):
     def solve(
         self,
         pools: list[Any],
-        input_token: Any,
+        input_token: Erc20Token,
         max_input: int | None = None,
     ) -> OptimizerResult:
         """
@@ -68,7 +73,7 @@ class ArbitrageOptimizer(ABC):
         ----------
         pools : list[Any]
             List of pools in the arbitrage path.
-        input_token : Any
+        input_token : Erc20Token
             The token being input (Erc20Token).
         max_input : int | None
             Maximum input amount (optional constraint).

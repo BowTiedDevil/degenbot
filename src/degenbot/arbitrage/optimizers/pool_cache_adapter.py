@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from degenbot.logging import logger
-from degenbot.types.concrete import AbstractPublisherMessage, Subscriber
+from degenbot.types.concrete import AbstractPublisherMessage, Publisher, Subscriber
 from degenbot.types.pool_protocols import CacheablePool
 
 if TYPE_CHECKING:
@@ -76,7 +76,7 @@ class ArbPoolCacheAdapter(Subscriber):
         self._pool_to_ids[id(pool)] = (forward_id, reverse_id)
         return forward_id
 
-    def notify(self, publisher: Any, message: AbstractPublisherMessage) -> None:
+    def notify(self, publisher: Publisher, message: AbstractPublisherMessage) -> None:
         """
         Called when a pool publishes a state update.
 
@@ -89,8 +89,7 @@ class ArbPoolCacheAdapter(Subscriber):
 
         if not isinstance(pool, CacheablePool):
             logger.warning(
-                f"Pool {pool.address} no longer implements CacheablePool; "
-                f"skipping cache update."
+                f"Pool {pool.address} no longer implements CacheablePool; skipping cache update."
             )
             return
 

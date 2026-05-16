@@ -94,7 +94,7 @@ class ArbSolver(Solver):
     # Rust pool cache helpers (ArbSolver-only concern)
     # ------------------------------------------------------------------
 
-    def get_pool_cache(self) -> Any:
+    def get_pool_cache(self) -> _rs_mobius.RustPoolCache:
         """Return the Rust-side pool state cache.
 
         The cache can be used to register pool states at update time,
