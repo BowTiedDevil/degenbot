@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from eth_typing import ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
+from web3 import Web3
 from web3.exceptions import ContractLogicError
 
 from degenbot.aave.analysis.core import (
@@ -172,7 +173,7 @@ def _convert_collateral_position(pos: AaveV3CollateralPosition) -> CollateralPos
         asset_lt = asset.asset_config.liquidation_threshold
         asset_ltv = asset.asset_config.ltv
 
-    zero_addr = ChecksumAddress("0x" + "0" * 40)
+    zero_addr = ChecksumAddress(Web3.to_checksum_address("0x" + "0" * 40))
     underlying_address = asset.underlying_token.address if asset.underlying_token else zero_addr
     underlying_symbol = asset.underlying_token.symbol if asset.underlying_token else None
 
@@ -195,7 +196,7 @@ def _convert_debt_position(pos: AaveV3DebtPosition) -> DebtPositionRecord:
     asset = pos.asset
     emode_cat_id = asset.e_mode_category_id or None
 
-    zero_addr = ChecksumAddress("0x" + "0" * 40)
+    zero_addr = ChecksumAddress(Web3.to_checksum_address("0x" + "0" * 40))
     underlying_address = asset.underlying_token.address if asset.underlying_token else zero_addr
     underlying_symbol = asset.underlying_token.symbol if asset.underlying_token else None
 

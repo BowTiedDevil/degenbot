@@ -90,6 +90,8 @@ class WithdrawHandler:
         not the actual withdrawal. Extract the actual withdrawal amount from the
         Pool event and use COLLATERAL_BURN calculation (ceil rounding).
         """
+        assert operation.pool_event is not None
+        assert event.index is not None
         logger.debug(
             "ENRICHMENT: Interest exceeds withdrawal - using withdraw amount "
             "from pool event for burn calculation"
@@ -134,6 +136,8 @@ class WithdrawHandler:
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
         """Handle standard WITHDRAW burn event."""
+        assert operation.pool_event is not None
+        assert event.index is not None
         # Extract raw amount from Pool event
         raw_amount = context.extract_pool_amount(
             pool_event=operation.pool_event,

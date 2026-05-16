@@ -78,6 +78,8 @@ class RepayWithAtokensHandler:
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
         """Handle collateral (aToken) side of REPAY_WITH_ATOKENS."""
+        assert operation.pool_event is not None
+        assert event.index is not None
         event_type = event.event_type
 
         # Check for interest > repayment on collateral (similar to WITHDRAW)
@@ -148,6 +150,8 @@ class RepayWithAtokensHandler:
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
         """Handle debt (vToken) side of REPAY_WITH_ATOKENS."""
+        assert operation.pool_event is not None
+        assert event.index is not None
         event_type = event.event_type
 
         # Check for interest > repayment on debt (similar to REPAY)

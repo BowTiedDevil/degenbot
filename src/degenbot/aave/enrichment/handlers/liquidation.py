@@ -196,6 +196,7 @@ class LiquidationHandler:
         and passes it to vToken.burn(). We must calculate this ourselves.
         See debug/aave/0044 for details.
         """
+        assert operation.pool_event is not None
         if event.index is None:
             msg = "LIQUIDATION event has no index"
             raise EnrichmentError(msg)
