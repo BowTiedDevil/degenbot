@@ -140,8 +140,21 @@ class CurvePoolBuilder:
         # 13. Resolve strategies from pool address
         strategies = resolve_pool_strategies(pool_address)
 
-        # 14. Create fetchers and construct pool
+        # 14. Create data provider and construct pool
         fetchers = CurveFetcherFactory(connections=self._connections, chain_id=chain_id)
+        data_provider = fetchers.create_provider(
+            pool_address,
+            base_pool_address=metapool.base_pool_address if metapool.is_meta else None,
+            tokens=list(tokens),
+            use_lending=list(lending.use_lending) if lending.use_lending else [False] * len(tokens),
+            precision_multipliers=list(lending.precision_multipliers) if lending.precision_multipliers else [1] * len(tokens),
+            rate_multipliers=tuple(
+                pm * 10**18 for pm in (lending.precision_multipliers or [1] * len(tokens))
+            ),
+            lending_rate_style=strategies.lending_rate_style,
+            is_crypto=crypto.is_crypto,
+            n_coins=len(tokens),
+        )
         pool = CurveStableswapPool(
             address=pool_address,
             tokens=tokens,
@@ -167,35 +180,7 @@ class CurvePoolBuilder:
             out_fee=crypto.out_fee,
             gamma=crypto.gamma,
             offpeg_fee_multiplier=crypto.offpeg_fee_multiplier,
-            virtual_price_fetcher=fetchers.virtual_price_fetcher(
-                pool_address,
-                base_pool_address=metapool.base_pool_address if metapool.is_meta else None,
-            ),
-            base_virtual_price_fetcher=fetchers.base_virtual_price_fetcher(pool_address),
-            base_cache_updated_fetcher=fetchers.base_cache_updated_fetcher(pool_address),
-            timestamp_fetcher=fetchers.timestamp_fetcher(),
-            redemption_price_fetcher=fetchers.redemption_price_fetcher(pool_address),
-            admin_balances_fetcher=fetchers.admin_balances_fetcher(pool_address),
-            block_number_fetcher=fetchers.block_number_fetcher(),
-            total_supply_fetcher=fetchers.total_supply_fetcher(),
-            token_balance_fetcher=fetchers.token_balance_fetcher(),
-            lending_rate_fetcher=fetchers.lending_rate_fetcher(
-                pool_address=pool_address,
-                tokens=list(tokens),
-                use_lending=list(lending.use_lending) if lending.use_lending else [False] * len(tokens),
-                precision_multipliers=list(lending.precision_multipliers) if lending.precision_multipliers else [1] * len(tokens),
-                rate_multipliers=tuple(
-                    pm * 10**18 for pm in (lending.precision_multipliers or [1] * len(tokens))
-                ),
-                lending_rate_style=strategies.lending_rate_style,
-            ),
-            D_fetcher=fetchers.D_fetcher(pool_address) if crypto.is_crypto else None,
-            gamma_fetcher=fetchers.gamma_fetcher(pool_address) if crypto.is_crypto else None,
-            price_scale_fetcher=(
-                fetchers.price_scale_fetcher(pool_address, len(tokens))
-                if crypto.is_crypto
-                else None
-            ),
+            data_provider=data_provider,
             strategies=strategies,
         )
 

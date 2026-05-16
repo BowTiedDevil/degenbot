@@ -12,6 +12,7 @@ into the I/O-free CurveStableswapPool.
 from __future__ import annotations
 
 # ruff: noqa: ANN401, N802
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import eth_abi.abi
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
     from degenbot.connection.connection_manager import ConnectionManager
+    from degenbot.curve.types import CurveDataProvider
     from degenbot.types.aliases import ChainId
 
 
@@ -693,3 +695,158 @@ class CurveFetcherFactory:
             return tuple(price_scale)
 
         return fetcher
+
+    # ------------------------------------------------------------------
+    # CurveDataProvider creation
+    # ------------------------------------------------------------------
+
+    def create_provider(
+        self,
+        pool_address: ChecksumAddress,
+        *,
+        base_pool_address: ChecksumAddress | None = None,
+        tokens: list[Any] | None = None,
+        use_lending: list[bool] | None = None,
+        precision_multipliers: list[int] | None = None,
+        rate_multipliers: tuple[int, ...] | None = None,
+        lending_rate_style: Any = None,
+        is_crypto: bool = False,
+        n_coins: int = 2,
+    ) -> CurveDataProvider:
+        """Create a CurveDataProvider for the given pool.
+
+        The provider bundles all fetcher closures behind a single object
+        implementing the CurveDataProvider protocol.
+        """
+        vp_fn = self.virtual_price_fetcher(
+            pool_address, base_pool_address=base_pool_address
+        )
+        return _CurveDataProviderImpl(
+            _virtual_price_fn=vp_fn,
+            _base_virtual_price_fn=self.base_virtual_price_fetcher(pool_address),
+            _base_cache_updated_fn=self.base_cache_updated_fetcher(pool_address),
+            _timestamp_fn=self.timestamp_fetcher(),
+            _redemption_price_fn=self.redemption_price_fetcher(pool_address),
+            _admin_balances_fn=self.admin_balances_fetcher(pool_address),
+            _block_number_fn=self.block_number_fetcher(),
+            _total_supply_fn=self.total_supply_fetcher(),
+            _token_balance_fn=self.token_balance_fetcher(),
+            _lending_rate_fn=self.lending_rate_fetcher(
+                pool_address=pool_address,
+                tokens=tokens or [],
+                use_lending=use_lending or [],
+                precision_multipliers=precision_multipliers or [],
+                rate_multipliers=rate_multipliers,
+                lending_rate_style=lending_rate_style,
+            ),
+            _d_fn=self.D_fetcher(pool_address) if is_crypto else None,
+            _gamma_fn=self.gamma_fetcher(pool_address) if is_crypto else None,
+            _price_scale_fn=self.price_scale_fetcher(pool_address, n_coins) if is_crypto else None,
+        )
+
+
+class _CurveDataProviderImpl:
+    """Private implementation of CurveDataProvider.
+
+    Wraps the existing fetcher closures from CurveFetcherFactory behind
+    the CurveDataProvider protocol interface. This avoids duplicating
+    the RPC call logic while presenting a unified object to the pool.
+    """
+
+    def __init__(
+        self,
+        *,
+        _virtual_price_fn: Any,
+        _base_virtual_price_fn: Any,
+        _base_cache_updated_fn: Any,
+        _timestamp_fn: Any,
+        _redemption_price_fn: Any,
+        _admin_balances_fn: Any,
+        _block_number_fn: Any,
+        _total_supply_fn: Any,
+        _token_balance_fn: Any,
+        _lending_rate_fn: Any | None = None,
+        _d_fn: Any | None = None,
+        _gamma_fn: Any | None = None,
+        _price_scale_fn: Any | None = None,
+    ) -> None:
+        self._virtual_price_fn = _virtual_price_fn
+        self._base_virtual_price_fn = _base_virtual_price_fn
+        self._base_cache_updated_fn = _base_cache_updated_fn
+        self._timestamp_fn = _timestamp_fn
+        self._redemption_price_fn = _redemption_price_fn
+        self._admin_balances_fn = _admin_balances_fn
+        self._block_number_fn = _block_number_fn
+        self._total_supply_fn = _total_supply_fn
+        self._token_balance_fn = _token_balance_fn
+        self._lending_rate_fn = _lending_rate_fn
+        self._d_fn = _d_fn
+        self._gamma_fn = _gamma_fn
+        self._price_scale_fn = _price_scale_fn
+
+    # Pool-state fetchers
+
+    def virtual_price(self, block_number: int) -> int:
+        return self._virtual_price_fn(block_number)
+
+    def base_virtual_price(self, block_number: int) -> int:
+        return self._base_virtual_price_fn(block_number)
+
+    def base_cache_updated(self, block_number: int) -> int:
+        return self._base_cache_updated_fn(block_number)
+
+    def admin_balances(self, block_number: int) -> tuple[int, ...]:
+        return self._admin_balances_fn(block_number)
+
+    def D(self, block_number: int) -> int:
+        if self._d_fn is None:
+            msg = "D() not available for this pool type"
+            raise ValueError(msg)
+        return self._d_fn(block_number)
+
+    def gamma(self, block_number: int) -> int:
+        if self._gamma_fn is None:
+            msg = "gamma() not available for this pool type"
+            raise ValueError(msg)
+        return self._gamma_fn(block_number)
+
+    def price_scale(self, block_number: int) -> tuple[int, ...]:
+        if self._price_scale_fn is None:
+            msg = "price_scale() not available for this pool type"
+            raise ValueError(msg)
+        return self._price_scale_fn(block_number)
+
+    # Chain-state fetchers
+
+    def block_timestamp(self, block_number: int) -> int:
+        return self._timestamp_fn(block_number)
+
+    def block_number(self) -> int:
+        return self._block_number_fn()
+
+    # Helper fetchers
+
+    def token_balance(self, token_address: str, holder_address: str, block_number: int) -> int:
+        # The underlying closure expects a token-like object with .address
+        token = _SimpleToken(token_address)
+        return self._token_balance_fn(token, holder_address, block_identifier=block_number)
+
+    def token_total_supply(self, token_address: str, block_number: int) -> int:
+        token = _SimpleToken(token_address)
+        return self._total_supply_fn(token, block_identifier=block_number)
+
+    def lending_rates(self, block_number: int) -> tuple[int, ...]:
+        if self._lending_rate_fn is None:
+            msg = "lending_rates() not available for this pool type"
+            raise ValueError(msg)
+        return self._lending_rate_fn(block_number)
+
+    def redemption_price(self, block_number: int) -> int:
+        return self._redemption_price_fn(block_number)
+
+
+@dataclass(frozen=True, slots=True)
+class _SimpleToken:
+    """Minimal token-like object for closure compatibility."""
+
+    address: str
