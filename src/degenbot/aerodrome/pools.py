@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import dataclasses
@@ -46,7 +45,7 @@ if TYPE_CHECKING:
     from degenbot.uniswap.types import UniswapPoolSwapVector
 
 
-class AerodromeV2Pool(  # type: ignore[override]
+class AerodromeV2Pool(
     PublisherMixin,
     PoolPickleMixin,
     AerodromeV2PoolStateMixin,
@@ -129,15 +128,15 @@ class AerodromeV2Pool(  # type: ignore[override]
         return self._chain_id
 
     @property
-    def reserves_token0(self) -> int:  # type: ignore[override]
+    def reserves_token0(self) -> int:
         return self.state.reserves_token0
 
     @property
-    def reserves_token1(self) -> int:  # type: ignore[override]
+    def reserves_token1(self) -> int:
         return self.state.reserves_token1
 
     @property
-    def state(self) -> PoolState:  # type: ignore[override]
+    def state(self) -> PoolState:
         return self._state_cache[-1]
 
     @property
@@ -221,7 +220,7 @@ class AerodromeV2Pool(  # type: ignore[override]
                 ),
             },
         ]
-        factory_data, token0_data, token1_data, stable_data = provider.batch_call(immutable_calls)  # type: ignore[arg-type]
+        factory_data, token0_data, token1_data, stable_data = provider.batch_call(immutable_calls)
 
         # This call uses a specific block so the reserve values are consistent
         reserves_data = provider.call_raw(
@@ -423,21 +422,22 @@ class AerodromeV2Pool(  # type: ignore[override]
 
             def _stable_swap_fn(
                 amount_in: int,
-                __reserves0: int = reserves0,
-                __reserves1: int = reserves1,
-                __decimals0: int = decimals0,
-                __decimals1: int = decimals1,
-                __fee: Fraction = fee,
-                __token_in: Literal[0, 1] = token_in,
+                /,
+                _reserves0: int = reserves0,
+                _reserves1: int = reserves1,
+                _decimals0: int = decimals0,
+                _decimals1: int = decimals1,
+                _fee: Fraction = fee,
+                _token_in: Literal[0, 1] = token_in,
             ) -> int:
                 return calc_exact_in_stable(
                     amount_in=amount_in,
-                    token_in=__token_in,
-                    reserves0=__reserves0,
-                    reserves1=__reserves1,
-                    decimals0=__decimals0,
-                    decimals1=__decimals1,
-                    fee=__fee,
+                    token_in=_token_in,
+                    reserves0=_reserves0,
+                    reserves1=_reserves1,
+                    decimals0=_decimals0,
+                    decimals1=_decimals1,
+                    fee=_fee,
                 )
 
             return SolidlyStableHop(
@@ -484,7 +484,7 @@ class AerodromeV3Pool(UniswapV3Pool):
         "uint160",
         "uint32",
         "bool",
-    )  # type:ignore[assignment]
+    )
 
     SLOT0_STRUCT_TYPES = (
         "uint160",
@@ -493,4 +493,4 @@ class AerodromeV3Pool(UniswapV3Pool):
         "uint16",
         "uint16",
         "bool",
-    )  # type:ignore[assignment]
+    )
