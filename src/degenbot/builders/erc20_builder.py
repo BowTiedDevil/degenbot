@@ -68,7 +68,7 @@ class Erc20Builder:
 
         # Check for Ether placeholder
         if address in EtherPlaceholder.addresses:
-            token = EtherPlaceholder(address, chain_id=chain_id)
+            token: Erc20Token = EtherPlaceholder(address, chain_id=chain_id)
             self._tokens.add(token_address=token.address, chain_id=chain_id, token=token)
             if not silent:
                 logger.info(f"• {token.symbol} ({token.name})")
@@ -185,6 +185,7 @@ class Erc20Builder:
         """Retrieve the ERC-20 balance for the given address."""
 
         address = get_checksum_address(address)
+        assert token.chain_id is not None
         provider = self._connections.get_provider(token.chain_id)
 
         block_number = (
@@ -221,6 +222,7 @@ class Erc20Builder:
 
         owner = get_checksum_address(owner)
         spender = get_checksum_address(spender)
+        assert token.chain_id is not None
         provider = self._connections.get_provider(token.chain_id)
 
         block_number = (
@@ -253,6 +255,7 @@ class Erc20Builder:
     ) -> int:
         """Retrieve the total supply for this token."""
 
+        assert token.chain_id is not None
         provider = self._connections.get_provider(token.chain_id)
 
         block_number = (
@@ -273,9 +276,10 @@ class Erc20Builder:
                 block=block_number,
             ),
         )
+        total_supply = int(total_supply)
 
-        token.set_cached_total_supply(block_number, cast("int", total_supply))
-        return cast("int", total_supply)
+        token.set_cached_total_supply(block_number, total_supply)
+        return total_supply
 
     def get_ether_balance(
         self,
@@ -286,7 +290,12 @@ class Erc20Builder:
         """Retrieve the native ETH balance for the given address."""
         address = get_checksum_address(address)
         provider = self._connections.get_provider(chain_id)
-        return cast("int", provider.get_balance(address, block=block_identifier))
+        block_number = (
+            block_identifier
+            if isinstance(block_identifier, int)
+            else self._resolve_block_number(provider, block_identifier)
+        )
+        return provider.get_balance(address, block=block_number)
 
     @staticmethod
     def _resolve_block_number(
@@ -294,8 +303,8 @@ class Erc20Builder:
     ) -> int:
         """Resolve a block identifier to a block number."""
         if block_identifier is None:
-            return cast("int", provider.get_block_number())
+            return provider.get_block_number()
         if isinstance(block_identifier, int):
             return block_identifier
         # For string identifiers like 'latest', 'earliest', 'pending'
-        return cast("int", provider.get_block_number())
+        return provider.get_block_number()
