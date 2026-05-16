@@ -1,6 +1,6 @@
 """Event processing handlers for Aave V3 configuration and contract updates."""
 
-from typing import Any, assert_never
+from typing import Any
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress

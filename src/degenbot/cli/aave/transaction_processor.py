@@ -12,7 +12,6 @@ This module contains the main transaction processing orchestrator that handles:
 """
 
 from operator import itemgetter
-from typing import assert_never
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress

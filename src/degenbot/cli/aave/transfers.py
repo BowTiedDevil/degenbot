@@ -8,7 +8,6 @@ between users, including:
 - Protocol mints and burns
 """
 
-from typing import assert_never
 
 import eth_abi.abi
 from eth_typing import ChecksumAddress

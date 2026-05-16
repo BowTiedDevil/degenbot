@@ -33,7 +33,8 @@ Typical iterations: 3-4 for machine precision
 """
 
 import time
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from degenbot.arbitrage.optimizers.base import (
     ArbitrageOptimizer,

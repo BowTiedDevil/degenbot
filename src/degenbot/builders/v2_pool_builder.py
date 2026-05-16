@@ -10,7 +10,6 @@ from degenbot.logging import logger
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.aliases import ChainId
 from degenbot.types.pool_protocols import ConstantProductPool
-from degenbot.types.pool_protocols import ConstantProductPool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 

@@ -17,7 +17,6 @@ from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.types.pool_protocols import ConcentratedLiquidityPool, ConstantProductPool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 if TYPE_CHECKING:

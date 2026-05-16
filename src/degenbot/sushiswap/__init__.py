@@ -1,6 +1,6 @@
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
-from degenbot.checksum_cache import get_checksum_address
 
 from . import (
     abi as abi,

@@ -38,7 +38,6 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
-    from hexbytes import HexBytes
 
     from degenbot.erc20 import Erc20Token
     from degenbot.provider.interface import ProviderAdapter

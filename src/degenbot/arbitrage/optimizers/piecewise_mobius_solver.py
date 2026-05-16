@@ -6,7 +6,7 @@ import math
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import TYPE_CHECKING, Any, override
+from typing import Any, override
 
 import numpy as np
 
