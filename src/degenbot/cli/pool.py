@@ -86,7 +86,7 @@ class MockV3LiquidityPool(UniswapV3Pool):
         tick_bitmap: dict[int, UniswapV3BitmapAtWord] | None = None,
         tick_data: dict[int, UniswapV3LiquidityAtTick] | None = None,
     ) -> None:
-        self.sparse_liquidity_map = False
+        self._sparse_liquidity_map = False
         self._initial_state_block = MAX_UINT256  # Skip the in-range liquidity modification step
 
         initial_state = UniswapV3PoolState(
@@ -100,7 +100,7 @@ class MockV3LiquidityPool(UniswapV3Pool):
         )
 
         # No-op context manager to avoid locking overhead
-        self._state_lock = contextlib.nullcontext()  # type:ignore[assignment]
+        self._state_lock = contextlib.nullcontext()
         self._state_cache = deque(maxlen=1)
         self._state_cache.append(initial_state)
         self.name = "V3 POOL"
@@ -123,7 +123,7 @@ class MockV4LiquidityPool(UniswapV4Pool):
         tick_bitmap: dict[int, UniswapV4BitmapAtWord] | None = None,
         tick_data: dict[int, UniswapV4LiquidityAtTick] | None = None,
     ) -> None:
-        self.sparse_liquidity_map = False
+        self._sparse_liquidity_map = False
         self._initial_state_block = MAX_UINT256  # Skip the in-range liquidity modification step
 
         initial_state = UniswapV4PoolState(
@@ -138,7 +138,7 @@ class MockV4LiquidityPool(UniswapV4Pool):
         )
 
         # No-op context manager to avoid locking overhead
-        self._state_lock = contextlib.nullcontext()  # type:ignore[assignment]
+        self._state_lock = contextlib.nullcontext()
         self._state_cache = deque(maxlen=1)
         self._state_cache.append(initial_state)
         self.name = "V4 POOL"
@@ -263,7 +263,7 @@ def apply_v3_liquidity_updates(
             for k, v in pool_liquidity_map.tick_data.items()
         },
     )
-    lp_helper.tick_spacing = pool_in_db.tick_spacing
+    lp_helper._tick_spacing = pool_in_db.tick_spacing
 
     for liquidity_event in liquidity_events:
         # Guard against applying a liquidity event that occurred in the past
@@ -707,19 +707,31 @@ def _pool_updater(
 
     if exchange_name in _V2_CONFIGS:
         update_v2_pools(
-            provider, start_block, end_block, exchange, session,
+            provider,
+            start_block,
+            end_block,
+            exchange,
+            session,
             config=_V2_CONFIGS[exchange_name],
             get_events_fn=get_events_from_contract,
         )
     elif exchange_name in _V3_CONFIGS:
         update_v3_pools(
-            provider, start_block, end_block, exchange, session,
+            provider,
+            start_block,
+            end_block,
+            exchange,
+            session,
             config=_V3_CONFIGS[exchange_name],
             get_events_fn=get_events_from_contract,
         )
     elif exchange_name in _V4_CONFIGS:
         update_v4_pools(
-            provider, start_block, end_block, exchange, session,
+            provider,
+            start_block,
+            end_block,
+            exchange,
+            session,
             config=_V4_CONFIGS[exchange_name],
             get_events_fn=get_events_from_contract,
         )

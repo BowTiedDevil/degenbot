@@ -217,7 +217,7 @@ class V4PoolBuilder:
                 with contextlib.suppress(Exception), self._db() as session:
                     if hasattr(pool_from_db, "managed_pool_id"):
                         pool_with_data = session.scalar(
-                            select(type(pool_from_db)).where(  # type: ignore[arg-type]
+                            select(type(pool_from_db)).where(
                                 UniswapV4PoolTable.id == pool_from_db.id
                             )
                         )

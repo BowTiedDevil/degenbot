@@ -1,10 +1,10 @@
 """
-Tests for ProviderBackend protocol and __getattr__ delegation.
+Tests for ProviderBackend protocol and explicit method delegation.
 
 Validates that:
 1. ProviderBackend merges EthereumProvider + _SyncProviderBackend
-2. __getattr__ correctly delegates pure pass-through methods
-3. Explicit methods on ProviderAdapter still work
+2. Explicit methods on ProviderAdapter delegate to backend correctly
+3. Explicit methods take precedence over any fallback behavior
 4. Block guard simplification works for _Web3Adapter
 """
 
@@ -55,7 +55,7 @@ class TestProviderBackendProtocol:
 
 
 class TestGetattrDelegation:
-    """Test that __getattr__ delegates pure pass-through methods to backend."""
+    """Test that explicit methods delegate to backend correctly."""
 
     def test_delegated_method_forwards_to_backend(self) -> None:
         """Methods not defined explicitly on ProviderAdapter forward to backend."""

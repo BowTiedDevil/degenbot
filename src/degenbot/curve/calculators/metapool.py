@@ -10,7 +10,7 @@ Each style gets its own calculator dataclass.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
@@ -174,12 +174,13 @@ class MetapoolUnderlyingRedemptionDyCalculator:
             x -= x * pool.base_pool.fee // (2 * pool.FEE_DENOMINATOR)
             x += xp[max_coin]
         else:
-            return pool.base_pool.get_dy(
+            return cast("int", pool.base_pool.get_dy(
                 i=base_i,
                 j=base_j,
                 dx=dx,
+                block_identifier=block_number,
                 override_state=(override_state.base if override_state is not None else None),
-            )
+            ))
 
         y = pool._get_y(meta_i, meta_j, x, xp)
         dy = xp[meta_j] - y - 1
@@ -256,13 +257,13 @@ class MetapoolUnderlyingPrecisionVpDyCalculator:
             x -= x * pool.base_pool.fee // (2 * pool.FEE_DENOMINATOR)
             x += xp[max_coin]
         else:
-            return pool.base_pool.get_dy(
+            return cast("int", pool.base_pool.get_dy(
                 i=base_i,
                 j=base_j,
                 dx=dx,
                 block_identifier=block_number,
                 override_state=(override_state.base if override_state is not None else None),
-            )
+            ))
 
         y = pool._get_y(meta_i, meta_j, x, xp)
         dy = xp[meta_j] - y - 1
@@ -336,13 +337,13 @@ class MetapoolUnderlyingStandardDyCalculator:
             x -= x * pool.base_pool.fee // (2 * pool.FEE_DENOMINATOR)
             x += xp[max_coin]
         else:
-            return pool.base_pool.get_dy(
+            return cast("int", pool.base_pool.get_dy(
                 i=base_i,
                 j=base_j,
                 dx=dx,
                 block_identifier=block_number,
                 override_state=(override_state.base if override_state is not None else None),
-            )
+            ))
 
         y = pool._get_y(meta_i, meta_j, x, xp)
         dy = xp[meta_j] - y - 1

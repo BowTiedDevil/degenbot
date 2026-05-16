@@ -22,7 +22,7 @@ All functions are pure: numeric inputs → numeric outputs, no self, no class re
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from degenbot.curve.types import DVariant, YDVariant, YVariant
@@ -110,7 +110,7 @@ def calc_dp_variant_gamma(
     n_coins: int,
 ) -> int:
     """Variant gamma D' step: like beta but uses n^n instead of n^2."""
-    return d * d // xp[0] * d // xp[1] // n_coins**n_coins
+    return cast("int", d * d // xp[0] * d // xp[1] // n_coins**n_coins)
 
 
 # ── Iterative solvers ──

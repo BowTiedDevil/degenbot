@@ -20,7 +20,7 @@ from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber, ChainId
-from degenbot.types.concrete import PublisherMixin
+from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import HopType
 from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
@@ -71,7 +71,7 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
             block=state_block,
             balances=tuple(balances),
         )
-        self._subscribers: WeakSet = WeakSet()
+        self._subscribers: WeakSet[Subscriber] = WeakSet()
 
     @property
     def balances(self) -> tuple[int, ...]:

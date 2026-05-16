@@ -18,6 +18,7 @@ from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from web3.types import LogReceipt
 
 from degenbot import abi_decode
 from degenbot.checksum_cache import get_checksum_address
@@ -119,7 +120,7 @@ def update_v2_pools(
     exchange: ExchangeTable,
     session: Session,
     config: V2PoolUpdateConfig,
-    get_events_fn: Callable,
+    get_events_fn: Callable[..., list[LogReceipt]],
 ) -> None:
     """Process V2-style pool creation events for a DEX."""
     new_pool_events = get_events_fn(
@@ -201,7 +202,7 @@ def update_v3_pools(
     exchange: ExchangeTable,
     session: Session,
     config: V3PoolUpdateConfig,
-    get_events_fn: Callable,
+    get_events_fn: Callable[..., list[LogReceipt]],
 ) -> None:
     """Process V3-style pool creation events for a DEX."""
     new_pool_events = get_events_fn(
@@ -270,7 +271,7 @@ def update_v4_pools(
     exchange: ExchangeTable,
     session: Session,
     config: V4PoolUpdateConfig,
-    get_events_fn: Callable,
+    get_events_fn: Callable[..., list[LogReceipt]],
 ) -> None:
     """Process V4-style pool creation events for a DEX."""
     manager_in_db = session.scalar(

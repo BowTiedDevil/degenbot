@@ -6,6 +6,7 @@
 """
 
 from collections.abc import Sequence
+from typing import Any
 
 import eth_abi.abi
 import eth_abi.packed
@@ -25,7 +26,7 @@ from degenbot.calculations.solidly_stable import (
 from degenbot.contract.addresses import eip_1167_clone_address
 
 
-def calc_exact_in_stable(*args, **kwargs):
+def calc_exact_in_stable(*args: Any, **kwargs: Any) -> int:
     """Aerodrome-specific stable exact-in calculation.
 
     Delegates to :func:`degenbot.calculations.solidly_stable.calc_exact_in_stable`

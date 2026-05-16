@@ -6,19 +6,14 @@ from typing import TYPE_CHECKING, Any, cast
 import eth_abi.abi
 from sqlalchemy import select
 
-from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.tick_data_fetcher import TickDataTypes, make_tick_data_fetcher
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.database.models.pools import LiquidityPoolTable
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
-from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.types.aliases import ChainId
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
@@ -26,9 +21,18 @@ from degenbot.uniswap.v3_types import (
     UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
 )
+from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 if TYPE_CHECKING:
     from web3.types import BlockIdentifier
+
+    from degenbot.builders.erc20_builder import Erc20Builder
+    from degenbot.connection.connection_manager import ConnectionManager
+    from degenbot.database.session_manager import DatabaseSessionManager
+    from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
+    from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
+    from degenbot.types.aliases import ChainId
+    from degenbot.types.pool_protocols import ConcentratedLiquidityPool
 
 
 class V3PoolBuilder:
@@ -56,14 +60,10 @@ class V3PoolBuilder:
         self._managed_pools = managed_pools
         self._erc20_builder = erc20_builder
 
-    def _make_tick_data_fetcher(
-        self, pool_address: str, chain_id: int
-    ) -> Any:
+    def _make_tick_data_fetcher(self, pool_address: str, chain_id: int) -> Any:
         """Create a tick data fetcher callback for a V3 pool."""
         return make_tick_data_fetcher(
-            pool_lookup=lambda _: self._pools.get(
-                pool_address=pool_address, chain_id=chain_id
-            ),
+            pool_lookup=lambda _: self._pools.get(pool_address=pool_address, chain_id=chain_id),
             provider_lookup=lambda: self._connections.get_provider(chain_id),
             types=TickDataTypes(
                 bitmap_at_word=UniswapV3BitmapAtWord,
@@ -84,8 +84,8 @@ class V3PoolBuilder:
         tick_data: dict[int, UniswapV3LiquidityAtTick] | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
-    ) -> UniswapV3Pool:
-        """Fetch pool data from DB/RPC and construct an I/O-free UniswapV3Pool."""
+    ) -> ConcentratedLiquidityPool:
+        """Fetch pool data from DB/RPC and construct an I/O-free V3-style pool."""
 
         pool_address = get_checksum_address(pool_address)
         chain_id = chain_id or self._connections.default_chain_id
@@ -194,7 +194,7 @@ class V3PoolBuilder:
                 with contextlib.suppress(Exception), self._db() as session:
                     if hasattr(pool_from_db, "pool_id"):
                         pool_with_data = session.scalar(
-                            select(type(pool_from_db)).where(  # type: ignore[arg-type]
+                            select(type(pool_from_db)).where(
                                 LiquidityPoolTable.id == pool_from_db.id
                             )
                         )
@@ -309,7 +309,11 @@ class V3PoolBuilder:
         )
 
         # Register pool
-        self._pools.add(pool_address=pool.address, chain_id=chain_id, pool=pool)
+        self._pools.add(
+            pool=pool,
+            chain_id=chain_id,
+            pool_address=pool.address,
+        )
 
         if not silent:
             logger.info(pool.name)
@@ -326,13 +330,11 @@ class V3PoolBuilder:
 
     def update(
         self,
-        pool: Any,
+        pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
     ) -> bool:
         """Fetch current state from chain and push update to the pool."""
-        # Import here to avoid circular imports at module level
-        from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
         if isinstance(pool, UniswapV4Pool):
             msg = f"V3PoolBuilder cannot update {type(pool).__name__}"
@@ -368,7 +370,11 @@ class V3PoolBuilder:
             ),
         )
 
-        if pool.sqrt_price_x96 == sqrt_price_x96 and pool.liquidity == liquidity and pool.tick == tick:
+        if (
+            pool.sqrt_price_x96 == sqrt_price_x96
+            and pool.liquidity == liquidity
+            and pool.tick == tick
+        ):
             return False
 
         update = UniswapV3PoolExternalUpdate(

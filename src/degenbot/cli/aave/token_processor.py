@@ -11,11 +11,12 @@ from typing import TYPE_CHECKING, assert_never
 import eth_abi.abi
 from web3.types import LogReceipt
 
-from degenbot.aave.events import AaveV3PoolEvent
+from degenbot.aave.events import AaveV3PoolEvent, ScaledTokenEventType
 from degenbot.aave.libraries.gho_math import GhoMath
 from degenbot.aave.libraries.pool_math import PoolMath
 from degenbot.aave.libraries.token_math import TokenMathFactory
 from degenbot.aave.models import EnrichedScaledTokenEvent
+from degenbot.aave.operation_types import OperationType
 from degenbot.aave.pattern_types import LiquidationPattern
 from degenbot.aave.processors.base import (
     CollateralBurnEvent,
@@ -35,12 +36,7 @@ from degenbot.cli.aave.stkaave import get_or_init_stk_aave_balance
 from degenbot.cli.aave.transfers import _process_collateral_transfer
 from degenbot.cli.aave.types import TokenType, TransactionContext
 from degenbot.cli.aave.verification import update_debt_position_index
-from degenbot.cli.aave_transaction_operations import (
-    Operation,
-    OperationType,
-    ScaledTokenEvent,
-    ScaledTokenEventType,
-)
+from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
 from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.database.models.aave import AaveV3CollateralPosition, AaveV3DebtPosition, AaveV3User

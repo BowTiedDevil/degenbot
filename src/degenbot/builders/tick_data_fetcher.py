@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 import eth_abi.abi
 
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
+from degenbot.provider.interface import ProviderAdapter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -30,8 +31,8 @@ class TickDataTypes:
 
 
 def make_tick_data_fetcher(
-    pool_lookup: Callable[[int], UniswapV3Pool | UniswapV4Pool | None],  # type: ignore[valid-type]
-    provider_lookup: Callable[[], Any],
+    pool_lookup: Callable[[int], UniswapV3Pool | UniswapV4Pool | None],
+    provider_lookup: Callable[[], ProviderAdapter],
     types: TickDataTypes,
     *,
     state_view_address: str | None = None,
@@ -98,8 +99,8 @@ def make_tick_data_fetcher(
 
 def _fetch_v3(
     *,
-    provider: Any,
-    pool: UniswapV3Pool,  # type: ignore[valid-type]
+    provider: ProviderAdapter,
+    pool: UniswapV3Pool,
     word_position: int,
     block_number: int,
     working_tick_bitmap: dict[int, Any],
@@ -111,9 +112,7 @@ def _fetch_v3(
         (bitmap_value,) = raw_call(
             provider,
             address=pool.address,
-            calldata=encode_function_calldata(
-                "tickBitmap(int16)", [word_position]
-            ),
+            calldata=encode_function_calldata("tickBitmap(int16)", [word_position]),
             return_types=["uint256"],
             block_identifier=block_number,
         )
@@ -135,9 +134,7 @@ def _fetch_v3(
             try:
                 result = provider.call(
                     to=pool.address,
-                    data=encode_function_calldata(
-                        "ticks(int24)", [active_tick]
-                    ),
+                    data=encode_function_calldata("ticks(int24)", [active_tick]),
                     block=block_number,
                 )
             except Exception:  # noqa: BLE001
@@ -156,12 +153,12 @@ def _fetch_v3(
 
 def _fetch_v4(
     *,
-    provider: Any,
+    provider: ProviderAdapter,
     state_view_address: str,
     pool_id: bytes,
     word_position: int,
     block_number: int,
-    pool: UniswapV4Pool,  # type: ignore[valid-type]
+    pool: UniswapV4Pool,
     working_tick_bitmap: dict[int, Any],
     working_tick_data: dict[int, Any],
     types: TickDataTypes,

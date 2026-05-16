@@ -53,8 +53,12 @@ class OfflineCallReverted(Exception):
     This is signaled by a `null` result in the recorded data.
     """
 
-    def __init__(self) -> None:
-        super().__init__("Recorded call reverted or contract not deployed.")
+    def __init__(self, to: str, data: bytes) -> None:
+        self.to = to
+        self.data = data
+        super().__init__(
+            f"Recorded call reverted or contract not deployed for call to {to} with data 0x{data.hex()[:40]}..."
+        )
 
 
 class OfflineProvider:

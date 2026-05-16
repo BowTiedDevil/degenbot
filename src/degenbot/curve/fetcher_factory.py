@@ -13,7 +13,7 @@ from __future__ import annotations
 
 # ruff: noqa: ANN401, N802
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
 from hexbytes import HexBytes
@@ -68,7 +68,7 @@ class CurveFetcherFactory:
                     block=block_number,
                 ),
             )
-            return vp
+            return cast("int", vp)
 
         return fetcher
 
@@ -91,7 +91,7 @@ class CurveFetcherFactory:
                     block=block_number,
                 ),
             )
-            return vp
+            return cast("int", vp)
 
         return fetcher
 
@@ -114,7 +114,7 @@ class CurveFetcherFactory:
                     block=block_number,
                 ),
             )
-            return bcu
+            return cast("int", bcu)
 
         return fetcher
 
@@ -124,7 +124,7 @@ class CurveFetcherFactory:
 
         def fetcher(block_number: int) -> int:
             provider = self._connections.get_provider(chain_id)
-            return provider.get_block_timestamp(block=block_number)
+            return cast("int", provider.get_block_timestamp(block=block_number))
 
         return fetcher
 
@@ -156,7 +156,7 @@ class CurveFetcherFactory:
                     block=block_number,
                 ),
             )
-            return rate // redemption_price_scale
+            return cast("int", rate // redemption_price_scale)
 
         return fetcher
 
@@ -195,7 +195,7 @@ class CurveFetcherFactory:
 
         def fetcher() -> int:
             provider = self._connections.get_provider(chain_id)
-            return provider.get_block_number()
+            return cast("int", provider.get_block_number())
 
         return fetcher
 
@@ -220,7 +220,7 @@ class CurveFetcherFactory:
                     block=block_identifier,
                 ),
             )
-            return total_supply
+            return cast("int", total_supply)
 
         return fetcher
 
@@ -246,7 +246,7 @@ class CurveFetcherFactory:
                     block=block_identifier,
                 ),
             )
-            return balance
+            return cast("int", balance)
 
         return fetcher
 
@@ -650,7 +650,7 @@ class CurveFetcherFactory:
                     block=block_number,
                 ),
             )
-            return d
+            return cast("int", d)
 
         return fetcher
 
@@ -667,7 +667,7 @@ class CurveFetcherFactory:
                     block=block_number,
                 ),
             )
-            return gamma
+            return cast("int", gamma)
 
         return fetcher
 
@@ -787,62 +787,62 @@ class _CurveDataProviderImpl:
     # Pool-state fetchers
 
     def virtual_price(self, block_number: int) -> int:
-        return self._virtual_price_fn(block_number)
+        return cast("int", self._virtual_price_fn(block_number))
 
     def base_virtual_price(self, block_number: int) -> int:
-        return self._base_virtual_price_fn(block_number)
+        return cast("int", self._base_virtual_price_fn(block_number))
 
     def base_cache_updated(self, block_number: int) -> int:
-        return self._base_cache_updated_fn(block_number)
+        return cast("int", self._base_cache_updated_fn(block_number))
 
     def admin_balances(self, block_number: int) -> tuple[int, ...]:
-        return self._admin_balances_fn(block_number)
+        return cast("tuple[int, ...]", self._admin_balances_fn(block_number))
 
     def D(self, block_number: int) -> int:
         if self._d_fn is None:
             msg = "D() not available for this pool type"
             raise ValueError(msg)
-        return self._d_fn(block_number)
+        return cast("int", self._d_fn(block_number))
 
     def gamma(self, block_number: int) -> int:
         if self._gamma_fn is None:
             msg = "gamma() not available for this pool type"
             raise ValueError(msg)
-        return self._gamma_fn(block_number)
+        return cast("int", self._gamma_fn(block_number))
 
     def price_scale(self, block_number: int) -> tuple[int, ...]:
         if self._price_scale_fn is None:
             msg = "price_scale() not available for this pool type"
             raise ValueError(msg)
-        return self._price_scale_fn(block_number)
+        return cast("tuple[int, ...]", self._price_scale_fn(block_number))
 
     # Chain-state fetchers
 
     def block_timestamp(self, block_number: int) -> int:
-        return self._timestamp_fn(block_number)
+        return cast("int", self._timestamp_fn(block_number))
 
     def block_number(self) -> int:
-        return self._block_number_fn()
+        return cast("int", self._block_number_fn())
 
     # Helper fetchers
 
     def token_balance(self, token_address: str, holder_address: str, block_number: int) -> int:
         # The underlying closure expects a token-like object with .address
         token = _SimpleToken(token_address)
-        return self._token_balance_fn(token, holder_address, block_identifier=block_number)
+        return cast("int", self._token_balance_fn(token, holder_address, block_identifier=block_number))
 
     def token_total_supply(self, token_address: str, block_number: int) -> int:
         token = _SimpleToken(token_address)
-        return self._total_supply_fn(token, block_identifier=block_number)
+        return cast("int", self._total_supply_fn(token, block_identifier=block_number))
 
     def lending_rates(self, block_number: int) -> tuple[int, ...]:
         if self._lending_rate_fn is None:
             msg = "lending_rates() not available for this pool type"
             raise ValueError(msg)
-        return self._lending_rate_fn(block_number)
+        return cast("tuple[int, ...]", self._lending_rate_fn(block_number))
 
     def redemption_price(self, block_number: int) -> int:
-        return self._redemption_price_fn(block_number)
+        return cast("int", self._redemption_price_fn(block_number))
 
 
 @dataclass(frozen=True, slots=True)

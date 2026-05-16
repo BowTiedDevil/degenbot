@@ -67,7 +67,7 @@ class Erc20Token(AbstractErc20Token):
             max_items=state_cache_depth,
         )
 
-        self._chain_id = chain_id  # type: ignore[assignment]
+        self._chain_id = chain_id
         self.name = name
         self.symbol = symbol
         self.decimals = decimals
@@ -80,7 +80,7 @@ class Erc20Token(AbstractErc20Token):
     # -- Cache accessors (dictionary operations, no I/O) --
 
     def get_cached_balance(self, address: ChecksumAddress, block_number: int) -> int | None:
-        return self._cached_balance.get(address, {}).get(block_number)
+        return self._cached_balance.get(address, BoundedCache(max_items=self._state_cache_depth)).get(block_number)
 
     def set_cached_balance(self, address: ChecksumAddress, block_number: int, balance: int) -> None:
         if address not in self._cached_balance:
@@ -196,13 +196,17 @@ class Erc20Token(AbstractErc20Token):
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
         """Fetch total supply via RPC call."""
+        block: int | None = None
+        if block_identifier is not None and isinstance(block_identifier, int):
+            block = block_identifier
+
         result = provider.call(
             to=address,
             data=encode_function_calldata(
                 function_prototype="totalSupply()",
                 function_arguments=None,
             ),
-            block=block_identifier,
+            block=block,
         )
         (total_supply,) = eth_abi.abi.decode(types=["uint256"], data=result)
         return cast("int", total_supply)
@@ -215,4 +219,5 @@ class Erc20Token(AbstractErc20Token):
 
     @property
     def chain_id(self) -> int:
+        assert self._chain_id is not None
         return self._chain_id

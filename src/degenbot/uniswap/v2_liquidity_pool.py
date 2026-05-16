@@ -13,7 +13,6 @@ from eth_typing import ChecksumAddress
 
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database.models.pools import UniswapV2PoolTable
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
@@ -49,7 +48,6 @@ class UniswapV2Pool(PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolC
     variant: ClassVar[str | None] = None
 
     type PoolState = UniswapV2PoolState
-    type DatabasePoolType = UniswapV2PoolTable
 
     _state: PoolState
     _state_cache: deque[PoolState]

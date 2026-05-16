@@ -1,6 +1,7 @@
 """Retry-aware log fetching with adaptive chunk sizing."""
 
 from collections.abc import Sequence
+from typing import cast
 
 import tqdm
 from eth_typing import ChecksumAddress
@@ -147,12 +148,12 @@ def fetch_logs_retrying(
                 topics_str.append([topic.to_0x_hex()])
             else:
                 topics_str.append([t.to_0x_hex() for t in topic])
-        return provider.get_logs(
+        return cast("list[LogReceipt]", provider.get_logs(
             from_block=from_block,
             to_block=to_block,
             addresses=addr or None,
             topics=topics_str or None,
-        )
+        ))
 
     while not fetcher.is_complete:
         try:

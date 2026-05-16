@@ -11,7 +11,7 @@ Camelot's k invariant) define their own calc mixin instead of using this one.
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
@@ -212,4 +212,4 @@ class UniswapV2PoolCalc:
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
-        return self._fee_token0 if zero_for_one else self._fee_token1
+        return cast("Fraction", self._fee_token0 if zero_for_one else self._fee_token1)

@@ -9,6 +9,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.logging import logger
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.aliases import ChainId
+from degenbot.types.pool_protocols import ConstantProductPool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 
@@ -36,8 +37,8 @@ class V2PoolBuilder(V2BuilderBase):
         state_block: int | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
-    ) -> UniswapV2Pool:
-        """Fetch pool data from DB/RPC and construct an I/O-free UniswapV2Pool."""
+    ) -> ConstantProductPool:
+        """Fetch pool data from DB/RPC and construct an I/O-free V2-style pool."""
 
         pool_address = get_checksum_address(pool_address)
         chain_id = chain_id or self._connections.default_chain_id

@@ -53,7 +53,7 @@ class PiecewiseMobiusSolver(Solver):
     def __init__(self) -> None:
         self._rust_optimizer = _rs_mobius.RustMobiusOptimizer()
         self._mobius_solver: MobiusSolver | None = None
-        self._rust_hop_cache: dict[int, list] = {}
+        self._rust_hop_cache: dict[int, list[_rs_mobius.RustHopState]] = {}
         self._rust_sequence_cache: dict[tuple[tuple[int, ...], int, bool], Any] = {}
 
     def __getstate__(self) -> dict[str, Any]:
@@ -622,7 +622,7 @@ class PiecewiseMobiusSolver(Solver):
         *,
         x_low: float,
         x_high: float,
-        eval_profit_scalar: Callable,
+        eval_profit_scalar: Callable[[float], float],
     ) -> SolveResult:
         """
         Vectorized bracket search using NumPy for parallel evaluation.
@@ -781,7 +781,7 @@ class PiecewiseMobiusSolver(Solver):
             method=SolverMethod.PIECEWISE_MOBIUS.name,
         )
 
-    def _get_cached_rust_hops(self, solve_input: SolveInput) -> list:
+    def _get_cached_rust_hops(self, solve_input: SolveInput) -> list[_rs_mobius.RustHopState]:
         cache_key = hash(
             tuple((hop.reserve_in, hop.reserve_out, float(hop.fee)) for hop in solve_input.hops)
         )

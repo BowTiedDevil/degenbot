@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
 import sqlalchemy.exc
@@ -22,6 +22,7 @@ from degenbot.erc20.erc20 import (
 )
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
+from degenbot.provider.interface import ProviderAdapter
 from degenbot.registry import TokenRegistry
 
 if TYPE_CHECKING:
@@ -206,8 +207,8 @@ class Erc20Builder:
             ),
         )
 
-        token.set_cached_balance(address, block_number, balance)
-        return balance
+        token.set_cached_balance(address, block_number, cast("int", balance))
+        return cast("int", balance)
 
     def get_token_approval(
         self,
@@ -242,8 +243,8 @@ class Erc20Builder:
             ),
         )
 
-        token.set_cached_approval(block_number, owner, spender, approval)
-        return approval
+        token.set_cached_approval(block_number, owner, spender, cast("int", approval))
+        return cast("int", approval)
 
     def get_token_total_supply(
         self,
@@ -273,8 +274,8 @@ class Erc20Builder:
             ),
         )
 
-        token.set_cached_total_supply(block_number, total_supply)
-        return total_supply
+        token.set_cached_total_supply(block_number, cast("int", total_supply))
+        return cast("int", total_supply)
 
     def get_ether_balance(
         self,
@@ -285,14 +286,16 @@ class Erc20Builder:
         """Retrieve the native ETH balance for the given address."""
         address = get_checksum_address(address)
         provider = self._connections.get_provider(chain_id)
-        return provider.get_balance(address, block=block_identifier)
+        return cast("int", provider.get_balance(address, block=block_identifier))
 
     @staticmethod
-    def _resolve_block_number(provider: Any, block_identifier: BlockIdentifier | None) -> int:
+    def _resolve_block_number(
+        provider: ProviderAdapter, block_identifier: BlockIdentifier | None
+    ) -> int:
         """Resolve a block identifier to a block number."""
         if block_identifier is None:
-            return provider.get_block_number()
+            return cast("int", provider.get_block_number())
         if isinstance(block_identifier, int):
             return block_identifier
         # For string identifiers like 'latest', 'earliest', 'pending'
-        return provider.get_block_number()
+        return cast("int", provider.get_block_number())
