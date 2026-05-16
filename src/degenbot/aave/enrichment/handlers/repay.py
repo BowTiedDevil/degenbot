@@ -102,6 +102,8 @@ class RepayHandler:
         the enriched scaled_amount directly.
         See debug/aave/0037 for details.
         """
+        assert operation.pool_event is not None
+        assert event.index is not None
         logger.debug(
             "ENRICHMENT: Interest exceeds repayment - using repay amount "
             "from pool event for burn calculation"
@@ -147,6 +149,8 @@ class RepayHandler:
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
         """Handle standard REPAY/GHO_REPAY burn event."""
+        assert operation.pool_event is not None
+        assert event.index is not None
         # Extract raw amount from Pool event
         raw_amount = context.extract_pool_amount(
             pool_event=operation.pool_event,
