@@ -9,6 +9,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import eth_abi.abi
+from eth_abi.exceptions import DecodingError
+from web3.exceptions import Web3Exception
 
 from degenbot.curve.detection.types import ARampingResult
 from degenbot.provider.call_helpers import encode_function_calldata
@@ -78,7 +80,7 @@ def detect_a_ramping(
             block=block_identifier,
         )
         (future_a_time,) = eth_abi.abi.decode(types=["uint256"], data=future_a_time_result)
-    except Exception:
+    except (Web3Exception, DecodingError, ValueError):
         return ARampingResult(
             initial_a=None,
             initial_a_time=None,
