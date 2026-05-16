@@ -85,6 +85,10 @@ class CurveStableswapPoolTracker(
                 message=f"Could not build Curve pool {pool_address}: {exc}"
             ) from exc
         else:
+            if not isinstance(new_pool, CurveStableswapPool):
+                raise PoolCreationFailed(
+                    message=f"Pool {pool_address} is not a Curve StableSwap pool"
+                )
             self._add_tracked_pool(new_pool)
             return new_pool
 
