@@ -22,7 +22,13 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
 from degenbot.connection.async_connection_manager import AsyncConnectionManager
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
-from degenbot.database.models.pools import LiquidityPoolTable, PoolManagerTable, UniswapV4PoolTable
+from degenbot.database.models.pools import (
+    LiquidityPoolTable,
+    PoolManagerTable,
+    UniswapFeeMixin,
+    UniswapV3PoolTableBase,
+    UniswapV4PoolTable,
+)
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.erc20.erc20 import (
@@ -37,7 +43,7 @@ from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError, TrackerAlreadyInitialized
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import async_raw_call, encode_function_calldata
-from degenbot.provider.interface import ProviderAdapter
+from degenbot.provider.interface import AsyncProviderAdapter
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.types.abstract import AbstractPoolTracker
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
@@ -130,7 +136,7 @@ class AsyncBot:
 
         # Check for Ether placeholder
         if address in EtherPlaceholder.addresses:
-            token = EtherPlaceholder(address, chain_id=chain_id)
+            token: Erc20Token = EtherPlaceholder(address, chain_id=chain_id)
             self.tokens.add(token_address=token.address, chain_id=chain_id, token=token)
             if not silent:
                 logger.info(f"• {token.symbol} ({token.name})")
@@ -197,7 +203,7 @@ class AsyncBot:
     async def _fetch_name_symbol_decimals_batched(
         self,
         address: str,
-        provider: ProviderAdapter,
+        provider: AsyncProviderAdapter,
     ) -> tuple[str, str, int]:
         """Fetch name, symbol, decimals from chain in three async calls."""
         name_result = await provider.call(
@@ -219,7 +225,7 @@ class AsyncBot:
 
         return name, symbol, decimals
 
-    def get_token(self, address: str, *, chain_id: ChainId | None = None) -> Erc20Token:
+    def get_token(self, address: str, *, chain_id: ChainId | None = None) -> Erc20Token | None:
         """Get a token from the registry (sync — no async I/O)."""
         chain_id = chain_id or self.connections.default_chain_id
         return self.tokens.get(token_address=address, chain_id=chain_id)
@@ -264,12 +270,18 @@ class AsyncBot:
             )
 
         # Get immutable values
-        if pool_from_db is not None:
+        if pool_from_db is not None and isinstance(pool_from_db, UniswapFeeMixin):
             factory = get_checksum_address(pool_from_db.exchange.factory)
             token0_address = pool_from_db.token0.address
             token1_address = pool_from_db.token1.address
             fee_token0 = Fraction(pool_from_db.fee_token0, pool_from_db.fee_denominator)
             fee_token1 = Fraction(pool_from_db.fee_token1, pool_from_db.fee_denominator)
+        elif pool_from_db is not None:
+            factory = get_checksum_address(pool_from_db.exchange.factory)
+            token0_address = pool_from_db.token0.address
+            token1_address = pool_from_db.token1.address
+            fee_token0 = Fraction(3, 1000)
+            fee_token1 = Fraction(3, 1000)
         else:
             try:
                 factory_result = await provider.call(
@@ -325,9 +337,9 @@ class AsyncBot:
             factory_deployment = _FACTORY_DEPLOYMENTS[chain_id][factory]
             _init_hash = factory_deployment.pool_init_hash
             if factory_deployment.deployer is not None:
-                _deployer = factory_deployment.deployer
+                _deployer = get_checksum_address(factory_deployment.deployer)
 
-        _deployer = deployer_address or _deployer
+        _deployer = get_checksum_address(deployer_address) if deployer_address is not None else _deployer
         _init_hash = init_hash or _init_hash
 
         pool = UniswapV2Pool(
@@ -399,8 +411,12 @@ class AsyncBot:
             factory = get_checksum_address(pool_from_db.exchange.factory)
             token0_address = pool_from_db.token0.address
             token1_address = pool_from_db.token1.address
-            fee = pool_from_db.fee_token0
-            tick_spacing_for_pool = pool_from_db.tick_spacing
+            if isinstance(pool_from_db, UniswapV3PoolTableBase):
+                fee = pool_from_db.fee_token0
+                tick_spacing_for_pool = pool_from_db.tick_spacing
+            else:
+                fee = 0
+                tick_spacing_for_pool = 60
         else:
             try:
                 factory_result = await provider.call(
@@ -526,9 +542,9 @@ class AsyncBot:
             factory_deployment = _FACTORY_DEPLOYMENTS[chain_id][factory]
             _init_hash = factory_deployment.pool_init_hash
             if factory_deployment.deployer is not None:
-                _deployer = factory_deployment.deployer
+                _deployer = get_checksum_address(factory_deployment.deployer)
 
-        _deployer = deployer_address or _deployer
+        _deployer = get_checksum_address(deployer_address) if deployer_address is not None else _deployer
         _init_hash = init_hash or _init_hash
 
         pool = UniswapV3Pool(
@@ -613,7 +629,7 @@ class AsyncBot:
             _hook_address = get_checksum_address(pool_from_db.hooks)
             tick_spacing_for_pool = pool_from_db.tick_spacing
             fee_for_pool = pool_from_db.fee_currency0
-            _state_view_address = pool_from_db.manager.state_view
+            _state_view_address = get_checksum_address(pool_from_db.manager.state_view)
         else:
             if state_view_address is None:
                 raise DegenbotValueError(
@@ -646,6 +662,7 @@ class AsyncBot:
         token0 = await self.build_erc20token(currency0_address, chain_id=chain_id, silent=silent)
         token1 = await self.build_erc20token(currency1_address, chain_id=chain_id, silent=silent)
 
+        assert _state_view_address is not None
         # Fetch slot0 + liquidity
         try:
             slot0_result = await provider.call(
@@ -682,6 +699,7 @@ class AsyncBot:
         (bitmap_at_word,) = await async_raw_call(
             provider,
             address=_state_view_address,
+
             calldata=encode_function_calldata(
                 "getTickBitmap(bytes32,int16)",
                 [pool_id_bytes, word],
@@ -699,6 +717,7 @@ class AsyncBot:
             for active_tick in active_ticks:
                 result = await provider.call(
                     to=_state_view_address,
+
                     data=encode_function_calldata(
                         "getTickLiquidity(bytes32,int24)",
                         [pool_id_bytes, active_tick],
@@ -881,7 +900,7 @@ class AsyncBot:
         chain_id = chain_id or self.connections.default_chain_id
         provider = self.connections.get_provider(chain_id)
         block = block_identifier if isinstance(block_identifier, int) else None
-        return cast("int", await provider.get_balance(address, block=block))
+        return await provider.get_balance(address, block=block)
 
     @staticmethod
     async def _resolve_block_number(
