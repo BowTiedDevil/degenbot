@@ -29,7 +29,7 @@ from degenbot.exceptions.pool import (
     NoPoolStateAvailable,
 )
 from degenbot.provider.call_helpers import encode_function_calldata
-from degenbot.types.abstract import AbstractLiquidityPool
+from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
 from degenbot.types.pool_pickle import PoolPickleMixin
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from degenbot.uniswap.types import UniswapPoolSwapVector
 
 
-class AerodromeV2Pool(
+class AerodromeV2Pool(  # type: ignore[override]
     PublisherMixin,
     PoolPickleMixin,
     AerodromeV2PoolStateMixin,
@@ -125,19 +125,19 @@ class AerodromeV2Pool(
         return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1}, stable={self._stable})"  # noqa:E501
 
     @property
-    def chain_id(self) -> int:
+    def chain_id(self) -> int | None:
         return self._chain_id
 
     @property
-    def reserves_token0(self) -> int:
+    def reserves_token0(self) -> int:  # type: ignore[override]
         return self.state.reserves_token0
 
     @property
-    def reserves_token1(self) -> int:
+    def reserves_token1(self) -> int:  # type: ignore[override]
         return self.state.reserves_token1
 
     @property
-    def state(self) -> PoolState:
+    def state(self) -> PoolState:  # type: ignore[override]
         return self._state_cache[-1]
 
     @property
@@ -221,7 +221,7 @@ class AerodromeV2Pool(
                 ),
             },
         ]
-        factory_data, token0_data, token1_data, stable_data = provider.batch_call(immutable_calls)
+        factory_data, token0_data, token1_data, stable_data = provider.batch_call(immutable_calls)  # type: ignore[arg-type]
 
         # This call uses a specific block so the reserve values are consistent
         reserves_data = provider.call_raw(
@@ -235,12 +235,12 @@ class AerodromeV2Pool(
             block=state_block,
         )
 
-        (factory,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", factory_data))
-        (token0,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token0_data))
-        (token1,) = eth_abi.abi.decode(types=["address"], data=cast("HexBytes", token1_data))
-        (stable,) = eth_abi.abi.decode(types=["bool"], data=cast("HexBytes", stable_data))
+        (factory,) = eth_abi.abi.decode(types=["address"], data=factory_data)
+        (token0,) = eth_abi.abi.decode(types=["address"], data=token0_data)
+        (token1,) = eth_abi.abi.decode(types=["address"], data=token1_data)
+        (stable,) = eth_abi.abi.decode(types=["bool"], data=stable_data)
         reserves0, reserves1, _ = eth_abi.abi.decode(
-            types=["uint256", "uint256", "uint256"], data=cast("HexBytes", reserves_data)
+            types=["uint256", "uint256", "uint256"], data=reserves_data
         )
 
         factory_checksum = get_checksum_address(cast("str", factory))
@@ -319,8 +319,15 @@ class AerodromeV2Pool(
         token_in: ChecksumAddress,
         amount_in: int,
         token_out: ChecksumAddress,
-        state_override: AerodromeV2PoolState | None = None,
+        state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
+        aero_state: AerodromeV2PoolState | None = None
+        if state_override is not None:
+            if not isinstance(state_override, AerodromeV2PoolState):
+                msg = f"Expected AerodromeV2PoolState, got {type(state_override).__name__}"
+                raise DegenbotValueError(message=msg)
+            aero_state = state_override
+
         if token_in == self._token0.address:
             token_in_obj = self._token0
         elif token_in == self._token1.address:
@@ -328,11 +335,11 @@ class AerodromeV2Pool(
         else:
             raise DegenbotValueError(message=f"token_in {token_in} not in pool")
 
-        initial_state = state_override or self.state
+        initial_state = aero_state or self.state
         amount_out = self.calculate_tokens_out_from_tokens_in(
             token_in=token_in_obj,
             token_in_quantity=amount_in,
-            override_state=state_override,
+            override_state=aero_state,
         )
         return SimulationResult(
             amount_in=amount_in,
