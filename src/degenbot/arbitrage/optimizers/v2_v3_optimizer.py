@@ -558,7 +558,7 @@ class V2V3Optimizer:
         v2_state = V2PoolState(
             reserve0=float(v2_pool.state.reserves_token0),
             reserve1=float(v2_pool.state.reserves_token1),
-            fee=float(v2_pool.fee[0]),
+            fee=float(v2_pool.fee[0] if isinstance(v2_pool.fee, tuple) else v2_pool.fee),
             token0_address=v2_pool.token0.address,
             token1_address=v2_pool.token1.address,
         )
