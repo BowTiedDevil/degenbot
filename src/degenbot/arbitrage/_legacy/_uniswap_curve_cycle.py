@@ -1,8 +1,14 @@
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Awaitable, Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from degenbot.async_bot import AsyncBot
+    from degenbot.bot import Bot
 from weakref import WeakSet
 
 import eth_abi.abi
@@ -66,7 +72,7 @@ class _UniswapCurveCycle(PublisherMixin):
         swap_pools: Iterable[CurveOrUniswapPool],
         id: str,  # noqa:A002
         max_input: int | None = None,
-        bot: Any | None = None,
+        bot: Bot | AsyncBot | None = None,
     ) -> None:
         self._bot = bot
         for swap_pool in swap_pools:
@@ -592,9 +598,7 @@ class _UniswapCurveCycle(PublisherMixin):
         if self._bot is None:
             msg = "A Bot instance is required for async calculations"
             raise ValueError(msg)
-        block_number = self._bot.connections.get_provider(
-            curve_pool.chain_id
-        ).get_block_number()
+        block_number = self._bot.connections.get_provider(curve_pool.chain_id).get_block_number()
 
         # Some Curve pools utilize on-chain lookups in their calc, so do a simple pre-calc to
         # cache those values for a given block since the pool will be disconnected once sent

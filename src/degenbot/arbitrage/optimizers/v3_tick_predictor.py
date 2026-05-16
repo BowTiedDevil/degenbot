@@ -12,12 +12,15 @@ This module provides:
 3. Efficient V3 pool analysis for routing
 """
 
+from __future__ import annotations
+
 import math
 import operator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from degenbot.types.pool_protocols import ConstantProductPool
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 
@@ -541,7 +544,7 @@ def estimate_v2_equilibrium_price(
 
 
 def predict_v2_v3_optimal_range(
-    v2_pool_state: Any,
+    v2_pool_state: ConstantProductPool,
     v3_pool_state: V3PoolState,
     v3_tick_ranges: list[TickRange],
     input_token_is_token0: bool,
@@ -554,7 +557,7 @@ def predict_v2_v3_optimal_range(
 
     Parameters
     ----------
-    v2_pool_state : Any
+    v2_pool_state : ConstantProductPool
         V2 pool state (with reserves).
     v3_pool_state : V3PoolState
         V3 pool state.
