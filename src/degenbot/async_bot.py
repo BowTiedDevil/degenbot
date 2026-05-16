@@ -43,7 +43,6 @@ from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError, TrackerAlreadyInitialized
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import async_raw_call, encode_function_calldata
-from degenbot.provider.interface import AsyncProviderAdapter
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.types.abstract import AbstractPoolTracker
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
@@ -60,8 +59,10 @@ from degenbot.uniswap.v4_types import UniswapV4BitmapAtWord, UniswapV4LiquidityA
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from web3 import AsyncBaseProvider, AsyncWeb3
     from web3.types import BlockIdentifier
 
+    from degenbot.provider.interface import AsyncProviderAdapter
     from degenbot.types.aliases import ChainId
 
 
@@ -105,14 +106,16 @@ class AsyncBot:
             key = (chain_id, get_checksum_address(factory_address))
             if key in self._trackers:
                 raise TrackerAlreadyInitialized(
-                    message=f"A {manager_cls.__name__} is already registered for chain {chain_id}, factory {factory_address}"
+                    message=(
+                        f"A {manager_cls.__name__} is already registered"
+                        f" for chain {chain_id}, factory {factory_address}"
+                    )
                 )
             manager = manager_cls(*args, **kwargs)
             self._trackers[key] = manager
             return manager
 
-        manager = manager_cls(*args, **kwargs)
-        return manager
+        return manager_cls(*args, **kwargs)
 
     # ------------------------------------------------------------------
     # ERC-20 token factory
@@ -200,8 +203,8 @@ class AsyncBot:
 
         return token
 
+    @staticmethod
     async def _fetch_name_symbol_decimals_batched(
-        self,
         address: str,
         provider: AsyncProviderAdapter,
     ) -> tuple[str, str, int]:
@@ -243,7 +246,7 @@ class AsyncBot:
         init_hash: str | None = None,
         state_block: int | None = None,
         silent: bool = False,
-    ) -> Any:
+    ) -> UniswapV2Pool:
         """.. deprecated:: 0.x
         Use ``build_pool(address)`` instead.
         """
@@ -257,7 +260,9 @@ class AsyncBot:
         chain_id = chain_id or self.connections.default_chain_id
         provider = self.connections.get_provider(chain_id)
 
-        _state_block = state_block if state_block is not None else await provider.get_block_number()
+        resolved_state_block = (
+            state_block if state_block is not None else await provider.get_block_number()
+        )
 
         # Try DB first
         pool_from_db = None
@@ -320,7 +325,7 @@ class AsyncBot:
             reserves_result = await provider.call(
                 to=pool_address,
                 data=encode_function_calldata("getReserves()", None),
-                block=_state_block,
+                block=resolved_state_block,
             )
         except Exception as exc:
             raise LiquidityPoolError(message="Could not decode contract data") from exc
@@ -331,16 +336,20 @@ class AsyncBot:
         )
 
         # Determine deployer/init_hash
-        _deployer = factory
-        _init_hash = UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH
+        resolved_deployer = factory
+        resolved_init_hash = UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH
         with contextlib.suppress(KeyError):
             factory_deployment = _FACTORY_DEPLOYMENTS[chain_id][factory]
-            _init_hash = factory_deployment.pool_init_hash
+            resolved_init_hash = factory_deployment.pool_init_hash
             if factory_deployment.deployer is not None:
-                _deployer = get_checksum_address(factory_deployment.deployer)
+                resolved_deployer = get_checksum_address(factory_deployment.deployer)
 
-        _deployer = get_checksum_address(deployer_address) if deployer_address is not None else _deployer
-        _init_hash = init_hash or _init_hash
+        resolved_deployer = (
+            get_checksum_address(deployer_address)
+            if deployer_address is not None
+            else resolved_deployer
+        )
+        resolved_init_hash = init_hash or resolved_init_hash
 
         pool = UniswapV2Pool(
             address=pool_address,
@@ -352,9 +361,9 @@ class AsyncBot:
             fee_token1=fee_token1,
             reserves_token0=reserves0,
             reserves_token1=reserves1,
-            deployer_address=_deployer,
-            init_hash=_init_hash,
-            state_block=_state_block,
+            deployer_address=resolved_deployer,
+            init_hash=resolved_init_hash,
+            state_block=resolved_state_block,
         )
 
         self.pools.add(pool_address=pool.address, chain_id=chain_id, pool=pool)
@@ -380,7 +389,7 @@ class AsyncBot:
         init_hash: str | None = None,
         state_block: int | None = None,
         silent: bool = False,
-    ) -> Any:
+    ) -> UniswapV3Pool:
         """.. deprecated:: 0.x
         Use ``build_pool(address)`` instead.
         """
@@ -394,7 +403,9 @@ class AsyncBot:
         chain_id = chain_id or self.connections.default_chain_id
         provider = self.connections.get_provider(chain_id)
 
-        _state_block = state_block if state_block is not None else await provider.get_block_number()
+        resolved_state_block = (
+            state_block if state_block is not None else await provider.get_block_number()
+        )
 
         # Try DB first
         pool_from_db = None
@@ -463,12 +474,12 @@ class AsyncBot:
             slot0_result = await provider.call(
                 to=pool_address,
                 data=encode_function_calldata("slot0()", None),
-                block=_state_block,
+                block=resolved_state_block,
             )
             liquidity_result = await provider.call(
                 to=pool_address,
                 data=encode_function_calldata("liquidity()", None),
-                block=_state_block,
+                block=resolved_state_block,
             )
         except Exception as exc:
             raise LiquidityPoolError(message="Could not decode contract data") from exc
@@ -493,7 +504,7 @@ class AsyncBot:
             address=pool_address,
             calldata=encode_function_calldata("tickBitmap(int16)", [word]),
             return_types=["uint256"],
-            block_identifier=_state_block,
+            block_identifier=resolved_state_block,
         )
 
         if bitmap_at_word != 0:
@@ -506,7 +517,7 @@ class AsyncBot:
                 result = await provider.call(
                     to=pool_address,
                     data=encode_function_calldata("ticks(int24)", [active_tick]),
-                    block=_state_block,
+                    block=resolved_state_block,
                 )
                 liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
                     types=[
@@ -524,28 +535,32 @@ class AsyncBot:
                 working_tick_data[active_tick] = UniswapV3LiquidityAtTick(
                     liquidity_net=int(liquidity_net),
                     liquidity_gross=int(liquidity_gross),
-                    block=_state_block,
+                    block=resolved_state_block,
                 )
 
         working_tick_bitmap[word] = UniswapV3BitmapAtWord(
             bitmap=bitmap_at_word,
-            block=_state_block,
+            block=resolved_state_block,
         )
 
-        _tick_bitmap_arg = working_tick_bitmap if working_tick_data else None
-        _tick_data_arg = working_tick_data or None
+        tick_bitmap_arg = working_tick_bitmap if working_tick_data else None
+        tick_data_arg = working_tick_data or None
 
         # Determine deployer/init_hash
-        _deployer = factory
-        _init_hash = UniswapV3Pool.UNISWAP_V3_MAINNET_POOL_INIT_HASH
+        resolved_deployer = factory
+        resolved_init_hash = UniswapV3Pool.UNISWAP_V3_MAINNET_POOL_INIT_HASH
         with contextlib.suppress(KeyError):
             factory_deployment = _FACTORY_DEPLOYMENTS[chain_id][factory]
-            _init_hash = factory_deployment.pool_init_hash
+            resolved_init_hash = factory_deployment.pool_init_hash
             if factory_deployment.deployer is not None:
-                _deployer = get_checksum_address(factory_deployment.deployer)
+                resolved_deployer = get_checksum_address(factory_deployment.deployer)
 
-        _deployer = get_checksum_address(deployer_address) if deployer_address is not None else _deployer
-        _init_hash = init_hash or _init_hash
+        resolved_deployer = (
+            get_checksum_address(deployer_address)
+            if deployer_address is not None
+            else resolved_deployer
+        )
+        resolved_init_hash = init_hash or resolved_init_hash
 
         pool = UniswapV3Pool(
             address=pool_address,
@@ -558,11 +573,11 @@ class AsyncBot:
             sqrt_price_x96=int(sqrt_price_x96),
             tick=int(tick),
             liquidity=int(liquidity),
-            state_block=_state_block,
-            tick_bitmap=_tick_bitmap_arg,
-            tick_data=_tick_data_arg,
-            deployer_address=_deployer,
-            init_hash=_init_hash,
+            state_block=resolved_state_block,
+            tick_bitmap=tick_bitmap_arg,
+            tick_data=tick_data_arg,
+            deployer_address=resolved_deployer,
+            init_hash=resolved_init_hash,
         )
 
         self.pools.add(pool_address=pool.address, chain_id=chain_id, pool=pool)
@@ -589,7 +604,7 @@ class AsyncBot:
         chain_id: ChainId | None = None,
         state_block: int | None = None,
         silent: bool = False,
-    ) -> Any:
+    ) -> UniswapV4Pool:
         """.. deprecated:: 0.x
         Use ``build_pool(address, pool_id=...)`` instead.
         """
@@ -604,7 +619,9 @@ class AsyncBot:
         chain_id = chain_id or self.connections.default_chain_id
         provider = self.connections.get_provider(chain_id)
 
-        _state_block = state_block if state_block is not None else await provider.get_block_number()
+        resolved_state_block = (
+            state_block if state_block is not None else await provider.get_block_number()
+        )
 
         # Try DB first
         pool_from_db = None
@@ -626,14 +643,17 @@ class AsyncBot:
         if pool_from_db is not None:
             currency0_address = pool_from_db.currency0.address
             currency1_address = pool_from_db.currency1.address
-            _hook_address = get_checksum_address(pool_from_db.hooks)
+            resolved_hook_address = get_checksum_address(pool_from_db.hooks)
             tick_spacing_for_pool = pool_from_db.tick_spacing
             fee_for_pool = pool_from_db.fee_currency0
-            _state_view_address = get_checksum_address(pool_from_db.manager.state_view)
+            resolved_state_view_address = get_checksum_address(pool_from_db.manager.state_view)
         else:
             if state_view_address is None:
                 raise DegenbotValueError(
-                    message="A state view contract address must be provided for a pool not in the database."
+                    message=(
+                        "A state view contract address must be provided"
+                        " for a pool not in the database."
+                    )
                 )
             if fee is None:
                 raise DegenbotValueError(
@@ -648,12 +668,12 @@ class AsyncBot:
                     message="Token addresses must be provided for a pool not in the database."
                 )
 
-            _state_view_address = get_checksum_address(state_view_address)
+            resolved_state_view_address = get_checksum_address(state_view_address)
             currency0_address, currency1_address = sorted(
                 [get_checksum_address(t) for t in tokens],
                 key=lambda t: t.lower(),
             )
-            _hook_address = (
+            resolved_hook_address = (
                 get_checksum_address(hook_address) if hook_address is not None else _ZERO_ADDRESS
             )
             fee_for_pool = fee
@@ -662,18 +682,18 @@ class AsyncBot:
         token0 = await self.build_erc20token(currency0_address, chain_id=chain_id, silent=silent)
         token1 = await self.build_erc20token(currency1_address, chain_id=chain_id, silent=silent)
 
-        assert _state_view_address is not None
+        assert resolved_state_view_address is not None
         # Fetch slot0 + liquidity
         try:
             slot0_result = await provider.call(
-                to=_state_view_address,
+                to=resolved_state_view_address,
                 data=encode_function_calldata("getSlot0(bytes32)", [pool_id_bytes]),
-                block=_state_block,
+                block=resolved_state_block,
             )
             liquidity_result = await provider.call(
-                to=_state_view_address,
+                to=resolved_state_view_address,
                 data=encode_function_calldata("getLiquidity(bytes32)", [pool_id_bytes]),
-                block=_state_block,
+                block=resolved_state_block,
             )
         except Exception as exc:
             raise LiquidityPoolError(message="Could not decode contract data") from exc
@@ -698,14 +718,13 @@ class AsyncBot:
 
         (bitmap_at_word,) = await async_raw_call(
             provider,
-            address=_state_view_address,
-
+            address=resolved_state_view_address,
             calldata=encode_function_calldata(
                 "getTickBitmap(bytes32,int16)",
                 [pool_id_bytes, word],
             ),
             return_types=["uint256"],
-            block_identifier=_state_block,
+            block_identifier=resolved_state_block,
         )
 
         if bitmap_at_word != 0:
@@ -716,13 +735,12 @@ class AsyncBot:
             ]
             for active_tick in active_ticks:
                 result = await provider.call(
-                    to=_state_view_address,
-
+                    to=resolved_state_view_address,
                     data=encode_function_calldata(
                         "getTickLiquidity(bytes32,int24)",
                         [pool_id_bytes, active_tick],
                     ),
-                    block=_state_block,
+                    block=resolved_state_block,
                 )
                 liquidity_gross, liquidity_net = eth_abi.abi.decode(
                     types=["uint128", "int128"],
@@ -731,16 +749,16 @@ class AsyncBot:
                 working_tick_data[active_tick] = UniswapV4LiquidityAtTick(
                     liquidity_net=int(liquidity_net),
                     liquidity_gross=int(liquidity_gross),
-                    block=_state_block,
+                    block=resolved_state_block,
                 )
 
         working_tick_bitmap[word] = UniswapV4BitmapAtWord(
             bitmap=bitmap_at_word,
-            block=_state_block,
+            block=resolved_state_block,
         )
 
-        _tick_bitmap_arg = working_tick_bitmap if working_tick_data else None
-        _tick_data_arg = working_tick_data or None
+        tick_bitmap_arg = working_tick_bitmap if working_tick_data else None
+        tick_data_arg = working_tick_data or None
 
         pool = UniswapV4Pool(
             pool_id=pool_id_bytes,
@@ -749,17 +767,17 @@ class AsyncBot:
             token1=token1,
             fee=fee_for_pool,
             tick_spacing=tick_spacing_for_pool,
-            hook_address=_hook_address,
-            state_view_address=_state_view_address,
+            hook_address=resolved_hook_address,
+            state_view_address=resolved_state_view_address,
             sqrt_price_x96=int(price),
             tick=int(tick_val),
             liquidity=int(liquidity_val),
             protocol_fee_zero_for_one=protocol_fee_zero_to_one,
             protocol_fee_one_for_zero=protocol_fee_one_to_zero,
             lp_fee=int(lp_fee_val),
-            state_block=_state_block,
-            tick_bitmap=_tick_bitmap_arg,
-            tick_data=_tick_data_arg,
+            state_block=resolved_state_block,
+            tick_bitmap=tick_bitmap_arg,
+            tick_data=tick_data_arg,
         )
 
         self.managed_pools.add(
@@ -904,20 +922,20 @@ class AsyncBot:
 
     @staticmethod
     async def _resolve_block_number(
-        provider: Any, block_identifier: BlockIdentifier | None
+        provider: AsyncProviderAdapter, block_identifier: BlockIdentifier | None
     ) -> int:
         """Resolve a block identifier to a block number."""
         if block_identifier is None:
-            return cast("int", await provider.get_block_number())
+            return await provider.get_block_number()
         if isinstance(block_identifier, int):
             return block_identifier
         # For string identifiers like 'latest', 'earliest', 'pending'
-        return cast("int", await provider.get_block_number())
+        return await provider.get_block_number()
 
-    def get_provider(self, *, chain_id: ChainId) -> Any:
+    def get_provider(self, *, chain_id: ChainId) -> AsyncProviderAdapter:
         return self.connections.get_provider(chain_id)
 
-    def get_web3(self, *, chain_id: ChainId) -> Any:
+    def get_web3(self, *, chain_id: ChainId) -> AsyncWeb3[AsyncBaseProvider]:
         """.. deprecated:: 0.x
         Use ``get_provider(chain_id)`` instead.
         """
