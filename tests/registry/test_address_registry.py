@@ -23,15 +23,15 @@ TEST_POOL_ID = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678
 class TestAddressRegistry:
     def test_get_missing_returns_none(self):
         registry = AddressRegistry()
-        assert registry.get(chain_id=1, address=TEST_ADDRESS_1) is None
+        assert registry._get(chain_id=1, address=TEST_ADDRESS_1) is None
 
     def test_add_and_retrieve(self):
         registry = AddressRegistry()
         item = FakeItem(TEST_ADDRESS_1)
 
-        registry.add(item=item, chain_id=1, address=TEST_ADDRESS_1)
+        registry._add(item=item, chain_id=1, address=TEST_ADDRESS_1)
 
-        assert registry.get(chain_id=1, address=TEST_ADDRESS_1) is item
+        assert registry._get(chain_id=1, address=TEST_ADDRESS_1) is item
         assert len(registry) == 1
 
     def test_add_duplicate_raises_by_default(self):
@@ -39,49 +39,48 @@ class TestAddressRegistry:
         item1 = FakeItem(TEST_ADDRESS_1)
         item2 = FakeItem(TEST_ADDRESS_2)
 
-        registry.add(item=item1, chain_id=1, address=TEST_ADDRESS_1)
+        registry._add(item=item1, chain_id=1, address=TEST_ADDRESS_1)
 
         with pytest.raises(DegenbotValueError, match="is already registered"):
-            registry.add(item=item2, chain_id=1, address=TEST_ADDRESS_1)
+            registry._add(item=item2, chain_id=1, address=TEST_ADDRESS_1)
 
     def test_add_duplicate_with_ignore(self):
         registry = AddressRegistry(on_duplicate="ignore")
         item1 = FakeItem(TEST_ADDRESS_1)
         item2 = FakeItem(TEST_ADDRESS_2)
 
-        registry.add(item=item1, chain_id=1, address=TEST_ADDRESS_1)
-        registry.add(item=item2, chain_id=1, address=TEST_ADDRESS_1)
+        registry._add(item=item1, chain_id=1, address=TEST_ADDRESS_1)
+        registry._add(item=item2, chain_id=1, address=TEST_ADDRESS_1)
 
         assert len(registry) == 1
-        assert registry.get(chain_id=1, address=TEST_ADDRESS_1) is item1
+        assert registry._get(chain_id=1, address=TEST_ADDRESS_1) is item1
 
     def test_add_duplicate_with_replace(self):
         registry = AddressRegistry(on_duplicate="replace")
         item1 = FakeItem(TEST_ADDRESS_1)
         item2 = FakeItem(TEST_ADDRESS_2)
 
-        registry.add(item=item1, chain_id=1, address=TEST_ADDRESS_1)
-        registry.add(item=item2, chain_id=1, address=TEST_ADDRESS_1)
+        registry._add(item=item1, chain_id=1, address=TEST_ADDRESS_1)
+        registry._add(item=item2, chain_id=1, address=TEST_ADDRESS_1)
 
         assert len(registry) == 1
-        assert registry.get(chain_id=1, address=TEST_ADDRESS_1) is item2
+        assert registry._get(chain_id=1, address=TEST_ADDRESS_1) is item2
 
     def test_remove_pool(self):
         registry = AddressRegistry()
         item = FakeItem(TEST_ADDRESS_1)
 
-        registry.add(item=item, chain_id=1, address=TEST_ADDRESS_1)
-        registry.remove(chain_id=1, address=TEST_ADDRESS_1)
+        registry._add(item=item, chain_id=1, address=TEST_ADDRESS_1)
+        registry._remove(chain_id=1, address=TEST_ADDRESS_1)
 
-        assert registry.get(chain_id=1, address=TEST_ADDRESS_1) is None
+        assert registry._get(chain_id=1, address=TEST_ADDRESS_1) is None
         assert len(registry) == 0
 
-    def test_remove_missing_is_noop(self):
+    def test_remove_missing_is_noop(self) -> None:
         registry = AddressRegistry()
 
-        result = registry.remove(chain_id=1, address=TEST_ADDRESS_1)
+        registry._remove(chain_id=1, address=TEST_ADDRESS_1)
 
-        assert result is None
         assert len(registry) == 0
 
     def test_list_all_yields_items(self):
@@ -89,8 +88,8 @@ class TestAddressRegistry:
         item1 = FakeItem(TEST_ADDRESS_1)
         item2 = FakeItem(TEST_ADDRESS_2)
 
-        registry.add(item=item1, chain_id=1, address=TEST_ADDRESS_1)
-        registry.add(item=item2, chain_id=1, address=TEST_ADDRESS_2)
+        registry._add(item=item1, chain_id=1, address=TEST_ADDRESS_1)
+        registry._add(item=item2, chain_id=1, address=TEST_ADDRESS_2)
 
         items = list(registry.list_all())
         assert set(items) == {item1, item2}
@@ -100,9 +99,9 @@ class TestAddressRegistry:
         item = FakeItem(TEST_ADDRESS_1)
 
         # Add with lowercase, retrieve with checksummed
-        registry.add(item=item, chain_id=1, address=TEST_ADDRESS_1.lower())
+        registry._add(item=item, chain_id=1, address=TEST_ADDRESS_1.lower())
         # Use the same address - checksum function should handle it
-        retrieved = registry.get(chain_id=1, address=TEST_ADDRESS_1)
+        retrieved = registry._get(chain_id=1, address=TEST_ADDRESS_1)
 
         assert retrieved is item
 
@@ -110,10 +109,10 @@ class TestAddressRegistry:
         registry = AddressRegistry(name="TestRegistry")
         item = FakeItem(TEST_ADDRESS_1)
 
-        registry.add(item=item, chain_id=1, address=TEST_ADDRESS_1)
+        registry._add(item=item, chain_id=1, address=TEST_ADDRESS_1)
 
         with pytest.raises(DegenbotValueError, match="TestRegistry is already registered"):
-            registry.add(item=item, chain_id=1, address=TEST_ADDRESS_1)
+            registry._add(item=item, chain_id=1, address=TEST_ADDRESS_1)
 
 
 class TestMultiKeyAddressRegistry:
@@ -122,7 +121,7 @@ class TestMultiKeyAddressRegistry:
             address_fields=("pool_manager_address", "pool_id"),
         )
         assert (
-            registry.get(
+            registry._get(
                 chain_id=1,
                 pool_manager_address=TEST_MANAGER_ADDRESS,
                 pool_id=TEST_POOL_ID,
@@ -136,14 +135,14 @@ class TestMultiKeyAddressRegistry:
         )
         item = FakeItem(TEST_ADDRESS_1)
 
-        registry.add(
+        registry._add(
             item=item,
             chain_id=1,
             pool_manager_address=TEST_MANAGER_ADDRESS,
             pool_id=TEST_POOL_ID,
         )
 
-        retrieved = registry.get(
+        retrieved = registry._get(
             chain_id=1,
             pool_manager_address=TEST_MANAGER_ADDRESS,
             pool_id=TEST_POOL_ID,
@@ -158,7 +157,7 @@ class TestMultiKeyAddressRegistry:
         item1 = FakeItem(TEST_ADDRESS_1)
         item2 = FakeItem(TEST_ADDRESS_2)
 
-        registry.add(
+        registry._add(
             item=item1,
             chain_id=1,
             pool_manager_address=TEST_MANAGER_ADDRESS,
@@ -166,7 +165,7 @@ class TestMultiKeyAddressRegistry:
         )
 
         with pytest.raises(DegenbotValueError, match="is already registered"):
-            registry.add(
+            registry._add(
                 item=item2,
                 chain_id=1,
                 pool_manager_address=TEST_MANAGER_ADDRESS,
@@ -179,20 +178,20 @@ class TestMultiKeyAddressRegistry:
         )
         item = FakeItem(TEST_ADDRESS_1)
 
-        registry.add(
+        registry._add(
             item=item,
             chain_id=1,
             pool_manager_address=TEST_MANAGER_ADDRESS,
             pool_id=TEST_POOL_ID,
         )
-        registry.remove(
+        registry._remove(
             chain_id=1,
             pool_manager_address=TEST_MANAGER_ADDRESS,
             pool_id=TEST_POOL_ID,
         )
 
         assert (
-            registry.get(
+            registry._get(
                 chain_id=1,
                 pool_manager_address=TEST_MANAGER_ADDRESS,
                 pool_id=TEST_POOL_ID,
@@ -200,18 +199,18 @@ class TestMultiKeyAddressRegistry:
             is None
         )
 
-    def test_remove_missing_is_noop(self):
+    def test_remove_missing_is_noop(self) -> None:
         registry = MultiKeyAddressRegistry(
             address_fields=("pool_manager_address", "pool_id"),
         )
 
-        result = registry.remove(
+        registry._remove(
             chain_id=1,
             pool_manager_address=TEST_MANAGER_ADDRESS,
             pool_id=TEST_POOL_ID,
         )
 
-        assert result is None
+        assert len(registry) == 0
 
     def test_missing_address_field_raises_error(self):
         registry = MultiKeyAddressRegistry(
@@ -220,7 +219,7 @@ class TestMultiKeyAddressRegistry:
         item = FakeItem(TEST_ADDRESS_1)
 
         with pytest.raises(ValueError, match="Missing required address field"):
-            registry.add(
+            registry._add(
                 item=item,
                 chain_id=1,
                 pool_manager_address=TEST_MANAGER_ADDRESS,  # Missing pool_id
@@ -237,7 +236,7 @@ class TestMultiKeyAddressRegistry:
 
         pool_id_bytes = HexBytes(TEST_POOL_ID)
 
-        registry.add(
+        registry._add(
             item=item,
             chain_id=1,
             pool_manager_address=TEST_MANAGER_ADDRESS,
@@ -245,7 +244,7 @@ class TestMultiKeyAddressRegistry:
         )
 
         # Should retrieve correctly (pool_id is kept as HexBytes)
-        retrieved = registry.get(
+        retrieved = registry._get(
             chain_id=1,
             pool_manager_address=TEST_MANAGER_ADDRESS,
             pool_id=pool_id_bytes,

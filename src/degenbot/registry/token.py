@@ -13,27 +13,27 @@ class TokenRegistry(AddressRegistry["Erc20Token"]):
     def __init__(self) -> None:
         super().__init__(name="Token")
 
-    def get(  # type: ignore[override]
+    def get(
         self,
         token_address: str,
         chain_id: ChainId,
     ) -> "Erc20Token | None":
         """Retrieve a token by chain and address."""
-        return super().get(chain_id=chain_id, address=token_address)
+        return self._get(chain_id=chain_id, address=token_address)
 
-    def add(  # type: ignore[override]
+    def add(
         self,
         token_address: str,
         chain_id: ChainId,
         token: "Erc20Token",
     ) -> None:
         """Register a token."""
-        super().add(item=token, chain_id=chain_id, address=token_address)
+        self._add(item=token, chain_id=chain_id, address=token_address)
 
-    def remove(  # type: ignore[override]
+    def remove(
         self,
         token_address: str,
         chain_id: ChainId,
     ) -> None:
         """Remove a token from the registry."""
-        super().remove(chain_id=chain_id, address=token_address)
+        self._remove(chain_id=chain_id, address=token_address)
