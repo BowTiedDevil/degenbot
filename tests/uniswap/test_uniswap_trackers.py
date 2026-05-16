@@ -329,13 +329,13 @@ def test_get_pool_with_kwargs(fork_mainnet_full: AnvilFork):
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS,
         bot=bot,
     )
-    uniswap_v2_pool_tracker.get_pool(MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS, pool_class_kwargs={})
+    uniswap_v2_pool_tracker.get_pool(MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS)
 
     uniswap_v3_pool_tracker = UniswapV3PoolTracker(
         factory_address=MAINNET_UNISWAP_V3_FACTORY_ADDRESS,
         bot=bot,
     )
-    uniswap_v3_pool_tracker.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS, pool_class_kwargs={})
+    uniswap_v3_pool_tracker.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
 
 
 def test_pools_from_token_path(fork_mainnet_full: AnvilFork) -> None:

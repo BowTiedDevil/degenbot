@@ -180,7 +180,7 @@ class UniswapV4Pool(  # type: ignore[override]
 
         self._chain_id: Final[int | None] = chain_id if chain_id is not None else token0.chain_id
 
-        # TODO: check - should this be zero?
+        # Default state_block to zero if not provided
         state_block = state_block if state_block is not None else 0
         self._initial_state_block = state_block
 

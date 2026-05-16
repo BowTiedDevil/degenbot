@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextlib
 from threading import Lock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.pool import (
@@ -74,7 +74,6 @@ class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool
         pool_address: ChecksumAddress | str,
         *,
         silent: bool = False,
-        pool_class_kwargs: dict[str, Any] | None = None,
     ) -> Pool:
         """
         Get a pool from its address. If the pool is already tracked or found in the global registry,
@@ -143,7 +142,6 @@ class UniswapV2PoolTracker(AbstractUniswapV2PoolTracker[UniswapV2Pool], pool_fac
         token_addresses: tuple[str, str],
         *,
         silent: bool = False,
-        pool_class_kwargs: dict[str, Any] | None = None,
     ) -> UniswapV2Pool:
         """
         Get a pool by its token addresses
@@ -158,7 +156,6 @@ class UniswapV2PoolTracker(AbstractUniswapV2PoolTracker[UniswapV2Pool], pool_fac
         return self.get_pool(
             pool_address=pool_address,
             silent=silent,
-            pool_class_kwargs=pool_class_kwargs,
         )
 
 
@@ -176,6 +173,7 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
         self,
         factory_address: ChecksumAddress | str,
         bot: Bot,
+        *,
         deployer_address: ChecksumAddress | str | None = None,
         chain_id: ChainId | None = None,
         pool_init_hash: str | None = None,
@@ -229,7 +227,6 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
         pool_address: ChecksumAddress | str,
         *,
         silent: bool = False,
-        pool_class_kwargs: dict[str, Any] | None = None,
     ) -> Pool:
         """
         Get a pool from its address. If the pool is already tracked or found in the pool registry,
@@ -303,8 +300,6 @@ class UniswapV3PoolTracker(AbstractUniswapV3PoolTracker[UniswapV3Pool], pool_fac
         pool_fee: int,
         *,
         silent: bool = False,
-        # keyword arguments passed to the pool class constructor
-        pool_class_kwargs: dict[str, Any] | None = None,
     ) -> UniswapV3Pool:
         """
         Get a pool by its token addresses
@@ -320,5 +315,4 @@ class UniswapV3PoolTracker(AbstractUniswapV3PoolTracker[UniswapV3Pool], pool_fac
         return self.get_pool(
             pool_address=pool_address,
             silent=silent,
-            pool_class_kwargs=pool_class_kwargs,
         )

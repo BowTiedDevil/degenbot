@@ -48,7 +48,7 @@ class _HasTickData(Protocol):
     def tick_bitmap(self) -> Mapping[int, object]: ...
 
 
-class _HasLiquidityNet(Protocol):
+class _HasLiquidityNet(Protocol):  # noqa: PYI046
     """Duck-type for tick entries that carry a ``liquidity_net`` field."""
 
     @property
