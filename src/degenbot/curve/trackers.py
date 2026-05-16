@@ -105,4 +105,8 @@ class CurveStableswapPoolTracker(
         ]
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"{self.__class__.__name__}(chain_id={self._chain_id}, pools={len(self._tracked_pools)})"
+        return (
+            f"{self.__class__.__name__}("
+            f"chain_id={self._chain_id}, "
+            f"pools={len(self._tracked_pools)})"
+        )

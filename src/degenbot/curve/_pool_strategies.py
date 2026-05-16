@@ -65,9 +65,9 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
     # ⚠️  These have NOT been systematically verified against contract
     # source. See module docstring for the full warning.
     # ────────────────────────────────────────────────────────────────
-
     # ── Metapool rate style variants ──
-    # Source: `if self.address == "0xC61557C5..."`` and similar blocks in get_dy()/_get_dy_underlying()
+    # Source: `if self.address == "0xC61557C5..."` blocks
+    # in get_dy()/_get_dy_underlying()
     # 0xC61557C5d177bd7DC889A3b621eEC333e168f68A
     #   get_dy metapool: (PRECISION, virtual_price)
     #   _get_dy_underlying: (PRECISION, virtual_price) with special base_i/base_j logic
@@ -88,7 +88,6 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
         metapool_rate_style=MetapoolRateStyle.PRECISION_VP,
         metapool_underlying_style=MetapoolUnderlyingStyle.PRECISION_VP,
     ),
-
     # ── Live balances minus admin (SwapStyle.LIVE_ADMIN) ──
     # Source: LIVE_ADMIN_ADDRESSES frozenset in old CurveStableswapPool
     _a("0x4e0915C88bC70750D68C481540F081fEFaF22273"): PoolStrategies(
@@ -106,13 +105,11 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
     _a("0x3Fb78e61784C9c637D560eDE23Ad57CA1294c14a"): PoolStrategies(
         swap_style=SwapStyle.LIVE_ADMIN,
     ),
-
     # ── Crypto pool ──
     # Source: `if self.address == "0x80466c64..."` block in get_dy()
     _a("0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5"): PoolStrategies(
         swap_style=SwapStyle.CRYPTO,
     ),
-
     # ── Rate-adjusted fee style (SwapStyle.RATE_ADJUSTED) ──
     # Source: RATE_ADJUSTED_ADDRESSES frozenset in old CurveStableswapPool
     # dy computed as (xp[j] - y - 1) * PRECISION // rates[j], then fee applied
@@ -128,7 +125,6 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
     _a("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7"): PoolStrategies(
         swap_style=SwapStyle.RATE_ADJUSTED,
     ),
-
     # ── Standard rate style (SwapStyle.STANDARD) ──
     # Source: STANDARD_RATE_ADDRESSES frozenset in old CurveStableswapPool
     # dy computed as xp[j] - y - 1, fee applied, then rate conversion
@@ -226,7 +222,6 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
     _a("0xFD5dB7463a3aB53fD211b4af195c5BCCC1A03890"): PoolStrategies(
         swap_style=SwapStyle.STANDARD,
     ),
-
     # ── Raw balance style (SwapStyle.RAW_BALANCE) ──
     # Source: RAW_BALANCE_ADDRESSES frozenset in old CurveStableswapPool
     # No rate conversion, direct fee application
@@ -260,7 +255,6 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
     _a("0xFB9a265b5a1f52d97838Ec7274A0b1442efAcC87"): PoolStrategies(
         swap_style=SwapStyle.RAW_BALANCE,
     ),
-
     # ── Live admin + oracle (SwapStyle.LIVE_ADMIN_ORACLE) ──
     # Source: ORACLE_ADDRESSES frozenset in old CurveStableswapPool
     _a("0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492"): PoolStrategies(
@@ -271,7 +265,6 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
         swap_style=SwapStyle.LIVE_ADMIN_ORACLE,
         lending_rate_style=LendingRateStyle.ORACLE,
     ),
-
     # ── CTOKEN swap style (RATE_ADJUSTED_NO_ONE) ──
     # Source: CTOKEN_ADDRESSES frozenset in old CurveStableswapPool
     # ⚠️  0xA5407eAE uses this swap style but has USE_LENDING=[F,F,F,F]
@@ -288,14 +281,12 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
     _a("0xA5407eAE9Ba41422680e2e00537571bcC53efBfD"): PoolStrategies(
         swap_style=SwapStyle.RATE_ADJUSTED_NO_ONE,
     ),
-
     # ── CYTOKEN swap style ──
     # Source: `if self.address == "0x2dded6Da..."` block in get_dy()
     _a("0x2dded6Da1BF5DBdF597C45fcFaa3194e53EcfeAF"): PoolStrategies(
         swap_style=SwapStyle.CYTOKEN,
         lending_rate_style=LendingRateStyle.CYTOKEN,
     ),
-
     # ── YTOKEN swap style ──
     # Source: YTOKEN_ADDRESSES and YTOKEN_NO_ONE_ADDRESSES blocks in get_dy()
     # 0x06364f10: dy before rate with -1, fee on converted (RATE_ADJUSTED)
@@ -312,21 +303,18 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
         swap_style=SwapStyle.RATE_ADJUSTED_NO_ONE,
         lending_rate_style=LendingRateStyle.YTOKEN,
     ),
-
     # ── AETH swap style (NO_ONE_FEE_RATE) ──
     # Source: `if self.address == "0xA96A65c0..."` block in get_dy()
     _a("0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2"): PoolStrategies(
         swap_style=SwapStyle.NO_ONE_FEE_RATE,
         lending_rate_style=LendingRateStyle.AETH,
     ),
-
     # ── RETH swap style (NO_ONE_FEE_RATE) ──
     # Source: `if self.address == "0xF9440930..."` block in get_dy()
     _a("0xF9440930043eb3997fc70e1339dBb11F341de7A8"): PoolStrategies(
         swap_style=SwapStyle.NO_ONE_FEE_RATE,
         lending_rate_style=LendingRateStyle.RETH,
     ),
-
     # ── Live admin + dynamic fee ──
     # Source: `if self.address == "0xEB16Ae00..."` and `"0xDeBF2061..."` blocks in get_dy()
     _a("0xEB16Ae0052ed37f479f7fe63849198Df1765a733"): PoolStrategies(
@@ -401,7 +389,8 @@ def _make_metapool_dy_calculator(metapool_rate_style: MetapoolRateStyle) -> DyCa
 def _make_metapool_underlying_dy_calculator(
     metapool_underlying_style: MetapoolUnderlyingStyle,
 ) -> DyCalculator:
-    """Construct the appropriate metapool underlying DyCalculator for the given MetapoolUnderlyingStyle."""
+    """Construct the appropriate metapool underlying DyCalculator
+    for the given MetapoolUnderlyingStyle."""
     from degenbot.curve.calculators.metapool import (
         MetapoolUnderlyingPrecisionVpDyCalculator,
         MetapoolUnderlyingRedemptionDyCalculator,
@@ -442,7 +431,9 @@ def resolve_pool_strategies(pool_address: ChecksumAddress | str) -> PoolStrategi
         if mapped.metapool_rate_style is not None:
             metapool_dy_calculator = _make_metapool_dy_calculator(mapped.metapool_rate_style)
         if mapped.metapool_underlying_style is not None:
-            metapool_underlying_dy_calculator = _make_metapool_underlying_dy_calculator(mapped.metapool_underlying_style)
+            metapool_underlying_dy_calculator = _make_metapool_underlying_dy_calculator(
+                mapped.metapool_underlying_style
+            )
         return PoolStrategies(
             d_variant=d_variant,
             y_variant=y_variant,

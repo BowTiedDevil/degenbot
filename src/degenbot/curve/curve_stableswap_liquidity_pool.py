@@ -154,7 +154,9 @@ class CurveStableswapPool(  # type: ignore[override]
         self._base_pool = base_pool
         self._tokens_underlying = tuple(tokens_underlying) if tokens_underlying else None
         self._lp_token = lp_token if lp_token is not None else self._tokens[0]
-        self._use_lending = tuple(use_lending) if use_lending else tuple(False for _ in self._tokens)
+        self._use_lending = (
+            tuple(use_lending) if use_lending else tuple(False for _ in self._tokens)
+        )
 
         # A ramping configuration
         self._initial_a_coefficient = initial_a_coefficient
@@ -330,7 +332,7 @@ class CurveStableswapPool(  # type: ignore[override]
                 raise MissingCurveData(
                     self.address,
                     "timestamp",
-                    "Timestamp is required for A ramping calculation but no data_provider is available",
+                    "Timestamp requires A ramping but no data_provider",
                 )
 
         a_1 = self.future_a_coefficient
@@ -379,8 +381,7 @@ class CurveStableswapPool(  # type: ignore[override]
                 raise MissingCurveData(
                     self.address,
                     "block_timestamp",
-                    "Block timestamp requires a data_provider. "
-                    "Provide one via Bot.build_pool().",
+                    "Block timestamp requires a data_provider. Provide one via Bot.build_pool().",
                 )
             self._block_timestamps[block_number] = self._data_provider.block_timestamp(block_number)
 
@@ -415,8 +416,7 @@ class CurveStableswapPool(  # type: ignore[override]
                 raise MissingCurveData(
                     self.address,
                     "block_timestamp",
-                    "Block timestamp requires a data_provider. "
-                    "Provide one via Bot.build_pool().",
+                    "Block timestamp requires a data_provider. Provide one via Bot.build_pool().",
                 )
             self._block_timestamps[block_number] = self._data_provider.block_timestamp(block_number)
 
@@ -453,8 +453,7 @@ class CurveStableswapPool(  # type: ignore[override]
         raise MissingCurveData(
             self.address,
             "redemption_price",
-            "Redemption price requires a data_provider. "
-            "Provide one via Bot.build_pool().",
+            "Redemption price requires a data_provider. Provide one via Bot.build_pool().",
         )
 
     def get_dy(
@@ -484,8 +483,7 @@ class CurveStableswapPool(  # type: ignore[override]
                 raise MissingCurveData(
                     self.address,
                     "block_timestamp",
-                    "Block timestamp requires a data_provider. "
-                    "Provide one via Bot.build_pool().",
+                    "Block timestamp requires a data_provider. Provide one via Bot.build_pool().",
                 )
             self._block_timestamps[block_number] = self._data_provider.block_timestamp(block_number)
 
@@ -493,18 +491,34 @@ class CurveStableswapPool(  # type: ignore[override]
             calculator = self._strategies.metapool_dy_calculator
             if calculator is not None:
                 return calculator.calculate(
-                    i, j, dx, pool=self, block_number=block_number, override_state=override_state,
+                    i,
+                    j,
+                    dx,
+                    pool=self,
+                    block_number=block_number,
+                    override_state=override_state,
                 )
             # Fallback: lazily construct metapool calculator
             from degenbot.curve._pool_strategies import _make_metapool_dy_calculator
+
             calculator = _make_metapool_dy_calculator(self._strategies.metapool_rate_style)
             return calculator.calculate(
-                i, j, dx, pool=self, block_number=block_number, override_state=override_state,
+                i,
+                j,
+                dx,
+                pool=self,
+                block_number=block_number,
+                override_state=override_state,
             )
 
         if self._strategies.dy_calculator is not None:
             return self._strategies.dy_calculator.calculate(
-                i, j, dx, pool=self, block_number=block_number, override_state=override_state,
+                i,
+                j,
+                dx,
+                pool=self,
+                block_number=block_number,
+                override_state=override_state,
             )
 
         # Fallback: no calculator on PoolStrategies — construct lazily.
@@ -512,7 +526,12 @@ class CurveStableswapPool(  # type: ignore[override]
         # or constructed before the calculator migration.
         calculator = _make_dy_calculator(self._strategies.swap_style)
         return calculator.calculate(
-            i, j, dx, pool=self, block_number=block_number, override_state=override_state,
+            i,
+            j,
+            dx,
+            pool=self,
+            block_number=block_number,
+            override_state=override_state,
         )
 
     def _get_dy_underlying(
@@ -528,13 +547,26 @@ class CurveStableswapPool(  # type: ignore[override]
         calculator = self._strategies.metapool_underlying_dy_calculator
         if calculator is not None:
             return calculator.calculate(
-                i, j, dx, pool=self, block_number=block_number, override_state=override_state,
+                i,
+                j,
+                dx,
+                pool=self,
+                block_number=block_number,
+                override_state=override_state,
             )
         # Fallback: lazily construct metapool underlying calculator
         from degenbot.curve._pool_strategies import _make_metapool_underlying_dy_calculator
-        calculator = _make_metapool_underlying_dy_calculator(self._strategies.metapool_underlying_style)
+
+        calculator = _make_metapool_underlying_dy_calculator(
+            self._strategies.metapool_underlying_style
+        )
         return calculator.calculate(
-            i, j, dx, pool=self, block_number=block_number, override_state=override_state,
+            i,
+            j,
+            dx,
+            pool=self,
+            block_number=block_number,
+            override_state=override_state,
         )
 
     def _get_base_cache_updated(self, block_number: BlockNumber) -> int:
@@ -550,8 +582,7 @@ class CurveStableswapPool(  # type: ignore[override]
         raise MissingCurveData(
             self.address,
             "base_cache_updated",
-            "base_cache_updated requires a data_provider "
-            "via Bot.build_pool().",
+            "base_cache_updated requires a data_provider via Bot.build_pool().",
         )
 
     def _get_base_virtual_price(self, block_number: BlockNumber) -> int:
@@ -566,8 +597,7 @@ class CurveStableswapPool(  # type: ignore[override]
         raise MissingCurveData(
             self.address,
             "base_virtual_price",
-            "Base virtual price requires a data_provider. "
-            "Provide one via Bot.build_pool().",
+            "Base virtual price requires a data_provider. Provide one via Bot.build_pool().",
         )
 
     def _get_virtual_price(self, block_number: BlockNumber) -> int:
@@ -590,8 +620,7 @@ class CurveStableswapPool(  # type: ignore[override]
                 raise MissingCurveData(
                     self.address,
                     "virtual_price",
-                    "Virtual price requires a data_provider. "
-                    "Provide one via Bot.build_pool().",
+                    "Virtual price requires a data_provider. Provide one via Bot.build_pool().",
                 )
         else:
             # Cache is still valid — use the cached base_virtual_price
@@ -613,8 +642,7 @@ class CurveStableswapPool(  # type: ignore[override]
         raise MissingCurveData(
             self.address,
             "admin_balances",
-            "Admin balances require an data_provider. "
-            "Provide one via Bot.build_pool().",
+            "Admin balances require an data_provider. Provide one via Bot.build_pool().",
         )
 
     def _get_d(self, _xp: Sequence[int], _amp: int) -> int:
@@ -651,8 +679,11 @@ class CurveStableswapPool(  # type: ignore[override]
         )
         try:
             return stableswap_get_y(
-                i, j,
-                x=x, xp=xp, amp=amp,
+                i,
+                j,
+                x=x,
+                xp=xp,
+                amp=amp,
                 n_coins=len(self._tokens),
                 a_precision=self.A_PRECISION,
                 y_variant=self._strategies.y_variant,
@@ -670,8 +701,10 @@ class CurveStableswapPool(  # type: ignore[override]
 
         try:
             return stableswap_get_y_d(
-                a, i,
-                xp=xp, d=d,
+                a,
+                i,
+                xp=xp,
+                d=d,
                 n_coins=len(self._tokens),
                 a_precision=self.A_PRECISION,
                 yd_variant=self._strategies.yd_variant,
@@ -718,8 +751,11 @@ class CurveStableswapPool(  # type: ignore[override]
 
         try:
             return stableswap_newton_y(
-                ann, gamma,
-                xp=xp, d=d, token_index=token_index,
+                ann,
+                gamma,
+                xp=xp,
+                d=d,
+                token_index=token_index,
                 n_coins=len(self._tokens),
                 a_multiplier=self.A_PRECISION,
             )

@@ -75,11 +75,11 @@ class SwapStyle(Enum):
     CRYPTO = auto()  # Newton's method, dynamic fee
     LIVE_ADMIN = auto()  # live balances minus admin, dy = xp[j] - y - 1, fee, rate convert
     LIVE_ADMIN_DYNAMIC = auto()  # live balances minus admin, dynamic offpeg fee
-    LIVE_ADMIN_DYNAMIC_PRECISION = auto()  # live balances minus admin, precision multipliers for xp, dynamic offpeg fee
-    LIVE_ADMIN_ORACLE = auto()  # live balances minus admin, oracle rates, dy = xp[j] - y - 1, fee, rate convert
-    NO_ONE_FEE_RATE = auto()  # dy = xp[j] - y (no -1), fee, then rate convert — used by AETH/RETH pools
-    CYTOKEN = auto()  # dy = xp[j] - y - 1, then (dy - fee) * PRECISION // rates[j] — fee inside rate conversion
-    RATE_ADJUSTED_NO_ONE = auto()  # dy = (xp[j] - y) * PRECISION // rates[j], fee on converted dy — used by some ytoken pools
+    LIVE_ADMIN_DYNAMIC_PRECISION = auto()  # live-admin + precision multipliers + dynamic offpeg fee
+    LIVE_ADMIN_ORACLE = auto()  # live-admin + oracle rates, dy = xp[j] - y - 1
+    NO_ONE_FEE_RATE = auto()  # dy = xp[j] - y (no -1), fee, rate convert
+    CYTOKEN = auto()  # dy = xp[j] - y - 1, then (dy-fee)*PRECISION//rates[j]
+    RATE_ADJUSTED_NO_ONE = auto()  # dy = (xp[j]-y)*PRECISION//rates[j], fee on converted dy
 
 
 class MetapoolRateStyle(Enum):
@@ -145,6 +145,7 @@ class PoolStrategies:
     Set at construction time by the builder from the pool address.
     The pool class is address-agnostic — it only reads these strategy values.
     """
+
     d_variant: DVariant = DVariant.STANDARD
     y_variant: YVariant = YVariant.STANDARD
     yd_variant: YDVariant = YDVariant.STANDARD
@@ -158,6 +159,7 @@ class PoolStrategies:
     dy_calculator: DyCalculator = dataclasses.field(default=None)  # type: ignore[assignment]
     metapool_dy_calculator: DyCalculator | None = None
     metapool_underlying_dy_calculator: DyCalculator | None = None
+
 
 # ── Data Provider Protocol ──
 
@@ -193,7 +195,8 @@ class CurveDataProvider(Protocol):
     def redemption_price(self, block_number: int) -> int: ...
 
 
-# ── Fetcher Protocols (deprecated — use CurveDataProvider) ──# These protocols define the interface for callbacks that fetch on-chain data
+# ── Fetcher Protocols (deprecated — use CurveDataProvider) ──
+# These protocols define the interface for callbacks that fetch on-chain data
 # for Curve pools. They are injected by Bot.build_pool() to enable
 # on-demand data fetching while keeping the pool class I/O-free.
 

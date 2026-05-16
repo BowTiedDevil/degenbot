@@ -277,7 +277,9 @@ class ArbitragePath(PublisherMixin):
                 token_in_quantity=token_in_quantity,
                 override_state=pool_state,
             )
-            swap_amounts.append(pool.build_swap_amount(sv.zero_for_one, token_in_quantity, token_out_quantity))
+            swap_amounts.append(
+                pool.build_swap_amount(sv.zero_for_one, token_in_quantity, token_out_quantity)
+            )
             token_in_quantity = token_out_quantity
 
         input_swap = swap_amounts[0]
