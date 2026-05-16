@@ -1,3 +1,5 @@
+# ty: ignore
+
 import time
 import warnings
 from collections.abc import Mapping, Sequence
@@ -216,7 +218,7 @@ def _build_convex_problem(num_pools: int) -> Problem:
         ],
     )
     problem.solve(solver="CLARABEL")
-    assert problem.is_dcp(dpp=True)  # type: ignore[call-arg]
+    assert problem.is_dcp(dpp=True)
     return problem
 
 
@@ -273,7 +275,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
                 hop = pool.to_hop_state(
                     zero_for_one=current_token == pool.token0,
-                    state_override=state_override,  # type: ignore[arg-type]
+                    state_override=state_override,
                 )
                 hops.append(hop)
 
@@ -305,7 +307,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                         forward_token_amount = buy_pool.calculate_tokens_out_from_tokens_in(
                             token_in=input_token,
                             token_in_quantity=weth_in,
-                            override_state=buy_state_override,  # type: ignore[arg-type]
+                            override_state=buy_state_override,
                         )
                         if forward_token_amount <= 0:
                             return None
@@ -1020,7 +1022,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             assert forward_token not in {
                 NATIVE_CURRENCY_ADDRESS,
-                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],  # type: ignore[index]
+                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],
             }
 
             start = time.perf_counter()
@@ -1063,7 +1065,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                     pools=[v3_pool, v4_pool],
                     input_token=self.input_token,
                     state_overrides={
-                        k: v  # type: ignore[misc]
+                        k: v
                         for k, v in [
                             (v3_pool, v3_pool_state_override),
                             (v4_pool, v4_pool_state_override),
@@ -1215,7 +1217,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             assert forward_token not in {
                 NATIVE_CURRENCY_ADDRESS,
-                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],  # type: ignore[index]
+                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],
             }
 
             start = time.perf_counter()
@@ -1405,7 +1407,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             assert forward_token not in {
                 NATIVE_CURRENCY_ADDRESS,
-                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],  # type: ignore[index]
+                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],
             }
 
             start = time.perf_counter()
@@ -1449,7 +1451,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                     pools=[v4_pool, v3_pool],
                     input_token=self.input_token,
                     state_overrides={
-                        k: v  # type: ignore[misc]
+                        k: v
                         for k, v in [
                             (v4_pool, v4_pool_state_override),
                             (v3_pool, v3_pool_state_override),
@@ -1940,7 +1942,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             assert forward_token not in {
                 NATIVE_CURRENCY_ADDRESS,
-                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],  # type: ignore[index]
+                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],
             }
 
             start = time.perf_counter()
@@ -2614,7 +2616,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                 UniswapV4Pool() as v4_pool_a,
                 UniswapV4Pool() as v4_pool_b,
             ):
-                wrapped_currency_address = WRAPPED_NATIVE_TOKENS[v4_pool_a.chain_id]  # type: ignore[index]
+                wrapped_currency_address = WRAPPED_NATIVE_TOKENS[v4_pool_a.chain_id]
                 profit_tokens = {wrapped_currency_address, NATIVE_CURRENCY_ADDRESS}
 
                 assert set(v4_pool_a.tokens) & profit_tokens
@@ -2703,10 +2705,10 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             ):
                 assert self.input_token in {
                     NATIVE_CURRENCY_ADDRESS,
-                    WRAPPED_NATIVE_TOKENS[v3_pool.chain_id],  # type: ignore[index]
+                    WRAPPED_NATIVE_TOKENS[v3_pool.chain_id],
                 }
 
-                wrapped_currency_address = WRAPPED_NATIVE_TOKENS[v3_pool.chain_id]  # type: ignore[index]
+                wrapped_currency_address = WRAPPED_NATIVE_TOKENS[v3_pool.chain_id]
 
                 if self.input_token == NATIVE_CURRENCY_ADDRESS:
                     v3_input_token = (
@@ -2796,10 +2798,10 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             ):
                 assert self.input_token in {
                     NATIVE_CURRENCY_ADDRESS,
-                    WRAPPED_NATIVE_TOKENS[v2_pool.chain_id],  # type: ignore[index]
+                    WRAPPED_NATIVE_TOKENS[v2_pool.chain_id],
                 }
 
-                wrapped_currency_address = WRAPPED_NATIVE_TOKENS[v2_pool.chain_id]  # type: ignore[index]
+                wrapped_currency_address = WRAPPED_NATIVE_TOKENS[v2_pool.chain_id]
 
                 if self.input_token == NATIVE_CURRENCY_ADDRESS:
                     v2_input_token = (
@@ -3119,12 +3121,12 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
     def generate_payloads(
         self,
         from_address: ChecksumAddress | str,
-        forward_token_amount: int,
+        swap_amount: int,
         pool_swap_amounts: Sequence[
             UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
         ],
     ) -> Sequence[Any]:
-        logger.debug(f"Generating payloads for {forward_token_amount} forward token amount")
+        logger.debug(f"Generating payloads for {swap_amount} swap amount")
         from_address = get_checksum_address(from_address)
 
         assert len(self.swap_pools) == 2  # noqa: PLR2004

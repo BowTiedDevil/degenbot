@@ -1,3 +1,5 @@
+# ty: ignore
+
 import warnings
 from collections.abc import Mapping, Sequence
 from fractions import Fraction
@@ -17,8 +19,13 @@ from eth_typing import ChecksumAddress
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.aerodrome.types import AerodromeV2PoolState
-from degenbot.arbitrage._legacy._uniswap_lp_cycle import _UniswapLpCycle
-from degenbot.arbitrage.types import ArbitrageCalculationResult, UniswapV2PoolSwapAmounts
+from degenbot.arbitrage._legacy._uniswap_lp_cycle import Pool, PoolState, _UniswapLpCycle
+from degenbot.arbitrage.types import (
+    ArbitrageCalculationResult,
+    UniswapV2PoolSwapAmounts,
+    UniswapV3PoolSwapAmounts,
+    UniswapV4PoolSwapAmounts,
+)
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.arbitrage import ArbitrageError, NoSolverSolution, Unprofitable
@@ -198,13 +205,9 @@ def _build_convex_problem(num_pools: int) -> Problem:
         objective=Maximize(final_pool_withdrawal - initial_pool_deposit),
         constraints=constraints,
     )
-    assert problem.is_dcp(dpp=True)  # type: ignore[call-arg]
+    assert problem.is_dcp(dpp=True)
     problem.solve(solver=cvxpy.CLARABEL, enforce_dpp=True)
     return problem
-
-
-type Pool = UniswapV2Pool | AerodromeV2Pool
-type PoolState = UniswapV2PoolState | AerodromeV2PoolState
 
 
 class _UniswapMultiPoolCycleTesting(_UniswapLpCycle):
@@ -216,10 +219,12 @@ class _UniswapMultiPoolCycleTesting(_UniswapLpCycle):
         ]
     ] = {}
 
-    def _calculate(  # type: ignore[override]
+    def _calculate(
         self,
         state_overrides: Mapping[Pool, PoolState] | None = None,
-    ) -> ArbitrageCalculationResult[UniswapV2PoolSwapAmounts]:
+    ) -> ArbitrageCalculationResult[
+        UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
+    ]:
         """
         Calculate the optimal arbitrage profit using the maximum input as an upper bound.
         """
@@ -447,10 +452,13 @@ class _UniswapMultiPoolCycleTesting(_UniswapLpCycle):
         err = "One or more pools is not supported by this arbitrage strategy."
         raise ValueError(err)
 
-    def generate_payloads(  # type: ignore[override]
+    def generate_payloads(
         self,
         from_address: ChecksumAddress | str,
-        pool_swap_amounts: Sequence[UniswapV2PoolSwapAmounts],
+        swap_amount: int,
+        pool_swap_amounts: Sequence[
+            UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
+        ],
     ) -> list[tuple[ChecksumAddress, bytes, bool]]:
         from_address = get_checksum_address(from_address)
 
