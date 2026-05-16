@@ -157,9 +157,9 @@ class RustMobiusOptimizer:
     """
     High-level Möbius optimizer for multi-hop paths.
 
-    Every constant product swap y = (γ·s·x)/(r + γ·x) is a Möbius
-    transformation. An n-hop path composes into l(x) = K·x / (M + N·x),
-    with closed-form optimal input x_opt = (√(K·M) - M) / N.
+    Every constant product swap y = (gamma*s*x)/(r + gamma*x) is a Mobius
+    transformation. An n-hop path composes into l(x) = K*x / (M + N*x),
+    with closed-form optimal input x_opt = (sqrt(K*M) - M) / N.
 
     Zero iterations, exact solution, O(n) forward pass.
     """

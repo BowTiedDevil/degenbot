@@ -1,3 +1,4 @@
+from . import hypothesis_strategies
 from .fixtures import ArbitrageCycleFixture, FixtureFactory
 from .pool_generator import PoolStateGenerator
 from .types import (
@@ -14,7 +15,6 @@ from .types import (
 
 def get_hypothesis_strategies():
     """Import and return hypothesis strategies module."""
-    from . import hypothesis_strategies
     return hypothesis_strategies
 
 

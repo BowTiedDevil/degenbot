@@ -1,4 +1,5 @@
 from web3.exceptions import Web3Exception
+from tests.curve.detection.fake_provider import make_fake_curve_provider
 
 """Tests for Curve pool lending token detection."""
 
@@ -54,7 +55,6 @@ class FakeErc20Token:
 class TestDetectLendingTokens:
     def testNoLendingTokens(self):
         """Plain pool with no cTokens or yTokens."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         token_addresses = (DAI, USDC, USDT)
         tokens = tuple(
@@ -78,7 +78,6 @@ class TestDetectLendingTokens:
 
     def testCTokenDetection(self):
         """cToken detection via isCToken(), with underlying decimals for precision."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         # Pool with cDAI (8 decimals) and USDC (6 decimals)
         token_addresses = (CDAI, USDC)
@@ -124,7 +123,6 @@ class TestDetectLendingTokens:
 
     def testCTokenWithDifferentUnderlyingDecimals(self):
         """cUSDC has 8 decimals, USDC underlying has 6 → precision = 10^12."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         token_addresses = (CUSDC, DAI)
         tokens = tuple(
@@ -164,7 +162,6 @@ class TestDetectLendingTokens:
 
     def testYTokenDetection(self):
         """yToken detection via token() returning a non-zero address."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         token_addresses = (YDAI, USDC)
         tokens = tuple(
@@ -199,7 +196,6 @@ class TestDetectLendingTokens:
 
     def testYTokenWithZeroAddressNotLending(self):
         """yToken where token() returns zero address is not treated as lending."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         token_addresses = (DAI, USDC)
         tokens = tuple(

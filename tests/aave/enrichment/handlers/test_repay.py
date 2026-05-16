@@ -14,6 +14,8 @@ from degenbot.aave.enrichment.handlers.repay import RepayHandler
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
+import eth_abi.abi
+from degenbot.aave.enrichment.context import EnrichmentContext
 
 if TYPE_CHECKING:
     from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
@@ -198,7 +200,6 @@ def _create_mock_scaled_event(
 
 def _create_mock_pool_event(amount: int) -> LogReceipt:
     """Create a mock Pool REPAY event."""
-    import eth_abi.abi
 
     # REPAY event: (uint256 amount, bool useATokens)
     data = eth_abi.abi.encode(["uint256", "bool"], [amount, False])
@@ -233,7 +234,6 @@ def _create_mock_operation(
 
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for REPAY burn."""
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
@@ -251,7 +251,6 @@ def _create_mock_context() -> MagicMock:
         event_type: ScaledTokenEventType | None = None,
         operation_type: OperationType | None = None,
     ) -> int:
-        import eth_abi.abi
         (amount, _) = eth_abi.abi.decode(["uint256", "bool"], pool_event["data"])
         return amount
 
@@ -299,7 +298,6 @@ def _create_mock_context() -> MagicMock:
 
 def _create_mock_context_with_mint() -> MagicMock:
     """Create mock context for REPAY with DEBT_MINT case."""
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
@@ -317,7 +315,6 @@ def _create_mock_context_with_mint() -> MagicMock:
         event_type: ScaledTokenEventType | None = None,
         operation_type: OperationType | None = None,
     ) -> int:
-        import eth_abi.abi
         (amount, _) = eth_abi.abi.decode(["uint256", "bool"], pool_event["data"])
         return amount
 
@@ -364,7 +361,6 @@ def _create_mock_context_with_mint() -> MagicMock:
 
 def _create_mock_context_gho() -> MagicMock:
     """Create mock context for GHO_REPAY burn."""
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
@@ -382,7 +378,6 @@ def _create_mock_context_gho() -> MagicMock:
         event_type: ScaledTokenEventType | None = None,
         operation_type: OperationType | None = None,
     ) -> int:
-        import eth_abi.abi
         (amount, _) = eth_abi.abi.decode(["uint256", "bool"], pool_event["data"])
         return amount
 
@@ -432,7 +427,6 @@ def _create_mock_context_gho() -> MagicMock:
 
 def _create_mock_context_gho_mint() -> MagicMock:
     """Create mock context for GHO_REPAY with GHO_DEBT_MINT case."""
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
@@ -450,7 +444,6 @@ def _create_mock_context_gho_mint() -> MagicMock:
         event_type: ScaledTokenEventType | None = None,
         operation_type: OperationType | None = None,
     ) -> int:
-        import eth_abi.abi
         (amount, _) = eth_abi.abi.decode(["uint256", "bool"], pool_event["data"])
         return amount
 

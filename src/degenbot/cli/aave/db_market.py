@@ -8,7 +8,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from degenbot.database.models.aave import (
-    AaveV3Asset,
     AaveV3AssetConfig,
     AaveV3EModeCategory,
     AaveV3Market,
@@ -151,19 +150,3 @@ def update_user_e_mode(
     """
 
     user.e_mode = e_mode
-
-
-def record_oracle_price(
-    session: Session,  # noqa: ARG001
-    asset: AaveV3Asset,
-    price: int,
-    block_number: int,
-) -> None:
-    """
-    Record an oracle price for an asset.
-
-    Updates the asset's last_known_price and last_price_block.
-    """
-
-    asset.last_known_price = price
-    asset.last_price_block = block_number

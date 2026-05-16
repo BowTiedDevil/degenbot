@@ -1,4 +1,3 @@
-# ruff: noqa: PLR0904
 import contextlib
 import dataclasses
 from collections import deque
@@ -35,6 +34,7 @@ from degenbot.uniswap.v3_functions import (
     generate_v3_pool_address,
     get_tick_word_and_bit_position,
 )
+from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
 from degenbot.uniswap.v3_libraries.tick_bitmap import flip_tick, gen_ticks
 from degenbot.uniswap.v3_libraries.tick_math import (
     MAX_SQRT_RATIO,
@@ -877,8 +877,6 @@ class UniswapV3Pool(
         zero_for_one: bool,  # noqa: FBT001
         state_override: UniswapV3PoolState | None = None,
     ) -> HopType:
-        from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves  # noqa: PLC0415
-
         state = state_override or self.state
         fee = self.extract_fee(zero_for_one=zero_for_one)
         reserve_in, reserve_out = v3_virtual_reserves(
@@ -919,11 +917,6 @@ class UniswapV3Pool(
         amount_in: int,
         amount_out: int,
     ) -> UniswapV3PoolSwapAmounts:
-        from degenbot.uniswap.v3_libraries.tick_math import (  # noqa: PLC0415
-            MAX_SQRT_RATIO,
-            MIN_SQRT_RATIO,
-        )
-
         limit = MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1
         return UniswapV3PoolSwapAmounts(
             pool=self.address,

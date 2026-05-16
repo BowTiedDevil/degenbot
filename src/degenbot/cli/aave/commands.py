@@ -952,7 +952,6 @@ def update_aave_market(
         if topic == AaveV3PoolConfigEvent.PROXY_CREATED.value:
             _process_proxy_creation_event(
                 provider=provider,
-                session=session,
                 market=market,
                 event=event,
                 proxy_name="POOL",
@@ -961,7 +960,6 @@ def update_aave_market(
             )
             _process_proxy_creation_event(
                 provider=provider,
-                session=session,
                 market=market,
                 event=event,
                 proxy_name="POOL_CONFIGURATOR",

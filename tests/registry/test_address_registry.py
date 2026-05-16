@@ -4,6 +4,7 @@ import pytest
 
 from degenbot.exceptions import DegenbotValueError
 from degenbot.registry.base import AddressRegistry, MultiKeyAddressRegistry
+from hexbytes import HexBytes
 
 
 class FakeItem:
@@ -227,7 +228,6 @@ class TestMultiKeyAddressRegistry:
 
     def test_pool_id_not_checksummed(self):
         """Verify pool_id is kept as HexBytes, not checksummed."""
-        from hexbytes import HexBytes
 
         registry = MultiKeyAddressRegistry(
             address_fields=("pool_manager_address", "pool_id"),

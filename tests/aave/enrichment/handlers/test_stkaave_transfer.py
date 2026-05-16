@@ -14,6 +14,7 @@ from degenbot.aave.enrichment.handlers.stkaave_transfer import StkAaveTransferHa
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
+from degenbot.aave.enrichment.context import EnrichmentContext
 
 if TYPE_CHECKING:
     from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
@@ -121,7 +122,6 @@ def _create_mock_operation(operation_type: OperationType) -> "Operation":
 
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for stkAAVE transfers."""
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)

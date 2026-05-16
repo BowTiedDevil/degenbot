@@ -85,9 +85,11 @@ class MockV3LiquidityPool(UniswapV3Pool):
         address: ChecksumAddress,
         tick_bitmap: dict[int, UniswapV3BitmapAtWord] | None = None,
         tick_data: dict[int, UniswapV3LiquidityAtTick] | None = None,
+        tick_spacing: int = 0,
     ) -> None:
         self._sparse_liquidity_map = False
         self._initial_state_block = MAX_UINT256  # Skip the in-range liquidity modification step
+        self._tick_spacing = tick_spacing
 
         initial_state = UniswapV3PoolState(
             address=address,
@@ -262,8 +264,8 @@ def apply_v3_liquidity_updates(
             )
             for k, v in pool_liquidity_map.tick_data.items()
         },
+        tick_spacing=pool_in_db.tick_spacing,
     )
-    lp_helper._tick_spacing = pool_in_db.tick_spacing
 
     for liquidity_event in liquidity_events:
         # Guard against applying a liquidity event that occurred in the past

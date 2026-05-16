@@ -97,8 +97,8 @@ def estimate_equilibrium_price(
     Estimate equilibrium price after arbitrage.
 
     At equilibrium, both pools have the same effective marginal rate.
-    For V2: MR = γ * R1 * R0 / (R0 + x)²
-    For V3: MR = γ * L² / (R0 + x)²
+    For V2: MR = gamma * R1 * R0 / (R0 + x)**2
+    For V3: MR = gamma * L**2 / (R0 + x)**2
 
     Simplifying: equilibrium occurs where prices are equal (adjusted for fees).
 

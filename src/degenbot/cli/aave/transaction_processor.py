@@ -11,11 +11,18 @@ This module contains the main transaction processing orchestrator that handles:
 - Processing remaining events
 """
 
+from __future__ import annotations
+
 from operator import itemgetter
+from typing import TYPE_CHECKING
 
 import eth_abi.abi
-from eth_typing import ChecksumAddress
 from sqlalchemy import select
+
+if TYPE_CHECKING:
+    from eth_typing import ChecksumAddress
+
+    from degenbot.cli.aave.types import TransactionContext
 
 from degenbot.aave.enrichment import ScaledEventEnricher
 from degenbot.aave.events import (
@@ -56,7 +63,6 @@ from degenbot.cli.aave.token_processor import (
     _process_deficit_coverage_operation,
 )
 from degenbot.cli.aave.transfers import _process_collateral_transfer
-from degenbot.cli.aave.types import TransactionContext
 from degenbot.cli.aave_transaction_operations import Operation, TransactionOperationsParser
 from degenbot.cli.aave_utils import decode_address
 from degenbot.database.models.aave import AaveV3User

@@ -2,16 +2,16 @@
 Bounded Product CFMM optimizer for V3 tick ranges.
 
 Each V3 tick range is a bounded product CFMM with trading function:
-    φ(R) = (R₀ + α)(R₁ + β) ≥ k
+    phi(R) = (R0 + alpha)(R1 + beta) >= k
 
 where:
-- α = L / sqrt(P_upper) is the lower bound on R₀
-- β = L * sqrt(P_lower) is the lower bound on R₁
-- k = L² is the effective constant product
+- alpha = L / sqrt(P_upper) is the lower bound on R0
+- beta = L * sqrt(P_lower) is the lower bound on R1
+- k = L**2 is the effective constant product
 
 Closed-form optimal arbitrage:
-    R₁_opt = L × sqrt(external_price) - β
-    R₀_opt = L / sqrt(external_price) - α
+    R1_opt = L * sqrt(external_price) - beta
+    R0_opt = L / sqrt(external_price) - alpha
 
 This provides O(1) optimization per tick range, similar to V2's Newton method.
 """

@@ -1,4 +1,5 @@
 from web3.exceptions import Web3Exception
+from tests.curve.detection.fake_provider import make_fake_curve_provider
 
 """Tests for Curve pool metapool detection."""
 
@@ -47,7 +48,6 @@ def _encode_address_array8(addrs: list[str]) -> bytes:
 class TestDetectMetapool:
     def testNotMetapool(self):
         """Pool where is_meta() returns False for all registries."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         def handle_is_meta(to: str, data: bytes, block: int) -> bytes:
             return _encode_bool(False)
@@ -69,7 +69,6 @@ class TestDetectMetapool:
 
     def testMetapoolDetectedFromRegistry(self):
         """Metapool detected via is_meta() on the first registry."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         base_pool_addr = TRIPOOL_ADDR
         underlying_coins = [DAI, USDC, USDT]
@@ -105,7 +104,6 @@ class TestDetectMetapool:
 
     def testMetapoolFallbackToGetBasePool(self):
         """If base_pool() reverts, falls back to get_base_pool() on the registry."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         base_pool_addr = TRIPOOL_ADDR
         underlying_coins = [DAI, USDC, USDT]
@@ -143,7 +141,6 @@ class TestDetectMetapool:
 
     def testMetapoolFallbackTo3CrvHardcode(self):
         """If base_pool() and get_base_pool() both revert but second token is 3Crv LP."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         underlying_coins = [DAI, USDC, USDT]
 
@@ -180,7 +177,6 @@ class TestDetectMetapool:
 
     def testBothRegistriesTried(self):
         """If first registry reverts on is_meta(), second registry is tried."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         first_registry_tried = {"value": False}
 

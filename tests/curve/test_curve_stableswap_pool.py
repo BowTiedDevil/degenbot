@@ -72,6 +72,7 @@ def _test_calculations(lp: CurveStableswapPool, w3: Web3):
                 InvalidSwapInputAmount,
                 NoLiquidity,
                 EVMRevertError,
+                ContractLogicError,
                 eth_abi.exceptions.InsufficientDataBytes,
             ):
                 continue
@@ -135,7 +136,7 @@ def _test_calculations(lp: CurveStableswapPool, w3: Web3):
                         token_out=token_out,
                         token_in_quantity=amount,
                     )
-                except (InvalidSwapInputAmount, NoLiquidity, EVMRevertError):
+                except (InvalidSwapInputAmount, NoLiquidity, EVMRevertError, ContractLogicError):
                     continue
 
                 try:

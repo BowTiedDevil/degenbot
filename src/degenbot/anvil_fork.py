@@ -1,4 +1,3 @@
-# ruff: noqa: PLR0904
 
 import contextlib
 import pathlib

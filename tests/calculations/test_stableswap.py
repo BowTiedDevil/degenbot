@@ -16,7 +16,7 @@ from degenbot.calculations.stableswap import (
     stableswap_get_y,
     stableswap_get_y_d,
 )
-from degenbot.curve.types import DVariant
+from degenbot.curve.types import DVariant, YDVariant, YVariant
 
 # ── Step function tests (pre-existing, kept for regression) ──
 
@@ -150,7 +150,6 @@ class TestStableswapGetY:
 
     def test_equal_balances_swap_in_equals_swap_out(self):
         """For equal balances at high A, swapping x[i]+dx → y[j]-dy preserves symmetry."""
-        from degenbot.curve.types import YVariant
 
         xp = [1_000_000_000_000_000_000, 1_000_000_000_000_000_000]
         # With A=100 (in A_PRECISION units), amp=100
@@ -166,7 +165,6 @@ class TestStableswapGetY:
 
     def test_y_decreases_as_input_increases(self):
         """More input → less output (basic AMM property)."""
-        from degenbot.curve.types import YVariant
 
         xp = [1_000_000_000_000_000_000, 1_000_000_000_000_000_000]
         y_small = stableswap_get_y(
@@ -186,7 +184,6 @@ class TestStableswapGetY:
 
     def test_y_variant_1(self):
         """VARIANT_1 uses amp without A_PRECISION divisor."""
-        from degenbot.curve.types import YVariant
 
         xp = [1_000_000_000_000_000_000, 1_000_000_000_000_000_000]
         y = stableswap_get_y(
@@ -199,7 +196,6 @@ class TestStableswapGetY:
 
     def test_y_is_positive(self):
         """Y should always be positive for valid inputs."""
-        from degenbot.curve.types import YVariant
 
         xp = [2_000_000_000_000_000_000, 1_000_000_000_000_000_000]
         y = stableswap_get_y(
@@ -216,7 +212,6 @@ class TestStableswapGetYD:
 
     def test_equal_balances_returns_original(self):
         """For equal balances and D, y_d should return the original balance."""
-        from degenbot.curve.types import YDVariant
 
         xp = [1_000_000_000_000_000_000, 1_000_000_000_000_000_000]
         d = 2_000_000_000_000_000_000
@@ -228,7 +223,6 @@ class TestStableswapGetYD:
 
     def test_y_d_is_positive(self):
         """Y_D should always be positive for valid inputs."""
-        from degenbot.curve.types import YDVariant
 
         xp = [2_000_000_000_000_000_000, 1_000_000_000_000_000_000]
         d = 2_800_000_000_000_000_000
@@ -240,7 +234,6 @@ class TestStableswapGetYD:
 
     def test_variant_0(self):
         """VARIANT_0 uses A_PRECISION in b/c formulas."""
-        from degenbot.curve.types import YDVariant
 
         xp = [1_000_000_000_000_000_000, 1_000_000_000_000_000_000]
         d = 2_000_000_000_000_000_000

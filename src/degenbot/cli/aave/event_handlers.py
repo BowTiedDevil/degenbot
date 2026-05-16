@@ -966,7 +966,6 @@ def _update_contract_revision(
 def _process_proxy_creation_event(
     *,
     provider: ProviderAdapter,
-    session: Session,
     market: AaveV3Market,
     event: LogReceipt,
     proxy_name: str,

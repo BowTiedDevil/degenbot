@@ -14,6 +14,8 @@ from degenbot.aave.enrichment.handlers.withdraw import WithdrawHandler
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
+import eth_abi.abi
+from degenbot.aave.enrichment.context import EnrichmentContext
 
 if TYPE_CHECKING:
     from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
@@ -150,7 +152,6 @@ def _create_mock_scaled_event(
 
 def _create_mock_pool_event(amount: int) -> LogReceipt:
     """Create a mock Pool WITHDRAW event."""
-    import eth_abi.abi
 
     # WITHDRAW event: (uint256 amount)
     data = eth_abi.abi.encode(["uint256"], [amount])
@@ -185,7 +186,6 @@ def _create_mock_operation(
 
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for WITHDRAW."""
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
@@ -204,7 +204,6 @@ def _create_mock_context() -> MagicMock:
         operation_type: OperationType | None = None,
     ) -> int:
         """Extract amount from the mock pool event."""
-        import eth_abi.abi
 
         (amount,) = eth_abi.abi.decode(["uint256"], pool_event["data"])
         return amount
@@ -256,7 +255,6 @@ def _create_mock_context() -> MagicMock:
 
 def _create_mock_context_with_override() -> MagicMock:
     """Create a mock EnrichmentContext for interest>withdrawal case."""
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
@@ -276,7 +274,6 @@ def _create_mock_context_with_override() -> MagicMock:
         operation_type: OperationType | None = None,
     ) -> int:
         """Extract amount from the mock pool event."""
-        import eth_abi.abi
 
         (amount,) = eth_abi.abi.decode(["uint256"], pool_event["data"])
         return amount

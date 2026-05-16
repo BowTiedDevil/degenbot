@@ -420,7 +420,7 @@ class TransactionOperationsParser:
     def _get_default_treasury_address(self) -> ChecksumAddress:
         """Get default treasury address for known markets."""
 
-        # TODO: add to deployments or store in DB
+        # Known treasury addresses (should be added to deployments or stored in DB)
         known_treasuries: dict[int, ChecksumAddress] = {
             1: get_checksum_address("0x464C71f6c2F760DdA6093dCB91C24c39e5d6e18c"),  # Ethereum
         }
@@ -1037,7 +1037,6 @@ class TransactionOperationsParser:
             return self._create_deficit_operation(
                 operation_id=operation_id,
                 deficit_event=pool_event,
-                all_events=all_events,
                 pool_revision=pool_revision,
             )
 
@@ -2094,12 +2093,11 @@ class TransactionOperationsParser:
             debt_to_cover=debt_to_cover,  # Use actual debtToCover from LiquidationCall
         )
 
+    @staticmethod
     def _create_deficit_operation(
-        self,
         *,
         operation_id: int,
         deficit_event: LogReceipt,
-        all_events: list[LogReceipt],
         pool_revision: int,
     ) -> Operation:
         """
@@ -2122,31 +2120,11 @@ class TransactionOperationsParser:
         separate flash loan operation.
         """
 
-        user = decode_address(deficit_event["topics"][1])
-        asset = decode_address(deficit_event["topics"][2])
-
-        # Check if this is a GHO deficit (flash loan) or non-GHO deficit
-        is_gho_deficit = asset == self.gho_token_address
-
-        # Check if there's a LIQUIDATION_CALL for the same user in this transaction
-        # If so, this DEFICIT_CREATED is part of the liquidation, not a standalone flash loan
-        has_liquidation_for_user = False
-        for event in all_events:
-            if event["topics"][0] == AaveV3PoolEvent.LIQUIDATION_CALL.value:
-                liquidation_user = decode_address(event["topics"][3])
-                if liquidation_user == user:
-                    has_liquidation_for_user = True
-                    break
-
         scaled_token_events: list[ScaledTokenEvent] = []
 
-        # If this DEFICIT_CREATED is part of a liquidation, mark it as UNKNOWN
-        # so it doesn't interfere with liquidation processing
-        # TODO: fix this block, it seems like tech debt
-        if is_gho_deficit and has_liquidation_for_user:
-            operation_type = OperationType.UNKNOWN
-        else:
-            operation_type = OperationType.UNKNOWN
+        # DEFICIT_CREATED is always marked UNKNOWN to avoid interfering
+        # with liquidation processing downstream
+        operation_type = OperationType.UNKNOWN
 
         return Operation(
             operation_id=operation_id,

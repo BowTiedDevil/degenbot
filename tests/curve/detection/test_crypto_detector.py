@@ -5,6 +5,7 @@ import eth_abi.abi
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.crypto_detector import detect_crypto_params
 from degenbot.provider.call_helpers import encode_function_calldata
+from tests.curve.detection.fake_provider import make_fake_curve_provider
 
 POOL_ADDR = get_checksum_address("0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5")
 
@@ -23,7 +24,6 @@ def _encode_uint256(val: int) -> bytes:
 class TestDetectCryptoParams:
     def testNotCryptoPool(self):
         """Pool where fee_gamma() reverts is not a crypto pool."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         provider = make_fake_curve_provider({})
 
@@ -37,7 +37,6 @@ class TestDetectCryptoParams:
 
     def testFeeGammaZeroIsNotCrypto(self):
         """Pool where fee_gamma() returns 0 is not a crypto pool."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         provider = make_fake_curve_provider({
             FEE_GAMMA: _encode_uint256(0),
@@ -48,7 +47,6 @@ class TestDetectCryptoParams:
 
     def testCryptoPoolWithAllParams(self):
         """Crypto pool with fee_gamma > 0 fetches all related parameters."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         provider = make_fake_curve_provider({
             FEE_GAMMA: _encode_uint256(5_000_000_000_000_000),
@@ -68,7 +66,6 @@ class TestDetectCryptoParams:
 
     def testCryptoPoolWithMissingMidFee(self):
         """Crypto pool where mid_fee() reverts still reports is_crypto=True."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         provider = make_fake_curve_provider({
             FEE_GAMMA: _encode_uint256(5_000_000_000_000_000),
@@ -85,7 +82,6 @@ class TestDetectCryptoParams:
 
     def testCryptoPoolWithoutOffpegFee(self):
         """Crypto pool where offpeg_fee_multiplier() reverts returns None for it."""
-        from tests.curve.detection.fake_provider import make_fake_curve_provider
 
         provider = make_fake_curve_provider({
             FEE_GAMMA: _encode_uint256(5_000_000_000_000_000),

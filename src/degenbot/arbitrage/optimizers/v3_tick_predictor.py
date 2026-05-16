@@ -257,7 +257,7 @@ class V3PoolState:
     virtual_reserve1: float
 
 
-def extract_v3_pool_state(pool: "UniswapV3Pool") -> V3PoolState:
+def extract_v3_pool_state(pool: UniswapV3Pool) -> V3PoolState:
     """
     Extract V3 pool state for optimization.
 
@@ -385,15 +385,15 @@ class BoundedProductCFMM:
     """
     Bounded product CFMM representation of a V3 tick range.
 
-    Trading function: φ(R) = (R₀ + α)(R₁ + β) ≥ L²
+    Trading function: phi(R) = (R0 + alpha)(R1 + beta) >= L**2
 
     where:
-    - α = L / sqrt(P_upper) is the lower bound on R₀
-    - β = L * sqrt(P_lower) is the lower bound on R₁
+    - alpha = L / sqrt(P_upper) is the lower bound on R0
+    - beta = L * sqrt(P_lower) is the lower bound on R1
 
     At optimum, marginal price = external price:
-    - R₁_opt + β = L × sqrt(P_external)
-    - R₀_opt + α = L / sqrt(P_external)
+    - R1_opt + beta = L * sqrt(P_external)
+    - R0_opt + alpha = L / sqrt(P_external)
     """
 
     tick_lower: int

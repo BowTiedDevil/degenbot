@@ -14,6 +14,8 @@ from degenbot.aave.enrichment.handlers.borrow import BorrowHandler
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
+import eth_abi.abi
+from degenbot.aave.enrichment.context import EnrichmentContext
 
 if TYPE_CHECKING:
     from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
@@ -147,7 +149,6 @@ def _create_mock_pool_event(
     amount: int,
 ) -> LogReceipt:
     """Create a mock Pool BORROW event."""
-    import eth_abi.abi
 
     # BORROW event: (address, uint256 amount, uint8, uint256)
     data = eth_abi.abi.encode(
@@ -183,7 +184,6 @@ def _create_mock_operation(
 
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for BORROW."""
-    from degenbot.aave.enrichment.context import EnrichmentContext
 
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
@@ -202,7 +202,6 @@ def _create_mock_context() -> MagicMock:
         operation_type: OperationType | None = None,
     ) -> int:
         """Extract amount from the mock pool event."""
-        import eth_abi.abi
 
         (_, amount, _, _) = eth_abi.abi.decode(
             ["address", "uint256", "uint8", "uint256"],
