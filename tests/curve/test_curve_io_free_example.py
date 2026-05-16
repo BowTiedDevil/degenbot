@@ -1,18 +1,115 @@
 """Example: Testing Curve pool calculations with I/O-free architecture.
 
 This demonstrates how the I/O-free pattern eliminates the need for mocks
-when testing pool logic. All on-chain data is injected via typed fetcher closures.
+when testing pool logic. All on-chain data is injected via a CurveDataProvider.
 """
 
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20 import Erc20Token
 
 
-def test_curve_plain_pool_with_lambda_fetchers():
+class FakeCurveDataProvider:
+    """A fake CurveDataProvider for testing that returns pre-programmed values."""
+
+    def __init__(
+        self,
+        *,
+        virtual_price: int | None = None,
+        base_virtual_price: int | None = None,
+        base_cache_updated: int | None = None,
+        block_timestamp: int = 1_700_000_000,
+        redemption_price: int | None = None,
+        admin_balances: tuple[int, ...] | None = None,
+        D: int | None = None,
+        gamma: int | None = None,
+        price_scale: tuple[int, ...] | None = None,
+        lending_rates: tuple[int, ...] | None = None,
+    ) -> None:
+        self._virtual_price = virtual_price
+        self._base_virtual_price = base_virtual_price
+        self._base_cache_updated = base_cache_updated
+        self._block_timestamp = block_timestamp
+        self._redemption_price = redemption_price
+        self._admin_balances = admin_balances
+        self._D = D
+        self._gamma = gamma
+        self._price_scale = price_scale
+        self._lending_rates = lending_rates
+
+    def virtual_price(self, block_number: int) -> int:  # noqa: ARG002
+        if self._virtual_price is None:
+            msg = "virtual_price not configured"
+            raise ValueError(msg)
+        return self._virtual_price
+
+    def base_virtual_price(self, block_number: int) -> int:  # noqa: ARG002
+        if self._base_virtual_price is None:
+            msg = "base_virtual_price not configured"
+            raise ValueError(msg)
+        return self._base_virtual_price
+
+    def base_cache_updated(self, block_number: int) -> int:  # noqa: ARG002
+        if self._base_cache_updated is None:
+            msg = "base_cache_updated not configured"
+            raise ValueError(msg)
+        return self._base_cache_updated
+
+    def block_timestamp(self, block_number: int) -> int:  # noqa: ARG002
+        return self._block_timestamp
+
+    def block_number(self) -> int:
+        return 18_000_000
+
+    def token_balance(self, token_address: str, holder_address: str, block_number: int) -> int:  # noqa: ARG002
+        msg = "token_balance not configured"
+        raise ValueError(msg)
+
+    def token_total_supply(self, token_address: str, block_number: int) -> int:  # noqa: ARG002
+        msg = "token_total_supply not configured"
+        raise ValueError(msg)
+
+    def lending_rates(self, block_number: int) -> tuple[int, ...]:  # noqa: ARG002
+        if self._lending_rates is None:
+            msg = "lending_rates not configured"
+            raise ValueError(msg)
+        return self._lending_rates
+
+    def redemption_price(self, block_number: int) -> int:  # noqa: ARG002
+        if self._redemption_price is None:
+            msg = "redemption_price not configured"
+            raise ValueError(msg)
+        return self._redemption_price
+
+    def admin_balances(self, block_number: int) -> tuple[int, ...]:  # noqa: ARG002
+        if self._admin_balances is None:
+            msg = "admin_balances not configured"
+            raise ValueError(msg)
+        return self._admin_balances
+
+    def D(self, block_number: int) -> int:  # noqa: ARG002
+        if self._D is None:
+            msg = "D not configured"
+            raise ValueError(msg)
+        return self._D
+
+    def gamma(self, block_number: int) -> int:  # noqa: ARG002
+        if self._gamma is None:
+            msg = "gamma not configured"
+            raise ValueError(msg)
+        return self._gamma
+
+    def price_scale(self, block_number: int) -> tuple[int, ...]:  # noqa: ARG002
+        if self._price_scale is None:
+            msg = "price_scale not configured"
+            raise ValueError(msg)
+        return self._price_scale
+
+
+def test_curve_plain_pool_with_data_provider():
     """
     Test a plain Curve pool (no lending, no base pool) with I/O-free pattern.
 
-    NO MOCKS NEEDED - just pass lambda fetchers for any on-chain data.
+    NO MOCKS NEEDED - just pass a data_provider with fake on-chain data.
     """
     dai = Erc20Token(
         address="0x6B175474E89094C44Da98b954EedeAC495271d0F",
@@ -27,12 +124,9 @@ def test_curve_plain_pool_with_lambda_fetchers():
         decimals=6,
     )
 
-    # I/O-free pool - inject fake data directly
-    # All pools need timestamp_fetcher for A coefficient ramping calculations
-    def fake_timestamp_fetcher(
-        block,  # noqa: ARG001
-    ):
-        return 1700000000  # Fake timestamp
+    provider = FakeCurveDataProvider(
+        block_timestamp=1_700_000_000,
+    )
 
     pool = CurveStableswapPool(
         address="0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
@@ -44,41 +138,31 @@ def test_curve_plain_pool_with_lambda_fetchers():
             10_000_000 * 10**18,  # 10M DAI
             10_000_000 * 10**6,  # 10M USDC
         ),
-        # Set state block to match the block we'll use for calculations
         state_block=18_000_000,
-        # Inject timestamp fetcher - needed for all pools
-        timestamp_fetcher=fake_timestamp_fetcher,
+        data_provider=provider,
     )
 
     # Test swap calculation - pass explicit block number (I/O-free)
-    # No network, no mocks, just math
     amount_in = 1000 * 10**18  # 1000 DAI
     result = pool.get_dy(0, 1, amount_in, block_identifier=18_000_000)
 
     assert result > 0
-    # Result is in USDC (6 decimals), input was DAI (18 decimals)
-    # At equilibrium with equal balances, 1000 DAI -> ~999.6 USDC (after 0.04% fee)
-    # Result in USDC units: ~999,600,000 (6 decimals)
     expected_approx = 999 * 10**6  # ~999 USDC
-    assert result > expected_approx * 0.99  # Close to expected (stable swap)
+    assert result > expected_approx * 0.99
     assert result < expected_approx * 1.01
 
 
-def test_curve_lending_pool_with_lending_rate_fetcher():
+def test_curve_lending_pool_with_data_provider():
     """
-    Test a lending pool (cToken/yToken) with fake lending rate fetcher.
+    Test a lending pool (cToken/yToken) with fake lending rates via data_provider.
 
-    BEFORE: Would need to mock the provider object
-    AFTER: Pass a lending_rate_fetcher closure that returns fake rates.
-
-    The lending rate fetcher replaces the old provider_call callback, completing
-    the I/O-free architecture for lending pools.
+    The data_provider bundles all on-chain data access behind a single seam.
     """
     cdai = Erc20Token(
         address="0x5d3a536E4D6DbD6114cc1Ead35777bAB948E3643",
         name="Compound DAI",
         symbol="cDAI",
-        decimals=8,  # cTokens have different decimals
+        decimals=8,
     )
     cusdc = Erc20Token(
         address="0x39AA39c021dfbaE8faC545936693aC917d5E7563",
@@ -87,25 +171,15 @@ def test_curve_lending_pool_with_lending_rate_fetcher():
         decimals=8,
     )
 
-    # Fake lending rate fetcher - returns per-token rates scaled to PRECISION
-    # For cToken pools, rates are the exchange rate * precision multiplier
     PRECISION = 10**18
 
-    def fake_lending_rate_fetcher(
-        block_number,  # noqa: ARG001
-    ) -> tuple[int, ...]:
-        # Return rates for cDAI and cUSDC
-        # cDAI rate ~1.02, cUSDC rate ~1.05, scaled by precision multiplier
-        return (PRECISION * 102 // 100, PRECISION * 105 // 100)
-
-    # Fake timestamp fetcher (needed for all pools)
-    def fake_timestamp_fetcher(
-        block,  # noqa: ARG001
-    ):
-        return 1700000000
+    provider = FakeCurveDataProvider(
+        block_timestamp=1_700_000_000,
+        lending_rates=(PRECISION * 102 // 100, PRECISION * 105 // 100),
+    )
 
     pool = CurveStableswapPool(
-        address="0x0000000000000000000000000000000000000001",  # Valid address
+        address="0x0000000000000000000000000000000000000001",
         tokens=(cdai, cusdc),
         a_coefficient=1000,
         fee=4000000,
@@ -114,29 +188,22 @@ def test_curve_lending_pool_with_lending_rate_fetcher():
             1_000_000 * 10**8,  # 1M cDAI
             1_000_000 * 10**8,  # 1M cUSDC
         ),
-        # Set state block to match the block we'll use for calculations
         state_block=18_000_000,
-        # Mark tokens as lending
         use_lending=(True, True),
-        # Inject fake fetchers - NO MOCKS!
-        lending_rate_fetcher=fake_lending_rate_fetcher,
-        timestamp_fetcher=fake_timestamp_fetcher,
+        data_provider=provider,
     )
 
-    # Test calculation with fake rates
     amount_in = 100 * 10**8  # 100 cDAI
     result = pool.get_dy(0, 1, amount_in, block_identifier=18_000_000)
 
     assert result > 0
-    # Rate difference affects the output
 
 
-def test_curve_metapool_with_virtual_price_fetcher():
+def test_curve_metapool_with_data_provider():
     """
-    Test a metapool with fake virtual price fetcher.
+    Test a metapool with fake virtual price via data_provider.
 
-    BEFORE: Would need to mock provider.call() for base_pool.get_virtual_price()
-    AFTER: Just pass a lambda that returns fake virtual price.
+    Just configure the provider with a base_virtual_price value.
     """
     rai = Erc20Token(
         address="0x81ab848898b15A779B7cd0cB2cDd406c64EFc12c",
@@ -144,23 +211,19 @@ def test_curve_metapool_with_virtual_price_fetcher():
         symbol="RAI",
         decimals=18,
     )
-    # 3Crv LP token (3Pool token)
     threecrv = Erc20Token(
-        address="0x6c3F90f043a72FA612CbAC8115EEe7f52CdE6E49",  # Fixed address (even length)
+        address="0x6c3F90f043a72FA612CbAC8115EEe7f52CdE6E49",
         name="Curve 3Pool Token",
         symbol="3Crv",
         decimals=18,
     )
 
-    # Fake virtual price fetcher - returns LP token price
     PRECISION = 10**18
-    fake_vp_fetcher = lambda block: PRECISION * 102 // 100  # 1.02
 
-    # Fake timestamp fetcher (needed for all pools)
-    def fake_timestamp_fetcher(
-        block,  # noqa: ARG001
-    ):
-        return 1700000000
+    provider = FakeCurveDataProvider(
+        block_timestamp=1_700_000_000,
+        base_virtual_price=PRECISION * 102 // 100,  # 1.02
+    )
 
     pool = CurveStableswapPool(
         address="0x618788357D0EBd8A37e763ADab3bc575D54c2C7d",
@@ -172,27 +235,22 @@ def test_curve_metapool_with_virtual_price_fetcher():
             5_000_000 * 10**18,  # 5M RAI
             10_000_000 * 10**18,  # 10M 3Crv LP tokens
         ),
-        # Set state block to match the block we'll use for calculations
         state_block=18_000_000,
-        # Inject fake fetchers - NO MOCKS!
-        base_virtual_price_fetcher=fake_vp_fetcher,
-        timestamp_fetcher=fake_timestamp_fetcher,
+        data_provider=provider,
     )
 
-    # Test calculation with fake virtual price
     amount_in = 1000 * 10**18  # 1000 RAI
     result = pool.get_dy(0, 1, amount_in, block_identifier=18_000_000)
 
     assert result > 0
 
 
-def test_curve_crypto_pool_with_d_fetcher():
+def test_curve_crypto_pool_with_data_provider():
     """
-    Test a crypto pool (volatile assets like Tricrypto) with fake D fetcher.
+    Test a crypto pool (volatile assets like Tricrypto) with fake D, gamma, price_scale.
 
-    Crypto pools need the on-chain invariant D value.
-    BEFORE: Would need to mock provider.call() for D()
-    AFTER: Just pass a lambda.
+    Crypto pools need the on-chain invariant D value, gamma, and price_scale.
+    All provided through the single data_provider seam.
     """
     wbtc = Erc20Token(
         address="0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
@@ -207,55 +265,31 @@ def test_curve_crypto_pool_with_d_fetcher():
         decimals=18,
     )
 
-    # Fake D fetcher - returns on-chain invariant
-    def fake_d_fetcher(
-        block,  # noqa: ARG001
-    ):
-        return 10**20  # Some large D value
-
-    # Fake gamma fetcher
-    def fake_gamma_fetcher(
-        block,  # noqa: ARG001
-    ):
-        return 10**16  # Gamma parameter
-
-    # Fake price scale fetcher (for multi-asset pools)
-    def fake_price_scale_fetcher(
-        block,  # noqa: ARG001
-    ):
-        return (10**18,)
-
-    # Fake timestamp fetcher (needed for all pools)
-    def fake_timestamp_fetcher(
-        block,  # noqa: ARG001
-    ):
-        return 1700000000
+    provider = FakeCurveDataProvider(
+        block_timestamp=1_700_000_000,
+        D=10**20,
+        gamma=10**16,
+        price_scale=(10**18,),
+    )
 
     pool = CurveStableswapPool(
-        address="0x0000000000000000000000000000000000000002",  # Valid address
+        address="0x0000000000000000000000000000000000000002",
         tokens=(wbtc, weth),
-        a_coefficient=400,  # Crypto pools still have A parameter
-        fee=10000000,  # Higher fee for crypto pool
+        a_coefficient=400,
+        fee=10000000,
         admin_fee=5000000000,
         balances=(
             100 * 10**8,  # 100 WBTC
             2000 * 10**18,  # 2000 WETH
         ),
-        # Set state block to match the block we'll use for calculations
         state_block=18_000_000,
-        # Crypto pool parameters (non-zero fee_gamma indicates crypto pool)
         fee_gamma=500000000000000,
         mid_fee=3000000,
         out_fee=30000000,
-        gamma=10**16,  # Gamma parameter
-        # Inject fake fetchers - NO MOCKS!
-        D_fetcher=fake_d_fetcher,
-        gamma_fetcher=fake_gamma_fetcher,
-        price_scale_fetcher=fake_price_scale_fetcher,
-        timestamp_fetcher=fake_timestamp_fetcher,
+        gamma=10**16,
+        data_provider=provider,
     )
 
-    # Test calculation
     amount_in = 10**8  # 1 WBTC
     result = pool.get_dy(0, 1, amount_in, block_identifier=18_000_000)
 

@@ -19,8 +19,13 @@ class TestResolvePoolStrategies:
     """Test resolve_pool_strategies() for known pool addresses."""
 
     def test_default_for_unknown_address(self):
+        from degenbot.curve.calculators.standard import StandardDyCalculator
+
         strategies = resolve_pool_strategies("0x0000000000000000000000000000000000000001")
-        assert strategies == PoolStrategies()
+        # Unknown address gets defaults with StandardDyCalculator
+        assert strategies.swap_style == SwapStyle.STANDARD
+        assert strategies.lending_rate_style == LendingRateStyle.NONE
+        assert isinstance(strategies.dy_calculator, StandardDyCalculator)
 
     def test_tripool(self):
         # 3pool uses RATE_ADJUSTED
