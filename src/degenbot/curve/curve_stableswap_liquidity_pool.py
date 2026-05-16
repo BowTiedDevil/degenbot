@@ -108,7 +108,7 @@ class CurveStableswapPool(  # type: ignore[override]
         gamma: int | None = None,
         offpeg_fee_multiplier: int | None = None,
         # Strategy enums (resolved by builder from pool address)
-        strategies: PoolStrategies = PoolStrategies(),
+        strategies: PoolStrategies | None = None,
     ) -> None:
         """
         A Curve V1 (StableSwap) pool.
@@ -151,7 +151,7 @@ class CurveStableswapPool(  # type: ignore[override]
         self._gamma = gamma if gamma is not None else 0
 
         # Variant computation strategies (resolved by builder from pool address)
-        self._strategies = strategies
+        self._strategies = strategies if strategies is not None else PoolStrategies()
 
         # Pool configuration
         self._base_pool = base_pool
