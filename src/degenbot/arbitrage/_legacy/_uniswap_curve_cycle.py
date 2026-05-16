@@ -8,13 +8,15 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Iterable, Mapping, Sequence
 
-if TYPE_CHECKING:
+    from eth_typing import ChecksumAddress
+
     from degenbot.async_bot import AsyncBot
     from degenbot.bot import Bot
+    from degenbot.erc20 import Erc20Token
+    from degenbot.types.aliases import BlockNumber
 from weakref import WeakSet
 
 import eth_abi.abi
-from eth_typing import ChecksumAddress
 from scipy.optimize import OptimizeResult, minimize_scalar
 from web3 import Web3
 
@@ -29,13 +31,11 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_UINT256
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.types import CurveStableswapPoolState
-from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import ArbitrageError, NoLiquidity
 from degenbot.exceptions.pool import EVMRevertError, LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import (
     AbstractPublisherMessage,
     PoolStateMessage,
