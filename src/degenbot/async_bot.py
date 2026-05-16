@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import warnings
+from dataclasses import dataclass
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, cast
 
@@ -56,9 +57,19 @@ from degenbot.uniswap.v3_types import (
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.uniswap.v4_types import UniswapV4BitmapAtWord, UniswapV4LiquidityAtTick
 
+
+@dataclass(frozen=True)
+class _ResolvedDeployment:
+    """Deployer address and pool init-hash resolved from factory deployments."""
+
+    deployer: str
+    init_hash: str
+
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from eth_typing import ChecksumAddress
     from web3 import AsyncBaseProvider, AsyncWeb3
     from web3.types import BlockIdentifier
 
@@ -336,20 +347,13 @@ class AsyncBot:
         )
 
         # Determine deployer/init_hash
-        resolved_deployer = factory
-        resolved_init_hash = UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH
-        with contextlib.suppress(KeyError):
-            factory_deployment = _FACTORY_DEPLOYMENTS[chain_id][factory]
-            resolved_init_hash = factory_deployment.pool_init_hash
-            if factory_deployment.deployer is not None:
-                resolved_deployer = get_checksum_address(factory_deployment.deployer)
-
-        resolved_deployer = (
-            get_checksum_address(deployer_address)
-            if deployer_address is not None
-            else resolved_deployer
+        deployment = self._resolve_deployment(
+            chain_id=chain_id,
+            factory=factory,
+            default_init_hash=UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH,
+            deployer_address=deployer_address,
+            init_hash=init_hash,
         )
-        resolved_init_hash = init_hash or resolved_init_hash
 
         pool = UniswapV2Pool(
             address=pool_address,
@@ -361,8 +365,8 @@ class AsyncBot:
             fee_token1=fee_token1,
             reserves_token0=reserves0,
             reserves_token1=reserves1,
-            deployer_address=resolved_deployer,
-            init_hash=resolved_init_hash,
+            deployer_address=deployment.deployer,
+            init_hash=deployment.init_hash,
             state_block=resolved_state_block,
         )
 
@@ -547,20 +551,13 @@ class AsyncBot:
         tick_data_arg = working_tick_data or None
 
         # Determine deployer/init_hash
-        resolved_deployer = factory
-        resolved_init_hash = UniswapV3Pool.UNISWAP_V3_MAINNET_POOL_INIT_HASH
-        with contextlib.suppress(KeyError):
-            factory_deployment = _FACTORY_DEPLOYMENTS[chain_id][factory]
-            resolved_init_hash = factory_deployment.pool_init_hash
-            if factory_deployment.deployer is not None:
-                resolved_deployer = get_checksum_address(factory_deployment.deployer)
-
-        resolved_deployer = (
-            get_checksum_address(deployer_address)
-            if deployer_address is not None
-            else resolved_deployer
+        deployment = self._resolve_deployment(
+            chain_id=chain_id,
+            factory=factory,
+            default_init_hash=UniswapV3Pool.UNISWAP_V3_MAINNET_POOL_INIT_HASH,
+            deployer_address=deployer_address,
+            init_hash=init_hash,
         )
-        resolved_init_hash = init_hash or resolved_init_hash
 
         pool = UniswapV3Pool(
             address=pool_address,
@@ -576,8 +573,8 @@ class AsyncBot:
             state_block=resolved_state_block,
             tick_bitmap=tick_bitmap_arg,
             tick_data=tick_data_arg,
-            deployer_address=resolved_deployer,
-            init_hash=resolved_init_hash,
+            deployer_address=deployment.deployer,
+            init_hash=deployment.init_hash,
         )
 
         self.pools.add(pool_address=pool.address, chain_id=chain_id, pool=pool)
@@ -791,6 +788,36 @@ class AsyncBot:
             logger.info(pool.name)
 
         return pool
+
+    # ------------------------------------------------------------------
+    # Deployment resolution helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_deployment(
+        *,
+        chain_id: ChainId,
+        factory: ChecksumAddress,
+        default_init_hash: str,
+        deployer_address: str | None = None,
+        init_hash: str | None = None,
+    ) -> _ResolvedDeployment:
+        """Resolve deployer address and pool init-hash from factory deployments."""
+        resolved_deployer: str = factory
+        resolved_init_hash = default_init_hash
+        with contextlib.suppress(KeyError):
+            factory_deployment = _FACTORY_DEPLOYMENTS[chain_id][factory]
+            resolved_init_hash = factory_deployment.pool_init_hash
+            if factory_deployment.deployer is not None:
+                resolved_deployer = get_checksum_address(factory_deployment.deployer)
+
+        resolved_deployer = (
+            get_checksum_address(deployer_address)
+            if deployer_address is not None
+            else resolved_deployer
+        )
+        resolved_init_hash = init_hash or resolved_init_hash
+        return _ResolvedDeployment(deployer=resolved_deployer, init_hash=resolved_init_hash)
 
     # ------------------------------------------------------------------
     # I/O methods
