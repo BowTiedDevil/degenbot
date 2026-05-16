@@ -1,3 +1,4 @@
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 
@@ -42,7 +43,7 @@ def _register_uniswap_deployments() -> None:
     ]
 
     for chain_id, factory in v2_factories:
-        deployment = FACTORY_DEPLOYMENTS.get(chain_id, {}).get(factory)
+        deployment = FACTORY_DEPLOYMENTS.get(chain_id, {}).get(get_checksum_address(factory))
         pool_type_registry.register(
             UniswapV2Pool,
             chain_id=chain_id,
@@ -52,7 +53,7 @@ def _register_uniswap_deployments() -> None:
         )
 
     for chain_id, factory in v3_factories:
-        deployment = FACTORY_DEPLOYMENTS.get(chain_id, {}).get(factory)
+        deployment = FACTORY_DEPLOYMENTS.get(chain_id, {}).get(get_checksum_address(factory))
         pool_type_registry.register(
             UniswapV3Pool,
             chain_id=chain_id,
