@@ -1,14 +1,18 @@
+from __future__ import annotations
+
 import dataclasses
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+    from collections.abc import Callable, Sequence
 
-from eth_typing import HexAddress
+    from eth_typing import ChecksumAddress, HexAddress
+
+    from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+    from degenbot.types.aliases import BlockNumber
 
 from degenbot.types.abstract import AbstractPoolState
-from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PoolStateMessage
 
 # ── Variant Enums ──
@@ -114,6 +118,63 @@ class LendingRateStyle(Enum):
     ORACLE = auto()  # On-chain oracle bitmask
 
 
+@dataclasses.dataclass(slots=True, frozen=True)
+class DyCalculationInputs:
+    """Pre-resolved data for a single dy calculation.
+
+    Constructed by CurveStableswapPool.get_dy() before delegating to the
+    injected DyCalculator. The calculator reads only from this object —
+    never from the pool directly. All I/O, cache lookups, and rate
+    resolution happen before this object is created.
+    """
+
+    # ── Pool constants ──
+    PRECISION: int
+    FEE_DENOMINATOR: int
+    fee: int
+    n_coins: int
+
+    # ── Pool state ──
+    balances: tuple[int, ...]
+    rate_multipliers: tuple[int, ...]
+    precision_multipliers: tuple[int, ...]
+    offpeg_fee_multiplier: int
+    fee_gamma: int
+    mid_fee: int
+    out_fee: int
+    address: ChecksumAddress
+
+    # ── Pre-resolved rates (after lending-rate I/O) ──
+    resolved_rates: tuple[int, ...]
+
+    # ── Pre-computed XP (rate-adjusted balances) ──
+    xp: tuple[int, ...]
+
+    # ── Pre-resolved block data ──
+    block_number: int
+    block_timestamp: int
+    amp: int
+
+    # ── I/O results for crypto pools ──
+    d: int | None = None
+    gamma: int | None = None
+    price_scale: tuple[int, ...] | None = None
+
+    # ── I/O results for live-admin pools ──
+    live_balances: tuple[int, ...] | None = None
+    admin_balances: tuple[int, ...] | None = None
+    effective_balances: tuple[int, ...] | None = None
+
+    # ── I/O results for metapool pools ──
+    virtual_price: int | None = None
+    scaled_redemption_price: int | None = None
+    base_pool: CurveStableswapPool | None = None
+
+    # ── Callable: invariant solver closures ──
+    get_y: Callable[[int, int, int, Sequence[int]], int] | None = None
+    newton_y: Callable[[int, int, Sequence[int], int, int], int] | None = None
+
+
 class DyCalculator(Protocol):
     """Calculates dy (output amount) for a Curve StableSwap swap.
 
@@ -121,9 +182,10 @@ class DyCalculator(Protocol):
     protocol. The pool's get_dy() delegates to the injected calculator
     via PoolStrategies.dy_calculator.
 
-    Calculators resolve data from the pool (amp, balances, rates) in
-    the first few lines, then call pure invariant-solver functions for
-    the math. The pool parameter is read-only.
+    Calculators receive a DyCalculationInputs object carrying all
+    pre-resolved data (balances, rates, xp, closures for invariant
+    solving). All I/O and cache lookups happen before the calculator
+    is called — the calculator is pure math.
     """
 
     def calculate(
@@ -132,9 +194,8 @@ class DyCalculator(Protocol):
         j: int,
         dx: int,
         *,
-        pool: "CurveStableswapPool",
-        block_number: int,
-        override_state: "CurveStableswapPoolState | None" = None,
+        inputs: DyCalculationInputs,
+        override_state: CurveStableswapPoolState | None = None,
     ) -> int: ...
 
 
@@ -283,7 +344,7 @@ class LendingRateFetcher(Protocol):
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
 class CurveStableswapPoolState(AbstractPoolState):
     balances: tuple[int, ...]
-    base: "CurveStableswapPoolState | None" = None
+    base: CurveStableswapPoolState | None = None
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

@@ -5,6 +5,7 @@ plain pools, metapools, lending pools, and crypto pools.
 """
 
 import contextlib
+import dataclasses
 from collections.abc import Iterable, Sequence
 from fractions import Fraction
 from threading import Lock
@@ -22,8 +23,10 @@ from degenbot.curve.types import (
     CurveStableswapPoolExternalUpdate,
     CurveStableswapPoolState,
     CurveStableSwapPoolStateUpdated,
+    DyCalculationInputs,
     LendingRateStyle,
     PoolStrategies,
+    SwapStyle,
     YVariant,
 )
 from degenbot.erc20 import Erc20Token
@@ -453,6 +456,190 @@ class CurveStableswapPool(  # type: ignore[override]
         raise MissingCurveData(
             self.address,
             "redemption_price",
+            "Redemption price requires a data_provider."
+            " Provide one via Bot.build_pool().",
+        )
+
+    def _build_calculation_inputs(
+        self,
+        block_number: int,
+        override_state: CurveStableswapPoolState | None = None,
+    ) -> DyCalculationInputs:
+        """Pre-resolve all data needed by DyCalculator implementations.
+
+        All I/O, cache lookups, and rate resolution happen here.
+        The calculator receives a frozen snapshot — no pool access needed.
+        """
+        pool_balances = override_state.balances if override_state is not None else self.balances
+
+        # Resolve block timestamp
+        if block_number not in self._block_timestamps:
+            if self._data_provider is None:
+                raise MissingCurveData(
+                    self.address,
+                    "block_timestamp",
+                    "Block timestamp requires a data_provider."
+                    " Provide one via Bot.build_pool().",
+                )
+            self._block_timestamps[block_number] = self._data_provider.block_timestamp(
+                block_number
+            )
+        block_timestamp = self._block_timestamps[block_number]
+
+        # Resolve amp (A ramping)
+        amp = self._a(timestamp=block_timestamp)
+
+        # Resolve rates (lending-rate I/O)
+        if self._strategies.lending_rate_style == LendingRateStyle.NONE:
+            resolved_rates = self.rate_multipliers
+        else:
+            if self._data_provider is None:
+                raise MissingCurveData(
+                    self.address,
+                    "lending_rate",
+                    "Lending rate fetcher is required for pools with"
+                    " lending tokens. Provide one via Bot.build_pool().",
+                )
+            resolved_rates = self._data_provider.lending_rates(block_number)
+
+        # Compute XP
+        xp = tuple(
+            rate * balance // self.PRECISION
+            for rate, balance in zip(resolved_rates, pool_balances, strict=True)
+        )
+
+        # get_y closure — encapsulates amp resolution, variant dispatch, EVMRevertError wrapping
+        def get_y(i: int, j: int, x: int, xp_: Sequence[int]) -> int:
+            return self._get_y(i, j, x, xp_)
+
+        # newton_y closure — encapsulates crypto invariant solving
+        def newton_y(ann: int, gamma: int, xp_: Sequence[int], d: int, token_index: int) -> int:
+            return self._newton_y(ann, gamma, xp_, d, token_index)
+
+        inputs = DyCalculationInputs(
+            PRECISION=self.PRECISION,
+            FEE_DENOMINATOR=self.FEE_DENOMINATOR,
+            fee=self.fee,
+            n_coins=len(self.tokens),
+            balances=pool_balances,
+            rate_multipliers=self.rate_multipliers,
+            precision_multipliers=self.precision_multipliers,
+            offpeg_fee_multiplier=self.offpeg_fee_multiplier,
+            fee_gamma=self.fee_gamma,
+            mid_fee=self.mid_fee,
+            out_fee=self.out_fee,
+            address=self.address,
+            resolved_rates=resolved_rates,
+            xp=xp,
+            block_number=block_number,
+            block_timestamp=block_timestamp,
+            amp=amp,
+            get_y=get_y,
+            newton_y=newton_y,
+        )
+
+        swap_style = self._strategies.swap_style
+
+        # ── Crypto-specific I/O ──
+        if swap_style == SwapStyle.CRYPTO:
+            if self._data_provider is None:
+                raise MissingCurveData(
+                    self.address,
+                    "data_provider",
+                    "Crypto pool requires a data_provider"
+                    " for D, gamma, price_scale.",
+                )
+            try:
+                d_val = self._cached_contract_D[block_number]
+            except KeyError:
+                d_val = self._data_provider.D(block_number)
+                self._cached_contract_D[block_number] = d_val
+
+            try:
+                gamma_val = self._cached_gamma[block_number]
+            except KeyError:
+                gamma_val = self._data_provider.gamma(block_number)
+                self._cached_gamma[block_number] = gamma_val
+
+            try:
+                price_scale_val = self._cached_price_scale[block_number]
+            except KeyError:
+                price_scale_val = self._data_provider.price_scale(block_number)
+                self._cached_price_scale[block_number] = price_scale_val
+
+            return dataclasses.replace(
+                inputs,
+                d=d_val,
+                gamma=gamma_val,
+                price_scale=price_scale_val,
+            )
+
+        # ── Live-admin-specific I/O ──
+        if swap_style in {
+            SwapStyle.LIVE_ADMIN,
+            SwapStyle.LIVE_ADMIN_DYNAMIC,
+            SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION,
+            SwapStyle.LIVE_ADMIN_ORACLE,
+        }:
+            if self._data_provider is None:
+                raise MissingCurveData(
+                    self.address,
+                    "data_provider",
+                    "Live-admin pool requires a data_provider"
+                    " for token balances and admin balances.",
+                )
+            live_balances = tuple(
+                self._data_provider.token_balance(
+                    token.address, self.address, block_number
+                )
+                for token in self._tokens
+            )
+            admin_balances = self._get_admin_balances(block_number)
+            effective_balances = tuple(
+                lb - ab
+                for lb, ab in zip(live_balances, admin_balances, strict=True)
+            )
+
+            # For LIVE_ADMIN_ORACLE, re-resolve rates using effective balances
+            if swap_style == SwapStyle.LIVE_ADMIN_ORACLE:
+                oracle_rates = self._resolve_rates(
+                    rates=self.rate_multipliers,
+                    block_number=block_number,
+                    pool_balances=effective_balances,
+                )
+                oracle_xp = tuple(
+                    rate * balance // self.PRECISION
+                    for rate, balance in zip(oracle_rates, effective_balances, strict=True)
+                )
+            else:
+                oracle_rates = resolved_rates
+                oracle_xp = tuple(
+                    rate * balance // self.PRECISION
+                    for rate, balance in zip(resolved_rates, effective_balances, strict=True)
+                )
+
+            return dataclasses.replace(
+                inputs,
+                live_balances=live_balances,
+                admin_balances=admin_balances,
+                effective_balances=effective_balances,
+                balances=effective_balances,
+                resolved_rates=oracle_rates,
+                xp=oracle_xp,
+            )
+
+        return inputs
+        with contextlib.suppress(KeyError):
+            return self._cached_scaled_redemption_price[block_number]
+
+        if self._data_provider is not None:
+            result = self._data_provider.redemption_price(block_number)
+            self._cached_scaled_redemption_price[block_number] = result
+            return result
+
+        raise MissingCurveData(
+            self.address,
+            "redemption_price",
             "Redemption price requires a data_provider. Provide one via Bot.build_pool().",
         )
 
@@ -477,61 +664,54 @@ class CurveStableswapPool(  # type: ignore[override]
 
         block_number = self._resolve_block_number(block_identifier)
 
-        # Fetch and cache block timestamp for A ramping calculations
-        if block_number not in self._block_timestamps:
-            if self._data_provider is None:
-                raise MissingCurveData(
-                    self.address,
-                    "block_timestamp",
-                    "Block timestamp requires a data_provider. Provide one via Bot.build_pool().",
-                )
-            self._block_timestamps[block_number] = self._data_provider.block_timestamp(block_number)
-
         if self.base_pool is not None:
+            # Metapool path — resolve metapool-specific inputs
+            inputs = self._build_metapool_inputs(block_number, override_state)
             calculator = self._strategies.metapool_dy_calculator
-            if calculator is not None:
-                return calculator.calculate(
-                    i,
-                    j,
-                    dx,
-                    pool=self,
-                    block_number=block_number,
-                    override_state=override_state,
-                )
-            # Fallback: lazily construct metapool calculator
-            from degenbot.curve._pool_strategies import _make_metapool_dy_calculator
+            if calculator is None:
+                from degenbot.curve._pool_strategies import _make_metapool_dy_calculator
 
-            calculator = _make_metapool_dy_calculator(self._strategies.metapool_rate_style)
+                calculator = _make_metapool_dy_calculator(self._strategies.metapool_rate_style)
             return calculator.calculate(
-                i,
-                j,
-                dx,
-                pool=self,
-                block_number=block_number,
-                override_state=override_state,
+                i, j, dx, inputs=inputs, override_state=override_state,
             )
 
-        if self._strategies.dy_calculator is not None:
-            return self._strategies.dy_calculator.calculate(
-                i,
-                j,
-                dx,
-                pool=self,
-                block_number=block_number,
-                override_state=override_state,
-            )
+        # Non-metapool path — resolve standard/crypto/live-admin inputs
+        inputs = self._build_calculation_inputs(block_number, override_state)
 
-        # Fallback: no calculator on PoolStrategies — construct lazily.
-        # This handles pools constructed directly (without Bot.build_pool)
-        # or constructed before the calculator migration.
-        calculator = _make_dy_calculator(self._strategies.swap_style)
+        calculator = self._strategies.dy_calculator
+        if calculator is None:
+            # Fallback: lazily construct calculator
+            calculator = _make_dy_calculator(self._strategies.swap_style)
         return calculator.calculate(
-            i,
-            j,
-            dx,
-            pool=self,
-            block_number=block_number,
-            override_state=override_state,
+            i, j, dx, inputs=inputs, override_state=override_state,
+        )
+
+    def _build_metapool_inputs(
+        self,
+        block_number: int,
+        override_state: CurveStableswapPoolState | None = None,
+    ) -> DyCalculationInputs:
+        """Pre-resolve data needed by metapool DyCalculator implementations.
+
+        Extends the base inputs with metapool-specific I/O (virtual price,
+        redemption price, base pool reference).
+        """
+        inputs = self._build_calculation_inputs(block_number, override_state)
+
+        # Resolve virtual price
+        virtual_price = self._get_virtual_price(block_number)
+
+        # Resolve scaled redemption price (may not be available for all metapools)
+        scaled_redemption_price: int | None = None
+        with contextlib.suppress(MissingCurveData):
+            scaled_redemption_price = self._get_scaled_redemption_price(block_number)
+
+        return dataclasses.replace(
+            inputs,
+            virtual_price=virtual_price,
+            scaled_redemption_price=scaled_redemption_price,
+            base_pool=self.base_pool,
         )
 
     def _get_dy_underlying(
@@ -543,30 +723,17 @@ class CurveStableswapPool(  # type: ignore[override]
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
         block_number = self._resolve_block_number(block_identifier)
+        inputs = self._build_metapool_inputs(block_number, override_state)
 
         calculator = self._strategies.metapool_underlying_dy_calculator
-        if calculator is not None:
-            return calculator.calculate(
-                i,
-                j,
-                dx,
-                pool=self,
-                block_number=block_number,
-                override_state=override_state,
-            )
-        # Fallback: lazily construct metapool underlying calculator
-        from degenbot.curve._pool_strategies import _make_metapool_underlying_dy_calculator
+        if calculator is None:
+            from degenbot.curve._pool_strategies import _make_metapool_underlying_dy_calculator
 
-        calculator = _make_metapool_underlying_dy_calculator(
-            self._strategies.metapool_underlying_style
-        )
+            calculator = _make_metapool_underlying_dy_calculator(
+                self._strategies.metapool_underlying_style
+            )
         return calculator.calculate(
-            i,
-            j,
-            dx,
-            pool=self,
-            block_number=block_number,
-            override_state=override_state,
+            i, j, dx, inputs=inputs, override_state=override_state,
         )
 
     def _get_base_cache_updated(self, block_number: BlockNumber) -> int:
