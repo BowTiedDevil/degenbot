@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from degenbot.builders.tick_data_fetcher import TickDataTypes, make_tick_data_fetcher
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database.models.pools import LiquidityPoolTable
+from degenbot.database.models.pools import LiquidityPoolTable, UniswapV3PoolTableBase
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
@@ -63,7 +63,7 @@ class V3PoolBuilder:
     def _make_tick_data_fetcher(self, pool_address: str, chain_id: int) -> Any:
         """Create a tick data fetcher callback for a V3 pool."""
         return make_tick_data_fetcher(
-            pool_lookup=lambda _: self._pools.get(pool_address=pool_address, chain_id=chain_id),
+            pool_lookup=lambda block: self._pools.get(chain_id=chain_id, pool_address=get_checksum_address(pool_address)),  # type: ignore[arg-type,return-value]
             provider_lookup=lambda: self._connections.get_provider(chain_id),
             types=TickDataTypes(
                 bitmap_at_word=UniswapV3BitmapAtWord,
@@ -106,10 +106,14 @@ class V3PoolBuilder:
         # Get immutable values
         if pool_from_db is not None:
             factory = get_checksum_address(pool_from_db.exchange.factory)
-            token0_address = pool_from_db.token0.address
-            token1_address = pool_from_db.token1.address
-            fee = pool_from_db.fee_token0
-            tick_spacing_for_pool = pool_from_db.tick_spacing
+            token0_address = get_checksum_address(pool_from_db.token0.address)
+            token1_address = get_checksum_address(pool_from_db.token1.address)
+            if isinstance(pool_from_db, UniswapV3PoolTableBase):
+                fee = pool_from_db.fee_token0
+                tick_spacing_for_pool = pool_from_db.tick_spacing
+            else:
+                msg = f"Expected UniswapV3PoolTableBase, got {type(pool_from_db).__name__}"
+                raise DegenbotValueError(message=msg)
 
             if pool_from_db.exchange.deployer is not None:
                 deployer_address = pool_from_db.exchange.deployer
@@ -198,7 +202,7 @@ class V3PoolBuilder:
                                 LiquidityPoolTable.id == pool_from_db.id
                             )
                         )
-                        if pool_with_data is not None:
+                        if pool_with_data is not None and isinstance(pool_with_data, UniswapV3PoolTableBase):
                             init_maps = pool_with_data.initialization_maps
                             liq_positions = pool_with_data.liquidity_positions
                             if init_maps and liq_positions:
@@ -273,9 +277,9 @@ class V3PoolBuilder:
             if registry_deployment.pool_init_hash is not None:
                 init_hash = registry_deployment.pool_init_hash
             if registry_deployment.deployer is not None:
-                deployer = registry_deployment.deployer
+                deployer = get_checksum_address(registry_deployment.deployer)
 
-        deployer = deployer_address or deployer
+        deployer = get_checksum_address(deployer_address) if deployer_address else deployer
         init_hash = init_hash or init_hash
 
         # Only pass tick data if we have a complete DB snapshot.
@@ -289,7 +293,11 @@ class V3PoolBuilder:
         # Map factory addresses to pool classes for V3 variants
         pool_class = pool_type_registry.get_v3_class(chain_id, factory)
 
-        pool = pool_class(
+        if pool_class is None:
+            msg = f"No V3 pool class registered for chain {chain_id}, factory {factory}"
+            raise ValueError(msg)
+
+        pool = pool_class(  # type: ignore[call-arg]
             address=pool_address,
             chain_id=chain_id,
             token0=token0,
@@ -310,7 +318,7 @@ class V3PoolBuilder:
 
         # Register pool
         self._pools.add(
-            pool=pool,
+            pool=pool,  # type: ignore[arg-type]
             chain_id=chain_id,
             pool_address=pool.address,
         )
@@ -343,8 +351,10 @@ class V3PoolBuilder:
             msg = f"V3PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 
+        assert pool.chain_id is not None
         provider = self._connections.get_provider(pool.chain_id)
-        _block_number = block_number if block_number is not None else provider.get_block_number()
+        raw_block = block_number if block_number is not None else provider.get_block_number()
+        _block_number = int(raw_block) if not isinstance(raw_block, int) else raw_block
 
         slot0_result = provider.call(
             to=pool.address,
