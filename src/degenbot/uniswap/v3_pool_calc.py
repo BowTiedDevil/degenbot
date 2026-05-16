@@ -14,22 +14,18 @@ These methods match the Uniswap V3 contract's math:
 
 from __future__ import annotations
 
+from abc import abstractmethod
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import EVMRevertError, IncompleteSwap, LiquidityPoolError
 from degenbot.uniswap.v3_functions import exchange_rate_from_sqrt_price_x96
-from degenbot.uniswap.v3_libraries.tick_math import (
-    MAX_SQRT_RATIO,
-    MIN_SQRT_RATIO,
-)
+from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 
 if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
-    from degenbot.uniswap.v3_types import (
-        UniswapV3PoolState,
-    )
+    from degenbot.uniswap.v3_types import UniswapV3PoolState
 
 
 class UniswapV3PoolCalc:
@@ -42,6 +38,31 @@ class UniswapV3PoolCalc:
     - TICK_STRUCT_TYPES
     - SLOT0_STRUCT_TYPES
     """
+
+    # Attributes provided by sibling/child mixins in the MRO.
+    # Declared here for mypy; at runtime they come from V3PoolState
+    # and the concrete UniswapV3Pool class.
+    _token0: Erc20Token
+    _token1: Erc20Token
+    _fee: int
+
+    @property
+    @abstractmethod
+    def tokens(self) -> tuple[Erc20Token, Erc20Token]: ...
+
+    @property
+    @abstractmethod
+    def state(self) -> UniswapV3PoolState: ...
+
+    @abstractmethod
+    def _calculate_swap(
+        self,
+        *,
+        zero_for_one: bool,
+        amount_specified: int,
+        sqrt_price_limit_x96: int,
+        override_state: UniswapV3PoolState | None = None,
+    ) -> tuple[int, int, int, int, int]: ...
 
     FEE_DENOMINATOR = 1_000_000
 
