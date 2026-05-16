@@ -12,6 +12,8 @@ from degenbot.provider.interface import ProviderAdapter
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from eth_typing import ChecksumAddress
+
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
     from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
@@ -29,6 +31,14 @@ class TickDataTypes:
     bitmap_at_word: type  # UniswapV3BitmapAtWord or UniswapV4BitmapAtWord
     liquidity_at_tick: type  # UniswapV3LiquidityAtTick or UniswapV4LiquidityAtTick
     tick_struct_types: tuple[str, ...]  # ABI types for decoding tick data
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class _PoolRef:
+    """Minimal pool reference needed by fetch helpers."""
+
+    address: ChecksumAddress
+    tick_spacing: int
 
 
 def make_tick_data_fetcher(
@@ -63,15 +73,16 @@ def make_tick_data_fetcher(
         provider = provider_lookup()
         working_tick_bitmap = dict(pool.tick_bitmap)
         working_tick_data = dict(pool.tick_data)
+        pool_ref = _PoolRef(address=pool.address, tick_spacing=pool.tick_spacing)
 
         if is_v4:
             _fetch_v4(
                 provider=provider,
                 state_view_address=cast("str", state_view_address),
                 pool_id=cast("bytes", pool_id),
+                pool_ref=pool_ref,
                 word_position=word_position,
                 block_number=block_number,
-                pool=pool,  # type: ignore[arg-type]
                 working_tick_bitmap=working_tick_bitmap,
                 working_tick_data=working_tick_data,
                 types=types,
@@ -79,7 +90,7 @@ def make_tick_data_fetcher(
         else:
             _fetch_v3(
                 provider=provider,
-                pool=pool,  # type: ignore[arg-type]
+                pool_ref=pool_ref,
                 word_position=word_position,
                 block_number=block_number,
                 working_tick_bitmap=working_tick_bitmap,
@@ -101,7 +112,7 @@ def make_tick_data_fetcher(
 def _fetch_v3(
     *,
     provider: ProviderAdapter,
-    pool: UniswapV3Pool,
+    pool_ref: _PoolRef,
     word_position: int,
     block_number: int,
     working_tick_bitmap: dict[int, Any],
@@ -112,7 +123,7 @@ def _fetch_v3(
     try:
         (bitmap_value,) = raw_call(
             provider,
-            address=pool.address,
+            address=pool_ref.address,
             calldata=encode_function_calldata("tickBitmap(int16)", [word_position]),
             return_types=["uint256"],
             block_identifier=block_number,
@@ -126,7 +137,7 @@ def _fetch_v3(
 
     if bitmap_value != 0:
         active_ticks = [
-            ((word_position << 8) + i) * pool.tick_spacing
+            ((word_position << 8) + i) * pool_ref.tick_spacing
             for i in range(256)
             if bitmap_value & (1 << i) > 0
         ]
@@ -134,7 +145,7 @@ def _fetch_v3(
         for active_tick in active_ticks:
             try:
                 result = provider.call(
-                    to=pool.address,
+                    to=pool_ref.address,
                     data=encode_function_calldata("ticks(int24)", [active_tick]),
                     block=block_number,
                 )
@@ -157,9 +168,9 @@ def _fetch_v4(
     provider: ProviderAdapter,
     state_view_address: str,
     pool_id: bytes,
+    pool_ref: _PoolRef,
     word_position: int,
     block_number: int,
-    pool: UniswapV4Pool,
     working_tick_bitmap: dict[int, Any],
     working_tick_data: dict[int, Any],
     types: TickDataTypes,
@@ -184,7 +195,7 @@ def _fetch_v4(
 
     if bitmap_value != 0:
         active_ticks = [
-            ((word_position << 8) + i) * pool.tick_spacing
+            ((word_position << 8) + i) * pool_ref.tick_spacing
             for i in range(256)
             if bitmap_value & (1 << i) > 0
         ]
