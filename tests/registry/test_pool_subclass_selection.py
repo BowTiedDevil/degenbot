@@ -124,7 +124,7 @@ class TestBotBuildPoolSubclassSelection:
         """Bot.build_v3_pool should return UniswapV3Pool for Uniswap factory."""
         bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
 
-        pool = bot.build_v3_pool(MAINNET_UNISWAP_V3_WETH_WBTC)
+        pool = bot.build_pool(MAINNET_UNISWAP_V3_WETH_WBTC)
 
         assert isinstance(pool, UniswapV3Pool), f"Expected UniswapV3Pool, got {type(pool).__name__}"
         assert type(pool) is UniswapV3Pool, (
