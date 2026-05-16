@@ -31,6 +31,20 @@ class AbstractPoolTracker[Pool: AbstractLiquidityPool]:
     _untracked_pools: set[ChecksumAddress]
     _lock: Lock
 
+    def __init__(
+        self,
+        factory_address: str,
+        bot: Bot,
+        *,
+        chain_id: ChainId | None = None,
+        **kwargs: Any,
+    ) -> None:
+        # Concrete trackers set instance attributes in their own __init__
+        # which override this base. This declaration exists solely so
+        # type checkers can validate constructor calls through
+        # add_tracker().
+        ...
+
     def __init_subclass__(cls, *, pool_factory: type[Pool] | None = None, **kwargs: Any) -> None:
         if pool_factory is not None:
             cls.pool_factory = pool_factory

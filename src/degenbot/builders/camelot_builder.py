@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import eth_abi.abi
 
@@ -16,6 +16,7 @@ from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 if TYPE_CHECKING:
     from web3.types import BlockIdentifier
 
+    from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
 
@@ -24,7 +25,7 @@ class CamelotBuilder(V2BuilderBase):
 
     def build(
         self,
-        pool_address: str,
+        address: str,
         *,
         chain_id: ChainId | None = None,
         deployer_address: str | None = None,
@@ -32,8 +33,9 @@ class CamelotBuilder(V2BuilderBase):
         state_block: int | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,  # noqa: ARG002 -- accepted for API consistency
-    ) -> CamelotLiquidityPool:
-        pool_address = get_checksum_address(pool_address)
+        **kwargs: Any,
+    ) -> AbstractLiquidityPool:
+        pool_address = get_checksum_address(address)
         chain_id = chain_id or self._connections.default_chain_id
         provider = self._connections.get_provider(chain_id)
         state_block = state_block if state_block is not None else provider.get_block_number()
@@ -86,7 +88,7 @@ class CamelotBuilder(V2BuilderBase):
             msg = f"No V2 pool class registered for chain {chain_id}, factory {common.factory}"
             raise ValueError(msg)
 
-        pool = pool_class(  # type: ignore[call-arg]
+        pool = pool_class(
             address=pool_address,
             token0=token0,
             token1=token1,
@@ -116,7 +118,7 @@ class CamelotBuilder(V2BuilderBase):
 
     def update(
         self,
-        pool: CamelotLiquidityPool,
+        pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
     ) -> bool:

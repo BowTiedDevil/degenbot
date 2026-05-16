@@ -34,7 +34,6 @@ if TYPE_CHECKING:
     from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
-    from degenbot.types.pool_protocols import ConcentratedLiquidityPool
 
 
 class V3PoolBuilder:
@@ -84,7 +83,7 @@ class V3PoolBuilder:
 
     def build(
         self,
-        pool_address: str,
+        address: str,
         *,
         chain_id: ChainId | None = None,
         deployer_address: str | None = None,
@@ -94,10 +93,11 @@ class V3PoolBuilder:
         tick_data: dict[int, UniswapV3LiquidityAtTick] | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
-    ) -> ConcentratedLiquidityPool:
+        **kwargs: Any,
+    ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free V3-style pool."""
 
-        pool_address = get_checksum_address(pool_address)
+        pool_address = get_checksum_address(address)
         chain_id = chain_id or self._connections.default_chain_id
         provider = self._connections.get_provider(chain_id)
 
@@ -309,7 +309,7 @@ class V3PoolBuilder:
             msg = f"No V3 pool class registered for chain {chain_id}, factory {factory}"
             raise ValueError(msg)
 
-        pool = pool_class(  # type: ignore[call-arg]
+        pool = pool_class(
             address=pool_address,
             chain_id=chain_id,
             token0=token0,
@@ -331,7 +331,7 @@ class V3PoolBuilder:
 
         # Register pool
         self._pools.add(
-            pool=pool,  # type: ignore[arg-type]
+            pool=pool,
             chain_id=chain_id,
             pool_address=pool.address,
         )

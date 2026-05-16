@@ -52,10 +52,6 @@ if TYPE_CHECKING:
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
     from degenbot.types.aliases import ChainId
-    from degenbot.types.pool_protocols import (
-        ConcentratedLiquidityPool,
-        ConstantProductPool,
-    )
     from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
     from degenbot.uniswap.v4_types import UniswapV4BitmapAtWord, UniswapV4LiquidityAtTick
 
@@ -138,12 +134,12 @@ class Bot:
         # Builder registry: concrete pool type → builder
         # Used by update() for O(1) dict lookup instead of isinstance chain
         self._builders: dict[type, PoolBuilder] = {}
-        self.register_builder(UniswapV2Pool, self._v2_builder)  # type: ignore[arg-type]
-        self.register_builder(UniswapV3Pool, self._v3_builder)  # type: ignore[arg-type]
-        self.register_builder(UniswapV4Pool, self._v4_builder)  # type: ignore[arg-type]
-        self.register_builder(CurveStableswapPool, self._curve_builder)  # type: ignore[arg-type]
-        self.register_builder(AerodromeV2Pool, self._aerodrome_v2_builder)  # type: ignore[arg-type]
-        self.register_builder(CamelotLiquidityPool, self._camelot_builder)  # type: ignore[arg-type]
+        self.register_builder(UniswapV2Pool, self._v2_builder)
+        self.register_builder(UniswapV3Pool, self._v3_builder)
+        self.register_builder(UniswapV4Pool, self._v4_builder)
+        self.register_builder(CurveStableswapPool, self._curve_builder)
+        self.register_builder(AerodromeV2Pool, self._aerodrome_v2_builder)
+        self.register_builder(CamelotLiquidityPool, self._camelot_builder)
         # SushiswapV2Pool, PancakeSwapV2Pool, SwapbasedV2Pool, etc. inherit
         # UniswapV2Pool so they are handled by the V2 builder via MRO fallback
 
@@ -202,7 +198,7 @@ class Bot:
                 "Access it using the bot's manager registry."
             )
 
-        manager = manager_cls(  # type: ignore[call-arg]
+        manager = manager_cls(
             factory_address=factory_address,
             chain_id=chain_id,
             bot=self,
@@ -295,7 +291,7 @@ class Bot:
                 v4_kwargs["tick_bitmap"] = tick_bitmap
             if tick_data is not None:
                 v4_kwargs["tick_data"] = tick_data
-            return self._v4_builder.build(**v4_kwargs)
+            return self._v4_builder.build(address, **v4_kwargs)
 
         # Check pool registry — return existing pool if already built
         existing = self.pools.get(chain_id=chain_id, pool_address=address)
@@ -549,7 +545,7 @@ class Bot:
         init_hash: str | None = None,
         state_block: int | None = None,
         silent: bool = False,
-    ) -> ConstantProductPool:
+    ) -> AbstractLiquidityPool:
         """.. deprecated:: 0.x
         Use ``build_pool(address)`` instead. Type resolution automatically
         selects the correct builder.
@@ -647,7 +643,7 @@ class Bot:
         tick_bitmap: dict[int, UniswapV3BitmapAtWord] | None = None,
         tick_data: dict[int, UniswapV3LiquidityAtTick] | None = None,
         silent: bool = False,
-    ) -> ConcentratedLiquidityPool:
+    ) -> AbstractLiquidityPool:
         """.. deprecated:: 0.x
         Use ``build_pool(address)`` instead. Type resolution automatically
         selects the correct builder.
@@ -683,7 +679,7 @@ class Bot:
         tick_bitmap: dict[int, UniswapV4BitmapAtWord] | None = None,
         tick_data: dict[int, UniswapV4LiquidityAtTick] | None = None,
         silent: bool = False,
-    ) -> UniswapV4Pool:
+    ) -> AbstractLiquidityPool:
         """.. deprecated:: 0.x
         Use ``build_pool(address, pool_id=...)`` instead.
         """
@@ -693,6 +689,7 @@ class Bot:
             stacklevel=2,
         )
         return self._v4_builder.build(
+            pool_manager_address,
             pool_id=pool_id,
             pool_manager_address=pool_manager_address,
             state_view_address=state_view_address,
@@ -715,7 +712,7 @@ class Bot:
         state_block: int | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
-    ) -> CurveStableswapPool:
+    ) -> AbstractLiquidityPool:
         """.. deprecated:: 0.x
         Use ``build_pool(address)`` instead. Type resolution automatically
         selects the correct builder.
