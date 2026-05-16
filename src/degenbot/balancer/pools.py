@@ -18,7 +18,7 @@ from degenbot.balancer.types import BalancerV2PoolState
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.types.abstract import AbstractLiquidityPool
+from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import HopType
@@ -78,7 +78,7 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         return self.state.balances
 
     @property
-    def chain_id(self) -> int:
+    def chain_id(self) -> int | None:
         return self._chain_id
 
     @property
@@ -99,11 +99,13 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         token_in_index = self._tokens.index(token_in)
         token_out_index = self._tokens.index(token_out)
 
-        fee_amount = mul_up(token_in_quantity, self.fee * self.FEE_DENOMINATOR)
+        fee_scaled = int(self.fee * self.FEE_DENOMINATOR)
+
+        fee_amount = mul_up(token_in_quantity, fee_scaled)
 
         amount_new = _subtract_swap_fee_amount(
             amount=token_in_quantity,
-            fee_percentage=self.fee * self.FEE_DENOMINATOR,
+            fee_percentage=fee_scaled,
         )
 
         assert token_in_quantity - fee_amount == amount_new
@@ -133,8 +135,15 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         token_in: ChecksumAddress,
         amount_in: int,
         token_out: ChecksumAddress,
-        state_override: BalancerV2PoolState | None = None,
+        state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
+        balancer_state: BalancerV2PoolState | None = None
+        if state_override is not None:
+            if not isinstance(state_override, BalancerV2PoolState):
+                msg = f"Expected BalancerV2PoolState, got {type(state_override).__name__}"
+                raise DegenbotValueError(message=msg)
+            balancer_state = state_override
+
         token_in_obj = next((t for t in self._tokens if t.address == token_in), None)
         if token_in_obj is None:
             raise DegenbotValueError(message=f"token_in {token_in} not in pool")
@@ -143,12 +152,12 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         if token_out_obj is None:
             raise DegenbotValueError(message=f"token_out {token_out} not in pool")
 
-        initial_state = state_override or self.state
+        initial_state = balancer_state or self.state
         amount_out = self.calculate_tokens_out_from_tokens_in(
             token_in=token_in_obj,
             token_in_quantity=amount_in,
             token_out=token_out_obj,
-            override_state=state_override,
+            override_state=balancer_state,
         )
         return SimulationResult(
             amount_in=amount_in,
