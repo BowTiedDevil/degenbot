@@ -11,11 +11,12 @@ import eth_abi.abi
 from sqlalchemy import select
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database.models.pools import LiquidityPoolTable
+from degenbot.database.models.pools import LiquidityPoolTable, UniswapFeeMixin
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.registry.pool_type import pool_type_registry
+from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.pool_protocols import ConcentratedLiquidityPool, ConstantProductPool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
@@ -41,8 +42,8 @@ class V2CommonData:
     pool_address: ChecksumAddress
     chain_id: ChainId
     factory: ChecksumAddress
-    token0_address: str
-    token1_address: str
+    token0_address: ChecksumAddress
+    token1_address: ChecksumAddress
     fee_token0: Fraction
     fee_token1: Fraction
     reserves0: int
@@ -107,10 +108,14 @@ class V2BuilderBase:  # noqa: B903
         # Get factory and token addresses
         if pool_from_db is not None:
             factory = get_checksum_address(pool_from_db.exchange.factory)
-            token0_address = pool_from_db.token0.address
-            token1_address = pool_from_db.token1.address
-            fee_token0 = Fraction(pool_from_db.fee_token0, pool_from_db.fee_denominator)
-            fee_token1 = Fraction(pool_from_db.fee_token1, pool_from_db.fee_denominator)
+            token0_address = get_checksum_address(pool_from_db.token0.address)
+            token1_address = get_checksum_address(pool_from_db.token1.address)
+            if isinstance(pool_from_db, UniswapFeeMixin):
+                fee_token0 = Fraction(pool_from_db.fee_token0, pool_from_db.fee_denominator)
+                fee_token1 = Fraction(pool_from_db.fee_token1, pool_from_db.fee_denominator)
+            else:
+                fee_token0 = Fraction(3, 1000)
+                fee_token1 = Fraction(3, 1000)
         else:
             # Fetch immutable values from chain
             try:
@@ -159,9 +164,9 @@ class V2BuilderBase:  # noqa: B903
             if registry_deployment.pool_init_hash is not None:
                 resolved_init_hash = registry_deployment.pool_init_hash
             if registry_deployment.deployer is not None:
-                deployer = registry_deployment.deployer
+                deployer = get_checksum_address(registry_deployment.deployer)
 
-        deployer = deployer_address or deployer
+        deployer = get_checksum_address(deployer_address) if deployer_address else deployer
         resolved_init_hash = init_hash or resolved_init_hash
 
         return V2CommonData(
@@ -181,7 +186,7 @@ class V2BuilderBase:  # noqa: B903
 
     def _register_pool(
         self,
-        pool: ConstantProductPool | ConcentratedLiquidityPool,
+        pool: AbstractLiquidityPool,
         *,
         chain_id: ChainId,
     ) -> None:
@@ -210,6 +215,8 @@ class V2BuilderBase:  # noqa: B903
         block_identifier: int,
     ) -> tuple[int, int]:
         """Fetch current reserves from chain."""
+
+        pool_address = get_checksum_address(pool_address)
 
         return raw_call(
             provider,
