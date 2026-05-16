@@ -11,7 +11,7 @@ Camelot's k invariant) define their own calc mixin instead of using this one.
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
@@ -38,6 +38,18 @@ class UniswapV2PoolCalc:
         FEE: Directional fee rate (default 0.3%)
         RESERVES_STRUCT_TYPES: ABI struct types for reserve decoding
     """
+
+    # Attributes provided by V2PoolState in the MRO
+    _token0: Erc20Token
+    _token1: Erc20Token
+    _fee_token0: Fraction
+    _fee_token1: Fraction
+
+    # Attributes provided by the concrete pool class in the MRO
+    reserves_token0: int
+    reserves_token1: int
+    state: UniswapV2PoolState
+    tokens: tuple[Erc20Token, Erc20Token]
 
     # These can be overridden by subclasses (e.g., PancakeSwap uses different fee)
     FEE: Fraction = Fraction(3, 1000)
@@ -212,4 +224,4 @@ class UniswapV2PoolCalc:
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
-        return cast("Fraction", self._fee_token0 if zero_for_one else self._fee_token1)
+        return self._fee_token0 if zero_for_one else self._fee_token1
