@@ -26,7 +26,7 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
     PossibleInaccurateResult,
 )
-from degenbot.types.abstract import AbstractLiquidityPool
+from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import (
     PublisherMixin,
@@ -121,7 +121,7 @@ class Hooks(Enum):
     AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA = 1 << 0
 
 
-class UniswapV4Pool(
+class UniswapV4Pool(  # type: ignore[override]
     PublisherMixin,
     PoolPickleMixin,
     V4PoolState,
@@ -163,12 +163,12 @@ class UniswapV4Pool(
         state_view_address: str | None = None,
         hook_address: str | None = None,
         chain_id: ChainId | None = None,
-        sqrt_price_x96: int = ...,
-        tick: int = ...,
-        liquidity: int = ...,
-        protocol_fee_zero_for_one: int = ...,
-        protocol_fee_one_for_zero: int = ...,
-        lp_fee: int = ...,
+        sqrt_price_x96: int = ...,  # type: ignore[assignment]
+        tick: int = ...,  # type: ignore[assignment]
+        liquidity: int = ...,  # type: ignore[assignment]
+        protocol_fee_zero_for_one: int = ...,  # type: ignore[assignment]
+        protocol_fee_one_for_zero: int = ...,  # type: ignore[assignment]
+        lp_fee: int = ...,  # type: ignore[assignment]
         tick_data: dict[Tick, dict[str, Any] | UniswapV4LiquidityAtTick] | None = None,
         tick_bitmap: dict[BitmapWord, dict[str, Any] | UniswapV4BitmapAtWord] | None = None,
         state_block: BlockNumber | int | None = None,
@@ -178,14 +178,14 @@ class UniswapV4Pool(
         self._pool_manager_address = get_checksum_address(pool_manager_address)
         self._pool_id: Final[HexBytes] = HexBytes(pool_id)
 
-        self._chain_id: Final[int] = chain_id if chain_id is not None else token0.chain_id
+        self._chain_id: Final[int | None] = chain_id if chain_id is not None else token0.chain_id
 
         # TODO: check - should this be zero?
         state_block = state_block if state_block is not None else 0
         self._initial_state_block = state_block
 
-        self._token0: Final[Erc20Token] = token0
-        self._token1: Final[Erc20Token] = token1
+        self._token0: Final[Erc20Token] = token0  # type: ignore[misc]
+        self._token1: Final[Erc20Token] = token1  # type: ignore[misc]
         self.hook_address = (
             get_checksum_address(hook_address) if hook_address is not None else ZERO_ADDRESS
         )
@@ -504,7 +504,7 @@ class UniswapV4Pool(
         return self._pool_manager_address
 
     @property
-    def chain_id(self) -> int:
+    def chain_id(self) -> int | None:
         return self._chain_id
 
     @property
@@ -536,7 +536,7 @@ class UniswapV4Pool(
         return self._state_mgr.sqrt_price_x96
 
     @property
-    def state(self) -> UniswapV4PoolState:
+    def state(self) -> UniswapV4PoolState:  # type: ignore[override]
         return self._state_mgr.state
 
     @property
@@ -556,7 +556,7 @@ class UniswapV4Pool(
         return self.pool_key.tick_spacing
 
     @property
-    def fee(self) -> int:
+    def fee(self) -> int:  # type: ignore[override]
         return self.pool_key.fee
 
     @property
@@ -768,8 +768,15 @@ class UniswapV4Pool(
         token_in: ChecksumAddress,
         amount_in: int,
         token_out: ChecksumAddress,  # noqa: ARG002
-        state_override: UniswapV4PoolState | None = None,
+        state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
+        v4_state: UniswapV4PoolState | None = None
+        if state_override is not None:
+            if not isinstance(state_override, UniswapV4PoolState):
+                msg = f"Expected UniswapV4PoolState, got {type(state_override).__name__}"
+                raise DegenbotValueError(message=msg)
+            v4_state = state_override
+
         if token_in == self._token0.address:
             token_in_obj = self._token0
         elif token_in == self._token1.address:
@@ -777,11 +784,11 @@ class UniswapV4Pool(
         else:
             raise DegenbotValueError(message=f"token_in {token_in} not in pool")
 
-        initial_state = state_override or self.state
+        initial_state = v4_state or self.state
         amount_out = self.calculate_tokens_out_from_tokens_in(
             token_in=token_in_obj,
             token_in_quantity=amount_in,
-            override_state=state_override,
+            override_state=v4_state,
         )
         return SimulationResult(
             amount_in=amount_in,
