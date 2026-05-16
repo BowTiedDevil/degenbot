@@ -13,6 +13,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import eth_abi.abi
+from eth_abi.exceptions import DecodingError
+from web3.exceptions import Web3Exception
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.types import MetapoolDetectionResult
@@ -92,7 +94,7 @@ def detect_metapool(
                 base_pool_address=base_pool_address,
                 tokens_underlying=tuple(tokens_underlying),
             )
-        except Exception:
+        except (Web3Exception, DecodingError, ValueError):
             continue
 
     return MetapoolDetectionResult(
@@ -124,7 +126,7 @@ def _resolve_base_pool_address(
         )
         (base_pool_address,) = eth_abi.abi.decode(types=["address"], data=base_pool_result)
         return get_checksum_address(base_pool_address)
-    except Exception:
+    except (Web3Exception, DecodingError, ValueError):
         pass
 
     # Try get_base_pool() on the registry
@@ -141,7 +143,7 @@ def _resolve_base_pool_address(
         )
         (base_pool_address,) = eth_abi.abi.decode(types=["address"], data=base_pool_result)
         return get_checksum_address(base_pool_address)
-    except Exception:
+    except (Web3Exception, DecodingError, ValueError):
         pass
 
     # Last resort: if the pool's second token is the 3Crv LP token,

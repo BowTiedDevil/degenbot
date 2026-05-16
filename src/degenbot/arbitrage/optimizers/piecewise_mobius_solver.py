@@ -28,6 +28,7 @@ from degenbot.arbitrage.optimizers.mobius_solver import MobiusSolver
 from degenbot.arbitrage.optimizers.v3_tick_predictor import estimate_price_impact
 from degenbot.degenbot_rs import mobius as _rs_mobius
 from degenbot.exceptions import OptimizationError
+from degenbot.logging import logger
 from degenbot.types.hop_types import (
     BoundedProductHop,
     ConstantProductHop,
@@ -142,9 +143,7 @@ class PiecewiseMobiusSolver(Solver):
 
         # Multi-range V3: try Rust first with caching
         try:
-            rust_result = self._try_rust_multi_range(
-                solve_input, v3_hop_index, v3_hop, start_ns
-            )
+            rust_result = self._try_rust_multi_range(solve_input, v3_hop_index, v3_hop, start_ns)
             if rust_result is not None:
                 return rust_result
         except OptimizationError:
@@ -278,8 +277,8 @@ class PiecewiseMobiusSolver(Solver):
                         solve_input, v3_hop_index, v3_hop, current_idx, end_idx
                     )
                     results.append(result)
-                except Exception:
-                    pass
+                except (OptimizationError, ArithmeticError, ValueError):
+                    logger.debug("Candidate range evaluation failed", exc_info=True)
             return results
 
         # Parallel evaluation only for 3+ candidates
@@ -300,8 +299,8 @@ class PiecewiseMobiusSolver(Solver):
                 try:
                     result = future.result()
                     results.append(result)
-                except Exception:
-                    pass
+                except (OptimizationError, ArithmeticError, ValueError):
+                    logger.debug("Parallel evaluation failed", exc_info=True)
 
         return results
 

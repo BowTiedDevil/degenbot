@@ -1,3 +1,5 @@
+from web3.exceptions import Web3Exception
+
 """Fake ProviderAdapter for Curve pool detection tests.
 
 Provides a configurable fake that returns pre-programmed responses to
@@ -51,7 +53,7 @@ class FakeCurveBackend:
         handler = self._call_responses.get(selector)
         if handler is None:
             msg = f"No handler for selector {selector.hex()}"
-            raise Exception(msg)
+            raise Web3Exception(msg)
         if callable(handler):
             return HexBytes(handler(tx.get("to", ""), data, block))
         return HexBytes(handler)

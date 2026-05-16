@@ -11,6 +11,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import eth_abi.abi
+from eth_abi.exceptions import DecodingError
+from web3.exceptions import Web3Exception
 
 from degenbot.curve.detection.types import CryptoDetectionResult
 from degenbot.provider.call_helpers import encode_function_calldata
@@ -67,7 +69,7 @@ def detect_crypto_params(
                 )
                 (mid_fee_val,) = eth_abi.abi.decode(types=["uint256"], data=mid_fee_result)
                 mid_fee = mid_fee_val
-            except Exception:
+            except (Web3Exception, DecodingError, ValueError):
                 pass
 
             try:
@@ -83,7 +85,7 @@ def detect_crypto_params(
                 )
                 (out_fee_val,) = eth_abi.abi.decode(types=["uint256"], data=out_fee_result)
                 out_fee = out_fee_val
-            except Exception:
+            except (Web3Exception, DecodingError, ValueError):
                 pass
 
             try:
@@ -99,9 +101,9 @@ def detect_crypto_params(
                 )
                 (gamma_val,) = eth_abi.abi.decode(types=["uint256"], data=gamma_result)
                 gamma = gamma_val
-            except Exception:
+            except (Web3Exception, DecodingError, ValueError):
                 pass
-    except Exception:
+    except (Web3Exception, DecodingError, ValueError):
         pass
 
     # Fetch offpeg_fee_multiplier (used by some lending/crypto pools)
@@ -118,7 +120,7 @@ def detect_crypto_params(
         )
         (offpeg_val,) = eth_abi.abi.decode(types=["uint256"], data=offpeg_result)
         offpeg_fee_multiplier = offpeg_val
-    except Exception:
+    except (Web3Exception, DecodingError, ValueError):
         pass
 
     return CryptoDetectionResult(

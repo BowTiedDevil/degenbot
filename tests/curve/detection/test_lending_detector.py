@@ -1,3 +1,5 @@
+from web3.exceptions import Web3Exception
+
 """Tests for Curve pool lending token detection."""
 
 from itertools import starmap
@@ -171,7 +173,7 @@ class TestDetectLendingTokens:
 
         def handle_is_ctoken(to: str, data: bytes, block: int) -> bytes:
             # yTokens don't respond to isCToken()
-            raise Exception("revert")
+            raise Web3Exception("revert")
 
         def handle_token(to: str, data: bytes, block: int) -> bytes:
             if to == YDAI:
@@ -205,7 +207,7 @@ class TestDetectLendingTokens:
         )
 
         def handle_is_ctoken(to: str, data: bytes, block: int) -> bytes:
-            raise Exception("revert")
+            raise Web3Exception("revert")
 
         def handle_token(to: str, data: bytes, block: int) -> bytes:
             # Returns zero address — not a yToken

@@ -1,3 +1,5 @@
+from web3.exceptions import Web3Exception
+
 """Tests for Curve pool coin discovery."""
 
 import eth_abi.abi
@@ -130,7 +132,7 @@ class TestDiscoverCoinsInt128:
 
         def handle_coins_uint256(to: str, data: bytes, block: int) -> bytes:
             call_count["uint256_tries"] += 1
-            raise Exception("revert")
+            raise Web3Exception("revert")
 
         def handle_coins_int128(to: str, data: bytes, block: int) -> bytes:
             (idx,) = eth_abi.abi.decode(["int128"], data[4:])
@@ -188,7 +190,7 @@ class TestDiscoverCoinsEdgeCases:
         def handle_coins_uint256(to: str, data: bytes, block: int) -> bytes:
             (idx,) = eth_abi.abi.decode(["uint256"], data[4:])
             if idx >= len(coins):
-                raise Exception("revert")
+                raise Web3Exception("revert")
             return _encode_addr(coins[idx])
 
         def handle_balances_uint256(to: str, data: bytes, block: int) -> bytes:
@@ -234,7 +236,7 @@ class TestDiscoverCoinsEdgeCases:
             balance_calls["count"] += 1
             if balance_calls["count"] > 1:
                 msg = "balance revert"
-                raise Exception(msg)
+                raise Web3Exception(msg)
             return _encode_uint256(100)
 
         from tests.curve.detection.fake_provider import make_fake_curve_provider

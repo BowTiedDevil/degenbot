@@ -1,3 +1,5 @@
+from web3.exceptions import Web3Exception
+
 """Tests for Curve pool metapool detection."""
 
 import eth_abi.abi
@@ -81,7 +83,7 @@ class TestDetectMetapool:
             if selector == GET_UNDERLYING_COINS:
                 return _encode_address_array8(underlying_coins)
             msg = f"Unexpected selector: {selector.hex()}"
-            raise Exception(msg)
+            raise Web3Exception(msg)
 
         provider = make_fake_curve_provider({
             IS_META: handle_call,
@@ -114,13 +116,13 @@ class TestDetectMetapool:
                 return _encode_bool(True)
             if selector == BASE_POOL:
                 msg = "base_pool() not supported"
-                raise Exception(msg)
+                raise Web3Exception(msg)
             if selector == GET_BASE_POOL:
                 return _encode_address(base_pool_addr)
             if selector == GET_UNDERLYING_COINS:
                 return _encode_address_array8(underlying_coins)
             msg = f"Unexpected selector: {selector.hex()}"
-            raise Exception(msg)
+            raise Web3Exception(msg)
 
         provider = make_fake_curve_provider({
             IS_META: handle_call,
@@ -150,13 +152,13 @@ class TestDetectMetapool:
             if selector == IS_META:
                 return _encode_bool(True)
             if selector == BASE_POOL:
-                raise Exception("revert")
+                raise Web3Exception("revert")
             if selector == GET_BASE_POOL:
-                raise Exception("revert")
+                raise Web3Exception("revert")
             if selector == GET_UNDERLYING_COINS:
                 return _encode_address_array8(underlying_coins)
             msg = f"Unexpected selector: {selector.hex()}"
-            raise Exception(msg)
+            raise Web3Exception(msg)
 
         provider = make_fake_curve_provider({
             IS_META: handle_call,
@@ -187,7 +189,7 @@ class TestDetectMetapool:
             if selector == IS_META:
                 if to == CURVE_V1_REGISTRY_ADDRESS:
                     first_registry_tried["value"] = True
-                    raise Exception("revert")
+                    raise Web3Exception("revert")
                 # Second registry says yes
                 return _encode_bool(True)
             if selector == BASE_POOL:
@@ -195,7 +197,7 @@ class TestDetectMetapool:
             if selector == GET_UNDERLYING_COINS:
                 return _encode_address_array8([DAI, USDC, USDT])
             msg = f"Unexpected selector: {selector.hex()}"
-            raise Exception(msg)
+            raise Web3Exception(msg)
 
         provider = make_fake_curve_provider({
             IS_META: handle_call,

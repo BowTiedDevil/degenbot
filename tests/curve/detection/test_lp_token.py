@@ -1,3 +1,5 @@
+from web3.exceptions import Web3Exception
+
 """Tests for Curve pool LP token discovery."""
 
 import eth_abi.abi
@@ -85,7 +87,7 @@ class TestFindLpToken:
 
         def handle_get_lp_token(to: str, data: bytes, block: int) -> bytes:
             if to == CURVE_V1_REGISTRY_ADDRESS:
-                raise Exception("revert")
+                raise Web3Exception("revert")
             return _encode_address(THREE_CRV_LP)
 
         provider = make_fake_curve_provider({
