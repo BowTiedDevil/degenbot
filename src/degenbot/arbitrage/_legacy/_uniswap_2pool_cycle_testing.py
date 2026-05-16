@@ -56,7 +56,7 @@ from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS, UniswapV
 from degenbot.uniswap.v4_types import UniswapV4PoolState
 
 if TYPE_CHECKING:
-    from degenbot.types.hop_types import HopType
+    from degenbot.types.hop_types import BalancerMultiTokenHop, HopType
 
 SLOW_ARB_CALC_THRESHOLD = 0.25
 SLOW_LOOP_TIME = 0.05
@@ -271,7 +271,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
                 hop = pool.to_hop_state(
                     zero_for_one=current_token == pool.token0,
-                    state_override=state_override,
+                    state_override=state_override,  # type: ignore[arg-type]
                 )
                 hops.append(hop)
 
@@ -313,6 +313,8 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                         return None
                 else:
                     # V2 buy pool: constant-product formula is exact
+                    if isinstance(hop_buy, BalancerMultiTokenHop):
+                        return None
                     r_in = float(hop_buy.reserve_in)
                     r_out = float(hop_buy.reserve_out)
                     gamma = hop_buy.gamma
@@ -1016,7 +1018,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             assert forward_token not in {
                 NATIVE_CURRENCY_ADDRESS,
-                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],
+                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],  # type: ignore[index]
             }
 
             start = time.perf_counter()
@@ -1059,7 +1061,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                     pools=[v3_pool, v4_pool],
                     input_token=self.input_token,
                     state_overrides={
-                        k: v
+                        k: v  # type: ignore[misc]
                         for k, v in [
                             (v3_pool, v3_pool_state_override),
                             (v4_pool, v4_pool_state_override),
@@ -1211,7 +1213,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             assert forward_token not in {
                 NATIVE_CURRENCY_ADDRESS,
-                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],
+                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],  # type: ignore[index]
             }
 
             start = time.perf_counter()
@@ -1401,7 +1403,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             assert forward_token not in {
                 NATIVE_CURRENCY_ADDRESS,
-                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],
+                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],  # type: ignore[index]
             }
 
             start = time.perf_counter()
@@ -1445,7 +1447,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                     pools=[v4_pool, v3_pool],
                     input_token=self.input_token,
                     state_overrides={
-                        k: v
+                        k: v  # type: ignore[misc]
                         for k, v in [
                             (v4_pool, v4_pool_state_override),
                             (v3_pool, v3_pool_state_override),
@@ -1936,7 +1938,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             assert forward_token not in {
                 NATIVE_CURRENCY_ADDRESS,
-                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],
+                WRAPPED_NATIVE_TOKENS[v4_pool.chain_id],  # type: ignore[index]
             }
 
             start = time.perf_counter()
@@ -2610,7 +2612,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                 UniswapV4Pool() as v4_pool_a,
                 UniswapV4Pool() as v4_pool_b,
             ):
-                wrapped_currency_address = WRAPPED_NATIVE_TOKENS[v4_pool_a.chain_id]
+                wrapped_currency_address = WRAPPED_NATIVE_TOKENS[v4_pool_a.chain_id]  # type: ignore[index]
                 profit_tokens = {wrapped_currency_address, NATIVE_CURRENCY_ADDRESS}
 
                 assert set(v4_pool_a.tokens) & profit_tokens
@@ -2699,10 +2701,10 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             ):
                 assert self.input_token in {
                     NATIVE_CURRENCY_ADDRESS,
-                    WRAPPED_NATIVE_TOKENS[v3_pool.chain_id],
+                    WRAPPED_NATIVE_TOKENS[v3_pool.chain_id],  # type: ignore[index]
                 }
 
-                wrapped_currency_address = WRAPPED_NATIVE_TOKENS[v3_pool.chain_id]
+                wrapped_currency_address = WRAPPED_NATIVE_TOKENS[v3_pool.chain_id]  # type: ignore[index]
 
                 if self.input_token == NATIVE_CURRENCY_ADDRESS:
                     v3_input_token = (
@@ -2792,10 +2794,10 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             ):
                 assert self.input_token in {
                     NATIVE_CURRENCY_ADDRESS,
-                    WRAPPED_NATIVE_TOKENS[v2_pool.chain_id],
+                    WRAPPED_NATIVE_TOKENS[v2_pool.chain_id],  # type: ignore[index]
                 }
 
-                wrapped_currency_address = WRAPPED_NATIVE_TOKENS[v2_pool.chain_id]
+                wrapped_currency_address = WRAPPED_NATIVE_TOKENS[v2_pool.chain_id]  # type: ignore[index]
 
                 if self.input_token == NATIVE_CURRENCY_ADDRESS:
                     v2_input_token = (
