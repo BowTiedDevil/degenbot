@@ -5,8 +5,7 @@ Provides Rust-accelerated tick math functions. Python implementations
 are available directly from ``tick_math`` for testing.
 """
 
-from degenbot.degenbot_rs import get_sqrt_ratio_at_tick
-from degenbot.degenbot_rs import get_tick_at_sqrt_ratio
+from degenbot.degenbot_rs import get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio
 
 from .tick_math import (
     MAX_SQRT_RATIO,

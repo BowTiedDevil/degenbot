@@ -4,7 +4,6 @@ These tests verify that the pure functions in `calculations/stableswap.py`
 produce identical results to the pool methods they were extracted from.
 """
 
-import pytest
 
 from degenbot.calculations.stableswap import (
     calc_d,
@@ -18,7 +17,6 @@ from degenbot.calculations.stableswap import (
     stableswap_get_y_d,
 )
 from degenbot.curve.types import DVariant
-
 
 # ── Step function tests (pre-existing, kept for regression) ──
 

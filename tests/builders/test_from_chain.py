@@ -75,6 +75,7 @@ def _make_aerodrome_builder(provider: FakeProvider | None = None) -> AerodromeV2
 
     erc20_builder = MagicMock(spec=Erc20Builder)
     # Make build() return fake tokens
+
     def _build_token(address, *, chain_id=None, silent=False):
         return _make_erc20(address, chain_id=chain_id or 8453)
     erc20_builder.build = _build_token
@@ -100,6 +101,7 @@ def _make_camelot_builder(provider: FakeProvider | None = None) -> CamelotBuilde
         connections.get_provider.return_value = provider
 
     erc20_builder = MagicMock(spec=Erc20Builder)
+
     def _build_token(address, *, chain_id=None, silent=False):
         return _make_erc20(address, chain_id=chain_id or 42161)
     erc20_builder.build = _build_token

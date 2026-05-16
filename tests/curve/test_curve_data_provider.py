@@ -9,13 +9,11 @@ connection manager.
 from unittest.mock import MagicMock
 
 import eth_abi.abi
-import pytest
 from hexbytes import HexBytes
 from web3 import Web3
 
 from degenbot.curve.fetcher_factory import CurveFetcherFactory
 from degenbot.curve.types import CurveDataProvider
-
 
 # --- Fake provider ---
 
