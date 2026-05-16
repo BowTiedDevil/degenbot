@@ -12,7 +12,7 @@ Two calculation strategies:
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 from degenbot.calculations.solidly_stable import (
     calc_exact_in_stable,
@@ -30,6 +30,18 @@ from degenbot.uniswap.v2_functions import constant_product_calc_exact_out
 if TYPE_CHECKING:
     from degenbot.aerodrome.types import AerodromeV2PoolState
     from degenbot.erc20 import Erc20Token
+
+
+class _CalcTokensOutKwargs(TypedDict, total=False):
+    """Keyword arguments for _calc_tokens_out_from_tokens_in dispatch."""
+
+    amount_in: int
+    token_in: Literal[0, 1]
+    reserves0: int
+    reserves1: int
+    decimals0: int
+    decimals1: int
+    fee: Fraction
 
 
 class AerodromeV2PoolCalc:
@@ -55,7 +67,7 @@ class AerodromeV2PoolCalc:
     state: AerodromeV2PoolState
     tokens: tuple[Erc20Token, Erc20Token]
 
-    def _wire_stable_calculations(self, stable: bool) -> None:
+    def _wire_stable_calculations(self, *, stable: bool) -> None:
         """Wire calculation functions based on the stable flag.
 
         Called by the pool's __init__ after setting self._stable.
@@ -139,15 +151,17 @@ class AerodromeV2PoolCalc:
 
         token_in_dir: Literal[0, 1] = 0 if token_in == self._token0 else 1
 
-        return self._calc_tokens_out_from_tokens_in(
-            amount_in=token_in_quantity,
-            token_in=token_in_dir,
-            reserves0=reserves_0,
-            reserves1=reserves_1,
-            decimals0=10**self._token0.decimals,
-            decimals1=10**self._token1.decimals,
-            fee=self._fee,
-        )
+        calc_kwargs: _CalcTokensOutKwargs = {
+            "amount_in": token_in_quantity,
+            "token_in": token_in_dir,
+            "reserves0": reserves_0,
+            "reserves1": reserves_1,
+            "fee": self._fee,
+        }
+        if self._stable_calc_mode:
+            calc_kwargs["decimals0"] = 10**self._token0.decimals
+            calc_kwargs["decimals1"] = 10**self._token1.decimals
+        return self._calc_tokens_out_from_tokens_in(**calc_kwargs)
 
     def get_absolute_price(
         self,
@@ -206,8 +220,6 @@ class AerodromeV2PoolCalc:
         token_in: Literal[0, 1],
         reserves0: int,
         reserves1: int,
-        decimals0: int,
-        decimals1: int,
         fee: Fraction,
     ) -> int:
         """Volatile (constant-product) exact-in calculation."""

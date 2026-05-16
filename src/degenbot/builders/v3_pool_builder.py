@@ -24,6 +24,8 @@ from degenbot.uniswap.v3_types import (
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from web3.types import BlockIdentifier
 
     from degenbot.builders.erc20_builder import Erc20Builder
@@ -60,10 +62,18 @@ class V3PoolBuilder:
         self._managed_pools = managed_pools
         self._erc20_builder = erc20_builder
 
-    def _make_tick_data_fetcher(self, pool_address: str, chain_id: int) -> Any:
+    def _make_tick_data_fetcher(
+        self, pool_address: str, chain_id: int
+    ) -> Callable[[int, int], None]:
         """Create a tick data fetcher callback for a V3 pool."""
         return make_tick_data_fetcher(
-            pool_lookup=lambda block: self._pools.get(chain_id=chain_id, pool_address=get_checksum_address(pool_address)),  # type: ignore[arg-type,return-value]
+            pool_lookup=lambda _block: cast(
+                "UniswapV3Pool | None",
+                self._pools.get(
+                    chain_id=chain_id,
+                    pool_address=get_checksum_address(pool_address),
+                ),
+            ),
             provider_lookup=lambda: self._connections.get_provider(chain_id),
             types=TickDataTypes(
                 bitmap_at_word=UniswapV3BitmapAtWord,
@@ -202,7 +212,9 @@ class V3PoolBuilder:
                                 LiquidityPoolTable.id == pool_from_db.id
                             )
                         )
-                        if pool_with_data is not None and isinstance(pool_with_data, UniswapV3PoolTableBase):
+                        if pool_with_data is not None and isinstance(
+                            pool_with_data, UniswapV3PoolTableBase
+                        ):
                             init_maps = pool_with_data.initialization_maps
                             liq_positions = pool_with_data.liquidity_positions
                             if init_maps and liq_positions:
@@ -314,6 +326,7 @@ class V3PoolBuilder:
             deployer_address=deployer,
             init_hash=init_hash,
             tick_data_fetcher=self._make_tick_data_fetcher(pool_address, chain_id),
+            state_cache_depth=state_cache_depth,
         )
 
         # Register pool
@@ -354,12 +367,12 @@ class V3PoolBuilder:
         assert pool.chain_id is not None
         provider = self._connections.get_provider(pool.chain_id)
         raw_block = block_number if block_number is not None else provider.get_block_number()
-        _block_number = int(raw_block) if not isinstance(raw_block, int) else raw_block
+        block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block
 
         slot0_result = provider.call(
             to=pool.address,
             data=encode_function_calldata("slot0()", None),
-            block=_block_number,
+            block=block_number_,
         )
         sqrt_price_x96, tick, *_ = cast(
             "tuple[int, ...]",
@@ -375,7 +388,7 @@ class V3PoolBuilder:
                 data=provider.call(
                     to=pool.address,
                     data=encode_function_calldata("liquidity()", None),
-                    block=_block_number,
+                    block=block_number_,
                 ),
             ),
         )
@@ -388,7 +401,7 @@ class V3PoolBuilder:
             return False
 
         update = UniswapV3PoolExternalUpdate(
-            block_number=_block_number,
+            block_number=block_number_,
             sqrt_price_x96=sqrt_price_x96,
             tick=tick,
             liquidity=liquidity,

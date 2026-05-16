@@ -6,14 +6,15 @@ from typing import TYPE_CHECKING, Any, cast
 import eth_abi.abi
 
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
-from degenbot.provider.interface import ProviderAdapter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from eth_typing import ChecksumAddress
 
+    from degenbot.provider.interface import ProviderAdapter
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
     from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
@@ -150,6 +151,7 @@ def _fetch_v3(
                     block=block_number,
                 )
             except Exception:  # noqa: BLE001
+                logger.debug("Failed to fetch tick data for tick %d", active_tick, exc_info=True)
                 continue
 
             liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
@@ -211,6 +213,7 @@ def _fetch_v4(
                     block=block_number,
                 )
             except Exception:  # noqa: BLE001
+                logger.debug("Failed to fetch V4 tick data for tick %d", active_tick, exc_info=True)
                 continue
 
             liquidity_gross, liquidity_net = eth_abi.abi.decode(

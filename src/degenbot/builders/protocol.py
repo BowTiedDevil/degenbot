@@ -11,9 +11,14 @@ Builders do NOT own:
 - Database lifecycle (received via DatabaseSessionManager)
 """
 
-from typing import Any, Protocol
+from __future__ import annotations
 
-from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from typing import Any
+
+    from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
 
 
 class PoolBuilder(Protocol):
@@ -31,7 +36,7 @@ class PoolBuilder(Protocol):
 
     def update(
         self,
-        pool: Any,
+        pool: AbstractLiquidityPool,
         *,
         block_number: int | None = None,
     ) -> bool: ...

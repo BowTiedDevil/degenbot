@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import eth_abi.abi
 from sqlalchemy import select
@@ -16,7 +16,6 @@ from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 if TYPE_CHECKING:
@@ -25,8 +24,10 @@ if TYPE_CHECKING:
     from degenbot.builders.erc20_builder import Erc20Builder
     from degenbot.connection.connection_manager import ConnectionManager
     from degenbot.database.session_manager import DatabaseSessionManager
+    from degenbot.erc20 import Erc20Token
     from degenbot.provider.interface import ProviderAdapter
     from degenbot.registry import PoolRegistry, TokenRegistry
+    from degenbot.types.abstract import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
 
@@ -193,11 +194,11 @@ class V2BuilderBase:  # noqa: B903
 
     @staticmethod
     def _log_pool(
-        pool: Any,
+        pool: AbstractLiquidityPool,
         *,
         silent: bool,
-        token0: Any,
-        token1: Any,
+        token0: Erc20Token,
+        token1: Erc20Token,
         reserves0: int,
         reserves1: int,
     ) -> None:
@@ -206,8 +207,8 @@ class V2BuilderBase:  # noqa: B903
             logger.info(f"• Token 0: {token0} - Reserves: {reserves0}")
             logger.info(f"• Token 1: {token1} - Reserves: {reserves1}")
 
+    @staticmethod
     def _fetch_reserves(
-        self,
         pool_address: str,
         provider: ProviderAdapter,
         *,

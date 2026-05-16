@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from degenbot.builders.v2_builder_base import V2BuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.logging import logger
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.types.aliases import ChainId
-from degenbot.types.pool_protocols import ConstantProductPool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 
 if TYPE_CHECKING:
     from web3.types import BlockIdentifier
+
+    from degenbot.types.aliases import ChainId
+    from degenbot.types.pool_protocols import ConstantProductPool
 
 
 class V2PoolBuilder(V2BuilderBase):
@@ -79,6 +80,7 @@ class V2PoolBuilder(V2BuilderBase):
             state_block=common.state_block,
             deployer_address=common.deployer,
             init_hash=common.init_hash,
+            state_cache_depth=state_cache_depth,
         )
 
         # Register pool
@@ -93,7 +95,7 @@ class V2PoolBuilder(V2BuilderBase):
 
     def update(
         self,
-        pool: Any,
+        pool: UniswapV2Pool,
         *,
         block_number: BlockIdentifier | None = None,
     ) -> bool:
@@ -105,14 +107,16 @@ class V2PoolBuilder(V2BuilderBase):
         assert pool.chain_id is not None
         provider = self._connections.get_provider(pool.chain_id)
         raw_block = block_number if block_number is not None else provider.get_block_number()
-        _block_number = int(raw_block) if not isinstance(raw_block, int) else raw_block
-        reserves0, reserves1 = self._fetch_reserves(pool.address, provider, block_identifier=_block_number)
+        block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block
+        reserves0, reserves1 = self._fetch_reserves(
+            pool.address, provider, block_identifier=block_number_
+        )
 
         if pool.reserves_token0 == reserves0 and pool.reserves_token1 == reserves1:
             return False
 
         update = UniswapV2PoolExternalUpdate(
-            block_number=_block_number,
+            block_number=block_number_,
             reserves_token0=reserves0,
             reserves_token1=reserves1,
         )
