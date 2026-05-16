@@ -33,7 +33,7 @@ Typical iterations: 3-4 for machine precision
 """
 
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from degenbot.arbitrage.optimizers.base import (
     ArbitrageOptimizer,
@@ -302,7 +302,7 @@ class NewtonV2Optimizer(ArbitrageOptimizer):
         pool_a, pool_b = pools
 
         # Accept both real V2 pools and mock pools for testing
-        is_v2_pool = lambda p: isinstance(p, UniswapV2Pool) or type(p).__name__ == "MockV2Pool"  # noqa: E731
+        is_v2_pool: Callable[[Any], bool] = lambda p: isinstance(p, UniswapV2Pool) or type(p).__name__ == "MockV2Pool"  # noqa: E731
 
         if not is_v2_pool(pool_a) or not is_v2_pool(pool_b):
             raise OptimizationError(
@@ -370,12 +370,12 @@ class NewtonV2Optimizer(ArbitrageOptimizer):
 
         # Run Newton optimization
         x_opt, _, iterations = v2_optimal_arbitrage_newton(
-            reserve0_buy,
-            reserve1_buy,
-            reserve0_sell,
-            reserve1_sell,
-            fee_buy,
-            fee_sell,
+            reserve0_buy=reserve0_buy,
+            reserve1_buy=reserve1_buy,
+            reserve0_sell=reserve0_sell,
+            reserve1_sell=reserve1_sell,
+            fee_buy=fee_buy,
+            fee_sell=fee_sell,
             max_input=float(max_input) if max_input else None,
         )
 

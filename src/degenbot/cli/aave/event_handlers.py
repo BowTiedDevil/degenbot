@@ -923,7 +923,8 @@ def _process_scaled_token_upgrade_event(
             )
 
     else:
-        assert_never()
+        msg = "Unreachable code path in GHO discount handler"
+        raise ValueError(msg)
 
 
 def _update_contract_revision(

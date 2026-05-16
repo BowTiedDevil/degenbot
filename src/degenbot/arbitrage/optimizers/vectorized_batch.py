@@ -284,11 +284,11 @@ class VectorizedNewtonSolver:
             # Get reserves
             buy_reserves0.append(float(pool_buy.state.reserves_token0))
             buy_reserves1.append(float(pool_buy.state.reserves_token1))
-            buy_fee_mult.append(1.0 - float(pool_buy.fee))
+            buy_fee_mult.append(1.0 - float(pool_buy.fee[0]))
 
             sell_reserves0.append(float(pool_sell.state.reserves_token0))
             sell_reserves1.append(float(pool_sell.state.reserves_token1))
-            sell_fee_mult.append(1.0 - float(pool_sell.fee))
+            sell_fee_mult.append(1.0 - float(pool_sell.fee[0]))
 
         return VectorizedPathState(
             buy_reserves0=np.array(buy_reserves0, dtype=np.float64),

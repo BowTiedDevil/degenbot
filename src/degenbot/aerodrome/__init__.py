@@ -1,3 +1,4 @@
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 
@@ -11,7 +12,7 @@ from .types import AerodromeV2PoolState, AerodromeV3PoolState
 # Register Aerodrome V3 factory with the unified pool type registry.
 _v3_factory_address = "0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A"
 _chain_id = 8453
-_v3_deployment = FACTORY_DEPLOYMENTS.get(_chain_id, {}).get(_v3_factory_address)
+_v3_deployment = FACTORY_DEPLOYMENTS.get(_chain_id, {}).get(get_checksum_address(_v3_factory_address))
 pool_type_registry.register(
     AerodromeV3Pool,
     chain_id=_chain_id,
@@ -24,7 +25,7 @@ pool_type_registry.register(
 # AerodromeV2Pool has a non-standard constructor that requires `stable` and `fee`
 # arguments. The builder handles the chain fetches for these.
 _v2_factory_address = "0x420DD381b31aEf6683db6B902084cB0FFECe40Da"
-_v2_deployment = FACTORY_DEPLOYMENTS.get(_chain_id, {}).get(_v2_factory_address)
+_v2_deployment = FACTORY_DEPLOYMENTS.get(_chain_id, {}).get(get_checksum_address(_v2_factory_address))
 pool_type_registry.register(
     AerodromeV2Pool,
     chain_id=_chain_id,

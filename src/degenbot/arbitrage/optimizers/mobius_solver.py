@@ -13,7 +13,7 @@ from degenbot.arbitrage.optimizers._solver_utils import (
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult, SolverMethod
 from degenbot.degenbot_rs import mobius as _rs_mobius
 from degenbot.exceptions import OptimizationError
-from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop, PoolInvariant
+from degenbot.types.hop_types import BalancerMultiTokenHop, BoundedProductHop, ConstantProductHop, PoolInvariant
 
 USE_MERGED_INT_REFINEMENT = bool(os.environ.get("DEGENBOT_MERGED_INT_REFINEMENT", "1"))
 USE_RAW_ARRAY_MARSHALLING = bool(os.environ.get("DEGENBOT_RAW_ARRAY_MARSHALLING", "1"))
@@ -185,6 +185,14 @@ class MobiusSolver(Solver):
     ) -> SolveResult:
         int_hops_flat: list[int] = []
         for hop in solve_input.hops:
+            if isinstance(hop, BalancerMultiTokenHop):
+                msg = "BalancerMultiTokenHop not supported by Rust solve_raw"
+                raise OptimizationError(
+                    message=msg,
+                    iterations=0,
+                    method=SolverMethod.MOBIUS.name,
+                )
+            assert not isinstance(hop, BalancerMultiTokenHop)
             fee_denom = hop.fee.denominator
             gamma_numer = fee_denom - hop.fee.numerator
             int_hops_flat.extend([hop.reserve_in, hop.reserve_out, gamma_numer, fee_denom])

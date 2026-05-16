@@ -34,6 +34,7 @@ def get_or_init_stk_aave_balance(
     discount_token = tx_context.gho_asset.v_gho_discount_token
 
     if user.stk_aave_balance is None:
+        assert discount_token is not None
         balance: int
         (balance,) = raw_call(
             provider=tx_context.provider,

@@ -563,4 +563,5 @@ def _process_operation(
                 scaled_event=scaled_event,
             )
         else:
-            assert_never(scaled_event.event_type)
+            msg = f"Unexpected event type: {scaled_event.event_type}"
+            raise ValueError(msg)
