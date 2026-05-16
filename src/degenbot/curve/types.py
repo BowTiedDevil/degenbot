@@ -114,7 +114,6 @@ class LendingRateStyle(Enum):
     ORACLE = auto()  # On-chain oracle bitmask
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
 class DyCalculator(Protocol):
     """Calculates dy (output amount) for a Curve StableSwap swap.
 

@@ -39,6 +39,7 @@ from eth_typing import ChecksumAddress
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve._variant_groups import resolve_d_variant, resolve_y_variant, resolve_yd_variant
 from degenbot.curve.types import (
+    DyCalculator,
     LendingRateStyle,
     MetapoolRateStyle,
     MetapoolUnderlyingStyle,
@@ -337,7 +338,7 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
 }
 
 
-def _make_dy_calculator(swap_style: SwapStyle) -> "DyCalculator":
+def _make_dy_calculator(swap_style: SwapStyle) -> DyCalculator:
     """Construct the appropriate DyCalculator for the given SwapStyle."""
     from degenbot.curve.calculators.crypto import CryptoDyCalculator
     from degenbot.curve.calculators.live_admin import (
@@ -380,7 +381,7 @@ def _make_dy_calculator(swap_style: SwapStyle) -> "DyCalculator":
             return CytokenDyCalculator()
 
 
-def _make_metapool_dy_calculator(metapool_rate_style: MetapoolRateStyle) -> "DyCalculator":
+def _make_metapool_dy_calculator(metapool_rate_style: MetapoolRateStyle) -> DyCalculator:
     """Construct the appropriate metapool DyCalculator for the given MetapoolRateStyle."""
     from degenbot.curve.calculators.metapool import (
         MetapoolPrecisionVpDyCalculator,
@@ -399,7 +400,7 @@ def _make_metapool_dy_calculator(metapool_rate_style: MetapoolRateStyle) -> "DyC
 
 def _make_metapool_underlying_dy_calculator(
     metapool_underlying_style: MetapoolUnderlyingStyle,
-) -> "DyCalculator":
+) -> DyCalculator:
     """Construct the appropriate metapool underlying DyCalculator for the given MetapoolUnderlyingStyle."""
     from degenbot.curve.calculators.metapool import (
         MetapoolUnderlyingPrecisionVpDyCalculator,
