@@ -264,7 +264,9 @@ class TestCVXPY2PoolKnownValues:
             (forward_token_amount, 0) if forward_token_index == 0 else (0, forward_token_amount)
         )
         pool_lo_deposits = (
-            (0, pool_lo_profit_token_in) if forward_token_index == 0 else (pool_lo_profit_token_in, 0)
+            (0, pool_lo_profit_token_in)
+            if forward_token_index == 0
+            else (pool_lo_profit_token_in, 0)
         )
         deposits = cvxpy_bmat((
             pool_hi_deposits,
@@ -272,7 +274,9 @@ class TestCVXPY2PoolKnownValues:
         ))
 
         pool_hi_withdrawals = (
-            (0, pool_hi_profit_token_out) if forward_token_index == 0 else (pool_hi_profit_token_out, 0)
+            (0, pool_hi_profit_token_out)
+            if forward_token_index == 0
+            else (pool_hi_profit_token_out, 0)
         )
         pool_lo_withdrawals = (
             (forward_token_amount, 0) if forward_token_index == 0 else (0, forward_token_amount)
@@ -389,12 +393,16 @@ class TestCVXPY2PoolKnownValues:
         )
 
         compressed_starting_reserves_pool_hi = (
-            Fraction(pool_hi.state.reserves_token0, 10**token0_decimals) / compression_factor_token0,
-            Fraction(pool_hi.state.reserves_token1, 10**token1_decimals) / compression_factor_token1,
+            Fraction(pool_hi.state.reserves_token0, 10**token0_decimals)
+            / compression_factor_token0,
+            Fraction(pool_hi.state.reserves_token1, 10**token1_decimals)
+            / compression_factor_token1,
         )
         compressed_starting_reserves_pool_lo = (
-            Fraction(pool_lo.state.reserves_token0, 10**token0_decimals) / compression_factor_token0,
-            Fraction(pool_lo.state.reserves_token1, 10**token1_decimals) / compression_factor_token1,
+            Fraction(pool_lo.state.reserves_token0, 10**token0_decimals)
+            / compression_factor_token0,
+            Fraction(pool_lo.state.reserves_token1, 10**token1_decimals)
+            / compression_factor_token1,
         )
         compressed_reserves_pre_swap = cvxpy.Parameter(
             name="compressed_reserves_pre_swap",
@@ -425,7 +433,9 @@ class TestCVXPY2PoolKnownValues:
             (forward_token_amount, 0) if forward_token_index == 0 else (0, forward_token_amount)
         )
         pool_lo_deposits = (
-            (0, pool_lo_profit_token_in) if forward_token_index == 0 else (pool_lo_profit_token_in, 0)
+            (0, pool_lo_profit_token_in)
+            if forward_token_index == 0
+            else (pool_lo_profit_token_in, 0)
         )
         deposits = cvxpy_bmat((
             pool_hi_deposits,
@@ -433,7 +443,9 @@ class TestCVXPY2PoolKnownValues:
         ))
 
         pool_hi_withdrawals = (
-            (0, pool_hi_profit_token_out) if forward_token_index == 0 else (pool_hi_profit_token_out, 0)
+            (0, pool_hi_profit_token_out)
+            if forward_token_index == 0
+            else (pool_hi_profit_token_out, 0)
         )
         pool_lo_withdrawals = (
             (forward_token_amount, 0) if forward_token_index == 0 else (0, forward_token_amount)
@@ -527,7 +539,7 @@ class TestCVXPY2PoolPropertyBased:
         factory = FixtureFactory()
         fixture = factory.random_v2_pair(
             seed=seed,
-            liquidity_depth=liquidity_depth,  # type: ignore[arg-type]
+            liquidity_depth=liquidity_depth,
             price_ratio_range=(price_ratio, price_ratio),
         )
 
@@ -552,7 +564,9 @@ class TestCVXPY2PoolPropertyBased:
 
     @hypothesis.given(
         decimals_pair=mismatched_decimal_pair_strategy,
-        price_ratio=st.floats(min_value=1.02, max_value=1.08, allow_nan=False, allow_infinity=False),
+        price_ratio=st.floats(
+            min_value=1.02, max_value=1.08, allow_nan=False, allow_infinity=False
+        ),
         liquidity_depth=liquidity_depth_strategy,
         seed=seed_strategy,
     )
@@ -575,7 +589,7 @@ class TestCVXPY2PoolPropertyBased:
         factory = FixtureFactory()
         fixture = factory.random_v2_pair(
             seed=seed,
-            liquidity_depth=liquidity_depth,  # type: ignore[arg-type]
+            liquidity_depth=liquidity_depth,
             price_ratio_range=(price_ratio, price_ratio),
         )
 
@@ -906,12 +920,16 @@ class TestBaseChainCVXPY:
         )
 
         compressed_starting_reserves_pool_hi = (
-            Fraction(pool_hi.state.reserves_token0, 10**token0_decimals) / compression_factor_token0,
-            Fraction(pool_hi.state.reserves_token1, 10**token1_decimals) / compression_factor_token1,
+            Fraction(pool_hi.state.reserves_token0, 10**token0_decimals)
+            / compression_factor_token0,
+            Fraction(pool_hi.state.reserves_token1, 10**token1_decimals)
+            / compression_factor_token1,
         )
         compressed_starting_reserves_pool_lo = (
-            Fraction(pool_lo.state.reserves_token0, 10**token0_decimals) / compression_factor_token0,
-            Fraction(pool_lo.state.reserves_token1, 10**token1_decimals) / compression_factor_token1,
+            Fraction(pool_lo.state.reserves_token0, 10**token0_decimals)
+            / compression_factor_token0,
+            Fraction(pool_lo.state.reserves_token1, 10**token1_decimals)
+            / compression_factor_token1,
         )
         compressed_reserves_pre_swap = cvxpy.Parameter(
             name="compressed_reserves_pre_swap",
@@ -942,7 +960,9 @@ class TestBaseChainCVXPY:
             (forward_token_amount, 0) if forward_token_index == 0 else (0, forward_token_amount)
         )
         pool_lo_deposits = (
-            (0, pool_lo_profit_token_in) if forward_token_index == 0 else (pool_lo_profit_token_in, 0)
+            (0, pool_lo_profit_token_in)
+            if forward_token_index == 0
+            else (pool_lo_profit_token_in, 0)
         )
         deposits = cvxpy_bmat((
             pool_hi_deposits,
@@ -950,7 +970,9 @@ class TestBaseChainCVXPY:
         ))
 
         pool_hi_withdrawals = (
-            (0, pool_hi_profit_token_out) if forward_token_index == 0 else (pool_hi_profit_token_out, 0)
+            (0, pool_hi_profit_token_out)
+            if forward_token_index == 0
+            else (pool_hi_profit_token_out, 0)
         )
         pool_lo_withdrawals = (
             (forward_token_amount, 0) if forward_token_index == 0 else (0, forward_token_amount)

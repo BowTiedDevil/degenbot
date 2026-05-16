@@ -101,11 +101,11 @@ def make_tick_data_fetcher(
 
         new_state = dataclasses.replace(
             pool.state,
-            tick_bitmap=working_tick_bitmap,  # type: ignore[arg-type]
-            tick_data=working_tick_data,  # type: ignore[arg-type]
+            tick_bitmap=working_tick_bitmap,
+            tick_data=working_tick_data,
             block=max(pool.update_block, block_number),
         )
-        pool._state_mgr.push_state(new_state)  # type: ignore[arg-type]  # noqa: SLF001
+        pool._state_mgr.push_state(new_state)
 
     return fetcher
 

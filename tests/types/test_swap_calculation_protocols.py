@@ -11,12 +11,12 @@ from degenbot.types.pool_protocols import MultiTokenSwapCalculation, TwoTokenSwa
 class TestSwapCalculationProtocols:
     def test_two_token_swap_calculation_declares_interface(self):
         """TwoTokenSwapCalculation declares the 2-token pool swap interface."""
-        attrs = TwoTokenSwapCalculation.__protocol_attrs__  # type: ignore[attr-defined]
+        attrs = TwoTokenSwapCalculation.__protocol_attrs__
         assert "calculate_tokens_out_from_tokens_in" in attrs
 
     def test_multi_token_swap_calculation_declares_interface(self):
         """MultiTokenSwapCalculation declares the N-token pool swap interface."""
-        attrs = MultiTokenSwapCalculation.__protocol_attrs__  # type: ignore[attr-defined]
+        attrs = MultiTokenSwapCalculation.__protocol_attrs__
         assert "calculate_tokens_out_from_tokens_in" in attrs
 
 

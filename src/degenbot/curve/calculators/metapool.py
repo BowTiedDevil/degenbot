@@ -46,7 +46,7 @@ class MetapoolPrecisionVpDyCalculator:
             for rate, balance in zip(rates, pool_balances, strict=True)
         )
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
+        y = inputs.get_y(i, j, x, xp)
         dy = xp[j] - y - 1
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return (dy - fee) * inputs.PRECISION // rates[j]
@@ -79,7 +79,7 @@ class MetapoolRedemptionVpDyCalculator:
             for rate, balance in zip(rates, pool_balances, strict=True)
         )
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
+        y = inputs.get_y(i, j, x, xp)
         dy = xp[j] - y - 1
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return (dy - fee) * inputs.PRECISION // rates[j]
@@ -111,7 +111,7 @@ class MetapoolStandardDyCalculator:
             for rate, balance in zip(rates, pool_balances, strict=True)
         )
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
+        y = inputs.get_y(i, j, x, xp)
         dy = xp[j] - y - 1
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return (dy - fee) * inputs.PRECISION // rates[j]
@@ -163,9 +163,7 @@ class MetapoolUnderlyingRedemptionDyCalculator:
             meta_j = j
 
         if base_i < 0:
-            x = xp[i] + (
-                dx * inputs.scaled_redemption_price // inputs.PRECISION
-            )
+            x = xp[i] + (dx * inputs.scaled_redemption_price // inputs.PRECISION)
         elif base_j < 0:
             base_inputs = [0] * base_n_coins
             base_inputs[base_i] = dx
@@ -190,7 +188,7 @@ class MetapoolUnderlyingRedemptionDyCalculator:
                 override_state=(override_state.base if override_state is not None else None),
             )
 
-        y = inputs.get_y(meta_i, meta_j, x, xp)  # type: ignore[misc]
+        y = inputs.get_y(meta_i, meta_j, x, xp)
         dy = xp[meta_j] - y - 1
         dy -= inputs.fee * dy // inputs.FEE_DENOMINATOR
         if j == redemption_coin:
@@ -272,7 +270,7 @@ class MetapoolUnderlyingPrecisionVpDyCalculator:
                 override_state=(override_state.base if override_state is not None else None),
             )
 
-        y = inputs.get_y(meta_i, meta_j, x, xp)  # type: ignore[misc]
+        y = inputs.get_y(meta_i, meta_j, x, xp)
         dy = xp[meta_j] - y - 1
         dy -= inputs.fee * dy // inputs.FEE_DENOMINATOR
 
@@ -355,7 +353,7 @@ class MetapoolUnderlyingStandardDyCalculator:
                 override_state=(override_state.base if override_state is not None else None),
             )
 
-        y = inputs.get_y(meta_i, meta_j, x, xp)  # type: ignore[misc]
+        y = inputs.get_y(meta_i, meta_j, x, xp)
         dy = xp[meta_j] - y - 1
         dy -= inputs.fee * dy // inputs.FEE_DENOMINATOR
 

@@ -57,7 +57,7 @@ from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 
 
-class CurveStableswapPool(  # type: ignore[override]
+class CurveStableswapPool(
     PublisherMixin,
     PoolPickleMixin,
     StableswapPoolState,
@@ -467,8 +467,7 @@ class CurveStableswapPool(  # type: ignore[override]
         raise MissingCurveData(
             self.address,
             "redemption_price",
-            "Redemption price requires a data_provider."
-            " Provide one via Bot.build_pool().",
+            "Redemption price requires a data_provider. Provide one via Bot.build_pool().",
         )
 
     def _build_calculation_inputs(
@@ -489,12 +488,9 @@ class CurveStableswapPool(  # type: ignore[override]
                 raise MissingCurveData(
                     self.address,
                     "block_timestamp",
-                    "Block timestamp requires a data_provider."
-                    " Provide one via Bot.build_pool().",
+                    "Block timestamp requires a data_provider. Provide one via Bot.build_pool().",
                 )
-            self._block_timestamps[block_number] = self._data_provider.block_timestamp(
-                block_number
-            )
+            self._block_timestamps[block_number] = self._data_provider.block_timestamp(block_number)
         block_timestamp = self._block_timestamps[block_number]
 
         # Resolve amp (A ramping)
@@ -557,8 +553,7 @@ class CurveStableswapPool(  # type: ignore[override]
                 raise MissingCurveData(
                     self.address,
                     "data_provider",
-                    "Crypto pool requires a data_provider"
-                    " for D, gamma, price_scale.",
+                    "Crypto pool requires a data_provider for D, gamma, price_scale.",
                 )
             try:
                 d_val = self._cached_contract_D[block_number]
@@ -600,15 +595,12 @@ class CurveStableswapPool(  # type: ignore[override]
                     " for token balances and admin balances.",
                 )
             live_balances = tuple(
-                self._data_provider.token_balance(
-                    token.address, self.address, block_number
-                )
+                self._data_provider.token_balance(token.address, self.address, block_number)
                 for token in self._tokens
             )
             admin_balances = self._get_admin_balances(block_number)
             effective_balances = tuple(
-                lb - ab
-                for lb, ab in zip(live_balances, admin_balances, strict=True)
+                lb - ab for lb, ab in zip(live_balances, admin_balances, strict=True)
             )
 
             # For LIVE_ADMIN_ORACLE, re-resolve rates using effective balances
@@ -682,7 +674,11 @@ class CurveStableswapPool(  # type: ignore[override]
             if calculator is None:
                 calculator = _make_metapool_dy_calculator(self._strategies.metapool_rate_style)
             return calculator.calculate(
-                i, j, dx, inputs=inputs, override_state=override_state,
+                i,
+                j,
+                dx,
+                inputs=inputs,
+                override_state=override_state,
             )
 
         # Non-metapool path — resolve standard/crypto/live-admin inputs
@@ -693,7 +689,11 @@ class CurveStableswapPool(  # type: ignore[override]
             # Fallback: lazily construct calculator
             calculator = _make_dy_calculator(self._strategies.swap_style)
         return calculator.calculate(
-            i, j, dx, inputs=inputs, override_state=override_state,
+            i,
+            j,
+            dx,
+            inputs=inputs,
+            override_state=override_state,
         )
 
     def _build_metapool_inputs(
@@ -740,7 +740,11 @@ class CurveStableswapPool(  # type: ignore[override]
                 self._strategies.metapool_underlying_style
             )
         return calculator.calculate(
-            i, j, dx, inputs=inputs, override_state=override_state,
+            i,
+            j,
+            dx,
+            inputs=inputs,
+            override_state=override_state,
         )
 
     def _get_base_cache_updated(self, block_number: BlockNumber) -> int:
@@ -1082,8 +1086,8 @@ class CurveStableswapPool(  # type: ignore[override]
 
         initial_state = curve_state or self.state
         amount_out = self.calculate_tokens_out_from_tokens_in(
-            token_in=token_in_obj,  # type: ignore[arg-type]
-            token_out=token_out_obj,  # type: ignore[arg-type]
+            token_in=token_in_obj,
+            token_out=token_out_obj,
             token_in_quantity=amount_in,
             override_state=curve_state,
         )

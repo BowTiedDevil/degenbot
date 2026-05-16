@@ -24,7 +24,7 @@ def test_curve_pool_tracker_exists() -> None:
 def test_curve_pool_tracker_requires_bot() -> None:
     """CurveStableswapPoolTracker requires a Bot instance."""
     with pytest.raises(TypeError):
-        CurveStableswapPoolTracker()  # type: ignore[call-arg]
+        CurveStableswapPoolTracker()
 
 
 def test_curve_pool_tracker_has_get_pool() -> None:

@@ -193,10 +193,10 @@ def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
 
     for invalid_tag in ["Latest", "latest ", "next", "previous"]:
         with pytest.raises(DegenbotValueError):
-            get_number_for_block_identifier(invalid_tag, provider)  # type: ignore[arg-type]
+            get_number_for_block_identifier(invalid_tag, provider)
 
     with pytest.raises(DegenbotValueError):
-        get_number_for_block_identifier(1.0, provider)  # type: ignore[arg-type]
+        get_number_for_block_identifier(1.0, provider)
 
 
 def test_fee_calcs():

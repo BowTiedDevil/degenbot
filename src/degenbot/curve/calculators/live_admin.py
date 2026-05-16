@@ -45,7 +45,7 @@ class LiveAdminDyCalculator:
         rates = inputs.rate_multipliers
         xp = inputs.xp
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
+        y = inputs.get_y(i, j, x, xp)
         dy = xp[j] - y - 1
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return (dy - fee) * inputs.PRECISION // rates[j]
@@ -69,7 +69,7 @@ class LiveAdminDynamicDyCalculator:
         assert inputs.effective_balances is not None
         xp_ = list(inputs.effective_balances)
         x = xp_[i] + dx
-        y = inputs.get_y(i, j, x, xp_)  # type: ignore[misc]
+        y = inputs.get_y(i, j, x, xp_)
         dy = xp_[j] - y
         fee_ = (
             _dynamic_fee(
@@ -108,7 +108,7 @@ class LiveAdminDynamicPrecisionDyCalculator:
         ]
 
         x = xp_[i] + dx * inputs.precision_multipliers[i]
-        y = inputs.get_y(i, j, x, xp_)  # type: ignore[misc]
+        y = inputs.get_y(i, j, x, xp_)
         dy = (xp_[j] - y) // inputs.precision_multipliers[j]
 
         fee_ = (
@@ -143,7 +143,7 @@ class LiveAdminOracleDyCalculator:
         rates = inputs.resolved_rates
         xp = inputs.xp
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)  # type: ignore[misc]
+        y = inputs.get_y(i, j, x, xp)
         dy = xp[j] - y - 1
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return (dy - fee) * inputs.PRECISION // rates[j]

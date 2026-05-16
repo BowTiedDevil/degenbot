@@ -227,9 +227,9 @@ class TestPositionAnalysisResult:
     def test_total_users(self) -> None:
         """Total users is sum of all categories."""
         result = PositionAnalysisResult()
-        result.safe_users = [object()]  # type: ignore[list-item]
-        result.at_risk_users = [object(), object()]  # type: ignore[list-item]
-        result.liquidatable_users = [object()]  # type: ignore[list-item]
+        result.safe_users = [object()]
+        result.at_risk_users = [object(), object()]
+        result.liquidatable_users = [object()]
         assert result.total_users == 4
 
     def test_empty_result(self) -> None:

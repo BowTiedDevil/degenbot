@@ -592,7 +592,7 @@ def test_bad_pool_in_constructor(
     ):
         UniswapCurveCycle(
             input_token=weth,
-            swap_pools=[uniswap_v2_weth_dai_lp, None, uniswap_v2_weth_usdc_lp],  # type: ignore[list-item]
+            swap_pools=[uniswap_v2_weth_dai_lp, None, uniswap_v2_weth_usdc_lp],
             id="test",
             bot=curve_arb_bot,
             max_input=10 * 10**18,

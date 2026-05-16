@@ -171,8 +171,8 @@ class DyCalculationInputs:
     base_pool: CurveStableswapPool | None = None
 
     # ── Callable: invariant solver closures ──
-    get_y: Callable[[int, int, int, Sequence[int]], int] | None = None
-    newton_y: Callable[[int, int, Sequence[int], int, int], int] | None = None
+    get_y: Callable[[int, int, int, Sequence[int]], int] = dataclasses.field(default=None)
+    newton_y: Callable[[int, int, Sequence[int], int, int], int] = dataclasses.field(default=None)
 
 
 class DyCalculator(Protocol):
@@ -217,7 +217,7 @@ class PoolStrategies:
 
     # Calculator instances — carry the actual swap formula implementation.
     # Enum values remain for introspection (e.g., logging).
-    dy_calculator: DyCalculator = dataclasses.field(default=None)  # type: ignore[assignment]
+    dy_calculator: DyCalculator | None = dataclasses.field(default=None)
     metapool_dy_calculator: DyCalculator | None = None
     metapool_underlying_dy_calculator: DyCalculator | None = None
 

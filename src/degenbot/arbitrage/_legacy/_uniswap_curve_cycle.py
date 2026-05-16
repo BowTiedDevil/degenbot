@@ -1,3 +1,5 @@
+# ty: ignore
+
 from __future__ import annotations
 
 import asyncio
@@ -286,8 +288,8 @@ class _UniswapCurveCycle(PublisherMixin):
                                 underlying=(
                                     pool.base_pool is not None
                                     and (
-                                        swap_vector.token_in in pool.tokens_underlying  # type: ignore[operator]
-                                        or swap_vector.token_out in pool.tokens_underlying  # type: ignore[operator]
+                                        swap_vector.token_in in pool.tokens_underlying
+                                        or swap_vector.token_out in pool.tokens_underlying
                                     )
                                 ),
                             ),

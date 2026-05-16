@@ -509,7 +509,7 @@ class BatchMobiusOptimizer:
                     optimizer_type=result.optimizer_type,
                 )
 
-        return list(results)  # type: ignore[arg-type]
+        return list(results)
 
     def solve_batch_hops(
         self,

@@ -25,7 +25,7 @@ class TestV2PoolUpdateConfig:
             fee_denominator=1000,
         )
         with pytest.raises(FrozenInstanceError):
-            config.name = "other"  # type: ignore[mutable]
+            config.name = "other"
 
     def test_defaults(self):
         config = V2PoolUpdateConfig(
@@ -71,7 +71,7 @@ class TestV3PoolUpdateConfig:
             fee_denominator=1_000_000,
         )
         with pytest.raises(FrozenInstanceError):
-            config.name = "other"  # type: ignore[mutable]
+            config.name = "other"
 
     def test_defaults(self):
         config = V3PoolUpdateConfig(
@@ -107,7 +107,7 @@ class TestV4PoolUpdateConfig:
             fee_denominator=1_000_000,
         )
         with pytest.raises(FrozenInstanceError):
-            config.name = "other"  # type: ignore[mutable]
+            config.name = "other"
 
 
 class TestPoolUpdaterDispatch:

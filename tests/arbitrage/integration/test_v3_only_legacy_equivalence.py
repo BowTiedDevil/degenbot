@@ -335,12 +335,10 @@ def _make_patched_legacy_cycle(
         unittest.mock.patch.object(
             UniswapLpCycle, "_build_swap_amounts", patched_build_swap_amounts
         ),
-        unittest.mock.patch.object(
-            UniswapLpCycle, "_calculate", patched_calculate
-        ),
+        unittest.mock.patch.object(UniswapLpCycle, "_calculate", patched_calculate),
     ]
 
-    UniswapLpCycle._v3_equiv_patches = patches  # type:ignore[attr-defined]
+    UniswapLpCycle._v3_equiv_patches = patches
     for p in patches:
         p.start()
 
@@ -362,7 +360,7 @@ def _make_patched_legacy_cycle(
 def _cleanup_patched_legacy_cycle() -> None:
     """Clean up monkeypatches on UniswapLpCycle."""
     if hasattr(UniswapLpCycle, "_v3_equiv_patches"):
-        for p in UniswapLpCycle._v3_equiv_patches:  # type:ignore[attr-defined]
+        for p in UniswapLpCycle._v3_equiv_patches:
             p.stop()
         del UniswapLpCycle._v3_equiv_patches
 

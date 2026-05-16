@@ -162,7 +162,7 @@ def fetch_logs_retrying(
         return provider.get_logs(
             from_block=from_block,
             to_block=to_block,
-            addresses=addr or None,  # type: ignore[arg-type]
+            addresses=addr or None,
             topics=topics_str or None,
         )
 
@@ -237,7 +237,7 @@ async def fetch_logs_retrying_async(
         leave=False,
     )
 
-    async def _fetch_chunk(attempt: object, chunk_end: int) -> None:  # type: ignore[arg-type]
+    async def _fetch_chunk(attempt: object, chunk_end: int) -> None:
         """Fetch a single chunk of logs within a retry attempt."""
         with attempt:
             try:
@@ -245,9 +245,7 @@ async def fetch_logs_retrying_async(
                     f"Fetching logs for range {fetcher.start_block}-{chunk_end} "
                     f" ({fetcher.chunk_size} blocks)"
                 )
-                addresses_arg: list[str] | None = (
-                    [address] if address is not None else None
-                )
+                addresses_arg: list[str] | None = [address] if address is not None else None
                 topics_list = _build_topics_list(topic_signature)
                 logs = await provider.get_logs(
                     from_block=fetcher.start_block,
@@ -260,7 +258,7 @@ async def fetch_logs_retrying_async(
                 old_working_span = fetcher.working_span
                 fetcher.on_timeout()
                 logger.debug(
-                    f"Attempt {attempt.retry_state.attempt_number} timed out "  # type: ignore[union-attr]
+                    f"Attempt {attempt.retry_state.attempt_number} timed out "
                     f"fetching {old_working_span} blocks. "
                     f"Reducing to {fetcher.working_span}..."
                 )

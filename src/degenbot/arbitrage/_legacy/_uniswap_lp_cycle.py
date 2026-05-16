@@ -1,3 +1,5 @@
+# ty: ignore
+
 import asyncio
 import math
 import uuid
@@ -132,8 +134,8 @@ class _UniswapLpCycle(PublisherMixin):
                         )
                     )
                 case EtherPlaceholder() if (
-                    wrapped_native_token := WRAPPED_NATIVE_TOKENS[pool.chain_id]  # type: ignore[index]
-                ) in pool.tokens:  # type: ignore[operator]
+                    wrapped_native_token := WRAPPED_NATIVE_TOKENS[pool.chain_id]
+                ) in pool.tokens:
                     # Handle case where input token is Ether and pool holds wrapped native
                     swap_vectors.append(
                         UniswapPoolSwapVector(
@@ -147,7 +149,7 @@ class _UniswapLpCycle(PublisherMixin):
                         )
                     )
                 case Erc20Token() if (
-                    input_token == WRAPPED_NATIVE_TOKENS[pool.chain_id]  # type: ignore[index]
+                    input_token == WRAPPED_NATIVE_TOKENS[pool.chain_id]
                     and ZERO_ADDRESS in pool.tokens
                 ):
                     # Handle case where input token is wrapped native and pool holds Ether
@@ -429,7 +431,7 @@ class _UniswapLpCycle(PublisherMixin):
                 zero_for_one = current_token == pool.token0
                 hop = pool.to_hop_state(
                     zero_for_one=zero_for_one,
-                    state_override=state_overrides.get(pool),  # type: ignore[arg-type]
+                    state_override=state_overrides.get(pool),
                 )
                 hops.append(hop)
                 current_token = pool.token1 if current_token == pool.token0 else pool.token0

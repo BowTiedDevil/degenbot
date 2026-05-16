@@ -141,7 +141,7 @@ class TestPoolStrategiesDataclass:
     def test_frozen(self):
         s = PoolStrategies()
         with pytest.raises(AttributeError):
-            s.swap_style = SwapStyle.CRYPTO  # type: ignore[misc]
+            s.swap_style = SwapStyle.CRYPTO
 
     def test_equality(self):
         s1 = PoolStrategies(swap_style=SwapStyle.CRYPTO)

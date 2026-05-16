@@ -103,7 +103,7 @@ class AsyncConnectionManager:
             retry=tenacity.retry_if_result(lambda result: result is False),
         )
         try:
-            await async_w3_connected_check_with_retry(provider.is_connected)  # type: ignore[type-var]
+            await async_w3_connected_check_with_retry(provider.is_connected)
         except tenacity.RetryError as exc:
             raise DegenbotValueError(message="Provider is not connected.") from exc
 
@@ -115,7 +115,7 @@ class AsyncConnectionManager:
             w3.middleware_onion.clear()
             if TYPE_CHECKING:
                 assert isinstance(w3.provider, JSONBaseProvider)
-            w3.provider.decode_rpc_response = _fast_decode_rpc_response  # type: ignore[method-assign]
+            w3.provider.decode_rpc_response = _fast_decode_rpc_response
 
         self.connections[await provider.get_chain_id()] = provider
 

@@ -268,7 +268,7 @@ class TestUnifiedModelImmutability:
             **_base_kwargs(event_type=ScaledTokenEventType.COLLATERAL_MINT)
         )
         with pytest.raises(ValidationError, match="frozen_instance"):
-            event.raw_amount = 999  # type: ignore[misc]
+            event.raw_amount = 999
 
 
 class TestPropertyDerivation:

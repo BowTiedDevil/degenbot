@@ -116,8 +116,8 @@ class LiquidityMapSnapshot:
             # Use the sparse path — may raise MissingLiquidityData
             try:
                 return next_initialized_tick_within_one_word(
-                    tick_bitmap=self.tick_bitmap,  # type: ignore[arg-type]
-                    tick_data=self.tick_data,  # type: ignore[arg-type]
+                    tick_bitmap=self.tick_bitmap,
+                    tick_data=self.tick_data,
                     tick=tick,
                     tick_spacing=self.tick_spacing,
                     less_than_or_equal=zero_for_one,
@@ -127,7 +127,7 @@ class LiquidityMapSnapshot:
         # Use the full-map optimized path
         return next(
             gen_ticks(
-                tick_data=self.tick_data,  # type: ignore[arg-type]
+                tick_data=self.tick_data,
                 starting_tick=tick,
                 tick_spacing=self.tick_spacing,
                 less_than_or_equal=zero_for_one,
@@ -148,7 +148,7 @@ class LiquidityMapSnapshot:
             msg = "ticks_along_path requires a non-sparse map"
             raise RuntimeError(msg)
         yield from gen_ticks(
-            tick_data=self.tick_data,  # type: ignore[arg-type]
+            tick_data=self.tick_data,
             starting_tick=tick_start,
             tick_spacing=self.tick_spacing,
             less_than_or_equal=zero_for_one,

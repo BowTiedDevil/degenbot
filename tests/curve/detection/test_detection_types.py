@@ -39,7 +39,7 @@ class TestCoinDiscoveryResult:
             balance_prototype="balances(uint256)",
         )
         with pytest.raises(FrozenInstanceError):
-            result.coin_prototype = "coins(int128)"  # type: ignore[misc]
+            result.coin_prototype = "coins(int128)"
 
 
 class TestLendingDetectionResult:
@@ -67,7 +67,7 @@ class TestLendingDetectionResult:
             precision_multipliers=None,
         )
         with pytest.raises(FrozenInstanceError):
-            result.use_lending = (True,)  # type: ignore[misc]
+            result.use_lending = (True,)
 
 
 class TestMetapoolDetectionResult:
@@ -104,7 +104,7 @@ class TestMetapoolDetectionResult:
             tokens_underlying=None,
         )
         with pytest.raises(FrozenInstanceError):
-            result.is_meta = True  # type: ignore[misc]
+            result.is_meta = True
 
 
 class TestCryptoDetectionResult:
@@ -145,7 +145,7 @@ class TestCryptoDetectionResult:
             offpeg_fee_multiplier=None,
         )
         with pytest.raises(FrozenInstanceError):
-            result.is_crypto = True  # type: ignore[misc]
+            result.is_crypto = True
 
 
 class TestARampingResult:
@@ -183,4 +183,4 @@ class TestARampingResult:
             has_ramping=False,
         )
         with pytest.raises(FrozenInstanceError):
-            result.has_ramping = True  # type: ignore[misc]
+            result.has_ramping = True

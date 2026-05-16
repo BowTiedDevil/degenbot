@@ -416,7 +416,7 @@ class MockV4Pool(MockV3Pool):
     @property
     @override
     def state(self) -> UniswapV4PoolState:
-        return self._state  # type: ignore[return-value]
+        return self._state
 
     @staticmethod
     def swap_is_viable(
