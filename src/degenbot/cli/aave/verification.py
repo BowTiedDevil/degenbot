@@ -237,7 +237,7 @@ def verify_scaled_token_positions(
     position_table: type[AaveV3CollateralPosition | AaveV3DebtPosition],
     block_number: int,
     show_progress: bool,
-    user_addresses: set[ChecksumAddress],
+    user_addresses: set[ChecksumAddress] | None = None,
 ) -> None:
     """
     Verify that database position balances match the contract.
@@ -282,7 +282,8 @@ def verify_scaled_token_positions(
         elif position_table is AaveV3DebtPosition:
             token_address = get_checksum_address(position.asset.v_token.address)
         else:
-            assert_never(position_table)
+            msg = f"Unexpected position table type: {position_table}"
+            raise ValueError(msg)
 
         (actual_scaled_balance,) = raw_call(
             provider=provider,

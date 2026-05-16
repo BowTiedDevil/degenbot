@@ -1,6 +1,6 @@
 """Block identifier resolution helpers."""
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from web3.types import BlockIdentifier
 
@@ -27,7 +27,7 @@ def get_number_for_block_identifier(
 
     match identifier:
         case None:
-            return cast("BlockNumber", provider.get_block_number())
+            return provider.get_block_number()
         case int() as block_number_as_int:
             return block_number_as_int
         case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
@@ -37,7 +37,7 @@ def get_number_for_block_identifier(
             block_number = block.get("number")
             if TYPE_CHECKING:
                 assert block_number is not None
-            return cast("BlockNumber", block_number)
+            return block_number
         case str() as block_number_as_str:
             try:
                 return int(block_number_as_str, 16)
@@ -57,15 +57,17 @@ async def get_number_for_block_identifier_async(
 ) -> BlockNumber:
     match identifier:
         case None:
-            return cast("BlockNumber", await provider.get_block_number())
+            return await provider.get_block_number()
         case int() as block_number_as_int:
             return block_number_as_int
         case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
             block = await provider.get_block(block_tag)
+            if block is None:
+                raise DegenbotValueError(message=f"Block {block_tag} not found")
             block_number = block.get("number")
             if TYPE_CHECKING:
                 assert block_number is not None
-            return cast("BlockNumber", block_number)
+            return block_number
         case str() as block_number_as_str:
             try:
                 return int(block_number_as_str, 16)

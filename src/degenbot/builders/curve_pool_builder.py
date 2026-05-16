@@ -242,8 +242,10 @@ class CurvePoolBuilder:
             msg = f"CurvePoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 
+        assert pool.chain_id is not None
         provider = self._connections.get_provider(pool.chain_id)
-        _block_number = block_number if block_number is not None else provider.get_block_number()
+        _raw_block_number = block_number if block_number is not None else provider.get_block_number()
+        _block_number: int = _raw_block_number if isinstance(_raw_block_number, int) else int(_raw_block_number)
 
         # Fetch balances for each token in the pool
         new_balances: list[int] = []

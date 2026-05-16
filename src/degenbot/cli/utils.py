@@ -7,7 +7,8 @@ from web3 import HTTPProvider, IPCProvider, JSONBaseProvider, LegacyWebSocketPro
 
 from degenbot.config import CONFIG_FILE, DegenbotConfig, _init_config
 from degenbot.connection.connection_manager import _fast_decode_rpc_response
-from degenbot.provider import AlloyProvider, ProviderAdapter
+from degenbot.degenbot_rs import AlloyProvider
+from degenbot.provider import ProviderAdapter
 
 
 def _get_use_alloy_from_env() -> bool:

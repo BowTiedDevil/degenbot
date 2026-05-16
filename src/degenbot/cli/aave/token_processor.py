@@ -671,7 +671,8 @@ def _process_debt_mint_with_match(
                     data=operation.pool_event["data"],
                 )
             else:
-                assert_never(operation.operation_type)
+                msg = f"Unexpected operation type: {operation.operation_type}"
+                raise ValueError(msg)
 
             # Use token revision (not pool revision) to get correct TokenMath
             token_math = TokenMathFactory.get_token_math_for_token_revision(
@@ -808,7 +809,7 @@ def _process_debt_burn_with_match(
 
         # Only update last_index if the new index is greater than current
         current_index = debt_position.last_index or 0
-        if scaled_event.index > current_index:
+        if scaled_event.index is not None and scaled_event.index > current_index:
             debt_position.last_index = scaled_event.index
 
         return
@@ -940,7 +941,8 @@ def _process_debt_burn_with_match(
                 )
 
             else:
-                assert_never(pattern)
+                msg = f"Unexpected pattern: {pattern}"
+                raise ValueError(msg)
 
         else:
             # Standard REPAY: use Burn event value

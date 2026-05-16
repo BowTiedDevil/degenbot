@@ -87,6 +87,8 @@ def _match_paired_balance_transfer(
         Tuple of (matched_event, scaled_amount, index) or (None, None, None)
     """
 
+    if operation is None:
+        return None, None, None
     # For liquidation operations, don't match ERC20 Transfers with BalanceTransfers
     # They represent different movements and should be processed separately
     if operation.operation_type in {OperationType.LIQUIDATION, OperationType.GHO_LIQUIDATION}:
@@ -111,7 +113,8 @@ def _match_paired_balance_transfer(
             )
             return bt_event, decoded_amount, decoded_index
 
-    assert_never()
+    msg = "Unreachable: BalanceTransfer loop should have returned"
+    raise ValueError(msg)
 
 
 def _process_collateral_transfer(
