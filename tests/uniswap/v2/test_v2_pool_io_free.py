@@ -8,6 +8,7 @@ from fractions import Fraction
 from unittest.mock import MagicMock
 
 import eth_abi.abi
+from web3.exceptions import Web3Exception
 
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
@@ -246,14 +247,20 @@ class TestBotBuildV2Pool:
         token1_calldata = encode_function_calldata("token1()", None)
         reserves_calldata = encode_function_calldata("getReserves()", None)
 
+        slot0_calldata = encode_function_calldata("slot0()", None)
+
         call_responses = {
             factory_calldata: factory_encoded,
             token0_calldata: token0_encoded,
             token1_calldata: token1_encoded,
+            slot0_calldata: None,  # marker: will raise Web3Exception
         }
 
         def mock_get_reserves_call(*, to, data, block=None):
             if data in call_responses:
+                if data == slot0_calldata:
+                    # V3 slot0() reverts on a V2 pool
+                    raise Web3Exception("revert")
                 return call_responses[data]
             if data == reserves_calldata:
                 # getReserves returns (uint112, uint112, uint32)
@@ -359,15 +366,19 @@ class TestV2PoolTrackerWithBot:
         token0_calldata = encode_function_calldata("token0()", None)
         token1_calldata = encode_function_calldata("token1()", None)
         reserves_calldata = encode_function_calldata("getReserves()", None)
+        slot0_calldata = encode_function_calldata("slot0()", None)
 
         call_responses = {
             factory_calldata: eth_abi.abi.encode(types=["address"], args=[factory_addr]),
             token0_calldata: eth_abi.abi.encode(types=["address"], args=[weth_addr]),
             token1_calldata: eth_abi.abi.encode(types=["address"], args=[usdc_addr]),
+            slot0_calldata: None,  # marker: slot0() reverts on V2 pools
         }
 
         def mock_call(*, to, data, block=None):
             if data in call_responses:
+                if data == slot0_calldata:
+                    raise Web3Exception("revert")
                 return call_responses[data]
             if data == reserves_calldata:
                 return eth_abi.abi.encode(

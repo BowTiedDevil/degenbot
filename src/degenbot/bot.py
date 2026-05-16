@@ -2,19 +2,20 @@ from __future__ import annotations
 
 import contextlib
 import warnings
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from eth_abi.exceptions import DecodingError
 from sqlalchemy import select
+from web3.exceptions import Web3Exception
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
 from degenbot.builders.camelot_builder import CamelotBuilder
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
-from degenbot.builders.protocol import PoolBuilder
 from degenbot.builders.v2_pool_builder import V2PoolBuilder
 from degenbot.builders.v3_pool_builder import V3PoolBuilder
 from degenbot.builders.v4_pool_builder import V4PoolBuilder
@@ -32,7 +33,6 @@ from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.types.pool_protocols import ConcentratedLiquidityPool, ConstantProductPool
 from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -43,12 +43,19 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from eth_typing import ChecksumAddress
+    from web3 import Web3
     from web3.types import BlockIdentifier
 
+    from degenbot.builders.protocol import PoolBuilder
     from degenbot.erc20.erc20 import Erc20Token
+    from degenbot.provider.interface import ProviderAdapter
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
     from degenbot.types.aliases import ChainId
+    from degenbot.types.pool_protocols import (
+        ConcentratedLiquidityPool,
+        ConstantProductPool,
+    )
     from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
     from degenbot.uniswap.v4_types import UniswapV4BitmapAtWord, UniswapV4LiquidityAtTick
 
@@ -152,7 +159,7 @@ class Bot:
         """Warn if the database schema is out of date."""
 
         try:
-            with self.db() as session:
+            with self.db():
                 current_version = MigrationContext.configure(
                     connection=self.db.connection()
                 ).get_current_revision()
@@ -349,8 +356,8 @@ class Bot:
             **dispatch_kwargs,
         )
 
+    @staticmethod
     def _dispatch_build(
-        self,
         *,
         builder: PoolBuilder,
         address: ChecksumAddress,
@@ -440,6 +447,9 @@ class Bot:
                 to=address,
                 data=encode_function_calldata("slot0()", None),
             )
+        except Web3Exception:
+            pass
+        else:
             # If we got here without reverting, it's a V3 pool
             registry_descriptor = pool_type_registry.get_descriptor(chain_id, factory)
             if registry_descriptor is not None:
@@ -450,8 +460,6 @@ class Bot:
                 kind=derive_kind(PoolFamily.CONCENTRATED_LIQUIDITY, None),
                 factory=factory,
             )
-        except Exception:
-            pass
 
         # Try V2: getReserves() exists → CONSTANT_PRODUCT
         try:
@@ -459,6 +467,9 @@ class Bot:
                 to=address,
                 data=encode_function_calldata("getReserves()", None),
             )
+        except Web3Exception:
+            pass
+        else:
             registry_descriptor = pool_type_registry.get_descriptor(chain_id, factory)
             if registry_descriptor is not None:
                 return registry_descriptor
@@ -468,8 +479,6 @@ class Bot:
                 kind=derive_kind(PoolFamily.CONSTANT_PRODUCT, None),
                 factory=factory,
             )
-        except Exception:
-            pass
 
         # Fall through to Curve — assume STABLESWAP if nothing else matched
         return PoolTypeDescriptor(
@@ -479,8 +488,8 @@ class Bot:
             factory=factory,
         )
 
+    @staticmethod
     def _pool_class_for_descriptor(
-        self,
         pool_type: PoolTypeDescriptor,
         *,
         chain_id: ChainId,
@@ -499,9 +508,17 @@ class Bot:
         # Default classes when no factory-specific registration exists
         match pool_type.family:
             case PoolFamily.CONSTANT_PRODUCT:
-                return pool_type_registry.get_v2_class(chain_id, pool_type.factory or "") or UniswapV2Pool  # type: ignore[return-value]
+                return cast(  # protocol subclass not recognized by mypy
+                    "type[AbstractLiquidityPool]",
+                    pool_type_registry.get_v2_class(chain_id, pool_type.factory or "")
+                    or UniswapV2Pool,
+                )
             case PoolFamily.CONCENTRATED_LIQUIDITY:
-                return pool_type_registry.get_v3_class(chain_id, pool_type.factory or "") or UniswapV3Pool  # type: ignore[return-value]
+                return cast(  # protocol subclass not recognized by mypy
+                    "type[AbstractLiquidityPool]",
+                    pool_type_registry.get_v3_class(chain_id, pool_type.factory or "")
+                    or UniswapV3Pool,
+                )
             case PoolFamily.STABLESWAP:
                 return CurveStableswapPool
             case _:
@@ -520,7 +537,7 @@ class Bot:
             )
             (factory_raw,) = eth_abi.abi.decode(types=["address"], data=factory_result)
             return get_checksum_address(factory_raw)
-        except Exception:
+        except (Web3Exception, DecodingError):
             return None
 
     def build_v2_pool(
@@ -716,16 +733,21 @@ class Bot:
             state_cache_depth=state_cache_depth,
         )
 
-    def get_provider(self, *, chain_id: ChainId) -> Any:
+    def get_provider(self, *, chain_id: ChainId) -> ProviderAdapter:
         return self.connections.get_provider(chain_id)
 
-    def get_web3(self, *, chain_id: ChainId) -> Any:
+    def get_web3(self, *, chain_id: ChainId) -> Web3:
         """.. deprecated:: 0.x
         Use ``get_provider(chain_id)`` instead.
         """
         return self.connections.get_web3(chain_id)
 
-    def update(self, pool: Any, *, block_number: BlockIdentifier | None = None) -> bool:
+    def update(
+        self,
+        pool: AbstractLiquidityPool,
+        *,
+        block_number: BlockIdentifier | None = None,
+    ) -> bool:
         """
         Fetch the current state of a pool from the chain and apply it via
         ``pool.external_update()``.
@@ -733,15 +755,16 @@ class Bot:
         Returns True if the state changed, False if unchanged.
         """
         builder = self._builder_for_pool(pool)
-        _block_number = (
-            int(block_number) if block_number is not None and not isinstance(block_number, int)
+        resolved_block_number = (
+            int(block_number)
+            if block_number is not None and not isinstance(block_number, int)
             else block_number
         )
-        return builder.update(pool, block_number=_block_number)
+        return builder.update(pool, block_number=resolved_block_number)
 
     def _builder_for_pool(
         self,
-        pool: Any,
+        pool: AbstractLiquidityPool,
     ) -> PoolBuilder:
         """Select the appropriate builder for the pool type.
 
