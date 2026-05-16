@@ -10,6 +10,7 @@ from eth_abi.abi import decode as abi_decode
 from eth_typing import ChecksumAddress, HexAddress
 from hexbytes import HexBytes
 from sqlalchemy import select
+from sqlalchemy.orm import Session, scoped_session
 from web3 import Web3
 from web3.types import LogReceipt
 
@@ -20,7 +21,7 @@ from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.pool import UnknownPool
 from degenbot.logging import logger
-from degenbot.provider.interface import AsyncProviderAdapter
+from degenbot.provider.interface import AsyncProviderAdapter, ProviderAdapter
 from degenbot.provider.log_fetching import fetch_logs_retrying, fetch_logs_retrying_async
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import KeyedDefaultDict
@@ -182,6 +183,7 @@ class DatabaseSnapshot:
     """
 
     storage_kind = "db"
+    session: DatabaseSessionManager | scoped_session[Session]
 
     def __init__(
         self,
@@ -352,7 +354,7 @@ class UniswapV3LiquiditySnapshot:
         self,
         to_block: BlockNumber,
         *,
-        provider: AsyncProviderAdapter,
+        provider: ProviderAdapter,
         blocks_per_request: int | None = None,
     ) -> None:
         """
