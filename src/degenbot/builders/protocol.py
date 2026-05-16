@@ -22,7 +22,13 @@ if TYPE_CHECKING:
 
 
 class PoolBuilder(Protocol):
-    """Protocol for pool construction and state updates."""
+    """Protocol for pool construction and state updates.
+
+    Builders must accept ``address`` as the first positional-or-keyword
+    parameter in ``build()``, and ``pool`` as the first positional-or-keyword
+    parameter in ``update()``. Extra builder-specific parameters are
+    forwarded through ``**kwargs`` by the dispatcher.
+    """
 
     def build(
         self,

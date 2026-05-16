@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
 
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
     from degenbot.provider.interface import ProviderAdapter
     from degenbot.registry import PoolRegistry, TokenRegistry
+    from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
 
@@ -67,7 +68,8 @@ class CurvePoolBuilder:
         state_block: int | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
-    ) -> CurveStableswapPool:
+        **kwargs: Any,
+    ) -> AbstractLiquidityPool:
         """Fetch pool data from RPC and construct an I/O-free CurveStableswapPool."""
 
         pool_address = get_checksum_address(address)
@@ -238,7 +240,7 @@ class CurvePoolBuilder:
 
     def update(
         self,
-        pool: CurveStableswapPool,
+        pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
     ) -> bool:

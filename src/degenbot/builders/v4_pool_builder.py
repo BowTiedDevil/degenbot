@@ -25,6 +25,7 @@ from degenbot.uniswap.v4_types import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+    from typing import overload
 
     from web3.types import BlockIdentifier
 
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     from degenbot.connection.connection_manager import ConnectionManager
     from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
+    from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
 
@@ -66,7 +68,7 @@ class V4PoolBuilder:
         """Create a tick data fetcher callback for a V4 pool."""
         pool_manager_address_ = get_checksum_address(pool_manager_address)
         return make_tick_data_fetcher(
-            pool_lookup=lambda _: self._managed_pools.get(  # type: ignore[arg-type,return-value]
+            pool_lookup=lambda _: self._managed_pools.get(
                 chain_id=chain_id,
                 pool_manager_address=pool_manager_address_,
                 pool_id=pool_id,
@@ -83,9 +85,9 @@ class V4PoolBuilder:
 
     def build(
         self,
-        *,
-        pool_id: str | bytes,
-        pool_manager_address: str,
+        address: str,
+        pool_id: str | bytes | None = None,
+        pool_manager_address: str | None = None,
         state_view_address: str | None = None,
         tokens: Sequence[str] | None = None,
         fee: int | None = None,
@@ -97,9 +99,12 @@ class V4PoolBuilder:
         tick_data: dict[int, UniswapV4LiquidityAtTick] | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
-    ) -> UniswapV4Pool:
+        **kwargs: Any,
+    ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free UniswapV4Pool."""
 
+        assert pool_manager_address is not None
+        assert pool_id is not None
         pool_manager_address = get_checksum_address(pool_manager_address)
         pool_id_bytes = HexBytes(pool_id)
         chain_id = chain_id or self._connections.default_chain_id
@@ -339,7 +344,7 @@ class V4PoolBuilder:
 
     def update(
         self,
-        pool: UniswapV4Pool,
+        pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
     ) -> bool:

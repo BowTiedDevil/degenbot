@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from degenbot.builders.v2_builder_base import V2BuilderBase
 from degenbot.checksum_cache import get_checksum_address
@@ -14,8 +14,8 @@ from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 if TYPE_CHECKING:
     from web3.types import BlockIdentifier
 
+    from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
-    from degenbot.types.pool_protocols import ConstantProductPool
 
 
 class V2PoolBuilder(V2BuilderBase):
@@ -30,7 +30,7 @@ class V2PoolBuilder(V2BuilderBase):
 
     def build(
         self,
-        pool_address: str,
+        address: str,
         *,
         chain_id: ChainId | None = None,
         deployer_address: str | None = None,
@@ -38,10 +38,11 @@ class V2PoolBuilder(V2BuilderBase):
         state_block: int | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
-    ) -> ConstantProductPool:
+        **kwargs: Any,
+    ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free V2-style pool."""
 
-        pool_address = get_checksum_address(pool_address)
+        pool_address = get_checksum_address(address)
         chain_id = chain_id or self._connections.default_chain_id
         provider = self._connections.get_provider(chain_id)
         state_block = state_block if state_block is not None else provider.get_block_number()
@@ -67,7 +68,7 @@ class V2PoolBuilder(V2BuilderBase):
 
         # pool_class is type[ConstantProductPool] (a Protocol) so mypy
         # cannot verify constructor args. Cast to the concrete default.
-        pool = pool_class(  # type: ignore[call-arg]
+        pool = pool_class(
             address=pool_address,
             chain_id=common.chain_id,
             token0=token0,
@@ -84,7 +85,7 @@ class V2PoolBuilder(V2BuilderBase):
         )
 
         # Register pool
-        self._register_pool(pool, chain_id=chain_id)  # type: ignore[arg-type]
+        self._register_pool(pool, chain_id=chain_id)
 
         if not silent:
             logger.info(pool.name)
@@ -95,7 +96,7 @@ class V2PoolBuilder(V2BuilderBase):
 
     def update(
         self,
-        pool: UniswapV2Pool,
+        pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
     ) -> bool:
