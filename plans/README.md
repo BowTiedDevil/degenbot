@@ -8,8 +8,7 @@ See the [skill vocabulary](https://github.com/user/skills/improve-codebase-archi
 
 | # | Plan | Summary |
 |---|------|---------|
-| 014 | [Async REPL](14-async-repl.md) | `python -m degenbot` with top-level `await`. |
-| 045 | [Calculator Explicit Data](completed/045-calculator-explicit-data.md) | Replace `pool` param with `DyCalculationInputs` to eliminate 77 SLF001 errors |
+| 014 | [Async REPL](014-async-repl.md) | `python -m degenbot` with top-level `await`. |
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
 
 ## Completed Plans
@@ -59,3 +58,4 @@ See the [skill vocabulary](https://github.com/user/skills/improve-codebase-archi
 | 042 | [Collapse Provider Adapter Mirror](completed/042-collapse-provider-adapter-mirror.md) | Merged `EthereumProvider`+`_SyncProviderBackend`→`ProviderBackend`. `__getattr__` dispatch replaces 15× delegation methods. Block guards simplified. 914→780 lines (−15%). |
 | 043 | [Extract V2 Variant Builders](completed/043-extract-v2-variant-builders.md) | `V2PoolBuilder` 375→118 lines (68% reduction). Per-variant builders: `V2BuilderBase`, `AerodromeV2Builder`, `CamelotBuilder`. |
 | 044 | [Deprecate Bot Pass-Throughs](completed/044-deprecate-bot-pass-throughs.md) | `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool` emit `DeprecationWarning`. Use `build_pool()`. |
+| 045 | [Calculator Explicit Data](completed/045-calculator-explicit-data.md) | Replace `pool` parameter with `DyCalculationInputs` in DyCalculator. 77 SLF001 errors → 0. Calculators are pure consumers of pre-resolved data. |

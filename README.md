@@ -132,7 +132,7 @@ Degenbot pools follow an **I/O-free architecture** where on-chain data is fetche
 - **Reliability**: No async complexity in pool logic
 - **State Management**: Pools can be snapshotted, pickled, and restored
 
-**Current status:** All pool types (Curve, V2, V3, V4, Aerodrome, Camelot) are fully I/O-free — no pool class imports `ProviderAdapter` or carries provider-dependent methods. Construction and updates flow through builders, and all state changes enter pools via `external_update()`.
+**Current status:** All pool types (Curve, V2, V3, V4, Aerodrome, Camelot) are fully I/O-free — no pool class imports `ProviderAdapter` or carries provider-dependent methods. Construction and updates flow through builders, and all state changes enter pools via `external_update()`. Curve calculators receive a `DyCalculationInputs` frozen dataclass carrying pre-resolved data, eliminating all private member access (no `pool._xxx` patterns).
 
 ### The Bot Class
 
@@ -611,8 +611,9 @@ crvUSD/USDC Curve Metapool
 ... )
 987654321098765432109  # ~987 3Crv LP tokens
 
-# For lending pools (cTokens), rates are fetched on-demand via the injected CurveDataProvider
-# No I/O during calculation - pool calls data_provider methods when needed
+# For lending pools (cTokens), rates are resolved before calculation
+# Pool's get_dy() pre-resolves all I/O via CurveDataProvider, then passes
+# pre-resolved data to calculators via DyCalculationInputs (pure math, no private access)
 ```
 
 <!-- skip: end -->
@@ -1185,7 +1186,7 @@ Each module has a `CONTEXT.md` defining domain terminology:
 
 - [Pool Types & Trackers](src/degenbot/types/CONTEXT.md) — Pool, Pool State, Reserves, Tick, Fee representations
 - [Uniswap](src/degenbot/uniswap/CONTEXT.md) — V2/V3/V4 pools, Pool Tracker, Managed Pool, Pool ID
-- [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — Metapools, lending pools, CurveDataProvider seam, A coefficient
+- [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — Metapools, lending pools, CurveDataProvider seam, DyCalculationInputs, DyCalculator, A coefficient
 - [Aave](src/degenbot/aave/CONTEXT.md) — Market, Asset, Reserve, Enrichment, Liquidation
 - [Arbitrage](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Solver, Optimizer, Hop State
 - [Registries](src/degenbot/registry/CONTEXT.md) — Pool, Token, Managed Pool registries

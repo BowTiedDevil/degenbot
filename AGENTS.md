@@ -213,6 +213,8 @@ The former 13 individual fetcher callback constructor parameters (`_D_fetcher`, 
 
 The `DyCalculator` seam (Plan 039) replaces 14 `match`/`if` dispatch branches in `get_dy()` with injectable calculator objects keyed on `SwapStyle`, `MetapoolRateStyle`, and `MetapoolUnderlyingStyle` enums. Pure math functions in `calculations/stableswap.py` raise `ValueError`; pool wrappers catch and re-raise as `EVMRevertError` for backward compat.
 
+**DyCalculationInputs** (Plan 045) replaces the `pool: CurveStableswapPool` parameter in `DyCalculator.calculate()` with a frozen dataclass carrying pre-resolved data. The pool's `get_dy()` performs all I/O (rate resolution, cache lookups, block data, invariant solver closure construction) before constructing a `DyCalculationInputs` and passing it to the calculator. Calculators are pure consumers of this object — no private member access, no I/O, no cache mutation. This eliminated 77 SLF001 (private member access) errors across the calculator modules.
+
 **V2/V3/V4/Aerodrome/Camelot pools** are fully I/O-free — builders fetch all data from DB/RPC, pass it to the pool constructor, and no provider references remain on the pool object. All updates flow through `external_update()` (pure logic). No pool class imports `ProviderAdapter` or carries provider-dependent methods (ADR-001 Phase 3 complete).
 
 See `docs/architecture/io-free-pools.md` and `src/degenbot/curve/CONTEXT.md` for details.
@@ -255,7 +257,7 @@ Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` f
 
 ## Architecture Plans
 
-Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–044 are all complete; the only remaining active plan is 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
+Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–045 are all complete; the only remaining active plan is 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
 
 When a plan is marked complete: (1) move its file from `plans/` to `plans/completed/`, (2) move its row in `plans/README.md` from the Active Plans table to the Completed Plans table, and (3) update the link to point to the new `completed/` path.
 

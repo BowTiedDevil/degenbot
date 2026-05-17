@@ -123,6 +123,7 @@ class CurveDataProvider(Protocol):
 - Curve fetcher callbacks collapsed into single `CurveDataProvider` seam (Plan 040)
 - V2 variant builders extracted from `V2PoolBuilder` into per-variant builders (Plan 043)
 - `ProviderBackend` protocol replaces `EthereumProvider` + `_SyncProviderBackend` mirror (Plan 042)
+- DyCalculator `pool` parameter replaced with `DyCalculationInputs` frozen dataclass; 77 SLF001 errors → 0; calculators are pure consumers of pre-resolved data (Plan 045)
 
 ## Testing Patterns
 

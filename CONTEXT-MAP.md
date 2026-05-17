@@ -49,6 +49,7 @@ _Avoid_: Fork, local chain
 - A **Curve Pool Tracker** tracks **Curve StableSwap Pools** and delegates construction to **Bot**
 - A **CurveDataProvider** is injected into **Curve Pools** by the **Curve Pool Builder** (invoked via `Bot.build_pool()`); pools never access connections directly. The former 13 individual fetcher callbacks have been collapsed into a single `CurveDataProvider` seam (Plan 040)
 - V2/V3/V4/Aerodrome **Pools** are fully I/O-free — **Builders** fetch all data from DB/RPC and pass values; no pool class imports `ProviderAdapter` or carries provider-dependent methods
+- **DyCalculationInputs** is a frozen dataclass constructed by `CurveStableswapPool.get_dy()` that carries pre-resolved data for a single dy calculation; **DyCalculator** implementations receive this instead of the pool object, eliminating all private member access (Plan 045)
 - **PoolFamily** (identity enum in `types/pool_type.py`) is the sole identity enum; **Pool Invariant** (in `types/hop_types.py`) is the solver-dispatch enum
 - **CacheablePool** protocol enables **Pool Cache Adapter** registration without introspection
 - **Swap Amounts** carry per-pool swap parameters and self-encode into **EncodedCall**s; `generate_payloads()` wires encoding → **ApprovalStrategy** → **PayloadComposer**
