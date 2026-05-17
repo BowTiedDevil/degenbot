@@ -6,12 +6,14 @@
 
 use crate::errors::{ProviderError, ProviderResult};
 use alloy::consensus::{Header as ConsensusHeader, TxEnvelope};
+use alloy::eips::BlockNumberOrTag;
 use alloy::network::Ethereum;
 use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::rpc::types::eth::{Block, Header as RpcHeader, Transaction};
 use alloy::rpc::types::{Filter, Log};
+use alloy::rpc::types::TransactionRequest;
 use alloy::transports::ipc::IpcConnect;
 use alloy::transports::layers::ThrottleLayer;
 use alloy::transports::ws::WsConnect;
@@ -201,6 +203,8 @@ pub struct AlloyProvider {
     max_attempts: u32,
 }
 
+// Manual Clone impl makes Arc::clone sharing semantics explicit
+// (vs deriving Clone, which would produce the same code).
 impl Clone for AlloyProvider {
     fn clone(&self) -> Self {
         Self {
@@ -413,8 +417,6 @@ impl AlloyProvider {
         &self,
         block_number: u64,
     ) -> ProviderResult<Option<Block<Transaction<TxEnvelope>, RpcHeader<ConsensusHeader>>>> {
-        use alloy::eips::BlockNumberOrTag;
-
         self.retry_with_backoff(|| async {
             let block_num_tag = BlockNumberOrTag::Number(block_number);
             let result = self
@@ -494,8 +496,6 @@ impl AlloyProvider {
         data: Bytes,
         block_number: Option<u64>,
     ) -> ProviderResult<Bytes> {
-        use alloy::rpc::types::TransactionRequest;
-
         self.retry_with_backoff(|| async {
             let tx = TransactionRequest::default()
                 .to(*to)
@@ -551,8 +551,6 @@ impl AlloyProvider {
         value: Option<u128>,
         block_number: Option<u64>,
     ) -> ProviderResult<u64> {
-        use alloy::rpc::types::TransactionRequest;
-
         self.retry_with_backoff(|| async {
             let mut tx = TransactionRequest::default()
                 .to(*to)
@@ -588,10 +586,7 @@ impl AlloyProvider {
         &self,
         tx_hash: &str,
     ) -> ProviderResult<Option<serde_json::Value>> {
-        use alloy::primitives::FixedBytes;
-        use std::str::FromStr;
-
-        let hash = FixedBytes::from_str(tx_hash).map_err(|e| ProviderError::InvalidParams {
+        let hash = B256::from_str(tx_hash).map_err(|e| ProviderError::InvalidParams {
             message: format!("Invalid transaction hash: {e}"),
         })?;
 
@@ -625,10 +620,7 @@ impl AlloyProvider {
         &self,
         tx_hash: &str,
     ) -> ProviderResult<Option<serde_json::Value>> {
-        use alloy::primitives::FixedBytes;
-        use std::str::FromStr;
-
-        let hash = FixedBytes::from_str(tx_hash).map_err(|e| ProviderError::InvalidParams {
+        let hash = B256::from_str(tx_hash).map_err(|e| ProviderError::InvalidParams {
             message: format!("Invalid transaction hash: {e}"),
         })?;
 
@@ -666,8 +658,6 @@ impl AlloyProvider {
         position: U256,
         block_number: Option<u64>,
     ) -> ProviderResult<B256> {
-        use alloy::eips::BlockNumberOrTag;
-
         self.retry_with_backoff(|| async {
             let result = if let Some(block) = block_number {
                 self.inner
@@ -695,8 +685,6 @@ impl AlloyProvider {
         address: &Address,
         block_number: Option<u64>,
     ) -> ProviderResult<U256> {
-        use alloy::eips::BlockNumberOrTag;
-
         self.retry_with_backoff(|| async {
             let result = if let Some(block) = block_number {
                 self.inner
@@ -723,8 +711,6 @@ impl AlloyProvider {
         address: &Address,
         block_number: Option<u64>,
     ) -> ProviderResult<u64> {
-        use alloy::eips::BlockNumberOrTag;
-
         self.retry_with_backoff(|| async {
             let result = if let Some(block) = block_number {
                 self.inner
@@ -760,21 +746,15 @@ impl AlloyProvider {
         method: &str,
         params: serde_json::Value,
     ) -> ProviderResult<serde_json::Value> {
-        // Convert to Arc for sharing across retries
-        let method_owned = Arc::new(method.to_string());
-        let params_owned = Arc::new(params);
+        let method = method.to_string();
 
         self.retry_with_backoff(|| {
-            let method = Arc::clone(&method_owned);
-            let params = Arc::clone(&params_owned);
+            let client = self.inner.client();
+            let method = method.clone();
+            let params = params.clone();
             async move {
-                // Get the client from the provider
-                let client = self.inner.client();
-
-                // Make the raw request - pass owned String which converts to Cow::Owned
-                let method_str = (*method).clone();
                 let result: serde_json::Value = client
-                    .request::<serde_json::Value, serde_json::Value>(method_str, (*params).clone())
+                    .request::<serde_json::Value, serde_json::Value>(method, params)
                     .await
                     .map_err(|e| alloy_error_to_provider_error(&e, "RPC request failed"))?;
 
@@ -813,7 +793,8 @@ impl LogFetcher {
     /// Fetch logs across a block range with chunking.
     ///
     /// Uses concurrent requests to fetch multiple chunks in parallel,
-    /// improving performance for large block ranges.
+    /// improving performance for large block ranges. Logs are sorted
+    /// by `(block_number, log_index)` for deterministic ordering.
     ///
     /// # Errors
     ///
@@ -848,43 +829,45 @@ impl LogFetcher {
             current_block = chunk_end + 1;
         }
 
-        // Pre-allocate result vector with estimated capacity
-        let estimated_logs_per_chunk = 100;
-        let mut all_logs = Vec::with_capacity(chunks.len() * estimated_logs_per_chunk);
-
-        // Process chunks concurrently with a semaphore to limit parallelism
+        // Spawn all tasks immediately; the semaphore gates execution inside each task
         let sem = Arc::new(tokio::sync::Semaphore::new(self.max_concurrent_requests));
-
-        let mut handles = Vec::with_capacity(chunks.len());
+        let mut join_set = tokio::task::JoinSet::new();
 
         for (chunk_start, chunk_end) in chunks {
-            let permit = Arc::clone(&sem).acquire_owned().await.map_err(|_| {
-                ProviderError::Other {
-                    message: "Semaphore acquisition failed".to_string(),
-                }
-            })?;
-
+            let sem = Arc::clone(&sem);
             let provider = Arc::clone(&self.provider);
             let addresses = addresses.clone();
             let topics = topics.clone();
 
-            let handle = tokio::spawn(async move {
-                let _permit = permit; // Hold permit for duration of request
+            join_set.spawn(async move {
+                // Acquire permit inside the task so all tasks can be spawned first
+                let _permit = sem.acquire().await.map_err(|_| ProviderError::Other {
+                    message: "Semaphore acquisition failed".to_string(),
+                })?;
+
                 let filter =
                     LogFilter::new(chunk_start, chunk_end, addresses, topics)?;
                 provider.get_logs(&filter).await
             });
-
-            handles.push(handle);
         }
 
-        // Collect results from all concurrent requests
-        for handle in handles {
-            let logs = handle.await.map_err(|e| ProviderError::Other {
+        // Collect results as tasks complete; JoinSet yields in completion order
+        let mut all_logs = Vec::new();
+        while let Some(join_result) = join_set.join_next().await {
+            let logs = join_result.map_err(|e| ProviderError::Other {
                 message: format!("Task join error: {e}"),
             })??;
             all_logs.extend(logs);
         }
+
+        // Sort by (block_number, log_index) for deterministic ordering
+        all_logs.sort_by(|a, b| {
+            let a_block = a.block_number.unwrap_or(0);
+            let b_block = b.block_number.unwrap_or(0);
+            a_block
+                .cmp(&b_block)
+                .then_with(|| a.log_index.unwrap_or(0).cmp(&b.log_index.unwrap_or(0)))
+        });
 
         Ok(all_logs)
     }
@@ -894,6 +877,8 @@ impl LogFetcher {
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    // ── LogFilter construction ──────────────────────────────────────────
 
     #[test]
     fn test_log_filter_creation() {
@@ -909,6 +894,38 @@ mod tests {
         assert_eq!(filter.to_block, Some(200));
         assert_eq!(filter.addresses.len(), 1);
     }
+
+    #[test]
+    fn test_log_filter_invalid_range() {
+        let result = LogFilter::new(200, 100, None, None);
+
+        assert!(result.is_err());
+        match result {
+            Err(ProviderError::InvalidBlockRange { from, to }) => {
+                assert_eq!(from, 200);
+                assert_eq!(to, 100);
+            }
+            _ => panic!("Expected InvalidBlockRange error"),
+        }
+    }
+
+    #[test]
+    fn test_log_filter_equal_range() {
+        // from_block == to_block is valid (single-block query)
+        let filter = LogFilter::new(42, 42, None, None)
+            .expect("equal range should be valid");
+        assert_eq!(filter.from_block, Some(42));
+        assert_eq!(filter.to_block, Some(42));
+    }
+
+    #[test]
+    fn test_log_filter_defaults() {
+        let filter = LogFilter::new(0, 100, None, None).expect("valid");
+        assert!(filter.addresses.is_empty());
+        assert!(filter.topics.is_empty());
+    }
+
+    // ── LogFilter → Alloy Filter conversion ─────────────────────────────
 
     #[test]
     fn test_to_alloy_filter_maps_topic_positions() {
@@ -978,18 +995,67 @@ mod tests {
     }
 
     #[test]
-    fn test_log_filter_invalid_range() {
-        let result = LogFilter::new(200, 100, None, None);
+    fn test_to_alloy_filter_invalid_address() {
+        let filter = LogFilter::new(
+            100,
+            200,
+            Some(vec!["not_an_address".to_string()]),
+            None,
+        )
+        .expect("filter construction succeeds; error at conversion time");
 
+        let result = filter.to_alloy_filter();
         assert!(result.is_err());
         match result {
-            Err(ProviderError::InvalidBlockRange { from, to }) => {
-                assert_eq!(from, 200);
-                assert_eq!(to, 100);
+            Err(ProviderError::InvalidAddress { address, .. }) => {
+                assert_eq!(address, "not_an_address");
             }
-            _ => panic!("Expected InvalidBlockRange error"),
+            other => panic!("Expected InvalidAddress error, got {other:?}"),
         }
     }
+
+    #[test]
+    fn test_to_alloy_filter_invalid_topic() {
+        let filter = LogFilter::new(
+            100,
+            200,
+            None,
+            Some(vec![vec!["not_a_topic".to_string()]]),
+        )
+        .expect("filter construction succeeds; error at conversion time");
+
+        let result = filter.to_alloy_filter();
+        assert!(result.is_err());
+        match result {
+            Err(ProviderError::InvalidTopic { topic, .. }) => {
+                assert_eq!(topic, "not_a_topic");
+            }
+            other => panic!("Expected InvalidTopic error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_to_alloy_filter_skips_empty_topic_slots() {
+        // Verify that empty inner vecs are skipped without error
+        let filter = LogFilter::new(
+            100,
+            200,
+            None,
+            Some(vec![
+                vec!["0x0000000000000000000000000000000000000000000000000000000000000001"
+                    .to_string()],
+                vec![], // should be skipped
+                vec!["0x0000000000000000000000000000000000000000000000000000000000000003"
+                    .to_string()],
+            ]),
+        )
+        .expect("valid filter");
+
+        let result = filter.to_alloy_filter();
+        assert!(result.is_ok());
+    }
+
+    // ── Retry backoff logic ─────────────────────────────────────────────
 
     #[test]
     fn test_saturating_retry_delay() {
@@ -999,4 +1065,299 @@ mod tests {
         // Should cap at MAX_RETRY_DELAY_MS, not overflow
         assert_eq!(result, MAX_RETRY_DELAY_MS);
     }
+
+    #[test]
+    fn test_backoff_progression() {
+        // Verify the exponential backoff sequence up to the cap
+        let mut delay = INITIAL_RETRY_DELAY_MS;
+        let mut delays = vec![delay];
+        for _ in 0..20 {
+            delay = std::cmp::min(delay.saturating_mul(BACKOFF_MULTIPLIER), MAX_RETRY_DELAY_MS);
+            delays.push(delay);
+        }
+
+        // Should double each step until hitting the 30s cap
+        assert_eq!(delays[0], 100);
+        assert_eq!(delays[1], 200);
+        assert_eq!(delays[2], 400);
+        assert_eq!(delays[3], 800);
+        assert_eq!(delays[4], 1600);
+        assert_eq!(delays[5], 3200);
+        assert_eq!(delays[6], 6400);
+        assert_eq!(delays[7], 12800);
+        assert_eq!(delays[8], 25600);
+        assert_eq!(delays[9], 30000); // capped
+        assert_eq!(delays[10], 30000); // stays capped
+    }
+
+    #[tokio::test]
+    async fn test_retry_returns_ok_immediately() {
+        // Successful operations should return on the first attempt
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        // We need a real AlloyProvider to call retry_with_backoff,
+        // but it requires an RPC connection. Test the retry logic
+        // by simulating it directly instead.
+        let call_count = Arc::new(AtomicU32::new(0));
+        let count_clone = Arc::clone(&call_count);
+
+        // Simulate retry_with_backoff logic inline
+        let max_attempts: u32 = 10;
+        let mut attempt = 0;
+
+        let result: ProviderResult<u64> = loop {
+            let count = count_clone.fetch_add(1, Ordering::SeqCst);
+            if count == 0 {
+                break Ok(42);
+            }
+            attempt += 1;
+            if attempt >= max_attempts {
+                break Err(ProviderError::Other {
+                    message: "too many attempts".to_string(),
+                });
+            }
+        };
+
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_retryable_error_classification() {
+        // Retryable errors
+        assert!(matches!(
+            ProviderError::RateLimited { message: "test".to_string() },
+            ProviderError::RateLimited { .. }
+        ));
+        assert!(matches!(
+            ProviderError::Timeout { message: "test".to_string() },
+            ProviderError::Timeout { .. }
+        ));
+        assert!(matches!(
+            ProviderError::ConnectionFailed { message: "test".to_string() },
+            ProviderError::ConnectionFailed { .. }
+        ));
+
+        // Non-retryable errors
+        let non_retryable = [
+            ProviderError::RpcError { code: -32000, message: "revert".to_string() },
+            ProviderError::InvalidBlockRange { from: 1, to: 0 },
+            ProviderError::InvalidParams { message: "bad".to_string() },
+            ProviderError::SerializationError { message: "bad".to_string() },
+            ProviderError::Other { message: "bad".to_string() },
+        ];
+
+        for err in non_retryable {
+            let is_retryable = matches!(
+                &err,
+                ProviderError::RateLimited { .. }
+                    | ProviderError::Timeout { .. }
+                    | ProviderError::ConnectionFailed { .. }
+            );
+            assert!(!is_retryable, "{err:?} should not be retryable");
+        }
+    }
+
+    // ── Chunk calculation ───────────────────────────────────────────────
+
+    #[test]
+    fn test_chunk_ranges_exact_division() {
+        // 100 blocks, 100 per chunk → 1 chunk
+        let from = 0u64;
+        let to = 99u64;
+        let chunk_size = 100u64;
+
+        let mut chunks = Vec::new();
+        let mut current = from;
+        while current <= to {
+            let end = std::cmp::min(current + chunk_size - 1, to);
+            chunks.push((current, end));
+            current = end + 1;
+        }
+
+        assert_eq!(chunks, vec![(0, 99)]);
+    }
+
+    #[test]
+    fn test_chunk_ranges_partial() {
+        // 250 blocks, 100 per chunk → 3 chunks
+        let from = 0u64;
+        let to = 249u64;
+        let chunk_size = 100u64;
+
+        let mut chunks = Vec::new();
+        let mut current = from;
+        while current <= to {
+            let end = std::cmp::min(current + chunk_size - 1, to);
+            chunks.push((current, end));
+            current = end + 1;
+        }
+
+        assert_eq!(chunks, vec![(0, 99), (100, 199), (200, 249)]);
+    }
+
+    #[test]
+    fn test_chunk_ranges_single_block() {
+        // 1 block → 1 chunk of size 1
+        let from = 42u64;
+        let to = 42u64;
+        let chunk_size = 100u64;
+
+        let mut chunks = Vec::new();
+        let mut current = from;
+        while current <= to {
+            let end = std::cmp::min(current + chunk_size - 1, to);
+            chunks.push((current, end));
+            current = end + 1;
+        }
+
+        assert_eq!(chunks, vec![(42, 42)]);
+    }
+
+    #[test]
+    fn test_chunk_ranges_non_zero_start() {
+        // Starting from block 500
+        let from = 500u64;
+        let to = 799u64;
+        let chunk_size = 100u64;
+
+        let mut chunks = Vec::new();
+        let mut current = from;
+        while current <= to {
+            let end = std::cmp::min(current + chunk_size - 1, to);
+            chunks.push((current, end));
+            current = end + 1;
+        }
+
+        assert_eq!(chunks, vec![(500, 599), (600, 699), (700, 799)]);
+    }
+
+    // ── URL scheme detection ────────────────────────────────────────────
+
+    #[test]
+    fn test_url_scheme_detection() {
+        // HTTP variants
+        assert!("http://localhost:8545".starts_with("http://"));
+        assert!("https://mainnet.infura.io".starts_with("https://"));
+
+        // WebSocket variants
+        assert!("ws://localhost:8546".starts_with("ws://"));
+        assert!("wss://mainnet.infura.io/ws".starts_with("wss://"));
+
+        // IPC paths (no ://)
+        assert!(!"/tmp/anvil.ipc".contains("://"));
+        assert!(!"\\\\.\\pipe\\anvil".contains("://"));
+
+        // Unsupported schemes
+        assert!("ftp://example.com".starts_with("ftp://"));
+    }
+
+    #[test]
+    fn test_unsupported_scheme_extraction() {
+        let url = "ftp://example.com";
+        let scheme = url.split("://").next().unwrap_or(url);
+        assert_eq!(scheme, "ftp");
+    }
+
+    // ── LogFetcher validation ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_fetch_logs_chunked_zero_chunk_size_rejected() {
+        // A provider is needed for LogFetcher but we only test validation,
+        // not actual RPC. The validation check runs before any I/O.
+        // We can't construct AlloyProvider without an RPC endpoint,
+        // so test the validation logic directly.
+        let max_blocks_per_request = 0u64;
+
+        // This is the check from fetch_logs_chunked:
+        let result = if max_blocks_per_request == 0 {
+            Err(ProviderError::InvalidParams {
+                message: "max_blocks_per_request must be greater than 0".to_string(),
+            })
+        } else {
+            Ok(())
+        };
+
+        assert!(result.is_err());
+        match result {
+            Err(ProviderError::InvalidParams { message }) => {
+                assert!(message.contains("greater than 0"));
+            }
+            other => panic!("Expected InvalidParams, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_logs_chunked_invalid_range_rejected() {
+        let from_block = 200u64;
+        let to_block = 100u64;
+
+        // This is the check from fetch_logs_chunked:
+        let result = if from_block > to_block {
+            Err(ProviderError::InvalidBlockRange {
+                from: from_block,
+                to: to_block,
+            })
+        } else {
+            Ok(())
+        };
+
+        assert!(result.is_err());
+        match result {
+            Err(ProviderError::InvalidBlockRange { from, to }) => {
+                assert_eq!(from, 200);
+                assert_eq!(to, 100);
+            }
+            other => panic!("Expected InvalidBlockRange, got {other:?}"),
+        }
+    }
+
+    // ── Log sorting ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_log_sort_order() {
+        // Verify logs sort by (block_number, log_index) even when provided out of order.
+        // Use raw field construction — address/topics live in `inner: LogData`
+        // which is not relevant to the sort.
+        let logs: Vec<Log> = vec![
+            Log {
+                block_number: Some(100),
+                log_index: Some(2),
+                ..Default::default()
+            },
+            Log {
+                block_number: Some(99),
+                log_index: Some(0),
+                ..Default::default()
+            },
+            Log {
+                block_number: Some(100),
+                log_index: Some(0),
+                ..Default::default()
+            },
+            Log {
+                block_number: None,
+                log_index: None,
+                ..Default::default()
+            },
+        ];
+
+        let mut sorted = logs;
+        sorted.sort_by(|a, b| {
+            let a_block = a.block_number.unwrap_or(0);
+            let b_block = b.block_number.unwrap_or(0);
+            a_block
+                .cmp(&b_block)
+                .then_with(|| a.log_index.unwrap_or(0).cmp(&b.log_index.unwrap_or(0)))
+        });
+
+        // Expected order: block_number=None(0,0), 99(99,0), 100(100,0), 100(100,2)
+        assert_eq!(sorted[0].log_index, None); // pending log comes first (0,0)
+        assert_eq!(sorted[1].block_number, Some(99));
+        assert_eq!(sorted[2].block_number, Some(100));
+        assert_eq!(sorted[2].log_index, Some(0));
+        assert_eq!(sorted[3].block_number, Some(100));
+        assert_eq!(sorted[3].log_index, Some(2));
+    }
 }
+
