@@ -216,7 +216,9 @@ class TestDecimalCorrectionImpact:
 
     @hypothesis.given(
         decimals_pair=st.sampled_from([(6, 18), (8, 18), (6, 8)]),
-        price_ratio=st.floats(min_value=1.02, max_value=1.08, allow_nan=False, allow_infinity=False),
+        price_ratio=st.floats(
+            min_value=1.02, max_value=1.08, allow_nan=False, allow_infinity=False
+        ),
     )
     @hypothesis.settings(max_examples=20)
     def test_mismatched_decimals_produces_different_results(

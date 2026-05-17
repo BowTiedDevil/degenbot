@@ -169,17 +169,13 @@ class TestAlloyProviderBalanceAndNonceMethods:
 
     def test_get_balance_with_block_returns_int(self, alloy_provider: AlloyProvider):
         """Test get_balance with block returns int."""
-        result = alloy_provider.get_balance(
-            "0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", 18000000
-        )
+        result = alloy_provider.get_balance("0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", 18000000)
         assert isinstance(result, int)
         assert result >= 0
 
     def test_get_transaction_count_returns_int(self, alloy_provider: AlloyProvider):
         """Test get_transaction_count returns int."""
-        result = alloy_provider.get_transaction_count(
-            "0x742d35Cc6634C0532925a3b8D4C9db96590d6B75"
-        )
+        result = alloy_provider.get_transaction_count("0x742d35Cc6634C0532925a3b8D4C9db96590d6B75")
         assert isinstance(result, int)
         assert result >= 0
 

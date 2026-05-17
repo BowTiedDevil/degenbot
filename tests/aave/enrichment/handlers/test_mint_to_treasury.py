@@ -33,9 +33,7 @@ class TestMintToTreasuryHandler:
         """Handler supports MINT_TO_TREASURY operation type."""
         assert OperationType.MINT_TO_TREASURY in handler.operation_types
 
-    def test_handler_is_operation_handler_protocol(
-        self, handler: MintToTreasuryHandler
-    ) -> None:
+    def test_handler_is_operation_handler_protocol(self, handler: MintToTreasuryHandler) -> None:
         """Handler implements OperationHandler protocol."""
         assert isinstance(handler, OperationHandler)
 

@@ -37,8 +37,9 @@ class MockV2Pool:
     -------
     >>> token0 = FakeToken(usdc_address, "USDC", 6)
     >>> token1 = FakeToken(weth_address, "WETH", 18)
-    >>> state = UniswapV2PoolState(address=pool_address, block=0,
-    ...                            reserves_token0=2000000000, reserves_token1=10**18)
+    >>> state = UniswapV2PoolState(
+    ...     address=pool_address, block=0, reserves_token0=2000000000, reserves_token1=10**18
+    ... )
     >>> pool = MockV2Pool(pool_address, token0, token1, state)
     >>> cycle = UniswapLpCycle(input_token=token0, swap_pools=[pool_a, pool_b])
     """

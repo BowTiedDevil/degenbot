@@ -175,8 +175,12 @@ class TestSolverFastPathEdgeCases:
     def test_very_small_price_difference(self, solver):
         """Very small price difference between pools."""
         hops = (
-            ConstantProductHop(reserve_in=1_000_000_000_000, reserve_out=500_000_000_000_000_000, fee=FEE_0_3_PCT),
-            ConstantProductHop(reserve_in=499_000_000_000_000_000, reserve_out=1_001_000_000_000, fee=FEE_0_3_PCT),
+            ConstantProductHop(
+                reserve_in=1_000_000_000_000, reserve_out=500_000_000_000_000_000, fee=FEE_0_3_PCT
+            ),
+            ConstantProductHop(
+                reserve_in=499_000_000_000_000_000, reserve_out=1_001_000_000_000, fee=FEE_0_3_PCT
+            ),
         )
         with pytest.raises(OptimizationError):
             solver.solve(SolveInput(hops=hops))
@@ -468,7 +472,9 @@ class TestArbSolverMultiHop:
             ConstantProductHop(
                 reserve_in=2_000_000_000_000, reserve_out=1_000_000_000_000_000_000, fee=FEE_0_3_PCT
             ),
-            ConstantProductHop(reserve_in=800_000_000_000_000_000, reserve_out=1_500_000_000_000, fee=FEE_0_3_PCT),
+            ConstantProductHop(
+                reserve_in=800_000_000_000_000_000, reserve_out=1_500_000_000_000, fee=FEE_0_3_PCT
+            ),
             ConstantProductHop(
                 reserve_in=1_800_000_000_000, reserve_out=1_200_000_000_000_000_000, fee=FEE_0_3_PCT
             ),
@@ -488,7 +494,9 @@ class TestArbSolverMultiHop:
             ConstantProductHop(
                 reserve_in=800_000_000_000_000_000, reserve_out=1_500_000_000_000, fee=FEE_0_05_PCT
             ),
-            ConstantProductHop(reserve_in=1_500_000_000_000, reserve_out=900_000_000_000_000_000, fee=FEE_0_3_PCT),
+            ConstantProductHop(
+                reserve_in=1_500_000_000_000, reserve_out=900_000_000_000_000_000, fee=FEE_0_3_PCT
+            ),
             ConstantProductHop(
                 reserve_in=900_000_000_000_000_000, reserve_out=2_200_000_000_000, fee=FEE_0_05_PCT
             ),
@@ -504,12 +512,18 @@ class TestArbSolverMultiHop:
             ConstantProductHop(
                 reserve_in=2_000_000_000_000, reserve_out=1_000_000_000_000_000_000, fee=FEE_0_3_PCT
             ),
-            ConstantProductHop(reserve_in=900_000_000_000_000_000, reserve_out=1_800_000_000_000, fee=FEE_0_3_PCT),
+            ConstantProductHop(
+                reserve_in=900_000_000_000_000_000, reserve_out=1_800_000_000_000, fee=FEE_0_3_PCT
+            ),
             ConstantProductHop(
                 reserve_in=1_800_000_000_000, reserve_out=700_000_000_000_000_000, fee=FEE_0_05_PCT
             ),
-            ConstantProductHop(reserve_in=700_000_000_000_000_000, reserve_out=1_600_000_000_000, fee=FEE_0_3_PCT),
-            ConstantProductHop(reserve_in=1_600_000_000_000, reserve_out=2_100_000_000_000, fee=FEE_0_05_PCT),
+            ConstantProductHop(
+                reserve_in=700_000_000_000_000_000, reserve_out=1_600_000_000_000, fee=FEE_0_3_PCT
+            ),
+            ConstantProductHop(
+                reserve_in=1_600_000_000_000, reserve_out=2_100_000_000_000, fee=FEE_0_05_PCT
+            ),
         )
         result = solver.solve(SolveInput(hops=hops))
         assert isinstance(result, SolveResult)
@@ -522,7 +536,9 @@ class TestArbSolverMultiHop:
             ConstantProductHop(
                 reserve_in=2_000_000_000_000, reserve_out=1_000_000_000_000_000_000, fee=FEE_0_3_PCT
             ),
-            ConstantProductHop(reserve_in=800_000_000_000_000_000, reserve_out=1_500_000_000_000, fee=FEE_0_3_PCT),
+            ConstantProductHop(
+                reserve_in=800_000_000_000_000_000, reserve_out=1_500_000_000_000, fee=FEE_0_3_PCT
+            ),
             ConstantProductHop(
                 reserve_in=1_800_000_000_000, reserve_out=1_200_000_000_000_000_000, fee=FEE_0_3_PCT
             ),
@@ -722,7 +738,10 @@ class TestCVXPYSolverComparison:
 
         # Fee multiplier
         fee_float = float(fee)
-        fee_multiplier = cvxpy_bmat(((1 - fee_float, 1 - fee_float), (1 - fee_float, 1 - fee_float)))
+        fee_multiplier = cvxpy_bmat((
+            (1 - fee_float, 1 - fee_float),
+            (1 - fee_float, 1 - fee_float),
+        ))
 
         # Deposits and withdrawals
         # Pool A: deposit token0, withdraw token1
@@ -903,4 +922,6 @@ class TestCVXPYSolverAccuracy:
         # (after fees, arbitrage is unprofitable for identical prices)
         # Allow small positive value due to numerical precision
         assert problem.status in cvxpy.settings.SOLUTION_PRESENT
-        assert problem.value < 1e-8, f"Expected no profit for identical pools with fees, got {problem.value}"
+        assert problem.value < 1e-8, (
+            f"Expected no profit for identical pools with fees, got {problem.value}"
+        )

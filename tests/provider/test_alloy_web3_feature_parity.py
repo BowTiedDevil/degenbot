@@ -426,9 +426,7 @@ class TestFeatureParitySummary:
         implemented_eth = sum(1 for m in WEB3_ETH_METHODS.values() if m["implemented"])
 
         total_instance_methods = len(WEB3_INSTANCE_METHODS)
-        implemented_instance = sum(
-            1 for m in WEB3_INSTANCE_METHODS.values() if m["implemented"]
-        )
+        implemented_instance = sum(1 for m in WEB3_INSTANCE_METHODS.values() if m["implemented"])
 
         print("\n## web3.eth methods")
         print(f"   Implemented: {implemented_eth}/{total_eth_methods}")

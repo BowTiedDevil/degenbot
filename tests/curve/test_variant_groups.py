@@ -4,7 +4,6 @@ Plan 029: Externalize variant group addresses from the pool class into
 a configuration module with typed resolver functions.
 """
 
-
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve._variant_groups import (
     resolve_d_variant,
@@ -82,7 +81,10 @@ class TestResolveDVariant:
     def test_checksumming(self):
         """Resolver should handle non-checksummed addresses."""
         # lowercase input should still resolve correctly
-        assert resolve_d_variant("0xbebc44782c7db0a1a60cb6fe97d0b483032ff1c7") == DVariant.VARIANT_ALPHA
+        assert (
+            resolve_d_variant("0xbebc44782c7db0a1a60cb6fe97d0b483032ff1c7")
+            == DVariant.VARIANT_ALPHA
+        )
 
 
 # ── Y-variant tests ──
@@ -124,7 +126,9 @@ class TestResolveYVariant:
 
 class TestResolveYDVariant:
     def test_standard_for_unknown_address(self):
-        assert resolve_yd_variant("0x0000000000000000000000000000000000000001") == YDVariant.STANDARD
+        assert (
+            resolve_yd_variant("0x0000000000000000000000000000000000000001") == YDVariant.STANDARD
+        )
 
     def test_variant_group_0(self):
         # Y_D_VARIANT_GROUP_0: A_PRECISION in b/c formulas

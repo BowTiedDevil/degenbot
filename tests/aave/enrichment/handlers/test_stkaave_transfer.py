@@ -33,15 +33,11 @@ class TestStkAaveTransferHandler:
         """Handler supports STKAAVE_TRANSFER operation type."""
         assert OperationType.STKAAVE_TRANSFER in handler.operation_types
 
-    def test_handler_is_operation_handler_protocol(
-        self, handler: StkAaveTransferHandler
-    ) -> None:
+    def test_handler_is_operation_handler_protocol(self, handler: StkAaveTransferHandler) -> None:
         """Handler implements OperationHandler protocol."""
         assert isinstance(handler, OperationHandler)
 
-    def test_stkaave_transfer_uses_amount_directly(
-        self, handler: StkAaveTransferHandler
-    ) -> None:
+    def test_stkaave_transfer_uses_amount_directly(self, handler: StkAaveTransferHandler) -> None:
         """
         stkAAVE transfers bypass index-based scaling.
 

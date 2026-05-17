@@ -33,9 +33,7 @@ class TestInterestAccrualHandler:
         """Handler supports INTEREST_ACCRUAL operation type."""
         assert OperationType.INTEREST_ACCRUAL in handler.operation_types
 
-    def test_handler_is_operation_handler_protocol(
-        self, handler: InterestAccrualHandler
-    ) -> None:
+    def test_handler_is_operation_handler_protocol(self, handler: InterestAccrualHandler) -> None:
         """Handler implements OperationHandler protocol."""
         assert isinstance(handler, OperationHandler)
 
@@ -67,9 +65,7 @@ class TestInterestAccrualHandler:
         assert result.raw_amount == 1000
         assert result.event_type == ScaledTokenEventType.COLLATERAL_INTEREST_MINT
 
-    def test_debt_mint_sets_scaled_amount_to_zero(
-        self, handler: InterestAccrualHandler
-    ) -> None:
+    def test_debt_mint_sets_scaled_amount_to_zero(self, handler: InterestAccrualHandler) -> None:
         """
         Interest accrual for debt mint sets scaled_amount=0.
         """

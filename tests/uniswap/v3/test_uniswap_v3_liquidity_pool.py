@@ -490,13 +490,13 @@ def test_tick_bitmap_equality() -> None:
 
 def test_tick_data_equality() -> None:
     with pytest.raises(AssertionError):
-        assert LiquidityAtTick(
-            liquidity_net=1, liquidity_gross=2
-        ) == LiquidityAtTick(liquidity_net=1, liquidity_gross=4)
+        assert LiquidityAtTick(liquidity_net=1, liquidity_gross=2) == LiquidityAtTick(
+            liquidity_net=1, liquidity_gross=4
+        )
     with pytest.raises(AssertionError):
-        assert LiquidityAtTick(
-            liquidity_net=1, liquidity_gross=2
-        ) == LiquidityAtTick(liquidity_net=4, liquidity_gross=2)
+        assert LiquidityAtTick(liquidity_net=1, liquidity_gross=2) == LiquidityAtTick(
+            liquidity_net=4, liquidity_gross=2
+        )
 
     assert LiquidityAtTick(liquidity_net=1, liquidity_gross=2) == LiquidityAtTick(
         liquidity_net=1, liquidity_gross=2

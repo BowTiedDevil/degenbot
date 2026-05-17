@@ -97,8 +97,7 @@ def offline_wbtc_weth_v3_pool(offline_adapter: ProviderAdapter) -> UniswapV3Pool
 
     # Convert to the format expected by UniswapV3Pool
     tick_bitmap_for_pool = {
-        k: BitmapAtWord(bitmap=v["bitmap"], block=v["block"])
-        for k, v in tick_bitmap_int.items()
+        k: BitmapAtWord(bitmap=v["bitmap"], block=v["block"]) for k, v in tick_bitmap_int.items()
     }
     tick_data_for_pool = {
         k: LiquidityAtTick(

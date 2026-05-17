@@ -119,13 +119,8 @@ def fork_base_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, No
     the test with an indirect parameter for this fixture, e.g.:
 
     ```
-    @pytest.mark.parametrize(
-        "fork_base_archive", [block_number], indirect=True
-    )
-    def test_using_fork(
-        fork_base_archive: AnvilFork
-    ):
-        ...
+    @pytest.mark.parametrize("fork_base_archive", [block_number], indirect=True)
+    def test_using_fork(fork_base_archive: AnvilFork): ...
     ```
     """
 
@@ -160,13 +155,8 @@ def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork,
     the test with an indirect parameter for this fixture, e.g.:
 
     ```
-    @pytest.mark.parametrize(
-        "fork_mainnet_archive", [block_number], indirect=True
-    )
-    def test_using_fork(
-        fork_mainnet_archive: AnvilFork
-    ):
-        ...
+    @pytest.mark.parametrize("fork_mainnet_archive", [block_number], indirect=True)
+    def test_using_fork(fork_mainnet_archive: AnvilFork): ...
     ```
     """
 

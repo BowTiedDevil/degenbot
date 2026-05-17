@@ -28,22 +28,16 @@ class TestBorrowHandler:
     def handler(self) -> BorrowHandler:
         return BorrowHandler()
 
-    def test_handler_supports_borrow_operations(
-        self, handler: BorrowHandler
-    ) -> None:
+    def test_handler_supports_borrow_operations(self, handler: BorrowHandler) -> None:
         """Handler supports BORROW and GHO_BORROW operation types."""
         assert OperationType.BORROW in handler.operation_types
         assert OperationType.GHO_BORROW in handler.operation_types
 
-    def test_handler_is_operation_handler_protocol(
-        self, handler: BorrowHandler
-    ) -> None:
+    def test_handler_is_operation_handler_protocol(self, handler: BorrowHandler) -> None:
         """Handler implements OperationHandler protocol."""
         assert isinstance(handler, OperationHandler)
 
-    def test_borrow_calculates_scaled_amount(
-        self, handler: BorrowHandler
-    ) -> None:
+    def test_borrow_calculates_scaled_amount(self, handler: BorrowHandler) -> None:
         """
         BORROW calculates scaled amount from raw amount and index.
 
@@ -74,9 +68,7 @@ class TestBorrowHandler:
         assert result.scaled_amount == 500_000_000_000_000_000
         assert result.event_type == ScaledTokenEventType.DEBT_MINT
 
-    def test_gho_borrow_calculates_scaled_amount(
-        self, handler: BorrowHandler
-    ) -> None:
+    def test_gho_borrow_calculates_scaled_amount(self, handler: BorrowHandler) -> None:
         """GHO_BORROW calculates scaled amount for GHO debt."""
         index = 2_000_000_000_000_000_000_000_000_000
         raw_amount = 1_000_000_000_000_000_000
