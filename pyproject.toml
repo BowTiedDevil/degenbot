@@ -72,6 +72,10 @@ line-length = 100
 indent-width = 4
 target-version = "py312"
 preview = true
+fix = true
+
+[tool.ruff.format]
+docstring-code-format = true
 
 [tool.ruff.lint]
 select = [
