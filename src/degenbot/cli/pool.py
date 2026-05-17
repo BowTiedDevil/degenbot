@@ -56,9 +56,9 @@ from degenbot.provider import ProviderAdapter
 from degenbot.provider.block_helpers import get_number_for_block_identifier
 from degenbot.provider.log_fetching import fetch_logs_retrying
 from degenbot.types.aliases import ChainId, Tick, Word
-from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.concentrated.types import BitmapAtWord as ConcentratedBitmapAtWord
 from degenbot.uniswap.concentrated.types import LiquidityAtTick as ConcentratedLiquidityAtTick
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
     UniswapV3PoolLiquidityMappingUpdate,
     UniswapV3PoolState,

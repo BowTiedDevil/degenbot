@@ -32,7 +32,7 @@ class CamelotBuilder(V2BuilderBase):
         init_hash: str | None = None,
         state_block: int | None = None,
         silent: bool = False,
-        state_cache_depth: int = 8,  # noqa: ARG002 -- accepted for API consistency
+        state_cache_depth: int = 8,
         **kwargs: Any,
     ) -> AbstractLiquidityPool:
         pool_address = get_checksum_address(address)

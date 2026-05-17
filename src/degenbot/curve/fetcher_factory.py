@@ -579,7 +579,7 @@ class CurveFetcherFactory:
 
         return fetcher
 
-    def lending_rate_fetcher(
+    def lending_rate_fetcher(  # noqa: PLR0917
         self,
         pool_address: ChecksumAddress,
         tokens: list[Any],

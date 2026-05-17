@@ -56,10 +56,10 @@ class PayloadComposer(Protocol):
 class NoApprovals:
     """Approval strategy that adds no approval calls."""
 
-    def approvals_for(
+    def approvals_for(  # noqa: PLR6301
         self,
-        swap_amounts: tuple[AbstractSwapAmounts, ...],
-        calls: list[EncodedCall],
+        swap_amounts: tuple[AbstractSwapAmounts, ...],  # noqa: ARG002
+        calls: list[EncodedCall],  # noqa: ARG002
     ) -> list[EncodedCall]:
         return []
 
@@ -67,7 +67,7 @@ class NoApprovals:
 class FlatComposer:
     """Composer that returns calls as-is (no wrapping)."""
 
-    def compose(self, calls: list[EncodedCall]) -> list[EncodedCall]:
+    def compose(self, calls: list[EncodedCall]) -> list[EncodedCall]:  # noqa: PLR6301
         return calls
 
 

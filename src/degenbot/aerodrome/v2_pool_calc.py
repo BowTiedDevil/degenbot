@@ -32,8 +32,6 @@ if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
 
 
-
-
 class AerodromeV2PoolCalc:
     """Calculation methods for Aerodrome V2 pools.
 

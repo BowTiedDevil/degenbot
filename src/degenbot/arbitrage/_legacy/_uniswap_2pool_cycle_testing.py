@@ -3129,7 +3129,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
         logger.debug(f"Generating payloads for {swap_amount} swap amount")
         from_address = get_checksum_address(from_address)
 
-        assert len(self.swap_pools) == 2  # noqa: PLR2004
+        assert len(self.swap_pools) == 2
 
         """
         PAYLOAD DEFINITION FROM CONTRACT

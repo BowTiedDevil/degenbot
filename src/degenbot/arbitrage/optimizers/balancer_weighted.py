@@ -368,7 +368,7 @@ class BalancerWeightedPoolSolver:
         self.use_heuristic_pruning = use_heuristic_pruning
         self.max_signatures = max_signatures
 
-    def solve(  # noqa: PLR6301
+    def solve(
         self,
         pool: BalancerMultiTokenState,
         market_prices: tuple[float, ...],

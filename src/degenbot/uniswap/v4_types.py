@@ -1,6 +1,5 @@
 import dataclasses
 
-import pydantic.config
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 
@@ -18,8 +17,6 @@ from degenbot.uniswap.v3_types import (
 
 type FeeToProtocol = int
 type SwapFee = int
-
-
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)

@@ -160,9 +160,9 @@ class VectorizedMobiusSolver:
         gammas = 1.0 - fees
 
         # Initialize recurrence from first hop
-        K = gammas[:, 0] * reserves_out[:, 0]  # noqa: N806 (math notation)
-        M = reserves_in[:, 0]  # noqa: N806
-        N = gammas[:, 0]  # noqa: N806
+        K = gammas[:, 0] * reserves_out[:, 0]
+        M = reserves_in[:, 0]
+        N = gammas[:, 0]
 
         # Log-domain recurrence for overflow-safe computation.
         # log(K) and log(M) are simple cumulative sums.
@@ -170,22 +170,22 @@ class VectorizedMobiusSolver:
         #   N_j = N_{j-1} * r_in_j + K_{j-1} * gamma_j
         #   log(N_j) = logsumexp(log(N_{j-1}) + log(r_in_j),
         #                        log(K_{j-1}) + log(gamma_j))
-        log_K = np.log(gammas[:, 0]) + np.log(reserves_out[:, 0])  # noqa: N806
-        log_M = np.log(reserves_in[:, 0])  # noqa: N806
-        log_N = np.log(gammas[:, 0])  # noqa: N806
+        log_K = np.log(gammas[:, 0]) + np.log(reserves_out[:, 0])
+        log_M = np.log(reserves_in[:, 0])
+        log_N = np.log(gammas[:, 0])
 
         with np.errstate(over="ignore", invalid="ignore"):
             for j in range(1, num_hops):
-                old_K = K.copy()  # noqa: N806
-                K = old_K * gammas[:, j] * reserves_out[:, j]  # noqa: N806
-                M *= reserves_in[:, j]  # noqa: N806
-                N = N * reserves_in[:, j] + old_K * gammas[:, j]  # noqa: N806
+                old_K = K.copy()
+                K = old_K * gammas[:, j] * reserves_out[:, j]
+                M *= reserves_in[:, j]
+                N = N * reserves_in[:, j] + old_K * gammas[:, j]
 
-                old_log_K = log_K.copy()  # noqa: N806
-                log_K = (  # noqa: N806
+                old_log_K = log_K.copy()
+                log_K = (
                     log_K + np.log(gammas[:, j]) + np.log(reserves_out[:, j])
                 )
-                log_M += np.log(reserves_in[:, j])  # noqa: N806
+                log_M += np.log(reserves_in[:, j])
 
                 # log(N_j) via log-sum-exp:
                 #   N_j = N_{j-1} * r_in_j + K_{j-1} * gamma_j
@@ -195,7 +195,7 @@ class VectorizedMobiusSolver:
                 a = log_N + np.log(reserves_in[:, j])
                 b = old_log_K + np.log(gammas[:, j])
                 max_ab = np.maximum(a, b)
-                log_N = max_ab + np.log1p(np.exp(-(np.abs(a - b))))  # noqa: N806
+                log_N = max_ab + np.log1p(np.exp(-(np.abs(a - b))))
 
         # Profitability check: K > M
         # Use direct comparison when both are finite, fall back to log-domain

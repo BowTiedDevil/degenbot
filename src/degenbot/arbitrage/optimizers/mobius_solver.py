@@ -11,7 +11,8 @@ from degenbot.arbitrage.optimizers._solver_utils import (
     _simulate_path,
 )
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult, SolverMethod
-from degenbot.degenbot_rs import RustArbSolver as _RustArbSolver, RustIntHopState as _RustIntHopState
+from degenbot.degenbot_rs import RustArbSolver as _RustArbSolver
+from degenbot.degenbot_rs import RustIntHopState as _RustIntHopState
 from degenbot.exceptions import OptimizationError
 from degenbot.types.hop_types import (
     BalancerMultiTokenHop,

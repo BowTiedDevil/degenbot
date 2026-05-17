@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 # 3Crv LP token — used as fallback base pool detection
-_THREE_CRV_LP_TOKEN_ADDRESS = "0x6c3F90f043a72FA612Cbac8115ee7e52bDE6E490"
+_THREE_CRV_LP_TOKEN_ADDRESS = "0x6c3F90f043a72FA612Cbac8115ee7e52bDE6E490"  # noqa: S105
 _THREE_CRV_POOL_ADDRESS = get_checksum_address("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7")
 
 
@@ -149,7 +149,7 @@ def _resolve_base_pool_address(
     # Last resort: if the pool's second token is the 3Crv LP token,
     # use the tripool as the base pool
     if (
-        len(token_addresses) >= 2
+        len(token_addresses) >= 2  # noqa: PLR2004
         and token_addresses[1].lower() == _THREE_CRV_LP_TOKEN_ADDRESS.lower()
     ):
         return _THREE_CRV_POOL_ADDRESS
