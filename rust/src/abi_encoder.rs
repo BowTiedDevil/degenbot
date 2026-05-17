@@ -493,40 +493,40 @@ mod tests {
 
     #[test]
     fn test_encoder_uses_shared_cache() {
-        use crate::abi_types::cached::TYPE_CACHE;
+        use crate::abi_types::cached::{cache_clear, cache_len};
 
-        TYPE_CACHE.lock().clear();
+        cache_clear();
 
         // Encode should populate the shared cache
         let value = AbiValue::Uint(U256::from(42u64), 256);
         let _encoded = encode_single_rust("uint256", &value).unwrap();
-        assert_eq!(TYPE_CACHE.lock().len(), 1);
+        assert_eq!(cache_len(), 1);
 
         // Same type should use cache (no new entry)
         let value2 = AbiValue::Uint(U256::from(99u64), 256);
         let _encoded2 = encode_single_rust("uint256", &value2).unwrap();
-        assert_eq!(TYPE_CACHE.lock().len(), 1);
+        assert_eq!(cache_len(), 1);
 
         // Different type adds new entry
         let value3 = AbiValue::Bool(true);
         let _encoded3 = encode_single_rust("bool", &value3).unwrap();
-        assert_eq!(TYPE_CACHE.lock().len(), 2);
+        assert_eq!(cache_len(), 2);
     }
 
     #[test]
     fn test_encode_rust_delegates_to_shared_cache() {
-        use crate::abi_types::cached::TYPE_CACHE;
+        use crate::abi_types::cached::{cache_clear, cache_len};
 
-        TYPE_CACHE.lock().clear();
+        cache_clear();
 
         let values = vec![AbiValue::Uint(U256::from(42u64), 256), AbiValue::Bool(true)];
         let _encoded = encode_rust(&["uint256", "bool"], &values).unwrap();
-        assert_eq!(TYPE_CACHE.lock().len(), 1);
+        assert_eq!(cache_len(), 1);
 
         // Second call with same types uses cache
         let values2 = vec![AbiValue::Uint(U256::from(1u64), 256), AbiValue::Bool(false)];
         let _encoded2 = encode_rust(&["uint256", "bool"], &values2).unwrap();
-        assert_eq!(TYPE_CACHE.lock().len(), 1);
+        assert_eq!(cache_len(), 1);
     }
 }
 

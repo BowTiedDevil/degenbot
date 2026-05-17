@@ -35,7 +35,6 @@ def to_checksum_address(address: bytes) -> str: ...
 def decode(
     types: list[str],
     data: bytes,
-    strict: bool = True,
     checksum: bool = True,
 ) -> list[Any]:
     """
@@ -44,7 +43,6 @@ def decode(
     Args:
         types: List of ABI type strings
         data: Raw ABI-encoded bytes
-        strict: If True (default), performs strict validation
         checksum: If True (default), returns checksummed addresses
 
     Returns:
@@ -52,28 +50,25 @@ def decode(
 
     Raises:
         ValueError: If data is invalid or insufficient
-        NotImplementedError: If strict=False or for unsupported types
+        NotImplementedError: For unsupported types (e.g., fixed-point)
     """
 
 @overload
 def decode_single(
     abi_type: Literal["address"],
     data: bytes,
-    strict: bool = True,
     checksum: bool = True,
 ) -> str: ...
 @overload
 def decode_single(
     abi_type: Literal["bool"],
     data: bytes,
-    strict: bool = True,
     checksum: bool = True,
 ) -> bool: ...
 @overload
 def decode_single(
     abi_type: Literal["string"],
     data: bytes,
-    strict: bool = True,
     checksum: bool = True,
 ) -> str: ...
 @overload
@@ -87,7 +82,6 @@ def decode_single(
         "uint256",
     ],
     data: bytes,
-    strict: bool = True,
     checksum: bool = True,
 ) -> int: ...
 @overload
@@ -101,14 +95,12 @@ def decode_single(
         "int256",
     ],
     data: bytes,
-    strict: bool = True,
     checksum: bool = True,
 ) -> int: ...
 @overload
 def decode_single(
     abi_type: Literal["bytes"],
     data: bytes,
-    strict: bool = True,
     checksum: bool = True,
 ) -> bytes: ...
 @overload
@@ -148,14 +140,12 @@ def decode_single(
         "bytes32",
     ],
     data: bytes,
-    strict: bool = True,
     checksum: bool = True,
 ) -> bytes: ...
 @overload
 def decode_single(
     abi_type: str,
     data: bytes,
-    strict: bool = True,
     checksum: bool = True,
 ) -> str | bool | int | bytes:
     """
@@ -164,7 +154,6 @@ def decode_single(
     Args:
         abi_type: ABI type string
         data: Raw ABI-encoded bytes
-        strict: If True (default), performs strict validation
         checksum: If True (default), returns checksummed addresses
 
     Returns:
@@ -172,7 +161,7 @@ def decode_single(
 
     Raises:
         ValueError: If data is invalid or insufficient
-        NotImplementedError: If strict=False or for unsupported types
+        NotImplementedError: For unsupported types (e.g., fixed-point)
     """
 
 def encode(
