@@ -297,7 +297,7 @@ class TestFakeTickInfo:
     """Tests for FakeTickInfo dataclass."""
 
     def test_to_liquidity_at_tick_conversion(self):
-        """Test conversion to UniswapV3LiquidityAtTick."""
+        """Test conversion to LiquidityAtTick."""
         fake_tick = FakeTickInfo(liquidity_net=10_000_000, liquidity_gross=10_000_000)
 
         real_tick = fake_tick.to_liquidity_at_tick()

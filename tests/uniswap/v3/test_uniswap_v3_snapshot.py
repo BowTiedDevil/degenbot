@@ -14,9 +14,8 @@ from degenbot.uniswap.v3_snapshot import (
     MonolithicJsonFileSnapshot,
     UniswapV3LiquiditySnapshot,
 )
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
     UniswapV3LiquidityEvent,
 )
 from tests.helpers.bot_factory import make_bot_with_provider
@@ -268,24 +267,24 @@ def test_apply_update_to_snapshot(
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
 
     tick_data = {
-        253320: UniswapV3LiquidityAtTick(
+        253320: LiquidityAtTick(
             liquidity_net=34399999543676, liquidity_gross=34399999543676, block=12369821
         ),
-        264600: UniswapV3LiquidityAtTick(
+        264600: LiquidityAtTick(
             liquidity_net=-34399999543676, liquidity_gross=34399999543676, block=12369821
         ),
-        255540: UniswapV3LiquidityAtTick(
+        255540: LiquidityAtTick(
             liquidity_net=2154941425, liquidity_gross=2154941425, block=12369846
         ),
-        262440: UniswapV3LiquidityAtTick(
+        262440: LiquidityAtTick(
             liquidity_net=-2154941425, liquidity_gross=2154941425, block=12369846
         ),
     }
     tick_bitmap = {
-        16: UniswapV3BitmapAtWord(
+        16: BitmapAtWord(
             bitmap=11692013098732293937359713277596107809105402396672, block=12369846
         ),
-        17: UniswapV3BitmapAtWord(bitmap=288230376155906048, block=12369846),
+        17: BitmapAtWord(bitmap=288230376155906048, block=12369846),
     }
     empty_mainnet_snapshot_from_file.update(
         pool=pool_address,
@@ -367,70 +366,70 @@ def test_pool_manager_applies_snapshot_from_file(
         match pool.address:
             case "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801":
                 assert pool.tick_data == {
-                    -50580: UniswapV3LiquidityAtTick(
+                    -50580: LiquidityAtTick(
                         liquidity_net=383995753785830744,
                         liquidity_gross=383995753785830744,
                         block=12369739,
                     ),
-                    -36720: UniswapV3LiquidityAtTick(
+                    -36720: LiquidityAtTick(
                         liquidity_net=-383995753785830744,
                         liquidity_gross=383995753785830744,
                         block=12369739,
                     ),
                 }
                 for word, bitmap in {
-                    -4: UniswapV3BitmapAtWord(
+                    -4: BitmapAtWord(
                         bitmap=3064991081731777716716694054300618367237478244367204352,
                         block=12369739,
                     ),
-                    -3: UniswapV3BitmapAtWord(
+                    -3: BitmapAtWord(
                         bitmap=91343852333181432387730302044767688728495783936, block=12369739
                     ),
                 }.items():
                     assert pool.tick_bitmap[word] == bitmap
             case "0x6c6Bc977E13Df9b0de53b251522280BB72383700":
                 assert pool.tick_data == {
-                    -276330: UniswapV3LiquidityAtTick(
+                    -276330: LiquidityAtTick(
                         liquidity_net=3964498619038659,
                         liquidity_gross=3964498619038659,
                         block=12369760,
                     ),
-                    -276320: UniswapV3LiquidityAtTick(
+                    -276320: LiquidityAtTick(
                         liquidity_net=-3964498619038659,
                         liquidity_gross=3964498619038659,
                         block=12369760,
                     ),
-                    -276400: UniswapV3LiquidityAtTick(
+                    -276400: LiquidityAtTick(
                         liquidity_net=2698389804940873511,
                         liquidity_gross=2698389804940873511,
                         block=12369823,
                     ),
-                    -276250: UniswapV3LiquidityAtTick(
+                    -276250: LiquidityAtTick(
                         liquidity_net=-2698389804940873511,
                         liquidity_gross=2698389804940873511,
                         block=12369823,
                     ),
                 }
                 for word, bitmap in {
-                    -108: UniswapV3BitmapAtWord(bitmap=8487168, block=12369823)
+                    -108: BitmapAtWord(bitmap=8487168, block=12369823)
                 }.items():
                     assert pool.tick_bitmap[word] == bitmap
 
             case "0x7BeA39867e4169DBe237d55C8242a8f2fcDcc387":
                 assert pool.tick_data == {
-                    192200: UniswapV3LiquidityAtTick(
+                    192200: LiquidityAtTick(
                         liquidity_net=123809464957093,
                         liquidity_gross=123809464957093,
                         block=12369811,
                     ),
-                    198000: UniswapV3LiquidityAtTick(
+                    198000: LiquidityAtTick(
                         liquidity_net=-123809464957093,
                         liquidity_gross=123809464957093,
                         block=12369811,
                     ),
                 }
                 for word, bitmap in {
-                    3: UniswapV3BitmapAtWord(
+                    3: BitmapAtWord(
                         bitmap=6739986679341863419440115299426486514824618937839854009203971588096,
                         block=12369811,
                     )
@@ -438,43 +437,43 @@ def test_pool_manager_applies_snapshot_from_file(
                     assert pool.tick_bitmap[word] == bitmap
             case "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD":
                 assert pool.tick_data == {
-                    253320: UniswapV3LiquidityAtTick(
+                    253320: LiquidityAtTick(
                         liquidity_net=34399999543676, liquidity_gross=34399999543676, block=12369821
                     ),
-                    264600: UniswapV3LiquidityAtTick(
+                    264600: LiquidityAtTick(
                         liquidity_net=-34399999543676,
                         liquidity_gross=34399999543676,
                         block=12369821,
                     ),
-                    255540: UniswapV3LiquidityAtTick(
+                    255540: LiquidityAtTick(
                         liquidity_net=2154941425, liquidity_gross=2154941425, block=12369846
                     ),
-                    262440: UniswapV3LiquidityAtTick(
+                    262440: LiquidityAtTick(
                         liquidity_net=-2154941425, liquidity_gross=2154941425, block=12369846
                     ),
                 }
                 for word, bitmap in {
-                    16: UniswapV3BitmapAtWord(
+                    16: BitmapAtWord(
                         bitmap=11692013098732293937359713277596107809105402396672, block=12369846
                     ),
-                    17: UniswapV3BitmapAtWord(bitmap=288230376155906048, block=12369846),
+                    17: BitmapAtWord(bitmap=288230376155906048, block=12369846),
                 }.items():
                     assert pool.tick_bitmap[word] == bitmap
             case "0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8":
                 assert pool.tick_data == {
-                    -84120: UniswapV3LiquidityAtTick(
+                    -84120: LiquidityAtTick(
                         liquidity_net=80059851033970806503,
                         liquidity_gross=80059851033970806503,
                         block=12369854,
                     ),
-                    -78240: UniswapV3LiquidityAtTick(
+                    -78240: LiquidityAtTick(
                         liquidity_net=-80059851033970806503,
                         liquidity_gross=80059851033970806503,
                         block=12369854,
                     ),
                 }
                 for word, bitmap in {
-                    -6: UniswapV3BitmapAtWord(
+                    -6: BitmapAtWord(
                         bitmap=6901746346790563787434755862298803523934049033832042530038157389332480,
                         block=12369854,
                     )
@@ -482,21 +481,21 @@ def test_pool_manager_applies_snapshot_from_file(
                     assert pool.tick_bitmap[word] == bitmap
             case "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf":
                 assert pool.tick_data == {
-                    -10: UniswapV3LiquidityAtTick(
+                    -10: LiquidityAtTick(
                         liquidity_net=21206360421978, liquidity_gross=21206360421978, block=12369863
                     ),
-                    10: UniswapV3LiquidityAtTick(
+                    10: LiquidityAtTick(
                         liquidity_net=-21206360421978,
                         liquidity_gross=21206360421978,
                         block=12369863,
                     ),
                 }
                 for word, bitmap in {
-                    -1: UniswapV3BitmapAtWord(
+                    -1: BitmapAtWord(
                         bitmap=57896044618658097711785492504343953926634992332820282019728792003956564819968,
                         block=12369863,
                     ),
-                    0: UniswapV3BitmapAtWord(bitmap=2, block=12369863),
+                    0: BitmapAtWord(bitmap=2, block=12369863),
                 }.items():
                     assert pool.tick_bitmap[word] == bitmap
             case _:
@@ -534,70 +533,70 @@ def test_pool_manager_applies_snapshot_from_dir(
         match pool.address:
             case "0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801":
                 assert pool.tick_data == {
-                    -50580: UniswapV3LiquidityAtTick(
+                    -50580: LiquidityAtTick(
                         liquidity_net=383995753785830744,
                         liquidity_gross=383995753785830744,
                         block=12369739,
                     ),
-                    -36720: UniswapV3LiquidityAtTick(
+                    -36720: LiquidityAtTick(
                         liquidity_net=-383995753785830744,
                         liquidity_gross=383995753785830744,
                         block=12369739,
                     ),
                 }
                 for word, bitmap in {
-                    -4: UniswapV3BitmapAtWord(
+                    -4: BitmapAtWord(
                         bitmap=3064991081731777716716694054300618367237478244367204352,
                         block=12369739,
                     ),
-                    -3: UniswapV3BitmapAtWord(
+                    -3: BitmapAtWord(
                         bitmap=91343852333181432387730302044767688728495783936, block=12369739
                     ),
                 }.items():
                     assert pool.tick_bitmap[word] == bitmap
             case "0x6c6Bc977E13Df9b0de53b251522280BB72383700":
                 assert pool.tick_data == {
-                    -276330: UniswapV3LiquidityAtTick(
+                    -276330: LiquidityAtTick(
                         liquidity_net=3964498619038659,
                         liquidity_gross=3964498619038659,
                         block=12369760,
                     ),
-                    -276320: UniswapV3LiquidityAtTick(
+                    -276320: LiquidityAtTick(
                         liquidity_net=-3964498619038659,
                         liquidity_gross=3964498619038659,
                         block=12369760,
                     ),
-                    -276400: UniswapV3LiquidityAtTick(
+                    -276400: LiquidityAtTick(
                         liquidity_net=2698389804940873511,
                         liquidity_gross=2698389804940873511,
                         block=12369823,
                     ),
-                    -276250: UniswapV3LiquidityAtTick(
+                    -276250: LiquidityAtTick(
                         liquidity_net=-2698389804940873511,
                         liquidity_gross=2698389804940873511,
                         block=12369823,
                     ),
                 }
                 for word, bitmap in {
-                    -108: UniswapV3BitmapAtWord(bitmap=8487168, block=12369823)
+                    -108: BitmapAtWord(bitmap=8487168, block=12369823)
                 }.items():
                     assert pool.tick_bitmap[word] == bitmap
 
             case "0x7BeA39867e4169DBe237d55C8242a8f2fcDcc387":
                 assert pool.tick_data == {
-                    192200: UniswapV3LiquidityAtTick(
+                    192200: LiquidityAtTick(
                         liquidity_net=123809464957093,
                         liquidity_gross=123809464957093,
                         block=12369811,
                     ),
-                    198000: UniswapV3LiquidityAtTick(
+                    198000: LiquidityAtTick(
                         liquidity_net=-123809464957093,
                         liquidity_gross=123809464957093,
                         block=12369811,
                     ),
                 }
                 for word, bitmap in {
-                    3: UniswapV3BitmapAtWord(
+                    3: BitmapAtWord(
                         bitmap=6739986679341863419440115299426486514824618937839854009203971588096,
                         block=12369811,
                     )
@@ -605,43 +604,43 @@ def test_pool_manager_applies_snapshot_from_dir(
                     assert pool.tick_bitmap[word] == bitmap
             case "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD":
                 assert pool.tick_data == {
-                    253320: UniswapV3LiquidityAtTick(
+                    253320: LiquidityAtTick(
                         liquidity_net=34399999543676, liquidity_gross=34399999543676, block=12369821
                     ),
-                    264600: UniswapV3LiquidityAtTick(
+                    264600: LiquidityAtTick(
                         liquidity_net=-34399999543676,
                         liquidity_gross=34399999543676,
                         block=12369821,
                     ),
-                    255540: UniswapV3LiquidityAtTick(
+                    255540: LiquidityAtTick(
                         liquidity_net=2154941425, liquidity_gross=2154941425, block=12369846
                     ),
-                    262440: UniswapV3LiquidityAtTick(
+                    262440: LiquidityAtTick(
                         liquidity_net=-2154941425, liquidity_gross=2154941425, block=12369846
                     ),
                 }
                 for word, bitmap in {
-                    16: UniswapV3BitmapAtWord(
+                    16: BitmapAtWord(
                         bitmap=11692013098732293937359713277596107809105402396672, block=12369846
                     ),
-                    17: UniswapV3BitmapAtWord(bitmap=288230376155906048, block=12369846),
+                    17: BitmapAtWord(bitmap=288230376155906048, block=12369846),
                 }.items():
                     assert pool.tick_bitmap[word] == bitmap
             case "0xC2e9F25Be6257c210d7Adf0D4Cd6E3E881ba25f8":
                 assert pool.tick_data == {
-                    -84120: UniswapV3LiquidityAtTick(
+                    -84120: LiquidityAtTick(
                         liquidity_net=80059851033970806503,
                         liquidity_gross=80059851033970806503,
                         block=12369854,
                     ),
-                    -78240: UniswapV3LiquidityAtTick(
+                    -78240: LiquidityAtTick(
                         liquidity_net=-80059851033970806503,
                         liquidity_gross=80059851033970806503,
                         block=12369854,
                     ),
                 }
                 for word, bitmap in {
-                    -6: UniswapV3BitmapAtWord(
+                    -6: BitmapAtWord(
                         bitmap=6901746346790563787434755862298803523934049033832042530038157389332480,
                         block=12369854,
                     )
@@ -649,21 +648,21 @@ def test_pool_manager_applies_snapshot_from_dir(
                     assert pool.tick_bitmap[word] == bitmap
             case "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf":
                 assert pool.tick_data == {
-                    -10: UniswapV3LiquidityAtTick(
+                    -10: LiquidityAtTick(
                         liquidity_net=21206360421978, liquidity_gross=21206360421978, block=12369863
                     ),
-                    10: UniswapV3LiquidityAtTick(
+                    10: LiquidityAtTick(
                         liquidity_net=-21206360421978,
                         liquidity_gross=21206360421978,
                         block=12369863,
                     ),
                 }
                 for word, bitmap in {
-                    -1: UniswapV3BitmapAtWord(
+                    -1: BitmapAtWord(
                         bitmap=57896044618658097711785492504343953926634992332820282019728792003956564819968,
                         block=12369863,
                     ),
-                    0: UniswapV3BitmapAtWord(bitmap=2, block=12369863),
+                    0: BitmapAtWord(bitmap=2, block=12369863),
                 }.items():
                     assert pool.tick_bitmap[word] == bitmap
             case _:

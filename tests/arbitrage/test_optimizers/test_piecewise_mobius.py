@@ -49,7 +49,7 @@ def test_bounded_product_hop_single_range():
         tick_lower=100,
         tick_upper=200,
     )
-    assert hop.is_v3 is True
+    assert isinstance(hop, BoundedProductHop)
     assert hop.has_multi_range is False
     assert hop.tick_ranges is None
     assert hop.current_range_index == 0
@@ -84,7 +84,7 @@ def test_bounded_product_hop_multi_range():
         tick_ranges=ranges,
         current_range_index=0,
     )
-    assert hop.is_v3 is True
+    assert isinstance(hop, BoundedProductHop)
     assert hop.has_multi_range is True
     assert hop.tick_ranges is not None
     assert len(hop.tick_ranges) == 2
@@ -235,9 +235,9 @@ def test_piecewise_mobius_solver_multi_range_routing():
     input_data = SolveInput(hops=(multi_range_hop, v2_hop))
 
     assert multi_range_hop.has_multi_range is True
-    assert multi_range_hop.is_v3 is True
-    assert v2_hop.is_v3 is False
-    assert input_data.has_v3 is True
+    assert isinstance(multi_range_hop, BoundedProductHop)
+    assert not isinstance(v2_hop, BoundedProductHop)
+    assert input_data.has_bounded_product is True
     assert input_data.num_hops == 2
 
     solver = PiecewiseMobiusSolver()

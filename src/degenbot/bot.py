@@ -52,8 +52,7 @@ if TYPE_CHECKING:
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
     from degenbot.types.aliases import ChainId
-    from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
-    from degenbot.uniswap.v4_types import UniswapV4BitmapAtWord, UniswapV4LiquidityAtTick
+    from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 
 
 class Bot:
@@ -640,8 +639,8 @@ class Bot:
         deployer_address: str | None = None,
         init_hash: str | None = None,
         state_block: int | None = None,
-        tick_bitmap: dict[int, UniswapV3BitmapAtWord] | None = None,
-        tick_data: dict[int, UniswapV3LiquidityAtTick] | None = None,
+        tick_bitmap: dict[int, BitmapAtWord] | None = None,
+        tick_data: dict[int, LiquidityAtTick] | None = None,
         silent: bool = False,
     ) -> AbstractLiquidityPool:
         """.. deprecated:: 0.x
@@ -676,8 +675,8 @@ class Bot:
         hook_address: str | None = None,
         chain_id: ChainId | None = None,
         state_block: int | None = None,
-        tick_bitmap: dict[int, UniswapV4BitmapAtWord] | None = None,
-        tick_data: dict[int, UniswapV4LiquidityAtTick] | None = None,
+        tick_bitmap: dict[int, BitmapAtWord] | None = None,
+        tick_data: dict[int, LiquidityAtTick] | None = None,
         silent: bool = False,
     ) -> AbstractLiquidityPool:
         """.. deprecated:: 0.x

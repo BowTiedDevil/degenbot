@@ -16,9 +16,8 @@ from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
 )
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
@@ -75,8 +74,8 @@ class V3PoolBuilder:
             ),
             provider_lookup=lambda: self._connections.get_provider(chain_id),
             types=TickDataTypes(
-                bitmap_at_word=UniswapV3BitmapAtWord,
-                liquidity_at_tick=UniswapV3LiquidityAtTick,
+                bitmap_at_word=BitmapAtWord,
+                liquidity_at_tick=LiquidityAtTick,
                 tick_struct_types=UniswapV3Pool.TICK_STRUCT_TYPES,
             ),
         )
@@ -89,8 +88,8 @@ class V3PoolBuilder:
         deployer_address: str | None = None,
         init_hash: str | None = None,
         state_block: int | None = None,
-        tick_bitmap: dict[int, UniswapV3BitmapAtWord] | None = None,
-        tick_data: dict[int, UniswapV3LiquidityAtTick] | None = None,
+        tick_bitmap: dict[int, BitmapAtWord] | None = None,
+        tick_data: dict[int, LiquidityAtTick] | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
         **kwargs: Any,
@@ -219,12 +218,12 @@ class V3PoolBuilder:
                             liq_positions = pool_with_data.liquidity_positions
                             if init_maps and liq_positions:
                                 for init_map in init_maps:
-                                    working_tick_bitmap[int(init_map.word)] = UniswapV3BitmapAtWord(
+                                    working_tick_bitmap[int(init_map.word)] = BitmapAtWord(
                                         bitmap=int(init_map.bitmap),
                                         block=pool_with_data.liquidity_update_block or 0,
                                     )
                                 for pos in liq_positions:
-                                    working_tick_data[int(pos.tick)] = UniswapV3LiquidityAtTick(
+                                    working_tick_data[int(pos.tick)] = LiquidityAtTick(
                                         liquidity_net=int(pos.liquidity_net),
                                         liquidity_gross=int(pos.liquidity_gross),
                                         block=pool_with_data.liquidity_update_block or 0,
@@ -270,13 +269,13 @@ class V3PoolBuilder:
                             ],
                             data=result,
                         )
-                        working_tick_data[active_tick] = UniswapV3LiquidityAtTick(
+                        working_tick_data[active_tick] = LiquidityAtTick(
                             liquidity_net=int(liquidity_net),
                             liquidity_gross=int(liquidity_gross),
                             block=state_block,
                         )
 
-                working_tick_bitmap[word] = UniswapV3BitmapAtWord(
+                working_tick_bitmap[word] = BitmapAtWord(
                     bitmap=bitmap_at_word,
                     block=state_block,
                 )

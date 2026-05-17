@@ -5,6 +5,11 @@ from __future__ import annotations
 import dataclasses
 from typing import Self
 
+import pydantic
+
+from degenbot.validation.evm_values import ValidatedInt128, ValidatedUint128, ValidatedUint256
+from degenbot.types.aliases import BlockNumber
+
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class SwapResult:
@@ -36,3 +41,18 @@ class SwapResult:
             liquidity=liquidity if liquidity is not None else self.liquidity,
             tick=tick if tick is not None else self.tick,
         )
+
+
+class BitmapAtWord(pydantic.BaseModel, frozen=True):
+    """Bitmap value at a tick bitmap word position."""
+
+    bitmap: ValidatedUint256
+    block: BlockNumber = 0
+
+
+class LiquidityAtTick(pydantic.BaseModel, frozen=True):
+    """Liquidity data at an initialized tick."""
+
+    liquidity_net: ValidatedInt128
+    liquidity_gross: ValidatedUint128
+    block: BlockNumber = 0

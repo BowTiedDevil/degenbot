@@ -28,9 +28,8 @@ from degenbot.uniswap.v2_types import (
     UniswapV2PoolStateUpdated,
 )
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolState,
     UniswapV3PoolStateUpdated,
@@ -92,11 +91,11 @@ _SNAP = json.load(
     ).open()
 )
 _WBTC_WETH_V3_TICK_BITMAP = {
-    int(k): UniswapV3BitmapAtWord(bitmap=v["bitmap"], block=v["block"])
+    int(k): BitmapAtWord(bitmap=v["bitmap"], block=v["block"])
     for k, v in _SNAP["tick_bitmap"].items()
 }
 _WBTC_WETH_V3_TICK_DATA = {
-    int(k): UniswapV3LiquidityAtTick(
+    int(k): LiquidityAtTick(
         liquidity_net=v["liquidity_net"],
         liquidity_gross=v["liquidity_gross"],
         block=v["block"],

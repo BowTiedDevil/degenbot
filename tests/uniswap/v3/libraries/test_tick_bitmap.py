@@ -10,7 +10,7 @@ from degenbot.uniswap.v3_libraries.tick_bitmap import (
     position,
 )
 from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK
-from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 
 # Tests adapted from Typescript tests on Uniswap V3 Github repo
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/TickBitmap.spec.ts
@@ -18,7 +18,7 @@ from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord, UniswapV3LiquidityA
 
 def next_initialized_tick_within_one_word_reference(
     *,
-    tick_bitmap: dict[int, UniswapV3BitmapAtWord],
+    tick_bitmap: dict[int, BitmapAtWord],
     tick: int,
     tick_spacing: int,
     less_than_or_equal: bool,
@@ -70,7 +70,7 @@ def next_initialized_tick_within_one_word_reference(
     return next_tick, initialized_status
 
 
-def is_initialized(tick_bitmap: dict[int, UniswapV3BitmapAtWord], tick: int) -> bool:
+def is_initialized(tick_bitmap: dict[int, BitmapAtWord], tick: int) -> bool:
     # Adapted from Uniswap test contract
     # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/test/TickBitmapTest.sol
 
@@ -80,14 +80,14 @@ def is_initialized(tick_bitmap: dict[int, UniswapV3BitmapAtWord], tick: int) -> 
     return next_tick == tick if is_init else False
 
 
-def empty_full_bitmap(spacing: int = 1) -> dict[int, UniswapV3BitmapAtWord]:
+def empty_full_bitmap(spacing: int = 1) -> dict[int, BitmapAtWord]:
     """
     Generate a empty tick bitmap, maximum size, with the given tick spacing
     """
 
-    tick_bitmap: dict[int, UniswapV3BitmapAtWord] = {}
+    tick_bitmap: dict[int, BitmapAtWord] = {}
 
-    empty_bitmap_at_word = UniswapV3BitmapAtWord(bitmap=0)
+    empty_bitmap_at_word = BitmapAtWord(bitmap=0)
     for tick in range(MIN_TICK, MAX_TICK, spacing):
         word_pos, _ = position(tick=tick)
         tick_bitmap[word_pos] = empty_bitmap_at_word
@@ -190,15 +190,15 @@ def test_next_initialized_tick_within_one_word() -> None:
     initialized_ticks = [-200, -55, -4, 70, 78, 84, 139, 240, 535]
 
     tick_data = {
-        -200: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
-        -55: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
-        -4: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
-        70: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
-        78: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
-        84: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
-        139: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
-        240: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
-        535: UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        -200: LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        -55: LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        -4: LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        70: LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        78: LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        84: LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        139: LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        240: LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
+        535: LiquidityAtTick(liquidity_gross=0, liquidity_net=0),
     }
 
     # set up a full-sized empty tick bitmap, then initialize the ticks required for the tests
@@ -447,7 +447,7 @@ def test_next_initialized_tick_within_one_word() -> None:
         tick_spacing=1,
         update_block=0,
     )
-    tick_data[329] = UniswapV3LiquidityAtTick(liquidity_gross=0, liquidity_net=0)
+    tick_data[329] = LiquidityAtTick(liquidity_gross=0, liquidity_net=0)
 
     assert next_initialized_tick_within_one_word(
         tick_data=tick_data,

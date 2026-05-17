@@ -107,7 +107,7 @@ class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
                     decimals1=_decimals1,
                     fee=_fee,
                     k_func=k_camelot,
-                    get_y_func=get_y_camelot,
+                    get_y_func=get_y_camelot,  # ty:ignore[invalid-argument-type]
                 )
 
             return SolidlyStableHop(

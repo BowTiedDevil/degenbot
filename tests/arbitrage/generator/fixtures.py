@@ -17,15 +17,12 @@ from hexbytes import HexBytes
 
 from degenbot.types.abstract import AbstractPoolState
 from degenbot.uniswap.v2_types import UniswapV2PoolState
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
     UniswapV3PoolState,
 )
 from degenbot.uniswap.v4_types import (
-    UniswapV4BitmapAtWord,
-    UniswapV4LiquidityAtTick,
     UniswapV4PoolState,
 )
 
@@ -272,11 +269,11 @@ def _deserialize_pool_state(data: dict[str, Any]) -> AbstractPoolState:
             sqrt_price_x96=data["sqrt_price_x96"],
             tick=data["tick"],
             tick_bitmap={
-                int(k): UniswapV4BitmapAtWord(bitmap=v["bitmap"], block=v["block"])
+                int(k): BitmapAtWord(bitmap=v["bitmap"], block=v["block"])
                 for k, v in data["tick_bitmap"].items()
             },
             tick_data={
-                int(k): UniswapV4LiquidityAtTick(
+                int(k): LiquidityAtTick(
                     liquidity_net=v["liquidity_net"],
                     liquidity_gross=v["liquidity_gross"],
                     block=v["block"],
@@ -292,11 +289,11 @@ def _deserialize_pool_state(data: dict[str, Any]) -> AbstractPoolState:
             sqrt_price_x96=data["sqrt_price_x96"],
             tick=data["tick"],
             tick_bitmap={
-                int(k): UniswapV3BitmapAtWord(bitmap=v["bitmap"], block=v["block"])
+                int(k): BitmapAtWord(bitmap=v["bitmap"], block=v["block"])
                 for k, v in data["tick_bitmap"].items()
             },
             tick_data={
-                int(k): UniswapV3LiquidityAtTick(
+                int(k): LiquidityAtTick(
                     liquidity_net=v["liquidity_net"],
                     liquidity_gross=v["liquidity_gross"],
                     block=v["block"],

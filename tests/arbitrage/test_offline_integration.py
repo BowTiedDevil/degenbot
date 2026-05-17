@@ -42,9 +42,8 @@ from degenbot.uniswap.v2_types import (
     UniswapV2PoolStateUpdated,
 )
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolState,
 )
@@ -270,9 +269,9 @@ def wbtc_weth_v3_lp(wbtc: OfflineErc20Token, weth: OfflineErc20Token) -> Offline
         liquidity=1612978974357835825,
         sqrt_price_x96=31549217861118002279483878013792428,
         tick=257907,
-        tick_bitmap={0: UniswapV3BitmapAtWord(bitmap=1)},
+        tick_bitmap={0: BitmapAtWord(bitmap=1)},
         tick_data={
-            0: UniswapV3LiquidityAtTick(
+            0: LiquidityAtTick(
                 liquidity_net=10943161472679,
                 liquidity_gross=10943161472679,
             ),

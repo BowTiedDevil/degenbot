@@ -26,9 +26,8 @@ from degenbot.provider.log_fetching import fetch_logs_retrying, fetch_logs_retry
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import KeyedDefaultDict
 from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
     UniswapV3LiquidityEvent,
     UniswapV3PoolLiquidityMappingUpdate,
 )
@@ -38,8 +37,8 @@ if TYPE_CHECKING:
 
 
 class LiquidityMap(TypedDict):
-    tick_bitmap: dict[int, UniswapV3BitmapAtWord]
-    tick_data: dict[int, UniswapV3LiquidityAtTick]
+    tick_bitmap: dict[int, BitmapAtWord]
+    tick_data: dict[int, LiquidityAtTick]
 
 
 class UniswapV3LiquiditySnapshotSource(Protocol):
@@ -100,11 +99,11 @@ class MonolithicJsonFileSnapshot:
 
         return LiquidityMap(
             tick_bitmap={
-                int(k): UniswapV3BitmapAtWord(**v)
+                int(k): BitmapAtWord(**v)
                 for k, v in self._file_snapshot[pool_address]["tick_bitmap"].items()
             },
             tick_data={
-                int(k): UniswapV3LiquidityAtTick(**v)
+                int(k): LiquidityAtTick(**v)
                 for k, v in self._file_snapshot[pool_address]["tick_data"].items()
             },
         )
@@ -166,11 +165,11 @@ class IndividualJsonFileSnapshot:
         pool_liquidity_snapshot = pydantic_core.from_json(pool_path.read_bytes())
         return LiquidityMap(
             tick_bitmap={
-                int(k): UniswapV3BitmapAtWord(**v)
+                int(k): BitmapAtWord(**v)
                 for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
             },
             tick_data={
-                int(k): UniswapV3LiquidityAtTick(**v)
+                int(k): LiquidityAtTick(**v)
                 for k, v in pool_liquidity_snapshot["tick_data"].items()
             },
         )
@@ -216,13 +215,13 @@ class DatabaseSnapshot:
 
         return LiquidityMap(
             tick_bitmap={
-                int(initialization_map.word): UniswapV3BitmapAtWord(
+                int(initialization_map.word): BitmapAtWord(
                     bitmap=initialization_map.bitmap
                 )
                 for initialization_map in pool_in_db.initialization_maps
             },
             tick_data={
-                int(liquidity_position.tick): UniswapV3LiquidityAtTick(
+                int(liquidity_position.tick): LiquidityAtTick(
                     liquidity_gross=liquidity_position.liquidity_gross,
                     liquidity_net=liquidity_position.liquidity_net,
                 )
@@ -460,7 +459,7 @@ class UniswapV3LiquiditySnapshot:
         finally:
             self._liquidity_events[pool_key].clear()
 
-    def tick_bitmap(self, pool_address: str | bytes) -> dict[int, UniswapV3BitmapAtWord] | None:
+    def tick_bitmap(self, pool_address: str | bytes) -> dict[int, BitmapAtWord] | None:
         """
         Consume the tick initialization bitmaps for the pool.
         """
@@ -474,7 +473,7 @@ class UniswapV3LiquiditySnapshot:
         pool_snapshot["tick_bitmap"] = {}
         return tick_bitmap
 
-    def tick_data(self, pool_address: str | bytes) -> dict[int, UniswapV3LiquidityAtTick] | None:
+    def tick_data(self, pool_address: str | bytes) -> dict[int, LiquidityAtTick] | None:
         """
         Consume the liquidity mapping for the pool.
         """
@@ -491,8 +490,8 @@ class UniswapV3LiquiditySnapshot:
     def update(
         self,
         pool: HexAddress,
-        tick_data: dict[int, UniswapV3LiquidityAtTick],
-        tick_bitmap: dict[int, UniswapV3BitmapAtWord],
+        tick_data: dict[int, LiquidityAtTick],
+        tick_bitmap: dict[int, BitmapAtWord],
     ) -> None:
         """
         Update the liquidity mapping for the pool.

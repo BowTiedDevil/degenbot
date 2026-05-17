@@ -29,8 +29,8 @@ class TickDataTypes:
     captures those differences so the algorithm can be written once.
     """
 
-    bitmap_at_word: type  # UniswapV3BitmapAtWord or UniswapV4BitmapAtWord
-    liquidity_at_tick: type  # UniswapV3LiquidityAtTick or UniswapV4LiquidityAtTick
+    bitmap_at_word: type  # BitmapAtWord
+    liquidity_at_tick: type  # LiquidityAtTick
     tick_struct_types: tuple[str, ...]  # ABI types for decoding tick data
 
 
@@ -99,13 +99,11 @@ def make_tick_data_fetcher(
                 types=types,
             )
 
-        new_state = dataclasses.replace(
-            pool.state,
+        pool.update_tick_data(
             tick_bitmap=working_tick_bitmap,
             tick_data=working_tick_data,
-            block=max(pool.update_block, block_number),
+            block=block_number,
         )
-        pool._state_mgr.push_state(new_state)
 
     return fetcher
 

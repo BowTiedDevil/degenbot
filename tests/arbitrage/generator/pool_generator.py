@@ -14,18 +14,15 @@ from hexbytes import HexBytes
 
 from degenbot.types.abstract import AbstractPoolState
 from degenbot.uniswap.v2_types import UniswapV2PoolState
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 from degenbot.uniswap.v3_types import (
     Liquidity,
     SqrtPriceX96,
     Tick,
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
     UniswapV3PoolState,
 )
 from degenbot.uniswap.v4_types import (
-    UniswapV4BitmapAtWord,
-    UniswapV4LiquidityAtTick,
     UniswapV4PoolState,
 )
 
@@ -158,8 +155,8 @@ class PoolStateGenerator:
         tick: Tick,
         *,
         tick_spacing: int = 60,
-        tick_bitmap: "dict[int, UniswapV4BitmapAtWord] | None" = None,
-        tick_data: "dict[int, UniswapV4LiquidityAtTick] | None" = None,
+        tick_bitmap: "dict[int, BitmapAtWord] | None" = None,
+        tick_data: "dict[int, LiquidityAtTick] | None" = None,
         block: int = 0,
     ) -> UniswapV4PoolState:
         """
@@ -182,9 +179,9 @@ class PoolStateGenerator:
             The current tick.
         tick_spacing : int
             The tick spacing for the pool (default: 60).
-        tick_bitmap : dict[int, UniswapV4BitmapAtWord] | None
+        tick_bitmap : dict[int, BitmapAtWord] | None
             Pre-built tick bitmap. If None, generates minimal bitmap.
-        tick_data : dict[int, UniswapV4LiquidityAtTick] | None
+        tick_data : dict[int, LiquidityAtTick] | None
             Pre-built tick data. If None, generates minimal tick data.
         block : int
             Block number for the state (default: 0).
@@ -202,11 +199,11 @@ class PoolStateGenerator:
             )
             # Convert V3 types to V4 types
             tick_bitmap = {
-                word: UniswapV4BitmapAtWord(bitmap=val.bitmap, block=val.block)
+                word: BitmapAtWord(bitmap=val.bitmap, block=val.block)
                 for word, val in tick_bitmap_v3.items()
             }
             tick_data = {
-                tick_val: UniswapV4LiquidityAtTick(
+                tick_val: LiquidityAtTick(
                     liquidity_net=val.liquidity_net,
                     liquidity_gross=val.liquidity_gross,
                     block=val.block,
@@ -273,12 +270,12 @@ class PoolStateGenerator:
 
         # Add lower tick
         if word_lower not in tick_bitmap:
-            tick_bitmap[word_lower] = UniswapV3BitmapAtWord(bitmap=0, block=0)
+            tick_bitmap[word_lower] = BitmapAtWord(bitmap=0, block=0)
         bitmap_value = tick_bitmap[word_lower].bitmap | (1 << bit_lower)
-        tick_bitmap[word_lower] = UniswapV3BitmapAtWord(bitmap=bitmap_value, block=0)
+        tick_bitmap[word_lower] = BitmapAtWord(bitmap=bitmap_value, block=0)
 
         # Liquidity comes in at lower tick (positive net)
-        tick_data[tick_lower] = UniswapV3LiquidityAtTick(
+        tick_data[tick_lower] = LiquidityAtTick(
             liquidity_net=liquidity,
             liquidity_gross=liquidity,
             block=0,
@@ -286,12 +283,12 @@ class PoolStateGenerator:
 
         # Add upper tick
         if word_upper not in tick_bitmap:
-            tick_bitmap[word_upper] = UniswapV3BitmapAtWord(bitmap=0, block=0)
+            tick_bitmap[word_upper] = BitmapAtWord(bitmap=0, block=0)
         bitmap_value = tick_bitmap[word_upper].bitmap | (1 << bit_upper)
-        tick_bitmap[word_upper] = UniswapV3BitmapAtWord(bitmap=bitmap_value, block=0)
+        tick_bitmap[word_upper] = BitmapAtWord(bitmap=bitmap_value, block=0)
 
         # Liquidity goes out at upper tick (negative net)
-        tick_data[tick_upper] = UniswapV3LiquidityAtTick(
+        tick_data[tick_upper] = LiquidityAtTick(
             liquidity_net=-liquidity,
             liquidity_gross=liquidity,
             block=0,

@@ -93,7 +93,7 @@ class PiecewiseMobiusSolver(Solver):
                 PoolInvariant.BOUNDED_PRODUCT,
             }:
                 return False
-        return solve_input.has_v3
+        return solve_input.has_bounded_product
 
     @staticmethod
     def _has_multi_range(solve_input: SolveInput) -> bool:

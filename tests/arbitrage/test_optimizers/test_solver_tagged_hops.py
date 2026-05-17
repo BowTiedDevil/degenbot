@@ -58,10 +58,10 @@ class TestConstantProductHop:
         hop = ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
         assert hop.gamma == pytest.approx(0.997)
 
-    def test_is_v2(self):
+    def test_is_constant_product(self):
         hop = ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
-        assert hop.is_v2
-        assert not hop.is_v3
+        assert isinstance(hop, ConstantProductHop)
+        assert not isinstance(hop, BoundedProductHop)
 
     def test_frozen(self):
         hop = ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
@@ -87,8 +87,8 @@ class TestBoundedProductHop:
         )
         assert hop.invariant == PoolInvariant.BOUNDED_PRODUCT
         assert hop.liquidity == 10**18
-        assert hop.is_v3
-        assert not hop.is_v2
+        assert isinstance(hop, BoundedProductHop)
+        assert not isinstance(hop, ConstantProductHop)
 
     def test_frozen(self):
         hop = BoundedProductHop(
@@ -121,8 +121,9 @@ class TestSolidlyStableHop:
         assert hop.invariant == PoolInvariant.SOLIDLY_STABLE
         assert hop.decimals_in == 6
         assert hop.decimals_out == 18
-        assert not hop.is_v2
-        assert not hop.is_v3
+        assert isinstance(hop, SolidlyStableHop)
+        assert not isinstance(hop, ConstantProductHop)
+        assert not isinstance(hop, BoundedProductHop)
 
     def test_frozen(self):
         hop = SolidlyStableHop(
@@ -152,8 +153,9 @@ class TestBalancerWeightedHop:
         )
         assert hop.invariant == PoolInvariant.BALANCER_WEIGHTED
         assert hop.weight_in == 500_000_000_000_000_000
-        assert not hop.is_v2
-        assert not hop.is_v3
+        assert isinstance(hop, BalancerWeightedHop)
+        assert not isinstance(hop, ConstantProductHop)
+        assert not isinstance(hop, BoundedProductHop)
 
     def test_frozen(self):
         hop = BalancerWeightedHop(
@@ -187,8 +189,9 @@ class TestCurveStableswapHop:
         )
         assert hop.invariant == PoolInvariant.CURVE_STABLESWAP
         assert hop.curve_a == 100
-        assert not hop.is_v2
-        assert not hop.is_v3
+        assert isinstance(hop, CurveStableswapHop)
+        assert not isinstance(hop, ConstantProductHop)
+        assert not isinstance(hop, BoundedProductHop)
 
     def test_frozen(self):
         hop = CurveStableswapHop(
@@ -271,7 +274,7 @@ class TestSolveInputTaggedHops:
             )
         )
         assert inp.all_constant_product
-        assert not inp.has_v3
+        assert not inp.has_bounded_product
         assert not inp.has_solidly_stable
         assert not inp.has_balancer_weighted
         assert not inp.has_curve_stableswap
@@ -291,9 +294,9 @@ class TestSolveInputTaggedHops:
                 ),
             )
         )
-        assert inp.has_v3
+        assert inp.has_bounded_product
         assert not inp.all_constant_product
-        assert inp.v3_indices == (1,)
+        assert inp.bounded_product_indices == (1,)
 
     def test_solidly_stable_detected(self):
         inp = SolveInput(

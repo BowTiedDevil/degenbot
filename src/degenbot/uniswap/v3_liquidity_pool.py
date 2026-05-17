@@ -12,11 +12,7 @@ from degenbot.arbitrage.types import UniswapV3PoolSwapAmounts
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import (
-    EVMRevertError,
-    ExternalUpdateError,
-    LiquidityPoolError,
-)
+from degenbot.exceptions.pool import EVMRevertError, ExternalUpdateError, LiquidityPoolError
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
@@ -24,16 +20,11 @@ from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
 from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot, MissingLiquidityData
-from degenbot.uniswap.concentrated.state_manager import (
-    ConcentratedLiquidityStateManager,
-)
+from degenbot.uniswap.concentrated.state_manager import ConcentratedLiquidityStateManager
 from degenbot.uniswap.concentrated.v3_simulator import calculate_swap as _v3_swap
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
 from degenbot.uniswap.types import UniswapPoolSwapVector
-from degenbot.uniswap.v3_functions import (
-    generate_v3_pool_address,
-    get_tick_word_and_bit_position,
-)
+from degenbot.uniswap.v3_functions import generate_v3_pool_address, get_tick_word_and_bit_position
 from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
 from degenbot.uniswap.v3_libraries.tick_bitmap import flip_tick, gen_ticks
 from degenbot.uniswap.v3_libraries.tick_math import (
@@ -45,14 +36,13 @@ from degenbot.uniswap.v3_libraries.tick_math import (
 )
 from degenbot.uniswap.v3_pool_calc import UniswapV3PoolCalc
 from degenbot.uniswap.v3_pool_state import V3PoolState
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
     InitializedTickMap,
     Liquidity,
     LiquidityMap,
     SqrtPriceX96,
     Tick,
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolLiquidityMappingUpdate,
     UniswapV3PoolSimulationResult,
@@ -64,13 +54,13 @@ type Token0Amount = int
 type Token1Amount = int
 
 
-class UniswapV3LiquidityAtTickAsDict(TypedDict):
+class LiquidityAtTickAsDict(TypedDict):
     block: int
     liquidity_gross: int
     liquidity_net: int
 
 
-class UniswapV3BitmapAtWordAsDict(TypedDict):
+class BitmapAtWordAsDict(TypedDict):
     bitmap: int
     block: int
 
@@ -128,17 +118,17 @@ class UniswapV3Pool(
         deployer_address: str | None = None,
         init_hash: str | None = None,
         tick_bitmap: (
-            dict[int, UniswapV3BitmapAtWord]
-            | dict[str, UniswapV3BitmapAtWord]
-            | dict[int, UniswapV3BitmapAtWordAsDict]
-            | dict[str, UniswapV3BitmapAtWordAsDict]
+            dict[int, BitmapAtWord]
+            | dict[str, BitmapAtWord]
+            | dict[int, BitmapAtWordAsDict]
+            | dict[str, BitmapAtWordAsDict]
             | None
         ) = None,
         tick_data: (
-            dict[int, UniswapV3LiquidityAtTick]
-            | dict[str, UniswapV3LiquidityAtTick]
-            | dict[int, UniswapV3LiquidityAtTickAsDict]
-            | dict[str, UniswapV3LiquidityAtTickAsDict]
+            dict[int, LiquidityAtTick]
+            | dict[str, LiquidityAtTick]
+            | dict[int, LiquidityAtTickAsDict]
+            | dict[str, LiquidityAtTickAsDict]
             | None
         ) = None,
         state_block: BlockNumber | None = None,
@@ -195,8 +185,8 @@ class UniswapV3Pool(
             else {
                 int(word): (
                     bitmap_at_word
-                    if isinstance(bitmap_at_word, UniswapV3BitmapAtWord)
-                    else UniswapV3BitmapAtWord(**bitmap_at_word)
+                    if isinstance(bitmap_at_word, BitmapAtWord)
+                    else BitmapAtWord(**bitmap_at_word)
                 )
                 for word, bitmap_at_word in tick_bitmap.items()
             }
@@ -207,8 +197,8 @@ class UniswapV3Pool(
             else {
                 int(tick): (
                     liquidity_at_tick
-                    if isinstance(liquidity_at_tick, UniswapV3LiquidityAtTick)
-                    else UniswapV3LiquidityAtTick(**liquidity_at_tick)
+                    if isinstance(liquidity_at_tick, LiquidityAtTick)
+                    else LiquidityAtTick(**liquidity_at_tick)
                 )
                 for tick, liquidity_at_tick in tick_data.items()
             }
@@ -417,6 +407,25 @@ class UniswapV3Pool(
             sparse_liquidity_map=self._sparse_liquidity_map,
         )
 
+    def update_tick_data(
+        self,
+        tick_bitmap: dict[int, Any],
+        tick_data: dict[int, Any],
+        block: int,
+    ) -> None:
+        """Apply updated tick bitmap and data from the tick data fetcher.
+
+        Replaces the tick_bitmap and tick_data on the current state and
+        pushes the new state through the state manager.
+        """
+        new_state = dataclasses.replace(
+            self.state,
+            tick_bitmap=tick_bitmap,
+            tick_data=tick_data,
+            block=max(self.update_block, block),
+        )
+        self._state_mgr.push_state(new_state)
+
     def external_update(
         self,
         update: UniswapV3PoolExternalUpdate,
@@ -529,7 +538,7 @@ class UniswapV3Pool(
                         else:
                             # Fetcher failed to add the word (e.g., historical block unavailable)
                             # Create an empty entry so flip_tick can work
-                            working_tick_bitmap[tick_word] = UniswapV3BitmapAtWord(
+                            working_tick_bitmap[tick_word] = BitmapAtWord(
                                 bitmap=0, block=state_block
                             )
                     elif self._sparse_liquidity_map:
@@ -539,7 +548,7 @@ class UniswapV3Pool(
                 # uninitialized and must be flipped in the bitmap and initialized as empty in the
                 # mapping
                 if tick not in working_tick_data:
-                    working_tick_data[tick] = UniswapV3LiquidityAtTick(
+                    working_tick_data[tick] = LiquidityAtTick(
                         liquidity_net=0,
                         liquidity_gross=0,
                         block=state_block,
@@ -579,7 +588,7 @@ class UniswapV3Pool(
                 else:
                     new_liquidity_net = current_liquidity_net - update.liquidity
 
-                working_tick_data[tick] = UniswapV3LiquidityAtTick(
+                working_tick_data[tick] = LiquidityAtTick(
                     liquidity_net=new_liquidity_net,
                     liquidity_gross=new_liquidity_gross,
                     block=state_block,

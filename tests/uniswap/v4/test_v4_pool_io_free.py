@@ -17,9 +17,8 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v4_types import (
-    UniswapV4BitmapAtWord,
-    UniswapV4LiquidityAtTick,
     UniswapV4PoolExternalUpdate,
     UniswapV4PoolKey,
 )
@@ -114,9 +113,9 @@ class TestV4PoolIOFreeConstructor:
         native_eth = _make_native_eth()
         usdc = _make_usdc()
 
-        tick_bitmap = {0: UniswapV4BitmapAtWord(bitmap=1, block=18_000_000)}
+        tick_bitmap = {0: BitmapAtWord(bitmap=1, block=18_000_000)}
         tick_data = {
-            -10: UniswapV4LiquidityAtTick(liquidity_net=100, liquidity_gross=200, block=18_000_000),
+            -10: LiquidityAtTick(liquidity_net=100, liquidity_gross=200, block=18_000_000),
         }
 
         pool = UniswapV4Pool(

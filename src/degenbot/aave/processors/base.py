@@ -2,9 +2,10 @@
 Base protocols and types for Aave token processors.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import ClassVar, Protocol, TypedDict
+from typing import ClassVar, Protocol
 
 from eth_typing import ChecksumAddress
 
@@ -19,33 +20,41 @@ class GhoUserOperation(Enum):
     GHO_INTEREST_ACCRUAL = "GHO INTEREST ACCRUAL"
 
 
-class PercentageMathLibrary(Protocol):
+@dataclass(frozen=True)
+class MathLibraries:
     """
-    Protocol for percentage math operations.
-    """
+    Strategy-based container for math library functions.
 
-    def percent_div(self, value: int, percentage: int) -> int: ...
-    def percent_mul(self, value: int, percentage: int) -> int: ...
-
-
-class WadRayMathLibrary(Protocol):
-    """
-    Protocol for Wad/Ray math operations.
+    Each private field is a callable bound from the corresponding library
+    module. Public methods delegate to them so callers can use keyword
+    arguments (e.g. ``ray_div(a=x, b=y)``) which ``Callable`` types do not
+    support directly.
     """
 
-    def ray_div(self, a: int, b: int) -> int: ...
-    def ray_div_ceil(self, a: int, b: int) -> int: ...
-    def ray_div_floor(self, a: int, b: int) -> int: ...
-    def ray_mul(self, a: int, b: int) -> int: ...
+    _ray_div: Callable[[int, int], int]
+    _ray_div_ceil: Callable[[int, int], int]
+    _ray_div_floor: Callable[[int, int], int]
+    _ray_mul: Callable[[int, int], int]
+    _percent_div: Callable[[int, int], int]
+    _percent_mul: Callable[[int, int], int]
 
+    def ray_div(self, a: int, b: int) -> int:
+        return self._ray_div(a, b)
 
-class MathLibraries(TypedDict):
-    """
-    Container for math library modules.
-    """
+    def ray_div_ceil(self, a: int, b: int) -> int:
+        return self._ray_div_ceil(a, b)
 
-    wad_ray: WadRayMathLibrary
-    percentage: PercentageMathLibrary
+    def ray_div_floor(self, a: int, b: int) -> int:
+        return self._ray_div_floor(a, b)
+
+    def ray_mul(self, a: int, b: int) -> int:
+        return self._ray_mul(a, b)
+
+    def percent_div(self, value: int, percentage: int) -> int:
+        return self._percent_div(value, percentage)
+
+    def percent_mul(self, value: int, percentage: int) -> int:
+        return self._percent_mul(value, percentage)
 
 
 @dataclass(frozen=True, slots=True)
@@ -415,10 +424,8 @@ __all__ = [
     "GhoScaledTokenMintResult",
     "GhoUserOperation",
     "MathLibraries",
-    "PercentageMathLibrary",
     "ProcessingResult",
     "ScaledTokenBurnResult",
     "ScaledTokenMintResult",
     "TokenProcessor",
-    "WadRayMathLibrary",
 ]

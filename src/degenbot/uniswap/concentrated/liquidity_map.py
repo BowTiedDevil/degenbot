@@ -13,23 +13,24 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, Self
 
 from degenbot.exceptions.pool import LiquidityMapWordMissing
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_libraries.tick_bitmap import (
     gen_ticks,
     next_initialized_tick_within_one_word,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Mapping
+    from collections.abc import Generator
 
 
 class _HasPoolLiquidityMap(Protocol):
     """Duck-type for V3/V4 pools that expose tick mapping attributes."""
 
     @property
-    def tick_data(self) -> Mapping[int, object]: ...
+    def tick_data(self) -> dict[int, LiquidityAtTick]: ...
 
     @property
-    def tick_bitmap(self) -> Mapping[int, object]: ...
+    def tick_bitmap(self) -> dict[int, BitmapAtWord]: ...
 
     @property
     def tick_spacing(self) -> int: ...
@@ -42,10 +43,10 @@ class _HasTickData(Protocol):
     """Duck-type for state objects carrying tick bitmap + data."""
 
     @property
-    def tick_data(self) -> Mapping[int, object]: ...
+    def tick_data(self) -> dict[int, LiquidityAtTick]: ...
 
     @property
-    def tick_bitmap(self) -> Mapping[int, object]: ...
+    def tick_bitmap(self) -> dict[int, BitmapAtWord]: ...
 
 
 class _HasLiquidityNet(Protocol):  # noqa: PYI046
@@ -72,8 +73,8 @@ class LiquidityMapSnapshot:
     The simulator never mutates these dicts.
     """
 
-    tick_data: Mapping[int, object]
-    tick_bitmap: Mapping[int, object]
+    tick_data: dict[int, LiquidityAtTick]
+    tick_bitmap: dict[int, BitmapAtWord]
     tick_spacing: int
     sparse: bool
 
@@ -108,10 +109,6 @@ class LiquidityMapSnapshot:
         Raises ``MissingLiquidityData`` if the required bitmap word is absent
         in a sparse mapping.
         """
-        # Detect V4-style vs V3-style by presence of `_next_initialized_tick_within_one_word`
-        # attribute on the bitmap entries. Both follow the same function signature for
-        # `next_initialized_tick_within_one_word` — we prefer V4 implementations when both are
-        # importable because they work on the subclasses, but practically they are compatible.
         if self.sparse:
             # Use the sparse path — may raise MissingLiquidityData
             try:

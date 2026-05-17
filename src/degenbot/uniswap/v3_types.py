@@ -5,6 +5,7 @@ import pydantic
 from degenbot.types.abstract import AbstractPoolState, AbstractSimulationResult
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PoolStateMessage
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.validation.evm_values import ValidatedInt128, ValidatedUint128, ValidatedUint256
 
 type BitmapWord = int
@@ -24,15 +25,6 @@ class UniswapSimulationResult(AbstractSimulationResult):
     """
 
 
-class UniswapV3BitmapAtWord(pydantic.BaseModel, frozen=True):
-    bitmap: ValidatedUint256
-    block: BlockNumber = 0
-
-
-class UniswapV3LiquidityAtTick(pydantic.BaseModel, frozen=True):
-    liquidity_net: ValidatedInt128
-    liquidity_gross: ValidatedUint128
-    block: BlockNumber = 0
 
 
 @dataclasses.dataclass(slots=True)
@@ -66,8 +58,8 @@ class UniswapV3PoolState(AbstractPoolState):
     liquidity: Liquidity
     sqrt_price_x96: SqrtPriceX96
     tick: Tick
-    tick_bitmap: dict[BitmapWord, UniswapV3BitmapAtWord]
-    tick_data: dict[Tick, UniswapV3LiquidityAtTick]
+    tick_bitmap: dict[BitmapWord, BitmapAtWord]
+    tick_data: dict[Tick, LiquidityAtTick]
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -81,5 +73,5 @@ class UniswapV3PoolStateUpdated(PoolStateMessage):
     state: UniswapV3PoolState
 
 
-type InitializedTickMap = dict[BitmapWord, UniswapV3BitmapAtWord]
-type LiquidityMap = dict[Tick, UniswapV3LiquidityAtTick]
+type InitializedTickMap = dict[BitmapWord, BitmapAtWord]
+type LiquidityMap = dict[Tick, LiquidityAtTick]

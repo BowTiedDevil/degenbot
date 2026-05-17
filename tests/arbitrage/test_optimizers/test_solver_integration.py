@@ -365,8 +365,8 @@ class TestV3VirtualReserves:
 class TestPoolStateToHop:
     """Validate pool_state_to_hop for all pool types."""
 
-    def test_v3_hop_has_v3_flag(self):
-        """V3 pool should produce a Hop with is_v3=True."""
+    def test_v3_hop_is_bounded_product(self):
+        """Concentrated-liquidity pool should produce a BoundedProductHop."""
 
         # Build a V3-style Hop manually
         L = 1_000_000_000_000_000_000
@@ -386,12 +386,12 @@ class TestPoolStateToHop:
             tick_lower=0,
             tick_upper=0,
         )
-        assert hop.is_v3
+        assert isinstance(hop, BoundedProductHop)
 
-    def test_v2_hop_is_not_v3(self):
-        """V2 pool should produce a Hop with is_v3=False."""
+    def test_v2_hop_is_not_bounded_product(self):
+        """Constant-product pool should produce a ConstantProductHop, not BoundedProductHop."""
         hop = ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
-        assert not hop.is_v3
+        assert not isinstance(hop, BoundedProductHop)
 
 
 class TestArbSolverAllPoolTypes:
