@@ -69,6 +69,7 @@ def _extract_liquidation_debt(event: LogReceipt) -> int:
     )
     return debt_to_cover
 
+
 @staticmethod
 def _extract_liquidation_collateral(event: LogReceipt) -> int:
     """Extract liquidatedCollateralAmount from LiquidationCall event."""
@@ -77,6 +78,7 @@ def _extract_liquidation_collateral(event: LogReceipt) -> int:
         data=event["data"],
     )
     return liquidated_collateral
+
 
 # In enrichment.py - select correct extractor based on event type
 if operation.operation_type.name in {"LIQUIDATION", "GHO_LIQUIDATION", "SELF_LIQUIDATION"}:
@@ -113,13 +115,14 @@ This is similar to how flash loans have multiple operations from a single event 
 def extract(self, scaled_event_type: ScaledTokenEventType | None = None) -> int:
     """
     Extract raw amount from the Pool event.
-    
+
     For LiquidationCall events, scaled_event_type determines which amount to return:
     - DEBT_BURN: returns debtToCover
     - COLLATERAL_BURN/TRANSFER: returns liquidatedCollateralAmount
     """
     extractor = self._get_extractor()
     return extractor(self.pool_event, scaled_event_type)
+
 
 # In enrichment.py
 calculator = ScaledAmountCalculator(...)

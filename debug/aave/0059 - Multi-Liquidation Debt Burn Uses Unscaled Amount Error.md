@@ -132,13 +132,9 @@ if liquidation_count > 1:
     # balance reduction is value + balance_increase (which equals debtToCover).
     # We must convert the unscaled debtToCover to scaled amount using TokenMath.
     debt_to_cover = scaled_event.amount + (scaled_event.balance_increase or 0)
-    
-    token_math = TokenMathFactory.get_token_math_for_token_revision(
-        debt_asset.v_token_revision
-    )
-    burn_value = token_math.get_debt_burn_scaled_amount(
-        debt_to_cover, scaled_event.index
-    )
+
+    token_math = TokenMathFactory.get_token_math_for_token_revision(debt_asset.v_token_revision)
+    burn_value = token_math.get_debt_burn_scaled_amount(debt_to_cover, scaled_event.index)
     scaled_amount = burn_value
 ```
 

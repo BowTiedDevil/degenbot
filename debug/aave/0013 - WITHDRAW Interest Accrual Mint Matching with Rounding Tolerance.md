@@ -151,10 +151,7 @@ The `amountToMint` calculation involves ray multiplication which rounds to the n
 
 ### Current Code (lines 1108-1112)
 ```python
-if (
-    ev.balance_increase is not None
-    and withdraw_amount != ev.balance_increase - ev.amount
-):
+if ev.balance_increase is not None and withdraw_amount != ev.balance_increase - ev.amount:
     continue
 ```
 
@@ -255,9 +252,7 @@ last_withdraw_user_address: ChecksumAddress | None = None
 # Store the token and user addresses for matching with INTEREST_ACCRUAL burns
 if operation.scaled_token_events:
     first_event = operation.scaled_token_events[0]
-    tx_context.last_withdraw_token_address = get_checksum_address(
-        first_event.event["address"]
-    )
+    tx_context.last_withdraw_token_address = get_checksum_address(first_event.event["address"])
     tx_context.last_withdraw_user_address = first_event.user_address
 ```
 

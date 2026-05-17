@@ -82,6 +82,7 @@ Curve uses a single `CurveDataProvider` protocol (structural subtyping), not ABC
 @runtime_checkable
 class CurveDataProvider(Protocol):
     """Single I/O seam for Curve pools."""
+
     def D(self, block_number: int) -> int: ...
     def gamma(self, block_number: int) -> int: ...
     def virtual_price(self, block_number: int) -> int: ...
@@ -232,30 +233,56 @@ class CurvePoolBuilder:
 def test_pool_calculation():
     # Pure test: no mocking, no providers
     from degenbot.curve.types import CurveDataProvider
-    
+
     class FakeCurveDataProvider:
         """Fixed-return test double for CurveDataProvider."""
-        def D(self, block_number): return 3 * 10**18
-        def gamma(self, block_number): return 10**18
-        def virtual_price(self, block_number): return 10**18 + 10**16
-        def base_virtual_price(self, block_number): return 10**18
-        def price_scale(self, block_number): return (10**18,)
-        def admin_balances(self, block_number): return (0, 0, 0)
-        def lending_rate(self, block_number, token_address): return 10**18
-        def redemption_price(self, block_number): return 10**18
-        def block_timestamp(self, block_number): return 1234567890
-        def block_number(self): return 100
-        def token_balance(self, block_number, token_address): return 10**18
-        def token_total_supply(self, block_number, token_address): return 10**18
-        def is_crypto(self): return False
-    
+
+        def D(self, block_number):
+            return 3 * 10**18
+
+        def gamma(self, block_number):
+            return 10**18
+
+        def virtual_price(self, block_number):
+            return 10**18 + 10**16
+
+        def base_virtual_price(self, block_number):
+            return 10**18
+
+        def price_scale(self, block_number):
+            return (10**18,)
+
+        def admin_balances(self, block_number):
+            return (0, 0, 0)
+
+        def lending_rate(self, block_number, token_address):
+            return 10**18
+
+        def redemption_price(self, block_number):
+            return 10**18
+
+        def block_timestamp(self, block_number):
+            return 1234567890
+
+        def block_number(self):
+            return 100
+
+        def token_balance(self, block_number, token_address):
+            return 10**18
+
+        def token_total_supply(self, block_number, token_address):
+            return 10**18
+
+        def is_crypto(self):
+            return False
+
     pool = CurveStableswapPool(
         address="0x1234...",
         data_provider=FakeCurveDataProvider(),
         A=1000,
         tokens=[FAKE_DAI, FAKE_USDC],
     )
-    
+
     # Test calculation logic only
     result = pool.calculate_swap(amount_in=1000_000, token_in=0, token_out=1, block=100)
     assert result == expected_amount

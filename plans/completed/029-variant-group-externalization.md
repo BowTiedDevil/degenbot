@@ -58,20 +58,22 @@ Added to `src/degenbot/curve/types.py`:
 ```python
 class DVariant(Enum):
     STANDARD = auto()
-    VARIANT_ALPHA = auto()           # Group 0
+    VARIANT_ALPHA = auto()  # Group 0
     VARIANT_ALPHA_DP_ALPHA = auto()  # Group 1
-    VARIANT_DP_ALPHA = auto()        # Group 3 (standard d + variant_alpha dp)
-    VARIANT_BETA_DP = auto()         # Group 2
-    VARIANT_GAMMA_DP = auto()        # Group 4
+    VARIANT_DP_ALPHA = auto()  # Group 3 (standard d + variant_alpha dp)
+    VARIANT_BETA_DP = auto()  # Group 2
+    VARIANT_GAMMA_DP = auto()  # Group 4
+
 
 class YVariant(Enum):
-    STANDARD = auto()    # amp WITH A_PRECISION divisor + standard c/b
-    VARIANT_0 = auto()   # amp WITHOUT A_PRECISION divisor + standard c/b
-    VARIANT_1 = auto()   # amp WITHOUT A_PRECISION divisor + c/b without A_PRECISION
+    STANDARD = auto()  # amp WITH A_PRECISION divisor + standard c/b
+    VARIANT_0 = auto()  # amp WITHOUT A_PRECISION divisor + standard c/b
+    VARIANT_1 = auto()  # amp WITHOUT A_PRECISION divisor + c/b without A_PRECISION
+
 
 class YDVariant(Enum):
     STANDARD = auto()
-    VARIANT_0 = auto()   # A_PRECISION in b/c formulas
+    VARIANT_0 = auto()  # A_PRECISION in b/c formulas
 ```
 
 **Key discovery:** `DVariant.VARIANT_DP_ALPHA` was added beyond the original proposal.

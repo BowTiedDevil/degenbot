@@ -98,9 +98,11 @@ from eth_typing import ChecksumAddress
 
 # === Data Classes ===
 
+
 @dataclass(frozen=True)
 class TokenMetadata:
     """Immutable token metadata."""
+
     address: ChecksumAddress
     name: str
     symbol: str
@@ -111,6 +113,7 @@ class TokenMetadata:
 @dataclass(frozen=True)
 class V2PoolMetadata:
     """Immutable data for V2-style pools."""
+
     address: ChecksumAddress
     chain_id: int
     factory: ChecksumAddress
@@ -125,6 +128,7 @@ class V2PoolMetadata:
 @dataclass(frozen=True)
 class V2PoolState:
     """State for V2-style pools (mutable, per-block)."""
+
     block: int
     reserves_token0: int
     reserves_token1: int
@@ -133,6 +137,7 @@ class V2PoolState:
 @dataclass(frozen=True)
 class V3PoolMetadata:
     """Immutable data for V3-style pools."""
+
     address: ChecksumAddress
     chain_id: int
     factory: ChecksumAddress
@@ -147,6 +152,7 @@ class V3PoolMetadata:
 @dataclass(frozen=True)
 class V3PoolState:
     """State for V3-style pools (mutable, per-block)."""
+
     block: int
     sqrt_price_x96: int
     tick: int
@@ -158,6 +164,7 @@ class V3PoolState:
 @dataclass(frozen=True)
 class CurvePoolMetadata:
     """Immutable data for Curve pools."""
+
     address: ChecksumAddress
     chain_id: int
     tokens: tuple[ChecksumAddress, ...]
@@ -187,6 +194,7 @@ class CurvePoolMetadata:
 @dataclass(frozen=True)
 class CurvePoolState:
     """State for Curve pools (mutable, per-block)."""
+
     block: int
     balances: tuple[int, ...]
 
@@ -194,9 +202,10 @@ class CurvePoolState:
 @dataclass
 class FetcherFactories:
     """Factory functions that create fetcher callbacks."""
+
     # V3
     tick_data_fetcher: Callable[[int, int], "UniswapV3LiquidityAtTick"] | None = None
-    
+
     # Curve
     timestamp_fetcher: Callable[[int], int] | None = None
     virtual_price_fetcher: Callable[[int], int] | None = None
@@ -206,7 +215,7 @@ class FetcherFactories:
     price_scale_fetcher: Callable[[int], tuple[int, ...]] | None = None
     redemption_price_fetcher: Callable[[int], int] | None = None
     admin_balances_fetcher: Callable[[int], tuple[int, ...]] | None = None
-    
+
     # Generic
     block_number_fetcher: Callable[[], int] | None = None
     provider_call: Callable[..., bytes] | None = None
@@ -214,20 +223,21 @@ class FetcherFactories:
 
 # === Protocol ===
 
+
 class ChainDataSource(Protocol):
     """
     Protocol for abstracting blockchain data access.
-    
+
     Implementations:
     - OnChainDataSource: Fetches live data from blockchain
     - FakeDataSource: Returns pre-configured test data
     - RecordingDataSource: Records calls for replay
     - ReplayingDataSource: Replays recorded calls
-    
+
     This abstraction allows Bot to work with any data source:
     production (on-chain), testing (fake), or recorded scenarios.
     """
-    
+
     # === Token Metadata ===
     def get_token_metadata(
         self,
@@ -236,7 +246,7 @@ class ChainDataSource(Protocol):
     ) -> TokenMetadata:
         """Fetch token name/symbol/decimals."""
         ...
-    
+
     # === V2 Pool ===
     def get_v2_pool_metadata(
         self,
@@ -245,7 +255,7 @@ class ChainDataSource(Protocol):
     ) -> V2PoolMetadata:
         """Fetch immutable V2 pool data."""
         ...
-    
+
     def get_v2_pool_state(
         self,
         address: ChecksumAddress,
@@ -253,7 +263,7 @@ class ChainDataSource(Protocol):
     ) -> V2PoolState:
         """Fetch V2 pool reserves at a block."""
         ...
-    
+
     # === V3 Pool ===
     def get_v3_pool_metadata(
         self,
@@ -262,7 +272,7 @@ class ChainDataSource(Protocol):
     ) -> V3PoolMetadata:
         """Fetch immutable V3 pool data."""
         ...
-    
+
     def get_v3_pool_state(
         self,
         address: ChecksumAddress,
@@ -272,7 +282,7 @@ class ChainDataSource(Protocol):
     ) -> V3PoolState:
         """Fetch V3 pool state at a block."""
         ...
-    
+
     def get_v3_fetcher_factories(
         self,
         address: ChecksumAddress,
@@ -280,7 +290,7 @@ class ChainDataSource(Protocol):
     ) -> FetcherFactories:
         """Create fetcher callbacks for V3 pool."""
         ...
-    
+
     # === V4 Pool ===
     def get_v4_pool_metadata(
         self,
@@ -290,7 +300,7 @@ class ChainDataSource(Protocol):
     ) -> "V4PoolMetadata":
         """Fetch immutable V4 pool data."""
         ...
-    
+
     def get_v4_pool_state(
         self,
         pool_id: bytes,
@@ -301,7 +311,7 @@ class ChainDataSource(Protocol):
     ) -> "V4PoolState":
         """Fetch V4 pool state at a block."""
         ...
-    
+
     # === Curve Pool ===
     def get_curve_pool_metadata(
         self,
@@ -310,7 +320,7 @@ class ChainDataSource(Protocol):
     ) -> CurvePoolMetadata:
         """Fetch immutable Curve pool data."""
         ...
-    
+
     def get_curve_pool_state(
         self,
         address: ChecksumAddress,
@@ -318,7 +328,7 @@ class ChainDataSource(Protocol):
     ) -> CurvePoolState:
         """Fetch Curve pool balances at a block."""
         ...
-    
+
     def get_curve_fetcher_factories(
         self,
         address: ChecksumAddress,
@@ -334,13 +344,14 @@ class ChainDataSource(Protocol):
 ```python
 # src/degenbot/chain_data/on_chain.py
 
+
 class OnChainDataSource:
     """Production: Fetches live data from blockchain via RPC."""
-    
+
     def __init__(self, web3, provider):
         self.w3 = web3
         self.provider = provider
-    
+
     def get_token_metadata(
         self,
         address: ChecksumAddress,
@@ -351,7 +362,7 @@ class OnChainDataSource:
         name = self._call(address, "name()")
         symbol = self._call(address, "symbol()")
         decimals = self._call(address, "decimals()")
-        
+
         return TokenMetadata(
             address=address,
             name=name,
@@ -359,7 +370,7 @@ class OnChainDataSource:
             decimals=decimals,
             chain_id=chain_id,
         )
-    
+
     def get_v2_pool_metadata(
         self,
         address: ChecksumAddress,
@@ -370,10 +381,10 @@ class OnChainDataSource:
         factory = self._call(address, "factory()")
         token0 = self._call(address, "token0()")
         token1 = self._call(address, "token1()")
-        
+
         # Detect pool variant (Camelot, Aerodrome, etc.)
         # ... existing detection logic ...
-        
+
         return V2PoolMetadata(
             address=address,
             chain_id=chain_id,
@@ -382,7 +393,7 @@ class OnChainDataSource:
             token1=token1,
             # ... other fields
         )
-    
+
     def get_v2_pool_state(
         self,
         address: ChecksumAddress,
@@ -394,13 +405,13 @@ class OnChainDataSource:
             "getReserves()",
             block=block,
         )
-        
+
         return V2PoolState(
             block=block,
             reserves_token0=reserves0,
             reserves_token1=reserves1,
         )
-    
+
     def get_curve_pool_metadata(
         self,
         address: ChecksumAddress,
@@ -413,7 +424,7 @@ class OnChainDataSource:
         # - crypto pool parameter detection
         # - metapool detection
         # ... existing code ...
-        
+
         return CurvePoolMetadata(
             address=address,
             chain_id=chain_id,
@@ -421,7 +432,7 @@ class OnChainDataSource:
             a_coefficient=a,
             # ... all other fields
         )
-    
+
     def get_curve_fetcher_factories(
         self,
         address: ChecksumAddress,
@@ -429,29 +440,29 @@ class OnChainDataSource:
         metadata: CurvePoolMetadata,
     ) -> FetcherFactories:
         """Create fetcher closures - move code from Bot._make_curve_* methods."""
-        
+
         def timestamp_fetcher(block: int) -> int:
             """Fetch block timestamp."""
             block_info = self.provider.get_block(block)
             return block_info["timestamp"]
-        
+
         def virtual_price_fetcher(block: int) -> int:
             """Fetch virtual price for metapools."""
             if metadata.base_pool is None:
                 return 10**18
             return self._call(metadata.base_pool, "get_virtual_price()", block=block)
-        
+
         def D_fetcher(block: int) -> int:
             """Fetch invariant D for crypto pools."""
             return self._call(address, "D()", block=block)
-        
+
         return FetcherFactories(
             timestamp_fetcher=timestamp_fetcher,
             virtual_price_fetcher=virtual_price_fetcher,
             D_fetcher=D_fetcher if metadata.fee_gamma else None,
             # ... other fetchers
         )
-    
+
     def _call(self, address: str, method: str, block: int = None, return_types=None):
         """Helper for eth_call."""
         data = encode_function_calldata(method, None)
@@ -466,9 +477,10 @@ class OnChainDataSource:
 ```python
 # src/degenbot/chain_data/fake.py
 
+
 class FakeDataSource:
     """Testing: Returns pre-configured test data."""
-    
+
     def __init__(self):
         self._tokens: dict[tuple[ChecksumAddress, int], TokenMetadata] = {}
         self._v2_metadata: dict[ChecksumAddress, V2PoolMetadata] = {}
@@ -478,9 +490,9 @@ class FakeDataSource:
         self._curve_metadata: dict[ChecksumAddress, CurvePoolMetadata] = {}
         self._curve_states: dict[tuple[ChecksumAddress, int], CurvePoolState] = {}
         self._fetcher_factories: dict[ChecksumAddress, FetcherFactories] = {}
-    
+
     # === Registration API ===
-    
+
     def add_token(
         self,
         address: str,
@@ -499,7 +511,7 @@ class FakeDataSource:
             chain_id=chain_id,
         )
         return self
-    
+
     def add_v2_pool(
         self,
         address: str,
@@ -514,13 +526,13 @@ class FakeDataSource:
     ) -> "FakeDataSource":
         """Register a V2 pool with metadata and initial state. Returns self."""
         addr = get_checksum_address(address)
-        
+
         # Auto-register tokens if not present
         if (get_checksum_address(token0), chain_id) not in self._tokens:
             self.add_token(token0, token0[:8], token0[:6], 18, chain_id)
         if (get_checksum_address(token1), chain_id) not in self._tokens:
             self.add_token(token1, token1[:8], token1[:6], 18, chain_id)
-        
+
         # Register metadata
         self._v2_metadata[addr] = V2PoolMetadata(
             address=addr,
@@ -533,16 +545,16 @@ class FakeDataSource:
             deployer=get_checksum_address(factory),
             init_hash=UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH,
         )
-        
+
         # Register state
         self._v2_states[(addr, block)] = V2PoolState(
             block=block,
             reserves_token0=reserves0,
             reserves_token1=reserves1,
         )
-        
+
         return self
-    
+
     def add_curve_pool(
         self,
         address: str,
@@ -557,12 +569,12 @@ class FakeDataSource:
     ) -> "FakeDataSource":
         """Register a Curve pool. Returns self for chaining."""
         addr = get_checksum_address(address)
-        
+
         # Auto-register tokens
         for token_addr in tokens:
             if (get_checksum_address(token_addr), chain_id) not in self._tokens:
                 self.add_token(token_addr, token_addr[:8], token_addr[:6], 18, chain_id)
-        
+
         # Register metadata
         self._curve_metadata[addr] = CurvePoolMetadata(
             address=addr,
@@ -586,22 +598,22 @@ class FakeDataSource:
             gamma=None,
             offpeg_fee_multiplier=None,
         )
-        
+
         # Register state
         self._curve_states[(addr, block)] = CurvePoolState(
             block=block,
             balances=tuple(balances),
         )
-        
+
         # Register fetchers (or use defaults)
         self._fetcher_factories[addr] = fetchers or FetcherFactories(
             timestamp_fetcher=lambda block: 1700000000,
         )
-        
+
         return self
-    
+
     # === ChainDataSource Protocol Implementation ===
-    
+
     def get_token_metadata(
         self,
         address: ChecksumAddress,
@@ -611,7 +623,7 @@ class FakeDataSource:
         if key not in self._tokens:
             raise ValueError(f"Token not registered: {address} on chain {chain_id}")
         return self._tokens[key]
-    
+
     def get_v2_pool_metadata(
         self,
         address: ChecksumAddress,
@@ -620,7 +632,7 @@ class FakeDataSource:
         if address not in self._v2_metadata:
             raise ValueError(f"V2 pool not registered: {address}")
         return self._v2_metadata[address]
-    
+
     def get_v2_pool_state(
         self,
         address: ChecksumAddress,
@@ -634,7 +646,7 @@ class FakeDataSource:
                     return state
             raise ValueError(f"No state registered for V2 pool {address}")
         return self._v2_states[key]
-    
+
     def get_curve_pool_metadata(
         self,
         address: ChecksumAddress,
@@ -643,7 +655,7 @@ class FakeDataSource:
         if address not in self._curve_metadata:
             raise ValueError(f"Curve pool not registered: {address}")
         return self._curve_metadata[address]
-    
+
     def get_curve_pool_state(
         self,
         address: ChecksumAddress,
@@ -656,7 +668,7 @@ class FakeDataSource:
                     return state
             raise ValueError(f"No state registered for Curve pool {address}")
         return self._curve_states[key]
-    
+
     def get_curve_fetcher_factories(
         self,
         address: ChecksumAddress,
@@ -671,9 +683,10 @@ class FakeDataSource:
 ```python
 # src/degenbot/bot.py (modified)
 
+
 class Bot:
     """Orchestrator that delegates I/O to a ChainDataSource."""
-    
+
     def __init__(
         self,
         config: DegenbotConfig,
@@ -686,18 +699,18 @@ class Bot:
         self.tokens = TokenRegistry()
         self.managed_pools = ManagedPoolRegistry()
         self._managers: dict[tuple[ChainId, str], AbstractPoolManager] = {}
-        
+
         # Use provided chain data source or create default
         if chain_data is None:
             provider = self.connections.get_provider(config.default_chain_id)
             web3 = self.connections.get_web3(config.default_chain_id)
             chain_data = OnChainDataSource(web3, provider)
-        
+
         self.chain_data = chain_data
-        
+
         # Check database migration version
         self._check_database_version()
-    
+
     def build_erc20token(
         self,
         address: str,
@@ -708,14 +721,14 @@ class Bot:
         """Build token using chain data source."""
         address = get_checksum_address(address)
         chain_id = chain_id or self.connections.default_chain_id
-        
+
         # Check registry
         if existing := self.tokens.get(address, chain_id):
             return existing
-        
+
         # Fetch metadata via chain data source
         metadata = self.chain_data.get_token_metadata(address, chain_id)
-        
+
         # Construct I/O-free token
         token = Erc20Token(
             address=metadata.address,
@@ -724,14 +737,14 @@ class Bot:
             symbol=metadata.symbol,
             decimals=metadata.decimals,
         )
-        
+
         self.tokens.add(address, chain_id, token)
-        
+
         if not silent:
             logger.info(f"• {token.symbol} ({token.name})")
-        
+
         return token
-    
+
     def build_v2_pool(
         self,
         pool_address: str,
@@ -743,23 +756,23 @@ class Bot:
         """Build V2 pool using chain data source."""
         pool_address = get_checksum_address(pool_address)
         chain_id = chain_id or self.connections.default_chain_id
-        
+
         # Check registry
         if existing := self.pools.get(pool_address, chain_id):
             return existing
-        
+
         state_block = state_block or self.chain_data.get_current_block(chain_id)
-        
+
         # Fetch metadata (immutable)
         metadata = self.chain_data.get_v2_pool_metadata(pool_address, chain_id)
-        
+
         # Build tokens
         token0 = self.build_erc20token(metadata.token0, chain_id=chain_id, silent=silent)
         token1 = self.build_erc20token(metadata.token1, chain_id=chain_id, silent=silent)
-        
+
         # Fetch state (mutable)
         state = self.chain_data.get_v2_pool_state(pool_address, state_block)
-        
+
         # Construct I/O-free pool
         pool = UniswapV2Pool(
             address=metadata.address,
@@ -775,16 +788,16 @@ class Bot:
             deployer_address=metadata.deployer,
             init_hash=metadata.init_hash,
         )
-        
+
         self.pools.add(pool_address, chain_id, pool)
-        
+
         if not silent:
             logger.info(pool.name)
             logger.info(f"• Token 0: {token0} - Reserves: {state.reserves_token0}")
             logger.info(f"• Token 1: {token1} - Reserves: {state.reserves_token1}")
-        
+
         return pool
-    
+
     def build_curve_pool(
         self,
         address: str,
@@ -796,33 +809,35 @@ class Bot:
         """Build Curve pool using chain data source."""
         address = get_checksum_address(address)
         chain_id = chain_id or self.connections.default_chain_id
-        
+
         # Check registry
         if existing := self.pools.get(address, chain_id):
             return existing
-        
+
         state_block = state_block or self.chain_data.get_current_block(chain_id)
-        
+
         # Fetch metadata (immutable)
         metadata = self.chain_data.get_curve_pool_metadata(address, chain_id)
-        
+
         # Build tokens
         tokens = tuple(
             self.build_erc20token(addr, chain_id=chain_id, silent=silent)
             for addr in metadata.tokens
         )
-        
+
         # Build base pool (recursive)
         base_pool = None
         if metadata.base_pool:
-            base_pool = self.build_curve_pool(metadata.base_pool, chain_id=chain_id, state_block=state_block)
-        
+            base_pool = self.build_curve_pool(
+                metadata.base_pool, chain_id=chain_id, state_block=state_block
+            )
+
         # Fetch state (mutable)
         state = self.chain_data.get_curve_pool_state(address, state_block)
-        
+
         # Get fetcher factories
         fetchers = self.chain_data.get_curve_fetcher_factories(address, chain_id, metadata)
-        
+
         # Construct I/O-free pool
         pool = CurveStableswapPool(
             address=metadata.address,
@@ -840,7 +855,11 @@ class Bot:
             future_a_coefficient_time=metadata.future_a_time,
             # Metapool
             base_pool=base_pool,
-            tokens_underlying=tuple(self.build_erc20token(a, chain_id) for a in metadata.tokens_underlying) if metadata.tokens_underlying else None,
+            tokens_underlying=tuple(
+                self.build_erc20token(a, chain_id) for a in metadata.tokens_underlying
+            )
+            if metadata.tokens_underlying
+            else None,
             # Lending
             use_lending=metadata.use_lending,
             precision_multipliers=metadata.precision_multipliers,
@@ -853,15 +872,15 @@ class Bot:
             # Fetchers
             **fetchers.__dict__,
         )
-        
+
         self.pools.add(address, chain_id, pool)
-        
+
         if not silent:
             logger.info(pool.name)
             logger.info(f"• Address: {pool.address}")
             logger.info(f"• Tokens: {[t.symbol for t in pool.tokens]}")
             logger.info(f"• A: {pool.a_coefficient}")
-        
+
         return pool
 ```
 
@@ -1174,12 +1193,12 @@ src/degenbot/chain_data/
 ```python
 class RecordingDataSource:
     """Wraps another source and records all fetches."""
-    
+
     def __init__(self, source: ChainDataSource, output_path: str):
         self.source = source
         self.output_path = output_path
         self.recording: list[dict] = []
-    
+
     def get_v2_pool_metadata(self, address, chain_id):
         metadata = self.source.get_v2_pool_metadata(address, chain_id)
         self.recording.append({
@@ -1188,20 +1207,20 @@ class RecordingDataSource:
             "result": metadata,
         })
         return metadata
-    
+
     def save(self):
-        with open(self.output_path, 'w') as f:
+        with open(self.output_path, "w") as f:
             json.dump(self.recording, f, indent=2, cls=DataclassEncoder)
 
 
 class ReplayingDataSource:
     """Replays recorded fetches."""
-    
+
     def __init__(self, recording_path: str):
         with open(recording_path) as f:
             self.recording = json.load(f, cls=DataclassDecoder)
         self._index = 0
-    
+
     def get_v2_pool_metadata(self, address, chain_id):
         entry = self.recording[self._index]
         self._index += 1
@@ -1211,10 +1230,12 @@ class ReplayingDataSource:
 **Usage:**
 ```python
 # Record once on fork
-bot = Bot(config, chain_data=RecordingDataSource(
-    OnChainDataSource(provider),
-    "tests/fixtures/tripool_recording.json"
-))
+bot = Bot(
+    config,
+    chain_data=RecordingDataSource(
+        OnChainDataSource(provider), "tests/fixtures/tripool_recording.json"
+    ),
+)
 pool = bot.build_curve_pool("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7")
 
 # Replay in tests

@@ -67,6 +67,7 @@ class TickDataTypes:
     the bitmap-at-word and liquidity-at-tick values. This dataclass
     captures those differences so the algorithm can be written once.
     """
+
     bitmap_at_word: type  # UniswapV3BitmapAtWord or UniswapV4BitmapAtWord
     liquidity_at_tick: type  # UniswapV3LiquidityAtTick or UniswapV4LiquidityAtTick
 

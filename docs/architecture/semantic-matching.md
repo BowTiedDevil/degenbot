@@ -312,9 +312,7 @@ for other_ev in events:
 ```python
 # Look for burn by user and token, any position
 for other_ev in events:
-    if (other_ev.type == BURN and 
-        other_ev.user == ev.user and 
-        other_ev.token == ev.token):
+    if other_ev.type == BURN and other_ev.user == ev.user and other_ev.token == ev.token:
         match = other_ev
         break
 ```

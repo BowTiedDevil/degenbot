@@ -64,7 +64,9 @@ This has 3–4 branches instead of 5, and no negative isinstance. Each builder's
 ```python
 # v2_pool_builder.py
 class V2PoolBuilder(PoolBuilder):
-    def update(self, pool: AbstractLiquidityPool, *, block_number: BlockIdentifier | None = None) -> bool:
+    def update(
+        self, pool: AbstractLiquidityPool, *, block_number: BlockIdentifier | None = None
+    ) -> bool:
         if isinstance(pool, AerodromeV2Pool):
             return self._update_aerodrome_v2(pool, block_number=block_number)
         return self._update_uniswap_v2(pool, block_number=block_number)
@@ -126,7 +128,9 @@ Each builder's `update()` method absorbs the corresponding `_update_*` methods f
 #### V2PoolBuilder.update()
 
 ```python
-def update(self, pool: AbstractLiquidityPool, *, block_number: BlockIdentifier | None = None) -> bool:
+def update(
+    self, pool: AbstractLiquidityPool, *, block_number: BlockIdentifier | None = None
+) -> bool:
     if isinstance(pool, AerodromeV2Pool):
         return self._update_aerodrome_v2(pool, block_number=block_number)
     if isinstance(pool, CamelotLiquidityPool):
@@ -134,15 +138,19 @@ def update(self, pool: AbstractLiquidityPool, *, block_number: BlockIdentifier |
         return self._update_uniswap_v2(pool, block_number=block_number)
     return self._update_uniswap_v2(pool, block_number=block_number)
 
+
 def _update_uniswap_v2(self, pool: UniswapV2Pool, *, block_number: int | None) -> bool:
     provider = self._connections.get_provider(pool.chain_id)
     _block_number = block_number if block_number is not None else provider.get_block_number()
     reserves0, reserves1 = pool.get_reserves(provider, block_identifier=_block_number)
     if pool.reserves_token0 == reserves0 and pool.reserves_token1 == reserves1:
         return False
-    update = UniswapV2PoolExternalUpdate(block_number=_block_number, reserves_token0=reserves0, reserves_token1=reserves1)
+    update = UniswapV2PoolExternalUpdate(
+        block_number=_block_number, reserves_token0=reserves0, reserves_token1=reserves1
+    )
     pool.external_update(update)
     return True
+
 
 def _update_aerodrome_v2(self, pool: AerodromeV2Pool, *, block_number: int | None) -> bool:
     # Same pattern with AerodromeV2PoolExternalUpdate
@@ -152,7 +160,9 @@ def _update_aerodrome_v2(self, pool: AerodromeV2Pool, *, block_number: int | Non
 #### V3PoolBuilder.update()
 
 ```python
-def update(self, pool: AbstractLiquidityPool, *, block_number: BlockIdentifier | None = None) -> bool:
+def update(
+    self, pool: AbstractLiquidityPool, *, block_number: BlockIdentifier | None = None
+) -> bool:
     if not isinstance(pool, UniswapV3Pool) or isinstance(pool, UniswapV4Pool):
         raise TypeError(f"V3PoolBuilder cannot update {type(pool).__name__}")
     provider = self._connections.get_provider(pool.chain_id)
@@ -165,7 +175,9 @@ def update(self, pool: AbstractLiquidityPool, *, block_number: BlockIdentifier |
     )
     sqrt_price_x96, tick, *_ = cast(
         "tuple[int, ...]",
-        eth_abi.abi.decode(types=["uint160", "int24", "uint16", "uint16", "uint16"], data=slot0_result),
+        eth_abi.abi.decode(
+            types=["uint160", "int24", "uint16", "uint16", "uint16"], data=slot0_result
+        ),
     )
     (liquidity,) = cast(
         "tuple[int]",
@@ -183,7 +195,10 @@ def update(self, pool: AbstractLiquidityPool, *, block_number: BlockIdentifier |
         return False
 
     update = UniswapV3PoolExternalUpdate(
-        block_number=_block_number, sqrt_price_x96=sqrt_price_x96, tick=tick, liquidity=liquidity,
+        block_number=_block_number,
+        sqrt_price_x96=sqrt_price_x96,
+        tick=tick,
+        liquidity=liquidity,
     )
     pool.external_update(update)
     return True
@@ -210,6 +225,7 @@ Same pattern — absorb the current `_update_v4_pool` and `_update_curve_pool` l
 def update(self, pool: Any, *, block_number: BlockIdentifier | None = None) -> bool:
     builder = self._builder_for_pool(pool)
     return builder.update(pool, block_number=block_number)
+
 
 def _builder_for_pool(self, pool: Any) -> PoolBuilder:
     if isinstance(pool, UniswapV4Pool):

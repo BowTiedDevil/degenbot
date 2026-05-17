@@ -80,26 +80,33 @@ class AbstractSwapAmounts:
 def input_amount(self) -> int:
     return self.amount_in
 
+
 def output_amount(self) -> int:
     return self.min_amount_out
+
 
 # UniswapV2PoolSwapAmounts
 def input_amount(self) -> int:
     return max(self.amounts_in)
 
+
 def output_amount(self) -> int:
     return max(self.amounts_out)
+
 
 # UniswapV3PoolSwapAmounts
 def input_amount(self) -> int:
     return self.amount_in
 
+
 def output_amount(self) -> int:
     return self.amount_out
+
 
 # UniswapV4PoolSwapAmounts
 def input_amount(self) -> int:
     return self.amount_in
+
 
 def output_amount(self) -> int:
     return self.amount_out

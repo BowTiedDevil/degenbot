@@ -167,7 +167,7 @@ scaled_amount: int | None = enriched_event.scaled_amount
 
 And line 3376:
 ```python
-scaled_amount=scaled_amount,
+scaled_amount = (scaled_amount,)
 ```
 
 So when the code falls through to the else branch for REPAY_WITH_ATOKENS, it does use `enriched_event.scaled_amount`. The enrichment layer should have calculated this correctly using the DEBT_BURN formula.
@@ -177,7 +177,8 @@ But wait - the enrichment layer has a special case for REPAY operations:
 # From enrichment.py lines 239-252
 if (
     operation.operation_type in {OperationType.REPAY, OperationType.GHO_REPAY}
-    and scaled_event.event_type in {ScaledTokenEventType.DEBT_MINT, ScaledTokenEventType.GHO_DEBT_MINT}
+    and scaled_event.event_type
+    in {ScaledTokenEventType.DEBT_MINT, ScaledTokenEventType.GHO_DEBT_MINT}
     and scaled_event.balance_increase is not None
 ):
     # Use DEBT_BURN for burn rounding (floor)

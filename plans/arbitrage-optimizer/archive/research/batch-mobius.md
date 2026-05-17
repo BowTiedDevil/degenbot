@@ -18,8 +18,8 @@ Processes all paths with the same hop count simultaneously:
 
 ```python
 # Initialize recurrence (vectorized across batch dimension)
-K = gammas[:, 0] * reserves_out[:, 0]   # shape (num_paths,)
-M = reserves_in[:, 0].copy()             # copy to avoid mutating input
+K = gammas[:, 0] * reserves_out[:, 0]  # shape (num_paths,)
+M = reserves_in[:, 0].copy()  # copy to avoid mutating input
 N = gammas[:, 0].copy()
 
 # Forward pass: one update per hop (no iterations!)
@@ -31,11 +31,11 @@ for j in range(1, num_hops):
 
 # Closed-form optimal input (single vectorized call)
 half_diff = 0.5 * (log_K - log_M)
-x_opt = (sqrt(K*M) - M) / N            # direct (no overflow)
+x_opt = (sqrt(K * M) - M) / N  # direct (no overflow)
 x_opt = exp(log_M + log(expm1(half_diff)) - log_N)  # log-domain (overflow)
 
 # Profit at x_opt (simplified formula)
-profit = x_opt * expm1(half_diff)       # works in both domains
+profit = x_opt * expm1(half_diff)  # works in both domains
 ```
 
 ### Log-Domain Overflow Handling

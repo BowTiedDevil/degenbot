@@ -45,6 +45,7 @@ def _get_reserves(pool: Any) -> tuple[int, int] | None:
         return reserves[0], reserves[1]
     return None
 
+
 # Current _get_fee()
 @staticmethod
 def _get_fee(pool: Any) -> Fraction | None:
@@ -77,6 +78,7 @@ Add `reserves_for_cache()` and `fee_for_cache()` to the `ArbitrageCapablePool` p
 
 ```python
 # src/degenbot/types/pool_protocols.py
+
 
 @runtime_checkable
 class CacheablePool(Protocol):
@@ -115,20 +117,25 @@ class CacheablePool(Protocol):
 def reserves_for_cache(self) -> tuple[int, int]:
     return self.reserves_token0, self.reserves_token1
 
+
 def fee_for_cache(self) -> Fraction:
     return self._fee_token0  # Forward direction (token0 → token1)
+
 
 # AerodromeV2Pool
 def reserves_for_cache(self) -> tuple[int, int]:
     return self.reserves_token0, self.reserves_token1
 
+
 def fee_for_cache(self) -> Fraction:
     return self._fee  # Non-directional fee
+
 
 # UniswapV3Pool
 def reserves_for_cache(self) -> tuple[int, int]:
     """Compute virtual reserves for the Rust solver cache."""
     from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
+
     reserve_in, reserve_out = v3_virtual_reserves(
         liquidity=self.liquidity,
         sqrt_price_x96=self.sqrt_price_x96,
@@ -138,8 +145,10 @@ def reserves_for_cache(self) -> tuple[int, int]:
     )
     return reserve_in, reserve_out
 
+
 def fee_for_cache(self) -> Fraction:
     return Fraction(self._fee, self.FEE_DENOMINATOR)
+
 
 # UniswapV4Pool — same as V3
 ```
@@ -148,6 +157,7 @@ def fee_for_cache(self) -> Fraction:
 
 ```python
 # src/degenbot/arbitrage/optimizers/pool_cache_adapter.py
+
 
 class ArbPoolCacheAdapter(Subscriber):
     """
@@ -218,9 +228,11 @@ class ArbPoolCacheAdapter(Subscriber):
        assert pool.reserves_for_cache() == (1000, 2000)
        assert pool.fee_for_cache() == Fraction(3, 1000)
 
+
    def test_aerodrome_pool_fee_for_cache():
        pool = FakeAerodromePool(fee=Fraction(2, 1000))
        assert pool.fee_for_cache() == Fraction(2, 1000)
+
 
    def test_v3_pool_reserves_for_cache():
        pool = FakeV3Pool(liquidity=..., sqrt_price_x96=..., fee=3000)
@@ -245,6 +257,7 @@ class ArbPoolCacheAdapter(Subscriber):
        adapter = ArbPoolCacheAdapter(solver=fake_solver)
        pool_id = adapter.register(pool)
        assert pool_id is not None
+
 
    def test_adapter_updates_on_state_change():
        pool = FakeV2Pool(reserves_token0=100, reserves_token1=200, fee=Fraction(3, 1000))

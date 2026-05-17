@@ -95,14 +95,18 @@ class PoolClassRegistry:
 
     # --- Lookup ---
 
-    def get_v2_pool_class(self, chain_id: ChainId, factory_address: str) -> type[AbstractLiquidityPool]:
+    def get_v2_pool_class(
+        self, chain_id: ChainId, factory_address: str
+    ) -> type[AbstractLiquidityPool]:
         """Get the V2 pool class for (chain_id, factory), or the default."""
         return self._v2_classes.get(
             (chain_id, factory_address),
             self._default_v2_class,
         )
 
-    def get_v3_pool_class(self, chain_id: ChainId, factory_address: str) -> type[AbstractLiquidityPool]:
+    def get_v3_pool_class(
+        self, chain_id: ChainId, factory_address: str
+    ) -> type[AbstractLiquidityPool]:
         """Get the V3 pool class for (chain_id, factory), or the default."""
         return self._v3_classes.get(
             (chain_id, factory_address),

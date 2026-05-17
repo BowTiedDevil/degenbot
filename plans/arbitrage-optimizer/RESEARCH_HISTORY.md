@@ -189,8 +189,8 @@ scipy's `minimize_scalar` accepts `bracket` but ignores it — uses full bounds 
 
 **7. Numpy View Mutation Is Silent**
 ```python
-M *= r_in        # BAD: mutates view, corrupts input
-M = M * r_in     # GOOD: creates new array
+M *= r_in  # BAD: mutates view, corrupts input
+M = M * r_in  # GOOD: creates new array
 ```
 
 **8. Log-Domain Overflow Handling**
@@ -215,7 +215,7 @@ Equation 9 from Willetts & Harrington uses `d_i = I_{s_i=1}` — always non-nega
 **11. Token Decimals Must Be Normalized**
 Balancer pools hold tokens with different decimals (ETH=18, USDC=6). Upscale all to 18-decimal before applying invariant formulas:
 ```python
-upscaled = [r * 10**(18-d) for r, d in zip(reserves, decimals)]
+upscaled = [r * 10 ** (18 - d) for r, d in zip(reserves, decimals)]
 ```
 
 **12. V2-V3 Speedup Expectations vs Reality**
@@ -231,7 +231,7 @@ Tolerance of `1.0` (1 wei) was too large — gradient at equilibrium often < 1.0
 
 **15. Equilibrium Price Prediction**
 ```python
-p_eq = sqrt(v2_price * v3_price) * (1 - avg_fee)**0.5
+p_eq = sqrt(v2_price * v3_price) * (1 - avg_fee) ** 0.5
 ```
 Enables O(1) tick range identification instead of O(n) iteration.
 

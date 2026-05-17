@@ -59,8 +59,7 @@ candidate_burns = sorted(
         for ev in scaled_events
         if ev.event["logIndex"] not in assigned_indices
         and ev.user_address == user
-        and ev.event_type
-        in {ScaledTokenEventType.DEBT_BURN, ScaledTokenEventType.GHO_DEBT_BURN}
+        and ev.event_type in {ScaledTokenEventType.DEBT_BURN, ScaledTokenEventType.GHO_DEBT_BURN}
         and get_checksum_address(ev.event["address"]) == debt_v_token_address  # <-- PROBLEM
     ],
     key=lambda e: e.event["logIndex"],

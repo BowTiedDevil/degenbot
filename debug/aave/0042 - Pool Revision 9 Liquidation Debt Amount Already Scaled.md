@@ -121,9 +121,7 @@ if scaled_event.event_type in {
     ScaledTokenEventType.ERC20_DEBT_TRANSFER,
 }:
     # Debt events use debtToCover
-    raw_amount = RawAmountExtractor.extract_liquidation_debt(
-        operation.pool_event
-    )
+    raw_amount = RawAmountExtractor.extract_liquidation_debt(operation.pool_event)
     # Pool Revision 9+ passes pre-scaled amounts to token contracts
     # Skip TokenMath calculation - use raw_amount directly as scaled
     if self.pool_revision >= 9:  # noqa: PLR2004

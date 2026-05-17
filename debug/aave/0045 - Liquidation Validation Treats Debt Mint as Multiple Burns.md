@@ -30,7 +30,7 @@ def is_debt(self) -> bool:
         ScaledTokenEventType.DEBT_BURN,
         ScaledTokenEventType.DEBT_MINT,  # <-- PROBLEM: Mint is not a burn!
         ScaledTokenEventType.DEBT_TRANSFER,
-        ...
+        ...,
     }
 ```
 

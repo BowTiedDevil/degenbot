@@ -117,10 +117,10 @@ else:
 
 ```python
 # Before:
-pool_revision=tx_context.pool_revision,
+pool_revision = (tx_context.pool_revision,)
 
 # After:
-a_token_revision=collateral_asset.a_token_revision,
+a_token_revision = (collateral_asset.a_token_revision,)
 ```
 
 ### 4. Updated Documentation

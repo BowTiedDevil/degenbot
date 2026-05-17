@@ -134,15 +134,12 @@ The fix adds token address validation when matching liquidation events. Two new 
 #### Helper Methods Added:
 
 ```python
-def _get_a_token_for_asset(
-    self, underlying_asset: ChecksumAddress
-) -> ChecksumAddress | None:
+def _get_a_token_for_asset(self, underlying_asset: ChecksumAddress) -> ChecksumAddress | None:
     """Get the aToken address for an underlying asset."""
     # Queries database to find aToken for given underlying asset
-    
-def _get_v_token_for_asset(
-    self, underlying_asset: ChecksumAddress
-) -> ChecksumAddress | None:
+
+
+def _get_v_token_for_asset(self, underlying_asset: ChecksumAddress) -> ChecksumAddress | None:
     """Get the vToken address for an underlying asset."""
     # Queries database to find vToken for given underlying asset
 ```
@@ -164,16 +161,10 @@ debt_v_token_address = self._get_v_token_for_asset(debt_asset)
 
 # Match collateral events only if they belong to this liquidation's collateral asset
 event_token_address = get_checksum_address(ev.event["address"])
-if (
-    collateral_a_token_address is not None
-    and event_token_address != collateral_a_token_address
-):
+if collateral_a_token_address is not None and event_token_address != collateral_a_token_address:
     continue
 
-if (
-    ev.event_type == ScaledTokenEventType.COLLATERAL_BURN
-    and ev.user_address == user
-):
+if ev.event_type == ScaledTokenEventType.COLLATERAL_BURN and ev.user_address == user:
     collateral_burn = ev
 ```
 

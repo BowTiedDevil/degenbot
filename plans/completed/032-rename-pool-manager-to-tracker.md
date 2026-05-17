@@ -70,10 +70,18 @@ Add deprecated aliases for the old class names in each module's `__init__.py`:
 # In uniswap/__init__.py
 def __getattr__(name: str) -> Any:
     if name == "UniswapV2PoolManager":
-        warnings.warn("UniswapV2PoolManager is deprecated, use UniswapV2PoolTracker", DeprecationWarning, stacklevel=2)
+        warnings.warn(
+            "UniswapV2PoolManager is deprecated, use UniswapV2PoolTracker",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return UniswapV2PoolTracker
     if name == "UniswapV3PoolManager":
-        warnings.warn("UniswapV3PoolManager is deprecated, use UniswapV3PoolTracker", DeprecationWarning, stacklevel=2)
+        warnings.warn(
+            "UniswapV3PoolManager is deprecated, use UniswapV3PoolTracker",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return UniswapV3PoolTracker
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 ```
@@ -84,7 +92,9 @@ For `Bot.add_manager()`, add a deprecated wrapper:
 
 ```python
 def add_manager(self, *args: Any, **kwargs: Any) -> Any:
-    warnings.warn("add_manager() is deprecated, use add_tracker()", DeprecationWarning, stacklevel=2)
+    warnings.warn(
+        "add_manager() is deprecated, use add_tracker()", DeprecationWarning, stacklevel=2
+    )
     return self.add_tracker(*args, **kwargs)
 ```
 
@@ -238,6 +248,7 @@ If `ManagedLiquidityPoolTable.manager_id` is renamed to `tracker_id`, create an 
 ```python
 def upgrade() -> None:
     op.alter_column("managed_liquidity_pools", "manager_id", new_column_name="tracker_id")
+
 
 def downgrade() -> None:
     op.alter_column("managed_liquidity_pools", "tracker_id", new_column_name="manager_id")

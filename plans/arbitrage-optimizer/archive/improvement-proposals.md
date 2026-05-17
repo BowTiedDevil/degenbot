@@ -110,8 +110,9 @@ def net_profit(x, gas_cost_eth, gas_price, token_price):
 ```python
 from scipy.optimize import minimize
 
+
 def update_prices(nu, gradient, hessian_approx):
-    result = minimize(lambda x: -lagrangian(x), nu, jac=gradient, method='L-BFGS-B')
+    result = minimize(lambda x: -lagrangian(x), nu, jac=gradient, method="L-BFGS-B")
     return result.x
 ```
 
@@ -170,7 +171,9 @@ results = vectorized_mobius.solve(gpu_paths)
 **Solution**: Add structured logging/metrics:
 ```python
 import structlog
+
 logger = structlog.get_logger()
+
 
 def solve_with_telemetry(optimizer, pools, input_token):
     with logger.timer("optimizer.solve", optimizer=type(optimizer).__name__):

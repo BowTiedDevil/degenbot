@@ -91,6 +91,7 @@ def _check_pool_compatibility(pool):
     else:
         return PoolCompatibility.COMPATIBLE
 
+
 # In _validate_pools:
 for i, pool in enumerate(self._pools):
     compat = _check_pool_compatibility(pool)
@@ -122,9 +123,9 @@ from degenbot.arbitrage.optimizers.solver_hop_builders import (
     pools_to_solve_input,
 )
 
-"pool_state_to_hop",
-"pool_to_hop",
-"pools_to_solve_input",
+("pool_state_to_hop",)
+("pool_to_hop",)
+("pools_to_solve_input",)
 ```
 
 ### Step 4: Rewrite tests

@@ -100,14 +100,17 @@ _USE_NEW_ENRICHMENT = os.environ.get("DEGENBOT_NEW_AAVE_ENRICHMENT", "").lower()
     "yes",
 }
 
+
 class ScaledEventEnricher:
     def _get_enricher(self):
         if self._enricher is None:
             if _USE_NEW_ENRICHMENT:
                 from degenbot.aave.enrichment.core import ScaledEventEnricher as NewEnricher
+
                 self._enricher = NewEnricher(...)
             else:
                 from degenbot.aave.enrichment._legacy import ScaledEventEnricher as LegacyEnricher
+
                 self._enricher = LegacyEnricher(...)
         return self._enricher
 ```

@@ -153,9 +153,9 @@ d2 = 1947199140  # AAVE liquidation
 # Individual calculations
 s1 = d1 * 10**27 // index  # = 118,788,760
 s2 = d2 * 10**27 // index  # = 1,689,983,687
-individual_sum = s1 + s2   # = 1,808,772,447
+individual_sum = s1 + s2  # = 1,808,772,447
 
-# Combined calculation  
+# Combined calculation
 total = (d1 + d2) * 10**27 // index  # = 1,808,772,447
 
 # In this case they're equal, so the 1 wei must come from elsewhere...
@@ -169,9 +169,7 @@ The code in `_process_debt_burn_with_match()` recalculates the scaled burn amoun
 
 ```python
 # Lines 3629-3631 in aave.py
-burn_value = token_math.get_debt_burn_scaled_amount(
-    aggregated_debt_to_cover, scaled_event.index
-)
+burn_value = token_math.get_debt_burn_scaled_amount(aggregated_debt_to_cover, scaled_event.index)
 ```
 
 However, `get_debt_burn_scaled_amount()` for token revision 1 uses `ray_div_floor()` (floor rounding), while the contract uses `ray_div()` (round-half-up) for VariableDebtToken rev 1.
@@ -236,9 +234,7 @@ When aggregating across multiple liquidations, the floor of the sum may differ f
 The code recalculates the burn amount from aggregated debtToCover for ALL liquidations:
 ```python
 # Lines 3629-3631 - PROBLEMATIC for multi-liquidation
-burn_value = token_math.get_debt_burn_scaled_amount(
-    aggregated_debt_to_cover, scaled_event.index
-)
+burn_value = token_math.get_debt_burn_scaled_amount(aggregated_debt_to_cover, scaled_event.index)
 ```
 
 This introduces rounding errors in multi-liquidation scenarios because:
@@ -256,9 +252,7 @@ This introduces rounding errors in multi-liquidation scenarios because:
 
 ```python
 # In aave_types.py, add to TransactionContext:
-liquidation_counts: dict[tuple[ChecksumAddress, ChecksumAddress], int] = field(
-    default_factory=dict
-)
+liquidation_counts: dict[tuple[ChecksumAddress, ChecksumAddress], int] = field(default_factory=dict)
 """Count of liquidations per (user, debt_v_token) pair."""
 ```
 
@@ -266,9 +260,7 @@ liquidation_counts: dict[tuple[ChecksumAddress, ChecksumAddress], int] = field(
 
 ```python
 # In _preprocess_liquidation_aggregates(), add:
-tx_context.liquidation_counts[key] = (
-    tx_context.liquidation_counts.get(key, 0) + 1
-)
+tx_context.liquidation_counts[key] = tx_context.liquidation_counts.get(key, 0) + 1
 ```
 
 **Change 3: Conditional burn calculation**
@@ -279,12 +271,8 @@ liquidation_count = tx_context.liquidation_counts.get(liquidation_key, 1)
 
 if liquidation_count > 1:
     # Multi-liquidation: use aggregated debtToCover
-    aggregated_debt_to_cover = tx_context.liquidation_aggregates.get(
-        liquidation_key, 0
-    )
-    token_math = TokenMathFactory.get_token_math_for_token_revision(
-        debt_asset.v_token_revision
-    )
+    aggregated_debt_to_cover = tx_context.liquidation_aggregates.get(liquidation_key, 0)
+    token_math = TokenMathFactory.get_token_math_for_token_revision(debt_asset.v_token_revision)
     burn_value = token_math.get_debt_burn_scaled_amount(
         aggregated_debt_to_cover, scaled_event.index
     )

@@ -93,9 +93,7 @@ if debt_to_cover > 0 and ev.amount > 0:
     ratio = ev.amount / debt_to_cover
     # If burn exceeds threshold, skip for this liquidation
     if ratio > DEBT_BURN_AMOUNT_MISMATCH_THRESHOLD:  # 100x
-        logger.debug(
-            f"_collect_primary_debt_burns: Skipping burn..."
-        )
+        logger.debug(f"_collect_primary_debt_burns: Skipping burn...")
         continue
 ```
 

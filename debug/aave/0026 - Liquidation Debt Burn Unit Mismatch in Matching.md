@@ -89,7 +89,7 @@ burn_amount = 35,780 + 619 = 36,399  # WRONG - double counting
 
 **Correct calculation should be:**
 ```python
-burn_amount = 35,780  # CORRECT - use as-is, it's already the net amount
+burn_amount = 35, 780  # CORRECT - use as-is, it's already the net amount
 ```
 
 ## Fix
@@ -160,8 +160,9 @@ This bug only manifested because:
 3. **Add assertion** in enrichment to validate burn event semantics:
    ```python
    # In enrichment, verify that amount >= balance_increase for Burn events
-   assert scaled_event.amount >= scaled_event.balance_increase, \
+   assert scaled_event.amount >= scaled_event.balance_increase, (
        f"Burn event amount ({scaled_event.amount}) should be >= balance_increase ({scaled_event.balance_increase})"
+   )
    ```
 
 4. **Review other burn event usages** to ensure this pattern isn't repeated elsewhere:

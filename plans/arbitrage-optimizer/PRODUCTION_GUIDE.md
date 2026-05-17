@@ -72,8 +72,12 @@ solver = ArbSolver()
 
 # Register pools at state update time (once per block)
 fee = Fraction(3, 1000)  # 0.3%
-pool_id_0 = solver.register_pool(reserve_in=1_500_000_000_000, reserve_out=800_000_000_000_000_000, fee=fee)
-pool_id_1 = solver.register_pool(reserve_in=1_000_000_000_000_000_000, reserve_out=2_000_000_000_000, fee=fee)
+pool_id_0 = solver.register_pool(
+    reserve_in=1_500_000_000_000, reserve_out=800_000_000_000_000_000, fee=fee
+)
+pool_id_1 = solver.register_pool(
+    reserve_in=1_000_000_000_000_000_000, reserve_out=2_000_000_000_000, fee=fee
+)
 
 # Solve by pool ID (no Python objects on hot path)
 result = solver.solve_cached([pool_id_0, pool_id_1])
@@ -147,9 +151,7 @@ The Rust V3-V3 solver (`solve_v3_v3`) handles two-V3-hop paths where both pools 
 For N-token weighted pool basket trades:
 
 ```python
-from degenbot.arbitrage.optimizers.solver import (
-    ArbSolver, BalancerMultiTokenHop, SolveInput
-)
+from degenbot.arbitrage.optimizers.solver import ArbSolver, BalancerMultiTokenHop, SolveInput
 from fractions import Fraction
 
 hop = BalancerMultiTokenHop(
@@ -206,6 +208,7 @@ DEGENBOT_MERGED_INT_REFINEMENT=1 # Enabled (default)
 ```python
 # Module-level constant
 from degenbot.arbitrage.optimizers.solver import USE_MERGED_INT_REFINEMENT
+
 USE_MERGED_INT_REFINEMENT = False  # Disable
 ```
 
@@ -228,6 +231,7 @@ DEGENBOT_RAW_ARRAY_MARSHALLING=1 # Enabled (default)
 ```python
 # Module-level constant
 from degenbot.arbitrage.optimizers.solver import USE_RAW_ARRAY_MARSHALLING
+
 USE_RAW_ARRAY_MARSHALLING = False  # Disable
 ```
 

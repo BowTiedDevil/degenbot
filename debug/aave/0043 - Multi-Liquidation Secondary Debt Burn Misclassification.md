@@ -163,7 +163,8 @@ def _collect_secondary_debt_burns(
 ```python
 # Count liquidations for this user
 user_liquidation_count = sum(
-    1 for ev in all_events
+    1
+    for ev in all_events
     if ev["topics"][0] == AaveV3PoolEvent.LIQUIDATION_CALL.value
     and decode_address(ev["topics"][3]) == user
 )

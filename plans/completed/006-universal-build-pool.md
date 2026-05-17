@@ -52,16 +52,17 @@ The resolver returns a structured descriptor, not a class:
 
 ```python
 class PoolInvariant(Enum):
-    CONSTANT_PRODUCT = "constant_product"       # V2-family
+    CONSTANT_PRODUCT = "constant_product"  # V2-family
     CONCENTRATED_LIQUIDITY = "concentrated_liquidity"  # V3-family
-    STABLESWAP = "stableswap"                    # Curve V1-family
-    WEIGHTED = "weighted"                        # Balancer (future)
+    STABLESWAP = "stableswap"  # Curve V1-family
+    WEIGHTED = "weighted"  # Balancer (future)
+
 
 @dataclass(frozen=True)
 class PoolTypeDescriptor:
     invariant: PoolInvariant
-    variant: str | None         # "sushiswap", "camelot", "aerodrome_v2", etc.
-                                # None = canonical Uniswap variant
+    variant: str | None  # "sushiswap", "camelot", "aerodrome_v2", etc.
+    # None = canonical Uniswap variant
     factory: ChecksumAddress | None
 ```
 
@@ -147,16 +148,36 @@ A private mapping from DB `kind` values to `PoolTypeDescriptor`:
 
 ```python
 _KIND_TO_DESCRIPTOR: dict[str, PoolTypeDescriptor] = {
-    "uniswap_v2":      PoolTypeDescriptor(invariant=PoolInvariant.CONSTANT_PRODUCT, variant=None, factory=None),
-    "sushiswap_v2":   PoolTypeDescriptor(invariant=PoolInvariant.CONSTANT_PRODUCT, variant="sushiswap", factory=None),
-    "pancakeswap_v2": PoolTypeDescriptor(invariant=PoolInvariant.CONSTANT_PRODUCT, variant="pancakeswap", factory=None),
-    "camelot_v2":     PoolTypeDescriptor(invariant=PoolInvariant.CONSTANT_PRODUCT, variant="camelot", factory=None),
-    "aerodrome_v2":   PoolTypeDescriptor(invariant=PoolInvariant.CONSTANT_PRODUCT, variant="aerodrome_v2", factory=None),
-    "swapbased_v2":   PoolTypeDescriptor(invariant=PoolInvariant.CONSTANT_PRODUCT, variant="swapbased", factory=None),
-    "uniswap_v3":     PoolTypeDescriptor(invariant=PoolInvariant.CONCENTRATED_LIQUIDITY, variant=None, factory=None),
-    "sushiswap_v3":   PoolTypeDescriptor(invariant=PoolInvariant.CONCENTRATED_LIQUIDITY, variant="sushiswap", factory=None),
-    "pancakeswap_v3": PoolTypeDescriptor(invariant=PoolInvariant.CONCENTRATED_LIQUIDITY, variant="pancakeswap", factory=None),
-    "aerodrome_v3":   PoolTypeDescriptor(invariant=PoolInvariant.CONCENTRATED_LIQUIDITY, variant="aerodrome_v3", factory=None),
+    "uniswap_v2": PoolTypeDescriptor(
+        invariant=PoolInvariant.CONSTANT_PRODUCT, variant=None, factory=None
+    ),
+    "sushiswap_v2": PoolTypeDescriptor(
+        invariant=PoolInvariant.CONSTANT_PRODUCT, variant="sushiswap", factory=None
+    ),
+    "pancakeswap_v2": PoolTypeDescriptor(
+        invariant=PoolInvariant.CONSTANT_PRODUCT, variant="pancakeswap", factory=None
+    ),
+    "camelot_v2": PoolTypeDescriptor(
+        invariant=PoolInvariant.CONSTANT_PRODUCT, variant="camelot", factory=None
+    ),
+    "aerodrome_v2": PoolTypeDescriptor(
+        invariant=PoolInvariant.CONSTANT_PRODUCT, variant="aerodrome_v2", factory=None
+    ),
+    "swapbased_v2": PoolTypeDescriptor(
+        invariant=PoolInvariant.CONSTANT_PRODUCT, variant="swapbased", factory=None
+    ),
+    "uniswap_v3": PoolTypeDescriptor(
+        invariant=PoolInvariant.CONCENTRATED_LIQUIDITY, variant=None, factory=None
+    ),
+    "sushiswap_v3": PoolTypeDescriptor(
+        invariant=PoolInvariant.CONCENTRATED_LIQUIDITY, variant="sushiswap", factory=None
+    ),
+    "pancakeswap_v3": PoolTypeDescriptor(
+        invariant=PoolInvariant.CONCENTRATED_LIQUIDITY, variant="pancakeswap", factory=None
+    ),
+    "aerodrome_v3": PoolTypeDescriptor(
+        invariant=PoolInvariant.CONCENTRATED_LIQUIDITY, variant="aerodrome_v3", factory=None
+    ),
 }
 ```
 

@@ -32,38 +32,43 @@ There are 9+ optimizer classes with different APIs:
 class Hop:
     """
     A single pool hop in an arbitrage path.
-    
+
     Encodes everything needed for swap math: reserves, fee, and optional
     V3 bounded-liquidity data. Every optimizer accepts a list of Hops.
     """
-    reserve_in: int        # Input reserve in wei
-    reserve_out: int        # Output reserve in wei
-    fee: Fraction           # Fee as Fraction (e.g. Fraction(3, 1000) for 0.3%)
-    
+
+    reserve_in: int  # Input reserve in wei
+    reserve_out: int  # Output reserve in wei
+    fee: Fraction  # Fee as Fraction (e.g. Fraction(3, 1000) for 0.3%)
+
     # V3/V4 bounded liquidity (None for V2)
     liquidity: int | None = None
-    sqrt_price: int | None = None        # X96 sqrt price
+    sqrt_price: int | None = None  # X96 sqrt price
     tick_lower: int | None = None
     tick_upper: int | None = None
 
-@dataclass(frozen=True, slots=True)  
+
+@dataclass(frozen=True, slots=True)
 class SolveInput:
     """
     Unified input for all optimizers.
     """
+
     hops: tuple[Hop, ...]
     max_input: int | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class SolveResult:
     """
     Unified output from all optimizers.
     """
-    optimal_input: int     # Optimal input in wei
-    profit: int            # Expected profit in wei
+
+    optimal_input: int  # Optimal input in wei
+    profit: int  # Expected profit in wei
     success: bool
     iterations: int
-    method: SolverMethod    # Which solver was used
+    method: SolverMethod  # Which solver was used
     error: str | None = None
 ```
 
@@ -72,13 +77,13 @@ class SolveResult:
 ```python
 class Solver(ABC):
     """Base class for all optimizers."""
-    
+
     @abstractmethod
     def solve(self, input: SolveInput) -> SolveResult:
         """Solve for optimal arbitrage."""
         ...
-    
-    @abstractmethod  
+
+    @abstractmethod
     def supports(self, input: SolveInput) -> bool:
         """Whether this solver can handle the given input."""
         ...

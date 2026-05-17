@@ -160,16 +160,15 @@ if operation.operation_type == OperationType.GHO_REPAY:
 **Lines 239-254**: Accept burn rounding for REPAY operations with interest accrual
 ```python
 if (
-    event_type in {
+    event_type
+    in {
         ScaledTokenEventType.DEBT_MINT,
         ScaledTokenEventType.GHO_DEBT_MINT,
     }
     and self.balance_increase is not None
     and self.balance_increase > 0
 ):
-    expected_burn = token_math.get_debt_burn_scaled_amount(
-        amount=raw, borrow_index=idx
-    )
+    expected_burn = token_math.get_debt_burn_scaled_amount(amount=raw, borrow_index=idx)
     if scaled == expected_burn:
         return self  # Validation passes with burn rounding
 ```
@@ -201,7 +200,7 @@ def process_mint_event(..., actual_repay_amount: int | None = None):
 Add 1 wei tolerance to balance verification:
 
 ```python
-assert abs(actual_scaled_balance - position.balance) <= 1, (...)
+assert abs(actual_scaled_balance - position.balance) <= 1, ...
 ```
 
 **Cons**: Masks the underlying issue, doesn't fix the calculation inconsistency.

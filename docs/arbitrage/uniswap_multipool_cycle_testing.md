@@ -130,9 +130,9 @@ After CVXPY solves for optimal swap amounts, the implementation re-calculates ex
 
 ```python
 amount_out = pool.calculate_tokens_out_from_tokens_in(
- token_in=token_in,
- token_in_quantity=amount_in,
- override_state=pool_state,
+    token_in=token_in,
+    token_in_quantity=amount_in,
+    override_state=pool_state,
 )
 ```
 

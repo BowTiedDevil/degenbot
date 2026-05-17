@@ -208,6 +208,7 @@ class ManagedPoolRegistry(MultiKeyAddressRegistry["AbstractLiquidityPool"]):
             address_fields=("pool_manager_address", "pool_id"),
             name="ManagedPool",
         )
+
     # get/add/remove delegate to super with named params
 
 
@@ -215,6 +216,7 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
     def __init__(self, managed_pool_registry: ManagedPoolRegistry | None = None) -> None:
         super().__init__(name="Pool")
         self._managed_pool_registry = managed_pool_registry or ManagedPoolRegistry()
+
     # get/add/remove delegate to base or managed_pool_registry for V4 pool_id
 ```
 
@@ -258,8 +260,7 @@ def get(  # type: ignore[override]
     chain_id: int,
     pool_address: str,
     pool_id: str | None = None,
-) -> AbstractLiquidityPool | None:
-    ...
+) -> AbstractLiquidityPool | None: ...
 ```
 
 ### `TypeVar("T")` Is Not Used

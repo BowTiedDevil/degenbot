@@ -111,8 +111,9 @@ This bug only manifested because:
 4. **Add assertion** to catch unmatched burns in INTEREST_ACCRUAL operations:
    ```python
    if operation.operation_type == OperationType.INTEREST_ACCRUAL:
-       assert scaled_event.event_type in MINT_EVENT_TYPES, \
+       assert scaled_event.event_type in MINT_EVENT_TYPES, (
            f"Burn event should not be classified as INTEREST_ACCRUAL"
+       )
    ```
 
 **Filename:** 0007 - Interest Accrual Burn Amount Zeroed in Enrichment

@@ -69,27 +69,29 @@ In `src/degenbot/curve/types.py`:
 ```python
 class CurveDataProvider(Protocol):
     """On-chain data access for a Curve StableSwap pool.
-    
+
     All methods are optional — the pool checks availability
     before calling. A provider that doesn't support a method
     should raise MissingCurveData if called.
     """
-    
+
     # Pool-state fetchers
     def virtual_price(self, block_number: int) -> int: ...
     def base_virtual_price(self, block_number: int) -> int: ...
     def base_cache_updated(self, block_number: int) -> int: ...
     def admin_balances(self, block_number: int) -> tuple[int, ...]: ...
-    def D(self, block_number: int) -> int: ...            # crypto only
-    def gamma(self, block_number: int) -> int: ...        # crypto only
+    def D(self, block_number: int) -> int: ...  # crypto only
+    def gamma(self, block_number: int) -> int: ...  # crypto only
     def price_scale(self, block_number: int) -> tuple[int, ...]: ...  # crypto only
-    
+
     # Chain-state fetchers
     def block_timestamp(self, block_number: int) -> int: ...
     def block_number(self) -> int: ...
-    
+
     # Helper fetchers
-    def token_balance(self, token: Erc20Token, holder: ChecksumAddress, block_number: int) -> int: ...
+    def token_balance(
+        self, token: Erc20Token, holder: ChecksumAddress, block_number: int
+    ) -> int: ...
     def token_total_supply(self, token: Erc20Token, block_number: int) -> int: ...
     def lending_rates(
         self,
@@ -114,24 +116,23 @@ The existing `CurveFetcherFactory` gains a `CurveDataProvider` adapter layer. Tw
 ```python
 class CurveFetcherFactory:
     """Creates fetcher closures AND implements CurveDataProvider."""
-    
+
     def __init__(self, *, connections: ConnectionManager, chain_id: ChainId) -> None:
         self._connections = connections
         self._chain_id = chain_id
         self._pool_address: ChecksumAddress | None = None
-    
+
     def set_pool_address(self, address: ChecksumAddress) -> None:
         self._pool_address = address
-    
+
     # --- CurveDataProvider implementation ---
-    
+
     def virtual_price(self, block_number: int) -> int:
         # Same logic as current virtual_price_fetcher() return value
         ...
-    
-    def block_timestamp(self, block_number: int) -> int:
-        ...
-    
+
+    def block_timestamp(self, block_number: int) -> int: ...
+
     # etc.
 ```
 

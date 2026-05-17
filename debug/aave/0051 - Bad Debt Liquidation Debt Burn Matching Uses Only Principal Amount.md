@@ -46,8 +46,10 @@ In `_collect_primary_debt_burns` (aave_transaction_operations.py:2022-2034):
 if debt_to_cover > 0 and ev.amount > 0:
     ratio = ev.amount / debt_to_cover  # BUG: Uses only principal, not total burn
     if ratio > DEBT_BURN_AMOUNT_MISMATCH_THRESHOLD:  # 100x threshold
-        logger.debug(f"_collect_primary_debt_burns: Skipping burn at logIndex {log_index} "
-                     f"(amount={ev.amount}) - {ratio:.0f}x debtToCover ({debt_to_cover})")
+        logger.debug(
+            f"_collect_primary_debt_burns: Skipping burn at logIndex {log_index} "
+            f"(amount={ev.amount}) - {ratio:.0f}x debtToCover ({debt_to_cover})"
+        )
         continue  # Skip this burn event!
 ```
 
@@ -108,7 +110,7 @@ The `debtToCover` in the `LiquidationCall` event (0.0135 ETH) represents only th
 # For multi-liquidation scenarios (debug/aave/0050):
 # Compare burn amount to debtToCover to find the best match.
 # Allow for interest accrual (burn can be slightly higher than debtToCover).
-# 
+#
 # IMPORTANT: Use total_burn = ev.amount + balance_increase, not just ev.amount.
 # In bad debt liquidations, the burn clears the entire debt (principal + interest),
 # which can be much larger than debtToCover. See debug/aave/0051.
@@ -117,7 +119,7 @@ if debt_to_cover > 0 and ev.amount > 0:
     # The Burn event's `value` field is principal only, balance_increase is interest
     # Total burned = value + balance_increase
     total_burn = ev.amount + (ev.balance_increase or 0)
-    
+
     # Match if total_burn >= debt_to_cover
     # - Normal liquidation: total_burn == debt_to_cover (within tolerance)
     # - Bad debt liquidation: total_burn > debt_to_cover (excess becomes deficit)
