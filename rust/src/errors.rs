@@ -10,8 +10,15 @@ pub enum TickMathError {
     #[error("Invalid tick value: {0}. Must be in range [-887272, 887272]")]
     InvalidTick(i32),
     /// Sqrt ratio value outside the valid [`MIN_SQRT_RATIO`, `MAX_SQRT_RATIO`) range.
-    #[error("Sqrt ratio out of bounds")]
-    SqrtRatioOutOfBounds,
+    #[error("Sqrt ratio {actual} out of bounds [{min}, {max})")]
+    SqrtRatioOutOfBounds {
+        /// The value that was out of bounds.
+        actual: alloy::primitives::aliases::U160,
+        /// Minimum valid sqrt ratio.
+        min: alloy::primitives::aliases::U160,
+        /// Maximum valid sqrt ratio (exclusive).
+        max: alloy::primitives::aliases::U160,
+    },
 }
 
 impl From<TickMathError> for PyErr {

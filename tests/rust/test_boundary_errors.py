@@ -43,17 +43,17 @@ class TestTickMathBoundaryErrors:
 
     def test_tick_at_sqrt_ratio_at_max(self):
         """Sqrt ratio >= MAX_SQRT_RATIO should raise ValueError."""
-        with pytest.raises(ValueError, match="Sqrt ratio out of bounds"):
+        with pytest.raises(ValueError, match="Sqrt ratio.*out of bounds"):
             get_tick_at_sqrt_ratio(MAX_SQRT_RATIO)
 
     def test_tick_at_sqrt_ratio_above_max(self):
         """Sqrt ratio > MAX_SQRT_RATIO should raise ValueError."""
-        with pytest.raises(ValueError, match="Sqrt ratio out of bounds"):
+        with pytest.raises(ValueError, match="Sqrt ratio.*out of bounds"):
             get_tick_at_sqrt_ratio(MAX_SQRT_RATIO + 1)
 
     def test_tick_at_sqrt_ratio_zero(self):
         """Sqrt ratio of 0 should raise ValueError."""
-        with pytest.raises(ValueError, match="Sqrt ratio out of bounds"):
+        with pytest.raises(ValueError, match="Sqrt ratio.*out of bounds"):
             get_tick_at_sqrt_ratio(0)
 
 

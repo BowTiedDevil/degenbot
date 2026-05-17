@@ -16,7 +16,7 @@ use crate::abi_types::AbiValue;
 use crate::py_cache::{bytes_to_int, bytes_to_int_signed};
 use alloy::primitives::{I256, U256};
 use pyo3::types::{PyAny, PyBool, PyBytes, PyDict, PyList, PyString};
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::{exceptions::PyValueError, prelude::*, PyTypeInfo};
 use std::str::FromStr;
 
 /// Wrapper for Alloy `U256` that implements `IntoPyObject`.
@@ -159,7 +159,7 @@ pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult
 
     // For larger integers, try to extract via Python's to_bytes method
     // Check if it's an integer type
-    let int_type = py.import("builtins")?.getattr("int")?;
+    let int_type = pyo3::types::PyInt::type_object(obj.py());
     if obj.is_instance(&int_type)? {
         // Try to get the sign
         let is_negative: bool = obj.call_method1("__lt__", (0,))?.extract()?;
