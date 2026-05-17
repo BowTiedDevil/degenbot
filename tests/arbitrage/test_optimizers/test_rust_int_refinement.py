@@ -9,8 +9,8 @@ both small and large (uint256-scale) reserves.
 from fractions import Fraction
 
 import pytest
-import degenbot.degenbot_rs as rs_mobius
 
+import degenbot.degenbot_rs as rs_mobius
 from degenbot.arbitrage.optimizers import SolveInput, SolverMethod
 from degenbot.arbitrage.optimizers.solver import ArbSolver
 from degenbot.exceptions import OptimizationError

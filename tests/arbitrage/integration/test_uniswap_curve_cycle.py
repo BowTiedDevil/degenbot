@@ -18,12 +18,12 @@ from degenbot.exceptions.arbitrage import ArbitrageError, NoLiquidity
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.provider import ProviderAdapter
 from degenbot.provider.call_helpers import encode_function_calldata
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.tick_bitmap import position
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
     UniswapV3PoolState,
 )

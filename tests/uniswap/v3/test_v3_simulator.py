@@ -9,9 +9,9 @@ import pytest
 
 from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot, MissingLiquidityData
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.concentrated.v3_simulator import calculate_swap
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 
 
 class TestV3SimulatorMatchesPool:

@@ -80,9 +80,7 @@ class Erc20Token(AbstractErc20Token):
     # -- Cache accessors (dictionary operations, no I/O) --
 
     def get_cached_balance(self, address: ChecksumAddress, block_number: int) -> int | None:
-        cache = self._cached_balance.get(
-            address, BoundedCache(max_items=self._state_cache_depth)
-        )
+        cache = self._cached_balance.get(address, BoundedCache(max_items=self._state_cache_depth))
         return cache.get(block_number)
 
     def set_cached_balance(self, address: ChecksumAddress, block_number: int, balance: int) -> None:

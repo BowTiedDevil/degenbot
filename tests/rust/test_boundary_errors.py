@@ -6,6 +6,7 @@ These tests verify the mapping is correct for all boundary functions.
 """
 
 import pytest
+
 from degenbot.degenbot_rs import (
     decode,
     decode_single,
@@ -14,7 +15,6 @@ from degenbot.degenbot_rs import (
     get_sqrt_ratio_at_tick,
     get_tick_at_sqrt_ratio,
 )
-
 from degenbot.uniswap.v3_libraries import MAX_SQRT_RATIO, MAX_TICK, MIN_TICK
 
 

@@ -15,11 +15,7 @@ Example:
     >>> provider = ProviderAdapter.from_offline(offline)
     >>>
     >>> # Use in tests
-    >>> result = provider.call(
-    ...     to="0x...",
-    ...     data=calldata,
-    ...     block=24945700
-    ... )
+    >>> result = provider.call(to="0x...", data=calldata, block=24945700)
 """
 
 import json
@@ -81,14 +77,10 @@ class OfflineProvider:
         ...     blocks={
         ...         "24945700": {
         ...             "timestamp": 1776984059,
-        ...             "calls": {
-        ...                 "0x...:0x...": "0x..."
-        ...             },
-        ...             "code": {
-        ...                 "0x...": "0x..."
-        ...             }
+        ...             "calls": {"0x...:0x...": "0x..."},
+        ...             "code": {"0x...": "0x..."},
         ...         }
-        ...     }
+        ...     },
         ... )
         >>> result = offline.call(to="0x...", data=b"...", block=24945700)
     """

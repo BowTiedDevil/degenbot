@@ -1,4 +1,5 @@
 from web3.exceptions import Web3Exception
+
 from tests.curve.detection.fake_provider import make_fake_curve_provider
 
 """Tests for Curve pool coin discovery."""
@@ -52,7 +53,6 @@ class TestDiscoverCoinsUint256:
                 return _encode_uint256(balances[idx])
             return _encode_uint256(0)
 
-
         provider = make_fake_curve_provider({
             COINS_UINT256: handle_coins_uint256,
             BALANCES_UINT256: handle_balances_uint256,
@@ -81,7 +81,6 @@ class TestDiscoverCoinsUint256:
             (idx,) = eth_abi.abi.decode(["uint256"], data[4:])
             return _encode_uint256(1000 * (idx + 1))
 
-
         provider = make_fake_curve_provider({
             COINS_UINT256: handle_coins_uint256,
             BALANCES_UINT256: handle_balances_uint256,
@@ -109,7 +108,6 @@ class TestDiscoverCoinsInt128:
         def handle_balances_int128(to: str, data: bytes, block: int) -> bytes:
             (idx,) = eth_abi.abi.decode(["int128"], data[4:])
             return _encode_uint256(5000)
-
 
         provider = make_fake_curve_provider({
             COINS_INT128: handle_coins_int128,
@@ -141,7 +139,6 @@ class TestDiscoverCoinsInt128:
         def handle_balances_int128(to: str, data: bytes, block: int) -> bytes:
             return _encode_uint256(999)
 
-
         provider = make_fake_curve_provider({
             COINS_UINT256: handle_coins_uint256,
             COINS_INT128: handle_coins_int128,
@@ -170,7 +167,6 @@ class TestDiscoverCoinsEdgeCases:
         def handle_balances_uint256(to: str, data: bytes, block: int) -> bytes:
             return _encode_uint256(100)
 
-
         provider = make_fake_curve_provider({
             COINS_UINT256: handle_coins_uint256,
             BALANCES_UINT256: handle_balances_uint256,
@@ -191,7 +187,6 @@ class TestDiscoverCoinsEdgeCases:
 
         def handle_balances_uint256(to: str, data: bytes, block: int) -> bytes:
             return _encode_uint256(100)
-
 
         provider = make_fake_curve_provider({
             COINS_UINT256: handle_coins_uint256,
@@ -232,7 +227,6 @@ class TestDiscoverCoinsEdgeCases:
                 msg = "balance revert"
                 raise Web3Exception(msg)
             return _encode_uint256(100)
-
 
         provider = make_fake_curve_provider({
             COINS_UINT256: handle_coins_uint256,

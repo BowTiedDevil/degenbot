@@ -65,10 +65,18 @@ class ArbSolver(Solver):
     >>> from degenbot.arbitrage.optimizers.solver import ArbSolver, SolveInput
     >>> from degenbot.types.hop_types import ConstantProductHop
     >>> solver = ArbSolver()
-    >>> result = solver.solve(SolveInput(hops=(
-    ...     ConstantProductHop(reserve_in=2_000_000e6, reserve_out=1_000e18, fee=Fraction(3, 1000)),
-    ...     ConstantProductHop(reserve_in=1_500_000e6, reserve_out=800e18, fee=Fraction(3, 1000)),
-    ... )))
+    >>> result = solver.solve(
+    ...     SolveInput(
+    ...         hops=(
+    ...             ConstantProductHop(
+    ...                 reserve_in=2_000_000e6, reserve_out=1_000e18, fee=Fraction(3, 1000)
+    ...             ),
+    ...             ConstantProductHop(
+    ...                 reserve_in=1_500_000e6, reserve_out=800e18, fee=Fraction(3, 1000)
+    ...             ),
+    ...         )
+    ...     )
+    ... )
     """
 
     MIN_HOPS = 2

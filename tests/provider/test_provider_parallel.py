@@ -13,6 +13,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
+
 from degenbot.degenbot_rs import AlloyProvider
 
 HTTP_RPC_URL = "https://ethereum.publicnode.com"

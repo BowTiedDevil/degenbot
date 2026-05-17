@@ -7,6 +7,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions.pool import UnknownPool
 from degenbot.provider import ProviderAdapter
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v3_snapshot import (
     DatabaseSnapshot,
@@ -14,7 +15,6 @@ from degenbot.uniswap.v3_snapshot import (
     MonolithicJsonFileSnapshot,
     UniswapV3LiquiditySnapshot,
 )
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
     UniswapV3LiquidityEvent,
 )

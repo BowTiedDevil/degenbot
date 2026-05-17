@@ -197,12 +197,15 @@ class CacheablePool(Protocol):
     """
 
     def reserves_for_cache(self) -> tuple[int, int]: ...
+
     """Return (reserve_token0, reserve_token1) for the Rust cache."""
 
     def fee_for_cache(self) -> Fraction: ...
+
     """Return the pool fee as a Fraction (e.g. Fraction(3, 1000))."""
 
     def subscribe(self, subscriber: Subscriber) -> None: ...
+
     """Subscribe to pool state updates (provided by PublisherMixin)."""
 
 

@@ -91,7 +91,8 @@ class EnrichmentContext:
         """Fetch token revision from database."""
         # Query for a_token match
         a_token_asset = (
-            self.session.query(AaveV3Asset)
+            self.session
+            .query(AaveV3Asset)
             .join(Erc20TokenTable, AaveV3Asset.a_token_id == Erc20TokenTable.id)
             .filter(Erc20TokenTable.address == token_address)
             .first()
@@ -102,7 +103,8 @@ class EnrichmentContext:
 
         # Query for v_token match
         v_token_asset = (
-            self.session.query(AaveV3Asset)
+            self.session
+            .query(AaveV3Asset)
             .join(Erc20TokenTable, AaveV3Asset.v_token_id == Erc20TokenTable.id)
             .filter(Erc20TokenTable.address == token_address)
             .first()
@@ -117,7 +119,8 @@ class EnrichmentContext:
     def get_underlying_asset(self, token_address: ChecksumAddress) -> ChecksumAddress:
         """Get underlying asset address for a token."""
         asset = (
-            self.session.query(AaveV3Asset)
+            self.session
+            .query(AaveV3Asset)
             .join(Erc20TokenTable, AaveV3Asset.a_token_id == Erc20TokenTable.id)
             .filter(Erc20TokenTable.address == token_address)
             .first()
@@ -125,7 +128,8 @@ class EnrichmentContext:
 
         if asset is None:
             asset = (
-                self.session.query(AaveV3Asset)
+                self.session
+                .query(AaveV3Asset)
                 .join(Erc20TokenTable, AaveV3Asset.v_token_id == Erc20TokenTable.id)
                 .filter(Erc20TokenTable.address == token_address)
                 .first()
@@ -249,16 +253,24 @@ class EnrichmentContext:
             kwargs["balance_increase"] = event.balance_increase
 
         # Type-specific fields
-        if actual_event_type in {
-            ScaledTokenEventType.COLLATERAL_MINT,
-            ScaledTokenEventType.DEBT_MINT,
-        } and not is_interest_accrual:
+        if (
+            actual_event_type
+            in {
+                ScaledTokenEventType.COLLATERAL_MINT,
+                ScaledTokenEventType.DEBT_MINT,
+            }
+            and not is_interest_accrual
+        ):
             kwargs["caller_address"] = event.caller_address
 
-        if actual_event_type in {
-            ScaledTokenEventType.COLLATERAL_BURN,
-            ScaledTokenEventType.DEBT_BURN,
-        } and not is_interest_accrual:
+        if (
+            actual_event_type
+            in {
+                ScaledTokenEventType.COLLATERAL_BURN,
+                ScaledTokenEventType.DEBT_BURN,
+            }
+            and not is_interest_accrual
+        ):
             kwargs["from_address"] = event.from_address or event.user_address
             kwargs["target_address"] = event.target_address
 

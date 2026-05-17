@@ -182,9 +182,7 @@ class VectorizedMobiusSolver:
                 N = N * reserves_in[:, j] + old_K * gammas[:, j]
 
                 old_log_K = log_K.copy()
-                log_K = (
-                    log_K + np.log(gammas[:, j]) + np.log(reserves_out[:, j])
-                )
+                log_K = log_K + np.log(gammas[:, j]) + np.log(reserves_out[:, j])
                 log_M += np.log(reserves_in[:, j])
 
                 # log(N_j) via log-sum-exp:

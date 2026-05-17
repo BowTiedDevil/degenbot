@@ -7,7 +7,6 @@ updated state, for both V3 and V4 type variants.
 """
 
 import dataclasses
-
 from unittest.mock import MagicMock, patch
 
 import eth_abi.abi
@@ -18,11 +17,11 @@ from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.concentrated.state_manager import (
     ConcentratedLiquidityStateManager,
 )
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
     UniswapV3PoolState,
 )
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 
 
 def _make_fake_pool(state):

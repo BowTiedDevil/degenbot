@@ -4,20 +4,21 @@ Tests verifying that concrete pool classes satisfy their pool-shape protocols
 AbstractLiquidityPool remains the root ABC.
 """
 
+import pytest
+
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.pancakeswap.pools import PancakeswapV2Pool, PancakeswapV3Pool
+from degenbot.registry.pool_type import _derive_family
 from degenbot.sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
 from degenbot.swapbased.pools import SwapbasedV2Pool
 from degenbot.types.abstract import AbstractLiquidityPool
+from degenbot.types.pool_type import PoolFamily
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-import pytest
-from degenbot.registry.pool_type import _derive_family
-from degenbot.types.pool_type import PoolFamily
 
 
 class TestAbstractLiquidityPoolCannotInstantiate:

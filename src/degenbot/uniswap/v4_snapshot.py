@@ -175,9 +175,7 @@ class DatabaseSnapshot:
 
         return LiquidityMap(
             tick_bitmap={
-                int(initialization_map.word): BitmapAtWord(
-                    bitmap=initialization_map.bitmap
-                )
+                int(initialization_map.word): BitmapAtWord(bitmap=initialization_map.bitmap)
                 for initialization_map in pool_in_db.initialization_maps
             },
             tick_data={

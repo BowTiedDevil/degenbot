@@ -1,10 +1,10 @@
 """Tests for the generic AddressRegistry base classes."""
 
 import pytest
+from hexbytes import HexBytes
 
 from degenbot.exceptions import DegenbotValueError
 from degenbot.registry.base import AddressRegistry, MultiKeyAddressRegistry
-from hexbytes import HexBytes
 
 
 class FakeItem:

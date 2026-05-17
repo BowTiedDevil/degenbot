@@ -13,8 +13,8 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
-from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 # Path to recorded chain data
 CHAIN_DATA_PATH = Path(__file__).parent.parent.parent / "fixtures" / "chain_data"

@@ -35,6 +35,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions.arbitrage import ArbitrageError, RateOfExchangeBelowMinimum
 from degenbot.exceptions.base import DegenbotValueError
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,
@@ -42,7 +43,6 @@ from degenbot.uniswap.v2_types import (
     UniswapV2PoolStateUpdated,
 )
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolState,

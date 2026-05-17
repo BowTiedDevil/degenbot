@@ -4,7 +4,6 @@ from fractions import Fraction
 from itertools import starmap
 
 import degenbot.degenbot_rs as rs_mobius
-
 from degenbot.arbitrage.optimizers._solver_utils import _compute_mobius_coefficients
 from degenbot.arbitrage.optimizers.mobius import MobiusFloatHop
 from degenbot.arbitrage.optimizers.mobius import mobius_solve as py_solve

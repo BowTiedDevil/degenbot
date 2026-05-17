@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from degenbot.cli.pool import POOL_UPDATER, _V2_CONFIGS, _V3_CONFIGS, _V4_CONFIGS, _pool_updater
+from degenbot.cli.pool import _V2_CONFIGS, _V3_CONFIGS, _V4_CONFIGS, POOL_UPDATER, _pool_updater
 from degenbot.cli.pool_updater_configs import (
     V2PoolUpdateConfig,
     V3PoolUpdateConfig,

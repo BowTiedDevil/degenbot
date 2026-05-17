@@ -9,11 +9,11 @@ class DegenbotError(Exception):
     try:
         degenbot.some_function()
     except SpecificDegenbotError:
-        ... # handle a specific exception
+        ...  # handle a specific exception
     except DegenbotError:
-        ... # handle non-specific degenbot exception
+        ...  # handle non-specific degenbot exception
     except Exception:
-        ... # handle exceptions raised by 3rd party dependencies or Python built-ins
+        ...  # handle exceptions raised by 3rd party dependencies or Python built-ins
     ```
 
     An optional string-formatted message may be attached to the exception and retrieved by accessing

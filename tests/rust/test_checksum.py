@@ -1,4 +1,5 @@
 import pytest
+
 from degenbot.degenbot_rs import to_checksum_address
 
 

@@ -151,9 +151,7 @@ _INTEREST_TYPES: set[ScaledTokenEventType] = {
     ScaledTokenEventType.GHO_DEBT_INTEREST_BURN,
 }
 
-_INDEX_SCALED_TYPES: set[ScaledTokenEventType] = (
-    _MINT_TYPES | _BURN_TYPES | _INTEREST_TYPES
-)
+_INDEX_SCALED_TYPES: set[ScaledTokenEventType] = _MINT_TYPES | _BURN_TYPES | _INTEREST_TYPES
 
 
 class EnrichedScaledTokenEvent(BaseModel):
@@ -326,14 +324,11 @@ class EnrichedScaledTokenEvent(BaseModel):
         # The Pool uses burn rounding (floor) but emits a Mint event.
         # See debug/aave/0037 for details.
         if (
-            self.event_type
-            in {ScaledTokenEventType.DEBT_MINT, ScaledTokenEventType.GHO_DEBT_MINT}
+            self.event_type in {ScaledTokenEventType.DEBT_MINT, ScaledTokenEventType.GHO_DEBT_MINT}
             and self.balance_increase is not None
             and self.balance_increase > 0
         ):
-            expected_burn = token_math.get_debt_burn_scaled_amount(
-                amount=raw, borrow_index=idx
-            )
+            expected_burn = token_math.get_debt_burn_scaled_amount(amount=raw, borrow_index=idx)
             if scaled == expected_burn:
                 return self
 

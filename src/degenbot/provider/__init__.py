@@ -413,8 +413,7 @@ class AlloyProvider:
         Example:
             >>> # Call debug_traceTransaction
             >>> result = provider.make_request(
-            ...     "debug_traceTransaction",
-            ...     ["0x...", {"tracer": "callTracer"}]
+            ...     "debug_traceTransaction", ["0x...", {"tracer": "callTracer"}]
             ... )
         """
         return self._provider.make_request(method, params)

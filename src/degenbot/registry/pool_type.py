@@ -111,8 +111,10 @@ class PoolTypeRegistry:
         from degenbot.registry import pool_type_registry
         from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
+
         class MyCustomPool(UniswapV2Pool):
             variant: ClassVar[str | None] = "my_dex"
+
 
         pool_type_registry.register(
             MyCustomPool,

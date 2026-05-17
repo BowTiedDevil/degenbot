@@ -1,4 +1,5 @@
 from web3.exceptions import Web3Exception
+
 from tests.curve.detection.fake_provider import make_fake_curve_provider
 
 """Tests for Curve pool LP token discovery."""

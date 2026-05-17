@@ -155,10 +155,7 @@ class RepayWithAtokensHandler:
         event_type = event.event_type
 
         # Check for interest > repayment on debt (similar to REPAY)
-        if (
-            event_type == ScaledTokenEventType.DEBT_MINT
-            and event.balance_increase is not None
-        ):
+        if event_type == ScaledTokenEventType.DEBT_MINT and event.balance_increase is not None:
             logger.debug(
                 "ENRICHMENT: REPAY_WITH_ATOKENS interest exceeds repayment on debt - "
                 "using DEBT_BURN calculation (floor rounding)"
