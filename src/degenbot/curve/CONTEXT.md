@@ -52,7 +52,8 @@
 
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|
-| **DyCalculator** | A runtime-checkable protocol defining `calculate(i, j, dx, *, pool, block_number, override_state) -> int` | Dy strategy, dy solver |
+| **DyCalculationInputs** | A frozen dataclass constructed by `CurveStableswapPool.get_dy()` carrying all pre-resolved data for a single dy calculation (balances, rates, xp, block data, invariant solver closures, and optional I/O results for crypto/live-admin/metapool). All I/O and cache lookups happen before this object is created — calculators read only from it. | Calculation inputs, inputs object |
+| **DyCalculator** | A runtime-checkable protocol defining `calculate(i, j, dx, *, inputs: DyCalculationInputs, override_state) -> int` | Dy strategy, dy solver |
 | **StandardDyCalculator** | Computes dy for STANDARD swap style (plain pool, no rate adjustment) | Basic calculator |
 | **RateAdjustedDyCalculator** | Computes dy for RATE_ADJUSTED swap style using `rate_multipliers` | Lending calculator |
 | **RateAdjustedNoOneDyCalculator** | Computes dy for RATE_ADJUSTED_NO_ONE (no `-1` minimum) | No-one rate calculator |
@@ -83,6 +84,7 @@
 - A **CurveStableswapPoolTracker** tracks Curve pools and delegates construction to **Bot**
 - A **Pool** holds a single **CurveDataProvider** (injected by builder), replacing the former 13 individual fetcher callbacks
 - **DyCalculator** objects are held by **PoolStrategies** and replace dispatch branches in `get_dy()` / `_get_dy_underlying()`
+- **DyCalculationInputs** is constructed by `get_dy()` before calling the **DyCalculator**; all I/O, rate resolution, and cache lookups happen in `get_dy()`, so the calculator receives only pre-resolved data with no private member access
 - Pure math functions in `calculations/stableswap.py` raise `ValueError`; pool wrappers catch and re-raise as `EVMRevertError`
 
 ## Resolved Ambiguities
@@ -144,3 +146,6 @@
 >
 > **Dev:** "What are all the **variant enums** for?"
 > **Domain expert:** "Mainnet Curve pools use different calculation formulas depending on the contract version. **DVariant**, **YVariant**, and **YDVariant** identify which formula a pool uses for D, y, and y_D calculations respectively. They replace the old class-level address frozensets that coupled configuration data to pool behavior."
+>
+> **Dev:** "How do the **DyCalculators** get their data? Do they access the pool directly?"
+> **Domain expert:** "No — that's the **DyCalculationInputs** pattern. `get_dy()` on the pool class does all the I/O and cache lookups first, then constructs a **DyCalculationInputs** frozen dataclass with pre-resolved rates, XP, block data, and invariant solver closures. The calculator receives that object instead of the pool, so there's zero private member access. The calculator is pure math."

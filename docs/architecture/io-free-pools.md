@@ -132,6 +132,7 @@ def build(self, pool_address):
 - **Builder extraction** — pool construction I/O has been extracted from `Bot` into typed builder classes (`V2PoolBuilder`, `V3PoolBuilder`, `V4PoolBuilder`, `CurvePoolBuilder`, `Erc20Builder`); V2 variant builders extracted into `V2BuilderBase`, `AerodromeV2Builder`, `CamelotBuilder` (Plan 043)
 - **V2/V3/V4/Aerodrome pool classes** — all `ProviderAdapter`-taking methods removed; I/O for construction and updates lives entirely in builders (ADR-001 Phase 3 complete, Plan 017)
 - **Curve DyCalculator seam** — 14 `match`/`if` dispatch branches in `get_dy()` replaced by injectable calculator objects; pure math functions in `calculations/stableswap.py` (Plan 039)
+- **DyCalculationInputs** — `pool: CurveStableswapPool` parameter in `DyCalculator.calculate()` replaced with `inputs: DyCalculationInputs` frozen dataclass carrying pre-resolved data; 77 SLF001 errors → 0; calculators are pure consumers of pre-resolved data with no private member access (Plan 045)
 - **Curve state mixin** — 25 attributes + 22 properties with `_xxx` private pattern; `StableswapPoolState` (Plan 041)
 - **ProviderBackend** — merged `EthereumProvider` + `_SyncProviderBackend` → `ProviderBackend` protocol; `__getattr__` dispatch replaces 15× delegation methods (Plan 042)
 - **Builder Protocol** — `PoolBuilder` protocol replaces the 4-way union type annotation; `_dispatch_build()` isinstance chain eliminated via `**kwargs` forwarding (Plan 035)
@@ -279,6 +280,8 @@ The pool catches `MissingCurveData` (not `ContractLogicError` or `ConnectionErro
 
 Curve pools use a **CurveDataProvider** seam — a single `@runtime_checkable` protocol with 13 methods that replaces the former 13 individual fetcher callback parameters. The pool calls `self._data_provider.xxx()` on-demand; the builder creates a `_CurveDataProviderImpl` that wraps existing fetcher closures.
 
+Calculators receive a **DyCalculationInputs** frozen dataclass instead of the pool object. The pool's `get_dy()` performs all I/O (rate resolution, cache lookups, block data, invariant solver closure construction) before constructing a `DyCalculationInputs` and passing it to the calculator. This eliminates all private member access from calculators — they are pure math consumers of pre-resolved data (Plan 045).
+
 | Method | Purpose | When Needed |
 |--------|---------|-------------|
 | `D()` | On-chain invariant D value | Crypto pools |
@@ -310,12 +313,13 @@ Pools participating in the Rust solver cache implement the `CacheablePool` proto
 ## References
 
 - `src/degenbot/curve/CONTEXT.md` — Curve domain terminology
-- `src/degenbot/curve/types.py` — CurveDataProvider protocol definition
+- `src/degenbot/curve/types.py` — CurveDataProvider protocol, DyCalculationInputs dataclass, DyCalculator protocol definitions
 - `src/degenbot/types/pool_protocols.py` — Pool simulation and cacheable protocols
 - `plans/completed/017-v2-v3-io-free-migration.md` — Plan to complete ADR-001 Phase 3 (complete)
-- `plans/019-pool-cache-adapter-protocol.md` — CacheablePool protocol plan
+- `plans/completed/019-pool-cache-adapter-protocol.md` — CacheablePool protocol plan
+- `plans/completed/045-calculator-explicit-data.md` — DyCalculationInputs: replace pool parameter with explicit data
 - `docs/adr/ADR-001-io-free-pools.md` — ADR-001 (I/O-free pools)
 
 ---
 
-*Last updated: 2026-05-15*
+*Last updated: 2026-05-16*
