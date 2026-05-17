@@ -1,12 +1,13 @@
 //! `PyO3` bindings for the contract module.
 
+use crate::abi_types::AbiValue;
 use crate::contract::{encode_arguments, Contract, FunctionSignature};
 use crate::provider::AlloyProvider;
 use crate::provider_py::PyAlloyProvider;
 use crate::runtime::get_runtime;
 use alloy::hex;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyList};
+use pyo3::types::{PyBool, PyBytes, PyList};
 use std::sync::Arc;
 
 /// Python wrapper for a Contract.
@@ -111,6 +112,56 @@ impl PyContract {
     fn address(&self) -> String {
         format!("{:#x}", self.contract.address())
     }
+
+    /// Execute a contract call and return decoded values as Python types.
+    ///
+    /// Unlike `call` which returns strings, this method returns native
+    /// Python types (int, bool, str, bytes, list) avoiding the string
+    /// round-trip overhead.
+    ///
+    /// Args:
+    ///     `function_signature`: Function signature like "balanceOf(address)"
+    ///     args: List of arguments as strings
+    ///     `block_number`: Optional block number to query
+    ///
+    /// Returns:
+    ///     List of decoded return values as native Python types
+    fn call_typed(
+        &self,
+        py: Python<'_>,
+        function_signature: &str,
+        args: &Bound<'_, PyList>,
+        block_number: Option<u64>,
+    ) -> PyResult<Py<PyList>> {
+        let function_signature = function_signature.to_string();
+        let contract = self.contract.clone();
+
+        // Extract args from Python list
+        let args: Vec<String> = args
+            .iter()
+            .map(|a| a.extract::<String>())
+            .collect::<Result<_, _>>()?;
+
+        // Release GIL during RPC call
+        let result = py
+            .detach(|| {
+                get_runtime().block_on(async {
+                    contract
+                        .call_typed(&function_signature, &args, block_number)
+                        .await
+                })
+            })
+            .map_err(Into::<PyErr>::into)?;
+
+        // Convert AbiValue results to native Python types
+        let py_list = PyList::empty(py);
+        for value in result {
+            let py_obj = abi_value_to_python(py, &value)?;
+            py_list.append(py_obj)?;
+        }
+
+        Ok(py_list.into())
+    }
 }
 
 /// Encode function arguments.
@@ -200,6 +251,45 @@ fn decode_return_data(
 fn get_function_selector(function_signature: &str) -> PyResult<String> {
     let func = FunctionSignature::parse(function_signature)?;
     Ok(format!("0x{}", hex::encode(func.selector)))
+}
+
+/// Convert an `AbiValue` to a native Python object.
+///
+/// Maps each `AbiValue` variant to the most natural Python type:
+/// - `Address` → `str` (checksummed hex)
+/// - `Bool` → `bool`
+/// - `Uint` → `int`
+/// - `Int` → `int`
+/// - `FixedBytes` / `Bytes` → `bytes`
+/// - `String` → `str`
+/// - `Array` → `list`
+fn abi_value_to_python<'py>(
+    py: Python<'py>,
+    value: &AbiValue,
+) -> PyResult<Bound<'py, pyo3::types::PyAny>> {
+    use crate::alloy_py::{i256_to_py, u256_to_py};
+
+    match value {
+        AbiValue::Address(addr) => {
+            let s = format!("0x{}", alloy::hex::encode(addr));
+            Ok(s.into_pyobject(py)?.into_any())
+        }
+        AbiValue::Bool(b) => Ok(PyBool::new(py, *b).to_owned().into_any()),
+        AbiValue::Uint(n, _bits) => u256_to_py(py, n),
+        AbiValue::Int(n, _bits) => i256_to_py(py, n),
+        AbiValue::FixedBytes(bytes) | AbiValue::Bytes(bytes) => {
+            Ok(PyBytes::new(py, bytes).into_any())
+        }
+        AbiValue::String(s) => Ok(s.clone().into_pyobject(py)?.into_any()),
+        AbiValue::Array(values) => {
+            let py_list = PyList::empty(py);
+            for v in values {
+                let py_obj = abi_value_to_python(py, v)?;
+                py_list.append(py_obj)?;
+            }
+            Ok(py_list.into_any())
+        }
+    }
 }
 
 /// Add contract module to Python module.

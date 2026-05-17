@@ -297,7 +297,9 @@ pub enum ParseIntError {
 /// Parse a JSON array string into individual element strings.
 ///
 /// Accepts `["elem1", "elem2"]` format with optional whitespace.
-fn parse_json_array(input: &str) -> Result<Vec<&str>, ContractError> {
+/// Quoted strings (`"..."`) have their surrounding quotes stripped.
+/// Unquoted elements are returned as-is.
+fn parse_json_array(input: &str) -> Result<Vec<String>, ContractError> {
     let trimmed = input.trim();
 
     if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
@@ -314,16 +316,40 @@ fn parse_json_array(input: &str) -> Result<Vec<&str>, ContractError> {
     }
 
     let mut elements = Vec::new();
-    let mut depth = 0;
+    let mut depth = 0usize;
     let mut start = 0;
+    let mut in_string = false;
+    let mut escape_next = false;
 
     for (i, c) in content.char_indices() {
+        if in_string {
+            if escape_next {
+                escape_next = false;
+                continue;
+            }
+            if c == '\\' {
+                escape_next = true;
+                continue;
+            }
+            if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
         match c {
+            '"' => in_string = true,
             '[' => depth += 1,
-            ']' => depth -= 1,
+            ']' => {
+                if depth == 0 {
+                    return Err(ContractError::InvalidAbi {
+                        message: format!("Unmatched ']' in array value: '{input}'"),
+                    });
+                }
+                depth -= 1;
+            }
             ',' if depth == 0 => {
-                let element = content[start..i].trim();
-                if !element.is_empty() || i > start {
+                let element = strip_quotes(content[start..i].trim());
+                if !element.is_empty() {
                     elements.push(element);
                 }
                 start = i + 1;
@@ -332,17 +358,59 @@ fn parse_json_array(input: &str) -> Result<Vec<&str>, ContractError> {
         }
     }
 
-    let last_element = content[start..].trim();
-    if !last_element.is_empty() || start < content.len() {
+    // Check for unterminated string
+    if in_string {
+        return Err(ContractError::InvalidAbi {
+            message: format!("Unterminated string in array value: '{input}'"),
+        });
+    }
+
+    let last_element = strip_quotes(content[start..].trim());
+    if !last_element.is_empty() {
         elements.push(last_element);
     }
 
     Ok(elements)
 }
 
+/// Strip surrounding double-quote marks from a string element.
+///
+/// Handles basic JSON string escaping: `\"` → `"`, `\\` → `\`.
+/// Returns the string as-is if not quoted.
+fn strip_quotes(s: &str) -> String {
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        // Unescape basic JSON sequences within the quoted content
+        let inner = &s[1..s.len() - 1];
+        let mut result = String::with_capacity(inner.len());
+        let mut chars = inner.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.peek().copied() {
+                    Some('"') => result.push('"'),
+                    Some('\\') => result.push('\\'),
+                    Some('n') => result.push('\n'),
+                    Some('t') => result.push('\t'),
+                    Some('/') => result.push('/'),
+                    _ => {
+                        // Unknown escape: keep the backslash
+                        result.push('\\');
+                        continue;
+                    }
+                }
+                chars.next();
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    } else {
+        s.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
 
@@ -518,6 +586,129 @@ mod tests {
                 result.is_err(),
                 "'{val}' should be rejected as invalid bool"
             );
+        }
+    }
+
+    // =========================================================================
+    // parse_json_array: quoted strings and edge cases
+    // =========================================================================
+    #[test]
+    fn test_parse_json_array_quoted_strings() {
+        // Quoted strings should have their quotes stripped
+        let result = AbiValue::from_str_arg(
+            &AbiType::Array(Box::new(AbiType::String)),
+            "[\"hello\", \"world\"]",
+        )
+        .expect("should parse quoted string array");
+        match result {
+            AbiValue::Array(arr) => {
+                assert_eq!(arr.len(), 2);
+                assert_eq!(arr[0], AbiValue::String("hello".to_string()));
+                assert_eq!(arr[1], AbiValue::String("world".to_string()));
+            }
+            _ => panic!("Expected Array variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_json_array_unquoted_strings() {
+        // Unquoted elements should work as before (for non-string types)
+        let result = AbiValue::from_str_arg(
+            &AbiType::Array(Box::new(AbiType::Uint(256))),
+            "[1, 2, 3]",
+        )
+        .expect("should parse unquoted uint array");
+        match result {
+            AbiValue::Array(arr) => {
+                assert_eq!(arr.len(), 3);
+            }
+            _ => panic!("Expected Array variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_json_array_single_quoted_string() {
+        // Single quoted string element: ["hello"]
+        let input = "[\"hello\"]";
+        let result = AbiValue::from_str_arg(
+            &AbiType::Array(Box::new(AbiType::String)),
+            input,
+        )
+        .expect("should parse single-element quoted string array");
+        match result {
+            AbiValue::Array(arr) => {
+                assert_eq!(arr.len(), 1);
+                assert_eq!(arr[0], AbiValue::String("hello".to_string()));
+            }
+            _ => panic!("Expected Array variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_json_array_escaped_quotes() {
+        // String with escaped quotes inside: ["he\"llo"] → he"llo
+        let input = "[\"he\\\"llo\"]";
+        let result = AbiValue::from_str_arg(
+            &AbiType::Array(Box::new(AbiType::String)),
+            input,
+        )
+        .expect("should parse string with escaped quotes");
+        match result {
+            AbiValue::Array(arr) => {
+                assert_eq!(arr.len(), 1);
+                assert_eq!(arr[0], AbiValue::String("he\"llo".to_string()));
+            }
+            _ => panic!("Expected Array variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_json_array_unmatched_bracket_errors() {
+        // Unmatched ']' without a matching '[' should error
+        let result = AbiValue::from_str_arg(
+            &AbiType::Array(Box::new(AbiType::Uint(256))),
+            "[foo]bar]",
+        );
+        assert!(
+            result.is_err(),
+            "Should reject unmatched ']' in array value"
+        );
+    }
+
+    #[test]
+    fn test_parse_json_array_string_with_bracket_inside() {
+        // String containing ] inside quotes should not be treated as array close
+        // Input: ["hello]"]
+        let input = "[\"hello]\"]";
+        let result = AbiValue::from_str_arg(
+            &AbiType::Array(Box::new(AbiType::String)),
+            input,
+        );
+        assert!(
+            result.is_ok(),
+            "String containing ] inside quotes should still parse: {result:?}"
+        );
+        if let Ok(AbiValue::Array(arr)) = result {
+            assert_eq!(arr.len(), 1);
+            match &arr[0] {
+                AbiValue::String(s) => assert_eq!(s, "hello]"),
+                _ => panic!("Expected String variant"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_json_array_mixed_quoted_and_unquoted() {
+        // addresses can be quoted or unquoted
+        let addr1 = "0x742d35Cc6634C0532925a3b8D4C9db96590d6B75";
+        let input = format!("[\"{addr1}\"]");
+        let result = AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::Address)), &input)
+            .expect("should parse quoted address array");
+        match result {
+            AbiValue::Array(arr) => {
+                assert_eq!(arr.len(), 1);
+            }
+            _ => panic!("Expected Array variant"),
         }
     }
 }

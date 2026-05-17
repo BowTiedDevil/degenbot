@@ -24,16 +24,15 @@
 //! The `encode_for_types` and `decode_for_types` functions take `&[AbiType]`
 //! directly, avoiding string parsing overhead.
 
-use crate::abi_types::{AbiType, AbiValue};
+use crate::abi_types::{AbiType, AbiValue, CachedAbiTypes};
 use crate::errors::{ContractError, ContractResult, ProviderResult};
 use crate::provider::AlloyProvider;
 use crate::signature_parser;
 use alloy::primitives::{Address, Bytes};
-use parking_lot::RwLock;
-use std::collections::HashMap;
+use dashmap::DashMap;
 use std::sync::Arc;
 
-/// Parsed function signature.
+/// Parsed function signature with pre-built cached types for encoding/decoding.
 #[derive(Debug, Clone)]
 pub struct FunctionSignature {
     /// Function name
@@ -44,6 +43,12 @@ pub struct FunctionSignature {
     pub outputs: Vec<AbiType>,
     /// Function selector (4-byte keccak256 hash of signature)
     pub selector: [u8; 4],
+    /// Pre-built cached types for encoding input arguments.
+    /// `None` when inputs are empty (no encoding needed).
+    input_cache: Option<CachedAbiTypes>,
+    /// Pre-built cached types for decoding output values.
+    /// `None` when outputs are empty (no decoding needed).
+    output_cache: Option<CachedAbiTypes>,
 }
 
 impl FunctionSignature {
@@ -63,11 +68,26 @@ impl FunctionSignature {
         let selector_input = format!("{}({})", parsed.name, Self::types_to_string(&parsed.inputs));
         let selector = Self::calculate_selector(&selector_input);
 
+        // Pre-build CachedAbiTypes for encoding/decoding so the hot path
+        // (Contract::call) never re-parses types.
+        let input_cache = if parsed.inputs.is_empty() {
+            None
+        } else {
+            Some(CachedAbiTypes::from_abi_types(&parsed.inputs)?)
+        };
+        let output_cache = if parsed.outputs.is_empty() {
+            None
+        } else {
+            Some(CachedAbiTypes::from_abi_types(&parsed.outputs)?)
+        };
+
         Ok(Self {
             name: parsed.name,
             inputs: parsed.inputs,
             outputs: parsed.outputs,
             selector,
+            input_cache,
+            output_cache,
         })
     }
 
@@ -80,8 +100,8 @@ impl FunctionSignature {
             if i > 0 {
                 result.push(',');
             }
-            #[allow(clippy::unwrap_used)]
-            write!(&mut result, "{ty}").unwrap();
+            #[allow(clippy::expect_used)]
+            write!(&mut result, "{ty}").expect("writing to String is infallible");
         }
         result
     }
@@ -93,6 +113,20 @@ impl FunctionSignature {
         let mut selector = [0u8; 4];
         selector.copy_from_slice(&hash[..4]);
         selector
+    }
+
+    /// Get the pre-built input cache for encoding.
+    /// Returns `None` when inputs are empty.
+    #[must_use]
+    pub const fn input_cache(&self) -> Option<&CachedAbiTypes> {
+        self.input_cache.as_ref()
+    }
+
+    /// Get the pre-built output cache for decoding.
+    /// Returns `None` when outputs are empty.
+    #[must_use]
+    pub const fn output_cache(&self) -> Option<&CachedAbiTypes> {
+        self.output_cache.as_ref()
     }
 }
 
@@ -128,6 +162,41 @@ pub fn encode_arguments(types: &[AbiType], args: &[String]) -> ContractResult<By
     Ok(Bytes::from(encoded))
 }
 
+/// Encode arguments using a pre-built `CachedAbiTypes` for maximum performance.
+///
+/// Use this in the hot path (e.g., `Contract::call`) where the type cache is
+/// already resolved from the `FunctionSignature`.
+///
+/// # Errors
+///
+/// Returns `ContractError` if argument count mismatch or encoding fails.
+pub fn encode_arguments_cached(
+    cached: &CachedAbiTypes,
+    types: &[AbiType],
+    args: &[String],
+) -> ContractResult<Bytes> {
+    if types.len() != args.len() {
+        return Err(ContractError::InvalidAbi {
+            message: format!(
+                "Argument count mismatch: expected {}, got {}",
+                types.len(),
+                args.len()
+            ),
+        });
+    }
+
+    // Convert string arguments to AbiValues
+    let values: Vec<AbiValue> = types
+        .iter()
+        .zip(args.iter())
+        .map(|(ty, arg)| AbiValue::from_str_arg(ty, arg))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let encoded = cached.encode(&values)?;
+
+    Ok(Bytes::from(encoded))
+}
+
 /// Decode return data based on expected ABI types.
 ///
 /// Uses `decode_for_types` to avoid string parsing overhead when we already
@@ -135,10 +204,17 @@ pub fn encode_arguments(types: &[AbiType], args: &[String]) -> ContractResult<By
 ///
 /// # Errors
 ///
-/// Returns `ContractError` if decoding fails.
+/// Returns `ContractError` if decoding fails or if data is empty when return
+/// types are expected.
 pub fn decode_return_data(data: &[u8], types: &[AbiType]) -> ContractResult<Vec<String>> {
-    if data.is_empty() {
+    if types.is_empty() {
         return Ok(Vec::new());
+    }
+
+    if data.is_empty() {
+        return Err(ContractError::DecodingError {
+            message: "Expected return data but got empty response".to_string(),
+        });
     }
 
     // Use decode_for_types to avoid string parsing
@@ -148,13 +224,79 @@ pub fn decode_return_data(data: &[u8], types: &[AbiType]) -> ContractResult<Vec<
     Ok(decoded.iter().map(AbiValue::to_contract_string).collect())
 }
 
+/// Decode return data using a pre-built `CachedAbiTypes` for maximum performance.
+///
+/// Use this in the hot path (e.g., `Contract::call`) where the type cache is
+/// already resolved from the `FunctionSignature`.
+///
+/// # Errors
+///
+/// Returns `ContractError` if decoding fails or if data is empty when return
+/// types are expected.
+pub fn decode_return_data_cached(
+    cached: &CachedAbiTypes,
+    data: &[u8],
+    types: &[AbiType],
+) -> ContractResult<Vec<String>> {
+    if types.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if data.is_empty() {
+        return Err(ContractError::DecodingError {
+            message: "Expected return data but got empty response".to_string(),
+        });
+    }
+
+    let decoded = cached.decode(data)?;
+
+    // Convert AbiValues back to strings
+    Ok(decoded.iter().map(AbiValue::to_contract_string).collect())
+}
+
+/// Decode return data into typed `AbiValue` results.
+///
+/// Returns the raw `AbiValue` enums so callers can match on specific variants
+/// without re-parsing strings back into typed values.
+///
+/// # Errors
+///
+/// Returns `ContractError` if decoding fails or if data is empty when return
+/// types are expected.
+pub fn decode_return_data_typed(types: &[AbiType], data: &[u8]) -> ContractResult<Vec<AbiValue>> {
+    if types.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if data.is_empty() {
+        return Err(ContractError::DecodingError {
+            message: "Expected return data but got empty response".to_string(),
+        });
+    }
+
+    crate::abi_decoder::decode_for_types(types, data).map_err(Into::into)
+}
+
 /// Contract interface for calling contract functions.
+///
+/// Cloned instances share the same signature cache, so parsing a signature
+/// in one clone makes it available in all others.
 #[derive(Clone)]
 pub struct Contract {
     address: Address,
     provider: Arc<AlloyProvider>,
-    /// Cache of parsed function signatures by name
-    signature_cache: Arc<RwLock<HashMap<String, Arc<FunctionSignature>>>>,
+    /// Cache of parsed function signatures by signature string.
+    /// Uses `DashMap` for lock-free concurrent reads.
+    signature_cache: Arc<DashMap<String, Arc<FunctionSignature>>>,
+}
+
+impl std::fmt::Debug for Contract {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Contract")
+            .field("address", &self.address)
+            .field("signature_cache_len", &self.signature_cache.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Contract {
@@ -172,7 +314,7 @@ impl Contract {
         Ok(Self {
             address: addr,
             provider,
-            signature_cache: Arc::new(RwLock::new(HashMap::new())),
+            signature_cache: Arc::new(DashMap::new()),
         })
     }
 
@@ -190,8 +332,12 @@ impl Contract {
         // Parse function signature
         let func = self.parse_function_signature(function_signature)?;
 
-        // Encode arguments
-        let encoded_args = encode_arguments(&func.inputs, args)?;
+        // Encode arguments (use cached types when available)
+        let encoded_args = if let Some(cached) = func.input_cache() {
+            encode_arguments_cached(cached, &func.inputs, args)?
+        } else {
+            encode_arguments(&func.inputs, args)?
+        };
 
         // Build calldata: selector + encoded_args
         let mut calldata = Vec::with_capacity(4 + encoded_args.len());
@@ -204,22 +350,88 @@ impl Contract {
             .eth_call(&self.address, Bytes::from(calldata), block_number)
             .await?;
 
-        // Decode return values
-        decode_return_data(&result, &func.outputs).map_err(Into::into)
+        // Decode return values (use cached types when available)
+        func.output_cache().map_or_else(
+            || decode_return_data(&result, &func.outputs).map_err(Into::into),
+            |cached| decode_return_data_cached(cached, &result, &func.outputs).map_err(Into::into),
+        )
+    }
+
+    /// Call a contract function and return typed `AbiValue` results.
+    ///
+    /// This avoids the string round-trip of [`call`](Self::call), which
+    /// is useful when the caller needs to inspect specific value variants
+    /// (e.g., extracting `U256` from `AbiValue::Uint` without re-parsing).
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError` or `ContractError` if the call fails or encoding/decoding fails.
+    pub async fn call_typed(
+        &self,
+        function_signature: &str,
+        args: &[String],
+        block_number: Option<u64>,
+    ) -> ProviderResult<Vec<AbiValue>> {
+        // Parse function signature
+        let func = self.parse_function_signature(function_signature)?;
+
+        // Encode arguments (use cached types when available)
+        let encoded_args = if let Some(cached) = func.input_cache() {
+            encode_arguments_cached(cached, &func.inputs, args)?
+        } else {
+            encode_arguments(&func.inputs, args)?
+        };
+
+        // Build calldata: selector + encoded_args
+        let mut calldata = Vec::with_capacity(4 + encoded_args.len());
+        calldata.extend_from_slice(&func.selector);
+        calldata.extend_from_slice(&encoded_args);
+
+        // Execute eth_call
+        let result = self
+            .provider
+            .eth_call(&self.address, Bytes::from(calldata), block_number)
+            .await?;
+
+        // Decode into typed values
+        #[allow(clippy::option_if_let_else)]
+        func.output_cache().map_or_else(
+            || decode_return_data_typed(&func.outputs, &result).map_err(Into::into),
+            |cached| {
+                if func.outputs.is_empty() {
+                    return Ok(Vec::new());
+                }
+                if result.is_empty() {
+                    return Err(ContractError::DecodingError {
+                        message: "Expected return data but got empty response".to_string(),
+                    }
+                    .into());
+                }
+                cached
+                    .decode(&result)
+                    .map_err(|e| ContractError::DecodingError {
+                        message: e.to_string(),
+                    })
+                    .map_err(Into::into)
+            },
+        )
     }
 
     /// Parse and cache a function signature.
+    ///
+    /// Uses `DashMap` so there is no read/write lock toggling. A concurrent
+    /// double-miss on the same key is harmless: both threads insert the same
+    /// value and the second insert simply overwrites the first.
     fn parse_function_signature(&self, signature: &str) -> ProviderResult<Arc<FunctionSignature>> {
-        let cache = self.signature_cache.read();
-        if let Some(func) = cache.get(signature) {
-            return Ok(Arc::clone(func));
+        // Fast path: check cache
+        if let Some(func) = self.signature_cache.get(signature) {
+            return Ok(Arc::clone(func.value()));
         }
-        drop(cache);
 
         let func = Arc::new(FunctionSignature::parse(signature)?);
 
+        // Insert (harmless if another thread already inserted)
         self.signature_cache
-            .write()
             .insert(signature.to_string(), Arc::clone(&func));
 
         Ok(func)
@@ -237,6 +449,7 @@ impl Contract {
 mod tests {
     use super::*;
     use alloy::primitives::I256;
+    use crate::runtime::get_runtime;
 
     #[test]
     fn test_abi_type_parse() {
@@ -315,6 +528,24 @@ mod tests {
         assert_eq!(sig.inputs.len(), 1);
         assert_eq!(sig.outputs.len(), 1);
         assert_eq!(sig.outputs[0], AbiType::Uint(256));
+    }
+
+    #[test]
+    fn test_function_signature_caches_are_built() {
+        // Signature with inputs: should have input_cache
+        let sig = FunctionSignature::parse("transfer(address,uint256)").unwrap();
+        assert!(sig.input_cache.is_some(), "input_cache should be built");
+        assert!(sig.output_cache.is_none(), "output_cache should be None for no outputs");
+
+        // Signature with outputs: should have output_cache
+        let sig = FunctionSignature::parse("balanceOf(address) returns (uint256)").unwrap();
+        assert!(sig.input_cache.is_some());
+        assert!(sig.output_cache.is_some());
+
+        // Empty inputs: no input_cache
+        let sig = FunctionSignature::parse("foo() returns (uint256)").unwrap();
+        assert!(sig.input_cache.is_none(), "input_cache should be None for empty inputs");
+        assert!(sig.output_cache.is_some());
     }
 
     #[test]
@@ -710,12 +941,10 @@ mod tests {
 
         let encoded = encode_arguments(&types, &args).expect("should encode");
 
-        // Decode should give back the original values
+        // Decode should give back the original values (exact match)
         let decoded = decode_return_data(&encoded, &types).expect("should decode");
         assert_eq!(decoded.len(), 1);
-        assert!(decoded[0].contains('1'));
-        assert!(decoded[0].contains('2'));
-        assert!(decoded[0].contains('3'));
+        assert_eq!(decoded[0], "[1, 2, 3]");
     }
 
     #[test]
@@ -728,9 +957,7 @@ mod tests {
         let decoded = decode_return_data(&encoded, &types).expect("should decode");
 
         assert_eq!(decoded.len(), 1);
-        assert!(decoded[0].contains("10"));
-        assert!(decoded[0].contains("20"));
-        assert!(decoded[0].contains("30"));
+        assert_eq!(decoded[0], "[10, 20, 30]");
     }
 
     #[test]
@@ -743,9 +970,8 @@ mod tests {
         let decoded = decode_return_data(&encoded, &types).expect("should decode");
 
         assert_eq!(decoded.len(), 1);
-        assert!(decoded[0]
-            .to_lowercase()
-            .contains("742d35cc6634c0532925a3b8d4c9db96590d6b75"));
+        // Use exact match instead of case-insensitive contains
+        assert_eq!(decoded[0], "[0x742d35cc6634c0532925a3b8d4c9db96590d6b75]");
     }
 
     #[test]
@@ -798,5 +1024,143 @@ mod tests {
             result.is_err(),
             "Should reject array with length exceeding available data"
         );
+    }
+
+    // =========================================================================
+    // decode_return_data: empty data with expected types
+    // =========================================================================
+
+    #[test]
+    fn test_decode_return_data_empty_with_types_errors() {
+        // When return types are expected but data is empty, this is an error
+        let result = decode_return_data(&[], &[AbiType::Uint(256)]);
+        assert!(
+            result.is_err(),
+            "Should return error when data is empty but types are expected"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("empty response"),
+            "Error message should mention empty response: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_decode_return_data_empty_types_returns_empty() {
+        // When no types are expected, empty data is fine
+        let result = decode_return_data(&[], &[]);
+        assert_eq!(result.unwrap(), Vec::<String>::new());
+    }
+
+    // =========================================================================
+    // Decode-typed (returns AbiValue instead of String)
+    // =========================================================================
+
+    #[test]
+    fn test_decode_return_data_typed() {
+        let types = vec![AbiType::Uint(256), AbiType::Bool];
+        let args = vec!["42".to_string(), "true".to_string()];
+
+        let encoded = encode_arguments(&types, &args).expect("should encode");
+        let decoded = decode_return_data_typed(&types, &encoded).expect("should decode typed");
+
+        assert_eq!(decoded.len(), 2);
+        match &decoded[0] {
+            AbiValue::Uint(n, bits) => {
+                assert_eq!(*n, alloy::primitives::U256::from(42u64));
+                assert_eq!(*bits, 256);
+            }
+            _ => panic!("Expected Uint variant"),
+        }
+        match &decoded[1] {
+            AbiValue::Bool(true) => {}
+            _ => panic!("Expected Bool(true)"),
+        }
+    }
+
+    // =========================================================================
+    // encode_arguments_cached / decode_return_data_cached
+    // =========================================================================
+
+    #[test]
+    fn test_encode_arguments_cached_matches_uncached() {
+        let types = vec![AbiType::Uint(256), AbiType::Bool];
+        let args = vec!["42".to_string(), "true".to_string()];
+
+        let uncached = encode_arguments(&types, &args).expect("uncached should encode");
+
+        let cached_types = CachedAbiTypes::from_abi_types(&types).expect("should build cache");
+        let with_cache =
+            encode_arguments_cached(&cached_types, &types, &args).expect("cached should encode");
+
+        assert_eq!(uncached, with_cache, "Cached and uncached encoding must match");
+    }
+
+    #[test]
+    fn test_decode_return_data_cached_matches_uncached() {
+        let types = vec![AbiType::Uint(256), AbiType::Bool];
+        let args = vec!["42".to_string(), "true".to_string()];
+        let encoded = encode_arguments(&types, &args).expect("should encode");
+
+        let uncached = decode_return_data(&encoded, &types).expect("uncached should decode");
+
+        let cached_types = CachedAbiTypes::from_abi_types(&types).expect("should build cache");
+        let with_cache = decode_return_data_cached(&cached_types, &encoded, &types)
+            .expect("cached should decode");
+
+        assert_eq!(uncached, with_cache, "Cached and uncached decoding must match");
+    }
+
+    // =========================================================================
+    // Contract struct: Debug and Clone
+    // =========================================================================
+
+    #[test]
+    fn test_contract_debug_impl() {
+        let provider = Arc::new(
+            get_runtime()
+                .block_on(async {
+                    AlloyProvider::new("http://localhost:8545", 1).await
+                })
+                .expect("should create provider"),
+        );
+        let contract =
+            Contract::new("0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", provider)
+                .expect("should create contract");
+
+        let debug_str = format!("{contract:?}");
+        assert!(
+            debug_str.contains("Contract"),
+            "Debug output should contain Contract: {debug_str}"
+        );
+    }
+
+    #[test]
+    fn test_contract_clone_shares_cache() {
+        let provider = Arc::new(
+            get_runtime()
+                .block_on(async {
+                    AlloyProvider::new("http://localhost:8545", 1).await
+                })
+                .expect("should create provider"),
+        );
+        let contract =
+            Contract::new("0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", provider)
+                .expect("should create contract");
+
+        let cloned = contract.clone();
+
+        // Parse a signature on the original
+        let func = contract
+            .parse_function_signature("transfer(address,uint256)")
+            .expect("should parse");
+
+        // The cloned contract should also have the signature in its cache
+        // (shared Arc<DashMap>)
+        let cached_func = cloned
+            .parse_function_signature("transfer(address,uint256)")
+            .expect("should find in shared cache");
+
+        assert_eq!(func.selector, cached_func.selector);
     }
 }
