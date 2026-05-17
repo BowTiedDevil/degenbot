@@ -13,8 +13,8 @@ from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 
 from degenbot.types.abstract import AbstractPoolState
-from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 from degenbot.uniswap.v3_types import (
     Liquidity,

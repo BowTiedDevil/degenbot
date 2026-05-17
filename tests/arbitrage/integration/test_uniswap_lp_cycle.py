@@ -21,6 +21,7 @@ from degenbot.exceptions.arbitrage import (
     RateOfExchangeBelowMinimum,
 )
 from degenbot.provider import ProviderAdapter
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,
@@ -28,7 +29,6 @@ from degenbot.uniswap.v2_types import (
     UniswapV2PoolStateUpdated,
 )
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolState,

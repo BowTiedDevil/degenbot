@@ -9,12 +9,12 @@ from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from web3.types import LogReceipt
 
+from degenbot.aave.enrichment.context import EnrichmentContext
 from degenbot.aave.enrichment.handlers.base import OperationHandler
 from degenbot.aave.enrichment.handlers.stkaave_transfer import StkAaveTransferHandler
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
-from degenbot.aave.enrichment.context import EnrichmentContext
 
 if TYPE_CHECKING:
     from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent

@@ -12,7 +12,6 @@ This is Item #17 in the arbitrage optimizer plan.
 from fractions import Fraction
 
 import degenbot.degenbot_rs as rs_mobius
-
 from degenbot.arbitrage.optimizers import ArbSolver, SolveInput, SolverMethod
 from degenbot.types.hop_types import ConstantProductHop
 

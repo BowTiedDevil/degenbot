@@ -252,13 +252,9 @@ class CurvePoolBuilder:
 
         assert pool.chain_id is not None
         provider = self._connections.get_provider(pool.chain_id)
-        raw_block_number = (
-            block_number if block_number is not None else provider.get_block_number()
-        )
+        raw_block_number = block_number if block_number is not None else provider.get_block_number()
         block_number_: int = (
-            raw_block_number
-            if isinstance(raw_block_number, int)
-            else int(raw_block_number)
+            raw_block_number if isinstance(raw_block_number, int) else int(raw_block_number)
         )
 
         # Fetch balances for each token in the pool

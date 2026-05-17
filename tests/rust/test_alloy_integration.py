@@ -5,14 +5,13 @@ These tests demonstrate that the Rust-based Alloy integration is functional,
 covering provider operations, contract interactions, and connection management.
 """
 
-from degenbot.degenbot_rs import decode_single, encode_single
-
 from degenbot.contract import (
     Contract,
     decode_return_data,
     encode_function_call,
     get_function_selector,
 )
+from degenbot.degenbot_rs import decode_single, encode_single
 from degenbot.provider import AlloyProvider, LogFilter
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 

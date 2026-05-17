@@ -9,9 +9,9 @@ from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 
 from degenbot.exceptions.arbitrage import ArbitrageError, OptimizationError
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_types import UniswapV2PoolState
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
     UniswapV3PoolState,
 )

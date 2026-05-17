@@ -4,18 +4,18 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
+import eth_abi.abi
 import pytest
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from web3.types import LogReceipt
 
+from degenbot.aave.enrichment.context import EnrichmentContext
 from degenbot.aave.enrichment.handlers.base import OperationHandler
 from degenbot.aave.enrichment.handlers.borrow import BorrowHandler
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
-import eth_abi.abi
-from degenbot.aave.enrichment.context import EnrichmentContext
 
 if TYPE_CHECKING:
     from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent

@@ -13,8 +13,7 @@ from typing import Any
 
 import pytest
 
-from degenbot.provider import AlloyProvider
-from degenbot.provider import ProviderAdapter
+from degenbot.provider import AlloyProvider, ProviderAdapter
 
 # =============================================================================
 # Web3 methods discovered in the codebase

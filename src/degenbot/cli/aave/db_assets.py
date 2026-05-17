@@ -4,7 +4,6 @@ Asset and token database operations for Aave V3.
 Functions for managing ERC20 tokens, Aave assets, contracts, and related lookups.
 """
 
-
 from eth_typing import ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload

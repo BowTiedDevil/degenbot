@@ -31,11 +31,13 @@ class BalancerMultiTokenSolver(Solver):
     Usage:
     -----
     >>> from degenbot.arbitrage.optimizers.solver import (
-    ...     BalancerMultiTokenHop, BalancerMultiTokenSolver, SolveInput
+    ...     BalancerMultiTokenHop,
+    ...     BalancerMultiTokenSolver,
+    ...     SolveInput,
     ... )
     >>> hop = BalancerMultiTokenHop(
     ...     reserves=(100e18, 2e12, 1e12),  # WETH, USDC, DAI in wei
-    ...     weights=(5e17, 25e16, 25e16),   # 50%, 25%, 25%
+    ...     weights=(5e17, 25e16, 25e16),  # 50%, 25%, 25%
     ...     fee=Fraction(3, 1000),
     ...     market_prices=(2000.0, 1.0, 1.0),  # In USD
     ... )

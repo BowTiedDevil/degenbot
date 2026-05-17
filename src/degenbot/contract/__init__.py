@@ -258,7 +258,7 @@ class Contract:
 
         Example:
             >>> decoded = Contract.decode_return_data(
-            ...     data=b'...',
+            ...     data=b"...",
             ...     output_types=["uint256", "address"],
             ... )
             >>> balance, owner = decoded

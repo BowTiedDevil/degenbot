@@ -66,7 +66,8 @@ class RepayHandler:
 
         # Check for interest > repayment case
         if (
-            event_type in {
+            event_type
+            in {
                 ScaledTokenEventType.DEBT_MINT,
                 ScaledTokenEventType.GHO_DEBT_MINT,
             }
@@ -117,8 +118,7 @@ class RepayHandler:
         )
 
         logger.debug(
-            "ENRICHMENT: Interest exceeds repayment - using DEBT_BURN "
-            "calculation (floor rounding)"
+            "ENRICHMENT: Interest exceeds repayment - using DEBT_BURN calculation (floor rounding)"
         )
 
         # Get token revision for calculation

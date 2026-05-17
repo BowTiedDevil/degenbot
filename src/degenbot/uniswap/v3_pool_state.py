@@ -15,7 +15,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-
     from degenbot.erc20 import Erc20Token
 
 

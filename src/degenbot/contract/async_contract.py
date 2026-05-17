@@ -9,12 +9,10 @@ Example:
     >>>
     >>> async def main():
     ...     contract = AsyncContract(
-    ...         "0xA0b86a33E6441e3D4e4b8b8b8b8b8b8b8b8b8b8",
-    ...         "https://eth.example.com"
+    ...         "0xA0b86a33E6441e3D4e4b8b8b8b8b8b8b8b8b8b8", "https://eth.example.com"
     ...     )
     ...     balance = await contract.call("balanceOf(address)", ["0x1234..."])
     ...     print(f"Balance: {balance[0]}")
-    ...
     >>> asyncio.run(main())
 """
 

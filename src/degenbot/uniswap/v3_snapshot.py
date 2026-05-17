@@ -165,8 +165,7 @@ class IndividualJsonFileSnapshot:
         pool_liquidity_snapshot = pydantic_core.from_json(pool_path.read_bytes())
         return LiquidityMap(
             tick_bitmap={
-                int(k): BitmapAtWord(**v)
-                for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
+                int(k): BitmapAtWord(**v) for k, v in pool_liquidity_snapshot["tick_bitmap"].items()
             },
             tick_data={
                 int(k): LiquidityAtTick(**v)
@@ -215,9 +214,7 @@ class DatabaseSnapshot:
 
         return LiquidityMap(
             tick_bitmap={
-                int(initialization_map.word): BitmapAtWord(
-                    bitmap=initialization_map.bitmap
-                )
+                int(initialization_map.word): BitmapAtWord(bitmap=initialization_map.bitmap)
                 for initialization_map in pool_in_db.initialization_maps
             },
             tick_data={

@@ -165,9 +165,7 @@ class MobiusSolver(Solver):
                     fee_denom = hop.fee.denominator
                     gamma_numer = fee_denom - fee_numer
                     rust_hops.append(
-                        _RustIntHopState(
-                            hop.reserve_in, hop.reserve_out, gamma_numer, fee_denom
-                        )
+                        _RustIntHopState(hop.reserve_in, hop.reserve_out, gamma_numer, fee_denom)
                     )
                 else:
                     rust_hops.append((

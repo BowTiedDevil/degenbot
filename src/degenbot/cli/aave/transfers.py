@@ -8,7 +8,6 @@ between users, including:
 - Protocol mints and burns
 """
 
-
 import eth_abi.abi
 from eth_typing import ChecksumAddress
 from web3.types import LogReceipt

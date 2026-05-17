@@ -24,6 +24,7 @@ from degenbot.exceptions.pool import (
     NoPoolStateAvailable,
 )
 from degenbot.provider import ProviderAdapter
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.deployments import (
     UniswapFactoryDeployment,
     UniswapV3ExchangeDeployment,
@@ -36,7 +37,6 @@ from degenbot.uniswap.v3_libraries.tick_math import (
     MIN_TICK,
 )
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolLiquidityMappingUpdate,

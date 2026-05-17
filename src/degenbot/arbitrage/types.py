@@ -42,8 +42,7 @@ class ArbitrageCalculationResult[SwapAmountType]:
         self,
         state_overrides: Mapping[ChecksumAddress, UniswapV2PoolState],
         block_number: BlockNumber | None = None,
-    ) -> ArbitrageCalculationResult[UniswapV2PoolSwapAmounts]:
-        ...
+    ) -> ArbitrageCalculationResult[UniswapV2PoolSwapAmounts]: ...
     ```
     """
 

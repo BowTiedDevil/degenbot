@@ -1,8 +1,8 @@
 """Tests for Curve pool strategy resolution."""
 
-import pytest
-
 import pickle
+
+import pytest
 
 from degenbot.curve._pool_strategies import resolve_pool_strategies
 from degenbot.curve.calculators.standard import StandardDyCalculator
