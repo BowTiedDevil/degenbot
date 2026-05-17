@@ -76,7 +76,11 @@ class ArbPoolCacheAdapter(Subscriber):
         self._pool_to_ids[id(pool)] = (forward_id, reverse_id)
         return forward_id
 
-    def notify(self, publisher: Publisher, message: AbstractPublisherMessage) -> None:
+    def notify(
+        self,
+        publisher: Publisher,
+        message: AbstractPublisherMessage,  # ruff: ignore[ARG002]
+    ) -> None:
         """
         Called when a pool publishes a state update.
 
