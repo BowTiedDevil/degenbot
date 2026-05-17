@@ -12,7 +12,7 @@ Two calculation strategies:
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING, Literal, TypedDict
+from typing import TYPE_CHECKING, Literal
 
 from degenbot.calculations.solidly_stable import (
     calc_exact_in_stable,
@@ -32,16 +32,6 @@ if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
 
 
-class _CalcTokensOutKwargs(TypedDict, total=False):
-    """Keyword arguments for _calc_tokens_out_from_tokens_in dispatch."""
-
-    amount_in: int
-    token_in: Literal[0, 1]
-    reserves0: int
-    reserves1: int
-    decimals0: int
-    decimals1: int
-    fee: Fraction
 
 
 class AerodromeV2PoolCalc:
@@ -53,7 +43,6 @@ class AerodromeV2PoolCalc:
 
     The following attributes are set in __init_subclass__ or at construction:
     - _calc_tokens_in_from_tokens_out: bound calc function for exact-out
-    - _calc_tokens_out_from_tokens_in: bound calc function for exact-in
     """
 
     # Attributes provided by AerodromeV2PoolState in the MRO
@@ -74,10 +63,8 @@ class AerodromeV2PoolCalc:
         """
         self._stable_calc_mode = stable
         if stable:
-            self._calc_tokens_out_from_tokens_in = self._calc_tokens_out_stable
             self._calc_tokens_in_from_tokens_out = self._calc_tokens_in_stable
         else:
-            self._calc_tokens_out_from_tokens_in = self._calc_tokens_out_volatile
             self._calc_tokens_in_from_tokens_out = self._calc_tokens_in_volatile
 
     def calculate_tokens_in_from_tokens_out(
@@ -151,7 +138,7 @@ class AerodromeV2PoolCalc:
 
         token_in_dir: Literal[0, 1] = 0 if token_in == self._token0 else 1
 
-        calc_kwargs: _CalcTokensOutKwargs = {
+        common_kwargs = {
             "amount_in": token_in_quantity,
             "token_in": token_in_dir,
             "reserves0": reserves_0,
@@ -159,9 +146,12 @@ class AerodromeV2PoolCalc:
             "fee": self._fee,
         }
         if self._stable_calc_mode:
-            calc_kwargs["decimals0"] = 10**self._token0.decimals
-            calc_kwargs["decimals1"] = 10**self._token1.decimals
-        return self._calc_tokens_out_from_tokens_in(**calc_kwargs)
+            return self._calc_tokens_out_stable(
+                **common_kwargs,
+                decimals0=10**self._token0.decimals,
+                decimals1=10**self._token1.decimals,
+            )
+        return self._calc_tokens_out_volatile(**common_kwargs)
 
     def get_absolute_price(
         self,

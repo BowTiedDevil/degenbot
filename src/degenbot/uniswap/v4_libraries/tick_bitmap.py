@@ -5,8 +5,9 @@ from itertools import count
 from degenbot.calculations.evm_math import evm_divide
 from degenbot.exceptions.pool import LiquidityMapWordMissing
 from degenbot.types.aliases import BlockNumber
+from degenbot.uniswap.concentrated.types import BitmapAtWord
 from degenbot.uniswap.v3_types import Tick
-from degenbot.uniswap.v4_types import InitializedTickMap, LiquidityMap, UniswapV4BitmapAtWord
+from degenbot.uniswap.v4_types import InitializedTickMap, LiquidityMap
 
 
 def compress(
@@ -42,12 +43,12 @@ def flip_tick(
     if word_pos not in tick_bitmap:
         if sparse:
             raise LiquidityMapWordMissing(word_pos)
-        tick_bitmap[word_pos] = UniswapV4BitmapAtWord(
+        tick_bitmap[word_pos] = BitmapAtWord(
             bitmap=0,
             block=update_block,
         )
 
-    new_bitmap = UniswapV4BitmapAtWord(
+    new_bitmap = BitmapAtWord(
         bitmap=tick_bitmap[word_pos].bitmap ^ (1 << bit_pos),
         block=update_block,
     )

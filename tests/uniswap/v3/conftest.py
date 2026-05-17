@@ -14,7 +14,7 @@ from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 
 # Path to recorded chain data
 CHAIN_DATA_PATH = Path(__file__).parent.parent.parent / "fixtures" / "chain_data"
@@ -97,11 +97,11 @@ def offline_wbtc_weth_v3_pool(offline_adapter: ProviderAdapter) -> UniswapV3Pool
 
     # Convert to the format expected by UniswapV3Pool
     tick_bitmap_for_pool = {
-        k: UniswapV3BitmapAtWord(bitmap=v["bitmap"], block=v["block"])
+        k: BitmapAtWord(bitmap=v["bitmap"], block=v["block"])
         for k, v in tick_bitmap_int.items()
     }
     tick_data_for_pool = {
-        k: UniswapV3LiquidityAtTick(
+        k: LiquidityAtTick(
             liquidity_gross=v["liquidity_gross"],
             liquidity_net=v["liquidity_net"],
             block=v["block"],

@@ -18,7 +18,8 @@ import numpy as np
 import pytest
 from eth_typing import ChecksumAddress
 
-from degenbot.uniswap.v3_types import UniswapV3LiquidityAtTick, UniswapV3PoolState
+from degenbot.uniswap.concentrated.types import LiquidityAtTick
+from degenbot.uniswap.v3_types import UniswapV3PoolState
 
 # ==============================================================================
 # TICK RANGE CACHE TYPES
@@ -87,7 +88,7 @@ class V3TickRangeCache:
 
     def rebuild(
         self,
-        tick_data: dict[int, UniswapV3LiquidityAtTick],
+        tick_data: dict[int, LiquidityAtTick],
         current_liquidity: int,
         current_tick: int,
     ) -> None:
@@ -313,16 +314,16 @@ class TestV3TickRangeCache:
     """Tests for V3TickRangeCache."""
 
     @pytest.fixture
-    def tick_data(self) -> dict[int, UniswapV3LiquidityAtTick]:
+    def tick_data(self) -> dict[int, LiquidityAtTick]:
         """Create sample tick data."""
         return {
-            0: UniswapV3LiquidityAtTick(liquidity_net=1_000_000, liquidity_gross=1_000_000),
-            60: UniswapV3LiquidityAtTick(liquidity_net=-500_000, liquidity_gross=500_000),
-            120: UniswapV3LiquidityAtTick(liquidity_net=-500_000, liquidity_gross=500_000),
+            0: LiquidityAtTick(liquidity_net=1_000_000, liquidity_gross=1_000_000),
+            60: LiquidityAtTick(liquidity_net=-500_000, liquidity_gross=500_000),
+            120: LiquidityAtTick(liquidity_net=-500_000, liquidity_gross=500_000),
         }
 
     @pytest.fixture
-    def cache(self, tick_data: dict[int, UniswapV3LiquidityAtTick]) -> V3TickRangeCache:
+    def cache(self, tick_data: dict[int, LiquidityAtTick]) -> V3TickRangeCache:
         """Create and build a cache."""
         cache = V3TickRangeCache(tick_spacing=60)
         cache.rebuild(
@@ -340,7 +341,7 @@ class TestV3TickRangeCache:
 
     def test_rebuild_makes_valid(
         self,
-        tick_data: dict[int, UniswapV3LiquidityAtTick],
+        tick_data: dict[int, LiquidityAtTick],
     ) -> None:
         """Test that rebuild makes cache valid."""
         cache = V3TickRangeCache(tick_spacing=60)
@@ -396,7 +397,7 @@ class TestV3TickRangeCache:
 
     def test_rebuild_skip_if_valid(
         self,
-        tick_data: dict[int, UniswapV3LiquidityAtTick],
+        tick_data: dict[int, LiquidityAtTick],
     ) -> None:
         """Test that rebuild skips if already valid."""
         cache = V3TickRangeCache(tick_spacing=60)
@@ -411,7 +412,7 @@ class TestV3TickRangeCache:
 
         # Modify tick_data (shouldn't affect cache since it's valid)
         new_tick_data = {
-            0: UniswapV3LiquidityAtTick(liquidity_net=999_999_999, liquidity_gross=999_999_999)
+            0: LiquidityAtTick(liquidity_net=999_999_999, liquidity_gross=999_999_999)
         }
         cache.rebuild(
             tick_data=new_tick_data,
@@ -437,19 +438,19 @@ class TestMockV3PoolWithCache:
             tick=0,
             tick_bitmap={},
             tick_data={
-                -60: UniswapV3LiquidityAtTick(
+                -60: LiquidityAtTick(
                     liquidity_net=500_000_000_000,
                     liquidity_gross=500_000_000_000,
                 ),
-                0: UniswapV3LiquidityAtTick(
+                0: LiquidityAtTick(
                     liquidity_net=500_000_000_000,
                     liquidity_gross=1_000_000_000_000,
                 ),
-                60: UniswapV3LiquidityAtTick(
+                60: LiquidityAtTick(
                     liquidity_net=-500_000_000_000,
                     liquidity_gross=500_000_000_000,
                 ),
-                120: UniswapV3LiquidityAtTick(
+                120: LiquidityAtTick(
                     liquidity_net=-500_000_000_000,
                     liquidity_gross=500_000_000_000,
                 ),
@@ -519,7 +520,7 @@ class TestTickCachePerformance:
         # Create cache with 100 tick ranges
         tick_data = {}
         for i in range(100):
-            tick_data[i * 60] = UniswapV3LiquidityAtTick(
+            tick_data[i * 60] = LiquidityAtTick(
                 liquidity_net=1_000_000,
                 liquidity_gross=1_000_000,
             )
@@ -550,7 +551,7 @@ class TestTickCachePerformance:
         # Create large tick data
         tick_data = {}
         for i in range(1000):
-            tick_data[i * 60] = UniswapV3LiquidityAtTick(
+            tick_data[i * 60] = LiquidityAtTick(
                 liquidity_net=1_000_000,
                 liquidity_gross=1_000_000,
             )
@@ -590,16 +591,16 @@ class TestCacheInArbitrage:
             tick=0,
             tick_bitmap={},
             tick_data={
-                -60: UniswapV3LiquidityAtTick(
+                -60: LiquidityAtTick(
                     liquidity_net=500_000_000_000, liquidity_gross=500_000_000_000
                 ),
-                0: UniswapV3LiquidityAtTick(
+                0: LiquidityAtTick(
                     liquidity_net=500_000_000_000, liquidity_gross=1_000_000_000_000
                 ),
-                60: UniswapV3LiquidityAtTick(
+                60: LiquidityAtTick(
                     liquidity_net=-500_000_000_000, liquidity_gross=500_000_000_000
                 ),
-                120: UniswapV3LiquidityAtTick(
+                120: LiquidityAtTick(
                     liquidity_net=-500_000_000_000, liquidity_gross=500_000_000_000
                 ),
             },

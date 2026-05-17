@@ -42,7 +42,7 @@ class TestV3BuyPoolFastPath:
             tick_lower=0,
             tick_upper=0,
         )
-        assert hop.is_v3
+        assert isinstance(hop, BoundedProductHop)
         assert hop.invariant.name == "BOUNDED_PRODUCT"
 
     def test_v3_buypool_with_v2_sell_path_completes(self, solver):

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 from degenbot.types.hop_types import HopType as _HopType
+from degenbot.types.hop_types import BoundedProductHop as _BoundedProductHop
 from degenbot.types.hop_types import PoolInvariant as _PoolInvariant
 
 __all__ = [
@@ -44,12 +45,12 @@ class SolveInput:
         return len(self.hops)
 
     @property
-    def has_v3(self) -> bool:
-        return any(h.is_v3 for h in self.hops)
+    def has_bounded_product(self) -> bool:
+        return any(isinstance(h, _BoundedProductHop) for h in self.hops)
 
     @property
-    def all_v2(self) -> bool:
-        return not self.has_v3
+    def all_constant_product(self) -> bool:
+        return not self.has_bounded_product
 
     @property
     def all_constant_product(self) -> bool:
@@ -72,8 +73,8 @@ class SolveInput:
         return any(h.invariant == _PoolInvariant.BALANCER_MULTI_TOKEN for h in self.hops)
 
     @property
-    def v3_indices(self) -> tuple[int, ...]:
-        return tuple(i for i, h in enumerate(self.hops) if h.is_v3)
+    def bounded_product_indices(self) -> tuple[int, ...]:
+        return tuple(i for i, h in enumerate(self.hops) if isinstance(h, _BoundedProductHop))
 
 
 @dataclass(frozen=True, slots=True)

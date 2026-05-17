@@ -11,9 +11,8 @@ from hexbytes import HexBytes
 from degenbot.exceptions.arbitrage import ArbitrageError, OptimizationError
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_types import UniswapV2PoolState
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
     UniswapV3PoolState,
 )
 from degenbot.uniswap.v4_types import UniswapV4PoolState
@@ -242,8 +241,8 @@ class TestMockV3Pool:
             liquidity=10**18,
             sqrt_price_x96=2**96,  # Price = 1
             tick=0,
-            tick_bitmap={0: UniswapV3BitmapAtWord(bitmap=0)},
-            tick_data={0: UniswapV3LiquidityAtTick(liquidity_net=0, liquidity_gross=0)},
+            tick_bitmap={0: BitmapAtWord(bitmap=0)},
+            tick_data={0: LiquidityAtTick(liquidity_net=0, liquidity_gross=0)},
         )
 
     def test_create_v3_pool(

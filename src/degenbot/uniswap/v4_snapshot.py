@@ -26,9 +26,8 @@ from degenbot.provider.log_fetching import fetch_logs_retrying, fetch_logs_retry
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import KeyedDefaultDict
 from degenbot.uniswap.abi import UNISWAP_V4_POOL_MANAGER_ABI
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v4_types import (
-    UniswapV4BitmapAtWord,
-    UniswapV4LiquidityAtTick,
     UniswapV4LiquidityEvent,
     UniswapV4PoolLiquidityMappingUpdate,
 )
@@ -39,8 +38,8 @@ type ManagedPoolIdentifier = tuple[PoolManagerAddress, PoolId]
 
 
 class LiquidityMap(TypedDict):
-    tick_bitmap: dict[int, UniswapV4BitmapAtWord]
-    tick_data: dict[int, UniswapV4LiquidityAtTick]
+    tick_bitmap: dict[int, BitmapAtWord]
+    tick_data: dict[int, LiquidityAtTick]
 
 
 class UniswapV4LiquiditySnapshotSource(Protocol):
@@ -109,11 +108,11 @@ class MonolithicJsonFileSnapshot:
 
         return LiquidityMap(
             tick_bitmap={
-                int(k): UniswapV4BitmapAtWord(**v)
+                int(k): BitmapAtWord(**v)
                 for k, v in self._file_snapshot[pool_id]["tick_bitmap"].items()
             },
             tick_data={
-                int(k): UniswapV4LiquidityAtTick(**v)
+                int(k): LiquidityAtTick(**v)
                 for k, v in self._file_snapshot[pool_id]["tick_data"].items()
             },
         )
@@ -176,13 +175,13 @@ class DatabaseSnapshot:
 
         return LiquidityMap(
             tick_bitmap={
-                int(initialization_map.word): UniswapV4BitmapAtWord(
+                int(initialization_map.word): BitmapAtWord(
                     bitmap=initialization_map.bitmap
                 )
                 for initialization_map in pool_in_db.initialization_maps
             },
             tick_data={
-                int(liquidity_position.tick): UniswapV4LiquidityAtTick(
+                int(liquidity_position.tick): LiquidityAtTick(
                     liquidity_gross=liquidity_position.liquidity_gross,
                     liquidity_net=liquidity_position.liquidity_net,
                 )
@@ -410,7 +409,7 @@ class UniswapV4LiquiditySnapshot:
         self,
         pool_manager: HexAddress | bytes,
         pool_id: HexStr | bytes,
-    ) -> dict[int, UniswapV4BitmapAtWord] | None:
+    ) -> dict[int, BitmapAtWord] | None:
         """
         Consume the tick initialization bitmaps for the pool.
         """
@@ -432,7 +431,7 @@ class UniswapV4LiquiditySnapshot:
         self,
         pool_manager: HexAddress | bytes,
         pool_id: HexStr | bytes,
-    ) -> dict[int, UniswapV4LiquidityAtTick] | None:
+    ) -> dict[int, LiquidityAtTick] | None:
         """
         Consume the liquidity mapping for the pool.
         """
@@ -454,8 +453,8 @@ class UniswapV4LiquiditySnapshot:
         self,
         pool_manager: HexAddress | bytes,
         pool_id: HexStr | bytes,
-        tick_data: dict[int, UniswapV4LiquidityAtTick],
-        tick_bitmap: dict[int, UniswapV4BitmapAtWord],
+        tick_data: dict[int, LiquidityAtTick],
+        tick_bitmap: dict[int, BitmapAtWord],
     ) -> None:
         """
         Update the liquidity mapping for the pool.

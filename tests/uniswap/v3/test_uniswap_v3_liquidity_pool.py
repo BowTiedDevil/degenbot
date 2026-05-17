@@ -36,9 +36,8 @@ from degenbot.uniswap.v3_libraries.tick_math import (
     MIN_TICK,
 )
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolLiquidityMappingUpdate,
     UniswapV3PoolSimulationResult,
@@ -482,24 +481,24 @@ def test_pickle_pool(wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool):
 
 def test_tick_bitmap_equality() -> None:
     with pytest.raises(AssertionError):
-        assert UniswapV3BitmapAtWord(bitmap=1) == UniswapV3BitmapAtWord(bitmap=2)
+        assert BitmapAtWord(bitmap=1) == BitmapAtWord(bitmap=2)
     with pytest.raises(AssertionError):
-        assert UniswapV3BitmapAtWord(bitmap=2) == UniswapV3BitmapAtWord(bitmap=4)
+        assert BitmapAtWord(bitmap=2) == BitmapAtWord(bitmap=4)
 
-    assert UniswapV3BitmapAtWord(bitmap=1, block=1) == UniswapV3BitmapAtWord(bitmap=1, block=1)
+    assert BitmapAtWord(bitmap=1, block=1) == BitmapAtWord(bitmap=1, block=1)
 
 
 def test_tick_data_equality() -> None:
     with pytest.raises(AssertionError):
-        assert UniswapV3LiquidityAtTick(
+        assert LiquidityAtTick(
             liquidity_net=1, liquidity_gross=2
-        ) == UniswapV3LiquidityAtTick(liquidity_net=1, liquidity_gross=4)
+        ) == LiquidityAtTick(liquidity_net=1, liquidity_gross=4)
     with pytest.raises(AssertionError):
-        assert UniswapV3LiquidityAtTick(
+        assert LiquidityAtTick(
             liquidity_net=1, liquidity_gross=2
-        ) == UniswapV3LiquidityAtTick(liquidity_net=4, liquidity_gross=2)
+        ) == LiquidityAtTick(liquidity_net=4, liquidity_gross=2)
 
-    assert UniswapV3LiquidityAtTick(liquidity_net=1, liquidity_gross=2) == UniswapV3LiquidityAtTick(
+    assert LiquidityAtTick(liquidity_net=1, liquidity_gross=2) == LiquidityAtTick(
         liquidity_net=1, liquidity_gross=2
     )
 

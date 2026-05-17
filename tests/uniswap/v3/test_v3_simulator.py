@@ -11,7 +11,7 @@ from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot, MissingLiquidityData
 from degenbot.uniswap.concentrated.v3_simulator import calculate_swap
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_types import UniswapV3BitmapAtWord, UniswapV3LiquidityAtTick
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 
 
 class TestV3SimulatorMatchesPool:
@@ -276,24 +276,24 @@ class TestSyntheticMap:
         compressed_lower = tick_lower // tick_spacing
         compressed_upper = tick_upper // tick_spacing
 
-        bitmap: dict[int, UniswapV3BitmapAtWord] = {}
+        bitmap: dict[int, BitmapAtWord] = {}
         for compressed in (compressed_lower, compressed_upper):
             word = compressed >> 8
             bit = compressed & 0xFF
             if word not in bitmap:
-                bitmap[word] = UniswapV3BitmapAtWord(bitmap=0, block=0)
-            bitmap[word] = UniswapV3BitmapAtWord(
+                bitmap[word] = BitmapAtWord(bitmap=0, block=0)
+            bitmap[word] = BitmapAtWord(
                 bitmap=bitmap[word].bitmap | (1 << bit),
                 block=0,
             )
 
         tick_data = {
-            tick_lower: UniswapV3LiquidityAtTick(
+            tick_lower: LiquidityAtTick(
                 liquidity_net=liquidity,
                 liquidity_gross=liquidity,
                 block=0,
             ),
-            tick_upper: UniswapV3LiquidityAtTick(
+            tick_upper: LiquidityAtTick(
                 liquidity_net=-liquidity,
                 liquidity_gross=liquidity,
                 block=0,

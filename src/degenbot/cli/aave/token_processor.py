@@ -23,9 +23,10 @@ from degenbot.aave.processors.base import (
     CollateralMintEvent,
     DebtBurnEvent,
     DebtMintEvent,
+    MathLibraries,
 )
 from degenbot.aave.processors.factory import TokenProcessorFactory
-from degenbot.cli.aave.constants import UserOperation, WadRayMathLibrary
+from degenbot.cli.aave.constants import UserOperation
 from degenbot.cli.aave.db_assets import get_asset_by_token_type, get_asset_identifier
 from degenbot.cli.aave.db_positions import (
     get_or_create_collateral_position,
@@ -179,7 +180,7 @@ def _refresh_discount_rate(
     discount_token_balance: int,
     scaled_debt_balance: int,
     debt_index: int,
-    wad_ray_math: WadRayMathLibrary,
+    math_libs: MathLibraries,
 ) -> None:
     """
     Calculate and update the user's GHO discount rate.
@@ -189,7 +190,7 @@ def _refresh_discount_rate(
     contract.
     """
 
-    debt_token_balance = wad_ray_math.ray_mul(
+    debt_token_balance = math_libs.ray_mul(
         a=scaled_debt_balance,
         b=debt_index,
     )
@@ -606,7 +607,7 @@ def _process_debt_mint_with_match(
                 discount_token_balance=discount_token_balance,
                 scaled_debt_balance=debt_position.balance,
                 debt_index=debt_position.last_index,
-                wad_ray_math=gho_processor.get_math_libraries()["wad_ray"],
+                math_libs=gho_processor.get_math_libraries(),
             )
     else:
         # Use standard debt processor for non-GHO tokens
@@ -864,7 +865,7 @@ def _process_debt_burn_with_match(
                 discount_token_balance=discount_token_balance,
                 scaled_debt_balance=debt_position.balance,
                 debt_index=current_index,
-                wad_ray_math=gho_processor.get_math_libraries()["wad_ray"],
+                math_libs=gho_processor.get_math_libraries(),
             )
     else:
         # Use standard debt processor for non-GHO tokens

@@ -17,9 +17,8 @@ from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v4_types import (
-    UniswapV4BitmapAtWord,
-    UniswapV4LiquidityAtTick,
     UniswapV4PoolExternalUpdate,
 )
 
@@ -68,15 +67,18 @@ class V4PoolBuilder:
         """Create a tick data fetcher callback for a V4 pool."""
         pool_manager_address_ = get_checksum_address(pool_manager_address)
         return make_tick_data_fetcher(
-            pool_lookup=lambda _: self._managed_pools.get(
-                chain_id=chain_id,
-                pool_manager_address=pool_manager_address_,
-                pool_id=pool_id,
+            pool_lookup=lambda _: cast(
+                "UniswapV4Pool | None",
+                self._managed_pools.get(
+                    chain_id=chain_id,
+                    pool_manager_address=pool_manager_address_,
+                    pool_id=pool_id,
+                ),
             ),
             provider_lookup=lambda: self._connections.get_provider(chain_id),
             types=TickDataTypes(
-                bitmap_at_word=UniswapV4BitmapAtWord,
-                liquidity_at_tick=UniswapV4LiquidityAtTick,
+                bitmap_at_word=BitmapAtWord,
+                liquidity_at_tick=LiquidityAtTick,
                 tick_struct_types=("uint128", "int128"),
             ),
             state_view_address=state_view_address,
@@ -95,8 +97,8 @@ class V4PoolBuilder:
         hook_address: str | None = None,
         chain_id: ChainId | None = None,
         state_block: int | None = None,
-        tick_bitmap: dict[int, UniswapV4BitmapAtWord] | None = None,
-        tick_data: dict[int, UniswapV4LiquidityAtTick] | None = None,
+        tick_bitmap: dict[int, BitmapAtWord] | None = None,
+        tick_data: dict[int, LiquidityAtTick] | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
         **kwargs: Any,
@@ -234,12 +236,12 @@ class V4PoolBuilder:
                             liq_positions = pool_with_data.liquidity_positions
                             if init_maps and liq_positions:
                                 for init_map in init_maps:
-                                    working_tick_bitmap[int(init_map.word)] = UniswapV4BitmapAtWord(
+                                    working_tick_bitmap[int(init_map.word)] = BitmapAtWord(
                                         bitmap=int(init_map.bitmap),
                                         block=pool_with_data.liquidity_update_block or 0,
                                     )
                                 for pos in liq_positions:
-                                    working_tick_data[int(pos.tick)] = UniswapV4LiquidityAtTick(
+                                    working_tick_data[int(pos.tick)] = LiquidityAtTick(
                                         liquidity_net=int(pos.liquidity_net),
                                         liquidity_gross=int(pos.liquidity_gross),
                                         block=pool_with_data.liquidity_update_block or 0,
@@ -283,13 +285,13 @@ class V4PoolBuilder:
                             types=["uint128", "int128"],
                             data=result,
                         )
-                        working_tick_data[active_tick] = UniswapV4LiquidityAtTick(
+                        working_tick_data[active_tick] = LiquidityAtTick(
                             liquidity_net=int(liquidity_net),
                             liquidity_gross=int(liquidity_gross),
                             block=state_block,
                         )
 
-                working_tick_bitmap[word] = UniswapV4BitmapAtWord(
+                working_tick_bitmap[word] = BitmapAtWord(
                     bitmap=bitmap_at_word,
                     block=state_block,
                 )

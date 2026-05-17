@@ -6,6 +6,8 @@ fetches bitmap/tick data from a concentrated-liquidity pool and pushes
 updated state, for both V3 and V4 type variants.
 """
 
+import dataclasses
+
 from unittest.mock import MagicMock, patch
 
 import eth_abi.abi
@@ -18,14 +20,9 @@ from degenbot.uniswap.concentrated.state_manager import (
 )
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
     UniswapV3PoolState,
 )
-from degenbot.uniswap.v4_types import (
-    UniswapV4BitmapAtWord,
-    UniswapV4LiquidityAtTick,
-)
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 
 
 def _make_fake_pool(state):
@@ -47,6 +44,25 @@ def _make_fake_pool(state):
     state_mgr = ConcentratedLiquidityStateManager(initial_state=state)
     pool._state_mgr = state_mgr
 
+    def _update_tick_data(
+        tick_bitmap: dict,
+        tick_data: dict,
+        block: int,
+    ) -> None:
+        new_state = dataclasses.replace(
+            pool._state_mgr.state,
+            tick_bitmap=tick_bitmap,
+            tick_data=tick_data,
+            block=max(pool.update_block, block),
+        )
+        pool._state_mgr.push_state(new_state)
+        pool.state = new_state
+        pool.tick_bitmap = dict(new_state.tick_bitmap)
+        pool.tick_data = dict(new_state.tick_data)
+        pool.update_block = new_state.block
+
+    pool.update_tick_data = _update_tick_data
+
     return pool
 
 
@@ -66,14 +82,14 @@ def _make_v3_state(
 
 
 V3_TYPES = TickDataTypes(
-    bitmap_at_word=UniswapV3BitmapAtWord,
-    liquidity_at_tick=UniswapV3LiquidityAtTick,
+    bitmap_at_word=BitmapAtWord,
+    liquidity_at_tick=LiquidityAtTick,
     tick_struct_types=UniswapV3Pool.TICK_STRUCT_TYPES,
 )
 
 V4_TYPES = TickDataTypes(
-    bitmap_at_word=UniswapV4BitmapAtWord,
-    liquidity_at_tick=UniswapV4LiquidityAtTick,
+    bitmap_at_word=BitmapAtWord,
+    liquidity_at_tick=LiquidityAtTick,
     tick_struct_types=("uint128", "int128"),
 )
 

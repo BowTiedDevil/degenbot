@@ -40,14 +40,6 @@ class ConstantProductHop:
     invariant: PoolInvariant = PoolInvariant.CONSTANT_PRODUCT
 
     @property
-    def is_v2(self) -> bool:
-        return True
-
-    @property
-    def is_v3(self) -> bool:
-        return False
-
-    @property
     def gamma(self) -> float:
         return 1.0 - float(self.fee)
 
@@ -91,14 +83,6 @@ class BoundedProductHop:
     invariant: PoolInvariant = PoolInvariant.BOUNDED_PRODUCT
 
     @property
-    def is_v2(self) -> bool:
-        return False
-
-    @property
-    def is_v3(self) -> bool:
-        return True
-
-    @property
     def gamma(self) -> float:
         return 1.0 - float(self.fee)
 
@@ -130,14 +114,6 @@ class SolidlyStableHop:
     invariant: PoolInvariant = PoolInvariant.SOLIDLY_STABLE
 
     @property
-    def is_v2(self) -> bool:
-        return False
-
-    @property
-    def is_v3(self) -> bool:
-        return False
-
-    @property
     def gamma(self) -> float:
         return 1.0 - float(self.fee)
 
@@ -157,14 +133,6 @@ class BalancerWeightedHop:
     weight_in: int
     weight_out: int
     invariant: PoolInvariant = PoolInvariant.BALANCER_WEIGHTED
-
-    @property
-    def is_v2(self) -> bool:
-        return False
-
-    @property
-    def is_v3(self) -> bool:
-        return False
 
     @property
     def gamma(self) -> float:
@@ -198,14 +166,6 @@ class CurveStableswapHop:
     invariant: PoolInvariant = PoolInvariant.CURVE_STABLESWAP
 
     @property
-    def is_v2(self) -> bool:
-        return False
-
-    @property
-    def is_v3(self) -> bool:
-        return False
-
-    @property
     def gamma(self) -> float:
         return 1.0 - float(self.fee)
 
@@ -229,14 +189,6 @@ class BalancerMultiTokenHop:
     @property
     def n_tokens(self) -> int:
         return len(self.reserves)
-
-    @property
-    def is_v2(self) -> bool:
-        return False
-
-    @property
-    def is_v3(self) -> bool:
-        return False
 
     @property
     def gamma(self) -> float:

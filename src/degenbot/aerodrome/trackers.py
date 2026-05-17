@@ -221,7 +221,7 @@ class AerodromeV3PoolTracker(
         pool = self.get_pool(
             pool_address=pool_address,
             silent=silent,
-            pool_class_kwargs=pool_class_kwargs,
+            pool_class_kwargs=pool_class_kwargs,  # ty:ignore[unknown-argument]
         )
         assert isinstance(pool, AerodromeV3Pool)
         return pool

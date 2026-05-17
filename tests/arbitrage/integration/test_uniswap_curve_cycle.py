@@ -23,9 +23,8 @@ from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.tick_bitmap import position
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
     UniswapV3PoolState,
 )
 from tests.helpers.bot_factory import make_bot_with_provider
@@ -85,8 +84,8 @@ def _build_v3_pool_with_tick_data(fork: AnvilFork, address: str) -> UniswapV3Poo
     })
     (bitmap_value,) = eth_abi.abi.decode(["uint256"], bitmap_result)
 
-    tick_bitmap_data = {word_pos: UniswapV3BitmapAtWord(bitmap=int(bitmap_value), block=0)}
-    tick_data: dict[int, UniswapV3LiquidityAtTick] = {}
+    tick_bitmap_data = {word_pos: BitmapAtWord(bitmap=int(bitmap_value), block=0)}
+    tick_data: dict[int, LiquidityAtTick] = {}
 
     for i in range(256):
         if bitmap_value & (1 << i) > 0:
@@ -108,7 +107,7 @@ def _build_v3_pool_with_tick_data(fork: AnvilFork, address: str) -> UniswapV3Poo
                 ],
                 result,
             )
-            tick_data[active_tick] = UniswapV3LiquidityAtTick(
+            tick_data[active_tick] = LiquidityAtTick(
                 liquidity_net=int(ln),
                 liquidity_gross=int(lg),
                 block=0,

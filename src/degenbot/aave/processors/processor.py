@@ -2,7 +2,8 @@
 
 from typing import ClassVar
 
-import degenbot.aave.libraries
+import degenbot.aave.libraries.percentage_math
+import degenbot.aave.libraries.wad_ray_math
 from degenbot.aave.processors.base import (
     CollateralBurnEvent,
     CollateralMintEvent,
@@ -39,8 +40,12 @@ class UnifiedCollateralProcessor:
         self._rounding = rounding
         self._revision = revision
         self._math_libs = MathLibraries(
-            wad_ray=degenbot.aave.libraries.wad_ray_math,
-            percentage=degenbot.aave.libraries.percentage_math,
+            _ray_div=degenbot.aave.libraries.wad_ray_math.ray_div,
+            _ray_div_ceil=degenbot.aave.libraries.wad_ray_math.ray_div_ceil,
+            _ray_div_floor=degenbot.aave.libraries.wad_ray_math.ray_div_floor,
+            _ray_mul=degenbot.aave.libraries.wad_ray_math.ray_mul,
+            _percent_div=degenbot.aave.libraries.percentage_math.percent_div,
+            _percent_mul=degenbot.aave.libraries.percentage_math.percent_mul,
         )
 
     def get_math_libraries(self) -> MathLibraries:
@@ -49,14 +54,13 @@ class UnifiedCollateralProcessor:
 
     def _ray_div(self, a: int, b: int, mode: RoundingMode) -> int:
         """Perform ray division with specified rounding mode."""
-        wad_ray = self._math_libs["wad_ray"]
         match mode:
             case RoundingMode.HALF_UP:
-                return wad_ray.ray_div(a, b)
+                return self._math_libs.ray_div(a, b)
             case RoundingMode.FLOOR:
-                return wad_ray.ray_div_floor(a, b)
+                return self._math_libs.ray_div_floor(a, b)
             case RoundingMode.CEIL:
-                return wad_ray.ray_div_ceil(a, b)
+                return self._math_libs.ray_div_ceil(a, b)
 
     def process_mint_event(
         self,
@@ -172,8 +176,12 @@ class UnifiedDebtProcessor:
         self._rounding = rounding
         self._revision = revision
         self._math_libs = MathLibraries(
-            wad_ray=degenbot.aave.libraries.wad_ray_math,
-            percentage=degenbot.aave.libraries.percentage_math,
+            _ray_div=degenbot.aave.libraries.wad_ray_math.ray_div,
+            _ray_div_ceil=degenbot.aave.libraries.wad_ray_math.ray_div_ceil,
+            _ray_div_floor=degenbot.aave.libraries.wad_ray_math.ray_div_floor,
+            _ray_mul=degenbot.aave.libraries.wad_ray_math.ray_mul,
+            _percent_div=degenbot.aave.libraries.percentage_math.percent_div,
+            _percent_mul=degenbot.aave.libraries.percentage_math.percent_mul,
         )
 
     def get_math_libraries(self) -> MathLibraries:
@@ -182,14 +190,13 @@ class UnifiedDebtProcessor:
 
     def _ray_div(self, a: int, b: int, mode: RoundingMode) -> int:
         """Perform ray division with specified rounding mode."""
-        wad_ray = self._math_libs["wad_ray"]
         match mode:
             case RoundingMode.HALF_UP:
-                return wad_ray.ray_div(a, b)
+                return self._math_libs.ray_div(a, b)
             case RoundingMode.FLOOR:
-                return wad_ray.ray_div_floor(a, b)
+                return self._math_libs.ray_div_floor(a, b)
             case RoundingMode.CEIL:
-                return wad_ray.ray_div_ceil(a, b)
+                return self._math_libs.ray_div_ceil(a, b)
 
     def process_mint_event(
         self,
@@ -296,8 +303,12 @@ class UnifiedGhoProcessor:
         self._discount = discount
         self._revision = revision
         self._math_libs = MathLibraries(
-            wad_ray=degenbot.aave.libraries.wad_ray_math,
-            percentage=degenbot.aave.libraries.percentage_math,
+            _ray_div=degenbot.aave.libraries.wad_ray_math.ray_div,
+            _ray_div_ceil=degenbot.aave.libraries.wad_ray_math.ray_div_ceil,
+            _ray_div_floor=degenbot.aave.libraries.wad_ray_math.ray_div_floor,
+            _ray_mul=degenbot.aave.libraries.wad_ray_math.ray_mul,
+            _percent_div=degenbot.aave.libraries.percentage_math.percent_div,
+            _percent_mul=degenbot.aave.libraries.percentage_math.percent_mul,
         )
 
     def get_math_libraries(self) -> MathLibraries:
@@ -306,14 +317,13 @@ class UnifiedGhoProcessor:
 
     def _ray_div(self, a: int, b: int, mode: RoundingMode) -> int:
         """Perform ray division with specified rounding mode."""
-        wad_ray = self._math_libs["wad_ray"]
         match mode:
             case RoundingMode.HALF_UP:
-                return wad_ray.ray_div(a, b)
+                return self._math_libs.ray_div(a, b)
             case RoundingMode.FLOOR:
-                return wad_ray.ray_div_floor(a, b)
+                return self._math_libs.ray_div_floor(a, b)
             case RoundingMode.CEIL:
-                return wad_ray.ray_div_ceil(a, b)
+                return self._math_libs.ray_div_ceil(a, b)
 
     def supports_discount(self) -> bool:
         """Check if this revision supports the discount mechanism."""
@@ -330,8 +340,6 @@ class UnifiedGhoProcessor:
         """
         Process a GHO debt mint event.
         """
-        wad_ray = self._math_libs["wad_ray"]
-
         # Accrue debt with discount (stateless - doesn't mutate position)
         discount_scaled = self.accrue_debt_on_action(
             previous_scaled_balance=previous_balance,
@@ -427,16 +435,16 @@ class UnifiedGhoProcessor:
                 balance_delta = -discount_scaled
             else:
                 # No discount (V4+): just interest accrual
-                balance_increase = wad_ray.ray_mul(
+                balance_increase = self._math_libs.ray_mul(
                     a=previous_balance,
                     b=event_data.index,
-                ) - wad_ray.ray_mul(
+                ) - self._math_libs.ray_mul(
                     a=previous_balance,
                     b=previous_index,
                 )
 
                 # Convert back to scaled
-                balance_increase_scaled = wad_ray.ray_div(
+                balance_increase_scaled = self._math_libs.ray_div(
                     a=balance_increase,
                     b=event_data.index,
                 )
@@ -526,8 +534,7 @@ class UnifiedGhoProcessor:
             balance_delta = -(amount_scaled + discount_scaled)
         else:
             # No discount (V4+): check for full repayment
-            wad_ray = self._math_libs["wad_ray"]
-            balance_before_burn = wad_ray.ray_mul(
+            balance_before_burn = self._math_libs.ray_mul(
                 a=previous_balance,
                 b=event_data.index,
             )
@@ -562,25 +569,22 @@ class UnifiedGhoProcessor:
         if not self._discount.supports_discount:
             return 0
 
-        wad_ray = self._math_libs["wad_ray"]
-        percentage = self._math_libs["percentage"]
-
         # Calculate balance increase
-        balance_increase = wad_ray.ray_mul(
+        balance_increase = self._math_libs.ray_mul(
             a=previous_scaled_balance,
             b=current_index,
-        ) - wad_ray.ray_mul(
+        ) - self._math_libs.ray_mul(
             a=previous_scaled_balance,
             b=previous_index,
         )
 
         discount_scaled = 0
         if balance_increase != 0 and discount_percent != 0:
-            discount = percentage.percent_mul(
+            discount = self._math_libs.percent_mul(
                 value=balance_increase,
                 percentage=discount_percent,
             )
-            discount_scaled = wad_ray.ray_div(a=discount, b=current_index)
+            discount_scaled = self._math_libs.ray_div(a=discount, b=current_index)
 
         return discount_scaled
 
@@ -594,12 +598,10 @@ class UnifiedGhoProcessor:
         """
         Calculate discounted balance for burn operations.
         """
-        wad_ray = self._math_libs["wad_ray"]
-
         if scaled_balance == 0:
             return 0
 
-        balance = wad_ray.ray_mul(
+        balance = self._math_libs.ray_mul(
             a=scaled_balance,
             b=current_index,
         )
@@ -610,15 +612,13 @@ class UnifiedGhoProcessor:
         if current_index == previous_index:
             return balance
 
-        percentage = self._math_libs["percentage"]
-
         if discount_percent != 0:
-            balance_increase = balance - wad_ray.ray_mul(
+            balance_increase = balance - self._math_libs.ray_mul(
                 a=scaled_balance,
                 b=previous_index,
             )
 
-            balance -= percentage.percent_mul(
+            balance -= self._math_libs.percent_mul(
                 value=balance_increase,
                 percentage=discount_percent,
             )

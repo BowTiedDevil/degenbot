@@ -12,9 +12,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
     UniswapV3PoolState,
 )
 from tests.arbitrage.mock_pools import FakeToken, MockV3Pool
@@ -31,15 +30,15 @@ class FakeTickInfo:
     """
     Tick information for fake V3 pools.
 
-    Mirrors UniswapV3LiquidityAtTick but is hashable for testing.
+    Mirrors LiquidityAtTick but is hashable for testing.
     """
 
     liquidity_net: int
     liquidity_gross: int
 
-    def to_liquidity_at_tick(self) -> UniswapV3LiquidityAtTick:
-        """Convert to UniswapV3LiquidityAtTick."""
-        return UniswapV3LiquidityAtTick(
+    def to_liquidity_at_tick(self) -> LiquidityAtTick:
+        """Convert to LiquidityAtTick."""
+        return LiquidityAtTick(
             liquidity_net=self.liquidity_net,
             liquidity_gross=self.liquidity_gross,
         )
@@ -142,16 +141,16 @@ class FakeV3PoolWithTicks(MockV3Pool):
             raise ValueError(msg)
 
         # Build tick data and bitmap from ranges first
-        self.tick_data: dict[int, UniswapV3LiquidityAtTick] = {}
+        self.tick_data: dict[int, LiquidityAtTick] = {}
         self.tick_bitmap: dict[int, int] = {}
         self.sparse_liquidity_map = False
         self._tick_ranges = tick_ranges
         self._build_tick_data()
 
         # Convert tick_bitmap to proper format
-        tick_bitmap_typed: dict[int, UniswapV3BitmapAtWord] = {}
+        tick_bitmap_typed: dict[int, BitmapAtWord] = {}
         for word_pos, bitmap in self.tick_bitmap.items():
-            tick_bitmap_typed[word_pos] = UniswapV3BitmapAtWord(
+            tick_bitmap_typed[word_pos] = BitmapAtWord(
                 bitmap=bitmap,
                 block=0,
             )
@@ -213,12 +212,12 @@ class FakeV3PoolWithTicks(MockV3Pool):
             existing = self.tick_data[tick]
             new_net = existing.liquidity_net + liquidity_delta
             new_gross = max(existing.liquidity_gross + abs(liquidity_delta), abs(new_net))
-            self.tick_data[tick] = UniswapV3LiquidityAtTick(
+            self.tick_data[tick] = LiquidityAtTick(
                 liquidity_net=new_net,
                 liquidity_gross=new_gross,
             )
         else:
-            self.tick_data[tick] = UniswapV3LiquidityAtTick(
+            self.tick_data[tick] = LiquidityAtTick(
                 liquidity_net=liquidity_delta,
                 liquidity_gross=abs(liquidity_delta),
             )

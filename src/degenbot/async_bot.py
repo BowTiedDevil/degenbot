@@ -50,12 +50,8 @@ from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYM
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
-)
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-from degenbot.uniswap.v4_types import UniswapV4BitmapAtWord, UniswapV4LiquidityAtTick
 
 
 @dataclass(frozen=True)
@@ -536,13 +532,13 @@ class AsyncBot:
                     ],
                     data=result,
                 )
-                working_tick_data[active_tick] = UniswapV3LiquidityAtTick(
+                working_tick_data[active_tick] = LiquidityAtTick(
                     liquidity_net=int(liquidity_net),
                     liquidity_gross=int(liquidity_gross),
                     block=resolved_state_block,
                 )
 
-        working_tick_bitmap[word] = UniswapV3BitmapAtWord(
+        working_tick_bitmap[word] = BitmapAtWord(
             bitmap=bitmap_at_word,
             block=resolved_state_block,
         )
@@ -743,13 +739,13 @@ class AsyncBot:
                     types=["uint128", "int128"],
                     data=result,
                 )
-                working_tick_data[active_tick] = UniswapV4LiquidityAtTick(
+                working_tick_data[active_tick] = LiquidityAtTick(
                     liquidity_net=int(liquidity_net),
                     liquidity_gross=int(liquidity_gross),
                     block=resolved_state_block,
                 )
 
-        working_tick_bitmap[word] = UniswapV4BitmapAtWord(
+        working_tick_bitmap[word] = BitmapAtWord(
             bitmap=bitmap_at_word,
             block=resolved_state_block,
         )

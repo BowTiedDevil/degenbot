@@ -40,7 +40,8 @@ from .conftest import (
 class TestHop:
     def test_v2_hop(self):
         hop = ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
-        assert not hop.is_v3
+        assert isinstance(hop, ConstantProductHop)
+        assert not isinstance(hop, BoundedProductHop)
         assert hop.gamma == pytest.approx(0.997)
 
     def test_v3_hop(self):
@@ -53,7 +54,7 @@ class TestHop:
             tick_lower=-100,
             tick_upper=100,
         )
-        assert hop.is_v3
+        assert isinstance(hop, BoundedProductHop)
 
     def test_frozen(self):
         hop = ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
@@ -65,9 +66,9 @@ class TestSolveInput:
     def test_properties(self):
         inp = make_2hop_v2_input()
         assert inp.num_hops == 2
-        assert inp.all_v2
-        assert not inp.has_v3
-        assert inp.v3_indices == ()
+        assert inp.all_constant_product
+        assert not inp.has_bounded_product
+        assert inp.bounded_product_indices == ()
 
     def test_mixed_v2_v3(self):
         v2 = ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT)
@@ -81,9 +82,9 @@ class TestSolveInput:
             tick_upper=100,
         )
         inp = SolveInput(hops=(v2, v3))
-        assert inp.has_v3
-        assert not inp.all_v2
-        assert inp.v3_indices == (1,)
+        assert inp.has_bounded_product
+        assert not inp.all_constant_product
+        assert inp.bounded_product_indices == (1,)
 
     def test_frozen(self):
         inp = make_2hop_v2_input()

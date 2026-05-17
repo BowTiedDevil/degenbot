@@ -7,7 +7,8 @@ in revision 5.
 
 import typing
 
-import degenbot.aave.libraries
+import degenbot.aave.libraries.percentage_math
+import degenbot.aave.libraries.wad_ray_math
 from degenbot.aave.processors.base import (
     DebtBurnEvent,
     DebtMintEvent,
@@ -30,8 +31,12 @@ class GhoV4Processor(GhoDebtTokenProcessor):
 
     def __init__(self) -> None:
         self._math_libs = MathLibraries(
-            wad_ray=degenbot.aave.libraries.wad_ray_math,
-            percentage=degenbot.aave.libraries.percentage_math,
+            _ray_div=degenbot.aave.libraries.wad_ray_math.ray_div,
+            _ray_div_ceil=degenbot.aave.libraries.wad_ray_math.ray_div_ceil,
+            _ray_div_floor=degenbot.aave.libraries.wad_ray_math.ray_div_floor,
+            _ray_mul=degenbot.aave.libraries.wad_ray_math.ray_mul,
+            _percent_div=degenbot.aave.libraries.percentage_math.percent_div,
+            _percent_mul=degenbot.aave.libraries.percentage_math.percent_mul,
         )
 
     def get_math_libraries(self) -> MathLibraries:
@@ -60,7 +65,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         Returns:
             The scaled amount (amountScaled)
         """
-        return self._math_libs["wad_ray"].ray_div(
+        return self._math_libs.ray_div(
             a=raw_amount,
             b=index,
         )
@@ -93,8 +98,6 @@ class GhoV4Processor(GhoDebtTokenProcessor):
             GhoMintResult with balance_delta, new_index, user_operation,
             discount_scaled=0, and should_refresh_discount=False
         """
-        wad_ray_math = self._math_libs["wad_ray"]
-
         if event_data.value >= event_data.balance_increase:
             # GHO BORROW: emitted in _mintScaled
             #
@@ -105,7 +108,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
             # using calculate_mint_scaled_amount() from the original borrow amount
             # extracted from the BORROW event, not derived from the Mint event values.
             requested_amount = event_data.value - event_data.balance_increase
-            balance_delta = wad_ray_math.ray_div(
+            balance_delta = self._math_libs.ray_div(
                 a=requested_amount,
                 b=event_data.index,
             )
@@ -124,7 +127,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
                 # Fallback: derive from Mint event (may have 1 wei rounding error)
                 amount_repaid = event_data.balance_increase - event_data.value
 
-            balance_delta = -wad_ray_math.ray_div(
+            balance_delta = -self._math_libs.ray_div(
                 a=amount_repaid,
                 b=event_data.index,
             )
@@ -132,16 +135,16 @@ class GhoV4Processor(GhoDebtTokenProcessor):
 
         else:
             # Pure interest accrual (value == balance_increase)
-            balance_increase = wad_ray_math.ray_mul(
+            balance_increase = self._math_libs.ray_mul(
                 a=previous_balance,
                 b=event_data.index,
-            ) - wad_ray_math.ray_mul(
+            ) - self._math_libs.ray_mul(
                 a=previous_balance,
                 b=previous_index,
             )
 
             # Convert back to scaled
-            balance_increase_scaled = wad_ray_math.ray_div(
+            balance_increase_scaled = self._math_libs.ray_div(
                 a=balance_increase,
                 b=event_data.index,
             )
@@ -179,15 +182,13 @@ class GhoV4Processor(GhoDebtTokenProcessor):
             GhoBurnResult with balance_delta, new_index, discount_scaled=0,
             and should_refresh_discount=False
         """
-        wad_ray_math = self._math_libs["wad_ray"]
-
         # uint256 amountToBurn = amount - balanceIncrease
         requested_amount = event_data.value + event_data.balance_increase
 
         # uint256 amountScaled = amount.rayDiv(index)
         # Revision 4 uses standard rayDiv (rounding half up) via _burnScaled.
         # No discount in rev 4.
-        balance_delta = -wad_ray_math.ray_div(
+        balance_delta = -self._math_libs.ray_div(
             a=requested_amount,
             b=event_data.index,
         )
@@ -222,12 +223,10 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         Returns:
             The balance without discount
         """
-        wad_ray_math = self._math_libs["wad_ray"]
-
         if scaled_balance == 0:
             return 0
 
-        return wad_ray_math.ray_mul(
+        return self._math_libs.ray_mul(
             a=scaled_balance,
             b=current_index,
         )

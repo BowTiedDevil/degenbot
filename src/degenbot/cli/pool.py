@@ -57,16 +57,14 @@ from degenbot.provider.block_helpers import get_number_for_block_identifier
 from degenbot.provider.log_fetching import fetch_logs_retrying
 from degenbot.types.aliases import ChainId, Tick, Word
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.concentrated.types import BitmapAtWord as ConcentratedBitmapAtWord
+from degenbot.uniswap.concentrated.types import LiquidityAtTick as ConcentratedLiquidityAtTick
 from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
     UniswapV3PoolLiquidityMappingUpdate,
     UniswapV3PoolState,
 )
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.uniswap.v4_types import (
-    UniswapV4BitmapAtWord,
-    UniswapV4LiquidityAtTick,
     UniswapV4PoolExternalUpdate,
     UniswapV4PoolKey,
     UniswapV4PoolLiquidityMappingUpdate,
@@ -83,8 +81,8 @@ class MockV3LiquidityPool(UniswapV3Pool):
     def __init__(
         self,
         address: ChecksumAddress,
-        tick_bitmap: dict[int, UniswapV3BitmapAtWord] | None = None,
-        tick_data: dict[int, UniswapV3LiquidityAtTick] | None = None,
+        tick_bitmap: dict[int, ConcentratedBitmapAtWord] | None = None,
+        tick_data: dict[int, ConcentratedLiquidityAtTick] | None = None,
         tick_spacing: int = 0,
     ) -> None:
         self._sparse_liquidity_map = False
@@ -122,8 +120,8 @@ class MockV4LiquidityPool(UniswapV4Pool):
         self,
         address: ChecksumAddress,
         pool_id: HexBytes,
-        tick_bitmap: dict[int, UniswapV4BitmapAtWord] | None = None,
-        tick_data: dict[int, UniswapV4LiquidityAtTick] | None = None,
+        tick_bitmap: dict[int, ConcentratedBitmapAtWord] | None = None,
+        tick_data: dict[int, ConcentratedLiquidityAtTick] | None = None,
     ) -> None:
         self._sparse_liquidity_map = False
         self._initial_state_block = MAX_UINT256  # Skip the in-range liquidity modification step
@@ -241,7 +239,7 @@ def apply_v3_liquidity_updates(
             for mapping in pool_in_db.initialization_maps
         },
         tick_data={
-            position.tick: LiquidityAtTick.model_construct(
+            position.tick: ConcentratedLiquidityAtTick.model_construct(
                 liquidity_gross=position.liquidity_gross,
                 liquidity_net=position.liquidity_net,
             )
@@ -252,13 +250,13 @@ def apply_v3_liquidity_updates(
     lp_helper = MockV3LiquidityPool(
         address=pool_address,
         tick_bitmap={
-            k: UniswapV3BitmapAtWord.model_construct(
+            k: ConcentratedBitmapAtWord.model_construct(
                 bitmap=v.bitmap,
             )
             for k, v in pool_liquidity_map.tick_bitmap.items()
         },
         tick_data={
-            k: UniswapV3LiquidityAtTick.model_construct(
+            k: ConcentratedLiquidityAtTick.model_construct(
                 liquidity_gross=v.liquidity_gross,
                 liquidity_net=v.liquidity_net,
             )
@@ -437,7 +435,7 @@ def apply_v4_liquidity_updates(
             for mapping in pool_in_db.initialization_maps
         },
         tick_data={
-            position.tick: LiquidityAtTick.model_construct(
+            position.tick: ConcentratedLiquidityAtTick.model_construct(
                 liquidity_gross=position.liquidity_gross,
                 liquidity_net=position.liquidity_net,
             )
@@ -449,13 +447,13 @@ def apply_v4_liquidity_updates(
         address=pool_in_db.manager.exchange.factory,
         pool_id=HexBytes(pool_in_db.pool_hash),
         tick_bitmap={
-            k: UniswapV4BitmapAtWord.model_construct(
+            k: ConcentratedBitmapAtWord.model_construct(
                 bitmap=v.bitmap,
             )
             for k, v in pool_liquidity_map.tick_bitmap.items()
         },
         tick_data={
-            k: UniswapV4LiquidityAtTick.model_construct(
+            k: ConcentratedLiquidityAtTick.model_construct(
                 liquidity_gross=v.liquidity_gross,
                 liquidity_net=v.liquidity_net,
             )

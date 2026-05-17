@@ -26,7 +26,7 @@ from degenbot.exceptions.pool import (
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
-from degenbot.types.hop_types import HopType
+from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
 from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot, MissingLiquidityData
@@ -35,7 +35,11 @@ from degenbot.uniswap.concentrated.v4_simulator import calculate_swap as _v4_swa
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import BitmapWord, Pip, Tick
+from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
+from degenbot.uniswap.v3_libraries.tick_bitmap import gen_ticks
+from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK, get_sqrt_ratio_at_tick
 from degenbot.uniswap.v4_libraries.tick_bitmap import flip_tick
 from degenbot.uniswap.v4_libraries.tick_math import MAX_SQRT_PRICE, MIN_SQRT_PRICE
 from degenbot.uniswap.v4_pool_calc import UniswapV4PoolCalc
@@ -45,8 +49,6 @@ from degenbot.uniswap.v4_types import (
     InitializedTickMap,
     LiquidityMap,
     SwapFee,
-    UniswapV4BitmapAtWord,
-    UniswapV4LiquidityAtTick,
     UniswapV4PoolExternalUpdate,
     UniswapV4PoolKey,
     UniswapV4PoolLiquidityMappingUpdate,
@@ -162,8 +164,8 @@ class UniswapV4Pool(
         protocol_fee_zero_for_one: int,
         protocol_fee_one_for_zero: int,
         lp_fee: int,
-        tick_data: dict[Tick, dict[str, Any] | UniswapV4LiquidityAtTick] | None = None,
-        tick_bitmap: dict[BitmapWord, dict[str, Any] | UniswapV4BitmapAtWord] | None = None,
+        tick_data: dict[Tick, dict[str, Any] | LiquidityAtTick] | None = None,
+        tick_bitmap: dict[BitmapWord, dict[str, Any] | BitmapAtWord] | None = None,
         state_block: BlockNumber | int | None = None,
         state_cache_depth: int = 8,
         tick_data_fetcher: Callable[[int, int], None] | None = None,
@@ -237,8 +239,8 @@ class UniswapV4Pool(
         if tick_bitmap is not None:
             working_tick_bitmap.update({
                 int(word): (
-                    UniswapV4BitmapAtWord(**bitmap_at_word)
-                    if not isinstance(bitmap_at_word, UniswapV4BitmapAtWord)
+                    BitmapAtWord(**bitmap_at_word)
+                    if not isinstance(bitmap_at_word, BitmapAtWord)
                     else bitmap_at_word
                 )
                 for word, bitmap_at_word in tick_bitmap.items()
@@ -247,8 +249,8 @@ class UniswapV4Pool(
         if tick_data is not None:
             working_tick_data.update({
                 int(tick): (
-                    UniswapV4LiquidityAtTick(**liquidity_at_tick)
-                    if not isinstance(liquidity_at_tick, UniswapV4LiquidityAtTick)
+                    LiquidityAtTick(**liquidity_at_tick)
+                    if not isinstance(liquidity_at_tick, LiquidityAtTick)
                     else liquidity_at_tick
                 )
                 for tick, liquidity_at_tick in tick_data.items()
@@ -570,6 +572,25 @@ class UniswapV4Pool(
             sparse_liquidity_map=self._sparse_liquidity_map,
         )
 
+    def update_tick_data(
+        self,
+        tick_bitmap: dict[int, Any],
+        tick_data: dict[int, Any],
+        block: int,
+    ) -> None:
+        """Apply updated tick bitmap and data from the tick data fetcher.
+
+        Replaces the tick_bitmap and tick_data on the current state and
+        pushes the new state through the state manager.
+        """
+        new_state = dataclasses.replace(
+            self.state,
+            tick_bitmap=tick_bitmap,
+            tick_data=tick_data,
+            block=max(self.update_block, block),
+        )
+        self._state_mgr.push_state(new_state)
+
     def external_update(
         self,
         update: UniswapV4PoolExternalUpdate,
@@ -686,7 +707,7 @@ class UniswapV4Pool(
                 # uninitialized and must be flipped in the bitmap and initialized as empty in the
                 # mapping
                 if tick not in working_tick_data:
-                    working_tick_data[tick] = UniswapV4LiquidityAtTick(
+                    working_tick_data[tick] = LiquidityAtTick(
                         liquidity_net=0,
                         liquidity_gross=0,
                         block=state_block,
@@ -726,7 +747,7 @@ class UniswapV4Pool(
                 else:
                     new_liquidity_net = current_liquidity_net - update.liquidity
 
-                working_tick_data[tick] = UniswapV4LiquidityAtTick(
+                working_tick_data[tick] = LiquidityAtTick(
                     liquidity_net=new_liquidity_net,
                     liquidity_gross=new_liquidity_gross,
                     block=state_block,
@@ -795,7 +816,118 @@ class UniswapV4Pool(
         zero_for_one: bool,  # noqa: FBT001
         state_override: UniswapV4PoolState | None = None,
     ) -> HopType:
-        return super().to_hop_state(zero_for_one=zero_for_one, state_override=state_override)
+        state = state_override or self.state
+        fee = self.extract_fee(zero_for_one=zero_for_one)
+        reserve_in, reserve_out = v3_virtual_reserves(
+            liquidity=state.liquidity,
+            sqrt_price_x96=state.sqrt_price_x96,
+            zero_for_one=zero_for_one,
+        )
+
+        if state_override is None:
+            tick_ranges = self._get_tick_ranges(zero_for_one)
+            if tick_ranges is not None:
+                ranges, current_idx = tick_ranges
+                return BoundedProductHop(
+                    reserve_in=reserve_in,
+                    reserve_out=reserve_out,
+                    fee=fee,
+                    liquidity=state.liquidity,
+                    sqrt_price=state.sqrt_price_x96,
+                    tick_lower=state.tick,
+                    tick_upper=state.tick,
+                    tick_ranges=ranges,
+                    current_range_index=current_idx,
+                )
+
+        return BoundedProductHop(
+            reserve_in=reserve_in,
+            reserve_out=reserve_out,
+            fee=fee,
+            liquidity=state.liquidity,
+            sqrt_price=state.sqrt_price_x96,
+            tick_lower=state.tick,
+            tick_upper=state.tick,
+        )
+
+    def _get_tick_ranges(
+        self,
+        zero_for_one: bool,  # noqa: FBT001
+        max_ranges: int = 3,
+    ) -> tuple[tuple[V3TickRangeInfo, ...], int] | None:
+        if self._sparse_liquidity_map:
+            return None
+
+        tick_data = self.tick_data
+        tick_bitmap = self.tick_bitmap
+        tick_spacing = self.tick_spacing
+
+        if tick_data is None or tick_bitmap is None or tick_spacing == 0:
+            return None
+
+        current_tick = self.tick
+        less_than_or_equal = not zero_for_one
+
+        try:
+            ticks_along_path = gen_ticks(
+                tick_data=tick_data,
+                starting_tick=current_tick,
+                tick_spacing=tick_spacing,
+                less_than_or_equal=less_than_or_equal,
+            )
+        except (ValueError, KeyError, IndexError):
+            return None
+
+        initialized_ticks: list[int] = []
+        try:
+            for tick, is_initialized in ticks_along_path:
+                clamped_tick = max(MIN_TICK, tick) if less_than_or_equal else min(MAX_TICK, tick)
+                if clamped_tick != tick:
+                    break
+                if len(initialized_ticks) >= max_ranges + 1:
+                    break
+                if is_initialized or tick == current_tick:
+                    initialized_ticks.append(tick)
+        except StopIteration:
+            pass
+
+        if len(initialized_ticks) < 2:  # noqa: PLR2004
+            return None
+
+        ranges: list[V3TickRangeInfo] = []
+        current_idx = 0
+
+        for i in range(len(initialized_ticks) - 1):
+            if zero_for_one:
+                tick_lower = initialized_ticks[i + 1]
+                tick_upper = initialized_ticks[i]
+            else:
+                tick_lower = initialized_ticks[i]
+                tick_upper = initialized_ticks[i + 1]
+
+            tick_info = tick_data.get(tick_lower if zero_for_one else tick_upper)
+            liquidity = tick_info.liquidity_net if tick_info else self.liquidity
+
+            sqrt_price_lower = int(get_sqrt_ratio_at_tick(tick_lower))
+            sqrt_price_upper = int(get_sqrt_ratio_at_tick(tick_upper))
+
+            ranges.append(
+                V3TickRangeInfo(
+                    tick_lower=tick_lower,
+                    tick_upper=tick_upper,
+                    liquidity=liquidity,
+                    sqrt_price_lower=sqrt_price_lower,
+                    sqrt_price_upper=sqrt_price_upper,
+                )
+            )
+
+            if tick_lower <= current_tick < tick_upper:
+                current_idx = i
+
+        if len(ranges) < 1:
+            return None
+
+        return (tuple(ranges), current_idx)
 
     def build_swap_amount(
         self,

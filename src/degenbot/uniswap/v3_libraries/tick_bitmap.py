@@ -5,7 +5,8 @@ from itertools import count
 from degenbot.calculations.evm_math import evm_divide
 from degenbot.exceptions.pool import LiquidityMapWordMissing
 from degenbot.types.aliases import BlockNumber
-from degenbot.uniswap.v3_types import InitializedTickMap, LiquidityMap, Tick, UniswapV3BitmapAtWord
+from degenbot.uniswap.concentrated.types import BitmapAtWord
+from degenbot.uniswap.v3_types import InitializedTickMap, LiquidityMap, Tick
 
 # NOTE: Pydantic validation is applied to certain functions to enforce the built-in integer range
 # guarantees from the Solidity contract. Pydantic's validation will copy mutable arguments when
@@ -34,13 +35,13 @@ def flip_tick(
     if word_pos not in tick_bitmap:
         if sparse:
             raise LiquidityMapWordMissing(word_pos)
-        tick_bitmap[word_pos] = UniswapV3BitmapAtWord(
+        tick_bitmap[word_pos] = BitmapAtWord(
             bitmap=0,
             block=update_block,
         )
 
     current_bitmap = tick_bitmap[word_pos]
-    new_bitmap = UniswapV3BitmapAtWord(
+    new_bitmap = BitmapAtWord(
         bitmap=current_bitmap.bitmap ^ (1 << bit_pos),
         block=update_block,
     )

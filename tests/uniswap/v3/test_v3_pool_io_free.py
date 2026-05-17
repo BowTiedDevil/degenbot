@@ -16,9 +16,8 @@ from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
-    UniswapV3BitmapAtWord,
-    UniswapV3LiquidityAtTick,
     UniswapV3PoolExternalUpdate,
 )
 
@@ -97,19 +96,19 @@ class TestV3PoolIOFreeConstructor:
         usdc = _make_usdc()
 
         tick_data = {
-            -76080: UniswapV3LiquidityAtTick(
+            -76080: LiquidityAtTick(
                 liquidity_gross=1000,
                 liquidity_net=-500,
                 block=18_000_000,
             ),
-            -75960: UniswapV3LiquidityAtTick(
+            -75960: LiquidityAtTick(
                 liquidity_gross=2000,
                 liquidity_net=300,
                 block=18_000_000,
             ),
         }
         tick_bitmap = {
-            -297: UniswapV3BitmapAtWord(bitmap=3, block=18_000_000),
+            -297: BitmapAtWord(bitmap=3, block=18_000_000),
         }
 
         pool = UniswapV3Pool(
