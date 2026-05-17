@@ -166,19 +166,27 @@ Each pool method is replaced with a thin wrapper that resolves `self` state and 
 
 ```python
 def _get_y(self, i: int, j: int, x: int, xp: Sequence[int]) -> int:
-    amp = self._a(
-        timestamp=self._block_timestamps.get(self.update_block)
-    ) // self.A_PRECISION
+    amp = self._a(timestamp=self._block_timestamps.get(self.update_block)) // self.A_PRECISION
     return stableswap_get_y(
-        i, j, x, xp, amp, len(self._tokens),
-        self.A_PRECISION, self._strategies.y_variant,
+        i,
+        j,
+        x,
+        xp,
+        amp,
+        len(self._tokens),
+        self.A_PRECISION,
+        self._strategies.y_variant,
         self._strategies.d_variant,
     )
 
+
 def _get_d(self, _xp: Sequence[int], _amp: int) -> int:
     return stableswap_get_d(
-        _xp, _amp, len(self._tokens),
-        self.A_PRECISION, self._strategies.d_variant,
+        _xp,
+        _amp,
+        len(self._tokens),
+        self.A_PRECISION,
+        self._strategies.d_variant,
     )
 ```
 
@@ -197,15 +205,16 @@ In `src/degenbot/curve/types.py`:
 ```python
 from typing import Protocol
 
+
 class DyCalculator(Protocol):
     """Calculates dy (output amount) for a Curve StableSwap swap.
-    
+
     Calculators resolve data from the pool (amp, balances, rates) in a few lines,
     then call pure invariant-solver functions from calculations/stableswap.py.
     The pool parameter provides read-only access to caches and fetchers for
     data resolution only — the math is done by pure functions.
     """
-    
+
     def calculate(
         self,
         i: int,
@@ -230,11 +239,13 @@ Each is a frozen dataclass implementing `DyCalculator`. The `calculate` method r
 # src/degenbot/curve/calculators/standard.py
 from degenbot.calculations.stableswap import stableswap_get_y
 
+
 @dataclass(frozen=True, slots=True)
 class StandardDyCalculator:
     """STANDARD: dy = xp[j] - y - 1, fee, then rate convert."""
+
     swap_style: SwapStyle = SwapStyle.STANDARD
-    
+
     def calculate(self, i, j, dx, *, pool, block_number, override_state=None) -> int:
         pool_balances = override_state.balances if override_state else pool.balances
         rates = pool._resolve_rates(
@@ -244,12 +255,18 @@ class StandardDyCalculator:
         )
         xp = pool._xp(rates=rates, balances=pool_balances)
         x = xp[i] + (dx * rates[i] // pool.PRECISION)
-        
+
         # Pure math — no pool access beyond this point
         amp = pool._a(timestamp=pool._block_timestamps.get(block_number))
         y = stableswap_get_y(
-            i, j, x, xp, amp, len(pool.tokens),
-            pool.A_PRECISION, pool._strategies.y_variant,
+            i,
+            j,
+            x,
+            xp,
+            amp,
+            len(pool.tokens),
+            pool.A_PRECISION,
+            pool._strategies.y_variant,
             pool._strategies.d_variant,
         )
         dy = xp[j] - y - 1
@@ -294,6 +311,7 @@ One calculator per `MetapoolRateStyle` value and one per `MetapoolUnderlyingStyl
 @dataclasses.dataclass(slots=True, frozen=True)
 class PoolStrategies:
     """Resolved calculation strategies for a Curve pool instance."""
+
     # ... existing enums for identity/introspection ...
     d_variant: DVariant = DVariant.STANDARD
     y_variant: YVariant = YVariant.STANDARD
@@ -302,7 +320,7 @@ class PoolStrategies:
     metapool_rate_style: MetapoolRateStyle = MetapoolRateStyle.STANDARD
     metapool_underlying_style: MetapoolUnderlyingStyle = MetapoolUnderlyingStyle.STANDARD
     lending_rate_style: LendingRateStyle = LendingRateStyle.NONE
-    
+
     # New: calculator instances
     dy_calculator: DyCalculator = field(default_factory=StandardDyCalculator)
     metapool_dy_calculator: MetapoolDyCalculator | None = None
@@ -337,15 +355,20 @@ def resolve_pool_strategies(pool_address: ChecksumAddress) -> PoolStrategies:
     base = _POOL_STRATEGIES.get(pool_address)
     if base is None:
         return PoolStrategies()  # defaults include StandardDyCalculator
-    
+
     dy_calculator = _make_dy_calculator(base.swap_style)
-    metapool_dy = _make_metapool_dy_calculator(base.metapool_rate_style) if base.metapool_rate_style != MetapoolRateStyle.STANDARD else None
-    
+    metapool_dy = (
+        _make_metapool_dy_calculator(base.metapool_rate_style)
+        if base.metapool_rate_style != MetapoolRateStyle.STANDARD
+        else None
+    )
+
     return dataclasses.replace(
         base,
         dy_calculator=dy_calculator,
         metapool_dy_calculator=metapool_dy,
     )
+
 
 def _make_dy_calculator(swap_style: SwapStyle) -> DyCalculator:
     match swap_style:
@@ -395,16 +418,24 @@ These need zero infrastructure — just integers:
 ```python
 # tests/calculations/test_stableswap.py
 
+
 def test_stableswap_get_d_convergence():
     xp = [1_000_000_000_000_000_000, 1_000_000_000_000_000_000]
     d = stableswap_get_d(xp, amp=1000, n_coins=2, a_precision=100, d_variant=DVariant.STANDARD)
     assert d == expected_from_contract
 
+
 def test_stableswap_get_y_known_values():
     y = stableswap_get_y(
-        0, 1, 2_000_000 * 10**18, xp,
-        amp=1000, n_coins=2, a_precision=100,
-        y_variant=YVariant.STANDARD, d_variant=DVariant.STANDARD,
+        0,
+        1,
+        2_000_000 * 10**18,
+        xp,
+        amp=1000,
+        n_coins=2,
+        a_precision=100,
+        y_variant=YVariant.STANDARD,
+        d_variant=DVariant.STANDARD,
     )
     assert y == expected_from_contract
 ```
@@ -417,6 +448,7 @@ Each calculator gets a dedicated test file. Tests construct the calculator direc
 
 ```python
 # tests/curve/calculators/test_standard_dy.py
+
 
 def test_standard_dy_known_values():
     calc = StandardDyCalculator()

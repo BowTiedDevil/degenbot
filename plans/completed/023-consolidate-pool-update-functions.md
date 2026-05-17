@@ -136,6 +136,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class DecodedPoolEvent:
     """Unified representation of a pool creation event across all DEXs."""
+
     tokens: Sequence[ChecksumAddress]  # [token0, token1] (ordered)
     pool_address: ChecksumAddress
     fee: int | None  # None if not applicable or encoded elsewhere
@@ -148,6 +149,7 @@ class DecodedPoolEvent:
 @dataclass(frozen=True)
 class RPCCallDescriptor:
     """Description of an RPC call to make after decoding the basic event."""
+
     # Function signature to encode
     function_prototype: str
     # Arguments (can be references to decoded event fields)
@@ -161,6 +163,7 @@ class RPCCallDescriptor:
 @dataclass(frozen=True)
 class PoolRecordBuilder:
     """Describes how to build the database record from decoded event data."""
+
     database_type: type  # The SQLAlchemy model class (e.g., AerodromeV2PoolTable)
     field_mapping: dict[str, str]  # Maps record field names -> data keys in DecodedPoolEvent
     constant_fields: dict[str, int | str]  # Fields with constant values (e.g., fee_denominator)
@@ -169,6 +172,7 @@ class PoolRecordBuilder:
 @dataclass(frozen=True)
 class PoolEventDecoderConfig:
     """Complete configuration for a DEX's pool update behavior."""
+
     name: str  # e.g., "aerodrome_v2"
     event_topic_hash: str  # Keccak-256 of "PoolCreated(address,address,uint256,...)"
     pool_creation_event_index: int = 0  # Event index in logs if multiple events per tx
@@ -180,6 +184,7 @@ class PoolEventDecoderConfig:
 @dataclass(frozen=True)
 class PoolUpdateResult:
     """Result of processing pool update events."""
+
     pools_added: int
     events_processed: int
     errors: list[tuple[LogReceipt, Exception]]
@@ -309,7 +314,9 @@ class PoolEventProcessor:
                         ),
                         return_types=rpc_call.return_types,
                     )
-                    rpc_results[rpc_call.process_return.__name__] = rpc_call.process_return(call_result)
+                    rpc_results[rpc_call.process_return.__name__] = rpc_call.process_return(
+                        call_result
+                    )
 
                 # 4. Build database record
                 pool_record = self._build_pool_record(

@@ -106,7 +106,7 @@ The Mint event for interest accrual is emitted for **tracking purposes only**. T
 if operation.operation_type.name == "INTEREST_ACCRUAL":
     # Interest accrual events don't have pool events.
     # The Mint event for interest accrual is emitted for tracking purposes only.
-    # Interest accrual does NOT mint tokens or increase the scaled balance - 
+    # Interest accrual does NOT mint tokens or increase the scaled balance -
     # it only updates the user's stored index.
     # See Aave V3 aToken contract _transfer function (rev_1.sol:2844-2846)
     raw_amount = scaled_event.amount

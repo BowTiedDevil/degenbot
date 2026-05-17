@@ -74,7 +74,7 @@ from degenbot.provider import ProviderAdapter
 bot = degenbot.Bot(
     config=DegenbotConfig(
         rpc={1: "http://node:8545"},
-        database={"path": "~/.config/degenbot/degenbot.db"}
+        database={"path": "~/.config/degenbot/degenbot.db"},
     )
 )
 
@@ -145,7 +145,9 @@ from degenbot.config import DegenbotConfig
 from degenbot.provider import ProviderAdapter
 
 # Bot manages connections, registries, and provides factory methods
-bot = degenbot.Bot(config=DegenbotConfig(rpc={1: "http://node:8545"}, database={"path": ":memory:"}))
+bot = degenbot.Bot(
+    config=DegenbotConfig(rpc={1: "http://node:8545"}, database={"path": ":memory:"})
+)
 w3 = web3.Web3(web3.HTTPProvider("http://node:8545"))
 bot.connections.register_provider(ProviderAdapter.from_web3(w3))
 bot.connections.set_default_chain(1)
@@ -668,7 +670,12 @@ Each `SwapAmounts` subclass (V2, V3, V4, Curve) encodes its own per-hop calldata
 3. **Call composition** — `PayloadComposer` protocol (default: `FlatComposer`)
 
 ```python
-from degenbot.arbitrage.encoding import generate_payloads, EncodedCall, ApprovalStrategy, PayloadComposer
+from degenbot.arbitrage.encoding import (
+    generate_payloads,
+    EncodedCall,
+    ApprovalStrategy,
+    PayloadComposer,
+)
 ```
 
 <!-- skip: start "uses undefined variables" -->
@@ -681,11 +688,13 @@ payloads = generate_payloads(
 )
 # Returns list[EncodedCall] — each has .to, .data, .value
 
+
 # With a custom approval strategy (e.g., ERC-20 approvals)
 class ExactApproval:
     def approvals_for(self, swap_amounts, calls):
         # Return approval calls to prepend before each swap
         return []
+
 
 payloads = generate_payloads(
     swap_amounts,
@@ -693,11 +702,13 @@ payloads = generate_payloads(
     approval_strategy=ExactApproval(),
 )
 
+
 # With a custom composer (e.g., wrapping in Multicall3)
 class Multicall3Composer:
     def compose(self, calls):
         # Aggregate calls into Multicall3 format
         return calls  # placeholder
+
 
 payloads = generate_payloads(
     swap_amounts,
@@ -740,7 +751,7 @@ bot = degenbot.Bot(
         rpc={
             1: "http://node:8545",
         },
-        database={"path": "~/.config/degenbot/degenbot.db"}
+        database={"path": "~/.config/degenbot/degenbot.db"},
     )
 )
 # Register an RPC provider for chain ID 1
@@ -774,7 +785,7 @@ pool = bot.build_pool(
 ```python
 # V2 pool factory
 pool = bot.build_v2_pool(
-    "0x...", 
+    "0x...",
     chain_id=1,
     state_block=18900000,  # Optional, defaults to current block
 )

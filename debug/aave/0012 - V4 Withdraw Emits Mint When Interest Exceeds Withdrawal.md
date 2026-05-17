@@ -153,9 +153,7 @@ This occurs because:
 ### Current Code (lines 1129-1147)
 ```python
 if ev.event_type != ScaledTokenEventType.COLLATERAL_BURN:
-    logger.debug(
-        f"WITHDRAW: Skipping logIndex={ev.event['logIndex']} - type={ev.event_type}"
-    )
+    logger.debug(f"WITHDRAW: Skipping logIndex={ev.event['logIndex']} - type={ev.event_type}")
     continue
 ```
 

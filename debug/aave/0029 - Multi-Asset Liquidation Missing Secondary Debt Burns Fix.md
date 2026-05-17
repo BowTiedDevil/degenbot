@@ -473,9 +473,7 @@ scaled_token_topics = {
     AaveV3ScaledTokenEvent.MINT.value,
     AaveV3ScaledTokenEvent.BALANCE_TRANSFER.value,
 }
-unassigned_scaled = [
-    e for e in self.unassigned_events if e["topics"][0] in scaled_token_topics
-]
+unassigned_scaled = [e for e in self.unassigned_events if e["topics"][0] in scaled_token_topics]
 if unassigned_scaled:
     all_errors.append(
         f"{len(unassigned_scaled)} scaled token events "

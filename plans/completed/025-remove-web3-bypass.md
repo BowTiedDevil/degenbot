@@ -48,9 +48,8 @@ def call_raw(self, tx: dict[str, Any], block: int | None = None) -> HexBytes:
     """Execute an eth_call with a raw transaction dict."""
     return self._backend.call_raw(tx, block)
 
-def batch_call(
-    self, calls: list[dict[str, Any]], block: int | None = None
-) -> list[HexBytes]:
+
+def batch_call(self, calls: list[dict[str, Any]], block: int | None = None) -> list[HexBytes]:
     """Execute multiple eth_calls. Returns results in input order."""
     return [self._backend.call_raw(tx, block) for tx in calls]
 ```
@@ -169,14 +168,13 @@ price_data = contract.functions.latestRoundData().call()
 
 # After:
 provider = self._bot.connections.get_provider(chain_id)
-decimals_data = provider.call_raw(
-    {"to": self.address, "data": Web3.keccak(text="decimals()")[:4]}
-)
+decimals_data = provider.call_raw({"to": self.address, "data": Web3.keccak(text="decimals()")[:4]})
 (self._decimals,) = eth_abi.abi.decode(["uint8"], decimals_data)
 
-round_data = provider.call_raw(
-    {"to": self.address, "data": Web3.keccak(text="latestRoundData()")[:4]}
-)
+round_data = provider.call_raw({
+    "to": self.address,
+    "data": Web3.keccak(text="latestRoundData()")[:4],
+})
 roundId, answer, startedAt, updatedAt, answeredInRound = eth_abi.abi.decode(
     ["uint80", "int256", "uint256", "uint256", "uint80"], round_data
 )

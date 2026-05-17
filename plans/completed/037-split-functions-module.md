@@ -64,6 +64,7 @@ Thin wrappers around ProviderAdapter.call() that handle
 ABI encoding/decoding and block identifier resolution.
 """
 
+
 def encode_function_calldata(function_prototype, function_arguments) -> bytes: ...
 def extract_argument_types_from_function_prototype(function_prototype) -> list[str]: ...
 def raw_call(provider, address, calldata, return_types, block_identifier) -> tuple: ...
@@ -91,6 +92,7 @@ Deterministic address derivation for CREATE2 and EIP-1167.
 ```python
 """Deterministic contract address derivation."""
 
+
 def create2_address(deployer, salt, init_code_hash) -> ChecksumAddress: ...
 def eip_1167_clone_address(deployer, implementation_contract, salt) -> ChecksumAddress: ...
 ```
@@ -113,6 +115,7 @@ Block identifier resolution (int, string tag, hex).
 
 ```python
 """Block identifier resolution helpers."""
+
 
 def get_number_for_block_identifier(identifier, provider) -> BlockNumber: ...
 async def get_number_for_block_identifier_async(identifier, provider) -> BlockNumber: ...

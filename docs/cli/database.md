@@ -249,6 +249,7 @@ The global database session is available in [`src/degenbot/database/__init__.py`
 ```python
 # OLD: Global singleton (deprecated)
 from degenbot.database import db_session
+
 with db_session() as session:
     result = session.execute(query)
 ```
@@ -260,6 +261,7 @@ Use the `Bot` class to manage database sessions:
 ```python
 # NEW: Bot manages database lifecycle
 import degenbot
+
 bot = degenbot.Bot.from_config_file()
 
 with bot.db() as session:

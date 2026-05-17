@@ -77,8 +77,8 @@ hops = (
 result = solver.solve(SolveInput(hops=hops))
 if result.success:
     optimal_input = result.optimal_input  # int wei
-    profit = result.profit              # int wei
-    method = result.method               # SolverMethod.MOBIUS/NEWTON/BRENT
+    profit = result.profit  # int wei
+    method = result.method  # SolverMethod.MOBIUS/NEWTON/BRENT
 
 # Multi-hop V2 (3+ pools)
 hops = (hop_a, hop_b, hop_c)
@@ -89,6 +89,7 @@ result = solver.solve(SolveInput(hops=hops, max_input=10**18))
 
 # Pool-to-Hop conversion
 from degenbot.arbitrage.optimizers.solver import pool_to_hop, pools_to_solve_input
+
 hop = pool_to_hop(pool, input_token)
 solve_input = pools_to_solve_input([pool_a, pool_b], input_token)
 
@@ -97,7 +98,9 @@ from degenbot.arbitrage.optimizers import MobiusOptimizer, NewtonV2Optimizer
 
 # Balancer multi-token basket arbitrage
 from degenbot.arbitrage.optimizers.solver import (
-    ArbSolver, BalancerMultiTokenHop, SolveInput,
+    ArbSolver,
+    BalancerMultiTokenHop,
+    SolveInput,
 )
 from fractions import Fraction
 

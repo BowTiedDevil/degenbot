@@ -98,9 +98,7 @@ class CurveFetcherFactory:
 
         return fetcher
 
-    def base_virtual_price_fetcher(
-        self, pool_address: ChecksumAddress
-    ) -> VirtualPriceFetcher:
+    def base_virtual_price_fetcher(self, pool_address: ChecksumAddress) -> VirtualPriceFetcher:
         """Create a base virtual price fetcher closure for metapools."""
         ...
 
@@ -108,15 +106,11 @@ class CurveFetcherFactory:
         """Create a timestamp fetcher closure."""
         ...
 
-    def redemption_price_fetcher(
-        self, pool_address: ChecksumAddress
-    ) -> RedemptionPriceFetcher:
+    def redemption_price_fetcher(self, pool_address: ChecksumAddress) -> RedemptionPriceFetcher:
         """Create a redemption price fetcher closure."""
         ...
 
-    def admin_balances_fetcher(
-        self, pool_address: ChecksumAddress
-    ) -> AdminBalancesFetcher:
+    def admin_balances_fetcher(self, pool_address: ChecksumAddress) -> AdminBalancesFetcher:
         """Create an admin balances fetcher closure."""
         ...
 
@@ -144,9 +138,7 @@ class CurveFetcherFactory:
         """Create a gamma() fetcher closure for crypto pools."""
         ...
 
-    def price_scale_fetcher(
-        self, pool_address: ChecksumAddress, n_coins: int
-    ) -> PriceScaleFetcher:
+    def price_scale_fetcher(self, pool_address: ChecksumAddress, n_coins: int) -> PriceScaleFetcher:
         """Create a price_scale() fetcher closure for crypto pools."""
         ...
 ```
@@ -191,6 +183,7 @@ In the factory, these can be simplified:
 ```python
 def total_supply_fetcher(self) -> Any:
     """Create a total supply fetcher closure."""
+
     def fetcher(token: Any, *, block_identifier: int | None = None) -> int:
         provider = self._connections.get_provider(self._chain_id)
         (total_supply,) = eth_abi.abi.decode(
@@ -202,6 +195,7 @@ def total_supply_fetcher(self) -> Any:
             ),
         )
         return total_supply
+
     return fetcher
 ```
 

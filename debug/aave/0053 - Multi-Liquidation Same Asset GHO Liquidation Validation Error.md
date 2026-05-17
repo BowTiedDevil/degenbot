@@ -46,15 +46,13 @@ The `_validate_gho_liquidation` method (aave_transaction_operations.py:3221-3235
 ```python
 def _validate_gho_liquidation(self, op: Operation) -> list[str]:
     errors = self._validate_liquidation(op)
-    
+
     gho_burns = [
         e for e in op.scaled_token_events if e.event_type == ScaledTokenEventType.GHO_DEBT_BURN
     ]
     if len(gho_burns) > 1:  # <-- FAILS HERE
-        errors.append(
-            f"Expected 0 or 1 GHO debt burn for GHO_LIQUIDATION, got {len(gho_burns)}."
-        )
-    
+        errors.append(f"Expected 0 or 1 GHO debt burn for GHO_LIQUIDATION, got {len(gho_burns)}.")
+
     return errors
 ```
 
@@ -234,17 +232,15 @@ Update the validation to allow multiple burns when `is_multi_liquidation` is Tru
 ```python
 def _validate_gho_liquidation(self, op: Operation, is_multi_liquidation: bool = False) -> list[str]:
     errors = self._validate_liquidation(op)
-    
+
     gho_burns = [
         e for e in op.scaled_token_events if e.event_type == ScaledTokenEventType.GHO_DEBT_BURN
     ]
-    
+
     # Allow multiple burns in multi-liquidation scenarios
     if len(gho_burns) > 1 and not is_multi_liquidation:
-        errors.append(
-            f"Expected 0 or 1 GHO debt burn for GHO_LIQUIDATION, got {len(gho_burns)}."
-        )
-    
+        errors.append(f"Expected 0 or 1 GHO debt burn for GHO_LIQUIDATION, got {len(gho_burns)}.")
+
     return errors
 ```
 

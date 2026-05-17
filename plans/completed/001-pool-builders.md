@@ -32,6 +32,7 @@ src/degenbot/builders/
 ```python
 # src/degenbot/builders/base.py
 
+
 class PoolBuilder(ABC):
     """
     Abstract base for pool construction I/O.
@@ -42,10 +43,14 @@ class PoolBuilder(ABC):
     """
 
     @abstractmethod
-    def build(self, address: str, *, chain_id: ChainId | None = None, **kwargs) -> AbstractLiquidityPool: ...
+    def build(
+        self, address: str, *, chain_id: ChainId | None = None, **kwargs
+    ) -> AbstractLiquidityPool: ...
 
     @abstractmethod
-    def update(self, pool: AbstractLiquidityPool, *, block_number: BlockIdentifier | None = None) -> bool: ...
+    def update(
+        self, pool: AbstractLiquidityPool, *, block_number: BlockIdentifier | None = None
+    ) -> bool: ...
 ```
 
 ### Key builder methods
@@ -54,13 +59,31 @@ class PoolBuilder(ABC):
 
 ```python
 class V2PoolBuilder(PoolBuilder):
-    def __init__(self, *, connections: ConnectionManager, db: DatabaseSessionManager, pools: PoolRegistry, tokens: TokenRegistry): ...
+    def __init__(
+        self,
+        *,
+        connections: ConnectionManager,
+        db: DatabaseSessionManager,
+        pools: PoolRegistry,
+        tokens: TokenRegistry,
+    ): ...
 
-    def build(self, address: str, *, chain_id: ChainId | None = None, state_block: int | None = None, deployer_address: str | None = None, init_hash: str | None = None, silent: bool = False) -> UniswapV2Pool:
+    def build(
+        self,
+        address: str,
+        *,
+        chain_id: ChainId | None = None,
+        state_block: int | None = None,
+        deployer_address: str | None = None,
+        init_hash: str | None = None,
+        silent: bool = False,
+    ) -> UniswapV2Pool:
         # Current logic from Bot.build_v2_pool (lines 297-474)
         pass
 
-    def update(self, pool: AbstractLiquidityPool, *, block_number: BlockIdentifier | None = None) -> bool:
+    def update(
+        self, pool: AbstractLiquidityPool, *, block_number: BlockIdentifier | None = None
+    ) -> bool:
         # Current logic from Bot._update_v2_pool + _update_aerodrome_v2_pool (lines 1868-1905)
         pass
 ```
@@ -69,13 +92,34 @@ class V2PoolBuilder(PoolBuilder):
 
 ```python
 class V3PoolBuilder(PoolBuilder):
-    def __init__(self, *, connections: ConnectionManager, db: DatabaseSessionManager, pools: PoolRegistry, tokens: TokenRegistry, managed_pools: ManagedPoolRegistry): ...
+    def __init__(
+        self,
+        *,
+        connections: ConnectionManager,
+        db: DatabaseSessionManager,
+        pools: PoolRegistry,
+        tokens: TokenRegistry,
+        managed_pools: ManagedPoolRegistry,
+    ): ...
 
-    def build(self, address: str, *, chain_id: ChainId | None = None, state_block: int | None = None, tick_bitmap: dict | None = None, tick_data: dict | None = None, deployer_address: str | None = None, init_hash: str | None = None, silent: bool = False) -> UniswapV3Pool:
+    def build(
+        self,
+        address: str,
+        *,
+        chain_id: ChainId | None = None,
+        state_block: int | None = None,
+        tick_bitmap: dict | None = None,
+        tick_data: dict | None = None,
+        deployer_address: str | None = None,
+        init_hash: str | None = None,
+        silent: bool = False,
+    ) -> UniswapV3Pool:
         # Current logic from Bot.build_v3_pool (lines 703-969)
         pass
 
-    def update(self, pool: AbstractLiquidityPool, *, block_number: BlockIdentifier | None = None) -> bool:
+    def update(
+        self, pool: AbstractLiquidityPool, *, block_number: BlockIdentifier | None = None
+    ) -> bool:
         # Current logic from Bot._update_v3_pool (lines 1906-1950)
         pass
 ```
@@ -99,11 +143,29 @@ class Bot:
         self._check_database_version()
 
         # Builders own I/O orchestration; Bot hands them its I/O dependencies
-        self._v2_builder = V2PoolBuilder(connections=self.connections, db=self.db, pools=self.pools, tokens=self.tokens)
-        self._v3_builder = V3PoolBuilder(connections=self.connections, db=self.db, pools=self.pools, tokens=self.tokens, managed_pools=self.managed_pools)
-        self._v4_builder = V4PoolBuilder(connections=self.connections, db=self.db, pools=self.pools, tokens=self.tokens, managed_pools=self.managed_pools)
-        self._curve_builder = CurvePoolBuilder(connections=self.connections, db=self.db, pools=self.pools, tokens=self.tokens)
-        self._erc20_builder = Erc20Builder(connections=self.connections, db=self.db, tokens=self.tokens)
+        self._v2_builder = V2PoolBuilder(
+            connections=self.connections, db=self.db, pools=self.pools, tokens=self.tokens
+        )
+        self._v3_builder = V3PoolBuilder(
+            connections=self.connections,
+            db=self.db,
+            pools=self.pools,
+            tokens=self.tokens,
+            managed_pools=self.managed_pools,
+        )
+        self._v4_builder = V4PoolBuilder(
+            connections=self.connections,
+            db=self.db,
+            pools=self.pools,
+            tokens=self.tokens,
+            managed_pools=self.managed_pools,
+        )
+        self._curve_builder = CurvePoolBuilder(
+            connections=self.connections, db=self.db, pools=self.pools, tokens=self.tokens
+        )
+        self._erc20_builder = Erc20Builder(
+            connections=self.connections, db=self.db, tokens=self.tokens
+        )
 
     # Delegating methods — thin wrappers preserving the existing public interface
     def build_v2_pool(self, address: str, **kwargs) -> UniswapV2Pool:

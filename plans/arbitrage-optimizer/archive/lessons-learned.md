@@ -90,7 +90,7 @@ x = (sqrt_term - R_in) / gamma
 
 **Key Insight**: The equilibrium price can be estimated independently of tick ranges:
 ```python
-p_eq = sqrt(v2_price * v3_price) * (1 - avg_fee)**0.5
+p_eq = sqrt(v2_price * v3_price) * (1 - avg_fee) ** 0.5
 ```
 
 This tells us which tick range will be active after arbitrage, enabling O(1) tick range identification instead of O(n) iteration.
@@ -281,6 +281,7 @@ for candidate in range(max(1, x_floor - 1), x_floor + 3):
 # WRONG: d_i = signature[i]  → gives -1 for withdrawals
 def _compute_d(signature):
     return [s for s in signature]  # -1, 0, +1
+
 
 # CORRECT: d_i = I_{s_i=1}  → gives 1 for deposits, 0 otherwise
 def _compute_d(signature):

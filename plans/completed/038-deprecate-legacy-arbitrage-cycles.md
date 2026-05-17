@@ -93,7 +93,9 @@ import warnings
 
 from degenbot.arbitrage._legacy._uniswap_lp_cycle import _UniswapLpCycle
 from degenbot.arbitrage._legacy._uniswap_curve_cycle import _UniswapCurveCycle
-from degenbot.arbitrage._legacy._uniswap_multipool_cycle_testing import _UniswapMultiPoolCycleTesting
+from degenbot.arbitrage._legacy._uniswap_multipool_cycle_testing import (
+    _UniswapMultiPoolCycleTesting,
+)
 from degenbot.arbitrage._legacy._uniswap_2pool_cycle_testing import _UniswapTwoPoolCycleTesting
 
 # Backward-compatible aliases (without underscore) for gradual migration.
@@ -147,9 +149,11 @@ _DEPRECATED_NAMES = {
     "UniswapCurveCycle": "degenbot.arbitrage._legacy._uniswap_curve_cycle:_UniswapCurveCycle",
 }
 
+
 def __getattr__(name):
     if name in _DEPRECATED_NAMES:
         import warnings
+
         warnings.warn(
             f"{name} is deprecated. Use ArbitragePath + ArbSolver instead. "
             "See docs/migration-guides/legacy-cycles-to-arbitrage-path.md",
@@ -158,6 +162,7 @@ def __getattr__(name):
         )
         module_path, attr = _DEPRECATED_NAMES[name].rsplit(":", 1)
         import importlib
+
         return getattr(importlib.import_module(module_path), attr)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 ```

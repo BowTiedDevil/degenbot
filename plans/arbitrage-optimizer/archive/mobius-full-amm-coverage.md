@@ -223,11 +223,12 @@ Extend `Hop` to represent all invariant types:
 
 ```python
 class PoolInvariant(Enum):
-    CONSTANT_PRODUCT = "constant_product"       # x*y=k (Uniswap V2, Aerodrome volatile)
-    BOUNDED_PRODUCT = "bounded_product"          # V3/V4 concentrated liquidity
-    SOLIDLY_STABLE = "solidly_stable"            # x³y + xy³ >= k
-    BALANCER_WEIGHTED = "balancer_weighted"      # ∏(x^w) >= k
-    CURVE_STABLESWAP = "curve_stableswap"        # A*n^n*Σx + D = ...
+    CONSTANT_PRODUCT = "constant_product"  # x*y=k (Uniswap V2, Aerodrome volatile)
+    BOUNDED_PRODUCT = "bounded_product"  # V3/V4 concentrated liquidity
+    SOLIDLY_STABLE = "solidly_stable"  # x³y + xy³ >= k
+    BALANCER_WEIGHTED = "balancer_weighted"  # ∏(x^w) >= k
+    CURVE_STABLESWAP = "curve_stableswap"  # A*n^n*Σx + D = ...
+
 
 @dataclass(frozen=True, slots=True)
 class Hop:
@@ -235,29 +236,29 @@ class Hop:
     reserve_out: int
     fee: Fraction
     invariant: PoolInvariant = PoolInvariant.CONSTANT_PRODUCT
-    
+
     # Asymmetric fee (Camelot)
     fee_out: Fraction | None = None
-    
+
     # V3/V4 bounded liquidity
     liquidity: int | None = None
     sqrt_price: int | None = None
     tick_lower: int | None = None
     tick_upper: int | None = None
-    
+
     # Solidly stable (Aerodrome stable, Camelot stable)
-    decimals_in: int | None = None   # 10**decimals scaling
+    decimals_in: int | None = None  # 10**decimals scaling
     decimals_out: int | None = None
-    
+
     # Balancer weighted
-    weight_in: int | None = None     # 18-decimal fixed point
+    weight_in: int | None = None  # 18-decimal fixed point
     weight_out: int | None = None
-    
+
     # Curve stableswap
-    curve_A: int | None = None       # Amplification coefficient
+    curve_A: int | None = None  # Amplification coefficient
     curve_n_coins: int | None = None
     curve_precisions: tuple[int, ...] | None = None
-    curve_D: int | None = None       # Current invariant value
+    curve_D: int | None = None  # Current invariant value
     curve_token_index_in: int | None = None
     curve_token_index_out: int | None = None
 ```
@@ -271,6 +272,7 @@ class ConstantProductHop:
     reserve_out: int
     fee: Fraction
 
+
 @dataclass(frozen=True, slots=True)
 class BoundedProductHop:
     reserve_in: int
@@ -281,6 +283,7 @@ class BoundedProductHop:
     tick_lower: int
     tick_upper: int
 
+
 @dataclass(frozen=True, slots=True)
 class SolidlyStableHop:
     reserve_in: int
@@ -289,6 +292,7 @@ class SolidlyStableHop:
     decimals_in: int
     decimals_out: int
 
+
 @dataclass(frozen=True, slots=True)
 class BalancerWeightedHop:
     reserve_in: int
@@ -296,6 +300,7 @@ class BalancerWeightedHop:
     fee: Fraction
     weight_in: int
     weight_out: int
+
 
 @dataclass(frozen=True, slots=True)
 class CurveStableswapHop:
@@ -309,7 +314,14 @@ class CurveStableswapHop:
     token_index_out: int
     precisions: tuple[int, ...]
 
-Hop = ConstantProductHop | BoundedProductHop | SolidlyStableHop | BalancerWeightedHop | CurveStableswapHop
+
+Hop = (
+    ConstantProductHop
+    | BoundedProductHop
+    | SolidlyStableHop
+    | BalancerWeightedHop
+    | CurveStableswapHop
+)
 ```
 
 **Recommendation**: Tagged union. Cleaner, type-safe, no None-checking. The `SolveInput.hops` becomes `tuple[Hop, ...]` where `Hop` is the union type.

@@ -93,6 +93,7 @@ ERC20_TRANSFER_SELECTOR = Web3.keccak(text="transfer(address,uint256)")[:4]
 @dataclass(frozen=True, slots=True)
 class V4PoolKey:
     """V4 pool identification for calldata encoding."""
+
     currency0: ChecksumAddress
     currency1: ChecksumAddress
     fee: int
@@ -103,6 +104,7 @@ class V4PoolKey:
 @dataclass(frozen=True, slots=True)
 class EncodedSwap:
     """An encoded swap calldata payload ready for on-chain submission."""
+
     to: ChecksumAddress
     data: bytes
     value: int = 0
@@ -198,10 +200,7 @@ def generate_payloads(
 
     This is the replacement for UniswapLpCycle.generate_payloads().
     """
-    return [
-        encode_swap_amounts(swap, recipient=recipient)
-        for swap in swap_amounts
-    ]
+    return [encode_swap_amounts(swap, recipient=recipient) for swap in swap_amounts]
 ```
 
 ### Step 2: Deprecate UniswapLpCycle
@@ -223,6 +222,7 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         Use :class:`ArbitragePath` for solving and :func:`generate_payloads`
         for swap encoding. This class will be removed in a future version.
     """
+
     ...
 ```
 
@@ -321,6 +321,7 @@ payloads = generate_payloads(
 1. Add deprecation warning to `UniswapLpCycle.__init__()`:
    ```python
    import warnings
+
    warnings.warn(
        "UniswapLpCycle is deprecated. Use ArbitragePath + SwapEncoder instead.",
        DeprecationWarning,

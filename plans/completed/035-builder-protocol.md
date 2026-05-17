@@ -119,19 +119,50 @@ Replace `_dispatch_build()` isinstance chain with `**kwargs` forwarding:
 
 ```python
 # Before: isinstance chain with 3 branches
-def _dispatch_build(self, *, builder, address, chain_id, deployer_address, init_hash,
-                    state_block, tick_bitmap, tick_data, silent, state_cache_depth):
+def _dispatch_build(
+    self,
+    *,
+    builder,
+    address,
+    chain_id,
+    deployer_address,
+    init_hash,
+    state_block,
+    tick_bitmap,
+    tick_data,
+    silent,
+    state_cache_depth,
+):
     if isinstance(builder, V3PoolBuilder):
-        return builder.build(address, chain_id=chain_id, deployer_address=deployer_address,
-                             init_hash=init_hash, state_block=state_block,
-                             tick_bitmap=tick_bitmap, tick_data=tick_data,
-                             silent=silent, state_cache_depth=state_cache_depth)
+        return builder.build(
+            address,
+            chain_id=chain_id,
+            deployer_address=deployer_address,
+            init_hash=init_hash,
+            state_block=state_block,
+            tick_bitmap=tick_bitmap,
+            tick_data=tick_data,
+            silent=silent,
+            state_cache_depth=state_cache_depth,
+        )
     if isinstance(builder, CurvePoolBuilder):
-        return builder.build(address, chain_id=chain_id, state_block=state_block,
-                             silent=silent, state_cache_depth=state_cache_depth)
-    return builder.build(address, chain_id=chain_id, deployer_address=deployer_address,
-                         init_hash=init_hash, state_block=state_block,
-                         silent=silent, state_cache_depth=state_cache_depth)
+        return builder.build(
+            address,
+            chain_id=chain_id,
+            state_block=state_block,
+            silent=silent,
+            state_cache_depth=state_cache_depth,
+        )
+    return builder.build(
+        address,
+        chain_id=chain_id,
+        deployer_address=deployer_address,
+        init_hash=init_hash,
+        state_block=state_block,
+        silent=silent,
+        state_cache_depth=state_cache_depth,
+    )
+
 
 # After: one-liner
 def _dispatch_build(
@@ -170,11 +201,23 @@ Each builder's `build()` already declares which kwargs it accepts. If a builder 
 Keep the typed methods but reduce them to delegates:
 
 ```python
-def build_v2_pool(self, pool_address: str, *, chain_id=None, deployer_address=None,
-                  init_hash=None, state_block=None, silent=False) -> UniswapV2Pool:
+def build_v2_pool(
+    self,
+    pool_address: str,
+    *,
+    chain_id=None,
+    deployer_address=None,
+    init_hash=None,
+    state_block=None,
+    silent=False,
+) -> UniswapV2Pool:
     pool = self.build_pool(
-        pool_address, chain_id=chain_id, deployer_address=deployer_address,
-        init_hash=init_hash, state_block=state_block, silent=silent,
+        pool_address,
+        chain_id=chain_id,
+        deployer_address=deployer_address,
+        init_hash=init_hash,
+        state_block=state_block,
+        silent=silent,
     )
     assert isinstance(pool, UniswapV2Pool)
     return pool

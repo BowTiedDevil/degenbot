@@ -81,21 +81,25 @@ Problems with this hierarchy:
 class Bot:
     def __init__(self, config: DegenbotConfig) -> None:
         # ... connections, db, registries ...
-        
+
         self._erc20_builder = Erc20Builder(...)
-        
+
         # Builder registry: concrete pool type → builder
         self._builders: dict[type, PoolBuilder] = {}
-        
+
         # Register builders
         self.register_builder(UniswapV2Pool, V2PoolBuilder(...))
-        self.register_builder(SushiswapV2Pool, V2PoolBuilder(...))  # V2 builder handles all V2 variants
+        self.register_builder(
+            SushiswapV2Pool, V2PoolBuilder(...)
+        )  # V2 builder handles all V2 variants
         self.register_builder(UniswapV3Pool, V3PoolBuilder(...))
         self.register_builder(UniswapV4Pool, V4PoolBuilder(...))
         self.register_builder(CurveStableswapPool, CurvePoolBuilder(...))
-        self.register_builder(AerodromeV2Pool, V2PoolBuilder(...))  # V2 builder also handles Aerodrome
+        self.register_builder(
+            AerodromeV2Pool, V2PoolBuilder(...)
+        )  # V2 builder also handles Aerodrome
         # ... etc for all concrete types
-    
+
     def register_builder(self, pool_class: type, builder: PoolBuilder) -> None:
         self._builders[pool_class] = builder
 ```
@@ -299,10 +303,13 @@ class V3PoolState:
     _tick_data: dict[int, Any]
     # ...
 
+
 class UniswapV3PoolCalc:
     """Calculation methods matching the Uniswap V3 contract."""
-    SLOT0_STRUCT_TYPES: ClassVar[tuple[str, ...]] = (...)
+
+    SLOT0_STRUCT_TYPES: ClassVar[tuple[str, ...]] = ...
     # ...
+
 
 class V4PoolState:
     # All V3 state plus:
@@ -310,12 +317,16 @@ class V4PoolState:
     _pool_manager_address: ChecksumAddress
     # ...
 
+
 class UniswapV4PoolCalc:
     """Calculation methods matching the Uniswap V4 contract."""
+
     # ...
+
 
 class UniswapV3Pool(AbstractLiquidityPool, V3PoolState, UniswapV3PoolCalc):
     variant: ClassVar[str | None] = "uniswap"
+
 
 class UniswapV4Pool(AbstractLiquidityPool, V4PoolState, UniswapV4PoolCalc):
     variant: ClassVar[str | None] = "uniswap_v4"
@@ -329,6 +340,7 @@ class UniswapV4Pool(AbstractLiquidityPool, V4PoolState, UniswapV4PoolCalc):
 @runtime_checkable
 class ConstantProductPool(Protocol):
     """Any pool using x*y=k invariant with directional fees."""
+
     token0: Erc20Token
     token1: Erc20Token
     fee_token0: Fraction
@@ -336,9 +348,11 @@ class ConstantProductPool(Protocol):
     reserves_token0: int
     reserves_token1: int
 
+
 @runtime_checkable
 class ConcentratedLiquidityPool(Protocol):
     """Any pool using concentrated liquidity (tick-based)."""
+
     token0: Erc20Token
     token1: Erc20Token
     fee: int
@@ -347,9 +361,11 @@ class ConcentratedLiquidityPool(Protocol):
     tick: int
     tick_spacing: int
 
+
 @runtime_checkable
 class StableswapPool(Protocol):
     """Any pool using the StableSwap invariant."""
+
     # ... as needed
 ```
 

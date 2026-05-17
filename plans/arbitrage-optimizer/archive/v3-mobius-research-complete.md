@@ -100,17 +100,17 @@ def hop_state_from_v3_tick_range(
     sqrt_price = sqrt_price_current / (2**96)
     sqrt_p_lower = sqrt_price_lower / (2**96)
     sqrt_p_upper = sqrt_price_upper / (2**96)
-    
+
     L = float(liquidity)
     alpha = L / sqrt_p_upper
     beta = L * sqrt_p_lower
-    
+
     if zero_for_one:
         R0 = L / sqrt_price - alpha
         R1 = L * sqrt_price - beta
         return HopState(
-            reserve_in=R0 + alpha,   # r_eff
-            reserve_out=R1 + beta,   # s_eff
+            reserve_in=R0 + alpha,  # r_eff
+            reserve_out=R1 + beta,  # s_eff
             fee=fee,
         )
     # ...

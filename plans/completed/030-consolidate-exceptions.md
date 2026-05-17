@@ -79,20 +79,32 @@ Includes exceptions for:
 - Pool trackers (ManagerError, PoolNotAssociated, ...)
 """
 
+
 # --- EVM ---
 class EVMRevertError(DegenbotError): ...
+
+
 class InvalidUint256(EVMRevertError): ...
+
 
 # --- Curve ---
 class CurveError(DegenbotError): ...
+
+
 class MissingCurveData(CurveError): ...
+
 
 # --- Pool Trackers ---
 class ManagerError(DegenbotError): ...  # TODO: rename to TrackerError
+
+
 # ...
+
 
 # --- Liquidity Pools ---
 class LiquidityPoolError(DegenbotError): ...
+
+
 # ...
 ```
 
@@ -167,12 +179,12 @@ from degenbot.exceptions.arbitrage import NoLiquidity
 ```python
 # src/degenbot/exceptions/curve.py — DEPRECATED
 """Deprecated. Import from degenbot.exceptions.pool instead."""
+
 import warnings
 from degenbot.exceptions.pool import CurveError, MissingCurveData
 
 warnings.warn(
-    "Importing from degenbot.exceptions.curve is deprecated. "
-    "Use degenbot.exceptions.pool instead.",
+    "Importing from degenbot.exceptions.curve is deprecated. Use degenbot.exceptions.pool instead.",
     DeprecationWarning,
     stacklevel=2,
 )

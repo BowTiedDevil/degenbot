@@ -56,61 +56,83 @@ Added to `src/degenbot/curve/types.py`:
 ```python
 from enum import Enum, auto
 
+
 class SwapStyle(Enum):
     """Which computation path to use in get_dy."""
-    STANDARD = auto()                    # dy = xp[j] - y - 1, fee, then rate convert
-    RATE_ADJUSTED = auto()               # dy = (xp[j] - y - 1) * PRECISION // rates[j], fee on converted dy
-    RATE_ADJUSTED_NO_ONE = auto()        # dy = (xp[j] - y) * PRECISION // rates[j], fee on converted dy (no -1)
-    RAW_BALANCE = auto()                 # no rate conversion on dy, direct fee
-    CRYPTO = auto()                      # Newton's method, dynamic fee
-    LIVE_ADMIN = auto()                  # live balances minus admin, dy = xp[j] - y - 1, fee, rate convert
-    LIVE_ADMIN_DYNAMIC = auto()          # live balances minus admin, dynamic offpeg fee
-    LIVE_ADMIN_DYNAMIC_PRECISION = auto() # live balances minus admin, precision multipliers for xp, dynamic offpeg fee
-    LIVE_ADMIN_ORACLE = auto()           # live balances minus admin, oracle rates, dy = xp[j] - y - 1, fee, rate convert
-    NO_ONE_FEE_RATE = auto()             # dy = xp[j] - y (no -1), fee, then rate convert — AETH/RETH
-    CYTOKEN = auto()                    # dy = xp[j] - y - 1, then (dy - fee) * PRECISION // rates[j] — fee inside rate conversion
+
+    STANDARD = auto()  # dy = xp[j] - y - 1, fee, then rate convert
+    RATE_ADJUSTED = auto()  # dy = (xp[j] - y - 1) * PRECISION // rates[j], fee on converted dy
+    RATE_ADJUSTED_NO_ONE = (
+        auto()
+    )  # dy = (xp[j] - y) * PRECISION // rates[j], fee on converted dy (no -1)
+    RAW_BALANCE = auto()  # no rate conversion on dy, direct fee
+    CRYPTO = auto()  # Newton's method, dynamic fee
+    LIVE_ADMIN = auto()  # live balances minus admin, dy = xp[j] - y - 1, fee, rate convert
+    LIVE_ADMIN_DYNAMIC = auto()  # live balances minus admin, dynamic offpeg fee
+    LIVE_ADMIN_DYNAMIC_PRECISION = (
+        auto()
+    )  # live balances minus admin, precision multipliers for xp, dynamic offpeg fee
+    LIVE_ADMIN_ORACLE = (
+        auto()
+    )  # live balances minus admin, oracle rates, dy = xp[j] - y - 1, fee, rate convert
+    NO_ONE_FEE_RATE = auto()  # dy = xp[j] - y (no -1), fee, then rate convert — AETH/RETH
+    CYTOKEN = (
+        auto()
+    )  # dy = xp[j] - y - 1, then (dy - fee) * PRECISION // rates[j] — fee inside rate conversion
+
 
 class MetapoolRateStyle(Enum):
     """Which rates to use for the metapool branch in get_dy."""
-    STANDARD = auto()                    # (rate_multipliers[0], virtual_price)
-    PRECISION_VP = auto()               # (PRECISION, virtual_price)
-    REDEMPTION_VP = auto()             # (redemption_price, virtual_price)
+
+    STANDARD = auto()  # (rate_multipliers[0], virtual_price)
+    PRECISION_VP = auto()  # (PRECISION, virtual_price)
+    REDEMPTION_VP = auto()  # (redemption_price, virtual_price)
+
 
 class MetapoolUnderlyingStyle(Enum):
     """Which computation path to use in _get_dy_underlying."""
-    STANDARD = auto()                   # rate_multipliers with VP for base pool LP token
-    REDEMPTION = auto()                 # redemption_price for first coin, VP for second
-    PRECISION_VP = auto()              # (PRECISION, virtual_price) — no rate multiplier for first coin
+
+    STANDARD = auto()  # rate_multipliers with VP for base pool LP token
+    REDEMPTION = auto()  # redemption_price for first coin, VP for second
+    PRECISION_VP = auto()  # (PRECISION, virtual_price) — no rate multiplier for first coin
+
 
 class LendingRateStyle(Enum):
     """Which rate-fetching method to use for lending tokens."""
-    NONE = auto()            # No lending tokens — use rate_multipliers directly
-    CTOKEN = auto()          # Exchange rate with supply rate accrual
-    YTOKEN = auto()          # Price per full share
-    CYTOKEN = auto()         # cToken + yToken combined accrual
-    AETH = auto()            # Lido aETH ratio inversion
-    RETH = auto()            # Rocket Pool exchange rate
-    ORACLE = auto()          # On-chain oracle bitmask
+
+    NONE = auto()  # No lending tokens — use rate_multipliers directly
+    CTOKEN = auto()  # Exchange rate with supply rate accrual
+    YTOKEN = auto()  # Price per full share
+    CYTOKEN = auto()  # cToken + yToken combined accrual
+    AETH = auto()  # Lido aETH ratio inversion
+    RETH = auto()  # Rocket Pool exchange rate
+    ORACLE = auto()  # On-chain oracle bitmask
+
 
 class DVariant(Enum):
     """Which D-calculation formula to use in _get_d."""
+
     STANDARD = auto()
     VARIANT_ALPHA = auto()
     VARIANT_ALPHA_DP_ALPHA = auto()  # alpha D + alpha Dp
-    VARIANT_DP_ALPHA = auto()       # standard D + alpha Dp (Group 3)
-    VARIANT_BETA_DP = auto()        # standard D + beta Dp
-    VARIANT_GAMMA_DP = auto()       # standard D + gamma Dp
+    VARIANT_DP_ALPHA = auto()  # standard D + alpha Dp (Group 3)
+    VARIANT_BETA_DP = auto()  # standard D + beta Dp
+    VARIANT_GAMMA_DP = auto()  # standard D + gamma Dp
+
 
 class YVariant(Enum):
     """Which Y-calculation formula to use in _get_y."""
-    STANDARD = auto()              # amp WITH A_PRECISION divisor + standard c/b
-    VARIANT_0 = auto()             # amp WITHOUT A_PRECISION divisor + standard c/b
-    VARIANT_1 = auto()             # amp WITHOUT A_PRECISION divisor + c/b without A_PRECISION
+
+    STANDARD = auto()  # amp WITH A_PRECISION divisor + standard c/b
+    VARIANT_0 = auto()  # amp WITHOUT A_PRECISION divisor + standard c/b
+    VARIANT_1 = auto()  # amp WITHOUT A_PRECISION divisor + c/b without A_PRECISION
+
 
 class YDVariant(Enum):
     """Which Y_D-calculation formula to use in _get_y_d."""
+
     STANDARD = auto()
-    VARIANT_0 = auto()             # uses A_PRECISION in b/c formulas
+    VARIANT_0 = auto()  # uses A_PRECISION in b/c formulas
 ```
 
 **Design decision:** The original proposal had `FeeStyle` + `BalanceSource` as two separate axes.
@@ -158,6 +180,7 @@ Per-group comments identify which old frozenset each address group came from.
 @dataclasses.dataclass(slots=True, frozen=True)
 class PoolStrategies:
     """Resolved calculation strategies for a Curve pool instance."""
+
     d_variant: DVariant = DVariant.STANDARD
     y_variant: YVariant = YVariant.STANDARD
     yd_variant: YDVariant = YDVariant.STANDARD

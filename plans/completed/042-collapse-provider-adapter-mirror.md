@@ -54,18 +54,24 @@ Everything else is identical delegation.
 @runtime_checkable
 class ProviderBackend(Protocol):
     """Protocol for sync provider backends.
-    
+
     Replaces the former EthereumProvider (public) and
     _SyncProviderBackend (private) with a single protocol.
     """
-    
+
     @property
     def chain_id(self) -> int: ...
     @property
     def block_number(self) -> int: ...
     def get_block_number(self) -> int: ...
     def get_block(self, block_identifier: int | str) -> dict[str, Any] | None: ...
-    def get_logs(self, from_block: int, to_block: int, addresses: list[str] | None, topics: list[list[str]] | None) -> list[dict[str, Any]]: ...
+    def get_logs(
+        self,
+        from_block: int,
+        to_block: int,
+        addresses: list[str] | None,
+        topics: list[list[str]] | None,
+    ) -> list[dict[str, Any]]: ...
     def call(self, to: str, data: bytes, block: int | None) -> HexBytes: ...
     def call_raw(self, tx: dict[str, Any], block: int | None) -> HexBytes: ...
     def get_code(self, address: str, block: int | None) -> HexBytes: ...
@@ -84,47 +90,49 @@ Instead of 15 explicit delegation methods, `ProviderAdapter` uses `__getattr__` 
 
 ```python
 class ProviderAdapter:
-    def __init__(self, backend: ProviderBackend, *, provider_type: str, raw_provider: Any = None) -> None:
+    def __init__(
+        self, backend: ProviderBackend, *, provider_type: str, raw_provider: Any = None
+    ) -> None:
         self._backend = backend
         self._provider_type = provider_type
         self._raw_provider = raw_provider
-    
+
     # Properties stay explicit (they don't match backend method names 1:1)
     @property
     def chain_id(self) -> int:
         return self._backend.chain_id
-    
+
     @property
     def block_number(self) -> int:
         return self._backend.block_number
-    
+
     # Methods with extra logic stay explicit
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         return self._backend.call(to, data, block)
-    
+
     def call_raw(self, tx: dict[str, Any], block: int | None = None) -> HexBytes:
         return self._backend.call_raw(tx, block)
-    
+
     def batch_call(self, calls: list[dict[str, Any]], block: int | None = None) -> list[HexBytes]:
         return [self._backend.call_raw(tx, block) for tx in calls]
-    
+
     def get_block_timestamp(self, block: int | None = None) -> int:
         block_data = self._backend.get_block(block if block is not None else "latest")
         if block_data is None:
             msg = f"Block {block} not found"
             raise ValueError(msg)
         return block_data["timestamp"]
-    
+
     def make_request(self, method: str, params: list[Any]) -> Any:
         if hasattr(self._raw_provider, "make_request"):
             return self._raw_provider.make_request(method, params)
         msg = f"Provider type '{self._provider_type}' does not support make_request"
         raise AttributeError(msg)
-    
+
     # Pure delegation methods use __getattr__
     def __getattr__(self, name: str) -> Any:
         """Forward unknown attribute lookups to the backend.
-        
+
         This provides delegation for methods that are pure pass-throughs:
         get_block_number, get_block, get_logs, get_code, get_balance,
         get_storage_at, get_transaction_count, is_connected, close.
@@ -152,6 +160,7 @@ def get_code(self, address: str, block: int | None) -> HexBytes:
     if block is not None:
         return self._w3.eth.get_code(address, block)
     return self._w3.eth.get_code(address)
+
 
 # After:
 def get_code(self, address: str, block: int | None) -> HexBytes:
@@ -200,6 +209,7 @@ def test_provider_adapter_delegates_to_backend():
     # so it should be forwarded to the backend
     result = adapter.get_code("0x1234...")
     assert result == expected
+
 
 def test_provider_backend_protocol_satisfaction():
     """Verify _Web3Adapter satisfies ProviderBackend."""

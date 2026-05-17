@@ -100,9 +100,7 @@ if operation.operation_type == OperationType.INTEREST_ACCRUAL:
 3. **Calculate scaled_amount** for V4+ debt burns using TokenMath:
 ```python
 if raw_amount is not None and debt_asset.v_token_revision >= 4:
-    token_math = TokenMathFactory.get_token_math_for_token_revision(
-        debt_asset.v_token_revision
-    )
+    token_math = TokenMathFactory.get_token_math_for_token_revision(debt_asset.v_token_revision)
     scaled_amount = token_math.get_debt_burn_scaled_amount(
         amount=raw_amount,
         borrow_index=scaled_event.index,

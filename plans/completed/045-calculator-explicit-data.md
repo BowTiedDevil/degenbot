@@ -265,7 +265,9 @@ from the appropriate balances before constructing `DyCalculationInputs`:
 
 ```python
 pool_balances = override_state.balances if override_state is not None else self.balances
-resolved_rates = self._resolve_rates(rates=self.rate_multipliers, block_number=block_number, pool_balances=pool_balances)
+resolved_rates = self._resolve_rates(
+    rates=self.rate_multipliers, block_number=block_number, pool_balances=pool_balances
+)
 xp = self._xp(rates=resolved_rates, balances=pool_balances)
 ```
 

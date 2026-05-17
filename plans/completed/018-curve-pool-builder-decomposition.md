@@ -61,6 +61,7 @@ from eth_typing import ChecksumAddress
 @dataclass(frozen=True)
 class CoinDiscoveryResult:
     """Result of coin enumeration for a Curve pool."""
+
     token_addresses: tuple[ChecksumAddress, ...]
     balances: tuple[int, ...]
     coin_prototype: str  # "coins(uint256)" or "coins(int128)"
@@ -70,6 +71,7 @@ class CoinDiscoveryResult:
 @dataclass(frozen=True)
 class LendingDetectionResult:
     """Result of lending token detection for a Curve pool."""
+
     use_lending: tuple[bool, ...]
     precision_multipliers: tuple[int, ...] | None  # None if no overrides needed
 
@@ -77,6 +79,7 @@ class LendingDetectionResult:
 @dataclass(frozen=True)
 class MetapoolDetectionResult:
     """Result of metapool detection for a Curve pool."""
+
     is_meta: bool
     base_pool_address: ChecksumAddress | None  # None if not a metapool
     tokens_underlying: tuple[ChecksumAddress, ...] | None  # None if not a metapool
@@ -85,6 +88,7 @@ class MetapoolDetectionResult:
 @dataclass(frozen=True)
 class CryptoDetectionResult:
     """Result of crypto pool parameter detection."""
+
     is_crypto: bool  # True if fee_gamma > 0
     fee_gamma: int | None
     mid_fee: int | None
@@ -96,6 +100,7 @@ class CryptoDetectionResult:
 @dataclass(frozen=True)
 class ARampingResult:
     """Result of A ramping parameter detection."""
+
     initial_a: int | None
     initial_a_time: int | None
     future_a: int | None
@@ -106,6 +111,7 @@ class ARampingResult:
 @dataclass(frozen=True)
 class LpTokenResult:
     """Result of LP token address lookup."""
+
     lp_token_address: ChecksumAddress | None
 ```
 
@@ -113,6 +119,7 @@ class LpTokenResult:
 
 ```python
 # src/degenbot/curve/detection/coin_discovery.py
+
 
 def discover_coins(
     w3: Any,
@@ -131,6 +138,7 @@ def discover_coins(
 
 
 # src/degenbot/curve/detection/lending_detector.py
+
 
 def detect_lending_tokens(
     w3: Any,
@@ -151,6 +159,7 @@ def detect_lending_tokens(
 
 # src/degenbot/curve/detection/metapool_detector.py
 
+
 def detect_metapool(
     w3: Any,
     pool_address: ChecksumAddress,
@@ -169,6 +178,7 @@ def detect_metapool(
 
 # src/degenbot/curve/detection/crypto_detector.py
 
+
 def detect_crypto_params(
     w3: Any,
     pool_address: ChecksumAddress,
@@ -185,6 +195,7 @@ def detect_crypto_params(
 
 
 # Also in crypto_detector.py:
+
 
 def detect_a_ramping(
     w3: Any,
@@ -204,6 +215,7 @@ def detect_a_ramping(
 
 ```python
 # src/degenbot/builders/curve_pool_builder.py (after refactoring)
+
 
 class CurvePoolBuilder:
     def build(
@@ -231,7 +243,9 @@ class CurvePoolBuilder:
         )
 
         # 3. Fetch A, fee, admin_fee
-        a_coefficient, fee, admin_fee = _fetch_pool_params(w3, pool_address, block_identifier=state_block)
+        a_coefficient, fee, admin_fee = _fetch_pool_params(
+            w3, pool_address, block_identifier=state_block
+        )
 
         # 4. Detect A ramping
         a_ramping = detect_a_ramping(w3, pool_address, block_identifier=state_block)
@@ -242,7 +256,11 @@ class CurvePoolBuilder:
 
         # 6. Detect lending tokens
         lending = detect_lending_tokens(
-            w3, pool_address, coins.token_addresses, tokens, block_identifier=state_block,
+            w3,
+            pool_address,
+            coins.token_addresses,
+            tokens,
+            block_identifier=state_block,
         )
 
         # 7. Detect crypto pool parameters
@@ -252,17 +270,23 @@ class CurvePoolBuilder:
         lp_token_address = _find_lp_token(w3, pool_address, block_identifier=state_block)
 
         # 9. Detect metapool
-        metapool = detect_metapool(w3, pool_address, coins.token_addresses, block_identifier=state_block)
+        metapool = detect_metapool(
+            w3, pool_address, coins.token_addresses, block_identifier=state_block
+        )
 
         # 10. Build base pool and underlying tokens (if metapool)
         base_pool, tokens_underlying = self._resolve_metapool(
-            metapool, chain_id, state_block, silent,
+            metapool,
+            chain_id,
+            state_block,
+            silent,
         )
 
         # 11. Build LP token
         lp_token = (
             self._erc20_builder.build(lp_token_address, chain_id=chain_id, silent=silent)
-            if lp_token_address else None
+            if lp_token_address
+            else None
         )
 
         # 12. Skip broken pools
@@ -311,7 +335,9 @@ class CurvePoolBuilder:
             D_fetcher=fetchers.D_fetcher(pool_address) if crypto.is_crypto else None,
             gamma_fetcher=fetchers.gamma_fetcher(pool_address) if crypto.is_crypto else None,
             price_scale_fetcher=(
-                fetchers.price_scale_fetcher(pool_address, len(tokens)) if crypto.is_crypto else None
+                fetchers.price_scale_fetcher(pool_address, len(tokens))
+                if crypto.is_crypto
+                else None
             ),
         )
 
@@ -340,11 +366,13 @@ class CurvePoolBuilder:
 1. **Red:** Write test for `discover_coins()` with a fake `w3` that returns predefined coin addresses and reverts at index 3.
    ```python
    def test_discover_coins_uint256():
-       w3 = FakeWeb3(coin_responses=[
-           ("0xA0b8...", True),   # coins(0) → valid address
-           ("0x6B17...", True),   # coins(1) → valid address
-           ("0x0000...", False),  # coins(2) → zero address (stop)
-       ])
+       w3 = FakeWeb3(
+           coin_responses=[
+               ("0xA0b8...", True),  # coins(0) → valid address
+               ("0x6B17...", True),  # coins(1) → valid address
+               ("0x0000...", False),  # coins(2) → zero address (stop)
+           ]
+       )
        result = discover_coins(w3, "0xPool...", block_identifier=18_000_000)
        assert len(result.token_addresses) == 2
        assert result.coin_prototype == "coins(uint256)"
@@ -362,7 +390,9 @@ class CurvePoolBuilder:
            underlying={0: "0x6B17..."},  # DAI underlying for cDAI
            underlying_decimals={0: 18},
        )
-       result = detect_lending_tokens(w3, "0xPool...", token_addrs, tokens, block_identifier=18_000_000)
+       result = detect_lending_tokens(
+           w3, "0xPool...", token_addrs, tokens, block_identifier=18_000_000
+       )
        assert result.use_lending == (True, False)
        assert result.precision_multipliers is not None
    ```

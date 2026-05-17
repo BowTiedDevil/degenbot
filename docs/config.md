@@ -25,13 +25,14 @@ bot = degenbot.Bot.from_config_file()
 
 # Or pass explicit config
 from degenbot.config import DegenbotConfig
+
 bot = degenbot.Bot(
     config=DegenbotConfig(
         rpc={
             1: "https://eth-mainnet.example.com",
             8453: "https://base-mainnet.example.com",
         },
-        database={"path": "~/.config/degenbot/degenbot.db"}
+        database={"path": "~/.config/degenbot/degenbot.db"},
     )
 )
 ```

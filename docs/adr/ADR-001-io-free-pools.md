@@ -63,11 +63,14 @@ A **Data Provider** is an object implementing the `CurveDataProvider` protocol, 
 ```python
 from typing import Protocol
 
+
 class CurveDataProvider(Protocol):
     def D(self, block_number: int) -> int: ...
     def virtual_price(self, block_number: int) -> int: ...
     def lending_rate(self, block_number: int, token_address: str) -> int: ...
+
     # ... 13 methods total
+
 
 # Bot creates the _CurveDataProviderImpl (handles I/O)
 # Pool just calls data_provider methods (pure logic)
@@ -137,9 +140,7 @@ def test_stableswap_swap():
         tokens=[FAKE_DAI, FAKE_USDC],
         A=1000,
     )
-    result = pool.calculate_tokens_out_from_tokens_in(
-        token_in=FAKE_DAI, token_in_quantity=1000000
-    )
+    result = pool.calculate_tokens_out_from_tokens_in(token_in=FAKE_DAI, token_in_quantity=1000000)
     assert result == expected_amount
 ```
 
@@ -150,7 +151,8 @@ def test_curve_pool_live(bot):
     # Bot creates pool with real fetchers
     pool = bot.build_pool("0xbEbc4...")
     # Pool calls fetchers internally on-demand
-    assert pool.virtual_price &gt; 0
+    assert pool.virtual_price & gt
+    0
 ```
 
 ## Related Decisions

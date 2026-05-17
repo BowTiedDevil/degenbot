@@ -132,7 +132,7 @@ if operation.operation_type == OperationType.GHO_REPAY:
     # This avoids 1 wei rounding errors from integer truncation in interest calculations.
     # See debug/aave/0037 - GHO REPAY Uses Mint Event Instead of Repay Event Amount.md
     assert enriched_event.scaled_amount is not None
-    
+
     # When interest exceeds repayment, the contract also burns the discount amount
     # that was minted to balanceFromInterest. We need to calculate and burn this too.
     # See debug/aave/0038 - GHO REPAY Missing Discount Scaled Amount in Balance Update.md
@@ -141,17 +141,15 @@ if operation.operation_type == OperationType.GHO_REPAY:
         # value = discount (amount minted to balanceFromInterest)
         # balance_increase = total interest accrued
         discount_amount = scaled_event.amount  # This is the discount, not debt
-        
+
         # Convert discount to scaled units (using same rounding as debt burn)
-        gho_processor = TokenProcessorFactory.get_gho_debt_processor(
-            debt_asset.v_token_revision
-        )
+        gho_processor = TokenProcessorFactory.get_gho_debt_processor(debt_asset.v_token_revision)
         wad_ray_math = gho_processor.get_math_libraries()["wad_ray"]
         discount_scaled = wad_ray_math.ray_div_floor(
             a=discount_amount,
             b=scaled_event.index,
         )
-        
+
         # Burn both repayment and discount
         total_burn = enriched_event.scaled_amount + discount_scaled
         debt_position.balance -= total_burn
@@ -161,7 +159,7 @@ if operation.operation_type == OperationType.GHO_REPAY:
         )
     else:
         debt_position.balance -= enriched_event.scaled_amount
-    
+
     _update_debt_position_index(...)
 ```
 
@@ -173,18 +171,16 @@ Instead of calculating the discount in the processing layer, use the GHO process
 if operation.operation_type == OperationType.GHO_REPAY:
     # Get the effective discount from transaction context
     effective_discount = tx_context.user_discounts.get(user.address, user.gho_discount)
-    
+
     # Process using GHO-specific processor
-    gho_processor = TokenProcessorFactory.get_gho_debt_processor(
-        debt_asset.v_token_revision
-    )
+    gho_processor = TokenProcessorFactory.get_gho_debt_processor(debt_asset.v_token_revision)
     assert scaled_event.balance_increase is not None
     assert scaled_event.index is not None
-    
+
     # Create event data with the actual repay amount from the Repay event
     # (extracted from enriched_event calculation)
-    repay_amount = ... # Derive from enriched_event.scaled_amount
-    
+    repay_amount = ...  # Derive from enriched_event.scaled_amount
+
     gho_result = gho_processor.process_mint_event(
         event_data=DebtMintEvent(
             caller=scaled_event.caller_address or scaled_event.user_address,
@@ -199,7 +195,7 @@ if operation.operation_type == OperationType.GHO_REPAY:
         previous_discount=effective_discount,
         actual_repay_amount=repay_amount,  # New parameter
     )
-    
+
     debt_position.balance += gho_result.balance_delta
     _update_debt_position_index(...)
 ```

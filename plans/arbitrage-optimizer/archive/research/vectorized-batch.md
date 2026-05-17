@@ -59,17 +59,17 @@
 def solve(self, paths: VectorizedPathState) -> VectorizedArbitrageResult:
     # All paths processed in lock-step (same iterations)
     x = buy_R0 * initial_guess_fraction  # Shape: (num_paths,)
-    
+
     for i in range(max_iterations):
         # Vectorized operations across all paths simultaneously
         y = x * gamma_buy * buy_R1 / (buy_R0 + x * gamma_buy)
-        dy_dx = gamma_buy * buy_R1 * buy_R0 / (buy_R0 + x * gamma_buy)**2
-        dz_dy = gamma_sell * sell_R0 * sell_R1 / (sell_R1 + y * gamma_sell)**2
+        dy_dx = gamma_buy * buy_R1 * buy_R0 / (buy_R0 + x * gamma_buy) ** 2
+        dz_dy = gamma_sell * sell_R0 * sell_R1 / (sell_R1 + y * gamma_sell) ** 2
         dprofit_dx = dz_dy * dy_dx - 1
-        
+
         # Newton step (vectorized)
         x = x - dprofit_dx / d2profit_dx2
-    
+
     return results
 ```
 

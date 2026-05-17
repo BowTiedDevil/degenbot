@@ -236,13 +236,7 @@ Blocks are processed in chunks to limit memory usage and enable incremental comm
 Events are processed in block number, then log index order to ensure chronological processing within blocks:
 
 ```python
-sorted(
-    all_events, 
-    key=operator.itemgetter(
-        "blockNumber", 
-        "logIndex"
-    )
-)
+sorted(all_events, key=operator.itemgetter("blockNumber", "logIndex"))
 ```
 
 Invariants enforced by assertions:

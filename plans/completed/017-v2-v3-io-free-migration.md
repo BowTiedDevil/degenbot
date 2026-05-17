@@ -133,6 +133,7 @@ class V2PoolBuilder:
         reserves0, reserves1 = pool.get_reserves(provider, block_identifier=block_number)
         # ... construct ExternalUpdate, call pool.external_update()
 
+
 # AFTER: builder calls fetcher, pushes update (pool is pure)
 class V2PoolBuilder:
     def _update_uniswap_v2(self, pool, *, block_number):
@@ -152,7 +153,9 @@ class V2PoolBuilder:
     def _update_uniswap_v2(self, pool, *, block_number):
         if pool._reserves_fetcher is None:
             raise LiquidityPoolError(message="Cannot update pool: no reserves_fetcher injected")
-        _block_number = block_number or self._connections.get_provider(pool.chain_id).get_block_number()
+        _block_number = (
+            block_number or self._connections.get_provider(pool.chain_id).get_block_number()
+        )
         reserves0, reserves1 = pool._reserves_fetcher(block_identifier=_block_number)
 
         if pool.reserves_token0 == reserves0 and pool.reserves_token1 == reserves1:

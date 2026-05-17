@@ -180,15 +180,11 @@ if operation.operation_type in LIQUIDATION_OPERATION_TYPES:
     tx_context.processed_liquidations.add(liquidation_key)
 
     # Get aggregated debtToCover for this (user, debt_asset)
-    aggregated_debt_to_cover = tx_context.liquidation_aggregates.get(
-        liquidation_key, 0
-    )
+    aggregated_debt_to_cover = tx_context.liquidation_aggregates.get(liquidation_key, 0)
 
     if aggregated_debt_to_cover > 0:
         # Use aggregated amount
-        token_math = TokenMathFactory.get_token_math_for_token_revision(
-            debt_asset.v_token_revision
-        )
+        token_math = TokenMathFactory.get_token_math_for_token_revision(debt_asset.v_token_revision)
         burn_value = token_math.get_debt_burn_scaled_amount(
             aggregated_debt_to_cover, scaled_event.index
         )

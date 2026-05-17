@@ -76,7 +76,10 @@ if is_erc20_transfer and ev.from_address == ZERO_ADDRESS:
         ):
             # Only skip if this is an actual mint (amount != balance_increase)
             # If amount == balance_increase, it's interest accrual (tracking-only)
-            if other_ev.balance_increase is not None and other_ev.amount != other_ev.balance_increase:
+            if (
+                other_ev.balance_increase is not None
+                and other_ev.amount != other_ev.balance_increase
+            ):
                 is_part_of_mint = True
                 local_assigned.add(ev.event["logIndex"])
                 break

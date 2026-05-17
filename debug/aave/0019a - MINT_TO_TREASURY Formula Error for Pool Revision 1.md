@@ -140,7 +140,13 @@ The failure occurred on multiple assets in this transaction.
 from degenbot.aave.libraries.wad_ray_math import ray_div, ray_div_ceil, ray_mul_floor, wad_mul
 
 # After:
-from degenbot.aave.libraries.wad_ray_math import ray_div, ray_div_ceil, ray_mul, ray_mul_floor, wad_mul
+from degenbot.aave.libraries.wad_ray_math import (
+    ray_div,
+    ray_div_ceil,
+    ray_mul,
+    ray_mul_floor,
+    wad_mul,
+)
 ```
 
 ### 2. Update `_calculate_mint_to_treasury_scaled_amount` function (lines 2693-2727)

@@ -135,6 +135,7 @@ class V2BuilderBase:
 @dataclass(frozen=True)
 class V2CommonData:
     """Data fetched from DB/chain that all V2 variants need."""
+
     pool_address: ChecksumAddress
     chain_id: ChainId
     factory: ChecksumAddress
@@ -156,26 +157,46 @@ This replaces the ~50 lines of common preamble in `build()` with a single call t
 ```python
 class AerodromeV2Builder(V2BuilderBase):
     """Builds and updates Aerodrome V2 pools."""
-    
-    def build(self, pool_address: str, *, chain_id=None, deployer_address=None, init_hash=None, state_block=None, silent=False, state_cache_depth=8) -> AerodromeV2Pool:
+
+    def build(
+        self,
+        pool_address: str,
+        *,
+        chain_id=None,
+        deployer_address=None,
+        init_hash=None,
+        state_block=None,
+        silent=False,
+        state_cache_depth=8,
+    ) -> AerodromeV2Pool:
         pool_address = get_checksum_address(pool_address)
         chain_id = chain_id or self._connections.default_chain_id
         provider = self._connections.get_provider(chain_id)
         state_block = state_block or provider.get_block_number()
-        
+
         common = self._fetch_v2_common_data(
-            pool_address, chain_id=chain_id, state_block=state_block,
-            deployer_address=deployer_address, init_hash=init_hash, provider=provider,
+            pool_address,
+            chain_id=chain_id,
+            state_block=state_block,
+            deployer_address=deployer_address,
+            init_hash=init_hash,
+            provider=provider,
         )
-        
+
         # Aerodrome-specific: fetch stable flag and fee
-        stable_result = provider.call(to=pool_address, data=encode_function_calldata("stable()", None), block=state_block)
+        stable_result = provider.call(
+            to=pool_address, data=encode_function_calldata("stable()", None), block=state_block
+        )
         (stable,) = eth_abi.abi.decode(types=["bool"], data=stable_result)
-        
-        fee_result = provider.call(to=common.factory, data=encode_function_calldata("getFee(address,bool)", [pool_address, stable]), block=state_block)
+
+        fee_result = provider.call(
+            to=common.factory,
+            data=encode_function_calldata("getFee(address,bool)", [pool_address, stable]),
+            block=state_block,
+        )
         (fee_raw,) = eth_abi.abi.decode(types=["uint256"], data=fee_result)
         fee = Fraction(fee_raw, AerodromeV2Pool.FEE_DENOMINATOR)
-        
+
         pool = AerodromeV2Pool(
             address=common.pool_address,
             token0=common.token0,
@@ -189,21 +210,21 @@ class AerodromeV2Builder(V2BuilderBase):
             deployer_address=common.deployer,
             state_block=common.state_block,
         )
-        
+
         self._register_pool(pool, chain_id=chain_id)
-        
+
         if not silent:
             logger.info(pool.name)
             logger.info(f"• Token 0: {common.token0} - Reserves: {common.reserves0}")
             logger.info(f"• Token 1: {common.token1} - Reserves: {common.reserves1}")
-        
+
         return pool
-    
+
     def update(self, pool, *, block_number=None) -> bool:
         if not isinstance(pool, AerodromeV2Pool):
             msg = f"AerodromeV2Builder cannot update {type(pool).__name__}"
             raise TypeError(msg)
-        
+
         provider = self._connections.get_provider(pool.chain_id)
         _block_number = block_number or provider.get_block_number()
         reserves0, reserves1 = raw_call(
@@ -213,10 +234,10 @@ class AerodromeV2Builder(V2BuilderBase):
             return_types=["uint256", "uint256"],
             block_identifier=_block_number,
         )
-        
+
         if pool.reserves_token0 == reserves0 and pool.reserves_token1 == reserves1:
             return False
-        
+
         update = AerodromeV2PoolExternalUpdate(
             block_number=_block_number,
             reserves_token0=reserves0,

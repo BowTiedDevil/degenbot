@@ -62,6 +62,7 @@ def _most_significant_bit_reference(x: int):
         i += 1
     return i
 
+
 def _least_significant_bit_reference(x: int):
     assert x > 0
     i = 0
@@ -88,7 +89,11 @@ This is the larger change. The test file uses the legacy function in two ways:
    ```python
    def is_initialized(tick_bitmap, tick_data, tick):
        next_tick, initialized = next_initialized_tick_within_one_word(
-           tick_data=tick_data, tick_bitmap=tick_bitmap, tick=tick, tick_spacing=1, less_than_or_equal=True
+           tick_data=tick_data,
+           tick_bitmap=tick_bitmap,
+           tick=tick,
+           tick_spacing=1,
+           less_than_or_equal=True,
        )
        return next_tick == tick if initialized else False
    ```
@@ -158,6 +163,7 @@ In each test file, update the import:
 ```python
 # Before
 from degenbot.arbitrage.optimizers.solver import Hop
+
 # After
 from degenbot.types.hop_types import ConstantProductHop, BoundedProductHop
 ```

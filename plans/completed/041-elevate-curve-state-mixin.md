@@ -107,12 +107,12 @@ The `StableswapPoolState` mixin should own the **immutable** and **mutable** sta
 ```python
 class StableswapPoolState:
     """State for Curve StableSwap pools.
-    
+
     Holds all data attributes (immutable and mutable) and their
     read-only properties. No calculation logic — calculations
     stay in CurveStableswapPool (or a future StableswapPoolCalc mixin).
     """
-    
+
     # Immutable — set once at construction
     _tokens: tuple[Erc20Token, ...]
     _a_coefficient: int
@@ -137,28 +137,41 @@ class StableswapPoolState:
     _strategies: PoolStrategies
     _coin_index_type: str
     _name: str
-    
+
     @property
-    def tokens(self) -> tuple[Erc20Token, ...]: return self._tokens
+    def tokens(self) -> tuple[Erc20Token, ...]:
+        return self._tokens
+
     @property
-    def a_coefficient(self) -> int: return self._a_coefficient
+    def a_coefficient(self) -> int:
+        return self._a_coefficient
+
     @property
-    def fee(self) -> int: return self._fee
+    def fee(self) -> int:
+        return self._fee
+
     @property
-    def admin_fee(self) -> int: return self._admin_fee
+    def admin_fee(self) -> int:
+        return self._admin_fee
+
     # ... etc for all immutable properties
-    
+
     # Mutable
     _state: CurveStableswapPoolState  # already a separate frozen dataclass
     base_cache_updated: int | None
     base_virtual_price: int
-    
+
     @property
-    def balances(self) -> tuple[int, ...]: return self._state.balances
+    def balances(self) -> tuple[int, ...]:
+        return self._state.balances
+
     @property
-    def state(self) -> CurveStableswapPoolState: return self._state
+    def state(self) -> CurveStableswapPoolState:
+        return self._state
+
     @property
-    def update_block(self) -> BlockNumber: return self._state.block
+    def update_block(self) -> BlockNumber:
+        return self._state.block
 ```
 
 ### Step 3: Remove redundant attributes from `CurveStableswapPool`

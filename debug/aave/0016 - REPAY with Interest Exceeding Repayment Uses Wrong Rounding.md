@@ -161,9 +161,7 @@ def process_burn_event(
 token_math = TokenMathFactory.get_token_math(operation.pool_revision)
 
 # NEW (correct):
-token_math = TokenMathFactory.get_token_math_for_token_revision(
-    debt_asset.v_token_revision
-)
+token_math = TokenMathFactory.get_token_math_for_token_revision(debt_asset.v_token_revision)
 ```
 
 **Critical**: The vToken revision (3) uses half-up rounding (TokenMathV1), while the Pool revision (8) uses floor rounding (TokenMathV5). Using the wrong TokenMath caused a 1 wei rounding error.

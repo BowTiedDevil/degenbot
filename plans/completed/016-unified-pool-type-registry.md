@@ -51,7 +51,7 @@ The `variant` attribute is the bare DEX name (e.g. `"sushiswap"`, `"aerodrome"`)
 class PoolTypeDescriptor:
     invariant: PoolInvariant
     variant: str | None
-    kind: str                    # NEW: "sushiswap_v2", "camelot_v2", etc.
+    kind: str  # NEW: "sushiswap_v2", "camelot_v2", etc.
     factory: ChecksumAddress | None
 ```
 
