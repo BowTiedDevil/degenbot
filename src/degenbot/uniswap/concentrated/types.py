@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import pydantic
 
-from degenbot.types.aliases import BlockNumber
-from degenbot.validation.evm_values import ValidatedInt128, ValidatedUint128, ValidatedUint256
+if TYPE_CHECKING:
+    from degenbot.types.aliases import BlockNumber
+    from degenbot.validation.evm_values import ValidatedInt128, ValidatedUint128, ValidatedUint256
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
