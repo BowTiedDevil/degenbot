@@ -19,7 +19,6 @@ use alloy::transports::layers::ThrottleLayer;
 use alloy::transports::ws::WsConnect;
 use alloy::transports::{RpcError, TransportErrorKind};
 use rand::RngExt;
-use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -31,86 +30,127 @@ const MAX_RETRY_DELAY_MS: u64 = 30_000; // 30 seconds
 const BACKOFF_MULTIPLIER: u64 = 2;
 const MAX_JITTER_MS: u64 = 100; // Add up to 100ms of jitter
 
+/// Maximum allowed concurrent requests in `LogFetcher`.
+///
+/// Prevents file-descriptor exhaustion and RPC rate-limit bans from
+/// spawning thousands of simultaneous connections.
+const MAX_CONCURRENT_REQUESTS_CAP: usize = 32;
+
 /// Default maximum total attempts for provider operations (1 initial + 9 retries).
 pub const DEFAULT_MAX_RETRIES: u32 = 10;
 
-/// Convert an Alloy `RpcError` to a `ProviderError` with appropriate classification.
+/// Type alias for the full Ethereum block type returned by `get_block`.
 ///
-/// Uses type-based matching on the Alloy error enum instead of string scraping:
+/// Centralises the generic parameters so callers don't repeat
+/// `Block<Transaction<TxEnvelope>, RpcHeader<ConsensusHeader>>`.
+pub type EthBlock = Block<Transaction<TxEnvelope>, RpcHeader<ConsensusHeader>>;
+
+/// Helper macro that wraps a simple Alloy RPC call with retry logic and
+/// error classification. Reduces per-method boilerplate from 9 lines to 1.
+///
+/// For methods that need request construction (e.g. `eth_call`, `estimate_gas`)
+/// or conditional block-id handling, write the `retry_with_backoff` call manually.
+macro_rules! rpc_call {
+    ($self:expr, $context:literal, $expr:expr) => {
+        $self.retry_with_backoff(|| async {
+            $expr.await
+                .map_err(|e| e.into_provider_error($context))
+        })
+        .await
+    };
+}
+
+/// Extension trait that converts an Alloy `RpcError` into a `ProviderError`.
+///
+/// Consumes the error (no double-borrow) and classifies it by Alloy's
+/// type-based error variants instead of string scraping:
 /// - `RpcError::Transport(TransportErrorKind::HttpError)` with 429 → `RateLimited`
 /// - `RpcError::Transport(TransportErrorKind::HttpError)` with 5xx → `ConnectionFailed`
 /// - `RpcError::Transport` with retryable transport errors → `Timeout`
 /// - `RpcError::ErrorResp` → `RpcError` with the JSON-RPC error code
 /// - `RpcError::LocalUsageError` → `Other`
 /// - Other → `RpcError` with code -1
-fn alloy_error_to_provider_error(e: &RpcError<TransportErrorKind>, context: &str) -> ProviderError {
-    let message = format!("{context}: {e}");
-
-    // Check for transport-level errors
-    if let Some(transport_err) = e.as_transport_err() {
-        // HTTP 429 = rate limited
-        if let Some(http_err) = transport_err.as_http_error() {
-            let status = http_err.status;
-            if status == 429 {
-                return ProviderError::RateLimited { message };
-            }
-            // 5xx server errors are retryable as connection failures
-            if (500..600).contains(&status) {
-                return ProviderError::ConnectionFailed { message };
-            }
-        }
-
-        // Backend gone or pubsub unavailable = connection failed
-        if transport_err.is_backend_gone() || transport_err.is_pubsub_unavailable() {
-            return ProviderError::ConnectionFailed { message };
-        }
-
-        // Use Alloy's built-in retry heuristic for other transport errors
-        if transport_err.is_retry_err() {
-            return ProviderError::Timeout { message };
-        }
-
-        // Other transport errors → RPC error
-        return ProviderError::RpcError { code: -1, message };
-    }
-
-    // Server returned an error response (JSON-RPC error)
-    if let Some(error_resp) = e.as_error_resp() {
-        return ProviderError::RpcError {
-            code: error_resp.code,
-            message,
-        };
-    }
-
-    // Local usage errors (signer errors, pre-processing failures)
-    if e.is_local_usage_error() {
-        return ProviderError::Other { message };
-    }
-
-    // Serialization/deserialization errors
-    if e.is_ser_error() || e.is_deser_error() {
-        return ProviderError::SerializationError { message };
-    }
-
-    // Fallback
-    ProviderError::RpcError { code: -1, message }
+trait IntoProviderError {
+    fn into_provider_error(self, context: &str) -> ProviderError;
 }
 
-/// Filter criteria for log fetching.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+impl IntoProviderError for RpcError<TransportErrorKind> {
+    fn into_provider_error(self, context: &str) -> ProviderError {
+        let message = format!("{context}: {self}");
+
+        // Check for transport-level errors
+        if let Some(transport_err) = self.as_transport_err() {
+            // HTTP 429 = rate limited
+            if let Some(http_err) = transport_err.as_http_error() {
+                let status = http_err.status;
+                if status == 429 {
+                    return ProviderError::RateLimited { message };
+                }
+                // 5xx server errors are retryable as connection failures
+                if (500..600).contains(&status) {
+                    return ProviderError::ConnectionFailed { message };
+                }
+            }
+
+            // Backend gone or pubsub unavailable = connection failed
+            if transport_err.is_backend_gone() || transport_err.is_pubsub_unavailable() {
+                return ProviderError::ConnectionFailed { message };
+            }
+
+            // Use Alloy's built-in retry heuristic for other transport errors
+            if transport_err.is_retry_err() {
+                return ProviderError::Timeout { message };
+            }
+
+            // Other transport errors → RPC error
+            return ProviderError::RpcError { code: -1, message };
+        }
+
+        // Server returned an error response (JSON-RPC error)
+        if let Some(error_resp) = self.as_error_resp() {
+            return ProviderError::RpcError {
+                code: error_resp.code,
+                message,
+            };
+        }
+
+        // Local usage errors (signer errors, pre-processing failures)
+        if self.is_local_usage_error() {
+            return ProviderError::Other { message };
+        }
+
+        // Serialization/deserialization errors
+        if self.is_ser_error() || self.is_deser_error() {
+            return ProviderError::SerializationError { message };
+        }
+
+        // Fallback
+        ProviderError::RpcError { code: -1, message }
+    }
+}
+
+/// Filter criteria for log fetching with pre-resolved typed values.
+///
+/// All address and topic strings are validated and parsed at construction
+/// time so that `to_alloy_filter()` is infallible and cheap — no redundant
+/// parsing on every retry or across concurrent chunk tasks.
+#[derive(Debug, Clone)]
 pub struct LogFilter {
-    pub from_block: Option<u64>,
-    pub to_block: Option<u64>,
-    pub addresses: Vec<String>,
-    pub topics: Vec<Vec<String>>,
+    from_block: Option<u64>,
+    to_block: Option<u64>,
+    addresses: Vec<Address>,
+    topics: Vec<Vec<B256>>,
 }
 
 impl LogFilter {
-    /// Create a new `LogFilter`.
+    /// Create a new `LogFilter`, validating and parsing all inputs eagerly.
     ///
     /// # Errors
     ///
-    /// Returns `ProviderError::InvalidBlockRange` if `from_block > to_block`.
+    /// Returns `ProviderError::InvalidBlockRange` if `from_block > to_block`,
+    /// `ProviderError::InvalidAddress` if any address string is malformed, or
+    /// `ProviderError::InvalidTopic` if any topic string is malformed or out of
+    /// range.
     pub fn new(
         from_block: u64,
         to_block: u64,
@@ -124,16 +164,70 @@ impl LogFilter {
             });
         }
 
+        // Parse addresses eagerly — fail fast on bad input
+        let parsed_addresses: Vec<Address> = addresses
+            .unwrap_or_default()
+            .into_iter()
+            .map(|addr| {
+                crate::address_utils::parse_address(&addr).map_err(|e| {
+                    ProviderError::InvalidAddress {
+                        address: addr,
+                        reason: format!("{e}"),
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Parse topics eagerly — each element maps to a topic position (0-3)
+        let parsed_topics: Vec<Vec<B256>> = topics
+            .unwrap_or_default()
+            .into_iter()
+            .enumerate()
+            .map(|(i, topic_list)| {
+                if topic_list.is_empty() {
+                    return Ok(vec![]);
+                }
+                if i > 3 {
+                    return Err(ProviderError::InvalidTopic {
+                        topic: String::new(),
+                        reason: format!("topic position {i} is out of range (max 3)"),
+                    });
+                }
+                topic_list
+                    .into_iter()
+                    .map(|t| {
+                        B256::from_str(&t).map_err(|e| ProviderError::InvalidTopic {
+                            topic: t,
+                            reason: format!("{e}"),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(Self {
             from_block: Some(from_block),
             to_block: Some(to_block),
-            addresses: addresses.unwrap_or_default(),
-            topics: topics.unwrap_or_default(),
+            addresses: parsed_addresses,
+            topics: parsed_topics,
         })
     }
 
-    /// Convert to Alloy Filter.
-    pub fn to_alloy_filter(&self) -> ProviderResult<Filter> {
+    /// Returns the `from_block` value.
+    #[must_use]
+    pub const fn from_block(&self) -> Option<u64> {
+        self.from_block
+    }
+
+    /// Returns the `to_block` value.
+    #[must_use]
+    pub const fn to_block(&self) -> Option<u64> {
+        self.to_block
+    }
+
+    /// Convert to Alloy `Filter` (infallible — all parsing done at construction).
+    #[must_use]
+    pub fn to_alloy_filter(&self) -> Filter {
         let mut filter = Filter::new();
 
         if let Some(from) = self.from_block {
@@ -144,55 +238,48 @@ impl LogFilter {
             filter = filter.to_block(to);
         }
 
-        // Convert addresses
         if !self.addresses.is_empty() {
-            let addresses: Vec<Address> = self
-                .addresses
-                .iter()
-                .map(|addr| {
-                    crate::address_utils::parse_address(addr).map_err(|e| {
-                        ProviderError::InvalidAddress {
-                            address: addr.clone(),
-                            reason: format!("{e}"),
-                        }
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-
-            filter = filter.address(addresses);
+            filter = filter.address(self.addresses.clone());
         }
 
-        // Convert topics — each element maps to a topic position (0-3)
-        if !self.topics.is_empty() {
-            for (i, topic_list) in self.topics.iter().enumerate() {
-                if topic_list.is_empty() {
-                    continue;
-                }
-                let topics: Vec<B256> = topic_list
-                    .iter()
-                    .map(|t| {
-                        B256::from_str(t).map_err(|e| ProviderError::InvalidTopic {
-                            topic: t.clone(),
-                            reason: format!("{e}"),
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                filter = match i {
-                    0 => filter.event_signature(topics),
-                    1 => filter.topic1(topics),
-                    2 => filter.topic2(topics),
-                    3 => filter.topic3(topics),
-                    _ => {
-                        return Err(ProviderError::InvalidTopic {
-                            topic: String::new(),
-                            reason: format!("topic position {i} is out of range (max 3)"),
-                        })
-                    }
-                };
+        for (i, topic_list) in self.topics.iter().enumerate() {
+            if topic_list.is_empty() {
+                continue;
             }
+            filter = match i {
+                0 => filter.event_signature(topic_list.clone()),
+                1 => filter.topic1(topic_list.clone()),
+                2 => filter.topic2(topic_list.clone()),
+                3 => filter.topic3(topic_list.clone()),
+                _ => break, // validated at construction; unreachable
+            };
         }
 
-        Ok(filter)
+        filter
+    }
+
+    /// Returns the addresses as EIP-55 checksummed strings.
+    ///
+    /// Re-serialises the pre-parsed `Address` values back to checksummed
+    /// strings. Used by the `PyO3` `__repr__` and property getters.
+    #[must_use]
+    pub fn address_strings(&self) -> Vec<String> {
+        self.addresses
+            .iter()
+            .map(crate::address_utils::address_to_checksum_string)
+            .collect()
+    }
+
+    /// Returns the topics as hex strings.
+    ///
+    /// Re-serialises the pre-parsed `B256` values back to hex strings.
+    /// Used by the `PyO3` property getters.
+    #[must_use]
+    pub fn topic_strings(&self) -> Vec<Vec<String>> {
+        self.topics
+            .iter()
+            .map(|list| list.iter().map(|t| format!("{t}")).collect())
+            .collect()
     }
 }
 
@@ -333,15 +420,7 @@ impl AlloyProvider {
     ///
     /// Returns `ProviderError::RpcError` if the RPC call fails.
     pub async fn get_block_number(&self) -> ProviderResult<u64> {
-        self.retry_with_backoff(|| async {
-            let result: u64 = self
-                .inner
-                .get_block_number()
-                .await
-                .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get block number"))?;
-            Ok(result)
-        })
-        .await
+        rpc_call!(self, "Failed to get block number", self.inner.get_block_number())
     }
 
     /// Get chain ID.
@@ -350,15 +429,7 @@ impl AlloyProvider {
     ///
     /// Returns `ProviderError::RpcError` if the RPC call fails.
     pub async fn get_chain_id(&self) -> ProviderResult<u64> {
-        self.retry_with_backoff(|| async {
-            let result: u64 = self
-                .inner
-                .get_chain_id()
-                .await
-                .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get chain ID"))?;
-            Ok(result)
-        })
-        .await
+        rpc_call!(self, "Failed to get chain ID", self.inner.get_chain_id())
     }
 
     /// Fetch logs with retry logic.
@@ -367,14 +438,14 @@ impl AlloyProvider {
     ///
     /// Returns `ProviderError` if the RPC call fails or filter is invalid.
     pub async fn get_logs(&self, filter: &LogFilter) -> ProviderResult<Vec<Log>> {
-        let alloy_filter = filter.to_alloy_filter()?;
+        let alloy_filter = filter.to_alloy_filter();
 
         self.retry_with_backoff(|| async {
             let result: Vec<Log> = self
                 .inner
                 .get_logs(&alloy_filter)
                 .await
-                .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get logs"))?;
+                .map_err(|e| e.into_provider_error("Failed to get logs"))?;
             Ok(result)
         })
         .await
@@ -399,7 +470,7 @@ impl AlloyProvider {
             } else {
                 self.inner.get_code_at(*address).await
             }
-            .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get code"))?;
+            .map_err(|e| e.into_provider_error("Failed to get code"))?;
 
             Ok(result)
         })
@@ -413,17 +484,14 @@ impl AlloyProvider {
     /// # Errors
     ///
     /// Returns `ProviderError::RpcError` if the RPC call fails.
-    pub async fn get_block(
-        &self,
-        block_number: u64,
-    ) -> ProviderResult<Option<Block<Transaction<TxEnvelope>, RpcHeader<ConsensusHeader>>>> {
+    pub async fn get_block(&self, block_number: u64) -> ProviderResult<Option<EthBlock>> {
         self.retry_with_backoff(|| async {
             let block_num_tag = BlockNumberOrTag::Number(block_number);
             let result = self
                 .inner
                 .get_block_by_number(block_num_tag)
                 .await
-                .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get block"))?;
+                .map_err(|e| e.into_provider_error("Failed to get block"))?;
 
             Ok(result)
         })
@@ -454,14 +522,7 @@ impl AlloyProvider {
                     }
 
                     // Check if it's a retryable error
-                    let is_retryable = matches!(
-                        &e,
-                        ProviderError::RateLimited { .. }
-                            | ProviderError::Timeout { .. }
-                            | ProviderError::ConnectionFailed { .. }
-                    );
-
-                    if !is_retryable {
+                    if !e.is_retryable() {
                         return Err(e);
                     }
 
@@ -473,7 +534,10 @@ impl AlloyProvider {
                     tokio::time::sleep(sleep_duration).await;
 
                     // Exponential backoff with cap (saturating to prevent overflow)
-                    delay_ms = std::cmp::min(delay_ms.saturating_mul(BACKOFF_MULTIPLIER), MAX_RETRY_DELAY_MS);
+                    delay_ms = std::cmp::min(
+                        delay_ms.saturating_mul(BACKOFF_MULTIPLIER),
+                        MAX_RETRY_DELAY_MS,
+                    );
                 }
             }
         }
@@ -507,7 +571,7 @@ impl AlloyProvider {
             } else {
                 self.inner.call(tx).await
             }
-            .map_err(|e| alloy_error_to_provider_error(&e, "eth_call failed"))?;
+            .map_err(|e| e.into_provider_error("eth_call failed"))?;
 
             Ok(result)
         })
@@ -520,15 +584,7 @@ impl AlloyProvider {
     ///
     /// Returns `ProviderError::RpcError` if the RPC call fails.
     pub async fn get_gas_price(&self) -> ProviderResult<u128> {
-        self.retry_with_backoff(|| async {
-            let result: u128 = self
-                .inner
-                .get_gas_price()
-                .await
-                .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get gas price"))?;
-            Ok(result)
-        })
-        .await
+        rpc_call!(self, "Failed to get gas price", self.inner.get_gas_price())
     }
 
     /// Estimate gas for a transaction.
@@ -570,7 +626,7 @@ impl AlloyProvider {
             } else {
                 self.inner.estimate_gas(tx).await
             }
-            .map_err(|e| alloy_error_to_provider_error(&e, "Failed to estimate gas"))?;
+            .map_err(|e| e.into_provider_error("Failed to estimate gas"))?;
 
             Ok(result)
         })
@@ -595,7 +651,7 @@ impl AlloyProvider {
                 .inner
                 .get_transaction_by_hash(hash)
                 .await
-                .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get transaction"))?;
+                .map_err(|e| e.into_provider_error("Failed to get transaction"))?;
 
             // Convert to JSON value
             let json_value = result
@@ -629,9 +685,7 @@ impl AlloyProvider {
                 .inner
                 .get_transaction_receipt(hash)
                 .await
-                .map_err(|e| {
-                    alloy_error_to_provider_error(&e, "Failed to get transaction receipt")
-                })?;
+                .map_err(|e| e.into_provider_error("Failed to get transaction receipt"))?;
 
             // Convert to JSON value
             let json_value = result
@@ -662,12 +716,12 @@ impl AlloyProvider {
             let result = if let Some(block) = block_number {
                 self.inner
                     .get_storage_at(*address, position)
-                    .block_id(BlockNumberOrTag::Number(block).into())
+                    .block_id(block.into())
                     .await
             } else {
                 self.inner.get_storage_at(*address, position).await
             }
-            .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get storage"))?;
+            .map_err(|e| e.into_provider_error("Failed to get storage"))?;
 
             // Convert U256 to B256 (32-byte storage slot)
             Ok(B256::from(result.to_be_bytes::<32>()))
@@ -689,12 +743,12 @@ impl AlloyProvider {
             let result = if let Some(block) = block_number {
                 self.inner
                     .get_balance(*address)
-                    .block_id(BlockNumberOrTag::Number(block).into())
+                    .block_id(block.into())
                     .await
             } else {
                 self.inner.get_balance(*address).await
             }
-            .map_err(|e| alloy_error_to_provider_error(&e, "Failed to get balance"))?;
+            .map_err(|e| e.into_provider_error("Failed to get balance"))?;
 
             Ok(result)
         })
@@ -715,14 +769,12 @@ impl AlloyProvider {
             let result = if let Some(block) = block_number {
                 self.inner
                     .get_transaction_count(*address)
-                    .block_id(BlockNumberOrTag::Number(block).into())
+                    .block_id(block.into())
                     .await
             } else {
                 self.inner.get_transaction_count(*address).await
             }
-            .map_err(|e| {
-                alloy_error_to_provider_error(&e, "Failed to get transaction count")
-            })?;
+            .map_err(|e| e.into_provider_error("Failed to get transaction count"))?;
 
             Ok(result)
         })
@@ -747,16 +799,17 @@ impl AlloyProvider {
         params: serde_json::Value,
     ) -> ProviderResult<serde_json::Value> {
         let method = method.to_string();
+        let params = Arc::new(params);
 
         self.retry_with_backoff(|| {
             let client = self.inner.client();
             let method = method.clone();
-            let params = params.clone();
+            let params = Arc::clone(&params);
             async move {
                 let result: serde_json::Value = client
-                    .request::<serde_json::Value, serde_json::Value>(method, params)
+                    .request(method, (*params).clone())
                     .await
-                    .map_err(|e| alloy_error_to_provider_error(&e, "RPC request failed"))?;
+                    .map_err(|e| e.into_provider_error("RPC request failed"))?;
 
                 Ok(result)
             }
@@ -784,9 +837,12 @@ impl LogFetcher {
     }
 
     /// Set the maximum number of concurrent requests.
+    ///
+    /// The value is capped at [`MAX_CONCURRENT_REQUESTS_CAP`] (32) to prevent
+    /// file-descriptor exhaustion and RPC rate-limit bans.
     #[must_use]
-    pub const fn with_concurrency(mut self, max_concurrent: usize) -> Self {
-        self.max_concurrent_requests = max_concurrent;
+    pub fn with_concurrency(mut self, max_concurrent: usize) -> Self {
+        self.max_concurrent_requests = max_concurrent.min(MAX_CONCURRENT_REQUESTS_CAP);
         self
     }
 
@@ -819,12 +875,22 @@ impl LogFetcher {
             });
         }
 
+        // Resolve the filter once and share it across chunk tasks via Arc.
+        // All string→typed parsing happens here, not per-chunk.
+        let base_filter = Arc::new(LogFilter::new(
+            from_block,
+            to_block,
+            addresses,
+            topics,
+        )?);
+
         // Build list of chunk ranges
         let mut chunks = Vec::new();
         let mut current_block = from_block;
 
         while current_block <= to_block {
-            let chunk_end = std::cmp::min(current_block + self.max_blocks_per_request - 1, to_block);
+            let chunk_end =
+                std::cmp::min(current_block + self.max_blocks_per_request - 1, to_block);
             chunks.push((current_block, chunk_end));
             current_block = chunk_end + 1;
         }
@@ -836,8 +902,7 @@ impl LogFetcher {
         for (chunk_start, chunk_end) in chunks {
             let sem = Arc::clone(&sem);
             let provider = Arc::clone(&self.provider);
-            let addresses = addresses.clone();
-            let topics = topics.clone();
+            let base_filter = Arc::clone(&base_filter);
 
             join_set.spawn(async move {
                 // Acquire permit inside the task so all tasks can be spawned first
@@ -845,9 +910,14 @@ impl LogFetcher {
                     message: "Semaphore acquisition failed".to_string(),
                 })?;
 
-                let filter =
-                    LogFilter::new(chunk_start, chunk_end, addresses, topics)?;
-                provider.get_logs(&filter).await
+                // Build chunk-specific filter from the pre-resolved base
+                let chunk_filter = LogFilter {
+                    from_block: Some(chunk_start),
+                    to_block: Some(chunk_end),
+                    addresses: base_filter.addresses.clone(),
+                    topics: base_filter.topics.clone(),
+                };
+                provider.get_logs(&chunk_filter).await
             });
         }
 
@@ -864,9 +934,11 @@ impl LogFetcher {
         all_logs.sort_by(|a, b| {
             let a_block = a.block_number.unwrap_or(0);
             let b_block = b.block_number.unwrap_or(0);
-            a_block
-                .cmp(&b_block)
-                .then_with(|| a.log_index.unwrap_or(0).cmp(&b.log_index.unwrap_or(0)))
+            a_block.cmp(&b_block).then_with(|| {
+                a.log_index
+                    .unwrap_or(0)
+                    .cmp(&b.log_index.unwrap_or(0))
+            })
         });
 
         Ok(all_logs)
@@ -885,13 +957,16 @@ mod tests {
         let filter = LogFilter::new(
             100,
             200,
-            Some(vec!["0x1234567890abcdef".to_string()]),
-            Some(vec![vec!["0xabcd1234".to_string()]]),
+            Some(vec!["0x1234567890abcdef1234567890abcdef12345678".to_string()]),
+            Some(vec![vec![
+                "0x0000000000000000000000000000000000000000000000000000000000000001"
+                    .to_string(),
+            ]]),
         )
         .expect("valid log filter should be created");
 
-        assert_eq!(filter.from_block, Some(100));
-        assert_eq!(filter.to_block, Some(200));
+        assert_eq!(filter.from_block(), Some(100));
+        assert_eq!(filter.to_block(), Some(200));
         assert_eq!(filter.addresses.len(), 1);
     }
 
@@ -912,10 +987,10 @@ mod tests {
     #[test]
     fn test_log_filter_equal_range() {
         // from_block == to_block is valid (single-block query)
-        let filter = LogFilter::new(42, 42, None, None)
-            .expect("equal range should be valid");
-        assert_eq!(filter.from_block, Some(42));
-        assert_eq!(filter.to_block, Some(42));
+        let filter =
+            LogFilter::new(42, 42, None, None).expect("equal range should be valid");
+        assert_eq!(filter.from_block(), Some(42));
+        assert_eq!(filter.to_block(), Some(42));
     }
 
     #[test]
@@ -923,6 +998,42 @@ mod tests {
         let filter = LogFilter::new(0, 100, None, None).expect("valid");
         assert!(filter.addresses.is_empty());
         assert!(filter.topics.is_empty());
+    }
+
+    #[test]
+    fn test_log_filter_invalid_address_eager() {
+        // Invalid addresses are now caught at construction time
+        let result = LogFilter::new(
+            100,
+            200,
+            Some(vec!["not_an_address".to_string()]),
+            None,
+        );
+        assert!(result.is_err());
+        match result {
+            Err(ProviderError::InvalidAddress { address, .. }) => {
+                assert_eq!(address, "not_an_address");
+            }
+            other => panic!("Expected InvalidAddress error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_log_filter_invalid_topic_eager() {
+        // Invalid topics are now caught at construction time
+        let result = LogFilter::new(
+            100,
+            200,
+            None,
+            Some(vec![vec!["not_a_topic".to_string()]]),
+        );
+        assert!(result.is_err());
+        match result {
+            Err(ProviderError::InvalidTopic { topic, .. }) => {
+                assert_eq!(topic, "not_a_topic");
+            }
+            other => panic!("Expected InvalidTopic error, got {other:?}"),
+        }
     }
 
     // ── LogFilter → Alloy Filter conversion ─────────────────────────────
@@ -945,7 +1056,7 @@ mod tests {
         )
         .expect("valid filter");
 
-        let alloy_filter = filter.to_alloy_filter().expect("conversion succeeds");
+        let alloy_filter = filter.to_alloy_filter();
         let topics = &alloy_filter.topics;
 
         assert_eq!(
@@ -964,7 +1075,7 @@ mod tests {
 
     #[test]
     fn test_to_alloy_filter_rejects_topic_position_out_of_range() {
-        let filter = LogFilter::new(
+        let result = LogFilter::new(
             100,
             200,
             None,
@@ -981,56 +1092,14 @@ mod tests {
                         .to_string(),
                 ],
             ]),
-        )
-        .expect("valid filter");
+        );
 
-        let result = filter.to_alloy_filter();
         assert!(result.is_err());
         match result {
             Err(ProviderError::InvalidTopic { reason, .. }) => {
                 assert!(reason.contains("out of range"));
             }
             _ => panic!("Expected InvalidTopic error"),
-        }
-    }
-
-    #[test]
-    fn test_to_alloy_filter_invalid_address() {
-        let filter = LogFilter::new(
-            100,
-            200,
-            Some(vec!["not_an_address".to_string()]),
-            None,
-        )
-        .expect("filter construction succeeds; error at conversion time");
-
-        let result = filter.to_alloy_filter();
-        assert!(result.is_err());
-        match result {
-            Err(ProviderError::InvalidAddress { address, .. }) => {
-                assert_eq!(address, "not_an_address");
-            }
-            other => panic!("Expected InvalidAddress error, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_to_alloy_filter_invalid_topic() {
-        let filter = LogFilter::new(
-            100,
-            200,
-            None,
-            Some(vec![vec!["not_a_topic".to_string()]]),
-        )
-        .expect("filter construction succeeds; error at conversion time");
-
-        let result = filter.to_alloy_filter();
-        assert!(result.is_err());
-        match result {
-            Err(ProviderError::InvalidTopic { topic, .. }) => {
-                assert_eq!(topic, "not_a_topic");
-            }
-            other => panic!("Expected InvalidTopic error, got {other:?}"),
         }
     }
 
@@ -1051,8 +1120,7 @@ mod tests {
         )
         .expect("valid filter");
 
-        let result = filter.to_alloy_filter();
-        assert!(result.is_ok());
+        let _ = filter.to_alloy_filter(); // infallible, just verifying no panic
     }
 
     // ── Retry backoff logic ─────────────────────────────────────────────
@@ -1061,7 +1129,10 @@ mod tests {
     fn test_saturating_retry_delay() {
         // Verify that retry delay uses saturating arithmetic
         let max_delay = u64::MAX / 2;
-        let result = std::cmp::min(max_delay.saturating_mul(BACKOFF_MULTIPLIER), MAX_RETRY_DELAY_MS);
+        let result = std::cmp::min(
+            max_delay.saturating_mul(BACKOFF_MULTIPLIER),
+            MAX_RETRY_DELAY_MS,
+        );
         // Should cap at MAX_RETRY_DELAY_MS, not overflow
         assert_eq!(result, MAX_RETRY_DELAY_MS);
     }
@@ -1072,7 +1143,10 @@ mod tests {
         let mut delay = INITIAL_RETRY_DELAY_MS;
         let mut delays = vec![delay];
         for _ in 0..20 {
-            delay = std::cmp::min(delay.saturating_mul(BACKOFF_MULTIPLIER), MAX_RETRY_DELAY_MS);
+            delay = std::cmp::min(
+                delay.saturating_mul(BACKOFF_MULTIPLIER),
+                MAX_RETRY_DELAY_MS,
+            );
             delays.push(delay);
         }
 
@@ -1095,9 +1169,6 @@ mod tests {
         // Successful operations should return on the first attempt
         use std::sync::atomic::{AtomicU32, Ordering};
 
-        // We need a real AlloyProvider to call retry_with_backoff,
-        // but it requires an RPC connection. Test the retry logic
-        // by simulating it directly instead.
         let call_count = Arc::new(AtomicU32::new(0));
         let count_clone = Arc::clone(&call_count);
 
@@ -1125,36 +1196,41 @@ mod tests {
     #[test]
     fn test_retryable_error_classification() {
         // Retryable errors
-        assert!(matches!(
-            ProviderError::RateLimited { message: "test".to_string() },
-            ProviderError::RateLimited { .. }
-        ));
-        assert!(matches!(
-            ProviderError::Timeout { message: "test".to_string() },
-            ProviderError::Timeout { .. }
-        ));
-        assert!(matches!(
-            ProviderError::ConnectionFailed { message: "test".to_string() },
-            ProviderError::ConnectionFailed { .. }
-        ));
+        assert!(ProviderError::RateLimited {
+            message: "test".to_string()
+        }
+        .is_retryable());
+        assert!(ProviderError::Timeout {
+            message: "test".to_string()
+        }
+        .is_retryable());
+        assert!(
+            ProviderError::ConnectionFailed {
+                message: "test".to_string()
+            }
+            .is_retryable()
+        );
 
         // Non-retryable errors
         let non_retryable = [
-            ProviderError::RpcError { code: -32000, message: "revert".to_string() },
+            ProviderError::RpcError {
+                code: -32000,
+                message: "revert".to_string(),
+            },
             ProviderError::InvalidBlockRange { from: 1, to: 0 },
-            ProviderError::InvalidParams { message: "bad".to_string() },
-            ProviderError::SerializationError { message: "bad".to_string() },
-            ProviderError::Other { message: "bad".to_string() },
+            ProviderError::InvalidParams {
+                message: "bad".to_string(),
+            },
+            ProviderError::SerializationError {
+                message: "bad".to_string(),
+            },
+            ProviderError::Other {
+                message: "bad".to_string(),
+            },
         ];
 
         for err in non_retryable {
-            let is_retryable = matches!(
-                &err,
-                ProviderError::RateLimited { .. }
-                    | ProviderError::Timeout { .. }
-                    | ProviderError::ConnectionFailed { .. }
-            );
-            assert!(!is_retryable, "{err:?} should not be retryable");
+            assert!(!err.is_retryable(), "{err:?} should not be retryable");
         }
     }
 
@@ -1263,10 +1339,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_logs_chunked_zero_chunk_size_rejected() {
-        // A provider is needed for LogFetcher but we only test validation,
-        // not actual RPC. The validation check runs before any I/O.
-        // We can't construct AlloyProvider without an RPC endpoint,
-        // so test the validation logic directly.
         let max_blocks_per_request = 0u64;
 
         // This is the check from fetch_logs_chunked:
@@ -1312,13 +1384,29 @@ mod tests {
         }
     }
 
+    // ── LogFetcher concurrency cap ─────────────────────────────────────
+
+    #[test]
+    fn test_concurrency_cap() {
+        // Values above the cap should be clamped
+        let requested = 1000usize;
+        let clamped = requested.min(MAX_CONCURRENT_REQUESTS_CAP);
+        assert_eq!(clamped, MAX_CONCURRENT_REQUESTS_CAP);
+    }
+
+    #[test]
+    fn test_concurrency_within_cap() {
+        // Values within the cap should pass through
+        let requested = 8usize;
+        let clamped = requested.min(MAX_CONCURRENT_REQUESTS_CAP);
+        assert_eq!(clamped, 8);
+    }
+
     // ── Log sorting ────────────────────────────────────────────────────
 
     #[test]
     fn test_log_sort_order() {
         // Verify logs sort by (block_number, log_index) even when provided out of order.
-        // Use raw field construction — address/topics live in `inner: LogData`
-        // which is not relevant to the sort.
         let logs: Vec<Log> = vec![
             Log {
                 block_number: Some(100),
@@ -1346,9 +1434,11 @@ mod tests {
         sorted.sort_by(|a, b| {
             let a_block = a.block_number.unwrap_or(0);
             let b_block = b.block_number.unwrap_or(0);
-            a_block
-                .cmp(&b_block)
-                .then_with(|| a.log_index.unwrap_or(0).cmp(&b.log_index.unwrap_or(0)))
+            a_block.cmp(&b_block).then_with(|| {
+                a.log_index
+                    .unwrap_or(0)
+                    .cmp(&b.log_index.unwrap_or(0))
+            })
         });
 
         // Expected order: block_number=None(0,0), 99(99,0), 100(100,0), 100(100,2)
@@ -1359,5 +1449,13 @@ mod tests {
         assert_eq!(sorted[3].block_number, Some(100));
         assert_eq!(sorted[3].log_index, Some(2));
     }
-}
 
+    // ── EthBlock type alias ────────────────────────────────────────────
+
+    #[test]
+    fn test_eth_block_type_alias_compiles() {
+        // Verify the type alias is usable (compile-time check)
+        fn assert_block_type(_: Option<EthBlock>) {}
+        assert_block_type(None);
+    }
+}

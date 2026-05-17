@@ -43,30 +43,30 @@ impl PyLogFilter {
     #[getter]
     #[pyo3(name = "from_block")]
     const fn get_from_block(&self) -> Option<u64> {
-        self.inner.from_block
+        self.inner.from_block()
     }
 
     #[getter]
     const fn to_block(&self) -> Option<u64> {
-        self.inner.to_block
+        self.inner.to_block()
     }
 
     #[getter]
-    fn addresses(&self) -> &[String] {
-        &self.inner.addresses
+    fn addresses(&self) -> Vec<String> {
+        self.inner.address_strings()
     }
 
     #[getter]
-    fn topics(&self) -> &[Vec<String>] {
-        &self.inner.topics
+    fn topics(&self) -> Vec<Vec<String>> {
+        self.inner.topic_strings()
     }
 
     fn __repr__(&self) -> String {
         format!(
             "LogFilter(from_block={:?}, to_block={:?}, addresses={:?})",
-            self.inner.from_block,
-            self.inner.to_block,
-            self.inner.addresses
+            self.inner.from_block(),
+            self.inner.to_block(),
+            self.inner.address_strings(),
         )
     }
 }
@@ -294,13 +294,6 @@ impl PyAlloyProvider {
             }
             None => Ok(None),
         }
-    }
-
-    /// Close the provider.
-    #[allow(clippy::unused_self)]
-    const fn close(&self) {
-        // No-op for now - provider connection is managed internally
-        // This method exists for API compatibility
     }
 
     #[getter]

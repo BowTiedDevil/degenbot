@@ -23,7 +23,7 @@ use alloy::consensus::{
 use alloy::eips::eip4895::Withdrawal;
 use alloy::network::primitives::BlockTransactions;
 use alloy::primitives::{Address, TxKind, B256, U256};
-use alloy::rpc::types::eth::{Block, Header as RpcHeader, Transaction};
+use alloy::rpc::types::eth::Transaction;
 use alloy::rpc::types::Log;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -33,6 +33,7 @@ use std::sync::LazyLock;
 use crate::address_utils::address_to_checksum_string;
 use crate::hex_utils::decode_hex;
 use crate::py_cache::create_hexbytes;
+use crate::provider::EthBlock;
 
 /// Field names that should be converted to `HexBytes`.
 /// These are commonly used field names for Ethereum hashes and data.
@@ -615,7 +616,7 @@ fn withdrawal_to_py_dict<'py>(
 
 pub fn block_to_py_dict<'py>(
     py: Python<'py>,
-    block: &Block<Transaction<TxEnvelope>, RpcHeader<ConsensusHeader>>,
+    block: &EthBlock,
 ) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
 

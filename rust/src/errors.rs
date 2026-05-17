@@ -153,6 +153,20 @@ pub enum ProviderError {
     Other { message: String },
 }
 
+impl ProviderError {
+    /// Returns `true` if this error is retryable (rate-limited, timeout, connection failure).
+    ///
+    /// Used by the retry-with-backoff loop to decide whether to sleep and retry
+    /// or surface the error immediately.
+    #[must_use]
+    pub const fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::RateLimited { .. } | Self::Timeout { .. } | Self::ConnectionFailed { .. }
+        )
+    }
+}
+
 impl From<ProviderError> for PyErr {
     fn from(err: ProviderError) -> Self {
         let msg = format!("Provider error: {err}");
