@@ -142,59 +142,6 @@ logger-objects = [
 allow-star-arg-any = true
 
 [tool.ruff.lint.per-file-ignores]
-"src/degenbot/arbitrage/_legacy/*" = [
-    "BLE",    # legacy code catches blind exceptions for fallback behavior
-    "FIX",    # legacy code has known TODOs that won't be resolved
-    "PLR2004", # legacy code uses magic values in comparisons
-    "S110",   # legacy code uses try-except-pass as fallback
-    "TRY",    # legacy code uses try/return patterns for fast-path fallback
-]
-"**/*.pyi" = [
-    "ANN401",  # stub files use Any for dynamic Rust-side types
-    "N802",    # Rust-side property names (coeff_K, D) are fixed by the FFI
-    "E501",    # long lines in generated stubs are acceptable
-]
-"src/degenbot/uniswap/concentrated/types.py" = [
-    "TC001",   # Pydantic models require these imports at runtime
-]
-"src/degenbot/curve/types.py" = [
-    "N802",    # D() is the Curve convention for the invariant value
-]
-"src/degenbot/curve/calculators/*" = [
-    "PLR6301", # calculate() is a protocol method; override_state is required by the protocol signature
-    "ARG002",  # override_state required by DyCalculator protocol signature
-]
-"src/degenbot/database/models/base.py" = [
-    "PLR6301", # SQLAlchemy type decorators require (self, value, dialect) signature
-    "ARG002",  # dialect is required by SQLAlchemy protocol even if unused
-]
-"src/degenbot/curve/fetcher_factory.py" = [
-    "ARG002",  # fetcher factory methods accept pool_address for API consistency with closure signatures
-    "N806",    # PRECISION/LENDING_PRECISION are Curve convention constants
-]
-"src/degenbot/curve/curve_stableswap_liquidity_pool.py" = [
-    "ARG002",  # pool_balances and zero_for_one required by protocol signatures
-    "FIX002",  # TODO comments documenting known investigation items
-]
-"src/degenbot/builders/*" = [
-    "ARG002",  # builders accept **kwargs for API consistency across the builder protocol
-    "FBT001",  # boolean positional args match the PoolBuilder protocol
-    "FBT002",  # boolean default positional args match the PoolBuilder protocol
-    "PLR0917", # V4 builder has many parameters matching PoolBuilder protocol
-]
-"src/degenbot/arbitrage/optimizers/*" = [
-    "N806",    # mathematical variable names (R0, R1, L, delta_R0, buy_R0) follow domain conventions
-    "PLR2004", # numerical thresholds in optimization code are domain-standard
-    "PLR6301", # calculate() is a protocol method
-    "PLR0917", # optimizer functions accept many positional args by design
-    "FBT001",  # zero_for_one boolean positional args are a domain convention
-    "FBT002",  # zero_for_one boolean default positional args are a domain convention
-    "ARG001",  # unused arguments reserved for future use or API consistency
-    "ARG002",  # unused method arguments for protocol compliance
-    "ANN401",  # Any types for Rust FFI results
-    "TRY301",  # raise inside try blocks for optimization error handling
-    "S105",    # hex addresses are not passwords
-]
 "tests/*" = [
     "ANN",      # type annotations for tests are low priority
     "C90",      # high complexity tests are acceptable
@@ -252,8 +199,7 @@ dev = [
 exclude-newer = "14 days"
 link-mode = "copy"
 cache-keys = [
-    {file = "pyproject.toml"}, 
-    {file = "rust/Cargo.toml"}, 
+    {file = "rust/Cargo.toml"},
     {file = "rust/src/**/*.rs"},
 ]
 
