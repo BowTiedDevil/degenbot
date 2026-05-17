@@ -27,6 +27,18 @@ const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(10_000).expect("10_000 is
 pub(crate) static TYPE_CACHE: LazyLock<Mutex<LruCache<Vec<String>, CachedAbiTypes>>> =
     LazyLock::new(|| Mutex::new(LruCache::new(CACHE_CAPACITY)));
 
+/// Return the current number of entries in the type cache (test-only helper).
+#[cfg(test)]
+pub fn cache_len() -> usize {
+    TYPE_CACHE.lock().len()
+}
+
+/// Clear the type cache (test-only helper).
+#[cfg(test)]
+pub fn cache_clear() {
+    TYPE_CACHE.lock().clear();
+}
+
 /// Get or create cached types for the given type strings.
 ///
 /// This function checks the global cache first, and only parses
@@ -41,20 +53,14 @@ pub(crate) static TYPE_CACHE: LazyLock<Mutex<LruCache<Vec<String>, CachedAbiType
 pub fn get_cached_types(types: &[&str]) -> Result<CachedAbiTypes, AbiDecodeError> {
     let key: Vec<String> = types.iter().map(std::string::ToString::to_string).collect();
 
-    // Fast path: check cache
-    {
-        let mut cache = TYPE_CACHE.lock();
-        if let Some(cached) = cache.get(&key) {
-            return Ok(cached.clone());
-        }
+    let mut cache = TYPE_CACHE.lock();
+    if let Some(cached) = cache.get(&key) {
+        return Ok(cached.clone());
     }
 
-    // Slow path: parse and cache
     let cached = CachedAbiTypes::new(types)?;
-    {
-        let mut cache = TYPE_CACHE.lock();
-        cache.put(key, cached.clone());
-    }
+    cache.put(key, cached.clone());
+    drop(cache);
     Ok(cached)
 }
 

@@ -321,15 +321,6 @@ class TestErrorHandling:
         with pytest.raises(NotImplementedError, match="Fixed-point types"):
             decode_single_rs("fixed128x18", data)
 
-    def test_non_strict_not_implemented(self):
-        """
-        Test that non-strict mode raises NotImplementedError.
-        """
-
-        data = bytes.fromhex("0" * 64)
-        with pytest.raises(NotImplementedError, match="Non-strict decoding"):
-            decode_single_rs("uint256", data, strict=False)
-
 
 class TestEthAbiCompatibility:
     """

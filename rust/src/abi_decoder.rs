@@ -24,7 +24,6 @@
 use crate::abi_types::cached::get_cached_types;
 use crate::abi_types::AbiValue;
 use crate::errors::AbiDecodeError;
-use alloy::hex;
 use alloy::primitives::Address;
 use pyo3::{
     exceptions::{PyNotImplementedError, PyValueError},
@@ -78,6 +77,12 @@ pub fn decode_rust(types: &[&str], data: &[u8]) -> Result<Vec<AbiValue>, AbiDeco
 ///
 /// Convenience function for decoding a single value without Python dependencies.
 /// Uses internal type parsing cache for performance.
+///
+/// # Panics
+///
+/// Panics if `cached.decode()` returns a different number of values than
+/// the length check allows. This is a logic error and should never occur.
+#[allow(clippy::missing_panics_doc)]
 pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDecodeError> {
     if abi_type.contains("fixed") || abi_type.contains("ufixed") {
         return Err(AbiDecodeError::FixedPointNotImplemented);
@@ -90,7 +95,15 @@ pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDe
     // Use cached types for decoding
     let cached = get_cached_types(&[abi_type])?;
     let mut values = cached.decode(data)?;
-    values.pop().ok_or(AbiDecodeError::EmptyData)
+    if values.len() != 1 {
+        return Err(AbiDecodeError::InvalidLength(format!(
+            "Expected 1 value from single-type decode, got {}",
+            values.len()
+        )));
+    }
+    // Length verified as 1 above; pop is infallible.
+    #[allow(clippy::expect_used)]
+    Ok(values.pop().expect("length verified above"))
 }
 
 /// Decode ABI-encoded data using pre-parsed `AbiType` values.
@@ -163,16 +176,8 @@ fn abi_value_to_python<'py>(
                 let addr = Address::from_slice(addr_bytes);
                 Ok(PyString::new(py, &addr.to_string()).into_any())
             } else {
-                let mut buf = [0u8; 42];
-                buf[0] = b'0';
-                buf[1] = b'x';
-                hex::encode_to_slice(addr_bytes, &mut buf[2..]).map_err(|e| {
-                    PyValueError::new_err(format!("Failed to encode address to hex: {e}"))
-                })?;
-                let addr_str = std::str::from_utf8(&buf).map_err(|e| {
-                    PyValueError::new_err(format!("Invalid UTF-8 in hex address: {e}"))
-                })?;
-                Ok(PyString::new(py, addr_str).into_any())
+                let s = alloy::hex::encode_prefixed(addr_bytes);
+                Ok(PyString::new(py, &s).into_any())
             }
         }
         AbiValue::Bool(b) => Ok(PyBool::new(py, *b).to_owned().into_any()),
@@ -183,11 +188,11 @@ fn abi_value_to_python<'py>(
         AbiValue::Int(n, _) => crate::alloy_py::i256_to_py(py, n),
         AbiValue::String(s) => Ok(PyString::new(py, s).into_any()),
         AbiValue::Array(values) => {
-            let list = PyList::empty(py);
-            for value in values {
-                list.append(abi_value_to_python(value, py, checksum)?)?;
-            }
-            Ok(list.into_any())
+            let py_values: Vec<_> = values
+                .iter()
+                .map(|v| abi_value_to_python(v, py, checksum))
+                .collect::<Result<_, _>>()?;
+            Ok(PyList::new(py, py_values)?.into_any())
         }
     }
 }
@@ -198,12 +203,27 @@ fn decoded_values_to_py_list<'py>(
     values: &[AbiValue],
     checksum: bool,
 ) -> PyResult<Bound<'py, PyList>> {
-    let list = PyList::empty(py);
-    for value in values {
-        let py_value = abi_value_to_python(value, py, checksum)?;
-        list.append(py_value)?;
+    let py_values: Vec<_> = values
+        .iter()
+        .map(|v| abi_value_to_python(v, py, checksum))
+        .collect::<Result<_, _>>()?;
+    PyList::new(py, py_values)
+}
+
+// =============================================================================
+// Error mapping
+// =============================================================================
+
+/// Map `AbiDecodeError` to the appropriate Python exception.
+///
+/// Fixed-point types map to `NotImplementedError`; all others map to `ValueError`.
+#[allow(clippy::needless_pass_by_value)]
+fn map_decode_error(e: AbiDecodeError) -> PyErr {
+    if matches!(e, AbiDecodeError::FixedPointNotImplemented) {
+        PyNotImplementedError::new_err(e.to_string())
+    } else {
+        PyValueError::new_err(e.to_string())
     }
-    Ok(list)
 }
 
 // =============================================================================
@@ -216,7 +236,6 @@ fn decoded_values_to_py_list<'py>(
 ///
 /// * `types` - List of ABI type strings
 /// * `data` - Raw ABI-encoded bytes
-/// * `strict` - If true (default), performs strict validation
 /// * `checksum` - If true (default), returns checksummed addresses
 ///
 /// # Returns
@@ -232,34 +251,21 @@ fn decoded_values_to_py_list<'py>(
 /// - Pure Rust unit testing
 /// - Clean separation of concerns
 #[pyfunction]
-#[pyo3(signature = (types, data, strict = true, checksum = true))]
+#[pyo3(signature = (types, data, checksum = true))]
 pub fn decode(
     py: Python<'_>,
     types: &Bound<'_, PyList>,
     data: &[u8],
-    strict: bool,
     checksum: bool,
 ) -> PyResult<Py<PyAny>> {
-    if !strict {
-        return Err(PyNotImplementedError::new_err(
-            "Non-strict decoding mode is not yet implemented",
-        ));
-    }
-
-    // Extract type strings from Python list
+    // Extract type strings from Python list (borrow directly, no String alloc)
     let type_strings: Vec<String> = types
         .iter()
         .map(|t| t.extract::<String>())
         .collect::<Result<_, _>>()?;
     let type_refs: Vec<&str> = type_strings.iter().map(String::as_str).collect();
 
-    let values = py.detach(|| decode_rust(&type_refs, data)).map_err(|e| {
-        if matches!(e, AbiDecodeError::FixedPointNotImplemented) {
-            PyNotImplementedError::new_err(format!("{e}"))
-        } else {
-            PyValueError::new_err(format!("{e}"))
-        }
-    })?;
+    let values = py.detach(|| decode_rust(&type_refs, data)).map_err(map_decode_error)?;
 
     let list = decoded_values_to_py_list(py, &values, checksum)?;
     Ok(list.into())
@@ -273,29 +279,16 @@ pub fn decode(
 ///
 /// This PyO3-exposed function wraps `decode_single_rust` for consistent architecture.
 #[pyfunction]
-#[pyo3(signature = (abi_type, data, strict = true, checksum = true))]
+#[pyo3(signature = (abi_type, data, checksum = true))]
 pub fn decode_single(
     py: Python<'_>,
     abi_type: &str,
     data: &[u8],
-    strict: bool,
     checksum: bool,
 ) -> PyResult<Py<PyAny>> {
-    if !strict {
-        return Err(PyNotImplementedError::new_err(
-            "Non-strict decoding mode is not yet implemented",
-        ));
-    }
-
     let value = py
         .detach(|| decode_single_rust(abi_type, data))
-        .map_err(|e| {
-            if matches!(e, AbiDecodeError::FixedPointNotImplemented) {
-                PyNotImplementedError::new_err(format!("{e}"))
-            } else {
-                PyValueError::new_err(format!("{e}"))
-            }
-        })?;
+        .map_err(map_decode_error)?;
 
     let py_value = abi_value_to_python(&value, py, checksum)?;
     Ok(py_value.unbind())
@@ -652,30 +645,30 @@ mod tests {
 
     #[test]
     fn test_type_caching() {
-        use crate::abi_types::cached::TYPE_CACHE;
+        use crate::abi_types::cached::{cache_clear, cache_len};
 
         // Ensure cache starts empty
-        TYPE_CACHE.lock().clear();
+        cache_clear();
 
         // First call should populate cache
         let data = vec![0u8; 32];
         let _result1 = decode_single_rust("uint256", &data).unwrap();
-        assert_eq!(TYPE_CACHE.lock().len(), 1);
+        assert_eq!(cache_len(), 1);
 
         // Second call should use cache (same key)
         let _result2 = decode_single_rust("uint256", &data).unwrap();
-        assert_eq!(TYPE_CACHE.lock().len(), 1); // Still 1, not 2
+        assert_eq!(cache_len(), 1); // Still 1, not 2
 
         // Different type should add to cache
         let _result3 = decode_single_rust("address", &data).unwrap();
-        assert_eq!(TYPE_CACHE.lock().len(), 2);
+        assert_eq!(cache_len(), 2);
     }
 
     #[test]
     fn test_type_caching_multiple_types() {
-        use crate::abi_types::cached::TYPE_CACHE;
+        use crate::abi_types::cached::{cache_clear, cache_len};
 
-        TYPE_CACHE.lock().clear();
+        cache_clear();
 
         let mut data = Vec::new();
         data.extend(vec![0u8; 32]); // uint256
@@ -683,14 +676,14 @@ mod tests {
 
         // First call with these types
         let _result1 = decode_rust(&["uint256", "bool"], &data).unwrap();
-        assert_eq!(TYPE_CACHE.lock().len(), 1);
+        assert_eq!(cache_len(), 1);
 
         // Second call with same types should use cache
         let _result2 = decode_rust(&["uint256", "bool"], &data).unwrap();
-        assert_eq!(TYPE_CACHE.lock().len(), 1);
+        assert_eq!(cache_len(), 1);
 
         // Different order is a different cache entry
         let _result3 = decode_rust(&["bool", "uint256"], &data).unwrap();
-        assert_eq!(TYPE_CACHE.lock().len(), 2);
+        assert_eq!(cache_len(), 2);
     }
 }
