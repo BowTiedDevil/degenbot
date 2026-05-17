@@ -65,9 +65,7 @@ def _make_fake_pool(state):
     return pool
 
 
-def _make_v3_state(
-    tick_bitmap=None, tick_data=None, block=100
-) -> UniswapV3PoolState:
+def _make_v3_state(tick_bitmap=None, tick_data=None, block=100) -> UniswapV3PoolState:
     """Build a minimal V3 pool state for testing."""
     return UniswapV3PoolState(
         address="0x" + "00" * 20,

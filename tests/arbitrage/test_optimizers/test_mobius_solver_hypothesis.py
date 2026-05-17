@@ -35,7 +35,9 @@ fee_strategy = st.floats(min_value=0.0001, max_value=0.03, allow_nan=False, allo
 num_pools_strategy = st.integers(min_value=2, max_value=8)
 
 # Profit factor for generating profitable paths
-profit_factor_strategy = st.floats(min_value=1.01, max_value=1.5, allow_nan=False, allow_infinity=False)
+profit_factor_strategy = st.floats(
+    min_value=1.01, max_value=1.5, allow_nan=False, allow_infinity=False
+)
 
 
 # ==============================================================================
@@ -72,7 +74,9 @@ def chain_state_from_def(pd: PoolDef) -> ChainPoolState:
     )
 
 
-def make_n_pool_path(n: int, profit_factor: float = 1.1, base_reserve: float = 1_000_000.0, fee: float = 0.003) -> list[PoolDef]:
+def make_n_pool_path(
+    n: int, profit_factor: float = 1.1, base_reserve: float = 1_000_000.0, fee: float = 0.003
+) -> list[PoolDef]:
     """
     Generate an n-pool cycle with guaranteed profitability.
 
@@ -159,7 +163,9 @@ class TestMobius2PoolProperties:
         # Should match within tolerance
         if x_mobius > 0 and x_brent > 0:
             rel_x_diff = abs(x_mobius - x_brent) / max(x_mobius, x_brent)
-            rel_p_diff = abs(profit_mobius - profit_brent) / max(abs(profit_mobius), abs(profit_brent), 1e-10)
+            rel_p_diff = abs(profit_mobius - profit_brent) / max(
+                abs(profit_mobius), abs(profit_brent), 1e-10
+            )
 
             # Allow tolerance for numerical precision (5e-3 = 0.5%)
             assert rel_x_diff < 5e-3, f"Optimal input mismatch: {x_mobius} vs {x_brent}"
@@ -258,17 +264,25 @@ class TestMobiusMultiPoolProperties:
         # Should match within tolerance
         if x_mobius > 0 and x_brent > 0:
             rel_x_diff = abs(x_mobius - x_brent) / max(x_mobius, x_brent)
-            rel_p_diff = abs(profit_mobius - profit_brent) / max(abs(profit_mobius), abs(profit_brent), 1e-10)
+            rel_p_diff = abs(profit_mobius - profit_brent) / max(
+                abs(profit_mobius), abs(profit_brent), 1e-10
+            )
 
             # Allow slightly larger tolerance for longer paths
             tolerance = 1e-3 if num_pools <= 4 else 1e-2
 
-            assert rel_x_diff < tolerance, f"[{num_pools} pools] Input mismatch: {x_mobius} vs {x_brent}"
-            assert rel_p_diff < tolerance, f"[{num_pools} pools] Profit mismatch: {profit_mobius} vs {profit_brent}"
+            assert rel_x_diff < tolerance, (
+                f"[{num_pools} pools] Input mismatch: {x_mobius} vs {x_brent}"
+            )
+            assert rel_p_diff < tolerance, (
+                f"[{num_pools} pools] Profit mismatch: {profit_mobius} vs {profit_brent}"
+            )
 
     @hypothesis.given(
         num_pools=st.integers(min_value=2, max_value=5),
-        profit_factor=st.floats(min_value=1.05, max_value=1.3, allow_nan=False, allow_infinity=False),
+        profit_factor=st.floats(
+            min_value=1.05, max_value=1.3, allow_nan=False, allow_infinity=False
+        ),
         fee=fee_strategy,
     )
     @hypothesis.settings(deadline=None, max_examples=20)
@@ -390,8 +404,12 @@ class TestMobiusSimulationProperties:
         base_reserve=reserve_strategy,
         price_ratio=st.floats(min_value=1.0, max_value=2.0, allow_nan=False, allow_infinity=False),
         fee=fee_strategy,
-        amount_in_small=st.floats(min_value=1.0, max_value=1e6, allow_nan=False, allow_infinity=False),
-        amount_in_large=st.floats(min_value=1e6, max_value=1e9, allow_nan=False, allow_infinity=False),
+        amount_in_small=st.floats(
+            min_value=1.0, max_value=1e6, allow_nan=False, allow_infinity=False
+        ),
+        amount_in_large=st.floats(
+            min_value=1e6, max_value=1e9, allow_nan=False, allow_infinity=False
+        ),
     )
     @hypothesis.settings(deadline=None, max_examples=20)
     def test_simulate_path_monotonic(
@@ -465,7 +483,9 @@ class TestMobiusEdgeCases:
         assert profit <= 0 or x_opt == 0, f"Expected unprofitable with fee={fee}"
 
     @hypothesis.given(
-        base_reserve=st.floats(min_value=1e3, max_value=1e15, allow_nan=False, allow_infinity=False),
+        base_reserve=st.floats(
+            min_value=1e3, max_value=1e15, allow_nan=False, allow_infinity=False
+        ),
     )
     @hypothesis.settings(deadline=None, max_examples=15)
     def test_various_reserve_scales(self, base_reserve: float):

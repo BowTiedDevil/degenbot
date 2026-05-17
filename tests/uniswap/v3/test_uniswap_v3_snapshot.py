@@ -281,9 +281,7 @@ def test_apply_update_to_snapshot(
         ),
     }
     tick_bitmap = {
-        16: BitmapAtWord(
-            bitmap=11692013098732293937359713277596107809105402396672, block=12369846
-        ),
+        16: BitmapAtWord(bitmap=11692013098732293937359713277596107809105402396672, block=12369846),
         17: BitmapAtWord(bitmap=288230376155906048, block=12369846),
     }
     empty_mainnet_snapshot_from_file.update(
@@ -410,9 +408,7 @@ def test_pool_manager_applies_snapshot_from_file(
                         block=12369823,
                     ),
                 }
-                for word, bitmap in {
-                    -108: BitmapAtWord(bitmap=8487168, block=12369823)
-                }.items():
+                for word, bitmap in {-108: BitmapAtWord(bitmap=8487168, block=12369823)}.items():
                     assert pool.tick_bitmap[word] == bitmap
 
             case "0x7BeA39867e4169DBe237d55C8242a8f2fcDcc387":
@@ -577,9 +573,7 @@ def test_pool_manager_applies_snapshot_from_dir(
                         block=12369823,
                     ),
                 }
-                for word, bitmap in {
-                    -108: BitmapAtWord(bitmap=8487168, block=12369823)
-                }.items():
+                for word, bitmap in {-108: BitmapAtWord(bitmap=8487168, block=12369823)}.items():
                     assert pool.tick_bitmap[word] == bitmap
 
             case "0x7BeA39867e4169DBe237d55C8242a8f2fcDcc387":

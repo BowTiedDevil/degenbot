@@ -40,8 +40,13 @@ class FakeCurveBackend:
     def get_block(self, block_identifier: int | str) -> dict[str, Any] | None:
         return {"number": 18_000_000, "timestamp": self._block_timestamp}
 
-    def get_logs(self, from_block: int, to_block: int, addresses: list[str] | None,
-                 topics: list[list[str]] | None) -> list[dict[str, Any]]:
+    def get_logs(
+        self,
+        from_block: int,
+        to_block: int,
+        addresses: list[str] | None,
+        topics: list[list[str]] | None,
+    ) -> list[dict[str, Any]]:
         return []
 
     def call(self, to: str, data: bytes, block: int | None) -> HexBytes:

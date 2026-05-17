@@ -77,61 +77,103 @@ def _init_hash(deployment: object) -> str | None:
 REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
     # Ethereum Mainnet (chain_id=1)
     (1, _factory(EthereumMainnetUniswapV2)): (
-        UniswapV2Pool, EthereumMainnetUniswapV2, None, "uniswap_v2"
+        UniswapV2Pool,
+        EthereumMainnetUniswapV2,
+        None,
+        "uniswap_v2",
     ),
     (1, _factory(EthereumMainnetUniswapV3)): (
-        UniswapV3Pool, EthereumMainnetUniswapV3, None, "uniswap_v3"
+        UniswapV3Pool,
+        EthereumMainnetUniswapV3,
+        None,
+        "uniswap_v3",
     ),
     (1, _factory(EthereumMainnetSushiswapV2)): (
-        SushiswapV2Pool, EthereumMainnetSushiswapV2, "sushiswap", "sushiswap_v2"
+        SushiswapV2Pool,
+        EthereumMainnetSushiswapV2,
+        "sushiswap",
+        "sushiswap_v2",
     ),
     (1, _factory(EthereumMainnetSushiswapV3)): (
-        SushiswapV3Pool, EthereumMainnetSushiswapV3, "sushiswap", "sushiswap_v3"
+        SushiswapV3Pool,
+        EthereumMainnetSushiswapV3,
+        "sushiswap",
+        "sushiswap_v3",
     ),
     (1, _factory(EthereumMainnetPancakeswapV2)): (
-        PancakeswapV2Pool, EthereumMainnetPancakeswapV2, "pancakeswap", "pancakeswap_v2"
+        PancakeswapV2Pool,
+        EthereumMainnetPancakeswapV2,
+        "pancakeswap",
+        "pancakeswap_v2",
     ),
     (1, _factory(EthereumMainnetPancakeswapV3)): (
-        PancakeswapV3Pool, EthereumMainnetPancakeswapV3, "pancakeswap", "pancakeswap_v3"
+        PancakeswapV3Pool,
+        EthereumMainnetPancakeswapV3,
+        "pancakeswap",
+        "pancakeswap_v3",
     ),
-    (8453, _factory(BaseUniswapV2)): (
-        UniswapV2Pool, BaseUniswapV2, None, "uniswap_v2"
-    ),
-    (8453, _factory(BaseUniswapV3)): (
-        UniswapV3Pool, BaseUniswapV3, None, "uniswap_v3"
-    ),
+    (8453, _factory(BaseUniswapV2)): (UniswapV2Pool, BaseUniswapV2, None, "uniswap_v2"),
+    (8453, _factory(BaseUniswapV3)): (UniswapV3Pool, BaseUniswapV3, None, "uniswap_v3"),
     (8453, _factory(BaseSushiswapV2)): (
-        SushiswapV2Pool, BaseSushiswapV2, "sushiswap", "sushiswap_v2"
+        SushiswapV2Pool,
+        BaseSushiswapV2,
+        "sushiswap",
+        "sushiswap_v2",
     ),
     (8453, _factory(BaseSushiswapV3)): (
-        SushiswapV3Pool, BaseSushiswapV3, "sushiswap", "sushiswap_v3"
+        SushiswapV3Pool,
+        BaseSushiswapV3,
+        "sushiswap",
+        "sushiswap_v3",
     ),
     (8453, _factory(BasePancakeswapV2)): (
-        PancakeswapV2Pool, BasePancakeswapV2, "pancakeswap", "pancakeswap_v2"
+        PancakeswapV2Pool,
+        BasePancakeswapV2,
+        "pancakeswap",
+        "pancakeswap_v2",
     ),
     (8453, _factory(BasePancakeswapV3)): (
-        PancakeswapV3Pool, BasePancakeswapV3, "pancakeswap", "pancakeswap_v3"
+        PancakeswapV3Pool,
+        BasePancakeswapV3,
+        "pancakeswap",
+        "pancakeswap_v3",
     ),
     (8453, _factory(BaseAerodromeV3)): (
-        AerodromeV3Pool, BaseAerodromeV3, "aerodrome", "aerodrome_v3"
+        AerodromeV3Pool,
+        BaseAerodromeV3,
+        "aerodrome",
+        "aerodrome_v3",
     ),
     (8453, _factory(BaseAerodromeV2)): (
-        AerodromeV2Pool, BaseAerodromeV2, "aerodrome", "aerodrome_v2"
+        AerodromeV2Pool,
+        BaseAerodromeV2,
+        "aerodrome",
+        "aerodrome_v2",
     ),
     (8453, _factory(BaseSwapbasedV2)): (
-        SwapbasedV2Pool, BaseSwapbasedV2, "swapbased", "swapbased_v2"
+        SwapbasedV2Pool,
+        BaseSwapbasedV2,
+        "swapbased",
+        "swapbased_v2",
     ),
-    (42161, _factory(ArbitrumUniswapV3)): (
-        UniswapV3Pool, ArbitrumUniswapV3, None, "uniswap_v3"
-    ),
+    (42161, _factory(ArbitrumUniswapV3)): (UniswapV3Pool, ArbitrumUniswapV3, None, "uniswap_v3"),
     (42161, _factory(ArbitrumSushiswapV2)): (
-        SushiswapV2Pool, ArbitrumSushiswapV2, "sushiswap", "sushiswap_v2"
+        SushiswapV2Pool,
+        ArbitrumSushiswapV2,
+        "sushiswap",
+        "sushiswap_v2",
     ),
     (42161, _factory(ArbitrumSushiswapV3)): (
-        SushiswapV3Pool, ArbitrumSushiswapV3, "sushiswap", "sushiswap_v3"
+        SushiswapV3Pool,
+        ArbitrumSushiswapV3,
+        "sushiswap",
+        "sushiswap_v3",
     ),
     (42161, _factory(ArbitrumCamelotV2)): (
-        CamelotLiquidityPool, ArbitrumCamelotV2, "camelot", "camelot_v2"
+        CamelotLiquidityPool,
+        ArbitrumCamelotV2,
+        "camelot",
+        "camelot_v2",
     ),
 }
 
@@ -158,7 +200,7 @@ class TestFullRegistration:
 
     def test_all_registrations_succeed(self, registry: PoolTypeRegistry) -> None:
         """Every deployment should be registered without error."""
-        for (chain_id, factory) in REGISTRATIONS:
+        for chain_id, factory in REGISTRATIONS:
             assert registry.has_registration(chain_id, factory), (
                 f"Missing registration for chain={chain_id} factory={factory}"
             )
@@ -177,9 +219,7 @@ class TestFullRegistration:
         list(REGISTRATIONS.keys()),
         ids=[f"{c}-{f[:10]}…" for (c, f) in REGISTRATIONS],
     )
-    def test_pool_class(
-        self, registry: PoolTypeRegistry, chain_id: int, factory: str
-    ) -> None:
+    def test_pool_class(self, registry: PoolTypeRegistry, chain_id: int, factory: str) -> None:
         """get_class returns the correct pool class."""
         expected_class = REGISTRATIONS[chain_id, factory][0]
         result = registry.get_class(chain_id, factory)
@@ -190,9 +230,7 @@ class TestFullRegistration:
         list(REGISTRATIONS.keys()),
         ids=[f"{c}-{f[:10]}…" for (c, f) in REGISTRATIONS],
     )
-    def test_invariant(
-        self, registry: PoolTypeRegistry, chain_id: int, factory: str
-    ) -> None:
+    def test_invariant(self, registry: PoolTypeRegistry, chain_id: int, factory: str) -> None:
         """The family is correctly derived from the class hierarchy."""
         pool_class = REGISTRATIONS[chain_id, factory][0]
         desc = registry.get_descriptor(chain_id, factory)
@@ -210,9 +248,7 @@ class TestFullRegistration:
         list(REGISTRATIONS.keys()),
         ids=[f"{c}-{f[:10]}…" for (c, f) in REGISTRATIONS],
     )
-    def test_variant(
-        self, registry: PoolTypeRegistry, chain_id: int, factory: str
-    ) -> None:
+    def test_variant(self, registry: PoolTypeRegistry, chain_id: int, factory: str) -> None:
         """The variant is read from the class's `variant` attribute."""
         expected_variant = REGISTRATIONS[chain_id, factory][2]
         desc = registry.get_descriptor(chain_id, factory)
@@ -224,9 +260,7 @@ class TestFullRegistration:
         list(REGISTRATIONS.keys()),
         ids=[f"{c}-{f[:10]}…" for (c, f) in REGISTRATIONS],
     )
-    def test_kind(
-        self, registry: PoolTypeRegistry, chain_id: int, factory: str
-    ) -> None:
+    def test_kind(self, registry: PoolTypeRegistry, chain_id: int, factory: str) -> None:
         """The kind is correctly derived from invariant + variant."""
         expected_kind = REGISTRATIONS[chain_id, factory][3]
         desc = registry.get_descriptor(chain_id, factory)
@@ -238,9 +272,7 @@ class TestFullRegistration:
         list(REGISTRATIONS.keys()),
         ids=[f"{c}-{f[:10]}…" for (c, f) in REGISTRATIONS],
     )
-    def test_deployment_data(
-        self, registry: PoolTypeRegistry, chain_id: int, factory: str
-    ) -> None:
+    def test_deployment_data(self, registry: PoolTypeRegistry, chain_id: int, factory: str) -> None:
         """Deployment data matches FACTORY_DEPLOYMENTS."""
         deployment = REGISTRATIONS[chain_id, factory][1]
         result = registry.get_deployment(chain_id, factory)
@@ -316,7 +348,7 @@ class TestDeploymentDataMatchesFactoriesModule:
     def test_init_hashes_match(self, registry: PoolTypeRegistry) -> None:
         """pool_init_hash in registry matches FACTORY_DEPLOYMENTS."""
 
-        for (chain_id, factory) in REGISTRATIONS:
+        for chain_id, factory in REGISTRATIONS:
             reg_deployment = registry.get_deployment(chain_id, factory)
             assert reg_deployment is not None
 
@@ -370,22 +402,14 @@ class TestDefaultFallback:
             )
         return reg
 
-    def test_unknown_v2_factory_falls_back_to_uniswap(
-        self, registry: PoolTypeRegistry
-    ) -> None:
+    def test_unknown_v2_factory_falls_back_to_uniswap(self, registry: PoolTypeRegistry) -> None:
         assert registry.get_v2_class(chain_id=1, factory_address="0x" + "0" * 40) is UniswapV2Pool
 
-    def test_unknown_v3_factory_falls_back_to_uniswap(
-        self, registry: PoolTypeRegistry
-    ) -> None:
+    def test_unknown_v3_factory_falls_back_to_uniswap(self, registry: PoolTypeRegistry) -> None:
         assert registry.get_v3_class(chain_id=1, factory_address="0x" + "0" * 40) is UniswapV3Pool
 
-    def test_unknown_factory_has_no_descriptor(
-        self, registry: PoolTypeRegistry
-    ) -> None:
+    def test_unknown_factory_has_no_descriptor(self, registry: PoolTypeRegistry) -> None:
         assert registry.get_descriptor(chain_id=1, factory_address="0x" + "0" * 40) is None
 
-    def test_unknown_factory_has_no_deployment(
-        self, registry: PoolTypeRegistry
-    ) -> None:
+    def test_unknown_factory_has_no_deployment(self, registry: PoolTypeRegistry) -> None:
         assert registry.get_deployment(chain_id=1, factory_address="0x" + "0" * 40) is None

@@ -28,21 +28,15 @@ class TestGhoFlashLoanHandler:
     def handler(self) -> GhoFlashLoanHandler:
         return GhoFlashLoanHandler()
 
-    def test_handler_supports_gho_flash_loan_operation(
-        self, handler: GhoFlashLoanHandler
-    ) -> None:
+    def test_handler_supports_gho_flash_loan_operation(self, handler: GhoFlashLoanHandler) -> None:
         """Handler supports GHO_FLASH_LOAN operation type."""
         assert OperationType.GHO_FLASH_LOAN in handler.operation_types
 
-    def test_handler_is_operation_handler_protocol(
-        self, handler: GhoFlashLoanHandler
-    ) -> None:
+    def test_handler_is_operation_handler_protocol(self, handler: GhoFlashLoanHandler) -> None:
         """Handler implements OperationHandler protocol."""
         assert isinstance(handler, OperationHandler)
 
-    def test_gho_flash_loan_calculates_scaled_amount(
-        self, handler: GhoFlashLoanHandler
-    ) -> None:
+    def test_gho_flash_loan_calculates_scaled_amount(self, handler: GhoFlashLoanHandler) -> None:
         """
         GHO_FLASH_LOAN calculates scaled amount for GHO debt burn.
 
@@ -125,7 +119,9 @@ def _create_mock_pool_event(amount: int) -> LogReceipt:
     return LogReceipt({
         "address": "0x" + "p" * 40,
         "topics": [
-            HexBytes(bytes.fromhex("2bccfb3fad376d59d7accf970515eb77b2f27b082c90ed0fb15583dd5a942699")),
+            HexBytes(
+                bytes.fromhex("2bccfb3fad376d59d7accf970515eb77b2f27b082c90ed0fb15583dd5a942699")
+            ),
         ],
         "data": data,
         "blockNumber": 1,

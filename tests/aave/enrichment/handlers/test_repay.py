@@ -28,22 +28,16 @@ class TestRepayHandler:
     def handler(self) -> RepayHandler:
         return RepayHandler()
 
-    def test_handler_supports_repay_operations(
-        self, handler: RepayHandler
-    ) -> None:
+    def test_handler_supports_repay_operations(self, handler: RepayHandler) -> None:
         """Handler supports REPAY and GHO_REPAY operation types."""
         assert OperationType.REPAY in handler.operation_types
         assert OperationType.GHO_REPAY in handler.operation_types
 
-    def test_handler_is_operation_handler_protocol(
-        self, handler: RepayHandler
-    ) -> None:
+    def test_handler_is_operation_handler_protocol(self, handler: RepayHandler) -> None:
         """Handler implements OperationHandler protocol."""
         assert isinstance(handler, OperationHandler)
 
-    def test_standard_repay_calculates_scaled_amount(
-        self, handler: RepayHandler
-    ) -> None:
+    def test_standard_repay_calculates_scaled_amount(self, handler: RepayHandler) -> None:
         """
         Standard REPAY calculates scaled amount with floor rounding.
 
@@ -68,9 +62,7 @@ class TestRepayHandler:
         assert result.scaled_amount == 500_000_000_000_000_000
         assert result.event_type == ScaledTokenEventType.DEBT_BURN
 
-    def test_interest_exceeds_repayment_uses_burn_calculation(
-        self, handler: RepayHandler
-    ) -> None:
+    def test_interest_exceeds_repayment_uses_burn_calculation(self, handler: RepayHandler) -> None:
         """
         When interest exceeds repayment, use DEBT_BURN calculation.
 
@@ -105,9 +97,7 @@ class TestRepayHandler:
         assert result.scaled_amount == 750
         assert result.event_type == ScaledTokenEventType.DEBT_MINT
 
-    def test_gho_repay_standard_burn(
-        self, handler: RepayHandler
-    ) -> None:
+    def test_gho_repay_standard_burn(self, handler: RepayHandler) -> None:
         """GHO_REPAY standard burn calculation."""
         index = 2_000_000_000_000_000_000_000_000_000
         raw_amount = 1_000_000_000_000_000_000
@@ -128,9 +118,7 @@ class TestRepayHandler:
         assert result.scaled_amount == 500_000_000_000_000_000
         assert result.event_type == ScaledTokenEventType.GHO_DEBT_BURN
 
-    def test_gho_repay_interest_exceeds_repayment(
-        self, handler: RepayHandler
-    ) -> None:
+    def test_gho_repay_interest_exceeds_repayment(self, handler: RepayHandler) -> None:
         """GHO_REPAY with interest > repayment uses GHO_DEBT_BURN calculation."""
         index = 2_000_000_000_000_000_000_000_000_000
         interest_amount = 2000
@@ -207,7 +195,9 @@ def _create_mock_pool_event(amount: int) -> LogReceipt:
     return LogReceipt({
         "address": "0x" + "p" * 40,
         "topics": [
-            HexBytes(bytes.fromhex("a534c8dbe71f871f9f3530e97a74601fea17b426cae02e1c5aee42c96c784051")),
+            HexBytes(
+                bytes.fromhex("a534c8dbe71f871f9f3530e97a74601fea17b426cae02e1c5aee42c96c784051")
+            ),
         ],
         "data": data,
         "blockNumber": 1,

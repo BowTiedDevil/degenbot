@@ -27,21 +27,15 @@ class TestUnknownHandler:
     def handler(self) -> UnknownHandler:
         return UnknownHandler()
 
-    def test_handler_supports_unknown_operation(
-        self, handler: UnknownHandler
-    ) -> None:
+    def test_handler_supports_unknown_operation(self, handler: UnknownHandler) -> None:
         """Handler supports UNKNOWN operation type."""
         assert OperationType.UNKNOWN in handler.operation_types
 
-    def test_handler_is_operation_handler_protocol(
-        self, handler: UnknownHandler
-    ) -> None:
+    def test_handler_is_operation_handler_protocol(self, handler: UnknownHandler) -> None:
         """Handler implements OperationHandler protocol."""
         assert isinstance(handler, OperationHandler)
 
-    def test_unknown_raises_enrichment_error(
-        self, handler: UnknownHandler
-    ) -> None:
+    def test_unknown_raises_enrichment_error(self, handler: UnknownHandler) -> None:
         """
         UNKNOWN operation raises EnrichmentError.
 

@@ -288,8 +288,12 @@ class TestArbSolverRawArrayMarshalling:
         inp = SolveInput(
             hops=(
                 ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
-                ConstantProductHop(reserve_in=WETH_1000, reserve_out=500_000_000_000, fee=FEE_0_3_PCT),
-                ConstantProductHop(reserve_in=500_000_000_000, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+                ConstantProductHop(
+                    reserve_in=WETH_1000, reserve_out=500_000_000_000, fee=FEE_0_3_PCT
+                ),
+                ConstantProductHop(
+                    reserve_in=500_000_000_000, reserve_out=WETH_1000, fee=FEE_0_3_PCT
+                ),
             )
         )
         result = solver.solve(inp)

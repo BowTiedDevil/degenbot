@@ -51,9 +51,7 @@ class TestLiquidationHandler:
         assert result.raw_amount == 1_000_000_000_000_000_000
         assert result.scaled_amount == 1_000_000_000_000_000_000
 
-    def test_erc20_debt_transfer_bypasses_index_check(
-        self, handler: LiquidationHandler
-    ) -> None:
+    def test_erc20_debt_transfer_bypasses_index_check(self, handler: LiquidationHandler) -> None:
         """
         ERC20_DEBT_TRANSFER events within LIQUIDATION have no index.
 
@@ -74,28 +72,23 @@ class TestLiquidationHandler:
 
         assert result.raw_amount == 1_000_000_000_000_000_000
         assert result.scaled_amount == 1_000_000_000_000_000_000
+
     """Tests for LiquidationHandler."""
 
     @pytest.fixture
     def handler(self) -> LiquidationHandler:
         return LiquidationHandler()
 
-    def test_handler_supports_liquidation_operations(
-        self, handler: LiquidationHandler
-    ) -> None:
+    def test_handler_supports_liquidation_operations(self, handler: LiquidationHandler) -> None:
         """Handler supports LIQUIDATION and GHO_LIQUIDATION operation types."""
         assert OperationType.LIQUIDATION in handler.operation_types
         assert OperationType.GHO_LIQUIDATION in handler.operation_types
 
-    def test_handler_is_operation_handler_protocol(
-        self, handler: LiquidationHandler
-    ) -> None:
+    def test_handler_is_operation_handler_protocol(self, handler: LiquidationHandler) -> None:
         """Handler implements OperationHandler protocol."""
         assert isinstance(handler, OperationHandler)
 
-    def test_debt_burn_uses_debt_extractor(
-        self, handler: LiquidationHandler
-    ) -> None:
+    def test_debt_burn_uses_debt_extractor(self, handler: LiquidationHandler) -> None:
         """
         LIQUIDATION debt events use debtToCover from LiquidationCall event.
         """
@@ -120,9 +113,7 @@ class TestLiquidationHandler:
         assert result.scaled_amount == 500_000_000_000_000_000
         assert result.event_type == ScaledTokenEventType.DEBT_BURN
 
-    def test_collateral_burn_uses_collateral_extractor(
-        self, handler: LiquidationHandler
-    ) -> None:
+    def test_collateral_burn_uses_collateral_extractor(self, handler: LiquidationHandler) -> None:
         """
         LIQUIDATION collateral events use liquidatedCollateralAmount.
         """
@@ -147,9 +138,7 @@ class TestLiquidationHandler:
         assert result.scaled_amount == 550_000_000_000_000_000
         assert result.event_type == ScaledTokenEventType.COLLATERAL_BURN
 
-    def test_pool_rev9_plus_pre_scales_debt(
-        self, handler: LiquidationHandler
-    ) -> None:
+    def test_pool_rev9_plus_pre_scales_debt(self, handler: LiquidationHandler) -> None:
         """
         Pool Revision 9+ passes pre-scaled amounts for debt burns.
 
@@ -176,9 +165,7 @@ class TestLiquidationHandler:
         # Pre-scaled: should calculate debtToCover / index
         assert result.scaled_amount == 500_000_000_000_000_000
 
-    def test_net_debt_increase_uses_burn_calculation(
-        self, handler: LiquidationHandler
-    ) -> None:
+    def test_net_debt_increase_uses_burn_calculation(self, handler: LiquidationHandler) -> None:
         """
         When debt repayment < accrued interest, DEBT_MINT is a net increase.
 
@@ -209,9 +196,7 @@ class TestLiquidationHandler:
         assert result.scaled_amount == 750
         assert result.event_type == ScaledTokenEventType.DEBT_MINT
 
-    def test_gho_liquidation_debt_burn(
-        self, handler: LiquidationHandler
-    ) -> None:
+    def test_gho_liquidation_debt_burn(self, handler: LiquidationHandler) -> None:
         """GHO_LIQUIDATION uses GHO_DEBT_BURN."""
         index = 2_000_000_000_000_000_000_000_000_000
         debt_to_cover = 1_000_000_000_000_000_000
@@ -274,7 +259,9 @@ def _create_mock_scaled_event(
     )
 
 
-def _create_mock_liquidation_pool_event(debt_to_cover: int, collateral_liquidated: int) -> LogReceipt:
+def _create_mock_liquidation_pool_event(
+    debt_to_cover: int, collateral_liquidated: int
+) -> LogReceipt:
     """Create a mock LiquidationCall Pool event."""
 
     # LiquidationCall event:
@@ -285,7 +272,9 @@ def _create_mock_liquidation_pool_event(debt_to_cover: int, collateral_liquidate
     )
 
     # LIQUIDATION_CALL topic
-    topic = HexBytes(bytes.fromhex("e413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286"))
+    topic = HexBytes(
+        bytes.fromhex("e413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286")
+    )
 
     return LogReceipt({
         "address": "0x" + "p" * 40,
@@ -324,23 +313,38 @@ def _create_mock_context_debt() -> MagicMock:
     def mock_get_underlying_asset(token_address: ChecksumAddress) -> ChecksumAddress:
         return ChecksumAddress("0x1111111111111111111111111111111111111111")
 
-    def mock_extract_pool_amount(pool_event: LogReceipt, event_type: ScaledTokenEventType | None = None, operation_type: OperationType | None = None) -> int:
+    def mock_extract_pool_amount(
+        pool_event: LogReceipt,
+        event_type: ScaledTokenEventType | None = None,
+        operation_type: OperationType | None = None,
+    ) -> int:
         # Debt events extract debtToCover
         if event_type in {ScaledTokenEventType.DEBT_BURN, ScaledTokenEventType.GHO_DEBT_BURN}:
-            (debt_to_cover, _, _, _) = eth_abi.abi.decode(["uint256", "uint256", "address", "bool"], pool_event["data"])
+            (debt_to_cover, _, _, _) = eth_abi.abi.decode(
+                ["uint256", "uint256", "address", "bool"], pool_event["data"]
+            )
             return debt_to_cover
         # Collateral events extract liquidatedCollateralAmount
         if event_type == ScaledTokenEventType.COLLATERAL_BURN:
-            (_, collateral, _, _) = eth_abi.abi.decode(["uint256", "uint256", "address", "bool"], pool_event["data"])
+            (_, collateral, _, _) = eth_abi.abi.decode(
+                ["uint256", "uint256", "address", "bool"], pool_event["data"]
+            )
             return collateral
         msg = f"Unexpected event type: {event_type}"
         raise ValueError(msg)
 
-    def mock_calculate(event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int) -> int:
+    def mock_calculate(
+        event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
+    ) -> int:
         RAY = 10**27
         return raw_amount * RAY // index
 
-    def mock_build_enriched_event(event: "ScaledTokenEvent", operation: "Operation", raw_amount: int, scaled_amount: int | None) -> EnrichedScaledTokenEvent:
+    def mock_build_enriched_event(
+        event: "ScaledTokenEvent",
+        operation: "Operation",
+        raw_amount: int,
+        scaled_amount: int | None,
+    ) -> EnrichedScaledTokenEvent:
         event_type = event.event_type
         kwargs = {
             "event": event.event,
@@ -381,15 +385,28 @@ def _create_mock_context_debt_rev9() -> MagicMock:
     def mock_get_underlying_asset(token_address: ChecksumAddress) -> ChecksumAddress:
         return ChecksumAddress("0x1111111111111111111111111111111111111111")
 
-    def mock_extract_pool_amount(pool_event: LogReceipt, event_type: ScaledTokenEventType | None = None, operation_type: OperationType | None = None) -> int:
-        (debt_to_cover, _, _, _) = eth_abi.abi.decode(["uint256", "uint256", "address", "bool"], pool_event["data"])
+    def mock_extract_pool_amount(
+        pool_event: LogReceipt,
+        event_type: ScaledTokenEventType | None = None,
+        operation_type: OperationType | None = None,
+    ) -> int:
+        (debt_to_cover, _, _, _) = eth_abi.abi.decode(
+            ["uint256", "uint256", "address", "bool"], pool_event["data"]
+        )
         return debt_to_cover
 
-    def mock_calculate(event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int) -> int:
+    def mock_calculate(
+        event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
+    ) -> int:
         RAY = 10**27
         return raw_amount * RAY // index
 
-    def mock_build_enriched_event(event: "ScaledTokenEvent", operation: "Operation", raw_amount: int, scaled_amount: int | None) -> EnrichedScaledTokenEvent:
+    def mock_build_enriched_event(
+        event: "ScaledTokenEvent",
+        operation: "Operation",
+        raw_amount: int,
+        scaled_amount: int | None,
+    ) -> EnrichedScaledTokenEvent:
         event_type = event.event_type
         kwargs = {
             "event": event.event,
@@ -429,15 +446,28 @@ def _create_mock_context_collateral() -> MagicMock:
     def mock_get_underlying_asset(token_address: ChecksumAddress) -> ChecksumAddress:
         return ChecksumAddress("0x1111111111111111111111111111111111111111")
 
-    def mock_extract_pool_amount(pool_event: LogReceipt, event_type: ScaledTokenEventType | None = None, operation_type: OperationType | None = None) -> int:
-        (_, collateral, _, _) = eth_abi.abi.decode(["uint256", "uint256", "address", "bool"], pool_event["data"])
+    def mock_extract_pool_amount(
+        pool_event: LogReceipt,
+        event_type: ScaledTokenEventType | None = None,
+        operation_type: OperationType | None = None,
+    ) -> int:
+        (_, collateral, _, _) = eth_abi.abi.decode(
+            ["uint256", "uint256", "address", "bool"], pool_event["data"]
+        )
         return collateral
 
-    def mock_calculate(event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int) -> int:
+    def mock_calculate(
+        event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
+    ) -> int:
         RAY = 10**27
         return raw_amount * RAY // index
 
-    def mock_build_enriched_event(event: "ScaledTokenEvent", operation: "Operation", raw_amount: int, scaled_amount: int | None) -> EnrichedScaledTokenEvent:
+    def mock_build_enriched_event(
+        event: "ScaledTokenEvent",
+        operation: "Operation",
+        raw_amount: int,
+        scaled_amount: int | None,
+    ) -> EnrichedScaledTokenEvent:
         event_type = event.event_type
         kwargs = {
             "event": event.event,
@@ -478,15 +508,28 @@ def _create_mock_context_debt_mint() -> MagicMock:
     def mock_get_underlying_asset(token_address: ChecksumAddress) -> ChecksumAddress:
         return ChecksumAddress("0x1111111111111111111111111111111111111111")
 
-    def mock_extract_pool_amount(pool_event: LogReceipt, event_type: ScaledTokenEventType | None = None, operation_type: OperationType | None = None) -> int:
-        (debt_to_cover, _, _, _) = eth_abi.abi.decode(["uint256", "uint256", "address", "bool"], pool_event["data"])
+    def mock_extract_pool_amount(
+        pool_event: LogReceipt,
+        event_type: ScaledTokenEventType | None = None,
+        operation_type: OperationType | None = None,
+    ) -> int:
+        (debt_to_cover, _, _, _) = eth_abi.abi.decode(
+            ["uint256", "uint256", "address", "bool"], pool_event["data"]
+        )
         return debt_to_cover
 
-    def mock_calculate(event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int) -> int:
+    def mock_calculate(
+        event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
+    ) -> int:
         RAY = 10**27
         return raw_amount * RAY // index
 
-    def mock_build_enriched_event(event: "ScaledTokenEvent", operation: "Operation", raw_amount: int, scaled_amount: int | None) -> EnrichedScaledTokenEvent:
+    def mock_build_enriched_event(
+        event: "ScaledTokenEvent",
+        operation: "Operation",
+        raw_amount: int,
+        scaled_amount: int | None,
+    ) -> EnrichedScaledTokenEvent:
         event_type = event.event_type
         kwargs = {
             "event": event.event,
@@ -525,7 +568,12 @@ def _create_mock_context_erc20_transfer() -> MagicMock:
     def mock_get_underlying_asset(token_address: ChecksumAddress) -> ChecksumAddress:
         return ChecksumAddress("0x1111111111111111111111111111111111111111")
 
-    def mock_build_enriched_event(event: "ScaledTokenEvent", operation: "Operation", raw_amount: int, scaled_amount: int | None) -> EnrichedScaledTokenEvent:
+    def mock_build_enriched_event(
+        event: "ScaledTokenEvent",
+        operation: "Operation",
+        raw_amount: int,
+        scaled_amount: int | None,
+    ) -> EnrichedScaledTokenEvent:
         event_type = event.event_type
         if event_type == ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER:
             actual_event_type = ScaledTokenEventType.COLLATERAL_TRANSFER
@@ -568,15 +616,28 @@ def _create_mock_context_gho_debt() -> MagicMock:
     def mock_get_underlying_asset(token_address: ChecksumAddress) -> ChecksumAddress:
         return ChecksumAddress("0x1111111111111111111111111111111111111111")
 
-    def mock_extract_pool_amount(pool_event: LogReceipt, event_type: ScaledTokenEventType | None = None, operation_type: OperationType | None = None) -> int:
-        (debt_to_cover, _, _, _) = eth_abi.abi.decode(["uint256", "uint256", "address", "bool"], pool_event["data"])
+    def mock_extract_pool_amount(
+        pool_event: LogReceipt,
+        event_type: ScaledTokenEventType | None = None,
+        operation_type: OperationType | None = None,
+    ) -> int:
+        (debt_to_cover, _, _, _) = eth_abi.abi.decode(
+            ["uint256", "uint256", "address", "bool"], pool_event["data"]
+        )
         return debt_to_cover
 
-    def mock_calculate(event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int) -> int:
+    def mock_calculate(
+        event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
+    ) -> int:
         RAY = 10**27
         return raw_amount * RAY // index
 
-    def mock_build_enriched_event(event: "ScaledTokenEvent", operation: "Operation", raw_amount: int, scaled_amount: int | None) -> EnrichedScaledTokenEvent:
+    def mock_build_enriched_event(
+        event: "ScaledTokenEvent",
+        operation: "Operation",
+        raw_amount: int,
+        scaled_amount: int | None,
+    ) -> EnrichedScaledTokenEvent:
         event_type = event.event_type
         kwargs = {
             "event": event.event,

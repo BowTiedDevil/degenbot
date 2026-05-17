@@ -61,7 +61,9 @@ def sim_path_pure(x: float, hops: list) -> float:
 tick_strategy = st.integers(min_value=MIN_TICK + 1000, max_value=MAX_TICK - 1000)
 
 # Liquidity values (reasonable range for testing)
-liquidity_strategy = st.floats(min_value=1e15, max_value=1e21, allow_nan=False, allow_infinity=False)
+liquidity_strategy = st.floats(
+    min_value=1e15, max_value=1e21, allow_nan=False, allow_infinity=False
+)
 
 # Fee values (standard V3 fee tiers)
 fee_strategy = st.sampled_from([0.0001, 0.0005, 0.003, 0.01])
@@ -93,7 +95,9 @@ def make_single_range_hop(
     """Create a single tick range hop centered at sqrt_price."""
     sqrt_lower = sqrt_price * (1 - range_mult)
     sqrt_upper = sqrt_price * (1 + range_mult)
-    return make_v3_hop(liquidity, sqrt_price, sqrt_lower, sqrt_upper, fee, zero_for_one=zero_for_one)
+    return make_v3_hop(
+        liquidity, sqrt_price, sqrt_lower, sqrt_upper, fee, zero_for_one=zero_for_one
+    )
 
 
 def make_wide_range_hop(
@@ -105,7 +109,9 @@ def make_wide_range_hop(
     """Create a wide tick range hop for testing fast path."""
     sqrt_lower = sqrt_price * 0.1  # Very wide
     sqrt_upper = sqrt_price * 10.0  # Very wide
-    return make_v3_hop(liquidity, sqrt_price, sqrt_lower, sqrt_upper, fee, zero_for_one=zero_for_one)
+    return make_v3_hop(
+        liquidity, sqrt_price, sqrt_lower, sqrt_upper, fee, zero_for_one=zero_for_one
+    )
 
 
 # ==============================================================================
@@ -117,8 +123,12 @@ class TestV3V3SingleRangeProperties:
     """Property tests for single-range V3-V3 arbitrage."""
 
     @hypothesis.given(
-        base_price=st.floats(min_value=100.0, max_value=10000.0, allow_nan=False, allow_infinity=False),
-        price_spread=st.floats(min_value=0.01, max_value=0.5, allow_nan=False, allow_infinity=False),
+        base_price=st.floats(
+            min_value=100.0, max_value=10000.0, allow_nan=False, allow_infinity=False
+        ),
+        price_spread=st.floats(
+            min_value=0.01, max_value=0.5, allow_nan=False, allow_infinity=False
+        ),
         liquidity=liquidity_strategy,
         fee=fee_strategy,
     )
@@ -186,7 +196,9 @@ class TestV3V3SingleRangeProperties:
         assert not result.success or result.profit == 0
 
     @hypothesis.given(
-        base_price=st.floats(min_value=100.0, max_value=10000.0, allow_nan=False, allow_infinity=False),
+        base_price=st.floats(
+            min_value=100.0, max_value=10000.0, allow_nan=False, allow_infinity=False
+        ),
         liquidity=liquidity_strategy,
         fee=fee_strategy,
     )
@@ -223,7 +235,9 @@ class TestV3V3ProfitProperties:
     """Property tests for profit computation."""
 
     @hypothesis.given(
-        base_price=st.floats(min_value=500.0, max_value=5000.0, allow_nan=False, allow_infinity=False),
+        base_price=st.floats(
+            min_value=500.0, max_value=5000.0, allow_nan=False, allow_infinity=False
+        ),
         liquidity=liquidity_strategy,
         fee=fee_strategy,
     )
@@ -258,11 +272,17 @@ class TestV3V3ProfitProperties:
 
         # Larger spread → larger profit (when profitable)
         if profits[0] > 0:
-            assert profits[1] > profits[0], f"Expected profit[1]={profits[1]} > profit[0]={profits[0]}"
-            assert profits[2] > profits[1], f"Expected profit[2]={profits[2]} > profit[1]={profits[1]}"
+            assert profits[1] > profits[0], (
+                f"Expected profit[1]={profits[1]} > profit[0]={profits[0]}"
+            )
+            assert profits[2] > profits[1], (
+                f"Expected profit[2]={profits[2]} > profit[1]={profits[1]}"
+            )
 
     @hypothesis.given(
-        base_price=st.floats(min_value=500.0, max_value=5000.0, allow_nan=False, allow_infinity=False),
+        base_price=st.floats(
+            min_value=500.0, max_value=5000.0, allow_nan=False, allow_infinity=False
+        ),
         spread=st.floats(min_value=0.05, max_value=0.2, allow_nan=False, allow_infinity=False),
         fee=fee_strategy,
     )
@@ -303,7 +323,9 @@ class TestV3V3ProfitProperties:
                 assert 1.9 < ratio < 2.1, f"Expected ~2x profit, got {ratio}x"
 
     @hypothesis.given(
-        base_price=st.floats(min_value=500.0, max_value=5000.0, allow_nan=False, allow_infinity=False),
+        base_price=st.floats(
+            min_value=500.0, max_value=5000.0, allow_nan=False, allow_infinity=False
+        ),
         spread=st.floats(min_value=0.1, max_value=0.3, allow_nan=False, allow_infinity=False),
         liquidity=liquidity_strategy,
     )
@@ -343,7 +365,9 @@ class TestV3V3BoundsProperties:
     """Property tests for optimal input bounds."""
 
     @hypothesis.given(
-        base_price=st.floats(min_value=500.0, max_value=5000.0, allow_nan=False, allow_infinity=False),
+        base_price=st.floats(
+            min_value=500.0, max_value=5000.0, allow_nan=False, allow_infinity=False
+        ),
         spread=st.floats(min_value=0.05, max_value=0.2, allow_nan=False, allow_infinity=False),
         liquidity=liquidity_strategy,
         fee=fee_strategy,
@@ -377,11 +401,15 @@ class TestV3V3BoundsProperties:
             assert math.isfinite(result.profit)
 
     @hypothesis.given(
-        base_price=st.floats(min_value=500.0, max_value=5000.0, allow_nan=False, allow_infinity=False),
+        base_price=st.floats(
+            min_value=500.0, max_value=5000.0, allow_nan=False, allow_infinity=False
+        ),
         spread=st.floats(min_value=0.1, max_value=0.3, allow_nan=False, allow_infinity=False),
         liquidity=liquidity_strategy,
         fee=fee_strategy,
-        max_input_fraction=st.floats(min_value=0.01, max_value=0.5, allow_nan=False, allow_infinity=False),
+        max_input_fraction=st.floats(
+            min_value=0.01, max_value=0.5, allow_nan=False, allow_infinity=False
+        ),
     )
     @hypothesis.settings(deadline=None, max_examples=20)
     def test_max_input_constraint_respected(
@@ -424,7 +452,9 @@ class TestV3V3MultiRangeProperties:
     """Property tests for multi-range V3-V3 (tick crossing)."""
 
     @hypothesis.given(
-        base_price=st.floats(min_value=500.0, max_value=5000.0, allow_nan=False, allow_infinity=False),
+        base_price=st.floats(
+            min_value=500.0, max_value=5000.0, allow_nan=False, allow_infinity=False
+        ),
         spread=st.floats(min_value=0.05, max_value=0.15, allow_nan=False, allow_infinity=False),
         liquidity1=liquidity_strategy,
         liquidity2=liquidity_strategy,
@@ -479,7 +509,9 @@ class TestV3V3Invariants:
     """Property tests for solver invariants."""
 
     @hypothesis.given(
-        base_price=st.floats(min_value=500.0, max_value=5000.0, allow_nan=False, allow_infinity=False),
+        base_price=st.floats(
+            min_value=500.0, max_value=5000.0, allow_nan=False, allow_infinity=False
+        ),
         spread=st.floats(min_value=0.05, max_value=0.2, allow_nan=False, allow_infinity=False),
         liquidity=liquidity_strategy,
         fee=fee_strategy,

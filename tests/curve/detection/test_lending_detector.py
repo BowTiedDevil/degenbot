@@ -58,9 +58,7 @@ class TestDetectLendingTokens:
         """Plain pool with no cTokens or yTokens."""
 
         token_addresses = (DAI, USDC, USDT)
-        tokens = tuple(
-            starmap(FakeErc20Token, [(DAI, 18), (USDC, 6), (USDT, 6)])
-        )
+        tokens = tuple(starmap(FakeErc20Token, [(DAI, 18), (USDC, 6), (USDT, 6)]))
 
         # isCToken() returns False for all, token() reverts for all
         provider = make_fake_curve_provider({
@@ -82,9 +80,7 @@ class TestDetectLendingTokens:
 
         # Pool with cDAI (8 decimals) and USDC (6 decimals)
         token_addresses = (CDAI, USDC)
-        tokens = tuple(
-            starmap(FakeErc20Token, [(CDAI, 8), (USDC, 6)])
-        )
+        tokens = tuple(starmap(FakeErc20Token, [(CDAI, 8), (USDC, 6)]))
 
         call_count = {"is_ctoken": 0}
 
@@ -126,9 +122,7 @@ class TestDetectLendingTokens:
         """cUSDC has 8 decimals, USDC underlying has 6 → precision = 10^12."""
 
         token_addresses = (CUSDC, DAI)
-        tokens = tuple(
-            starmap(FakeErc20Token, [(CUSDC, 8), (DAI, 18)])
-        )
+        tokens = tuple(starmap(FakeErc20Token, [(CUSDC, 8), (DAI, 18)]))
 
         def handle_is_ctoken(to: str, data: bytes, block: int) -> bytes:
             if to == CUSDC:
@@ -165,9 +159,7 @@ class TestDetectLendingTokens:
         """yToken detection via token() returning a non-zero address."""
 
         token_addresses = (YDAI, USDC)
-        tokens = tuple(
-            starmap(FakeErc20Token, [(YDAI, 18), (USDC, 6)])
-        )
+        tokens = tuple(starmap(FakeErc20Token, [(YDAI, 18), (USDC, 6)]))
 
         def handle_is_ctoken(to: str, data: bytes, block: int) -> bytes:
             # yTokens don't respond to isCToken()
@@ -199,9 +191,7 @@ class TestDetectLendingTokens:
         """yToken where token() returns zero address is not treated as lending."""
 
         token_addresses = (DAI, USDC)
-        tokens = tuple(
-            starmap(FakeErc20Token, [(DAI, 18), (USDC, 6)])
-        )
+        tokens = tuple(starmap(FakeErc20Token, [(DAI, 18), (USDC, 6)]))
 
         def handle_is_ctoken(to: str, data: bytes, block: int) -> bytes:
             raise Web3Exception("revert")

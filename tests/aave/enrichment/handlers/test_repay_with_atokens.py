@@ -34,15 +34,11 @@ class TestRepayWithAtokensHandler:
         """Handler supports REPAY_WITH_ATOKENS operation type."""
         assert OperationType.REPAY_WITH_ATOKENS in handler.operation_types
 
-    def test_handler_is_operation_handler_protocol(
-        self, handler: RepayWithAtokensHandler
-    ) -> None:
+    def test_handler_is_operation_handler_protocol(self, handler: RepayWithAtokensHandler) -> None:
         """Handler implements OperationHandler protocol."""
         assert isinstance(handler, OperationHandler)
 
-    def test_standard_collateral_burn(
-        self, handler: RepayWithAtokensHandler
-    ) -> None:
+    def test_standard_collateral_burn(self, handler: RepayWithAtokensHandler) -> None:
         """Standard collateral burn for REPAY_WITH_ATOKENS."""
         index = 2_000_000_000_000_000_000_000_000_000
         raw_amount = 1_000_000_000_000_000_000
@@ -63,9 +59,7 @@ class TestRepayWithAtokensHandler:
         assert result.scaled_amount == 500_000_000_000_000_000
         assert result.event_type == ScaledTokenEventType.COLLATERAL_BURN
 
-    def test_standard_debt_burn(
-        self, handler: RepayWithAtokensHandler
-    ) -> None:
+    def test_standard_debt_burn(self, handler: RepayWithAtokensHandler) -> None:
         """Standard debt burn for REPAY_WITH_ATOKENS."""
         index = 2_000_000_000_000_000_000_000_000_000
         raw_amount = 1_000_000_000_000_000_000
@@ -197,7 +191,9 @@ def _create_mock_pool_event(amount: int) -> LogReceipt:
     return LogReceipt({
         "address": "0x" + "p" * 40,
         "topics": [
-            HexBytes(bytes.fromhex("a534c8dbe71f871f9f3530e97a74601fea17b426cae02e1c5aee42c96c784051")),
+            HexBytes(
+                bytes.fromhex("a534c8dbe71f871f9f3530e97a74601fea17b426cae02e1c5aee42c96c784051")
+            ),
         ],
         "data": data,
         "blockNumber": 1,
@@ -237,11 +233,18 @@ def _create_mock_context_collateral() -> MagicMock:
         (amount, _) = eth_abi.abi.decode(["uint256", "bool"], pool_event["data"])
         return amount
 
-    def mock_calculate(event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int) -> int:
+    def mock_calculate(
+        event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
+    ) -> int:
         RAY = 10**27
         return raw_amount * RAY // index
 
-    def mock_build_enriched_event(event: "ScaledTokenEvent", operation: "Operation", raw_amount: int, scaled_amount: int | None) -> EnrichedScaledTokenEvent:
+    def mock_build_enriched_event(
+        event: "ScaledTokenEvent",
+        operation: "Operation",
+        raw_amount: int,
+        scaled_amount: int | None,
+    ) -> EnrichedScaledTokenEvent:
         event_type = event.event_type
         kwargs = {
             "event": event.event,
@@ -285,11 +288,18 @@ def _create_mock_context_collateral_mint() -> MagicMock:
         (amount, _) = eth_abi.abi.decode(["uint256", "bool"], pool_event["data"])
         return amount
 
-    def mock_calculate(event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int) -> int:
+    def mock_calculate(
+        event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
+    ) -> int:
         RAY = 10**27
         return raw_amount * RAY // index
 
-    def mock_build_enriched_event(event: "ScaledTokenEvent", operation: "Operation", raw_amount: int, scaled_amount: int | None) -> EnrichedScaledTokenEvent:
+    def mock_build_enriched_event(
+        event: "ScaledTokenEvent",
+        operation: "Operation",
+        raw_amount: int,
+        scaled_amount: int | None,
+    ) -> EnrichedScaledTokenEvent:
         event_type = event.event_type
         kwargs = {
             "event": event.event,
@@ -332,11 +342,18 @@ def _create_mock_context_debt() -> MagicMock:
         (amount, _) = eth_abi.abi.decode(["uint256", "bool"], pool_event["data"])
         return amount
 
-    def mock_calculate(event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int) -> int:
+    def mock_calculate(
+        event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
+    ) -> int:
         RAY = 10**27
         return raw_amount * RAY // index
 
-    def mock_build_enriched_event(event: "ScaledTokenEvent", operation: "Operation", raw_amount: int, scaled_amount: int | None) -> EnrichedScaledTokenEvent:
+    def mock_build_enriched_event(
+        event: "ScaledTokenEvent",
+        operation: "Operation",
+        raw_amount: int,
+        scaled_amount: int | None,
+    ) -> EnrichedScaledTokenEvent:
         event_type = event.event_type
         kwargs = {
             "event": event.event,
@@ -380,11 +397,18 @@ def _create_mock_context_debt_mint() -> MagicMock:
         (amount, _) = eth_abi.abi.decode(["uint256", "bool"], pool_event["data"])
         return amount
 
-    def mock_calculate(event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int) -> int:
+    def mock_calculate(
+        event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
+    ) -> int:
         RAY = 10**27
         return raw_amount * RAY // index
 
-    def mock_build_enriched_event(event: "ScaledTokenEvent", operation: "Operation", raw_amount: int, scaled_amount: int | None) -> EnrichedScaledTokenEvent:
+    def mock_build_enriched_event(
+        event: "ScaledTokenEvent",
+        operation: "Operation",
+        raw_amount: int,
+        scaled_amount: int | None,
+    ) -> EnrichedScaledTokenEvent:
         event_type = event.event_type
         kwargs = {
             "event": event.event,

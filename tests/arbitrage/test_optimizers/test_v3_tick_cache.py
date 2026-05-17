@@ -411,9 +411,7 @@ class TestV3TickRangeCache:
         assert cache.num_ranges == 3
 
         # Modify tick_data (shouldn't affect cache since it's valid)
-        new_tick_data = {
-            0: LiquidityAtTick(liquidity_net=999_999_999, liquidity_gross=999_999_999)
-        }
+        new_tick_data = {0: LiquidityAtTick(liquidity_net=999_999_999, liquidity_gross=999_999_999)}
         cache.rebuild(
             tick_data=new_tick_data,
             current_liquidity=1_000_000,

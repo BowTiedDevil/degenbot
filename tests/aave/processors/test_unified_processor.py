@@ -36,13 +36,16 @@ class TestCollateralStrategies:
         """Every supported collateral revision has a strategy."""
         assert revision in COLLATERAL_STRATEGIES
 
-    @pytest.mark.parametrize("revision,expected_mint,expected_burn", [
-        (1, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
-        (2, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
-        (3, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
-        (4, RoundingMode.HALF_UP, RoundingMode.CEIL),
-        (5, RoundingMode.HALF_UP, RoundingMode.CEIL),
-    ])
+    @pytest.mark.parametrize(
+        "revision,expected_mint,expected_burn",
+        [
+            (1, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
+            (2, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
+            (3, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
+            (4, RoundingMode.HALF_UP, RoundingMode.CEIL),
+            (5, RoundingMode.HALF_UP, RoundingMode.CEIL),
+        ],
+    )
     def test_collateral_strategy_rounding(
         self,
         revision: int,
@@ -55,9 +58,7 @@ class TestCollateralStrategies:
         assert strategy.burn_rounding == expected_burn
 
     @pytest.mark.parametrize("revision", [1, 3, 4, 5])
-    def test_collateral_mint_supply_uses_correct_rounding(
-        self, revision: int
-    ) -> None:
+    def test_collateral_mint_supply_uses_correct_rounding(self, revision: int) -> None:
         """
         Collateral mint for supply uses the mint rounding mode.
 
@@ -140,13 +141,16 @@ class TestDebtStrategies:
         """Every supported debt revision has a strategy."""
         assert revision in DEBT_STRATEGIES
 
-    @pytest.mark.parametrize("revision,expected_mint,expected_burn", [
-        (1, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
-        (2, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
-        (3, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
-        (4, RoundingMode.CEIL, RoundingMode.FLOOR),
-        (5, RoundingMode.CEIL, RoundingMode.FLOOR),
-    ])
+    @pytest.mark.parametrize(
+        "revision,expected_mint,expected_burn",
+        [
+            (1, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
+            (2, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
+            (3, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
+            (4, RoundingMode.CEIL, RoundingMode.FLOOR),
+            (5, RoundingMode.CEIL, RoundingMode.FLOOR),
+        ],
+    )
     def test_debt_strategy_rounding(
         self,
         revision: int,
@@ -247,14 +251,17 @@ class TestGhoStrategies:
         assert revision in GHO_STRATEGIES
         assert revision in GHO_DISCOUNT_STRATEGIES
 
-    @pytest.mark.parametrize("revision,expected_supports_discount,expected_has_method", [
-        (1, True, False),
-        (2, True, True),
-        (3, True, True),
-        (4, False, False),
-        (5, False, False),
-        (6, False, False),
-    ])
+    @pytest.mark.parametrize(
+        "revision,expected_supports_discount,expected_has_method",
+        [
+            (1, True, False),
+            (2, True, True),
+            (3, True, True),
+            (4, False, False),
+            (5, False, False),
+            (6, False, False),
+        ],
+    )
     def test_gho_discount_strategy(
         self,
         revision: int,
@@ -266,14 +273,17 @@ class TestGhoStrategies:
         assert strategy.supports_discount == expected_supports_discount
         assert strategy.has_discounted_balance_method == expected_has_method
 
-    @pytest.mark.parametrize("revision,expected_mint,expected_burn", [
-        (1, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
-        (2, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
-        (3, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
-        (4, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
-        (5, RoundingMode.CEIL, RoundingMode.FLOOR),
-        (6, RoundingMode.CEIL, RoundingMode.FLOOR),
-    ])
+    @pytest.mark.parametrize(
+        "revision,expected_mint,expected_burn",
+        [
+            (1, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
+            (2, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
+            (3, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
+            (4, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
+            (5, RoundingMode.CEIL, RoundingMode.FLOOR),
+            (6, RoundingMode.CEIL, RoundingMode.FLOOR),
+        ],
+    )
     def test_gho_strategy_rounding(
         self,
         revision: int,
@@ -293,9 +303,7 @@ class TestGhoStrategies:
         assert processor.supports_discount() == strategy.supports_discount
 
     @pytest.mark.parametrize("revision", [1, 2, 3])
-    def test_gho_discount_revisions_refresh_after_balance_change(
-        self, revision: int
-    ) -> None:
+    def test_gho_discount_revisions_refresh_after_balance_change(self, revision: int) -> None:
         """GHO revisions with discount support refresh after balance changes."""
         processor = TokenProcessorFactory.get_gho_debt_processor(revision)
 

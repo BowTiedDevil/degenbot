@@ -226,8 +226,12 @@ class TestArbSolverMergedIntRefinement:
         inp = SolveInput(
             hops=(
                 ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
-                ConstantProductHop(reserve_in=WETH_1000, reserve_out=500_000_000_000, fee=FEE_0_3_PCT),
-                ConstantProductHop(reserve_in=500_000_000_000, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
+                ConstantProductHop(
+                    reserve_in=WETH_1000, reserve_out=500_000_000_000, fee=FEE_0_3_PCT
+                ),
+                ConstantProductHop(
+                    reserve_in=500_000_000_000, reserve_out=WETH_1000, fee=FEE_0_3_PCT
+                ),
             )
         )
         result = solver.solve(inp)
@@ -245,8 +249,12 @@ class TestArbSolverMergedIntRefinement:
         solver = ArbSolver()
         inp = SolveInput(
             hops=(
-                ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=Fraction(5, 10000)),
-                ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=Fraction(3, 1000)),
+                ConstantProductHop(
+                    reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=Fraction(5, 10000)
+                ),
+                ConstantProductHop(
+                    reserve_in=WETH_1000, reserve_out=USDC_2M, fee=Fraction(3, 1000)
+                ),
             )
         )
         result = solver.solve(inp)

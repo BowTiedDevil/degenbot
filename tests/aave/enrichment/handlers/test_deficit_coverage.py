@@ -34,9 +34,7 @@ class TestDeficitCoverageHandler:
         """Handler supports DEFICIT_COVERAGE operation type."""
         assert OperationType.DEFICIT_COVERAGE in handler.operation_types
 
-    def test_handler_is_operation_handler_protocol(
-        self, handler: DeficitCoverageHandler
-    ) -> None:
+    def test_handler_is_operation_handler_protocol(self, handler: DeficitCoverageHandler) -> None:
         """Handler implements OperationHandler protocol."""
         assert isinstance(handler, OperationHandler)
 

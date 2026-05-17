@@ -28,21 +28,15 @@ class TestSupplyHandler:
     def handler(self) -> SupplyHandler:
         return SupplyHandler()
 
-    def test_handler_supports_supply_operation(
-        self, handler: SupplyHandler
-    ) -> None:
+    def test_handler_supports_supply_operation(self, handler: SupplyHandler) -> None:
         """Handler supports SUPPLY operation type."""
         assert OperationType.SUPPLY in handler.operation_types
 
-    def test_handler_is_operation_handler_protocol(
-        self, handler: SupplyHandler
-    ) -> None:
+    def test_handler_is_operation_handler_protocol(self, handler: SupplyHandler) -> None:
         """Handler implements OperationHandler protocol."""
         assert isinstance(handler, OperationHandler)
 
-    def test_supply_calculates_scaled_amount(
-        self, handler: SupplyHandler
-    ) -> None:
+    def test_supply_calculates_scaled_amount(self, handler: SupplyHandler) -> None:
         """
         SUPPLY calculates scaled amount from raw amount and index.
 

@@ -52,8 +52,13 @@ class FakeProviderBackend:
     def get_block(self, block_identifier: int | str) -> dict[str, Any] | None:
         return {"number": self._block_number, "timestamp": self._block_timestamp}
 
-    def get_logs(self, from_block: int, to_block: int, addresses: list[str] | None,
-                 topics: list[list[str]] | None) -> list[dict[str, Any]]:
+    def get_logs(
+        self,
+        from_block: int,
+        to_block: int,
+        addresses: list[str] | None,
+        topics: list[list[str]] | None,
+    ) -> list[dict[str, Any]]:
         return []
 
     def call(self, to: str, data: bytes, block: int | None) -> HexBytes:
@@ -125,9 +130,7 @@ def _selector(signature: str) -> bytes:
 
 
 CHAIN_ID: ChainId = 1
-POOL_ADDRESS: ChecksumAddress = get_checksum_address(
-    "0x0000000000000000000000000000000000000001"
-)
+POOL_ADDRESS: ChecksumAddress = get_checksum_address("0x0000000000000000000000000000000000000001")
 
 
 # --- Tests ---
@@ -157,9 +160,7 @@ class TestVirtualPriceFetcher:
     def test_fetches_virtual_price(self) -> None:
         expected_vp = 10**18
         provider = _make_fake_provider({
-            _selector("get_virtual_price()"): eth_abi.abi.encode(
-                ["uint256"], [expected_vp]
-            ),
+            _selector("get_virtual_price()"): eth_abi.abi.encode(["uint256"], [expected_vp]),
         })
         connections = FakeConnectionManager(provider=provider)
         factory = CurveFetcherFactory(connections=connections, chain_id=CHAIN_ID)
@@ -170,9 +171,7 @@ class TestVirtualPriceFetcher:
     def test_uses_base_pool_address_when_provided(self) -> None:
         expected_vp = 2 * 10**18
         provider = _make_fake_provider({
-            _selector("get_virtual_price()"): eth_abi.abi.encode(
-                ["uint256"], [expected_vp]
-            ),
+            _selector("get_virtual_price()"): eth_abi.abi.encode(["uint256"], [expected_vp]),
         })
         connections = FakeConnectionManager(provider=provider)
         factory = CurveFetcherFactory(connections=connections, chain_id=CHAIN_ID)
@@ -188,9 +187,7 @@ class TestBaseVirtualPriceFetcher:
     def test_fetches_base_virtual_price(self) -> None:
         expected_vp = 3 * 10**18
         provider = _make_fake_provider({
-            _selector("base_virtual_price()"): eth_abi.abi.encode(
-                ["uint256"], [expected_vp]
-            ),
+            _selector("base_virtual_price()"): eth_abi.abi.encode(["uint256"], [expected_vp]),
         })
         connections = FakeConnectionManager(provider=provider)
         factory = CurveFetcherFactory(connections=connections, chain_id=CHAIN_ID)
@@ -218,12 +215,8 @@ class TestRedemptionPriceFetcher:
         snap_address = get_checksum_address("0x0000000000000000000000000000000000000003")
         raw_rate = 10**18  # Will be divided by 10**9
         provider = _make_fake_provider({
-            _selector("redemption_price_snap()"): eth_abi.abi.encode(
-                ["address"], [snap_address]
-            ),
-            _selector("snappedRedemptionPrice()"): eth_abi.abi.encode(
-                ["uint256"], [raw_rate]
-            ),
+            _selector("redemption_price_snap()"): eth_abi.abi.encode(["address"], [snap_address]),
+            _selector("snappedRedemptionPrice()"): eth_abi.abi.encode(["uint256"], [raw_rate]),
         })
         connections = FakeConnectionManager(provider=provider)
         factory = CurveFetcherFactory(connections=connections, chain_id=CHAIN_ID)
@@ -237,9 +230,7 @@ class TestAdminBalancesFetcher:
 
     def test_fetches_admin_balances(self) -> None:
         provider = _make_fake_provider({
-            _selector("admin_balances(uint256)"): eth_abi.abi.encode(
-                ["uint256"], [1000]
-            ),
+            _selector("admin_balances(uint256)"): eth_abi.abi.encode(["uint256"], [1000]),
         })
         connections = FakeConnectionManager(provider=provider)
         factory = CurveFetcherFactory(connections=connections, chain_id=CHAIN_ID)
@@ -265,9 +256,7 @@ class TestDFetcher:
     def test_fetches_D_value(self) -> None:  # noqa: N802
         expected_d = 10**18
         provider = _make_fake_provider({
-            _selector("D()"): eth_abi.abi.encode(
-                ["uint256"], [expected_d]
-            ),
+            _selector("D()"): eth_abi.abi.encode(["uint256"], [expected_d]),
         })
         connections = FakeConnectionManager(provider=provider)
         factory = CurveFetcherFactory(connections=connections, chain_id=CHAIN_ID)
@@ -282,9 +271,7 @@ class TestGammaFetcher:
     def test_fetches_gamma_value(self) -> None:
         expected_gamma = 10**10
         provider = _make_fake_provider({
-            _selector("gamma()"): eth_abi.abi.encode(
-                ["uint256"], [expected_gamma]
-            ),
+            _selector("gamma()"): eth_abi.abi.encode(["uint256"], [expected_gamma]),
         })
         connections = FakeConnectionManager(provider=provider)
         factory = CurveFetcherFactory(connections=connections, chain_id=CHAIN_ID)
@@ -299,9 +286,7 @@ class TestPriceScaleFetcher:
     def test_fetches_price_scale(self) -> None:
         expected_price = 10**18
         provider = _make_fake_provider({
-            _selector("price_scale(uint256)"): eth_abi.abi.encode(
-                ["uint256"], [expected_price]
-            ),
+            _selector("price_scale(uint256)"): eth_abi.abi.encode(["uint256"], [expected_price]),
         })
         connections = FakeConnectionManager(provider=provider)
         factory = CurveFetcherFactory(connections=connections, chain_id=CHAIN_ID)

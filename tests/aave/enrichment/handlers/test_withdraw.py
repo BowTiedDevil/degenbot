@@ -28,21 +28,15 @@ class TestWithdrawHandler:
     def handler(self) -> WithdrawHandler:
         return WithdrawHandler()
 
-    def test_handler_supports_withdraw_operation(
-        self, handler: WithdrawHandler
-    ) -> None:
+    def test_handler_supports_withdraw_operation(self, handler: WithdrawHandler) -> None:
         """Handler supports WITHDRAW operation type."""
         assert OperationType.WITHDRAW in handler.operation_types
 
-    def test_handler_is_operation_handler_protocol(
-        self, handler: WithdrawHandler
-    ) -> None:
+    def test_handler_is_operation_handler_protocol(self, handler: WithdrawHandler) -> None:
         """Handler implements OperationHandler protocol."""
         assert isinstance(handler, OperationHandler)
 
-    def test_standard_withdraw_calculates_scaled_amount(
-        self, handler: WithdrawHandler
-    ) -> None:
+    def test_standard_withdraw_calculates_scaled_amount(self, handler: WithdrawHandler) -> None:
         """
         Standard WITHDRAW calculates scaled amount with ceil rounding.
 
@@ -159,7 +153,9 @@ def _create_mock_pool_event(amount: int) -> LogReceipt:
     return LogReceipt({
         "address": "0x" + "p" * 40,
         "topics": [
-            HexBytes(bytes.fromhex("3115d1449a7b732c986cba18244e897a450f61e1bb8d589cd2e69e6c8924f9f7")),
+            HexBytes(
+                bytes.fromhex("3115d1449a7b732c986cba18244e897a450f61e1bb8d589cd2e69e6c8924f9f7")
+            ),
         ],
         "data": data,
         "blockNumber": 1,

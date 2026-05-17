@@ -47,8 +47,8 @@ def test_v2_swap_amounts_encodes_swap_call() -> None:
         encoded.data[4:],
     )
     # amounts_out used as swap amounts: (0, 900)
-    assert params[0] == 0      # amount0Out
-    assert params[1] == 900   # amount1Out
+    assert params[0] == 0  # amount0Out
+    assert params[1] == 900  # amount1Out
     assert Web3.to_checksum_address(params[2]) == recipient
     assert params[3] == b""
 
@@ -171,9 +171,8 @@ def test_generate_payloads_with_custom_approval_strategy() -> None:
             swap_amounts: tuple[UniswapV2PoolSwapAmounts, ...],
             calls: list[EncodedCall],
         ) -> list[EncodedCall]:
-            approve_data = (
-                Web3.keccak(text="approve(address,uint256)")[:4]
-                + eth_abi.abi.encode(["address", "uint256"], [pool, 1000])
+            approve_data = Web3.keccak(text="approve(address,uint256)")[:4] + eth_abi.abi.encode(
+                ["address", "uint256"], [pool, 1000]
             )
             return [EncodedCall(to=token, data=approve_data)]
 
@@ -220,10 +219,10 @@ def test_curve_swap_amounts_encodes_exchange_call() -> None:
         ["int128", "int128", "uint256", "uint256"],
         encoded.data[4:],
     )
-    assert params[0] == 0   # token_in_index
-    assert params[1] == 1   # token_out_index
+    assert params[0] == 0  # token_in_index
+    assert params[1] == 1  # token_out_index
     assert params[2] == 1000  # amount_in
-    assert params[3] == 900   # min_amount_out
+    assert params[3] == 900  # min_amount_out
 
 
 def test_curve_swap_amounts_encodes_exchange_underlying_call() -> None:

@@ -152,7 +152,9 @@ def _new_arbitrage_path(
         token_out_quantity = _calculate_tokens_out_via_simulate(
             pool, sv.token_in, token_in_quantity
         )
-        swap_amounts.append(pool.build_swap_amount(sv.zero_for_one, token_in_quantity, token_out_quantity))
+        swap_amounts.append(
+            pool.build_swap_amount(sv.zero_for_one, token_in_quantity, token_out_quantity)
+        )
         token_in_quantity = token_out_quantity
 
     input_swap = swap_amounts[0]

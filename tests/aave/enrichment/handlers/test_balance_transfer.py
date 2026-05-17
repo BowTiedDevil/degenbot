@@ -33,9 +33,7 @@ class TestBalanceTransferHandler:
         """Handler supports BALANCE_TRANSFER operation type."""
         assert OperationType.BALANCE_TRANSFER in handler.operation_types
 
-    def test_handler_is_operation_handler_protocol(
-        self, handler: BalanceTransferHandler
-    ) -> None:
+    def test_handler_is_operation_handler_protocol(self, handler: BalanceTransferHandler) -> None:
         """Handler implements OperationHandler protocol."""
         assert isinstance(handler, OperationHandler)
 
@@ -63,9 +61,7 @@ class TestBalanceTransferHandler:
         assert result.raw_amount == 1000
         assert result.event_type == ScaledTokenEventType.COLLATERAL_TRANSFER
 
-    def test_debt_transfer_uses_amount_directly(
-        self, handler: BalanceTransferHandler
-    ) -> None:
+    def test_debt_transfer_uses_amount_directly(self, handler: BalanceTransferHandler) -> None:
         """Debt transfers bypass index-based scaling."""
         scaled_event = _create_mock_scaled_event(
             event_type=ScaledTokenEventType.DEBT_TRANSFER,
@@ -83,9 +79,7 @@ class TestBalanceTransferHandler:
         assert result.raw_amount == 500
         assert result.event_type == ScaledTokenEventType.DEBT_TRANSFER
 
-    def test_gho_debt_transfer_uses_amount_directly(
-        self, handler: BalanceTransferHandler
-    ) -> None:
+    def test_gho_debt_transfer_uses_amount_directly(self, handler: BalanceTransferHandler) -> None:
         """GHO debt transfers bypass index-based scaling."""
         scaled_event = _create_mock_scaled_event(
             event_type=ScaledTokenEventType.GHO_DEBT_TRANSFER,

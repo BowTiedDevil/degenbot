@@ -147,16 +147,14 @@ decimal_pair_strategy = st.tuples(
 )
 
 # Mismatched decimals (tests decimal correction)
-mismatched_decimal_pair_strategy = decimal_pair_strategy.filter(
-    lambda d: d[0] != d[1]
-)
+mismatched_decimal_pair_strategy = decimal_pair_strategy.filter(lambda d: d[0] != d[1])
 
 # Common decimal pairs in DeFi (e.g., USDC/WETH, WBTC/WETH)
 common_decimal_pairs_strategy = st.sampled_from([
-    (6, 18),   # USDC/WETH, USDT/WETH
-    (8, 18),   # WBTC/WETH
-    (6, 8),    # USDC/WBTC
-    (6, 6),    # USDC/USDT
+    (6, 18),  # USDC/WETH, USDT/WETH
+    (8, 18),  # WBTC/WETH
+    (6, 8),  # USDC/WBTC
+    (6, 6),  # USDC/USDT
     (18, 18),  # WETH/stETH, etc.
 ])
 

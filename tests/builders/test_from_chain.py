@@ -78,6 +78,7 @@ def _make_aerodrome_builder(provider: FakeProvider | None = None) -> AerodromeV2
 
     def _build_token(address, *, chain_id=None, silent=False):
         return _make_erc20(address, chain_id=chain_id or 8453)
+
     erc20_builder.build = _build_token
 
     # DB mock: raise on enter so contextlib.suppress skips it
@@ -104,6 +105,7 @@ def _make_camelot_builder(provider: FakeProvider | None = None) -> CamelotBuilde
 
     def _build_token(address, *, chain_id=None, silent=False):
         return _make_erc20(address, chain_id=chain_id or 42161)
+
     erc20_builder.build = _build_token
 
     # DB mock: raise on enter so contextlib.suppress skips it
@@ -204,15 +206,9 @@ def _camelot_provider(
         reserves1=reserves1,
     )
     responses[_selector("stableSwap()")] = eth_abi.abi.encode(["bool"], [stable_swap])
-    responses[_selector("FEE_DENOMINATOR()")] = eth_abi.abi.encode(
-        ["uint256"], [fee_denominator]
-    )
-    responses[_selector("token0FeePercent()")] = eth_abi.abi.encode(
-        ["uint16"], [fee_token0]
-    )
-    responses[_selector("token1FeePercent()")] = eth_abi.abi.encode(
-        ["uint16"], [fee_token1]
-    )
+    responses[_selector("FEE_DENOMINATOR()")] = eth_abi.abi.encode(["uint256"], [fee_denominator])
+    responses[_selector("token0FeePercent()")] = eth_abi.abi.encode(["uint16"], [fee_token0])
+    responses[_selector("token1FeePercent()")] = eth_abi.abi.encode(["uint16"], [fee_token1])
     return FakeProvider(responses)
 
 
