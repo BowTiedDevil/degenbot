@@ -1,11 +1,14 @@
 """Tests for the Rust Möbius optimizer Python bindings."""
 
+from fractions import Fraction
 from itertools import starmap
 
 import degenbot.degenbot_rs as rs_mobius
 
+from degenbot.arbitrage.optimizers._solver_utils import _compute_mobius_coefficients
 from degenbot.arbitrage.optimizers.mobius import MobiusFloatHop
 from degenbot.arbitrage.optimizers.mobius import mobius_solve as py_solve
+from degenbot.types.hop_types import ConstantProductHop
 
 # Reserve pairs that are profitable after fees.
 # For 2-hop arbitrage: K = γ²·s₁·s₂, M = r₁·r₂. Need K > M.
@@ -28,6 +31,33 @@ FLAT_HOPS_2 = [
 ]
 
 
+def _to_cp_hops(rust_hops: list) -> tuple[ConstantProductHop, ...]:
+    """Convert RustHopState list to ConstantProductHop tuple for Python utils."""
+    return tuple(
+        ConstantProductHop(
+            reserve_in=int(h.reserve_in),
+            reserve_out=int(h.reserve_out),
+            fee=Fraction(round(h.fee * 1e6), 1_000_000),
+        )
+        for h in rust_hops
+    )
+
+
+def _sim_path_float(x: float, hops: list) -> float:
+    """Pure Python simulate_path using RustHopState-like objects."""
+    amount = x
+    for hop in hops:
+        r_in = hop.reserve_in
+        r_out = hop.reserve_out
+        fee = hop.fee
+        gamma = 1.0 - fee
+        denom = r_in + amount * gamma
+        if denom <= 0:
+            return 0.0
+        amount = amount * gamma * r_out / denom
+    return amount
+
+
 class TestRustHopState:
     def test_creation(self):
         hop = rs_mobius.RustHopState(1_000_000.0, 1_050_000.0, 0.003)
@@ -42,23 +72,23 @@ class TestRustHopState:
 
 class TestRustMobiusSolve:
     def test_two_hop_profitable(self):
-        result = rs_mobius.py_mobius_solve(PROFIT_HOPS_2)
+        result = rs_mobius.RustArbSolver().solve(PROFIT_HOPS_2)
         assert result.optimal_input > 0
         assert result.profit > 0
-        assert result.iterations == 0
+        assert result.success
 
     def test_two_hop_not_profitable(self):
-        result = rs_mobius.py_mobius_solve(FLAT_HOPS_2)
+        result = rs_mobius.RustArbSolver().solve(FLAT_HOPS_2)
         assert not result.success
 
     def test_three_hop_profitable(self):
-        result = rs_mobius.py_mobius_solve(PROFIT_HOPS_3)
+        result = rs_mobius.RustArbSolver().solve(PROFIT_HOPS_3)
         assert result.optimal_input > 0
         assert result.profit > 0
 
     def test_max_input_constraint(self):
-        rs_mobius.py_mobius_solve(PROFIT_HOPS_2)
-        result_constrained = rs_mobius.py_mobius_solve(PROFIT_HOPS_2, max_input=100.0)
+        rs_mobius.RustArbSolver().solve(PROFIT_HOPS_2)
+        result_constrained = rs_mobius.RustArbSolver().solve(PROFIT_HOPS_2, max_input=100.0)
         assert result_constrained.optimal_input <= 100.0
 
     def test_matches_python(self):
@@ -71,51 +101,57 @@ class TestRustMobiusSolve:
         py_hops = list(starmap(MobiusFloatHop, hops_data))
         rust_hops = list(starmap(rs_mobius.RustHopState, hops_data))
 
-        py_x, py_profit, py_iters = py_solve(py_hops)
-        rust_result = rs_mobius.py_mobius_solve(rust_hops)
+        py_x, py_profit, _py_iters = py_solve(py_hops)
+        rust_result = rs_mobius.RustArbSolver().solve(rust_hops)
 
         assert abs(py_x - rust_result.optimal_input) < 1e-6
         assert abs(py_profit - rust_result.profit) < 1e-6
-        assert py_iters == rust_result.iterations == 0
 
 
 class TestRustSimulatePath:
     def test_basic_simulation(self):
-        output = rs_mobius.py_simulate_path(1000.0, PROFIT_HOPS_2)
+        output = _sim_path_float(1000.0, PROFIT_HOPS_2)
         assert output > 0
 
     def test_zero_input(self):
         hops = [rs_mobius.RustHopState(1_000_000.0, 1_050_000.0, 0.003)]
-        output = rs_mobius.py_simulate_path(0.0, hops)
+        output = _sim_path_float(0.0, hops)
         assert output == 0.0
 
 
 class TestRustMobiusCoefficients:
+    """Test Möbius coefficients via Python implementation (RustMobiusCoefficients removed)."""
+
     def test_two_hop_profitable(self):
-        coeffs = rs_mobius.py_compute_mobius_coefficients(PROFIT_HOPS_2)
+        cp_hops = _to_cp_hops(PROFIT_HOPS_2)
+        coeffs = _compute_mobius_coefficients(cp_hops)
         assert coeffs.is_profitable
-        assert coeffs.coeff_K > 0
-        assert coeffs.coeff_M > 0
-        assert coeffs.coeff_N > 0
+        assert coeffs.K > 0
+        assert coeffs.M > 0
+        assert coeffs.N > 0
 
     def test_optimal_input(self):
-        coeffs = rs_mobius.py_compute_mobius_coefficients(PROFIT_HOPS_2)
+        cp_hops = _to_cp_hops(PROFIT_HOPS_2)
+        coeffs = _compute_mobius_coefficients(cp_hops)
         x_opt = coeffs.optimal_input()
         assert x_opt > 0
 
     def test_profit_at(self):
-        coeffs = rs_mobius.py_compute_mobius_coefficients(PROFIT_HOPS_2)
+        cp_hops = _to_cp_hops(PROFIT_HOPS_2)
+        coeffs = _compute_mobius_coefficients(cp_hops)
         x_opt = coeffs.optimal_input()
         profit = coeffs.profit_at(x_opt)
         assert profit > 0
 
     def test_path_output(self):
-        coeffs = rs_mobius.py_compute_mobius_coefficients(PROFIT_HOPS_2)
+        cp_hops = _to_cp_hops(PROFIT_HOPS_2)
+        coeffs = _compute_mobius_coefficients(cp_hops)
         output = coeffs.path_output(1000.0)
         assert output > 0
 
     def test_not_profitable(self):
-        coeffs = rs_mobius.py_compute_mobius_coefficients(FLAT_HOPS_2)
+        cp_hops = _to_cp_hops(FLAT_HOPS_2)
+        coeffs = _compute_mobius_coefficients(cp_hops)
         assert not coeffs.is_profitable
         assert coeffs.optimal_input() == 0.0
 
@@ -174,50 +210,3 @@ class TestRustV3TickRangeHop:
         assert v3.contains_sqrt_price(1100.0)
         assert not v3.contains_sqrt_price(899.0)
         assert not v3.contains_sqrt_price(1101.0)
-
-
-class TestRustMobiusOptimizer:
-    def test_solve(self):
-        optimizer = rs_mobius.RustMobiusOptimizer()
-        result = optimizer.solve(PROFIT_HOPS_2)
-        assert result.optimal_input > 0
-        assert result.profit > 0
-
-    def test_batch_solve(self):
-        optimizer = rs_mobius.RustMobiusOptimizer()
-        # 2 paths × 2 hops
-        hops_array = [
-            1_000_000.0,
-            5_000_000.0,
-            0.003,  # path 0, hop 0
-            1_500_000.0,
-            3_000_000.0,
-            0.003,  # path 0, hop 1
-            2_000_000.0,
-            10_000_000.0,
-            0.003,  # path 1, hop 0
-            3_000_000.0,
-            6_000_000.0,
-            0.003,  # path 1, hop 1
-        ]
-        max_inputs = [float("inf"), float("inf")]
-        result = optimizer.solve_batch(hops_array, 2, max_inputs)
-        assert "optimal_input" in result
-        assert "profit" in result
-        assert "is_profitable" in result
-        assert len(result["optimal_input"]) == 2
-
-    def test_estimate_v3_final_sqrt_price(self):
-        optimizer = rs_mobius.RustMobiusOptimizer()
-        v3 = rs_mobius.RustV3TickRangeHop(
-            liquidity=1e18,
-            sqrt_price_current=1000.0,
-            sqrt_price_lower=900.0,
-            sqrt_price_upper=1100.0,
-            fee=0.003,
-            zero_for_one=True,
-        )
-        # Use a small amount so it stays in range
-        final_price = optimizer.estimate_v3_final_sqrt_price(1e10, v3)
-        assert final_price < 1000.0  # Price decreases for zero_for_one
-        assert final_price > 900.0  # Should stay in range for small input

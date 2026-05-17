@@ -11,13 +11,13 @@
 //! - [`mobius_int`] — Integer U512/U256 Möbius with EVM-exact simulation
 //! - [`mobius_v3`] — V3 tick range types, crossing computation, piecewise solve
 //! - [`mobius_v3_v3`] — V3-V3 arbitrage solver (two V3 hops)
-//! - [`mobius_batch`] — Batch solver (serial, vectorized, Rayon parallel)
+//! - [`mobius_batch`] — Batch solver (serial, vectorized, Rayon parallel) *(deprecated: no Python callers)*
 //! - [`mobius_py`] — `PyO3` Python bindings
 
 #[allow(clippy::doc_markdown)]
 pub mod mobius;
-#[allow(clippy::doc_markdown)]
-pub mod mobius_batch;
+// mobius_batch: removed from Python bindings, no callers remaining
+// pub mod mobius_batch;
 #[allow(clippy::doc_markdown)]
 pub mod mobius_int;
 #[allow(clippy::doc_markdown)]

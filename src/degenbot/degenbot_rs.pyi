@@ -493,21 +493,6 @@ class RustHopState:
     @property
     def fee(self) -> float: ...
 
-class RustMobiusCoefficients:
-    """Möbius transformation coefficients for a path."""
-
-    @property
-    def coeff_K(self) -> float: ...
-    @property
-    def coeff_M(self) -> float: ...
-    @property
-    def coeff_N(self) -> float: ...
-    @property
-    def is_profitable(self) -> bool: ...
-    def path_output(self, x: float) -> float: ...
-    def optimal_input(self) -> float: ...
-    def profit_at(self, x: float) -> float: ...
-
 class RustV3TickRangeHop:
     """Uniswap V3 tick range state for piecewise Möbius solving."""
 
@@ -542,6 +527,8 @@ class RustV3TickRangeSequence:
     """Sequence of adjacent V3 tick ranges for multi-range solving."""
 
     def __init__(self, ranges: list[RustV3TickRangeHop]) -> None: ...
+    def __len__(self) -> int: ...
+    def __getitem__(self, idx: int) -> RustV3TickRangeHop: ...
     def compute_crossing(self, k: int) -> RustTickRangeCrossing: ...
 
 class RustTickRangeCrossing:
@@ -559,70 +546,6 @@ class RustTickRangeCrossing:
     def crossing_output(self) -> float: ...
     @property
     def ending_range(self) -> RustV3TickRangeHop: ...
-
-class RustMobiusResult:
-    """Result from Möbius float solver."""
-
-    @property
-    def optimal_input(self) -> float: ...
-    @property
-    def profit(self) -> float: ...
-    @property
-    def iterations(self) -> int: ...
-    @property
-    def success(self) -> bool: ...
-
-class RustMobiusOptimizer:
-    """High-level Möbius optimizer for multi-hop paths."""
-
-    def __init__(self) -> None: ...
-    def compute_coefficients(self, hops: list[RustHopState]) -> RustMobiusCoefficients: ...
-    def simulate_path(self, x: float, hops: list[RustHopState]) -> float: ...
-    def solve(self, hops: list[RustHopState], max_input: float | None = None) -> RustMobiusResult: ...
-    def solve_v3_candidates(
-        self,
-        base_hops: list[RustHopState],
-        v3_hop_index: int,
-        v3_candidates: list[RustV3TickRangeHop],
-        max_input: float | None = None,
-    ) -> RustMobiusResult: ...
-    def estimate_v3_final_sqrt_price(self, amount_in: float, v3_hop: RustV3TickRangeHop) -> float: ...
-    def solve_piecewise(
-        self,
-        hops: list[RustHopState],
-        v3_hop_index: int,
-        crossings: list[RustTickRangeCrossing],
-        max_input: float | None = None,
-    ) -> RustMobiusResult: ...
-    def solve_v3_sequence(
-        self,
-        hops: list[RustHopState],
-        v3_hop_index: int,
-        sequence: RustV3TickRangeSequence,
-        max_candidates: int,
-        max_input: float | None = None,
-    ) -> RustMobiusResult: ...
-    def solve_v3_v3(
-        self,
-        sequence1: RustV3TickRangeSequence,
-        sequence2: RustV3TickRangeSequence,
-        max_input: float | None = None,
-        max_candidates: int = 10,
-    ) -> RustMobiusResult: ...
-    def solve_batch(
-        self,
-        hops_array: list[float],
-        num_hops: int,
-        max_inputs: list[float],
-    ) -> dict[str, Any]: ...
-    def solve_batch_vectorized(
-        self,
-        reserves_in: list[float],
-        reserves_out: list[float],
-        fees: list[float],
-        num_hops: int,
-        max_inputs: list[float],
-    ) -> dict[str, Any]: ...
 
 class RustArbResult:
     """Result from unified arbitrage solver (RustArbSolver)."""
@@ -712,28 +635,10 @@ class RustIntMobiusResult:
     @property
     def success(self) -> bool: ...
 
-def py_compute_mobius_coefficients(
-    hops: list[RustHopState],
-) -> RustMobiusCoefficients: ...
-
-def py_mobius_solve(
-    hops: list[RustHopState],
-    max_input: float | None = None,
-) -> RustMobiusResult: ...
-
-def py_simulate_path(x: float, hops: list[RustHopState]) -> float: ...
-
-def py_estimate_v3_final_sqrt_price(
-    amount_in: float,
-    v3_hop: RustV3TickRangeHop,
-) -> float: ...
-
 def py_int_mobius_solve(
     hops: list[RustIntHopState],
 ) -> RustIntMobiusResult: ...
-
 def py_int_simulate_path(x: int, hops: list[RustIntHopState]) -> int: ...
-
 def py_mobius_refine_int(
     x_approx: float,
     hops: list[RustIntHopState],
@@ -749,11 +654,7 @@ __all__ = [
     "RustArbResult",
     "RustArbSolver",
     "RustHopState",
-    "RustIntHopState",
     "RustIntMobiusResult",
-    "RustMobiusCoefficients",
-    "RustMobiusOptimizer",
-    "RustMobiusResult",
     "RustPoolCache",
     "RustTickRangeCrossing",
     "RustV3TickRangeHop",
@@ -767,12 +668,8 @@ __all__ = [
     "get_function_selector",
     "get_sqrt_ratio_at_tick",
     "get_tick_at_sqrt_ratio",
-    "py_compute_mobius_coefficients",
-    "py_estimate_v3_final_sqrt_price",
     "py_int_mobius_solve",
     "py_int_simulate_path",
     "py_mobius_refine_int",
-    "py_mobius_solve",
-    "py_simulate_path",
     "to_checksum_address",
 ]

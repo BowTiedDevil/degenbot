@@ -170,9 +170,9 @@ def test_piecewise_performance_multi_candidate():
 
     print(f"\nMulti-range V3 (2 ranges): {avg_time_us:.2f}μs per solve")
     print(f"Result details: profit={result.profit}, optimal_input={result.optimal_input}")
-    print(f"Solver has Rust optimizer: {solver._rust_optimizer is not None}")
+    print(f"Solver has Rust optimizer: {solver._rust_solver is not None}")
 
-    if solver._rust_optimizer is not None:
+    if solver._rust_solver is not None:
         assert avg_time_us < 100.0, f"Too slow with Rust: {avg_time_us:.2f}μs"
     else:
         assert avg_time_us < 200.0, f"Too slow without Rust: {avg_time_us:.2f}μs"
@@ -230,7 +230,7 @@ def test_rust_vs_python_performance():
     avg_time_us = elapsed_ns / n_iterations / 1000
 
     print(f"\nWith Rust available: {avg_time_us:.2f}μs per solve")
-    print(f"Rust optimizer type: {type(solver._rust_optimizer)}")
+    print(f"Rust optimizer type: {type(solver._rust_solver)}")
 
     print(f"Result details: profit={result.profit}")
 

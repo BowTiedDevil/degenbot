@@ -111,7 +111,7 @@ class TestIntMobiusSolve:
         ]
 
         int_result = rs_mobius.py_int_mobius_solve(hops_int)
-        float_result = rs_mobius.py_mobius_solve(hops_float)
+        float_result = rs_mobius.RustArbSolver().solve(hops_float)
 
         assert abs(int(int_result.profit) - float_result.profit) < 2.0
 

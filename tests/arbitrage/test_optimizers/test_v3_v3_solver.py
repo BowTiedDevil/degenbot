@@ -9,6 +9,18 @@ import degenbot.degenbot_rs as mobius
 from .conftest import make_rust_v3_hop as make_v3_hop
 
 
+def _solve_v3_v3(seq1, seq2, max_input=None, max_candidates=10):
+    """Solve a V3-V3 path using RustArbSolver."""
+    solver = mobius.RustArbSolver()
+    hops = [seq1[0].to_hop_state(), seq2[0].to_hop_state()]
+    return solver.solve(
+        hops,
+        v3_sequences=[(0, seq1), (1, seq2)],
+        max_input=max_input,
+        max_candidates=max_candidates,
+    )
+
+
 class TestV3V3SingleRange:
     """Tests for V3-V3 with both pools in a single tick range (fast path)."""
 
@@ -23,7 +35,7 @@ class TestV3V3SingleRange:
         seq1 = mobius.RustV3TickRangeSequence([hop1])
         seq2 = mobius.RustV3TickRangeSequence([hop2])
 
-        result = mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
 
         assert result.optimal_input > 0
         assert result.profit > 0
@@ -40,12 +52,12 @@ class TestV3V3SingleRange:
         # V3-V3 solve
         seq1 = mobius.RustV3TickRangeSequence([hop1])
         seq2 = mobius.RustV3TickRangeSequence([hop2])
-        result_v3v3 = mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result_v3v3 = _solve_v3_v3(seq1, seq2)
 
         # Standard Möbius solve (using MobiusFloatHop from V3 ranges)
         hs1 = hop1.to_hop_state()
         hs2 = hop2.to_hop_state()
-        result_mobius = mobius.RustMobiusOptimizer().solve([hs1, hs2])
+        result_mobius = mobius.RustArbSolver().solve([hs1, hs2])
 
         # Should match to high precision
         rel_tol = 1e-10
@@ -64,7 +76,7 @@ class TestV3V3SingleRange:
         seq1 = mobius.RustV3TickRangeSequence([hop1])
         seq2 = mobius.RustV3TickRangeSequence([hop2])
 
-        result = mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
 
         assert not result.success
         assert result.optimal_input == 0
@@ -95,7 +107,7 @@ class TestV3V3MultiRange:
         seq2 = mobius.RustV3TickRangeSequence([hop2_r1, hop2_r2])
 
         # Should not panic
-        result = mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
 
         # Result is valid even if no profit found
         assert result.iterations >= 0
@@ -121,7 +133,7 @@ class TestV3V3MultiRange:
         seq1 = mobius.RustV3TickRangeSequence([hop1_r1, hop1_r2])
         seq2 = mobius.RustV3TickRangeSequence([hop2_r1, hop2_r2])
 
-        result = mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
 
         # Should find some solution (even if baseline)
         assert result.optimal_input >= 0
@@ -142,7 +154,7 @@ class TestV3V3MultiRange:
         seq1 = mobius.RustV3TickRangeSequence([hop1_r1, hop1_r2])
         seq2 = mobius.RustV3TickRangeSequence([hop2])
 
-        result = mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
 
         # Should not panic and should find a solution
         assert result.optimal_input >= 0
@@ -165,7 +177,7 @@ class TestV3V3MultiRange:
         seq1 = mobius.RustV3TickRangeSequence([hop1])
         seq2 = mobius.RustV3TickRangeSequence([hop2_r1, hop2_r2])
 
-        result = mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
 
         # Should not panic and should find a solution
         assert result.optimal_input >= 0
@@ -185,7 +197,7 @@ class TestV3V3ProfitComputation:
         seq1 = mobius.RustV3TickRangeSequence([hop1])
         seq2 = mobius.RustV3TickRangeSequence([hop2])
 
-        result = mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
 
         assert result.profit > 0
 
@@ -206,7 +218,7 @@ class TestV3V3ProfitComputation:
             seq1 = mobius.RustV3TickRangeSequence([hop1])
             seq2 = mobius.RustV3TickRangeSequence([hop2])
 
-            result = mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+            result = _solve_v3_v3(seq1, seq2)
             profits.append(result.profit)
 
         # Larger spread → larger profit
@@ -225,11 +237,11 @@ class TestV3V3ProfitComputation:
         seq2 = mobius.RustV3TickRangeSequence([hop2])
 
         # Unconstrained
-        result_unconstrained = mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result_unconstrained = _solve_v3_v3(seq1, seq2)
 
         # Constrained to small input
         max_input = result_unconstrained.optimal_input * 0.1
-        result_constrained = mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2, max_input)
+        result_constrained = _solve_v3_v3(seq1, seq2, max_input=max_input)
 
         assert result_constrained.optimal_input <= max_input
         assert result_constrained.profit <= result_unconstrained.profit
