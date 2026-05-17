@@ -194,12 +194,6 @@ impl LogFilter {
     }
 }
 
-/// Default requests per second for transport-level rate limiting.
-const DEFAULT_RPS: u32 = 50;
-
-/// Default burst size for transport-level rate limiting.
-const DEFAULT_BURST: NonZeroU32 = NonZeroU32::new(10).unwrap();
-
 /// High-performance Ethereum RPC provider.
 pub struct AlloyProvider {
     inner: Arc<dyn Provider<Ethereum>>,
@@ -221,23 +215,22 @@ impl AlloyProvider {
     /// Create a new provider with the given RPC URL.
     ///
     /// Automatically detects the connection type based on the URL:
-    /// - HTTP/HTTPS URLs use HTTP transport with connection pooling and rate limiting
+    /// - HTTP/HTTPS URLs use HTTP transport with connection pooling
     /// - WS/WSS URLs use WebSocket transport
     /// - File paths (starting with / or \\) use IPC transport
     ///
     /// All connections use `ProviderBuilder::default()` (no fillers) with response
-    /// caching enabled (100 entries). HTTP connections additionally use
-    /// `ThrottleLayer` for transport-level rate limiting.
+    /// caching enabled (100 entries). No transport-level rate limiting is applied.
     ///
     /// # Errors
     ///
     /// Returns `ProviderError::ConnectionFailed` if the HTTP client cannot be created
     /// or IPC/WS connection fails.
     pub async fn new(rpc_url: &str, max_retries: u32) -> ProviderResult<Self> {
-        Self::with_rate_limit(rpc_url, max_retries, DEFAULT_RPS, DEFAULT_BURST).await
+        Self::build_provider(rpc_url, max_retries, None).await
     }
 
-    /// Create a new provider with custom rate limiting parameters.
+    /// Create a new provider with transport-level rate limiting.
     ///
     /// # Arguments
     ///
@@ -255,6 +248,23 @@ impl AlloyProvider {
         requests_per_second: u32,
         burst: NonZeroU32,
     ) -> ProviderResult<Self> {
+        Self::build_provider(
+            rpc_url,
+            max_retries,
+            Some((requests_per_second, burst)),
+        )
+        .await
+    }
+
+    /// Internal constructor shared by `new` and `with_rate_limit`.
+    ///
+    /// If `rate_limit` is `Some((rps, burst))`, the HTTP transport gets a
+    /// `ThrottleLayer`. Otherwise the client is built without throttling.
+    pub(crate) async fn build_provider(
+        rpc_url: &str,
+        max_retries: u32,
+        rate_limit: Option<(u32, NonZeroU32)>,
+    ) -> ProviderResult<Self> {
         let provider: Arc<dyn Provider<Ethereum>> =
             if rpc_url.starts_with("http://") || rpc_url.starts_with("https://") {
                 let url = rpc_url
@@ -263,9 +273,12 @@ impl AlloyProvider {
                         message: format!("Invalid RPC URL: {e}"),
                     })?;
 
-                // Build HTTP client with throttle layer at the transport level
-                let throttle = ThrottleLayer::new_with_burst(requests_per_second, burst);
-                let client = ClientBuilder::default().layer(throttle).http(url);
+                let client = if let Some((rps, burst)) = rate_limit {
+                    let throttle = ThrottleLayer::new_with_burst(rps, burst);
+                    ClientBuilder::default().layer(throttle).http(url)
+                } else {
+                    ClientBuilder::default().http(url)
+                };
 
                 let provider = ProviderBuilder::default()
                     .with_default_caching()

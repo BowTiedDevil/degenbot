@@ -98,26 +98,38 @@ impl PyAlloyProvider {
     ///
     /// Retryable errors: rate limits (HTTP 429), timeouts, connection failures.
     ///
-    /// # Rate Limiting (HTTP only)
+    /// # Rate Limiting (HTTP only, opt-in)
     ///
-    /// HTTP connections use transport-level rate limiting to avoid overwhelming
-    /// the RPC endpoint. `requests_per_second` controls the sustained rate,
-    /// while `burst` allows temporary spikes.
+    /// By default, HTTP connections run without transport-level rate limiting.
+    /// Pass `requests_per_second` and `burst` to enable throttling, which avoids
+    /// overwhelming the RPC endpoint. `requests_per_second` controls the sustained
+    /// rate, while `burst` allows temporary spikes. Both must be provided together
+    /// to activate throttling. These parameters are ignored for WS/IPC transports.
     #[new]
-    #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000, requests_per_second=50, burst=10))]
+    #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000, requests_per_second=None, burst=None))]
     fn new(
         py: Python<'_>,
         rpc_url: &str,
         max_retries: u32,
         max_blocks_per_request: u64,
-        requests_per_second: u32,
-        burst: u32,
+        requests_per_second: Option<u32>,
+        burst: Option<u32>,
     ) -> PyResult<Self> {
         /// Default burst size for rate limiting (guaranteed non-zero)
         const DEFAULT_BURST: std::num::NonZeroU32 = std::num::NonZeroU32::new(1).unwrap();
 
-        // Convert burst to NonZeroU32, defaulting to 1 if 0 is provided
-        let burst_nz = std::num::NonZeroU32::new(burst).unwrap_or(DEFAULT_BURST);
+        let rate_limit = match (requests_per_second, burst) {
+            (Some(rps), Some(b)) => {
+                let burst_nz = std::num::NonZeroU32::new(b).unwrap_or(DEFAULT_BURST);
+                Some((rps, burst_nz))
+            }
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(PyValueError::new_err(
+                    "requests_per_second and burst must be provided together",
+                ));
+            }
+            (None, None) => None,
+        };
 
         // Copy string before detaching from GIL
         let rpc_url = rpc_url.to_string();
@@ -126,7 +138,7 @@ impl PyAlloyProvider {
         let provider = py
             .detach(|| {
                 get_runtime().block_on(async {
-                    AlloyProvider::with_rate_limit(&rpc_url, max_retries, requests_per_second, burst_nz).await
+                    AlloyProvider::build_provider(&rpc_url, max_retries, rate_limit).await
                 })
             })
             .map_err(Into::<PyErr>::into)?;
