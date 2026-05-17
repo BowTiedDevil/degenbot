@@ -1,6 +1,5 @@
 //! PyO3 Python bindings for the Möbius transformation optimizer.
 
-#![allow(non_snake_case)]
 #![allow(clippy::must_use_candidate)]
 #![allow(clippy::use_self)]
 #![allow(clippy::let_and_return)]
@@ -20,29 +19,20 @@
 #![allow(clippy::unnecessary_wraps)]
 
 use crate::alloy_py::{extract_python_u256, PyU256};
-use crate::optimizers::mobius::{
-    compute_mobius_coefficients, mobius_solve, simulate_path, HopState, MobiusCoefficients,
-    MobiusError,
-};
-use crate::optimizers::mobius_batch::{mobius_batch_solve, mobius_batch_solve_vectorized};
+use crate::optimizers::mobius::HopState;
+
 use crate::optimizers::mobius_int::{
     mobius_refine_int, mobius_solve_with_refinement, u256_to_f64, IntHopState,
 };
 use crate::optimizers::mobius_v3::{
-    estimate_v3_final_sqrt_price, solve_piecewise, solve_v3_candidates,
-    solve_v3_tick_range_sequence, TickRangeCrossing, V3TickRangeHop, V3TickRangeSequence,
+    solve_v3_tick_range_sequence, TickRangeCrossing, V3TickRangeHop,
+    V3TickRangeSequence,
 };
 use crate::optimizers::mobius_v3_v3::solve_v3_v3;
 use alloy::primitives::U256;
 
 use pyo3::prelude::*;
 use pyo3::types::PyList;
-
-impl From<MobiusError> for PyErr {
-    fn from(err: MobiusError) -> Self {
-        pyo3::exceptions::PyValueError::new_err(format!("Möbius error: {err}"))
-    }
-}
 
 /// Reserve and fee state for a single pool hop.
 #[pyclass(name = "RustHopState", skip_from_py_object)]
@@ -80,62 +70,6 @@ impl PyHopState {
         format!(
             "RustHopState(reserve_in={}, reserve_out={}, fee={})",
             self.inner.reserve_in, self.inner.reserve_out, self.inner.fee
-        )
-    }
-}
-
-/// Möbius transformation coefficients.
-#[pyclass(name = "RustMobiusCoefficients")]
-pub struct PyMobiusCoefficients {
-    pub inner: MobiusCoefficients,
-}
-
-#[pymethods]
-impl PyMobiusCoefficients {
-    #[getter]
-    #[allow(non_snake_case)]
-    fn coeff_K(&self) -> f64 {
-        self.inner.K
-    }
-
-    #[getter]
-    #[allow(non_snake_case)]
-    fn coeff_M(&self) -> f64 {
-        self.inner.M
-    }
-
-    #[getter]
-    #[allow(non_snake_case)]
-    fn coeff_N(&self) -> f64 {
-        self.inner.N
-    }
-
-    #[getter]
-    fn is_profitable(&self) -> bool {
-        self.inner.is_profitable
-    }
-
-    /// Compute path output for input x.
-    #[pyo3(signature = (x))]
-    fn path_output(&self, x: f64) -> f64 {
-        self.inner.path_output(x)
-    }
-
-    /// Compute the exact optimal input.
-    fn optimal_input(&self) -> f64 {
-        self.inner.optimal_input()
-    }
-
-    /// Compute profit for input x.
-    #[pyo3(signature = (x))]
-    fn profit_at(&self, x: f64) -> f64 {
-        self.inner.profit_at(x)
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "RustMobiusCoefficients(K={}, M={}, N={}, is_profitable={})",
-            self.inner.K, self.inner.M, self.inner.N, self.inner.is_profitable
         )
     }
 }
@@ -280,423 +214,28 @@ impl PyV3TickRangeSequence {
         }
     }
 
+    /// Number of ranges in the sequence.
+    fn __len__(&self) -> usize {
+        self.inner.ranges.len()
+    }
+
+    /// Get the i-th range as a RustV3TickRangeHop.
+    fn __getitem__(&self, idx: usize) -> PyResult<PyV3TickRangeHop> {
+        if idx < self.inner.ranges.len() {
+            Ok(PyV3TickRangeHop {
+                inner: self.inner.ranges[idx].clone(),
+            })
+        } else {
+            Err(pyo3::exceptions::PyIndexError::new_err("Index out of range"))
+        }
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "RustV3TickRangeSequence(ranges={})",
             self.inner.ranges.len()
         )
     }
-}
-
-/// Result from a Möbius solve.
-#[pyclass(name = "RustMobiusResult")]
-pub struct PyMobiusResult {
-    pub optimal_input: f64,
-    pub profit: f64,
-    pub iterations: u32,
-    pub success: bool,
-}
-
-#[pymethods]
-impl PyMobiusResult {
-    #[getter]
-    fn optimal_input(&self) -> f64 {
-        self.optimal_input
-    }
-
-    #[getter]
-    fn profit(&self) -> f64 {
-        self.profit
-    }
-
-    #[getter]
-    fn iterations(&self) -> u32 {
-        self.iterations
-    }
-
-    #[getter]
-    fn success(&self) -> bool {
-        self.success
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "RustMobiusResult(optimal_input={}, profit={}, iterations={}, success={})",
-            self.optimal_input, self.profit, self.iterations, self.success
-        )
-    }
-}
-
-/// High-performance Möbius transformation optimizer implemented in Rust.
-///
-/// Every constant product swap y = (γ·s·x)/(r + γ·x) is a Möbius
-/// transformation. An n-hop path composes into l(x) = K·x / (M + N·x),
-/// with closed-form optimal input x_opt = (√(K·M) - M) / N.
-///
-/// Zero iterations, exact solution, O(n) forward pass.
-#[pyclass(name = "RustMobiusOptimizer")]
-pub struct PyMobiusOptimizer;
-
-#[pymethods]
-impl PyMobiusOptimizer {
-    #[new]
-    fn new() -> Self {
-        Self
-    }
-
-    /// Compute Möbius coefficients K, M, N for an n-hop path.
-    ///
-    /// Parameters
-    /// ----------
-    /// hops : list of RustHopState
-    ///     Pool states along the arbitrage path.
-    ///
-    /// Returns
-    /// -------
-    /// RustMobiusCoefficients
-    #[pyo3(signature = (hops))]
-    fn compute_coefficients(
-        &self,
-        py: Python<'_>,
-        hops: &Bound<'_, PyList>,
-    ) -> PyResult<PyMobiusCoefficients> {
-        let hop_states = extract_hops(hops)?;
-        let coeffs = py.detach(|| compute_mobius_coefficients(&hop_states))?;
-        Ok(PyMobiusCoefficients { inner: coeffs })
-    }
-
-    /// Simulate a swap through all hops.
-    ///
-    /// Parameters
-    /// ----------
-    /// x : float
-    ///     Input amount.
-    /// hops : list of RustHopState
-    ///     Pool states along the path.
-    ///
-    /// Returns
-    /// -------
-    /// float
-    #[pyo3(signature = (x, hops))]
-    fn simulate_path(&self, py: Python<'_>, x: f64, hops: &Bound<'_, PyList>) -> PyResult<f64> {
-        let hop_states = extract_hops(hops)?;
-        Ok(py.detach(|| simulate_path(x, &hop_states)))
-    }
-
-    /// Solve for optimal arbitrage input (closed-form, zero iterations).
-    ///
-    /// Parameters
-    /// ----------
-    /// hops : list of RustHopState
-    ///     Pool states along the arbitrage path.
-    /// max_input : float or None
-    ///     Optional upper bound on input amount.
-    ///
-    /// Returns
-    /// -------
-    /// RustMobiusResult
-    #[pyo3(signature = (hops, max_input=None))]
-    fn solve(
-        &self,
-        py: Python<'_>,
-        hops: &Bound<'_, PyList>,
-        max_input: Option<f64>,
-    ) -> PyResult<PyMobiusResult> {
-        let hop_states = extract_hops(hops)?;
-        let (x_opt, profit, iters) = py.detach(|| mobius_solve(&hop_states, max_input));
-        Ok(PyMobiusResult {
-            optimal_input: x_opt,
-            profit,
-            iterations: iters,
-            success: x_opt > 0.0 && profit > 0.0,
-        })
-    }
-
-    /// Solve with multiple candidate V3 tick ranges.
-    ///
-    /// Parameters
-    /// ----------
-    /// base_hops : list of RustHopState
-    ///     V2 (or other) hops excluding the V3 hop.
-    /// v3_hop_index : int
-    ///     Index in the full path where the V3 hop sits.
-    /// v3_candidates : list of RustV3TickRangeHop
-    ///     Candidate V3 tick ranges to check.
-    /// max_input : float or None
-    ///     Maximum input constraint.
-    ///
-    /// Returns
-    /// -------
-    /// RustMobiusResult
-    #[pyo3(signature = (base_hops, v3_hop_index, v3_candidates, max_input=None))]
-    fn solve_v3_candidates(
-        &self,
-        py: Python<'_>,
-        base_hops: &Bound<'_, PyList>,
-        v3_hop_index: usize,
-        v3_candidates: &Bound<'_, PyList>,
-        max_input: Option<f64>,
-    ) -> PyResult<PyMobiusResult> {
-        let hop_states = extract_hops(base_hops)?;
-        let candidates = extract_v3_candidates(v3_candidates)?;
-        let (x_opt, profit, iters) =
-            py.detach(|| solve_v3_candidates(&hop_states, v3_hop_index, &candidates, max_input));
-        Ok(PyMobiusResult {
-            optimal_input: x_opt,
-            profit,
-            iterations: iters,
-            success: x_opt > 0.0 && profit > 0.0,
-        })
-    }
-
-    /// Estimate final sqrt price after a V3 swap.
-    ///
-    /// Parameters
-    /// ----------
-    /// amount_in : float
-    ///     Input amount to the V3 pool.
-    /// v3_hop : RustV3TickRangeHop
-    ///     V3 tick range hop data.
-    ///
-    /// Returns
-    /// -------
-    /// float
-    #[pyo3(signature = (amount_in, v3_hop))]
-    fn estimate_v3_final_sqrt_price(
-        &self,
-        py: Python<'_>,
-        amount_in: f64,
-        v3_hop: &PyV3TickRangeHop,
-    ) -> f64 {
-        let inner = v3_hop.inner.clone();
-        py.detach(|| estimate_v3_final_sqrt_price(amount_in, &inner))
-    }
-
-    /// Solve arbitrage with piecewise-Möbius for V3 tick crossings.
-    ///
-    /// For each candidate ending range (via TickRangeCrossing), the V3 swap
-    /// is decomposed into fixed crossing output from crossed ranges plus
-    /// variable Möbius output from the ending range.
-    ///
-    /// Parameters
-    /// ----------
-    /// hops : list of RustHopState
-    ///     Full path hops with V3 hop at v3_hop_index.
-    /// v3_hop_index : int
-    ///     Index of the V3 hop in the path.
-    /// crossings : list of TickRangeCrossing
-    ///     Candidate crossing data, ordered by likelihood.
-    /// max_input : float or None
-    ///     Maximum input constraint.
-    ///
-    /// Returns
-    /// -------
-    /// RustMobiusResult
-    #[pyo3(signature = (hops, v3_hop_index, crossings, max_input=None))]
-    fn solve_piecewise(
-        &self,
-        py: Python<'_>,
-        hops: &Bound<'_, PyList>,
-        v3_hop_index: usize,
-        crossings: &Bound<'_, PyList>,
-        max_input: Option<f64>,
-    ) -> PyResult<PyMobiusResult> {
-        let hop_states = extract_hops(hops)?;
-        let crossing_data = extract_tick_range_crossings(crossings)?;
-        let (x_opt, profit, iters) =
-            py.detach(|| solve_piecewise(&hop_states, v3_hop_index, &crossing_data, max_input));
-        Ok(PyMobiusResult {
-            optimal_input: x_opt,
-            profit,
-            iterations: iters,
-            success: x_opt > 0.0 && profit > 0.0,
-        })
-    }
-
-    /// Solve arbitrage with full V3 tick range sequence handling.
-    ///
-    /// This is the high-level entry point for multi-range V3 arbitrage.
-    /// It computes crossings for each candidate range and returns the best result.
-    ///
-    /// Parameters
-    /// ----------
-    /// hops : list of RustHopState
-    ///     Full path hops with V3 hop at v3_hop_index.
-    /// v3_hop_index : int
-    ///     Index of the V3 hop in the path.
-    /// sequence : RustV3TickRangeSequence
-    ///     V3 tick range sequence (current + adjacent ranges).
-    /// max_candidates : int
-    ///     Maximum number of candidate ranges to check.
-    /// max_input : float or None
-    ///     Maximum input constraint.
-    ///
-    /// Returns
-    /// -------
-    /// RustMobiusResult
-    #[pyo3(signature = (hops, v3_hop_index, sequence, max_candidates, max_input=None))]
-    fn solve_v3_sequence(
-        &self,
-        py: Python<'_>,
-        hops: &Bound<'_, PyList>,
-        v3_hop_index: usize,
-        sequence: &PyV3TickRangeSequence,
-        max_candidates: usize,
-        max_input: Option<f64>,
-    ) -> PyResult<PyMobiusResult> {
-        let hop_states = extract_hops(hops)?;
-        let seq = sequence.inner.clone();
-        let (x_opt, profit, iters) = py.detach(|| {
-            solve_v3_tick_range_sequence(&hop_states, v3_hop_index, &seq, max_candidates, max_input)
-        });
-        Ok(PyMobiusResult {
-            optimal_input: x_opt,
-            profit,
-            iterations: iters,
-            success: x_opt > 0.0 && profit > 0.0,
-        })
-    }
-
-    /// Solve V3-V3 arbitrage (two V3 hops, both potentially crossing ticks).
-    ///
-    /// Uses enumeration over candidate ending ranges with golden section search.
-    ///
-    /// Parameters
-    /// ----------
-    /// sequence1 : RustV3TickRangeSequence
-    ///     Tick range sequence for first V3 hop.
-    /// sequence2 : RustV3TickRangeSequence
-    ///     Tick range sequence for second V3 hop.
-    /// max_input : float, optional
-    ///     Maximum input constraint.
-    /// max_candidates : int, optional
-    ///     Maximum number of candidate ranges to check per hop (default: 10).
-    ///
-    /// Returns
-    /// -------
-    /// RustMobiusResult
-    #[pyo3(signature = (sequence1, sequence2, max_input=None, max_candidates=10))]
-    fn solve_v3_v3(
-        &self,
-        py: Python<'_>,
-        sequence1: &PyV3TickRangeSequence,
-        sequence2: &PyV3TickRangeSequence,
-        max_input: Option<f64>,
-        max_candidates: usize,
-    ) -> PyResult<PyMobiusResult> {
-        let seq1 = sequence1.inner.clone();
-        let seq2 = sequence2.inner.clone();
-        let (x_opt, profit, iters) =
-            py.detach(|| solve_v3_v3(&seq1, &seq2, max_input, max_candidates));
-        Ok(PyMobiusResult {
-            optimal_input: x_opt,
-            profit,
-            iterations: iters,
-            success: x_opt > 0.0 && profit > 0.0,
-        })
-    }
-
-    /// Solve a batch of paths with the same hop count.
-    ///
-    /// Parameters
-    /// ----------
-    /// hops_array : list of float
-    ///     Flat array [reserve_in, reserve_out, fee] per hop per path.
-    /// num_hops : int
-    ///     Number of hops per path.
-    /// max_inputs : list of float
-    ///     Per-path max input constraints (use float('inf') for unconstrained).
-    ///
-    /// Returns
-    /// -------
-    /// dict with 'optimal_input', 'profit', 'is_profitable' lists.
-    #[pyo3(signature = (hops_array, num_hops, max_inputs))]
-    fn solve_batch(
-        &self,
-        py: Python<'_>,
-        hops_array: &Bound<'_, PyList>,
-        num_hops: usize,
-        max_inputs: &Bound<'_, PyList>,
-    ) -> PyResult<Py<PyAny>> {
-        let hops_vec: Vec<f64> = hops_array.extract()?;
-        let max_vec: Vec<f64> = max_inputs.extract()?;
-
-        let result = py
-            .detach(|| mobius_batch_solve(&hops_vec, num_hops, &max_vec))
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-
-        let dict = pyo3::types::PyDict::new(py);
-        dict.set_item("optimal_input", result.optimal_input.clone())?;
-        dict.set_item("profit", result.profit.clone())?;
-        dict.set_item("is_profitable", result.is_profitable)?;
-        Ok(dict.into())
-    }
-
-    /// Solve a batch using vectorized coefficient computation.
-    ///
-    /// Parameters
-    /// ----------
-    /// reserves_in : list of float
-    ///     Flat array of input reserves (num_paths * num_hops).
-    /// reserves_out : list of float
-    ///     Flat array of output reserves (num_paths * num_hops).
-    /// fees : list of float
-    ///     Flat array of fee fractions (num_paths * num_hops).
-    /// num_hops : int
-    ///     Number of hops per path.
-    /// max_inputs : list of float
-    ///     Per-path max input constraints.
-    ///
-    /// Returns
-    /// -------
-    /// dict with 'optimal_input', 'profit', 'is_profitable' lists.
-    #[pyo3(signature = (reserves_in, reserves_out, fees, num_hops, max_inputs))]
-    fn solve_batch_vectorized(
-        &self,
-        py: Python<'_>,
-        reserves_in: &Bound<'_, PyList>,
-        reserves_out: &Bound<'_, PyList>,
-        fees: &Bound<'_, PyList>,
-        num_hops: usize,
-        max_inputs: &Bound<'_, PyList>,
-    ) -> PyResult<Py<PyAny>> {
-        let r_in: Vec<f64> = reserves_in.extract()?;
-        let r_out: Vec<f64> = reserves_out.extract()?;
-        let fee_vec: Vec<f64> = fees.extract()?;
-        let max_vec: Vec<f64> = max_inputs.extract()?;
-
-        let num_paths = max_vec.len();
-        let result = py
-            .detach(|| {
-                mobius_batch_solve_vectorized(
-                    num_paths, num_hops, &r_in, &r_out, &fee_vec, &max_vec,
-                )
-            })
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-
-        let dict = pyo3::types::PyDict::new(py);
-        dict.set_item("optimal_input", result.optimal_input.clone())?;
-        dict.set_item("profit", result.profit.clone())?;
-        dict.set_item("is_profitable", result.is_profitable)?;
-        Ok(dict.into())
-    }
-}
-
-/// Extract a list of HopState from a Python list.
-fn extract_hops(py_list: &Bound<'_, PyList>) -> PyResult<Vec<HopState>> {
-    let mut hops = Vec::new();
-    for item in py_list.iter() {
-        if let Ok(py_hop) = item.extract::<PyRef<PyHopState>>() {
-            hops.push(py_hop.inner.clone());
-        } else if let Ok((r_in, r_out, fee)) = item.extract::<(f64, f64, f64)>() {
-            hops.push(HopState::new(r_in, r_out, fee));
-        } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "Each hop must be a RustHopState or a (reserve_in, reserve_out, fee) tuple",
-            ));
-        }
-    }
-    Ok(hops)
 }
 
 /// Python wrapper for TickRangeCrossing.
@@ -739,26 +278,13 @@ impl PyTickRangeCrossing {
             inner: self.inner.ending_range.clone(),
         }
     }
-}
 
-/// Extract a list of V3TickRangeHop from a Python list.
-fn extract_v3_candidates(py_list: &Bound<'_, PyList>) -> PyResult<Vec<V3TickRangeHop>> {
-    let mut candidates = Vec::new();
-    for item in py_list.iter() {
-        let py_v3 = item.extract::<PyRef<PyV3TickRangeHop>>()?;
-        candidates.push(py_v3.inner.clone());
+    fn __repr__(&self) -> String {
+        format!(
+            "RustTickRangeCrossing(crossing_gross_input={}, crossing_output={})",
+            self.inner.crossing_gross_input, self.inner.crossing_output
+        )
     }
-    Ok(candidates)
-}
-
-/// Extract a list of TickRangeCrossing from a Python list.
-fn extract_tick_range_crossings(py_list: &Bound<'_, PyList>) -> PyResult<Vec<TickRangeCrossing>> {
-    let mut crossings = Vec::new();
-    for item in py_list.iter() {
-        let py_crossing = item.extract::<PyRef<PyTickRangeCrossing>>()?;
-        crossings.push(py_crossing.inner.clone());
-    }
-    Ok(crossings)
 }
 
 // ==========================================================================
@@ -1296,21 +822,12 @@ impl PyPoolCache {
 
 pub fn add_mobius_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyHopState>()?;
-    m.add_class::<PyMobiusCoefficients>()?;
     m.add_class::<PyV3TickRangeHop>()?;
     m.add_class::<PyV3TickRangeSequence>()?;
     m.add_class::<PyTickRangeCrossing>()?;
-    m.add_class::<PyMobiusResult>()?;
-    m.add_class::<PyMobiusOptimizer>()?;
     m.add_class::<PyArbResult>()?;
     m.add_class::<PyArbSolver>()?;
     m.add_class::<PyPoolCache>()?;
-
-    // Standalone functions
-    m.add_function(wrap_pyfunction!(py_compute_mobius_coefficients, m)?)?;
-    m.add_function(wrap_pyfunction!(py_mobius_solve, m)?)?;
-    m.add_function(wrap_pyfunction!(py_simulate_path, m)?)?;
-    m.add_function(wrap_pyfunction!(py_estimate_v3_final_sqrt_price, m)?)?;
 
     // Integer Möbius solver
     m.add_class::<PyIntHopState>()?;
@@ -1320,51 +837,6 @@ pub fn add_mobius_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_mobius_refine_int, m)?)?;
 
     Ok(())
-}
-
-/// Compute Möbius coefficients for an n-hop path.
-#[pyfunction]
-#[pyo3(signature = (hops))]
-fn py_compute_mobius_coefficients(
-    py: Python<'_>,
-    hops: &Bound<'_, PyList>,
-) -> PyResult<PyMobiusCoefficients> {
-    let hop_states = extract_hops(hops)?;
-    let coeffs = py.detach(|| compute_mobius_coefficients(&hop_states))?;
-    Ok(PyMobiusCoefficients { inner: coeffs })
-}
-
-/// Solve for optimal arbitrage input.
-#[pyfunction]
-#[pyo3(signature = (hops, max_input=None))]
-fn py_mobius_solve(
-    py: Python<'_>,
-    hops: &Bound<'_, PyList>,
-    max_input: Option<f64>,
-) -> PyResult<PyMobiusResult> {
-    let hop_states = extract_hops(hops)?;
-    let (x_opt, profit, iters) = py.detach(|| mobius_solve(&hop_states, max_input));
-    Ok(PyMobiusResult {
-        optimal_input: x_opt,
-        profit,
-        iterations: iters,
-        success: x_opt > 0.0 && profit > 0.0,
-    })
-}
-
-/// Simulate a swap through all hops.
-#[pyfunction]
-#[pyo3(signature = (x, hops))]
-fn py_simulate_path(py: Python<'_>, x: f64, hops: &Bound<'_, PyList>) -> PyResult<f64> {
-    let hop_states = extract_hops(hops)?;
-    Ok(py.detach(|| simulate_path(x, &hop_states)))
-}
-
-/// Estimate final sqrt price after a V3 swap.
-#[pyfunction]
-#[pyo3(signature = (amount_in, v3_hop))]
-fn py_estimate_v3_final_sqrt_price(amount_in: f64, v3_hop: &PyV3TickRangeHop) -> f64 {
-    estimate_v3_final_sqrt_price(amount_in, &v3_hop.inner)
 }
 
 // ==========================================================================

@@ -14,9 +14,9 @@ import math
 import signal
 
 import pytest
-import degenbot.degenbot_rs as rs_mobius
 from scipy.optimize import minimize_scalar
 
+import degenbot.degenbot_rs as rs_mobius
 from degenbot.arbitrage.optimizers.v3_tick_predictor import tick_to_sqrt_price
 from degenbot.uniswap.v3_libraries.swap_math import compute_swap_step
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
@@ -28,9 +28,35 @@ from .conftest import make_rust_v3_hop as make_v3_hop
 # ==============================================================================
 
 
+def _solve_v3_v3(seq1, seq2, max_input=None, max_candidates=10):
+    """Solve a V3-V3 path using RustArbSolver.
+
+    Constructs the hops from the sequences' first ranges, since RustArbSolver
+    requires base_hops alongside v3_sequences.
+    """
+    solver = rs_mobius.RustArbSolver()
+    hops = [seq1[0].to_hop_state(), seq2[0].to_hop_state()]
+    return solver.solve(
+        hops,
+        v3_sequences=[(0, seq1), (1, seq2)],
+        max_input=max_input,
+        max_candidates=max_candidates,
+    )
+
+
 def sim_path(x: float, hops: list) -> float:
-    """Simulate path using Rust simulate_path (accepts RustHopState)."""
-    return rs_mobius.py_simulate_path(x, hops)
+    """Simulate path using pure Python mobility math (accepts RustHopState)."""
+    amount = x
+    for hop in hops:
+        r_in = hop.reserve_in
+        r_out = hop.reserve_out
+        fee = hop.fee
+        gamma = 1.0 - fee
+        denom = r_in + amount * gamma
+        if denom <= 0:
+            return 0.0
+        amount = amount * gamma * r_out / denom
+    return amount
 
 
 def tick_to_sqrt_price_x96(tick: int) -> int:
@@ -424,7 +450,7 @@ class TestV3V3ProfitFunction:
 
         # The solver should find this crossing path profitable
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
-        result = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
         assert result.profit > 0, "Crossing path should be profitable"
 
     def test_profit_crossing2_only(self):
@@ -571,7 +597,7 @@ class TestV3V3ProfitFunction:
             assert abs(manual_profit - expected_profit) < abs(expected_profit) * 1e-10 + 1.0
 
         # The solver should handle this
-        result = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
         assert result.optimal_input >= 0
 
     def test_profit_below_crossing_cost_returns_negative(self):
@@ -773,7 +799,7 @@ class TestV3V3VsBrent:
         seq1 = rs_mobius.RustV3TickRangeSequence([hop1])
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-        result_rust = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result_rust = _solve_v3_v3(seq1, seq2)
 
         __x_brent, profit_brent, brent_success = v3_v3_brent_solve(seq1, seq2)
 
@@ -824,7 +850,7 @@ class TestV3V3VsBrent:
         seq1 = rs_mobius.RustV3TickRangeSequence([hop1_r1, hop1_r2])
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-        result_rust = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result_rust = _solve_v3_v3(seq1, seq2)
 
         __x_brent, profit_brent, brent_success = v3_v3_brent_solve(seq1, seq2)
 
@@ -881,7 +907,7 @@ class TestV3V3VsBrent:
         seq1 = rs_mobius.RustV3TickRangeSequence([hop1_r1, hop1_r2])
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2_r1, hop2_r2])
 
-        result_rust = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result_rust = _solve_v3_v3(seq1, seq2)
 
         __x_brent, profit_brent, brent_success = v3_v3_brent_solve(seq1, seq2)
 
@@ -906,7 +932,7 @@ class TestV3V3VsBrent:
         seq1 = rs_mobius.RustV3TickRangeSequence([hop1])
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-        result_rust = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result_rust = _solve_v3_v3(seq1, seq2)
 
         _x_brent, _profit_brent, brent_success = v3_v3_brent_solve(seq1, seq2)
 
@@ -925,7 +951,7 @@ class TestV3V3VsBrent:
         seq1 = rs_mobius.RustV3TickRangeSequence([hop1])
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-        result_rust = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result_rust = _solve_v3_v3(seq1, seq2)
 
         __x_brent, profit_brent, brent_success = v3_v3_brent_solve(seq1, seq2)
 
@@ -952,14 +978,10 @@ class TestV3V3VsBrent:
         seq1 = rs_mobius.RustV3TickRangeSequence([hop1])
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-        result_unconstrained = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result_unconstrained = _solve_v3_v3(seq1, seq2)
 
         max_input = result_unconstrained.optimal_input * 0.1
-        result_constrained = rs_mobius.RustMobiusOptimizer().solve_v3_v3(
-            seq1,
-            seq2,
-            max_input,
-        )
+        result_constrained = _solve_v3_v3(seq1, seq2, max_input=max_input)
 
         if result_constrained.success:
             assert result_constrained.optimal_input <= max_input, (
@@ -993,7 +1015,7 @@ class TestV3V3VsBrent:
             seq1 = rs_mobius.RustV3TickRangeSequence([hop1])
             seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-            result = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+            result = _solve_v3_v3(seq1, seq2)
             assert result.optimal_input >= 0
 
 
@@ -1063,7 +1085,7 @@ class TestV3V3VsV3IntegerMath:
             tick_data_2, current_tick_2, range_idx_2, 0.003, zero_for_one=False
         )
 
-        result_rust = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result_rust = _solve_v3_v3(seq1, seq2)
 
         if bf_profit > 0 and result_rust.success and result_rust.profit > 0:
             rust_profit_int = int(result_rust.profit)
@@ -1122,7 +1144,7 @@ class TestV3V3VsV3IntegerMath:
             tick_data_2, current_tick_2, range_idx_2, 0.0005, zero_for_one=False
         )
 
-        result_rust = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result_rust = _solve_v3_v3(seq1, seq2)
 
         if bf_profit > 0 and result_rust.success and result_rust.profit > 0:
             rust_profit_int = int(result_rust.profit)
@@ -1147,7 +1169,7 @@ class TestV3V3VsV3IntegerMath:
         seq1 = rs_mobius.RustV3TickRangeSequence([hop1])
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-        result = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
 
         x_opt = result.optimal_input
         hs1 = hop1.to_hop_state()
@@ -1175,7 +1197,7 @@ class TestV3V3VsV3IntegerMath:
         seq1 = rs_mobius.RustV3TickRangeSequence([hop1])
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-        result = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
         assert result.profit > 0
 
         # Verify via simulate_path
@@ -1200,7 +1222,7 @@ class TestV3V3VsV3IntegerMath:
         seq1 = rs_mobius.RustV3TickRangeSequence([hop1])
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-        result = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
         assert result.profit > 0
 
         hs1 = hop1.to_hop_state()
@@ -1250,8 +1272,8 @@ class TestV3V3VsV3IntegerMath:
         seq1_single = rs_mobius.RustV3TickRangeSequence([hop1_r1])
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-        result_multi = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1_multi, seq2)
-        result_single = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1_single, seq2)
+        result_multi = _solve_v3_v3(seq1_multi, seq2)
+        result_single = _solve_v3_v3(seq1_single, seq2)
 
         # Multi-range should find better (or equal) profit
         assert result_multi.profit >= result_single.profit, (
@@ -1316,7 +1338,7 @@ class TestV3V3EdgeCases:
         )
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-        result = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
         assert result.optimal_input >= 0
 
     def test_very_narrow_tick_range(self):
@@ -1353,7 +1375,7 @@ class TestV3V3EdgeCases:
         seq1 = rs_mobius.RustV3TickRangeSequence([hop1])
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-        result = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
         assert result.optimal_input >= 0
 
     def test_massive_liquidity_asymmetry(self):
@@ -1371,7 +1393,7 @@ class TestV3V3EdgeCases:
         seq1 = rs_mobius.RustV3TickRangeSequence([hop1])
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-        result = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
         assert result.optimal_input >= 0
         if result.success:
             assert result.profit > 0
@@ -1391,7 +1413,7 @@ class TestV3V3EdgeCases:
         seq1 = rs_mobius.RustV3TickRangeSequence([hop1])
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-        result = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
         assert result.optimal_input >= 0
 
     def test_fee_exceeds_profit(self):
@@ -1409,7 +1431,7 @@ class TestV3V3EdgeCases:
         seq1 = rs_mobius.RustV3TickRangeSequence([hop1])
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-        result = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
 
         if result.success:
             assert result.profit > 0, "Successful result must have positive profit"
@@ -1444,7 +1466,7 @@ class TestV3V3EdgeCases:
         seq1 = rs_mobius.RustV3TickRangeSequence([hop1])
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-        result = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
         assert result.optimal_input >= 0
         if result.success:
             assert result.profit > 0
@@ -1465,7 +1487,7 @@ class TestV3V3EdgeCases:
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
         # With tiny max_input
-        result = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2, max_input=1.0)
+        result = _solve_v3_v3(seq1, seq2, max_input=1.0)
         assert result.optimal_input >= 0
 
     def test_no_valid_search_region(self):
@@ -1483,7 +1505,7 @@ class TestV3V3EdgeCases:
         seq1 = rs_mobius.RustV3TickRangeSequence([hop1])
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
-        result = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2, max_input=0.0)
+        result = _solve_v3_v3(seq1, seq2, max_input=0.0)
 
         assert not result.success
         assert result.optimal_input == 0
@@ -1528,7 +1550,7 @@ class TestV3V3EdgeCases:
         seq2 = rs_mobius.RustV3TickRangeSequence([hop2])
 
         # Should not crash
-        result = rs_mobius.RustMobiusOptimizer().solve_v3_v3(seq1, seq2)
+        result = _solve_v3_v3(seq1, seq2)
         assert result.optimal_input >= 0
 
 
@@ -1571,8 +1593,12 @@ class TestV3SingleRangeBounds:
         v2_hop = rs_mobius.RustHopState(reserve_in=1e19, reserve_out=1e16, fee=0.003)
 
         # V3 is at hop index 0: path is [V3(zfo) → V2]
-        optimizer = rs_mobius.RustMobiusOptimizer()
-        result = optimizer.solve_v3_candidates([v2_hop], 0, [v3_candidate], None)
+        seq = rs_mobius.RustV3TickRangeSequence([v3_candidate])
+        solver = rs_mobius.RustArbSolver()
+        result = solver.solve(
+            [v3_candidate.to_hop_state(), v2_hop],
+            v3_sequences=[(0, seq)],
+        )
 
         assert result.optimal_input > 0
         assert result.profit > 0
@@ -1602,15 +1628,13 @@ class TestV3SingleRangeBounds:
         v2_hop = rs_mobius.RustHopState(reserve_in=1e19, reserve_out=1e16, fee=0.003)
         v3_hs = hop0.to_hop_state()
 
-        optimizer = rs_mobius.RustMobiusOptimizer()
+        solver = rs_mobius.RustArbSolver()
 
         # solve_v3_sequence uses solve_piecewise internally
-        result = optimizer.solve_v3_sequence(
+        result = solver.solve(
             [v3_hs, v2_hop],
-            0,
-            seq,
-            3,
-            None,
+            v3_sequences=[(0, seq)],
+            max_candidates=3,
         )
 
         assert result.optimal_input > 0
@@ -1633,7 +1657,7 @@ class TestV3SingleRangeBounds:
         v2_hop = rs_mobius.RustHopState(reserve_in=1e19, reserve_out=1e16, fee=0.003)
         v3_hs = hop0.to_hop_state()
 
-        optimizer = rs_mobius.RustMobiusOptimizer()
+        solver = rs_mobius.RustArbSolver()
 
         # This must terminate (not hang)
         def handler(_signum, _frame):
@@ -1643,12 +1667,10 @@ class TestV3SingleRangeBounds:
         signal.alarm(5)
 
         try:
-            result = optimizer.solve_v3_sequence(
+            result = solver.solve(
                 [v3_hs, v2_hop],
-                0,
-                seq,
-                3,
-                None,
+                v3_sequences=[(0, seq)],
+                max_candidates=3,
             )
             assert result.optimal_input >= 0
         finally:
