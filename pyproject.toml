@@ -67,25 +67,6 @@ omit = [
     "**/migrations/**/*.py",
 ]
 
-[tool.mypy]
-plugins = ["pydantic.mypy"]
-files=["src/degenbot"]
-python_version = "3.12"
-python_executable = ".venv/bin/python"
-untyped_calls_exclude = "cvxpy"
-
-[[tool.mypy.overrides]]
-module="degenbot.*"
-strict = true
-
-[[tool.mypy.overrides]]
-module=[
-    "scipy.*",
-    "tqdm.*",
-    "networkx.*",
-]
-ignore_missing_imports = true
-
 [tool.ruff]
 line-length = 100
 indent-width = 4
@@ -255,7 +236,6 @@ dev = [
     "coverage",
     "hypothesis",
     "maturin",
-    "mypy",
     "pytest-asyncio",
     "pytest-benchmark",
     "pytest-cov",
