@@ -14,9 +14,9 @@ from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.registry.pool_type import pool_type_registry
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
     UniswapV3PoolExternalUpdate,
 )

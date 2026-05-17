@@ -16,7 +16,9 @@ from degenbot.aave.enrichment.handlers.supply import SupplyHandler
 from degenbot.aave.enrichment.handlers.transfer import BalanceTransferHandler
 from degenbot.aave.enrichment.handlers.unknown import UnknownHandler
 from degenbot.aave.enrichment.handlers.withdraw import WithdrawHandler
-from degenbot.aave.operation_types import OperationType
+
+if TYPE_CHECKING:
+    from degenbot.aave.operation_types import OperationType
 
 # Registry mapping OperationType to handler instances
 HANDLER_REGISTRY: dict["OperationType", OperationHandler] = {}

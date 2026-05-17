@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 def detect_lending_tokens(
     provider: ProviderAdapter,
-    pool_address: ChecksumAddress,
+    pool_address: ChecksumAddress,  # noqa: ARG001
     token_addresses: tuple[ChecksumAddress, ...],
     tokens: tuple[Erc20Token, ...],
     *,

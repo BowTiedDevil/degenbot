@@ -15,16 +15,15 @@ from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v4_types import (
     UniswapV4PoolExternalUpdate,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
-    from typing import overload
 
     from web3.types import BlockIdentifier
 

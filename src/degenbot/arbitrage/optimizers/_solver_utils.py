@@ -6,6 +6,8 @@ from typing import Any
 
 from degenbot.degenbot_rs import (
     RustIntHopState as _RustIntHopState,
+)
+from degenbot.degenbot_rs import (
     py_mobius_refine_int as _py_mobius_refine_int,
 )
 from degenbot.types.hop_types import BalancerMultiTokenHop, BoundedProductHop, HopType

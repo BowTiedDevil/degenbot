@@ -46,11 +46,11 @@ from degenbot.logging import logger
 from degenbot.provider.call_helpers import async_raw_call, encode_function_calldata
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.types.abstract import AbstractPoolTracker
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 

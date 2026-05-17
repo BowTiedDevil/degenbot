@@ -12,7 +12,6 @@ from degenbot.arbitrage.types import (
 )
 from degenbot.exceptions import OptimizationError
 from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
-from degenbot.types.pool_protocols import ArbitragePathPool
 from degenbot.types.concrete import (
     AbstractPublisherMessage,
     PoolStateMessage,
@@ -31,6 +30,7 @@ if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
     from degenbot.types.abstract import AbstractPoolState
     from degenbot.types.hop_types import HopType
+    from degenbot.types.pool_protocols import ArbitragePathPool
 
 
 _MIN_POOLS_FOR_ARBITRAGE_PATH = 2

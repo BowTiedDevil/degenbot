@@ -38,8 +38,8 @@ __all__ = (
     "FlatComposer",
     "NoApprovals",
     "PayloadComposer",
-    "UniswapCurveCycle",
-    "UniswapLpCycle",
+    "UniswapCurveCycle",  # noqa: F822
+    "UniswapLpCycle",  # noqa: F822
     "V4PoolKey",
     "generate_payloads",
 )

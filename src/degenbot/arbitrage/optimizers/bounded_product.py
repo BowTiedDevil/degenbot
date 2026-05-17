@@ -94,8 +94,8 @@ class BoundedProductCFMM:
         sqrt_price_external = math.sqrt(external_price)
 
         # Optimal reserves from closed-form solution
-        # R1 + β = L × sqrt(P_external)
-        # R0 + α = L / sqrt(P_external)
+        # R1 + beta = L * sqrt(P_external)
+        # R0 + alpha = L / sqrt(P_external)
         R1_opt = self.liquidity * sqrt_price_external - self.beta
         R0_opt = self.liquidity / sqrt_price_external - self.alpha
 

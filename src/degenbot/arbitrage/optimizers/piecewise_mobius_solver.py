@@ -28,9 +28,17 @@ from degenbot.arbitrage.optimizers.mobius_solver import MobiusSolver
 from degenbot.arbitrage.optimizers.v3_tick_predictor import estimate_price_impact
 from degenbot.degenbot_rs import (
     RustHopState as _RustHopState,
+)
+from degenbot.degenbot_rs import (
     RustMobiusOptimizer as _RustMobiusOptimizer,
+)
+from degenbot.degenbot_rs import (
     RustTickRangeCrossing as _RustTickRangeCrossing,
+)
+from degenbot.degenbot_rs import (
     RustV3TickRangeHop as _RustV3TickRangeHop,
+)
+from degenbot.degenbot_rs import (
     RustV3TickRangeSequence as _RustV3TickRangeSequence,
 )
 from degenbot.exceptions import OptimizationError

@@ -31,15 +31,20 @@ from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot, MissingLiquidityData
 from degenbot.uniswap.concentrated.state_manager import ConcentratedLiquidityStateManager
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.concentrated.v4_simulator import calculate_swap as _v4_swap
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
-from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-from degenbot.uniswap.v3_types import BitmapWord, Pip, Tick
 from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
 from degenbot.uniswap.v3_libraries.tick_bitmap import gen_ticks
-from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK, get_sqrt_ratio_at_tick
+from degenbot.uniswap.v3_libraries.tick_math import (
+    MAX_SQRT_RATIO,
+    MAX_TICK,
+    MIN_SQRT_RATIO,
+    MIN_TICK,
+    get_sqrt_ratio_at_tick,
+)
+from degenbot.uniswap.v3_types import BitmapWord, Pip, Tick
 from degenbot.uniswap.v4_libraries.tick_bitmap import flip_tick
 from degenbot.uniswap.v4_libraries.tick_math import MAX_SQRT_PRICE, MIN_SQRT_PRICE
 from degenbot.uniswap.v4_pool_calc import UniswapV4PoolCalc

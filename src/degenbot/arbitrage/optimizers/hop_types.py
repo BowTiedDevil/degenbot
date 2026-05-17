@@ -10,8 +10,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from degenbot.types.hop_types import HopType as _HopType
 from degenbot.types.hop_types import BoundedProductHop as _BoundedProductHop
+from degenbot.types.hop_types import HopType as _HopType
 from degenbot.types.hop_types import PoolInvariant as _PoolInvariant
 
 __all__ = [
@@ -51,10 +51,6 @@ class SolveInput:
     @property
     def all_constant_product(self) -> bool:
         return not self.has_bounded_product
-
-    @property
-    def all_constant_product(self) -> bool:
-        return all(h.invariant == _PoolInvariant.CONSTANT_PRODUCT for h in self.hops)
 
     @property
     def has_solidly_stable(self) -> bool:

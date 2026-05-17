@@ -7,8 +7,8 @@ from typing import Self
 
 import pydantic
 
-from degenbot.validation.evm_values import ValidatedInt128, ValidatedUint128, ValidatedUint256
 from degenbot.types.aliases import BlockNumber
+from degenbot.validation.evm_values import ValidatedInt128, ValidatedUint128, ValidatedUint256
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

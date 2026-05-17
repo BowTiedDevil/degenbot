@@ -21,7 +21,7 @@ class IntMappedToString(TypeDecorator[int]):
     def process_bind_param(
         self,
         value: int | None,
-        dialect: Dialect,  # noqa: ARG004
+        dialect: Dialect,
     ) -> str | None:
         """
         Perform the Python type -> DB type conversion.
@@ -32,7 +32,7 @@ class IntMappedToString(TypeDecorator[int]):
     def process_result_value(
         self,
         value: str | None,
-        dialect: Dialect,  # noqa: ARG004
+        dialect: Dialect,
     ) -> int | None:
         """
         Perform the DB type -> Python type conversion.

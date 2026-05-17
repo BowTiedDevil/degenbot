@@ -247,11 +247,11 @@ class LiquidationHandler:
             raise EnrichmentError(msg)
 
         # Calculate net increase
-        _amount = event.amount
-        if _amount is None:
+        amount = event.amount
+        if amount is None:
             msg = "Liquidation event amount is None"
             raise EnrichmentError(msg)
-        raw_amount = event.balance_increase - _amount  # ty:ignore[unsupported-operator]
+        raw_amount = event.balance_increase - amount  # ty:ignore[unsupported-operator]
 
         logger.debug(
             f"ENRICHMENT: LIQUIDATION net debt increase - using DEBT_BURN "

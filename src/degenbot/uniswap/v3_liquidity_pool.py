@@ -21,6 +21,7 @@ from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot, MissingLiquidityData
 from degenbot.uniswap.concentrated.state_manager import ConcentratedLiquidityStateManager
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.concentrated.v3_simulator import calculate_swap as _v3_swap
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
 from degenbot.uniswap.types import UniswapPoolSwapVector
@@ -36,7 +37,6 @@ from degenbot.uniswap.v3_libraries.tick_math import (
 )
 from degenbot.uniswap.v3_pool_calc import UniswapV3PoolCalc
 from degenbot.uniswap.v3_pool_state import V3PoolState
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
     InitializedTickMap,
     Liquidity,

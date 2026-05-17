@@ -299,7 +299,7 @@ class _UniswapMultiPoolCycleTesting(_UniswapLpCycle):
             )
 
             # SET UP PARAMETERS
-            assert len(problem.param_dict) == 3  # noqa: PLR2004
+            assert len(problem.param_dict) == 3
             swap_fees = problem.param_dict["swap_fees"]
             compressed_reserves_pre_swap = problem.param_dict["compressed_reserves_pre_swap"]
             pool_ks_pre_swap = problem.param_dict["pool_ks_pre_swap"]
@@ -455,7 +455,7 @@ class _UniswapMultiPoolCycleTesting(_UniswapLpCycle):
     def generate_payloads(
         self,
         from_address: ChecksumAddress | str,
-        swap_amount: int,
+        swap_amount: int,  # noqa: ARG002
         pool_swap_amounts: Sequence[
             UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
         ],

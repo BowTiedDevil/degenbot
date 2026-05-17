@@ -453,17 +453,17 @@ def compute_mobius_coefficients(hops: list[MobiusFloatHop]) -> MobiusCoefficient
 
     # Initialize from first hop
     first = hops[0]
-    K = first.gamma * first.reserve_out  # noqa: N806
-    M = first.reserve_in  # noqa: N806
-    N = first.gamma  # noqa: N806
+    K = first.gamma * first.reserve_out
+    M = first.reserve_in
+    N = first.gamma
 
     # Update for each subsequent hop
     # Note: N update uses K before it is updated in this step
     for hop in hops[1:]:
-        old_K = K  # noqa: N806
-        K = old_K * hop.gamma * hop.reserve_out  # noqa: N806
-        M *= hop.reserve_in  # noqa: N806
-        N = N * hop.reserve_in + old_K * hop.gamma  # noqa: N806
+        old_K = K
+        K = old_K * hop.gamma * hop.reserve_out
+        M *= hop.reserve_in
+        N = N * hop.reserve_in + old_K * hop.gamma
 
     is_profitable = K > M
 
