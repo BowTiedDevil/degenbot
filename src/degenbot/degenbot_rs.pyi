@@ -309,6 +309,9 @@ class AlloyProvider:
     - HTTP/HTTPS URLs use HTTP transport with connection pooling
     - WS/WSS URLs use WebSocket transport
     - File paths (Unix: /path, Windows: \\.\pipe\...) use IPC transport
+
+    Rate limiting is opt-in: pass ``requests_per_second`` and ``burst``
+    together to enable transport-level throttling on HTTP connections.
     """
 
     def __init__(
@@ -316,8 +319,8 @@ class AlloyProvider:
         rpc_url: str,
         max_retries: int = 10,
         max_blocks_per_request: int = 5000,
-        requests_per_second: int = 50,
-        burst: int = 10,
+        requests_per_second: int | None = None,
+        burst: int | None = None,
     ) -> None: ...
     @property
     def rpc_url(self) -> str: ...
@@ -388,8 +391,8 @@ class AsyncAlloyProvider:
         rpc_url: str,
         max_retries: int = 10,
         max_blocks_per_request: int = 5000,
-        requests_per_second: int = 50,
-        burst: int = 10,
+        requests_per_second: int | None = None,
+        burst: int | None = None,
     ) -> Coroutine[Any, Any, AsyncAlloyProvider]: ...
     @property
     def rpc_url(self) -> str: ...

@@ -43,26 +43,36 @@ impl PyAsyncAlloyProvider {
     /// # Arguments
     /// * `rpc_url` - The RPC endpoint URL
     /// * `max_retries` - Maximum retry attempts (default: 10)
-    /// * `requests_per_second` - Rate limit for HTTP connections (default: 50)
-    /// * `burst` - Burst size for rate limiting (default: 10)
+    /// * `requests_per_second` - Rate limit for HTTP connections (opt-in, must pair with `burst`)
+    /// * `burst` - Burst size for rate limiting (opt-in, must pair with `requests_per_second`)
     #[staticmethod]
-    #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000, requests_per_second=50, burst=10))]
+    #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000, requests_per_second=None, burst=None))]
     fn create(
         py: Python<'_>,
         rpc_url: String,
         max_retries: u32,
         max_blocks_per_request: u64,
-        requests_per_second: u32,
-        burst: u32,
+        requests_per_second: Option<u32>,
+        burst: Option<u32>,
     ) -> PyResult<Bound<'_, PyAny>> {
         /// Default burst size for rate limiting (guaranteed non-zero)
         const DEFAULT_BURST: std::num::NonZeroU32 = std::num::NonZeroU32::new(1).unwrap();
 
-        // Convert burst to NonZeroU32, defaulting to 1 if 0 is provided
-        let burst_nz = std::num::NonZeroU32::new(burst).unwrap_or(DEFAULT_BURST);
+        let rate_limit = match (requests_per_second, burst) {
+            (Some(rps), Some(b)) => {
+                let burst_nz = std::num::NonZeroU32::new(b).unwrap_or(DEFAULT_BURST);
+                Some((rps, burst_nz))
+            }
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(PyValueError::new_err(
+                    "requests_per_second and burst must be provided together",
+                ));
+            }
+            (None, None) => None,
+        };
 
         future_into_py(py, async move {
-            let provider = AlloyProvider::with_rate_limit(&rpc_url, max_retries, requests_per_second, burst_nz)
+            let provider = AlloyProvider::build_provider(&rpc_url, max_retries, rate_limit)
                 .await
                 .map_err(Into::<PyErr>::into)?;
 
