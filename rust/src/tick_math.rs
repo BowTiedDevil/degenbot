@@ -20,22 +20,25 @@ use alloy::primitives::{
     uint,
 };
 
-/// Sqrt ratio constants and utilities for Uniswap V3 tick math.
-pub struct SqrtRatio;
-
-impl SqrtRatio {
-    /// Minimum sqrt price ratio (at `MIN_TICK`).
-    pub const MIN: U160 = uint!(4295128739_U160);
-    /// Maximum sqrt price ratio (at `MAX_TICK`).
-    pub const MAX: U160 = uint!(1461446703485210103287273052203988822378723970342_U160);
-}
+/// Minimum sqrt price ratio (at [`MIN_TICK`]).
+pub const MIN_SQRT_RATIO: U160 = uint!(4295128739_U160);
+/// Maximum sqrt price ratio (at [`MAX_TICK`]).
+pub const MAX_SQRT_RATIO: U160 = uint!(1461446703485210103287273052203988822378723970342_U160);
 
 /// Minimum valid tick value for Uniswap V3.
 pub const MIN_TICK: i32 = -887_272;
 /// Maximum valid tick value for Uniswap V3.
 pub const MAX_TICK: i32 = 887_272;
 
-/// Tick mask lookup table for sqrt ratio calculation.
+/// Bit masks and ratio multipliers for the 19 most significant bits of the tick.
+///
+/// Each entry `(bit_mask, multiplier)` corresponds to a power-of-2 bit position.
+/// If that bit is set in `abs_tick`, the ratio is multiplied by the corresponding
+/// factor and right-shifted by 128 to maintain fixed-point precision.
+///
+/// These are the pre-computed values of `(2^(1/2^i) - 1) * 2^128` for i = 0..18,
+/// derived from the identity: `√(1.0001^tick) ≈ ∏(2^(bit_i / 2^i))`.
+/// Reference: Uniswap V3 `TickMath.sol`, lines 50–68.
 const TICK_MASKS: [(U256, U256); 19] = uint!([
     (0x2_U256, 0xfff97272373d413259a46990580e213a_U256),
     (0x4_U256, 0xfff2e50f5f656932ef12357cf3c7fdcc_U256),
@@ -74,6 +77,8 @@ pub fn get_sqrt_ratio_at_tick_internal(tick: i32) -> Result<U160, TickMathError>
         return Err(TickMathError::InvalidTick(tick));
     }
 
+    // SAFETY: Range check above guarantees tick ∈ [-887272, 887272],
+    // far from i32::MIN, so unsigned_abs() cannot panic.
     let abs_tick: U256 = U256::from(tick.unsigned_abs());
 
     let mut ratio: U256 = if abs_tick & U256::ONE == U256::ZERO {
@@ -97,7 +102,9 @@ pub fn get_sqrt_ratio_at_tick_internal(tick: i32) -> Result<U160, TickMathError>
         sqrt_ratio += U256::ONE;
     }
 
-    Ok(sqrt_ratio.to::<U160>())
+    let result = sqrt_ratio.to::<U160>();
+    debug_assert!(U256::from(result) == sqrt_ratio, "ratio overflowed U160");
+    Ok(result)
 }
 
 /// Internal function to calculate tick from sqrt ratio.
@@ -105,7 +112,7 @@ pub fn get_sqrt_ratio_at_tick_internal(tick: i32) -> Result<U160, TickMathError>
 /// # Errors
 ///
 /// Returns `TickMathError::SqrtRatioOutOfBounds` if the sqrt price is outside
-/// the valid [`SqrtRatio::MIN`, `SqrtRatio::MAX`) range.
+/// the valid [`MIN_SQRT_RATIO`, `MAX_SQRT_RATIO`) range.
 #[inline]
 pub fn get_tick_at_sqrt_ratio_internal(sqrt_price_x96: U160) -> Result<I24, TickMathError> {
     const FACTOR_SHIFT_VALUES: [(u128, u8); 8] = [
@@ -123,8 +130,12 @@ pub fn get_tick_at_sqrt_ratio_internal(sqrt_price_x96: U160) -> Result<I24, Tick
     const TICK_HIGH_OFFSET: I256 =
         I256::from_raw(uint!(291339464771989622907027621153398088495_U256));
 
-    if !(sqrt_price_x96 >= SqrtRatio::MIN && sqrt_price_x96 < SqrtRatio::MAX) {
-        return Err(TickMathError::SqrtRatioOutOfBounds);
+    if !(sqrt_price_x96 >= MIN_SQRT_RATIO && sqrt_price_x96 < MAX_SQRT_RATIO) {
+        return Err(TickMathError::SqrtRatioOutOfBounds {
+            actual: sqrt_price_x96,
+            min: MIN_SQRT_RATIO,
+            max: MAX_SQRT_RATIO,
+        });
     }
 
     let ratio: U256 = U256::from(sqrt_price_x96) << 32;
@@ -148,7 +159,8 @@ pub fn get_tick_at_sqrt_ratio_internal(sqrt_price_x96: U160) -> Result<I24, Tick
             ratio << (127 - msb_usize)
         };
 
-        // SAFETY: msb is a bit position (0-255), so msb - 128 is in [-128, 127].
+        // SAFETY: msb_usize is a bit position (0–255) which fits in I256.
+        // 128 also fits in I256. The difference is in [-128, 127], well within I256 range.
         // Shifting by 64 bits is always safe for I256 (256-bit integer).
         log_2 = (I256::unchecked_from(msb_usize) - I256::unchecked_from(128)).wrapping_shl(64);
     }
@@ -187,191 +199,169 @@ pub fn get_tick_at_sqrt_ratio_internal(sqrt_price_x96: U160) -> Result<I24, Tick
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
-    use std::error::Error;
     use std::str::FromStr;
 
     #[test]
-    fn test_tick_bounds_validation() -> Result<(), Box<dyn Error>> {
-        // Test invalid ticks below minimum
-        if let Err(TickMathError::InvalidTick(tick)) = get_sqrt_ratio_at_tick_internal(MIN_TICK - 1)
-        {
-            if tick == MIN_TICK - 1 {
-                // pass
-            } else {
-                return Err("Wrong tick value returned".into());
-            }
-        } else {
-            return Err("Should have rejected tick below MIN_TICK".into());
-        }
-
-        // Test invalid ticks above maximum
-        if let Err(TickMathError::InvalidTick(tick)) = get_sqrt_ratio_at_tick_internal(MAX_TICK + 1)
-        {
-            if tick == MAX_TICK + 1 {
-                // pass
-            } else {
-                return Err("Wrong tick value returned".into());
-            }
-        } else {
-            return Err("Should have rejected tick above MAX_TICK".into());
-        }
-
-        // Test extreme invalid values
-        if let Err(TickMathError::InvalidTick(tick)) = get_sqrt_ratio_at_tick_internal(i32::MIN) {
-            if tick == i32::MIN {
-                // pass
-            } else {
-                return Err("Wrong tick value returned".into());
-            }
-        } else {
-            return Err("Should have rejected i32::MIN".into());
-        }
-
-        if let Err(TickMathError::InvalidTick(tick)) = get_sqrt_ratio_at_tick_internal(i32::MAX) {
-            if tick == i32::MAX {
-                // pass
-            } else {
-                return Err("Wrong tick value returned".into());
-            }
-        } else {
-            return Err("Should have rejected i32::MAX".into());
-        }
-
-        Ok(())
+    fn test_tick_bounds_validation() {
+        assert!(matches!(
+            get_sqrt_ratio_at_tick_internal(MIN_TICK - 1),
+            Err(TickMathError::InvalidTick(t)) if t == MIN_TICK - 1
+        ));
+        assert!(matches!(
+            get_sqrt_ratio_at_tick_internal(MAX_TICK + 1),
+            Err(TickMathError::InvalidTick(t)) if t == MAX_TICK + 1
+        ));
+        assert!(matches!(
+            get_sqrt_ratio_at_tick_internal(i32::MIN),
+            Err(TickMathError::InvalidTick(t)) if t == i32::MIN
+        ));
+        assert!(matches!(
+            get_sqrt_ratio_at_tick_internal(i32::MAX),
+            Err(TickMathError::InvalidTick(t)) if t == i32::MAX
+        ));
     }
 
     #[test]
-    fn test_tickmath() -> Result<(), Box<dyn Error>> {
-        assert_eq!(
-            get_sqrt_ratio_at_tick_internal(MIN_TICK)?,
-            U160::from_str("4295128739")?
-        );
-        assert_eq!(
-            get_sqrt_ratio_at_tick_internal(MIN_TICK + 1)?,
-            U160::from_str("4295343490")?
-        );
-        assert_eq!(
-            get_sqrt_ratio_at_tick_internal(MAX_TICK - 1)?,
-            U160::from_str("1461373636630004318706518188784493106690254656249")?
-        );
-        assert_eq!(
-            get_sqrt_ratio_at_tick_internal(MAX_TICK)?,
-            U160::from_str("1461446703485210103287273052203988822378723970342")?,
-        );
-        Ok(())
+    fn test_sqrt_ratio_out_of_bounds() {
+        // Zero is below MIN_SQRT_RATIO
+        assert!(matches!(
+            get_tick_at_sqrt_ratio_internal(U160::ZERO),
+            Err(TickMathError::SqrtRatioOutOfBounds { .. })
+        ));
+        // MAX_SQRT_RATIO is exclusive upper bound
+        assert!(matches!(
+            get_tick_at_sqrt_ratio_internal(MAX_SQRT_RATIO),
+            Err(TickMathError::SqrtRatioOutOfBounds { .. })
+        ));
     }
 
     #[test]
-    fn test_tickmath_mid_values() -> Result<(), Box<dyn Error>> {
+    fn test_tickmath() {
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(0)?,
-            U160::from_str("79228162514264337593543950336")?
+            get_sqrt_ratio_at_tick_internal(MIN_TICK).unwrap(),
+            U160::from_str("4295128739").unwrap()
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(1)?,
-            U160::from_str("79232123823359799118286999568")?
+            get_sqrt_ratio_at_tick_internal(MIN_TICK + 1).unwrap(),
+            U160::from_str("4295343490").unwrap()
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(-1)?,
-            U160::from_str("79224201403219477170569942574")?
+            get_sqrt_ratio_at_tick_internal(MAX_TICK - 1).unwrap(),
+            U160::from_str("1461373636630004318706518188784493106690254656249").unwrap()
         );
-        Ok(())
+        assert_eq!(
+            get_sqrt_ratio_at_tick_internal(MAX_TICK).unwrap(),
+            U160::from_str("1461446703485210103287273052203988822378723970342").unwrap(),
+        );
     }
 
     #[test]
-    fn test_tickmath_negative_values() -> Result<(), Box<dyn Error>> {
+    fn test_tickmath_mid_values() {
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(-100_000)?,
-            U160::from_str("533968626430936354154228408")?
+            get_sqrt_ratio_at_tick_internal(0).unwrap(),
+            U160::from_str("79228162514264337593543950336").unwrap()
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(-500_000)?,
-            U160::from_str("1101692437043807371")?
+            get_sqrt_ratio_at_tick_internal(1).unwrap(),
+            U160::from_str("79232123823359799118286999568").unwrap()
         );
-        Ok(())
+        assert_eq!(
+            get_sqrt_ratio_at_tick_internal(-1).unwrap(),
+            U160::from_str("79224201403219477170569942574").unwrap()
+        );
     }
 
     #[test]
-    fn test_tickmath_positive_values() -> Result<(), Box<dyn Error>> {
+    fn test_tickmath_negative_values() {
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(100_000)?,
-            U160::from_str("11755562826496067164730007768450")?
+            get_sqrt_ratio_at_tick_internal(-100_000).unwrap(),
+            U160::from_str("533968626430936354154228408").unwrap()
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(500_000)?,
-            U160::from_str("5697689776495288729098254600827762987878")?
+            get_sqrt_ratio_at_tick_internal(-500_000).unwrap(),
+            U160::from_str("1101692437043807371").unwrap()
         );
-        Ok(())
     }
 
     #[test]
-    fn test_tickmath_additional_values() -> Result<(), Box<dyn Error>> {
+    fn test_tickmath_positive_values() {
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(10000)?,
-            U160::from_str("130621891405341611593710811006")?
+            get_sqrt_ratio_at_tick_internal(100_000).unwrap(),
+            U160::from_str("11755562826496067164730007768450").unwrap()
         );
         assert_eq!(
-            get_sqrt_ratio_at_tick_internal(-10000)?,
-            U160::from_str("48055510970269007215549348797")?
+            get_sqrt_ratio_at_tick_internal(500_000).unwrap(),
+            U160::from_str("5697689776495288729098254600827762987878").unwrap()
         );
-        assert_eq!(
-            get_sqrt_ratio_at_tick_internal(1000)?,
-            U160::from_str("83290069058676223003182343270")?
-        );
-        assert_eq!(
-            get_sqrt_ratio_at_tick_internal(-1000)?,
-            U160::from_str("75364347830767020784054125655")?
-        );
-        assert_eq!(
-            get_sqrt_ratio_at_tick_internal(100)?,
-            U160::from_str("79625275426524748796330556128")?
-        );
-        assert_eq!(
-            get_sqrt_ratio_at_tick_internal(-100)?,
-            U160::from_str("78833030112140176575862854579")?
-        );
-        assert_eq!(
-            get_sqrt_ratio_at_tick_internal(10)?,
-            U160::from_str("79267784519130042428790663799")?
-        );
-        assert_eq!(
-            get_sqrt_ratio_at_tick_internal(-10)?,
-            U160::from_str("79188560314459151373725315960")?
-        );
-        Ok(())
     }
 
     #[test]
-    fn test_tickmath_roundtrip() -> Result<(), Box<dyn Error>> {
+    fn test_tickmath_additional_values() {
+        assert_eq!(
+            get_sqrt_ratio_at_tick_internal(10000).unwrap(),
+            U160::from_str("130621891405341611593710811006").unwrap()
+        );
+        assert_eq!(
+            get_sqrt_ratio_at_tick_internal(-10000).unwrap(),
+            U160::from_str("48055510970269007215549348797").unwrap()
+        );
+        assert_eq!(
+            get_sqrt_ratio_at_tick_internal(1000).unwrap(),
+            U160::from_str("83290069058676223003182343270").unwrap()
+        );
+        assert_eq!(
+            get_sqrt_ratio_at_tick_internal(-1000).unwrap(),
+            U160::from_str("75364347830767020784054125655").unwrap()
+        );
+        assert_eq!(
+            get_sqrt_ratio_at_tick_internal(100).unwrap(),
+            U160::from_str("79625275426524748796330556128").unwrap()
+        );
+        assert_eq!(
+            get_sqrt_ratio_at_tick_internal(-100).unwrap(),
+            U160::from_str("78833030112140176575862854579").unwrap()
+        );
+        assert_eq!(
+            get_sqrt_ratio_at_tick_internal(10).unwrap(),
+            U160::from_str("79267784519130042428790663799").unwrap()
+        );
+        assert_eq!(
+            get_sqrt_ratio_at_tick_internal(-10).unwrap(),
+            U160::from_str("79188560314459151373725315960").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_tickmath_roundtrip() {
         let ticks = [
             -500_000, -100_000, -10_000, -1_000, -100, -10, -1, 0, 1, 10, 100, 1_000, 10_000,
             100_000, 500_000,
         ];
 
         for tick in ticks {
-            let ratio = get_sqrt_ratio_at_tick_internal(tick)?;
-            let tick_back = get_tick_at_sqrt_ratio_internal(ratio)?;
+            let ratio = get_sqrt_ratio_at_tick_internal(tick).unwrap();
+            let tick_back = get_tick_at_sqrt_ratio_internal(ratio).unwrap();
             assert_eq!(tick_back.as_i32(), tick);
         }
-        Ok(())
     }
 
     #[test]
-    fn test_tickmath_boundary_roundtrip() -> Result<(), Box<dyn Error>> {
-        let min_ratio = get_sqrt_ratio_at_tick_internal(-887_272)?;
+    fn test_tickmath_boundary_roundtrip() {
+        let min_ratio = get_sqrt_ratio_at_tick_internal(-887_272).unwrap();
         assert_eq!(
-            get_tick_at_sqrt_ratio_internal(min_ratio)?,
+            get_tick_at_sqrt_ratio_internal(min_ratio).unwrap(),
             I24::unchecked_from(-887_272)
         );
 
-        let max_ratio = get_sqrt_ratio_at_tick_internal(887_272)?;
+        let max_ratio = get_sqrt_ratio_at_tick_internal(887_272).unwrap();
         let max_ratio_minus_one = U256::from(max_ratio) - U256::ONE;
         assert_eq!(
-            get_tick_at_sqrt_ratio_internal(U160::from(max_ratio_minus_one))?,
+            get_tick_at_sqrt_ratio_internal(U160::from(max_ratio_minus_one)).unwrap(),
             I24::unchecked_from(887_271)
         );
-        Ok(())
     }
 }
 

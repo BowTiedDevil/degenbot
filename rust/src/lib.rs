@@ -56,7 +56,7 @@ pub use address_utils_py::to_checksum_address;
 pub use hex_utils::{decode_hex, encode_hex, HexError};
 
 pub use errors::{AbiDecodeError, AddressError, ProviderError, TickMathError};
-pub use tick_math::{get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal};
+pub use tick_math::{get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MIN_SQRT_RATIO, MAX_SQRT_RATIO};
 pub use tick_math_py::{get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio};
 
 use pyo3::prelude::*;

@@ -4,7 +4,7 @@
 //! calls the pure Rust core, and converts results back to Python types.
 
 use alloy::primitives::aliases::U160;
-use pyo3::{exceptions::PyTypeError, exceptions::PyValueError, prelude::*, types::PyAny};
+use pyo3::{exceptions::PyTypeError, exceptions::PyValueError, prelude::*, types::PyAny, PyTypeInfo};
 
 use crate::alloy_py;
 use crate::tick_math::{get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal};
@@ -39,7 +39,7 @@ fn extract_u160(obj: &Bound<'_, PyAny>) -> PyResult<U160> {
 
     // For larger integers, convert via bytes
     let py = obj.py();
-    let int_type = py.import("builtins")?.getattr("int")?;
+    let int_type = pyo3::types::PyInt::type_object(py);
     if obj.is_instance(&int_type)? {
         let kwargs = pyo3::types::PyDict::new(py);
         kwargs.set_item("signed", false)?;
@@ -104,6 +104,9 @@ pub fn get_sqrt_ratio_at_tick(py: Python<'_>, tick: i32) -> PyResult<Bound<'_, P
 /// Returns `PyValueError` if:
 /// - The input is too large (exceeds 20 bytes)
 /// - The sqrt price is outside the valid [`MIN_SQRT_RATIO`, `MAX_SQRT_RATIO`) range
+///
+/// [`MIN_SQRT_RATIO`]: crate::tick_math::MIN_SQRT_RATIO
+/// [`MAX_SQRT_RATIO`]: crate::tick_math::MAX_SQRT_RATIO
 ///
 /// Returns `PyTypeError` if the input is not an int or bytes
 ///
