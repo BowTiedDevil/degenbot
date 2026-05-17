@@ -63,7 +63,7 @@ pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8]) -> PyResult<Py<Py
 | `hex_utils.rs` | Pure-Rust hex encoding/decoding (`decode_hex`, `encode_hex`) — no `PyO3` dependency |
 | `py_converters.rs` | Python object converters for RPC types: `log_to_py_dict`, `block_to_py_dict`, `json_to_py_with_hexbytes`; field-aware `HexBytes`/address/int detection; block/transaction/log dict builders. All functions require the GIL (documented as accepted cost) |
 | `address_utils.rs` | EIP-55 checksummed addresses |
-| `provider.rs` | Ethereum RPC provider (sync, Alloy-based), retry logic, `LogFetcher` |
+| `provider.rs` | Ethereum RPC provider (sync, Alloy-based), retry logic, `LogFetcher`, `EthBlock` type alias, `rpc_call!` macro, `IntoProviderError` trait, eager `LogFilter` validation |
 | `async_provider.rs` | Async provider wrapper for Python via `pyo3-async-runtimes` |
 | `contract.rs` | Smart contract interface with `FunctionSignature` parsing |
 | `async_contract.rs` | Async contract wrapper with `batch_call` via `join_all` |
@@ -78,6 +78,11 @@ pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8]) -> PyResult<Py<Py
 - **Arc Sharing**: Providers use `Arc<AlloyProvider>` for thread-safe sharing across Python objects. `Contract::clone()` shares the `Arc<RwLock<HashMap>>` signature cache across all clones.
 - **Signature Caching**: `Contract` uses `Arc<RwLock<HashMap<String, Arc<FunctionSignature>>>>` for parsed function signatures. The `Arc<FunctionSignature>` value allows cheap returns from the cache without copying the parsed data.
 - **GIL Release**: See [GIL Release Protocol](#gil-release-protocol) below.
+- **Eager Validation**: `LogFilter` parses all address/topic strings to typed `Address`/`B256` values at construction time. The `to_alloy_filter()` method is infallible — no redundant parsing on retries or across concurrent chunk tasks. The `fetch_logs_chunked` method resolves the base filter once and shares it across all chunk tasks via `Arc`.
+- **RPC Call Macro**: The `rpc_call!` macro wraps simple Alloy RPC calls (no request construction needed) with retry logic and error classification, reducing per-method boilerplate from 9 lines to 1. Methods that need conditional block-id handling or request construction (`eth_call`, `estimate_gas`, `get_logs`) write the `retry_with_backoff` call manually.
+- **Consuming Error Trait**: `IntoProviderError` consumes `RpcError<TransportErrorKind>` instead of borrowing it, classifying Alloy errors into `ProviderError` variants without double-borrow issues.
+- **Concurrency Cap**: `LogFetcher::with_concurrency()` caps the semaphore at 32 to prevent file-descriptor exhaustion and RPC rate-limit bans.
+- **Type Alias for Block**: `EthBlock` centralises the verbose `Block<Transaction<TxEnvelope>, RpcHeader<ConsensusHeader>>` generic, used by `provider.rs` and `py_converters.rs`.
 
 ### Module Naming Convention
 
