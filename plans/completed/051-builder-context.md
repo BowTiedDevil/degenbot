@@ -45,34 +45,50 @@ builders. Adding a new builder type requires only the builder class and a
 Bot's `__init__` constructs 7 builders with near-identical wiring:
 
 ```python
-self._erc20_builder = Erc20Builder(
-    connections=self.connections, db=self.db, tokens=self.tokens
-)
+self._erc20_builder = Erc20Builder(connections=self.connections, db=self.db, tokens=self.tokens)
 self._v2_builder = V2PoolBuilder(
-    connections=self.connections, db=self.db, pools=self.pools,
-    tokens=self.tokens, erc20_builder=self._erc20_builder,
+    connections=self.connections,
+    db=self.db,
+    pools=self.pools,
+    tokens=self.tokens,
+    erc20_builder=self._erc20_builder,
 )
 self._aerodrome_v2_builder = AerodromeV2Builder(
-    connections=self.connections, db=self.db, pools=self.pools,
-    tokens=self.tokens, erc20_builder=self._erc20_builder,
+    connections=self.connections,
+    db=self.db,
+    pools=self.pools,
+    tokens=self.tokens,
+    erc20_builder=self._erc20_builder,
 )
 self._camelot_builder = CamelotBuilder(
-    connections=self.connections, db=self.db, pools=self.pools,
-    tokens=self.tokens, erc20_builder=self._erc20_builder,
+    connections=self.connections,
+    db=self.db,
+    pools=self.pools,
+    tokens=self.tokens,
+    erc20_builder=self._erc20_builder,
 )
 self._v3_builder = V3PoolBuilder(
-    connections=self.connections, db=self.db, pools=self.pools,
-    tokens=self.tokens, managed_pools=self.managed_pools,
+    connections=self.connections,
+    db=self.db,
+    pools=self.pools,
+    tokens=self.tokens,
+    managed_pools=self.managed_pools,
     erc20_builder=self._erc20_builder,
 )
 self._v4_builder = V4PoolBuilder(
-    connections=self.connections, db=self.db, pools=self.pools,
-    tokens=self.tokens, managed_pools=self.managed_pools,
+    connections=self.connections,
+    db=self.db,
+    pools=self.pools,
+    tokens=self.tokens,
+    managed_pools=self.managed_pools,
     erc20_builder=self._erc20_builder,
 )
 self._curve_builder = CurvePoolBuilder(
-    connections=self.connections, db=self.db, pools=self.pools,
-    tokens=self.tokens, erc20_builder=self._erc20_builder,
+    connections=self.connections,
+    db=self.db,
+    pools=self.pools,
+    tokens=self.tokens,
+    erc20_builder=self._erc20_builder,
 )
 ```
 
@@ -153,6 +169,7 @@ class V2BuilderBase:
         self._pools = pools
         self._tokens = tokens
         self._erc20_builder = erc20_builder
+
 
 # After:
 class V2BuilderBase:
@@ -246,9 +263,7 @@ But `Erc20Builder` is constructed *before* `BuilderContext` exists (it's a field
 
 ```python
 # Bot.__init__:
-self._erc20_builder = Erc20Builder(
-    connections=self.connections, db=self.db, tokens=self.tokens
-)
+self._erc20_builder = Erc20Builder(connections=self.connections, db=self.db, tokens=self.tokens)
 ctx = BuilderContext(
     connections=self.connections,
     db=self.db,
@@ -271,9 +286,7 @@ layering: `Erc20Builder` is a leaf, `BuilderContext` is a composite.
 # Before: 35 lines of builder wiring
 # After:
 
-self._erc20_builder = Erc20Builder(
-    connections=self.connections, db=self.db, tokens=self.tokens
-)
+self._erc20_builder = Erc20Builder(connections=self.connections, db=self.db, tokens=self.tokens)
 ctx = BuilderContext(
     connections=self.connections,
     db=self.db,

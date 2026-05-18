@@ -239,9 +239,7 @@ class TestTopicConstants:
     def test_v3_burn_topic(self) -> None:
         from web3 import Web3  # noqa: PLC0415
 
-        expected = Web3.keccak(
-            text="Burn(address,int24,int24,uint128,uint256,uint256)"
-        ).hex()
+        expected = Web3.keccak(text="Burn(address,int24,int24,uint128,uint256,uint256)").hex()
         assert f"0x{expected}" == V3_BURN_TOPIC
 
     def test_v4_swap_topic(self) -> None:

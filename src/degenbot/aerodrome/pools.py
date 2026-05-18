@@ -254,9 +254,7 @@ class AerodromeV2Pool(
         (token0,) = abi_decode(["address"], token0_data)
         (token1,) = abi_decode(["address"], token1_data)
         (stable,) = abi_decode(["bool"], stable_data)
-        reserves0, reserves1, _ = abi_decode(
-            ["uint256", "uint256", "uint256"], reserves_data
-        )
+        reserves0, reserves1, _ = abi_decode(["uint256", "uint256", "uint256"], reserves_data)
 
         factory_checksum = get_checksum_address(cast("str", factory))
         (fee,) = abi_decode(

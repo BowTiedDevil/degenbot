@@ -14,8 +14,10 @@ Example::
 
     listener = LogListener()
 
+
     def handle_sync(log: dict) -> None:
         pool.external_update(...)
+
 
     listener.register("0xABC...", SYNC_TOPIC, handle_sync)
 

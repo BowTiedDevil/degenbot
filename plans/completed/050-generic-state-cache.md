@@ -118,6 +118,7 @@ class CacheableState(Protocol):
 
     Requires a `block` attribute for temporal navigation.
     """
+
     block: int | None
 
 

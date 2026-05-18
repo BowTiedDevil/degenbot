@@ -91,9 +91,7 @@ class PoolIO(Protocol):
 
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes: ...
 
-    def call_raw(
-        self, tx: TxParams, block: BlockIdentifier | None = None
-    ) -> HexBytes: ...
+    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes: ...
 
 
 @runtime_checkable
@@ -113,9 +111,7 @@ class AsyncPoolIO(Protocol):
 
     async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes: ...
 
-    async def call_raw(
-        self, tx: TxParams, block: BlockIdentifier | None = None
-    ) -> HexBytes: ...
+    async def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes: ...
 ```
 
 Key design decisions:
@@ -132,6 +128,7 @@ Key design decisions:
 
 ```python
 # src/degenbot/builders/pool_io.py (continued)
+
 
 class SyncPoolIO:
     """PoolIO adapter wrapping a sync ProviderAdapter."""
@@ -153,9 +150,7 @@ class SyncPoolIO:
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         return self._provider.call(to=to, data=data, block=block)
 
-    def call_raw(
-        self, tx: TxParams, block: BlockIdentifier | None = None
-    ) -> HexBytes:
+    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
         return self._provider.call_raw(tx, block=block)
 
 
@@ -182,9 +177,7 @@ class AsyncPoolIO:
     async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         return await self._provider.call(to=to, data=data, block=block)
 
-    async def call_raw(
-        self, tx: TxParams, block: BlockIdentifier | None = None
-    ) -> HexBytes:
+    async def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
         return await self._provider.call_raw(tx, block=block)
 ```
 
@@ -225,6 +218,7 @@ the builder uses `io` instead of `self._connections`.
 
 ```python
 # src/degenbot/builders/protocol.py (extended)
+
 
 class AsyncPoolBuilder(Protocol):
     """Async counterpart of PoolBuilder.
