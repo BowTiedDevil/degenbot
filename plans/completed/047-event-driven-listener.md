@@ -282,3 +282,52 @@ Remove SubscriptionManager tests. Live WS tests. Lint. Move plan to completed.
 14. **Bot stores async adapters** — `dict[ChainId, AsyncProviderAdapter]` for debugging and lifetime
 15. **WS URI from config** — `start_listening()` creates AsyncProviderAdapter from configured WS URI
 16. **V3 tick data fetch is acceptable blocking** — rare, bounded, sync RPC in handler is ok
+
+## Empirical Data
+
+### Subscription ordering
+
+| Metric | Value | Source |
+|--------|-------|--------|
+| Inversions (unfiltered) | **0** | `investigate_unfiltered_volume.py` |
+| Inversions (3 separate subs) | 3-5% of pairs | `investigate_raw_node_ordering.py` |
+| Inversions (1 combined, 3 topics) | **0** | `investigate_combined_subscription.py` |
+| Events per block (mainnet, all logs) | ~800 (range 388-1252) | `investigate_unfiltered_volume.py` |
+| Block spread (first→last event) | 8.6ms avg, 13.2ms max | Same |
+| Dispatch lookup cost | 376ns/event (set membership) | `investigate_unfiltered_dispatch_cost.py` |
+| Subscribe/unsubscribe RTT | 0.4ms | `investigate_dynamic_subscriptions.py` |
+
+### Subscription topology comparison
+
+| Approach | Ordering | Dynamic add | Add disruption | Latency | Complexity |
+|----------|----------|-------------|----------------|---------|------------|
+| Separate per-topic | ✗ (3-5% inversions) | ✓ (new sub) | None | +0ms | Low |
+| Separate + Sorter | ✓ | ✓ (new sub) | None | +12s (or +100-200ms with heads) | Medium |
+| Combined topics only | ✓ | ✗ (re-sub all) | Miss events in gap | +0ms | Low |
+| **Unfiltered + dispatch** | **✓** | **✓ (dict mutation)** | **None** | **+0ms** | **Low** |
+
+### Raw WS ordering (bypassing web3.py)
+
+| Block | Events | WS transitions | Chain transitions | % inverted | Same-sub inversions |
+|-------|--------|---------------|-------------------|------------|-------------------|
+| 25117804 | 791 | 2 | 70 | 4.3% | 0 |
+| 25117805 | 777 | 16 | 59 | 2.8% | 0 |
+| 25117806 | 431 | 4 | 54 | 4.4% | 0 |
+| 25117807 | 763 | 12 | 52 | 3.2% | 0 |
+| 25117808 | 858 | 39 | 84 | 3.0% | 0 |
+
+All inversions are **cross-subscription**; same-subscription ordering is always correct.
+
+### Unfiltered volume breakdown
+
+- Transfer: 76.1% of events
+- V3 Swap: 2.0%
+- V2 Sync: 1.3%
+- Other (Approval, Mint, Burn, etc.): 20.6%
+- Discard cost: ~376ns/event × 800 events/block ≈ 300μs/block total; only ~160 discards/block at 376ns = 60μs/block net discard cost
+
+### web3.py subscription behavior
+
+- **Sequential mode**: 0 ordering violations within a single subscription; cross-subscription batching preserved
+- **Parallel mode** (`parallelize=True`): log handlers can start ~5ms BEFORE heads handler for same block finishes — handler completion order is undefined
+- web3.py batches events by subscription internally; the node itself sends per-subscription bursts
