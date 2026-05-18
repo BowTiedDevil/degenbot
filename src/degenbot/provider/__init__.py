@@ -34,7 +34,8 @@ from typing import Any, Self
 
 from hexbytes import HexBytes
 
-from degenbot.degenbot_rs import AlloyProvider as _AlloyProvider
+from degenbot.degenbot_rs import AlloyProvider as RustAlloyProvider
+from degenbot.degenbot_rs import AsyncAlloyProvider
 from degenbot.provider.interface import (
     AsyncProviderAdapter,
     AsyncProviderBackend,
@@ -119,7 +120,7 @@ class AlloyProvider:
         self._max_blocks_per_request = max_blocks_per_request
 
         # Initialize Rust provider
-        self._provider = _AlloyProvider(
+        self._provider = RustAlloyProvider(
             rpc_url=rpc_url,
             max_retries=max_retries,
             max_blocks_per_request=max_blocks_per_request,
@@ -435,6 +436,7 @@ class AlloyProvider:
 
 __all__ = [
     "AlloyProvider",
+    "AsyncAlloyProvider",
     "AsyncProviderAdapter",
     "AsyncProviderBackend",
     "BlockNotRecordedError",

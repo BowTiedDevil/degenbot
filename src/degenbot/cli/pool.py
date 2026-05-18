@@ -1,6 +1,6 @@
 import contextlib
 import itertools
-from collections import defaultdict, deque
+from collections import defaultdict
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -56,6 +56,7 @@ from degenbot.provider import ProviderAdapter
 from degenbot.provider.block_helpers import get_number_for_block_identifier
 from degenbot.provider.log_fetching import fetch_logs_retrying
 from degenbot.types.aliases import ChainId, Tick, Word
+from degenbot.types.state_cache import StateCache
 from degenbot.uniswap.concentrated.types import BitmapAtWord as ConcentratedBitmapAtWord
 from degenbot.uniswap.concentrated.types import LiquidityAtTick as ConcentratedLiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -101,8 +102,9 @@ class MockV3LiquidityPool(UniswapV3Pool):
 
         # No-op context manager to avoid locking overhead
         self._state_lock = contextlib.nullcontext()
-        self._state_cache = deque(maxlen=1)
-        self._state_cache.append(initial_state)
+        state_cache: StateCache[UniswapV3PoolState] = StateCache(max_depth=1)
+        state_cache.append(initial_state)
+        self._state_cache = state_cache
         self.name = "V3 POOL"
 
     def _invalidate_range_cache_for_ticks(self, *args: Any, **kwargs: Any) -> None: ...
@@ -139,8 +141,9 @@ class MockV4LiquidityPool(UniswapV4Pool):
 
         # No-op context manager to avoid locking overhead
         self._state_lock = contextlib.nullcontext()
-        self._state_cache = deque(maxlen=1)
-        self._state_cache.append(initial_state)
+        state_cache: StateCache[UniswapV4PoolState] = StateCache(max_depth=1)
+        state_cache.append(initial_state)
+        self._state_cache = state_cache
         self.name = "V4 POOL"
 
     def _invalidate_range_cache_for_ticks(self, *args: Any, **kwargs: Any) -> None: ...

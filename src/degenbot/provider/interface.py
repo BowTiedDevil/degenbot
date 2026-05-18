@@ -923,8 +923,8 @@ class _AsyncWeb3Adapter:
 
     async def subscribe_logs(
         self,
-        _addresses: list[str] | None = None,
-        _topics: list[list[str]] | None = None,
+        addresses: list[str] | None = None,  # ruff: ignore[ARG002]
+        topics: list[list[str]] | None = None,  # ruff: ignore[ARG002]
     ) -> Subscription:
         raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
 
