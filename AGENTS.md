@@ -139,12 +139,16 @@ PoolClass -> PublisherMixin -> PoolPickleMixin -> StateMixin -> CalcMixin -> Abs
 
 | Pool | State Mixin | Calc Mixin | Notes |
 |------|-------------|------------|-------|
-| UniswapV2Pool | `V2PoolState` | `UniswapV2PoolCalc` | Base V2 |
-| AerodromeV2Pool | `AerodromeV2PoolState` | `AerodromeV2PoolCalc` | `if self._stable` eliminated |
-| CamelotLiquidityPool | (inherits V2) | `CamelotPoolCalc` | `if self.stable_swap` eliminated |
-| UniswapV3Pool | `V3PoolState` | `UniswapV3PoolCalc` | Base V3 |
-| UniswapV4Pool | `V4PoolState` | `UniswapV4PoolCalc` | V4-specific swap calc stays in pool |
-| CurveStableswapPool | `StableswapPoolState` | `DyCalculator` seam | Calculators in `curve/calculators/`; pure math in `calculations/stableswap.py` |
+| UniswapV2Pool | `V2PoolState` | `UniswapV2PoolCalc` | Base V2. Uses `StateCache[UniswapV2PoolState]` |
+| AerodromeV2Pool | `AerodromeV2PoolState` | `AerodromeV2PoolCalc` | Uses `StateCache[AerodromeV2PoolState]`. `if self._stable` eliminated |
+| CamelotLiquidityPool | (inherits V2) | `CamelotPoolCalc` | Inherits V2's `StateCache`. `if self.stable_swap` eliminated |
+| UniswapV3Pool | `V3PoolState` | `UniswapV3PoolCalc` | Base V3. Uses `ConcentratedLiquidityStateManager` which composes `StateCache` |
+| UniswapV4Pool | `V4PoolState` | `UniswapV4PoolCalc` | Same manager pattern as V3. V4-specific swap calc stays in pool |
+| CurveStableswapPool | `StableswapPoolState` | `DyCalculator` seam | Curve uses `BoundedCache` (dict-based), not `StateCache`. Calculators in `curve/calculators/`; pure math in `calculations/stableswap.py` |
+
+### StateCache
+
+`StateCache[T: CacheableState]` (PEP 695 generic in `src/degenbot/types/state_cache.py`) owns the deque and lock for temporal state navigation. **The caller holds the lock** — all mutation methods (`append`, `discard_before_block`, `restore_before_block`) are unlocked; pools acquire `cache.lock()` for compound operations. V2/Aerodrome use `StateCache` directly; V3/V4 use it via `ConcentratedLiquidityStateManager`. Curve/Balancer are unaffected (different state model).
 
 ### Protocols (replacing ABCs)
 
@@ -198,6 +202,10 @@ token = bot.build_erc20token("0x...")  # Fetches metadata, registers in token re
 V4 pools are identified by passing `pool_id` to `build_pool(address, pool_id=...)`.
 
 Typed builders (`build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`) emit `DeprecationWarning` (Plan 044) — use `build_pool()` instead. Adding a new pool family now requires only creating a builder and registering it via `register_builder()`, down from 5 touch points.
+
+#### BuilderContext
+
+All pool builders accept a `BuilderContext` (frozen dataclass in `src/degenbot/builders/context.py`) instead of 5–6 individual constructor parameters. Bot creates one context object and passes it to all builders. Adding a new builder requires a one-line construction + `register_builder()` — zero additional wiring. `Erc20Builder` is the one exception (it's a leaf dependency used *by* the context, so it keeps its standalone constructor).
 
 ### Fetcher Protocols
 
@@ -257,7 +265,7 @@ Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` f
 
 ## Architecture Plans
 
-Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–045 are all complete; the only remaining active plan is 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
+Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–051 are all complete except 048 and 049 (active). The only other active plan is 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
 
 **New plans must follow [`plans/TEMPLATE.md`](plans/TEMPLATE.md).** The template requires: deletion test, specific friction table, vertical slices, design decisions, relationship to other plans, and status checklist.
 

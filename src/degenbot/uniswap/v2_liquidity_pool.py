@@ -1,8 +1,6 @@
 import contextlib
 import dataclasses
-from collections import deque
 from fractions import Fraction
-from threading import Lock
 from typing import TYPE_CHECKING, Any, ClassVar
 from weakref import WeakSet
 
@@ -22,6 +20,7 @@ from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType
 from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
+from degenbot.types.state_cache import StateCache
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.uniswap.log_decoders import V2_SYNC_TOPIC, decode_v2_sync
 from degenbot.uniswap.types import UniswapPoolSwapVector
@@ -53,19 +52,14 @@ class UniswapV2Pool(
 
     type PoolState = UniswapV2PoolState
 
-    _state: PoolState
-    _state_cache: deque[PoolState]
-
     UNISWAP_V2_MAINNET_POOL_INIT_HASH = (
         "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
     )
 
     _pickle_drops: ClassVar[frozenset[str]] = frozenset({
-        "_state_lock",
         "_subscribers",
     })
     _pickle_reconstructs: ClassVar[dict[str, Any]] = {
-        "_state_lock": Lock,
         "_subscribers": WeakSet,
     }
 
@@ -132,9 +126,8 @@ class UniswapV2Pool(
             reserves_token1=reserves_token1,
             block=state_block_,
         )
-        self._state_cache: deque[UniswapV2PoolState] = deque(maxlen=max(1, state_cache_depth))
-        self._state_cache.append(initial_state)
-        self._state_lock = Lock()
+        self._state_cache = StateCache(max_depth=state_cache_depth)
+        self._state_cache.append(initial_state, block=state_block_)
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
     @property
@@ -167,7 +160,7 @@ class UniswapV2Pool(
 
     @property
     def state(self) -> PoolState:
-        return self._state_cache[-1]
+        return self._state_cache.current
 
     @staticmethod
     def swap_is_viable(
@@ -187,16 +180,16 @@ class UniswapV2Pool(
                 message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"  # noqa:E501
             )
 
-        with self._state_lock:
-            if (
-                update.reserves_token0,
-                update.reserves_token1,
-            ) == (
-                self.reserves_token0,
-                self.reserves_token1,
-            ):
-                return
+        if (
+            update.reserves_token0,
+            update.reserves_token1,
+        ) == (
+            self.reserves_token0,
+            self.reserves_token1,
+        ):
+            return
 
+        with self._state_cache.lock():
             working_state = dataclasses.replace(
                 self.state,
                 reserves_token0=update.reserves_token0,
@@ -204,10 +197,7 @@ class UniswapV2Pool(
                 block=update.block_number,
             )
 
-            if self.state.block == update.block_number:
-                self._state_cache.pop()
-            self._state_cache.append(working_state)
-
+            self._state_cache.append(working_state, block=update.block_number)
             self._notify_subscribers(
                 message=UniswapV2PoolStateUpdated(self.state),
             )
@@ -219,22 +209,11 @@ class UniswapV2Pool(
         """
         Discard cached states earlier than the given block.
         """
-
-        with self._state_lock:
-            # The oldest state already satisfies the request
-            if (earliest_block := self._state_cache[0].block) and earliest_block >= block:
-                return
-
-            # The newest state is older than the target block, so there is no state to return to
-            if (newest_block := self._state_cache[-1].block) and newest_block < block:
-                raise NoPoolStateAvailable(block=block)
-
-            # Discard older states until the earliest block meets or crosses the target
-            while (earliest_block := self._state_cache[0].block) is None or earliest_block < block:
-                self._state_cache.popleft()
-
-            assert self.state.block is not None
-            assert self.state.block >= block
+        try:
+            with self._state_cache.lock():
+                self._state_cache.discard_before_block(block)
+        except ValueError as e:
+            raise NoPoolStateAvailable(block=block) from e
 
     def restore_state_before_block(
         self,
@@ -243,21 +222,12 @@ class UniswapV2Pool(
         """
         Restore the last pool state recorded prior to a target block.
         """
-
-        with self._state_lock:
-            # The newest state already satisfies the request
-            if (newest_block := self._state_cache[-1].block) and newest_block < block:
-                return
-
-            # No earlier state is available
-            if (earliest_block := self._state_cache[0].block) and earliest_block >= block:
-                raise NoPoolStateAvailable(block=block)
-
-            # Discard blocks until the last block is older than the target
-            while self._state_cache[-1].block is None or self._state_cache[-1].block >= block:
-                self._state_cache.pop()
-
-            self._notify_subscribers(message=UniswapV2PoolStateUpdated(self.state))
+        try:
+            with self._state_cache.lock():
+                self._state_cache.restore_before_block(block)
+        except ValueError as e:
+            raise NoPoolStateAvailable(block=block) from e
+        self._notify_subscribers(message=UniswapV2PoolStateUpdated(self.state))
 
     def simulate_add_liquidity(
         self,
@@ -268,7 +238,7 @@ class UniswapV2Pool(
         """
         Simulate adding liquidity.
         """
-        with self._state_lock:
+        with self._state_cache.lock():
             reserves_token0 = (
                 override_state.reserves_token0 if override_state else self.reserves_token0
             )
@@ -297,7 +267,7 @@ class UniswapV2Pool(
         """
         Simulate removing liquidity.
         """
-        with self._state_lock:
+        with self._state_cache.lock():
             reserves_token0 = (
                 override_state.reserves_token0 if override_state else self.reserves_token0
             )

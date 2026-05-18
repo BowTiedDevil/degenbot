@@ -1,16 +1,22 @@
 """State manager for concentrated-liquidity pools.
 
-Owns the mutable ``_state_cache`` deque and provides thin read/write helpers.
-**The caller is responsible for all locking** — this module does not import
-``threading``.  RPC fetching and event emission stay on the pool.
+Delegates temporal state navigation (deque, lock, discard/restore) to
+a :class:`~degenbot.types.state_cache.StateCache` and adds CL-specific
+convenience properties (``liquidity``, ``sqrt_price_x96``, ``tick``,
+``tick_bitmap``, ``tick_data``, ``swap_is_viable``).
+
+**The caller is responsible for all locking** — the pool must hold
+``_state_cache.lock()`` when calling any method that mutates state or
+traverses history.  The only exception is ``swap_is_viable``, which is
+a pure query.
 """
 
 from __future__ import annotations
 
-from collections import deque
 from typing import TYPE_CHECKING, Protocol
 
 from degenbot.exceptions.pool import NoPoolStateAvailable
+from degenbot.types.state_cache import StateCache
 from degenbot.uniswap.v3_libraries.tick_math import (
     MAX_SQRT_RATIO,
     MIN_SQRT_RATIO,
@@ -48,8 +54,12 @@ class _StateLike(Protocol):
 class ConcentratedLiquidityStateManager[StateT: _StateLike]:
     """Unlocked data structure for a bounded history of pool states.
 
-    Every public method is **non-blocking**; the caller (pool) must hold the
-    lock when calling any method that mutates state or traverses history.
+    Delegates the deque and temporal navigation to a
+    :class:`~degenbot.types.state_cache.StateCache`. Adds CL-specific
+    read helpers on top.
+
+    Every public method is **non-blocking**; the caller (pool) must hold
+    the lock when calling any method that mutates state or traverses history.
     """
 
     def __init__(
@@ -58,15 +68,16 @@ class ConcentratedLiquidityStateManager[StateT: _StateLike]:
         initial_state: StateT,
         state_cache_depth: int = 8,
     ) -> None:
-        self._state_cache: deque[StateT] = deque(maxlen=max(1, state_cache_depth))
-        self._state_cache.append(initial_state)
+        self._state_cache = StateCache(max_depth=state_cache_depth)
+        block = initial_state.block
+        self._state_cache.append(initial_state, block=block)
         self._initial_state_block: int | None = initial_state.block
 
     # --- read helpers ---
 
     @property
     def state(self) -> StateT:
-        return self._state_cache[-1]
+        return self._state_cache.current
 
     @property
     def liquidity(self) -> int:
@@ -93,31 +104,25 @@ class ConcentratedLiquidityStateManager[StateT: _StateLike]:
         return self.state.block
 
     @property
-    def state_cache(self) -> deque[StateT]:
+    def state_cache(self) -> StateCache[StateT]:
         return self._state_cache
 
     @state_cache.setter
-    def state_cache(self, value: deque[StateT]) -> None:
+    def state_cache(self, value: StateCache[StateT]) -> None:
         self._state_cache = value
 
     # --- write helpers ---
 
     def push_state(self, new_state: StateT) -> None:
         """Append *new_state*, replacing the entry at the same block if present."""
-        if self._state_cache[-1].block == new_state.block:
-            self._state_cache.pop()
-        self._state_cache.append(new_state)
+        self._state_cache.append(new_state, block=new_state.block)
 
     def discard_states_before_block(self, block: BlockNumber) -> None:
         """Drop states strictly older than *block*."""
-        if (earliest := self._state_cache[0].block) and earliest >= block:
-            return
-
-        if (newest := self._state_cache[-1].block) and newest < block:
-            raise NoPoolStateAvailable(block=block)
-
-        while (self._state_cache[0].block or 0) < block:
-            self._state_cache.popleft()
+        try:
+            self._state_cache.discard_before_block(block)
+        except ValueError as e:
+            raise NoPoolStateAvailable(block=block) from e
 
     def restore_state_before_block(self, block: BlockNumber) -> StateT:
         """Rewind to the most recent state prior to *block*.
@@ -125,16 +130,10 @@ class ConcentratedLiquidityStateManager[StateT: _StateLike]:
         Returns the restored state so the caller can emit an event or
         subscribe notification.
         """
-        if (newest := self._state_cache[-1].block) and newest < block:
-            return self._state_cache[-1]
-
-        if (earliest := self._state_cache[0].block) and earliest >= block:
-            raise NoPoolStateAvailable(block=block)
-
-        while (self._state_cache[-1].block or 0) >= block:
-            self._state_cache.pop()
-
-        return self._state_cache[-1]
+        try:
+            return self._state_cache.restore_before_block(block)
+        except ValueError as e:
+            raise NoPoolStateAvailable(block=block) from e
 
     # --- swap viability (pure query, no lock needed) ---
 

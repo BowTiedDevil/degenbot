@@ -21,6 +21,7 @@ _Avoid_: Fork, local chain
 - [Aave](src/degenbot/aave/CONTEXT.md) — lending markets, assets, collateral, debt, and liquidation
 - [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — StableSwap pools, CurveDataProvider seam, DyCalculator, variant and strategy enums
 - [Connection Management](src/degenbot/connection/CONTEXT.md) — connection managers, provider references, and subscription primitives
+- **Builders** (`src/degenbot/builders/`) — pool builders, BuilderContext, and the PoolBuilder protocol
 
 ## Instructions
 

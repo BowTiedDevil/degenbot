@@ -28,6 +28,8 @@ Domain terms for Uniswap V2, V3, and V4 liquidity pools and pool trackers.
 | **Swap Vector** | See [Swap Vector](../arbitrage/CONTEXT.md) in the arbitrage context | Swap direction |
 | **Exact Input** | A swap calculation mode where the input amount is fixed and output is calculated | Exact in |
 | **Exact Output** | A swap calculation mode where the output amount is fixed and required input is calculated | Exact out |
+| **StateCache** | See [StateCache](../types/CONTEXT.md) in the types context | Pool state cache |
+| **ConcentratedLiquidityStateManager** | A manager class for V3/V4 that composes with `StateCache` internally, exposing CL-specific convenience properties (`liquidity`, `sqrt_price_x96`, `tick`, etc.) | State manager |
 
 ## Relationships
 

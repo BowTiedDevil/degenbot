@@ -14,6 +14,7 @@ from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 if TYPE_CHECKING:
     from web3.types import BlockIdentifier
 
+    from degenbot.builders.context import BuilderContext
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
@@ -27,6 +28,9 @@ class V2PoolBuilder(V2BuilderBase):
     Aerodrome and Camelot pools are handled by their own builders
     (AerodromeV2Builder, CamelotBuilder), registered separately in Bot.
     """
+
+    def __init__(self, ctx: BuilderContext) -> None:
+        super().__init__(ctx)
 
     def build(
         self,
