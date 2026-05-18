@@ -7,6 +7,7 @@ import eth_abi.abi
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve._pool_strategies import resolve_pool_strategies
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from degenbot.curve.data_provider_impl import CurveDataProviderImpl
 from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
 from degenbot.curve.detection.a_ramping import detect_a_ramping
 from degenbot.curve.detection.coin_discovery import discover_coins
@@ -14,7 +15,6 @@ from degenbot.curve.detection.crypto_detector import detect_crypto_params
 from degenbot.curve.detection.lending_detector import detect_lending_tokens
 from degenbot.curve.detection.lp_token import find_lp_token
 from degenbot.curve.detection.metapool_detector import detect_metapool
-from degenbot.curve.fetcher_factory import CurveFetcherFactory
 from degenbot.curve.types import CurveStableswapPoolExternalUpdate
 from degenbot.exceptions.pool import BrokenPool
 from degenbot.logging import logger
@@ -57,7 +57,7 @@ class CurvePoolBuilder:
         state_block: int | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
-        **kwargs: Any,
+        **kwargs: Any,  # noqa: ARG002
     ) -> AbstractLiquidityPool:
         """Fetch pool data from RPC and construct an I/O-free CurveStableswapPool."""
 
@@ -136,21 +136,27 @@ class CurvePoolBuilder:
         strategies = resolve_pool_strategies(pool_address)
 
         # 14. Create data provider and construct pool
-        fetchers = CurveFetcherFactory(connections=self._connections, chain_id=chain_id)
-        data_provider = fetchers.create_provider(
-            pool_address,
-            base_pool_address=metapool.base_pool_address if metapool.is_meta else None,
-            tokens=list(tokens),
-            use_lending=list(lending.use_lending) if lending.use_lending else [False] * len(tokens),
-            precision_multipliers=list(lending.precision_multipliers)
+        use_lending_list = (
+            list(lending.use_lending) if lending.use_lending else [False] * len(tokens)
+        )
+        precision_multipliers_list = (
+            list(lending.precision_multipliers)
             if lending.precision_multipliers
-            else [1] * len(tokens),
-            rate_multipliers=tuple(
-                pm * 10**18 for pm in (lending.precision_multipliers or [1] * len(tokens))
-            ),
-            lending_rate_style=strategies.lending_rate_style,
-            is_crypto=crypto.is_crypto,
+            else [1] * len(tokens)
+        )
+        rate_multipliers = tuple(
+            pm * 10**18 for pm in (lending.precision_multipliers or [1] * len(tokens))
+        )
+        data_provider = CurveDataProviderImpl(
+            provider=provider,
+            pool_address=pool_address,
+            base_pool_address=metapool.base_pool_address if metapool.is_meta else None,
             n_coins=len(tokens),
+            lending_rate_style=strategies.lending_rate_style,
+            token_addresses=[t.address for t in tokens],
+            use_lending=use_lending_list,
+            precision_multipliers=precision_multipliers_list,
+            rate_multipliers=rate_multipliers,
         )
         pool = CurveStableswapPool(
             address=pool_address,

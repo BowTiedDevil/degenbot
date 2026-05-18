@@ -2,11 +2,7 @@
 
 ## Overview
 
-Replace the 850-line `CurveFetcherFactory` — a bag of near-identical closure factories — with a
-structured `_CurveDataProviderImpl` class where each `CurveDataProvider` protocol method is a
-real method. Shared I/O patterns (call → decode → cast, block-identifier routing, error handling
-for reverts) become private helpers, collapsing ~15 near-identical closure patterns into shared
-infrastructure.
+Replace the 850-line `CurveFetcherFactory` — a bag of near-identical closure factories — with a structured `_CurveDataProviderImpl` class where each `CurveDataProvider` protocol method is a real method. Shared I/O patterns (call → decode → cast, block-identifier routing, error handling for reverts) become private helpers, collapsing ~15 near-identical closure patterns into shared infrastructure.
 
 ## Files Involved
 
@@ -55,16 +51,11 @@ Repeated 15 times with variations in:
 Problems with this pattern:
 1. **Unreadable stack traces.** A failed fetcher shows `<lambda>` or `fetcher()` with no
    indication of which fetcher failed.
-2. **Boilerplate.** Each closure repeats `provider = self._connections.get_provider(chain_id)`,
-   the decode pattern, and the cast. ~400 of the 850 lines are structural repetition.
-3. **Untestable in isolation.** Testing one fetcher requires constructing the whole factory.
-   Individual closures can't be inspected or breakpointed.
-4. **Inconsistent error handling.** Some fetchers catch `ContractLogicError`; others don't.
-   There's no shared pattern for "call this method, revert returns None."
+2. **Boilerplate.** Each closure repeats `provider = self._connections.get_provider(chain_id)`, the decode pattern, and the cast. ~400 of the 850 lines are structural repetition.
+3. **Untestable in isolation.** Testing one fetcher requires constructing the whole factory. Individual closures can't be inspected or breakpointed.
+4. **Inconsistent error handling.** Some fetchers catch `ContractLogicError`; others don't. There's no shared pattern for "call this method, revert returns None."
 
-The deletion test: deleting `CurveFetcherFactory` would scatter the I/O across `_CurveDataProviderImpl`
-or back into the pool. But since `_CurveDataProviderImpl` wraps the factory's closures, the factory
-*is* the implementation. The proposal makes this explicit.
+The deletion test: deleting `CurveFetcherFactory` would scatter the I/O across `_CurveDataProviderImpl` or back into the pool. But since `_CurveDataProviderImpl` wraps the factory's closures, the factory *is* the implementation. The proposal makes this explicit.
 
 ## Solution
 

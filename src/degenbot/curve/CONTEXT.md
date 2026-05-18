@@ -27,7 +27,7 @@
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|
 | **CurveDataProvider** | A `@runtime_checkable` protocol with 13 methods (`D()`, `gamma()`, `virtual_price()`, `base_virtual_price()`, `price_scale()`, `admin_balances()`, `lending_rate()`, `redemption_price()`, `block_timestamp()`, `block_number()`, `token_balance()`, `token_total_supply()`, `is_crypto()`) that serves as the single I/O seam for Curve pools | Data provider, provider |
-| **_CurveDataProviderImpl** | The production implementation of `CurveDataProvider` that wraps existing fetcher closures from `CurveFetcherFactory`; created by the builder via `fetchers.create_provider()` | Impl |
+| **CurveDataProviderImpl** | The production implementation of `CurveDataProvider` in `data_provider_impl.py` — a structured class with real methods and shared I/O helpers (`_call`, `_call_single`, `_call_raw_single`, `_wrap_revert`); constructed by the builder with a `ProviderAdapter` directly | Impl |
 | **FakeCurveDataProvider** | A test double implementing `CurveDataProvider` with fixed return values | Fake provider |
 
 ## Variant Enums
@@ -142,7 +142,7 @@
 > **Domain expert:** "No — use the **Base Pool's** virtual price when valuing the base pool LP token coin. The metapool's own virtual price is for the metapool's LP token, which is a different thing."
 >
 > **Dev:** "I need to fetch lending rates. Should I use **provider_call**?"
-> **Domain expert:** "No — `provider_call` has been removed. The pool calls `self._data_provider.lending_rate()`, which is part of the **CurveDataProvider** seam. The builder creates a `_CurveDataProviderImpl` that wraps fetcher closures; the pool never accesses connections directly. For tests, use a **FakeCurveDataProvider** with fixed return values."
+> **Domain expert:** "No — `provider_call` has been removed. The pool calls `self._data_provider.lending_rate()`, which is part of the **CurveDataProvider** seam. The builder creates a **CurveDataProviderImpl** that takes a `ProviderAdapter` directly; the pool never accesses connections directly. For tests, use a **FakeCurveDataProvider** with fixed return values."
 >
 > **Dev:** "What are all the **variant enums** for?"
 > **Domain expert:** "Mainnet Curve pools use different calculation formulas depending on the contract version. **DVariant**, **YVariant**, and **YDVariant** identify which formula a pool uses for D, y, and y_D calculations respectively. They replace the old class-level address frozensets that coupled configuration data to pool behavior."

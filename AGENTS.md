@@ -212,12 +212,12 @@ All pool builders accept a `BuilderContext` (frozen dataclass in `src/degenbot/b
 **Curve pools** use a **CurveDataProvider** seam for fully I/O-free operation — all on-chain data access flows through a single injected object with 13 methods (`D()`, `gamma()`, `virtual_price()`, `base_virtual_price()`, `price_scale()`, `admin_balances()`, `lending_rate()`, `redemption_price()`, `block_timestamp()`, `block_number()`, `token_balance()`, `token_total_supply()`, `is_crypto()`). The pool calls `self._data_provider.xxx()` on-demand:
 
 ```python
-# Bot creates a _CurveDataProviderImpl via the Curve Pool Builder's fetcher factory
+# Builder creates a CurveDataProviderImpl with a ProviderAdapter directly
 # Pool calls data_provider methods on-demand
 pool = bot.build_pool("0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7")
 ```
 
-The former 13 individual fetcher callback constructor parameters (`_D_fetcher`, `_gamma_fetcher`, `_virtual_price_fetcher`, etc.) have been collapsed into a single `data_provider: CurveDataProvider | None` parameter (Plan 040). Pickle config simplified from 13 drops+reconstructs to 1. Builders call `fetchers.create_provider()` instead of 13 individual fetcher closures. Tests use `FakeCurveDataProvider` instead of individual lambda fetchers.
+The former 13 individual fetcher callback constructor parameters (`_D_fetcher`, `_gamma_fetcher`, `_virtual_price_fetcher`, etc.) were collapsed into a single `data_provider: CurveDataProvider | None` parameter (Plan 040). The 850-line closure-based `CurveFetcherFactory` has been replaced by `CurveDataProviderImpl` (Plan 049) — a structured class in `data_provider_impl.py` with real methods and shared I/O helpers (`_call`, `_call_single`, `_call_raw_single`, `_wrap_revert`). Builders construct `CurveDataProviderImpl` directly with a `ProviderAdapter`. Tests use `FakeCurveDataProvider` instead of individual lambda fetchers.
 
 The `DyCalculator` seam (Plan 039) replaces 14 `match`/`if` dispatch branches in `get_dy()` with injectable calculator objects keyed on `SwapStyle`, `MetapoolRateStyle`, and `MetapoolUnderlyingStyle` enums. Pure math functions in `calculations/stableswap.py` raise `ValueError`; pool wrappers catch and re-raise as `EVMRevertError` for backward compat.
 
@@ -265,7 +265,7 @@ Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` f
 
 ## Architecture Plans
 
-Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–051 are all complete except 048 and 049 (active). The only other active plan is 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
+Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–051 are all complete except 048 (active). The only other active plan is 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
 
 **New plans must follow [`plans/TEMPLATE.md`](plans/TEMPLATE.md).** The template requires: deletion test, specific friction table, vertical slices, design decisions, relationship to other plans, and status checklist.
 
