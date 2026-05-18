@@ -20,7 +20,7 @@ _Avoid_: Fork, local chain
 - [Arbitrage, Solvers & Adapters](src/degenbot/arbitrage/CONTEXT.md) — arbitrage cycles, solvers, adapters, and swap encoding
 - [Aave](src/degenbot/aave/CONTEXT.md) — lending markets, assets, collateral, debt, and liquidation
 - [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — StableSwap pools, CurveDataProvider seam, DyCalculator, variant and strategy enums
-- [Connection Management](src/degenbot/connection/CONTEXT.md) — connection managers and provider references
+- [Connection Management](src/degenbot/connection/CONTEXT.md) — connection managers, provider references, and subscription primitives
 
 ## Instructions
 
@@ -54,6 +54,11 @@ _Avoid_: Fork, local chain
 - **CacheablePool** protocol enables **Pool Cache Adapter** registration without introspection
 - **Swap Amounts** carry per-pool swap parameters and self-encode into **EncodedCall**s; `generate_payloads()` wires encoding → **ApprovalStrategy** → **PayloadComposer**
 - **V4PoolKey** lives on `UniswapV4PoolSwapAmounts` for custom **PayloadComposers** handling V4's unlock/swap callback dispatch
+- A **Subscription** is a Rust-backed async iterator over push events from `eth_subscribe` with double-buffer drain for GIL-free accumulation; created by `AsyncProviderAdapter.subscribe_*()`; requires WS/IPC transport; raises **SubscriptionNotSupported** on HTTP providers
+- A **LogListener** is a pure Python dispatch registry mapping `(address, topic0)` → handler set; receives raw log dicts via `dispatch(log)`, calls handlers sequentially; created by the user, not owned by Bot
+- **LogSubscriptionFilter** carries `addresses` + `topics` only (no block range) for log subscriptions
+- **LOG_HANDLERS** is a `ClassVar[dict[str, Callable]]` on pool types mapping event topic0 → decoder function; each decoder takes a log dict and returns a closure that applies the update to a pool instance; the user wires LOG_HANDLERS to a LogListener after `build_pool()`
+- **Bot.start_listening()** creates newHeads + unfiltered logs subscriptions for a chain, returns the subscription pair; stores the AsyncProviderAdapter per chain in `_async_adapters`
 
 Module-internal relationships are documented in each module's context file.
 

@@ -30,7 +30,9 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, cast, runtime_ch
 from web3 import AsyncWeb3, Web3
 
 from degenbot.degenbot_rs import AlloyProvider
+from degenbot.exceptions import SubscriptionNotSupported
 from degenbot.provider.offline_provider import OfflineProvider
+from degenbot.provider.subscription import Subscription
 
 if TYPE_CHECKING:
     from eth_typing import BlockIdentifier
@@ -97,6 +99,47 @@ class ProviderBackend(Protocol):
     def is_connected(self) -> bool: ...
 
     def close(self) -> None: ...
+
+    # --- Subscription stubs (sync providers do not support subscriptions) ---
+
+    def subscribe_blocks(self) -> None:
+        """Not available on sync providers.
+
+        Use AsyncProviderAdapter.subscribe_blocks() instead.
+        """
+        ...
+
+    def subscribe_full_blocks(self) -> None:
+        """Not available on sync providers.
+
+        Use AsyncProviderAdapter.subscribe_full_blocks() instead.
+        """
+        ...
+
+    def subscribe_pending_transactions(self) -> None:
+        """Not available on sync providers.
+
+        Use AsyncProviderAdapter.subscribe_pending_transactions() instead.
+        """
+        ...
+
+    def subscribe_full_pending_transactions(self) -> None:
+        """Not available on sync providers.
+
+        Use AsyncProviderAdapter.subscribe_full_pending_transactions() instead.
+        """
+        ...
+
+    def subscribe_logs(
+        self,
+        _addresses: list[str] | None = None,
+        _topics: list[list[str]] | None = None,
+    ) -> None:
+        """Not available on sync providers.
+
+        Use AsyncProviderAdapter.subscribe_logs() instead.
+        """
+        ...
 
 
 # Backward compatibility alias
@@ -168,6 +211,30 @@ class _Web3Adapter:
         if hasattr(self._w3, "close"):
             self._w3.close()  # ty:ignore[call-non-callable]
 
+    def subscribe_blocks(self) -> None:
+        """Not available on sync providers."""
+        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
+
+    def subscribe_full_blocks(self) -> None:
+        """Not available on sync providers."""
+        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
+
+    def subscribe_pending_transactions(self) -> None:
+        """Not available on sync providers."""
+        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
+
+    def subscribe_full_pending_transactions(self) -> None:
+        """Not available on sync providers."""
+        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
+
+    def subscribe_logs(
+        self,
+        _addresses: list[str] | None = None,
+        _topics: list[list[str]] | None = None,
+    ) -> None:
+        """Not available on sync providers."""
+        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
+
 
 class _AlloyAdapter:
     """Adapter wrapping an AlloyProvider instance to satisfy ProviderBackend."""
@@ -236,6 +303,30 @@ class _AlloyAdapter:
         if hasattr(self._alloy, "close"):
             self._alloy.close()
 
+    def subscribe_blocks(self) -> None:
+        """Not available on sync providers."""
+        raise SubscriptionNotSupported(transport="sync", rpc_url=self._alloy.rpc_url)
+
+    def subscribe_full_blocks(self) -> None:
+        """Not available on sync providers."""
+        raise SubscriptionNotSupported(transport="sync", rpc_url=self._alloy.rpc_url)
+
+    def subscribe_pending_transactions(self) -> None:
+        """Not available on sync providers."""
+        raise SubscriptionNotSupported(transport="sync", rpc_url=self._alloy.rpc_url)
+
+    def subscribe_full_pending_transactions(self) -> None:
+        """Not available on sync providers."""
+        raise SubscriptionNotSupported(transport="sync", rpc_url=self._alloy.rpc_url)
+
+    def subscribe_logs(
+        self,
+        _addresses: list[str] | None = None,
+        _topics: list[list[str]] | None = None,
+    ) -> None:
+        """Not available on sync providers."""
+        raise SubscriptionNotSupported(transport="sync", rpc_url=self._alloy.rpc_url)
+
 
 class _OfflineAdapter:
     """Adapter wrapping an OfflineProvider instance to satisfy ProviderBackend."""
@@ -295,6 +386,30 @@ class _OfflineAdapter:
     def close(self) -> None:
         if hasattr(self._offline, "close"):
             self._offline.close()  # ty:ignore[call-non-callable]
+
+    def subscribe_blocks(self) -> None:  # noqa: PLR6301
+        """Not available on offline providers."""
+        raise SubscriptionNotSupported(transport="offline", rpc_url="offline")
+
+    def subscribe_full_blocks(self) -> None:  # noqa: PLR6301
+        """Not available on offline providers."""
+        raise SubscriptionNotSupported(transport="offline", rpc_url="offline")
+
+    def subscribe_pending_transactions(self) -> None:  # noqa: PLR6301
+        """Not available on offline providers."""
+        raise SubscriptionNotSupported(transport="offline", rpc_url="offline")
+
+    def subscribe_full_pending_transactions(self) -> None:  # noqa: PLR6301
+        """Not available on offline providers."""
+        raise SubscriptionNotSupported(transport="offline", rpc_url="offline")
+
+    def subscribe_logs(  # noqa: PLR6301
+        self,
+        _addresses: list[str] | None = None,
+        _topics: list[list[str]] | None = None,
+    ) -> None:
+        """Not available on offline providers."""
+        raise SubscriptionNotSupported(transport="offline", rpc_url="offline")
 
 
 # ============================================================================
@@ -609,6 +724,47 @@ class ProviderAdapter:
     def __repr__(self) -> str:
         return f"ProviderAdapter(type={self._provider_type})"
 
+    # --- Subscription stubs (sync providers do not support subscriptions) ---
+
+    def subscribe_blocks(self) -> None:
+        """Not available on sync providers.
+
+        Use AsyncProviderAdapter.subscribe_blocks() instead.
+        """
+        raise SubscriptionNotSupported(transport="sync", rpc_url=str(self._raw_provider))
+
+    def subscribe_full_blocks(self) -> None:
+        """Not available on sync providers.
+
+        Use AsyncProviderAdapter.subscribe_full_blocks() instead.
+        """
+        raise SubscriptionNotSupported(transport="sync", rpc_url=str(self._raw_provider))
+
+    def subscribe_pending_transactions(self) -> None:
+        """Not available on sync providers.
+
+        Use AsyncProviderAdapter.subscribe_pending_transactions() instead.
+        """
+        raise SubscriptionNotSupported(transport="sync", rpc_url=str(self._raw_provider))
+
+    def subscribe_full_pending_transactions(self) -> None:
+        """Not available on sync providers.
+
+        Use AsyncProviderAdapter.subscribe_full_pending_transactions() instead.
+        """
+        raise SubscriptionNotSupported(transport="sync", rpc_url=str(self._raw_provider))
+
+    def subscribe_logs(
+        self,
+        _addresses: list[str] | None = None,
+        _topics: list[list[str]] | None = None,
+    ) -> None:
+        """Not available on sync providers.
+
+        Use AsyncProviderAdapter.subscribe_logs() instead.
+        """
+        raise SubscriptionNotSupported(transport="sync", rpc_url=str(self._raw_provider))
+
 
 # ============================================================================
 # Private async backend protocol
@@ -651,6 +807,47 @@ class AsyncProviderBackend(Protocol):
     def is_connected(self) -> bool: ...
 
     def close(self) -> None: ...
+
+    # --- Subscription methods (optional — override in backend) ---
+
+    async def subscribe_blocks(self) -> Subscription:
+        """Subscribe to new block headers.
+
+        Raises SubscriptionNotSupported if transport doesn't support it.
+        """
+        ...
+
+    async def subscribe_full_blocks(self) -> Subscription:
+        """Subscribe to full block bodies.
+
+        Raises SubscriptionNotSupported if transport doesn't support it.
+        """
+        ...
+
+    async def subscribe_pending_transactions(self) -> Subscription:
+        """Subscribe to pending transaction hashes.
+
+        Raises SubscriptionNotSupported if transport doesn't support it.
+        """
+        ...
+
+    async def subscribe_full_pending_transactions(self) -> Subscription:
+        """Subscribe to full pending transaction bodies.
+
+        Raises SubscriptionNotSupported if transport doesn't support it.
+        """
+        ...
+
+    async def subscribe_logs(
+        self,
+        addresses: list[str] | None = None,
+        topics: list[list[str]] | None = None,
+    ) -> Subscription:
+        """Subscribe to filtered log events.
+
+        Raises SubscriptionNotSupported if transport doesn't support it.
+        """
+        ...
 
 
 # ============================================================================
@@ -712,6 +909,25 @@ class _AsyncWeb3Adapter:
         if hasattr(self._w3, "close"):
             self._w3.close()  # ty:ignore[call-non-callable]
 
+    async def subscribe_blocks(self) -> Subscription:
+        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
+
+    async def subscribe_full_blocks(self) -> Subscription:
+        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
+
+    async def subscribe_pending_transactions(self) -> Subscription:
+        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
+
+    async def subscribe_full_pending_transactions(self) -> Subscription:
+        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
+
+    async def subscribe_logs(
+        self,
+        _addresses: list[str] | None = None,
+        _topics: list[list[str]] | None = None,
+    ) -> Subscription:
+        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
+
 
 class _AsyncAlloyAdapter:
     """Adapter wrapping the Rust AsyncAlloyProvider directly."""
@@ -772,6 +988,36 @@ class _AsyncAlloyAdapter:
     def close(self) -> None:
         if hasattr(self._alloy, "close"):
             self._alloy.close()
+
+    async def subscribe_blocks(self) -> Subscription:
+        """Subscribe to new block headers via Alloy WS/IPC connection."""
+        raw_sub = self._alloy.subscribe_blocks()
+        return Subscription(_inner=raw_sub)
+
+    async def subscribe_full_blocks(self) -> Subscription:
+        """Subscribe to full block bodies via Alloy WS/IPC connection."""
+        raw_sub = self._alloy.subscribe_full_blocks()
+        return Subscription(_inner=raw_sub)
+
+    async def subscribe_pending_transactions(self) -> Subscription:
+        """Subscribe to pending transaction hashes via Alloy WS/IPC connection."""
+        raw_sub = self._alloy.subscribe_pending_transactions()
+        return Subscription(_inner=raw_sub)
+
+    async def subscribe_full_pending_transactions(self) -> Subscription:
+        """Subscribe to full pending transaction bodies via Alloy WS/IPC connection."""
+        raw_sub = self._alloy.subscribe_full_pending_transactions()
+        return Subscription(_inner=raw_sub)
+
+    async def subscribe_logs(
+        self,
+        addresses: list[str] | None = None,
+        topics: list[list[str]] | None = None,
+    ) -> Subscription:
+        """Subscribe to filtered log events via Alloy WS/IPC connection."""
+
+        raw_sub = self._alloy.subscribe_logs(addresses=addresses or [], topics=topics or [])
+        return Subscription(_inner=raw_sub)
 
 
 # ============================================================================
@@ -996,6 +1242,73 @@ class AsyncProviderAdapter:
 
     def __repr__(self) -> str:
         return f"AsyncProviderAdapter(type={self._provider_type})"
+
+    # -------------------------------------------------------------------------
+    # Pickle support
+    # -------------------------------------------------------------------------
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Pickle by storing only the type label; subscriptions are not picklable."""
+        state = self.__dict__.copy()
+        # Remove unpicklable subscription manager
+        # Backend and raw_provider are also not reliably picklable
+        state["_backend"] = None
+        state["_raw_provider"] = None
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore state; the backend must be set externally via set_provider."""
+        self.__dict__ = state
+
+    # --- Subscription methods ---
+
+    async def subscribe_blocks(self) -> Subscription:
+        """Subscribe to new block headers.
+
+        Requires a WS or IPC transport. Raises SubscriptionNotSupported
+        if the underlying provider doesn't support eth_subscribe.
+        """
+        return await self._backend.subscribe_blocks()
+
+    async def subscribe_full_blocks(self) -> Subscription:
+        """Subscribe to full block bodies (with full transactions).
+
+        Requires a WS or IPC transport. Raises SubscriptionNotSupported
+        if the underlying provider doesn't support eth_subscribe.
+        """
+        return await self._backend.subscribe_full_blocks()
+
+    async def subscribe_pending_transactions(self) -> Subscription:
+        """Subscribe to pending transaction hashes.
+
+        Requires a WS or IPC transport. Raises SubscriptionNotSupported
+        if the underlying provider doesn't support eth_subscribe.
+        """
+        return await self._backend.subscribe_pending_transactions()
+
+    async def subscribe_full_pending_transactions(self) -> Subscription:
+        """Subscribe to full pending transaction bodies.
+
+        Requires a WS or IPC transport. Raises SubscriptionNotSupported
+        if the underlying provider doesn't support eth_subscribe.
+        """
+        return await self._backend.subscribe_full_pending_transactions()
+
+    async def subscribe_logs(
+        self,
+        addresses: list[str] | None = None,
+        topics: list[list[str]] | None = None,
+    ) -> Subscription:
+        """Subscribe to filtered log events.
+
+        Args:
+            addresses: Contract addresses to filter.
+            topics: Event topic filters (nested: [[topic0], [topic1], ...]).
+
+        Requires a WS or IPC transport. Raises SubscriptionNotSupported
+        if the underlying provider doesn't support eth_subscribe.
+        """
+        return await self._backend.subscribe_logs(addresses=addresses, topics=topics)
 
 
 # ============================================================================

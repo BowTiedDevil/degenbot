@@ -6,7 +6,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from weakref import WeakSet
 
-import eth_abi.abi
+from eth_abi import decode as abi_decode
 
 from degenbot.aerodrome.functions import (
     calc_exact_in_stable,
@@ -32,6 +32,7 @@ from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
 from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
+from degenbot.uniswap.log_decoders import V2_SYNC_TOPIC, get_block_number, get_log_data_bytes
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
@@ -45,6 +46,29 @@ if TYPE_CHECKING:
     from degenbot.uniswap.types import UniswapPoolSwapVector
 
 
+def _decode_aerodrome_v2_sync(log: dict) -> Any:  # noqa: ANN401
+    """Decode a V2 Sync event for Aerodrome pools.
+
+    Same format as Uniswap V2 Sync, but creates an AerodromeV2PoolExternalUpdate.
+    """
+    reserve0, reserve1 = abi_decode(
+        ["uint112", "uint112"],
+        get_log_data_bytes(log),
+    )
+    block_number = get_block_number(log)
+
+    update = AerodromeV2PoolExternalUpdate(
+        block_number=block_number,
+        reserves_token0=reserve0,
+        reserves_token1=reserve1,
+    )
+
+    def apply(pool: AerodromeV2Pool) -> None:  # type: ignore[name-defined]
+        pool.external_update(update)
+
+    return apply
+
+
 class AerodromeV2Pool(
     PublisherMixin,
     PoolPickleMixin,
@@ -53,6 +77,10 @@ class AerodromeV2Pool(
     AbstractLiquidityPool,
 ):
     variant: ClassVar[str | None] = "aerodrome"
+
+    LOG_HANDLERS: ClassVar[dict[str, Any]] = {
+        V2_SYNC_TOPIC: _decode_aerodrome_v2_sync,
+    }
 
     type PoolState = AerodromeV2PoolState
 
@@ -234,18 +262,18 @@ class AerodromeV2Pool(
             block=state_block,
         )
 
-        (factory,) = eth_abi.abi.decode(types=["address"], data=factory_data)
-        (token0,) = eth_abi.abi.decode(types=["address"], data=token0_data)
-        (token1,) = eth_abi.abi.decode(types=["address"], data=token1_data)
-        (stable,) = eth_abi.abi.decode(types=["bool"], data=stable_data)
-        reserves0, reserves1, _ = eth_abi.abi.decode(
-            types=["uint256", "uint256", "uint256"], data=reserves_data
+        (factory,) = abi_decode(["address"], factory_data)
+        (token0,) = abi_decode(["address"], token0_data)
+        (token1,) = abi_decode(["address"], token1_data)
+        (stable,) = abi_decode(["bool"], stable_data)
+        reserves0, reserves1, _ = abi_decode(
+            ["uint256", "uint256", "uint256"], reserves_data
         )
 
         factory_checksum = get_checksum_address(cast("str", factory))
-        (fee,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=provider.call_raw({
+        (fee,) = abi_decode(
+            ["uint256"],
+            provider.call_raw({
                 "to": factory_checksum,
                 "data": encode_function_calldata(
                     function_prototype="getFee(address,bool)",

@@ -33,6 +33,7 @@ use std::sync::LazyLock;
 use crate::address_utils::address_to_checksum_string;
 use crate::hex_utils::decode_hex;
 use crate::py_cache::create_hexbytes;
+use alloy::rpc::types::eth::Header as RpcHeader;
 use crate::provider::EthBlock;
 
 /// Field names that should be converted to `HexBytes`.
@@ -611,6 +612,32 @@ fn withdrawal_to_py_dict<'py>(
     dict.set_item("validator_index", withdrawal.validator_index)?;
     dict.set_item("address", address_to_checksum_string(&withdrawal.address))?;
     dict.set_item("amount", withdrawal.amount)?;
+    Ok(dict)
+}
+
+/// Convert an RPC block header to a Python dict.
+///
+/// Used by the subscription pump for `subscribe_blocks()` events.
+pub fn header_to_py_dict<'py>(
+    py: Python<'py>,
+    header: &RpcHeader<ConsensusHeader>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+
+    dict.set_item("hash", create_hexbytes(py, header.hash.as_ref())?)?;
+
+    let inner_dict = consensus_header_to_py_dict(py, &header.inner)?;
+    for (key, val) in inner_dict.iter() {
+        dict.set_item(&key, val)?;
+    }
+
+    set_opt_u256(
+        &dict,
+        "total_difficulty",
+        header.total_difficulty.as_ref(),
+    )?;
+    set_opt_u256(&dict, "size", header.size.as_ref())?;
+
     Ok(dict)
 }
 

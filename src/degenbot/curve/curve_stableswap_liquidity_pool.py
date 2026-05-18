@@ -66,6 +66,8 @@ class CurveStableswapPool(
     type PoolState = CurveStableswapPoolState
     _state_cache: BoundedCache[BlockNumber, PoolState]
 
+    LOG_HANDLERS: ClassVar[dict[str, Any]] = {}  # Curve stays on polling
+
     _pickle_drops: ClassVar[frozenset[str]] = frozenset({
         "_state_lock",
         "_subscribers",

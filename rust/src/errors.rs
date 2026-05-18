@@ -155,6 +155,10 @@ pub enum ProviderError {
     #[error("Serialization error: {message}")]
     SerializationError { message: String },
 
+    /// Subscription not supported (e.g., HTTP transport).
+    #[error("Subscription not supported: {message}")]
+    SubscriptionNotSupported { message: String },
+
     /// Other error.
     #[error("{message}")]
     Other { message: String },
@@ -181,6 +185,9 @@ impl From<ProviderError> for PyErr {
             ProviderError::Timeout { .. } => Self::new::<pyo3::exceptions::PyTimeoutError, _>(msg),
             ProviderError::ConnectionFailed { .. } => {
                 Self::new::<pyo3::exceptions::PyConnectionError, _>(msg)
+            }
+            ProviderError::SubscriptionNotSupported { .. } => {
+                Self::new::<pyo3::exceptions::PyRuntimeError, _>(msg)
             }
             ProviderError::RateLimited { .. }
             | ProviderError::RpcError { .. }

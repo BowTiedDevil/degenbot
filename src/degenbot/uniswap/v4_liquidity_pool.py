@@ -33,6 +33,12 @@ from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot, Mi
 from degenbot.uniswap.concentrated.state_manager import ConcentratedLiquidityStateManager
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.concentrated.v4_simulator import calculate_swap as _v4_swap
+from degenbot.uniswap.log_decoders import (
+    V4_MODIFY_LIQUIDITY_TOPIC,
+    V4_SWAP_TOPIC,
+    decode_v4_modify_liquidity,
+    decode_v4_swap,
+)
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
@@ -129,6 +135,11 @@ class UniswapV4Pool(
     AbstractLiquidityPool,
 ):
     _state_mgr: ConcentratedLiquidityStateManager[UniswapV4PoolState]
+
+    LOG_HANDLERS: ClassVar[dict[str, Any]] = {
+        V4_SWAP_TOPIC: decode_v4_swap,
+        V4_MODIFY_LIQUIDITY_TOPIC: decode_v4_modify_liquidity,
+    }
 
     SLOT0_STRUCT_TYPES = (
         "uint160",  # sqrtPriceX96

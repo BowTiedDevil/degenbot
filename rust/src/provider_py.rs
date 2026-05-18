@@ -535,6 +535,112 @@ impl PyAlloyProvider {
 
         Ok(py_obj)
     }
+
+    // -----------------------------------------------------------------------
+    // Subscription methods (require WS or IPC transport)
+    // -----------------------------------------------------------------------
+
+    /// Close the underlying connection pool and release resources.
+    #[allow(clippy::unused_self, clippy::missing_const_for_fn)]
+    fn close(&self) {
+        // AlloyProvider doesn't have an explicit close method,
+        // but the connection pool is released when the Arc is dropped.
+        // This is a no-op for now to satisfy the Python context manager protocol.
+    }
+
+    /// Subscribe to new block headers.
+    ///
+    /// Returns an `AlloySubscription` that yields block header dicts
+    /// via the async iterator protocol.
+    ///
+    /// Requires a WebSocket or IPC transport. Raises `RuntimeError` for HTTP providers.
+    fn subscribe_blocks(&self, py: Python<'_>) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
+        let handle = self.provider.subscribe_blocks();
+        let sub = crate::subscription_py::PyAlloySubscription::from_handle(handle);
+        Py::new(py, sub)
+    }
+
+    /// Subscribe to full block bodies.
+    ///
+    /// Returns an `AlloySubscription` that yields full block dicts.
+    fn subscribe_full_blocks(&self, py: Python<'_>) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
+        let handle = self.provider.subscribe_full_blocks();
+        let sub = crate::subscription_py::PyAlloySubscription::from_handle(handle);
+        Py::new(py, sub)
+    }
+
+    /// Subscribe to pending transaction hashes.
+    ///
+    /// Returns an `AlloySubscription` that yields transaction hash hex strings.
+    fn subscribe_pending_transactions(&self, py: Python<'_>) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
+        let handle = self.provider.subscribe_pending_transactions();
+        let sub = crate::subscription_py::PyAlloySubscription::from_handle(handle);
+        Py::new(py, sub)
+    }
+
+    /// Subscribe to full pending transaction bodies.
+    ///
+    /// Returns an `AlloySubscription` that yields transaction dicts.
+    fn subscribe_full_pending_transactions(&self, py: Python<'_>) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
+        let handle = self.provider.subscribe_full_pending_transactions();
+        let sub = crate::subscription_py::PyAlloySubscription::from_handle(handle);
+        Py::new(py, sub)
+    }
+
+    /// Subscribe to logs matching the given filter.
+    ///
+    /// # Arguments
+    /// * `addresses` - Optional list of contract addresses to filter
+    /// * `topics` - Optional list of topic filters (nested: [[topic0], [topic1], ...])
+    ///
+    /// Returns an `AlloySubscription` that yields log receipt dicts.
+    #[pyo3(signature = (addresses=None, topics=None))]
+    fn subscribe_logs(
+        &self,
+        py: Python<'_>,
+        addresses: Option<Vec<String>>,
+        topics: Option<Vec<Vec<String>>>,
+    ) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
+        use alloy::rpc::types::{Filter, Topic};
+
+        let mut filter = Filter::new();
+
+        if let Some(addresses) = addresses {
+            let addr_set: Vec<alloy::primitives::Address> = addresses
+                .iter()
+                .map(|addr| {
+                    crate::address_utils::parse_address(addr)
+                        .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+            filter = filter.address(addr_set);
+        }
+
+        if let Some(topic_groups) = topics {
+            let mut parsed_topics: [Topic; 4] = Default::default();
+            for (i, group) in topic_groups.iter().enumerate() {
+                if i >= 4 {
+                    return Err(PyValueError::new_err(
+                        "Topic index out of range (0-3)"
+                    ));
+                }
+                let hashes: Vec<alloy::primitives::B256> = group
+                    .iter()
+                    .map(|topic| {
+                        topic.parse::<alloy::primitives::B256>().map_err(|e| {
+                            PyValueError::new_err(format!("Invalid topic hash: {e}"))
+                        })
+                    })
+                    .collect::<PyResult<Vec<_>>>()?;
+                parsed_topics[i] = Topic::from(hashes);
+            }
+            filter.topics = parsed_topics;
+        }
+
+        let handle = self.provider.subscribe_logs(filter);
+        let sub = crate::subscription_py::PyAlloySubscription::from_handle(handle);
+        Py::new(py, sub)
+    }
 }
 
 /// Add provider module to Python module.

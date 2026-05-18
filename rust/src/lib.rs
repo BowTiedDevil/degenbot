@@ -47,6 +47,8 @@ pub mod py_cache;
 pub mod py_converters;
 pub mod runtime;
 pub mod signature_parser;
+pub mod subscription;
+pub mod subscription_py;
 pub mod tick_math;
 pub mod tick_math_py;
 
@@ -93,6 +95,9 @@ fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Async modules
     m.add_class::<async_provider::PyAsyncAlloyProvider>()?;
     m.add_class::<async_contract::PyAsyncContract>()?;
+
+    // Subscription module
+    m.add_class::<subscription_py::PyAlloySubscription>()?;
 
     Ok(())
 }

@@ -47,6 +47,7 @@ from degenbot.provider.offline_provider import (
     OfflineDataMissing,
     OfflineProvider,
 )
+from degenbot.provider.subscription import LogSubscriptionFilter, Subscription
 from degenbot.types.aliases import BlockNumber
 
 
@@ -439,8 +440,10 @@ __all__ = [
     "BlockNotRecordedError",
     "EthereumProvider",
     "LogFilter",
+    "LogSubscriptionFilter",
     "OfflineDataMissing",
     "OfflineProvider",
     "ProviderAdapter",
     "ProviderBackend",
+    "Subscription",
 ]
