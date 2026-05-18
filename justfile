@@ -57,7 +57,7 @@ lint-markdown:
 # Lint Python files
 lint-python:
     uv run ruff check src/
-    uv run ty check src/
+    uv run ty check --no-progress src/
 
 # Run all linters (Rust + Python + Markdown)
 lint: lint-rust lint-python lint-markdown    

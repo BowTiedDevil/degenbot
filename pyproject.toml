@@ -199,6 +199,9 @@ dev = [
     "ty",
 ]
 
+[tool.ty.environment]
+python-version = "3.12"
+
 [tool.uv]
 exclude-newer = "14 days"
 link-mode = "copy"
