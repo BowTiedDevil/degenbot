@@ -67,10 +67,10 @@ class IoFreePool:
 │    admin_balances, lending_rate, etc.  │
 │  - Single seam replaces 13 fetchers    │
 ├───────────────────────────────────────┤
-│  _CurveDataProviderImpl (fetcher_factory)│
-│  - Wraps fetcher closures from factory │
-│  - Handles I/O, error handling, caching │
-│  - Created via fetchers.create_provider()│
+│  CurveDataProviderImpl (data_provider_impl)│
+│  - Structured class with real methods     │
+│  - Handles I/O, error handling, caching   │
+│  - Takes ProviderAdapter directly         │
 └───────────────────────────────────────┘
 ```
 
@@ -325,7 +325,7 @@ Calculators receive a **DyCalculationInputs** frozen dataclass instead of the po
 | `token_total_supply()` | Token total supply | Metapools |
 | `is_crypto()` | Whether pool uses CryptoSwap | All pools (flag) |
 
-See `src/degenbot/curve/types.py` for protocol definition and `src/degenbot/curve/fetcher_factory.py` for the `_CurveDataProviderImpl`.
+See `src/degenbot/curve/types.py` for protocol definition and `src/degenbot/curve/data_provider_impl.py` for `CurveDataProviderImpl`.
 
 ## Related Pool Types
 

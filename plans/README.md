@@ -22,7 +22,7 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | 014 | [Async REPL](014-async-repl.md) | `python -m degenbot` with top-level `await`. |
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
 | 048 | [Unify Bot and AsyncBot via Builder-Backed IO Seam](048-async-builder-shared.md) | AsyncBot delegates to async builders instead of duplicating construction. `PoolIO` protocol parameterizes builders over sync/async. ~965→~200 lines in AsyncBot. |
-| 049 | [Replace CurveFetcherFactory Closures with Structured CurveDataProvider Implementation](049-curve-data-provider-impl.md) | 850-line closure bag → structured `_CurveDataProviderImpl` with shared helpers. ~400 lines of boilerplate collapse. Readable stack traces, individually testable methods. |
+
 
 ## Completed Plans
 
@@ -76,3 +76,4 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | 047 | [Event-Driven Log Listener](completed/047-event-driven-listener.md) | Subscription double-buffer drain + LogListener dispatch registry + pool LOG_HANDLERS. Replaces SubscriptionManager. |
 | 050 | [Generic StateCache for Pool State Temporal Navigation](completed/050-generic-state-cache.md) | 4 near-identical deque+lock+navigation implementations → 1 `StateCache[T]`. PEP 695 syntax. Caller holds lock. |
 | 051 | [Extract BuilderContext from Bot Constructor Wiring](completed/051-builder-context.md) | 35 lines of builder wiring → 1 `BuilderContext` + 7 one-liners. Adding a new builder: 2 lines, not 7. |
+| 049 | [Replace CurveFetcherFactory Closures with Structured CurveDataProvider Implementation](completed/049-curve-data-provider-impl.md) | 850-line closure bag → structured `CurveDataProviderImpl` (~350 lines) with shared helpers. 13 closures → real methods. Readable stack traces, individually testable methods, simpler pickle. |
