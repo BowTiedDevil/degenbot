@@ -20,6 +20,7 @@ from degenbot.exceptions.pool import (
     NoPoolStateAvailable,
 )
 from degenbot.provider import ProviderAdapter
+from degenbot.types.state_cache import StateCache
 from degenbot.uniswap.abi import UNISWAP_V2_ROUTER_ABI
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import (
@@ -27,7 +28,6 @@ from degenbot.uniswap.v2_types import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
 )
-from degenbot.types.state_cache import StateCache
 from tests.helpers.bot_factory import make_bot_with_provider
 
 if TYPE_CHECKING:

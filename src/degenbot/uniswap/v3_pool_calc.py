@@ -40,8 +40,6 @@ class UniswapV3PoolCalc:
     """
 
     # Attributes provided by sibling/child mixins in the MRO.
-    # Declared here for mypy; at runtime they come from V3PoolState
-    # and the concrete UniswapV3Pool class.
     _token0: Erc20Token
     _token1: Erc20Token
     _fee: int

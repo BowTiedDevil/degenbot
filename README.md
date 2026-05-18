@@ -1217,10 +1217,6 @@ uv sync
 
 # Run tests
 uv run pytest
-
-# Run linting
-uv run ruff check
-uv run mypy
 ```
 
 ## License

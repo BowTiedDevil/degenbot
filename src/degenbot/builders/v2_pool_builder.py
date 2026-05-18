@@ -70,8 +70,6 @@ class V2PoolBuilder(V2BuilderBase):
             msg = f"No V2 pool class registered for chain {chain_id}, factory {common.factory}"
             raise ValueError(msg)
 
-        # pool_class is type[ConstantProductPool] (a Protocol) so mypy
-        # cannot verify constructor args. Cast to the concrete default.
         pool = pool_class(
             address=pool_address,
             chain_id=common.chain_id,

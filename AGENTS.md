@@ -21,8 +21,8 @@ Uses `just` (see justfile) and `uv` as the package runner. Key commands:
 
 ### Combined
 - `just test-all` - Run all tests (Rust + Python)
-- `just lint` - Run clippy, ruff, and mypy
-- `just format` - Run `cargo fmt` and `ruff format`
+- `just lint` - Run lint and type checks (Rust + Python)
+- `just format` - Run formatters (Rust + Python)
 
 ## Git Commits
 
