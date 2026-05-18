@@ -757,7 +757,7 @@ class Bot:
         # Create async alloy provider from WS URI
         from degenbot.provider import AsyncAlloyProvider  # noqa: PLC0415
 
-        alloy = AsyncAlloyProvider(str(ws_uri))
+        alloy = await AsyncAlloyProvider.create(str(ws_uri))
         adapter = AsyncProviderAdapter.from_alloy(alloy)
 
         self._async_adapters[chain_id] = adapter

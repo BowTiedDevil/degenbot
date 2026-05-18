@@ -1,6 +1,5 @@
 from collections.abc import Generator
-from collections.abc import Iterator as AbstractContextManager
-from contextlib import contextmanager, nullcontext
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from typing import Any, ClassVar
 
 from degenbot.types.state_cache import StateCache
