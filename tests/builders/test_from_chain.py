@@ -17,6 +17,7 @@ from web3 import Web3
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
 from degenbot.builders.camelot_builder import CamelotBuilder
+from degenbot.builders.context import BuilderContext
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.connection.connection_manager import ConnectionManager
@@ -85,13 +86,14 @@ def _make_aerodrome_builder(provider: FakeProvider | None = None) -> AerodromeV2
     db = MagicMock(spec=DatabaseSessionManager)
     db.side_effect = RuntimeError("no db")
 
-    return AerodromeV2Builder(
+    ctx = BuilderContext(
         connections=connections,
         db=db,
         pools=MagicMock(spec=PoolRegistry),
         tokens=MagicMock(spec=TokenRegistry),
         erc20_builder=erc20_builder,
     )
+    return AerodromeV2Builder(ctx)
 
 
 def _make_camelot_builder(provider: FakeProvider | None = None) -> CamelotBuilder:
@@ -112,13 +114,14 @@ def _make_camelot_builder(provider: FakeProvider | None = None) -> CamelotBuilde
     db = MagicMock(spec=DatabaseSessionManager)
     db.side_effect = RuntimeError("no db")
 
-    return CamelotBuilder(
+    ctx = BuilderContext(
         connections=connections,
         db=db,
         pools=MagicMock(spec=PoolRegistry),
         tokens=MagicMock(spec=TokenRegistry),
         erc20_builder=erc20_builder,
     )
+    return CamelotBuilder(ctx)
 
 
 # --- Common V2 responses ---

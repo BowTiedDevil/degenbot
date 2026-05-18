@@ -14,6 +14,7 @@ from web3.exceptions import Web3Exception
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
 from degenbot.builders.camelot_builder import CamelotBuilder
+from degenbot.builders.context import BuilderContext
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.v2_pool_builder import V2PoolBuilder
@@ -83,54 +84,25 @@ class Bot:
         self.managed_pools = ManagedPoolRegistry()
         self._trackers: dict[tuple[ChainId, str], AbstractPoolTracker[Any]] = {}
 
-        # Builders own I/O orchestration; Bot hands them its I/O dependencies
+        # Builders own I/O orchestration; Bot hands them its I/O dependencies.
+        # Erc20Builder is a leaf — constructed before BuilderContext.
         self._erc20_builder = Erc20Builder(
             connections=self.connections, db=self.db, tokens=self.tokens
         )
-        self._v2_builder = V2PoolBuilder(
+        ctx = BuilderContext(
             connections=self.connections,
             db=self.db,
             pools=self.pools,
             tokens=self.tokens,
             erc20_builder=self._erc20_builder,
-        )
-        self._aerodrome_v2_builder = AerodromeV2Builder(
-            connections=self.connections,
-            db=self.db,
-            pools=self.pools,
-            tokens=self.tokens,
-            erc20_builder=self._erc20_builder,
-        )
-        self._camelot_builder = CamelotBuilder(
-            connections=self.connections,
-            db=self.db,
-            pools=self.pools,
-            tokens=self.tokens,
-            erc20_builder=self._erc20_builder,
-        )
-        self._v3_builder = V3PoolBuilder(
-            connections=self.connections,
-            db=self.db,
-            pools=self.pools,
-            tokens=self.tokens,
             managed_pools=self.managed_pools,
-            erc20_builder=self._erc20_builder,
         )
-        self._v4_builder = V4PoolBuilder(
-            connections=self.connections,
-            db=self.db,
-            pools=self.pools,
-            tokens=self.tokens,
-            managed_pools=self.managed_pools,
-            erc20_builder=self._erc20_builder,
-        )
-        self._curve_builder = CurvePoolBuilder(
-            connections=self.connections,
-            db=self.db,
-            pools=self.pools,
-            tokens=self.tokens,
-            erc20_builder=self._erc20_builder,
-        )
+        self._v2_builder = V2PoolBuilder(ctx)
+        self._aerodrome_v2_builder = AerodromeV2Builder(ctx)
+        self._camelot_builder = CamelotBuilder(ctx)
+        self._v3_builder = V3PoolBuilder(ctx)
+        self._v4_builder = V4PoolBuilder(ctx)
+        self._curve_builder = CurvePoolBuilder(ctx)
 
         # Builder registry: concrete pool type → builder
         # Used by update() for O(1) dict lookup instead of isinstance chain

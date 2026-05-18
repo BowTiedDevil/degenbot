@@ -17,12 +17,16 @@ from degenbot.registry.pool_type import pool_type_registry
 if TYPE_CHECKING:
     from web3.types import BlockIdentifier
 
+    from degenbot.builders.context import BuilderContext
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
 
 class AerodromeV2Builder(V2BuilderBase):
     """Builds and updates Aerodrome V2 pools."""
+
+    def __init__(self, ctx: BuilderContext) -> None:
+        super().__init__(ctx)
 
     def build(
         self,

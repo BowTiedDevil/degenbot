@@ -1,8 +1,6 @@
 import dataclasses
-from collections import deque
 from collections.abc import Callable
 from enum import Enum
-from threading import Lock
 from typing import Any, ClassVar, Final, cast
 from weakref import WeakSet
 
@@ -29,6 +27,7 @@ from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
 from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
+from degenbot.types.state_cache import StateCache
 from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot, MissingLiquidityData
 from degenbot.uniswap.concentrated.state_manager import ConcentratedLiquidityStateManager
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
@@ -153,12 +152,10 @@ class UniswapV4Pool(
     )
 
     _pickle_drops: ClassVar[frozenset[str]] = frozenset({
-        "_state_lock",
         "_subscribers",
         "_tick_data_fetcher",
     })
     _pickle_reconstructs: ClassVar[dict[str, Any]] = {
-        "_state_lock": Lock,
         "_subscribers": WeakSet,
     }
 
@@ -284,7 +281,6 @@ class UniswapV4Pool(
             tick_data=working_tick_data,
             block=state_block,
         )
-        self._state_lock = Lock()
         self._state_mgr = ConcentratedLiquidityStateManager(
             initial_state=initial_state,
             state_cache_depth=state_cache_depth,
@@ -519,11 +515,11 @@ class UniswapV4Pool(
         return self._chain_id
 
     @property
-    def _state_cache(self) -> deque[UniswapV4PoolState]:
+    def _state_cache(self) -> StateCache[UniswapV4PoolState]:
         return self._state_mgr.state_cache
 
     @_state_cache.setter
-    def _state_cache(self, value: deque[UniswapV4PoolState]) -> None:
+    def _state_cache(self, value: StateCache[UniswapV4PoolState]) -> None:
         if not hasattr(self, "_state_mgr"):
             self._state_mgr = object.__new__(ConcentratedLiquidityStateManager)
             self._state_mgr.state_cache = value
@@ -639,7 +635,7 @@ class UniswapV4Pool(
         ):
             return False
 
-        with self._state_lock:
+        with self._state_cache.lock():
             state_block = update.block_number
 
             working_state = dataclasses.replace(
@@ -672,7 +668,7 @@ class UniswapV4Pool(
         if update.liquidity == 0:
             return
 
-        with self._state_lock:  # noqa:PLR1702
+        with self._state_cache.lock():  # noqa:PLR1702
             state_block = update.block_number
 
             # The tick bitmap and tick data dictionaries accessed from the property are copies, so
@@ -784,12 +780,12 @@ class UniswapV4Pool(
 
     def discard_states_before_block(self, block: BlockNumber) -> None:
         """Discard cached states earlier than the given block."""
-        with self._state_lock:
+        with self._state_cache.lock():
             self._state_mgr.discard_states_before_block(block)
 
     def restore_state_before_block(self, block: BlockNumber) -> None:
         """Restore the last pool state recorded prior to a target block."""
-        with self._state_lock:
+        with self._state_cache.lock():
             restored: UniswapV4PoolState = self._state_mgr.restore_state_before_block(block)
             self._notify_subscribers(message=UniswapV4PoolStateUpdated(restored))
 

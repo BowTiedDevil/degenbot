@@ -23,13 +23,10 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from web3.types import BlockIdentifier
 
-    from degenbot.builders.erc20_builder import Erc20Builder
-    from degenbot.connection.connection_manager import ConnectionManager
+    from degenbot.builders.context import BuilderContext
     from degenbot.curve.detection.types import MetapoolDetectionResult
-    from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.erc20 import Erc20Token
     from degenbot.provider.interface import ProviderAdapter
-    from degenbot.registry import PoolRegistry, TokenRegistry
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
@@ -45,20 +42,12 @@ class CurvePoolBuilder:
     construct pool → register.
     """
 
-    def __init__(
-        self,
-        *,
-        connections: ConnectionManager,
-        db: DatabaseSessionManager,
-        pools: PoolRegistry,
-        tokens: TokenRegistry,
-        erc20_builder: Erc20Builder,
-    ) -> None:
-        self._connections = connections
-        self._db = db
-        self._pools = pools
-        self._tokens = tokens
-        self._erc20_builder = erc20_builder
+    def __init__(self, ctx: BuilderContext) -> None:
+        self._connections = ctx.connections
+        self._db = ctx.db
+        self._pools = ctx.pools
+        self._tokens = ctx.tokens
+        self._erc20_builder = ctx.erc20_builder
 
     def build(
         self,

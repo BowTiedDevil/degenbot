@@ -16,12 +16,16 @@ from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 if TYPE_CHECKING:
     from web3.types import BlockIdentifier
 
+    from degenbot.builders.context import BuilderContext
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
 
 class CamelotBuilder(V2BuilderBase):
     """Builds and updates Camelot V2 pools."""
+
+    def __init__(self, ctx: BuilderContext) -> None:
+        super().__init__(ctx)
 
     def build(
         self,

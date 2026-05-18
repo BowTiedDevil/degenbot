@@ -8,12 +8,11 @@ Replaces the previous ad hoc pool fakes:
 - MockV3LiquidityPool(UniswapV3Pool) (from tests/arbitrage/integration/test_uniswap_lp_cycle.py)
 """
 
-from collections import deque
-from threading import Lock
 from weakref import WeakSet
 
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.types.abstract import AbstractLiquidityPool
+from degenbot.types.state_cache import StateCache
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -82,15 +81,16 @@ class MockLiquidityPool(UniswapV2Pool):
     """
 
     def __init__(self) -> None:
-        self._state_cache = deque([
+        self._state_cache = StateCache(max_depth=8)
+        self._state_cache.append(
             UniswapV2PoolState(
                 address=ZERO_ADDRESS,
                 reserves_token0=0,
                 reserves_token1=0,
                 block=0,
-            )
-        ])
-        self._state_lock = Lock()
+            ),
+            block=0,
+        )
         self._subscribers = WeakSet()
 
 
@@ -102,7 +102,7 @@ class MockV3LiquidityPool(UniswapV3Pool):
     """
 
     def __init__(self) -> None:
-        self._state_cache = deque()
+        self._state_cache = StateCache(max_depth=8)
         self._state_cache.append(
             UniswapV3PoolState(
                 address=ZERO_ADDRESS,
@@ -112,7 +112,7 @@ class MockV3LiquidityPool(UniswapV3Pool):
                 tick=0,
                 tick_bitmap={},
                 tick_data={},
-            )
+            ),
+            block=0,
         )
-        self._state_lock = Lock()
         self._subscribers = WeakSet()

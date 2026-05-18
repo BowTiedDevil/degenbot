@@ -27,10 +27,7 @@ if TYPE_CHECKING:
 
     from web3.types import BlockIdentifier
 
-    from degenbot.builders.erc20_builder import Erc20Builder
-    from degenbot.connection.connection_manager import ConnectionManager
-    from degenbot.database.session_manager import DatabaseSessionManager
-    from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
+    from degenbot.builders.context import BuilderContext
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
@@ -43,22 +40,16 @@ class V4PoolBuilder:
     construct pool → register.
     """
 
-    def __init__(
-        self,
-        *,
-        connections: ConnectionManager,
-        db: DatabaseSessionManager,
-        pools: PoolRegistry,
-        tokens: TokenRegistry,
-        managed_pools: ManagedPoolRegistry,
-        erc20_builder: Erc20Builder,
-    ) -> None:
-        self._connections = connections
-        self._db = db
-        self._pools = pools
-        self._tokens = tokens
-        self._managed_pools = managed_pools
-        self._erc20_builder = erc20_builder
+    def __init__(self, ctx: BuilderContext) -> None:
+        assert ctx.managed_pools is not None, (
+            "V4PoolBuilder requires managed_pools in BuilderContext"
+        )
+        self._connections = ctx.connections
+        self._db = ctx.db
+        self._pools = ctx.pools
+        self._tokens = ctx.tokens
+        self._managed_pools = ctx.managed_pools
+        self._erc20_builder = ctx.erc20_builder
 
     def _make_tick_data_fetcher(
         self, pool_id: HexBytes, pool_manager_address: str, state_view_address: str, chain_id: int

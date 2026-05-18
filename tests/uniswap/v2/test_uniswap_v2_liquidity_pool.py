@@ -1,5 +1,4 @@
 import pickle
-from collections import deque
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
@@ -28,6 +27,7 @@ from degenbot.uniswap.v2_types import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
 )
+from degenbot.types.state_cache import StateCache
 from tests.helpers.bot_factory import make_bot_with_provider
 
 if TYPE_CHECKING:
@@ -488,10 +488,12 @@ def test_comparisons(
     indirect=True,
 )
 def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool):
-    # Manipulate the cache depth so additional states beyond the default can be tracked
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache = deque(
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache,
-    )
+    # Replace the state cache with a deeper one so additional states can be tracked
+    old_cache = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache
+    new_cache = StateCache(max_depth=100)
+    for state in old_cache:
+        new_cache.append(state, block=state.block)
+    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache = new_cache
 
     starting_state = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.state
     starting_block = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.update_block
@@ -521,7 +523,7 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: 
             )
         )
         assert (
-            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache[-1].block
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache.current.block
             == block_number
         )
         expected_block_states[block_number] = (
@@ -595,7 +597,7 @@ def test_discard_before_finalized(
             )
         )
         assert (
-            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache[-1].block
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache.current.block
             == block_number
         )
         expected_block_states[block_number] = (
@@ -606,7 +608,7 @@ def test_discard_before_finalized(
         last_update_block
     )
     assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache[-1].block
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache.current.block
         == last_update_block
     )
 

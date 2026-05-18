@@ -22,9 +22,7 @@ NOT covered (requires real pool math or on-chain execution):
 """
 
 import pickle
-from collections import deque
 from fractions import Fraction
-from threading import Lock
 from weakref import WeakSet
 
 import pytest
@@ -35,6 +33,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.exceptions.arbitrage import ArbitrageError, RateOfExchangeBelowMinimum
 from degenbot.exceptions.base import DegenbotValueError
+from degenbot.types.state_cache import StateCache
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import (
@@ -83,16 +82,16 @@ class OfflineV2Pool(UniswapV2Pool):
         self.name = name
         self.factory = factory
         self._chain_id = 1
-        self._state_cache: deque[UniswapV2PoolState] = deque(maxlen=8)
+        self._state_cache = StateCache(max_depth=8)
         self._state_cache.append(
             UniswapV2PoolState(
                 address=address,
                 reserves_token0=reserves_token0,
                 reserves_token1=reserves_token1,
                 block=0,
-            )
+            ),
+            block=0,
         )
-        self._state_lock = Lock()
         self._subscribers: WeakSet = WeakSet()
 
     def external_update(self, update: UniswapV2PoolExternalUpdate) -> None:
@@ -103,7 +102,8 @@ class OfflineV2Pool(UniswapV2Pool):
             reserves_token1=update.reserves_token1,
             block=update.block_number,
         )
-        self._state_cache.append(new_state)
+        with self._state_cache.lock():
+            self._state_cache.append(new_state, block=update.block_number)
         for subscriber in self._subscribers:
             subscriber.notify(
                 publisher=self,
@@ -146,7 +146,7 @@ class OfflineV3Pool(UniswapV3Pool):
         self._sparse_liquidity_map = False
         self._chain_id = 1
         self._initial_state_block = 0
-        self._state_cache: deque[UniswapV3PoolState] = deque(maxlen=8)
+        self._state_cache = StateCache(max_depth=8)
         self._state_cache.append(
             UniswapV3PoolState(
                 address=address,
@@ -156,9 +156,9 @@ class OfflineV3Pool(UniswapV3Pool):
                 tick=tick,
                 tick_bitmap=tick_bitmap or {},
                 tick_data=tick_data or {},
-            )
+            ),
+            block=0,
         )
-        self._state_lock = Lock()
         self._subscribers: WeakSet = WeakSet()
 
     def external_update(self, update: UniswapV3PoolExternalUpdate) -> None:
@@ -172,7 +172,8 @@ class OfflineV3Pool(UniswapV3Pool):
             tick_bitmap=self.tick_bitmap,
             tick_data=self.tick_data,
         )
-        self._state_cache.append(new_state)
+        with self._state_cache.lock():
+            self._state_cache.append(new_state, block=update.block_number)
 
 
 class OfflineErc20Token:
