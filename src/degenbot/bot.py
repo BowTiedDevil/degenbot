@@ -480,13 +480,13 @@ class Bot:
         # Default classes when no factory-specific registration exists
         match pool_type.family:
             case PoolFamily.CONSTANT_PRODUCT:
-                return cast(  # protocol subclass not recognized by mypy
+                return cast(
                     "type[AbstractLiquidityPool]",
                     pool_type_registry.get_v2_class(chain_id, pool_type.factory or "")
                     or UniswapV2Pool,
                 )
             case PoolFamily.CONCENTRATED_LIQUIDITY:
-                return cast(  # protocol subclass not recognized by mypy
+                return cast(
                     "type[AbstractLiquidityPool]",
                     pool_type_registry.get_v3_class(chain_id, pool_type.factory or "")
                     or UniswapV3Pool,

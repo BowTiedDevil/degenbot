@@ -62,7 +62,6 @@ class TransactionContext:
     # Key: (user_address, asset_id, position_table_class), Value: position object
     # Using table class as discriminator to distinguish collateral vs debt positions
     # for the same user and asset (e.g., user supplying and borrowing USDC)
-    # Using Any for the table class type to satisfy mypy with generic parameters
     modified_positions: dict[
         tuple[ChecksumAddress, int, Any],
         AaveV3CollateralPosition | AaveV3DebtPosition,
