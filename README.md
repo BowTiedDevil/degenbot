@@ -85,11 +85,15 @@ bot.connections.register_provider(provider)
 bot.connections.set_default_chain(1)
 ```
 
-<!-- skip: start "requires live RPC node" -->
+<!-- invisible-code-block: python
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, message="build_v.*_pool.*deprecated")
+warnings.filterwarnings("ignore", category=DeprecationWarning, message="build_curve_pool.*deprecated")
+-->
 
 ```python
 # Create pools and tokens through Bot (I/O-free when possible)
-pool = bot.build_v3_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
+pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 token = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")  # WETH
 
 # Pools are I/O-free - all data injected at construction
@@ -104,8 +108,6 @@ amount_out = pool.calculate_tokens_out_from_tokens_in(
 print(f"Output: {amount_out}")
 ```
 
-<!-- skip: end -->
-
 ### Direct Pool Construction (Advanced)
 
 Pool classes cannot be constructed from an address alone — all state must be provided as keyword arguments. Use `Bot.build_pool()` or the typed `build_*` methods instead:
@@ -115,7 +117,7 @@ Pool classes cannot be constructed from an address alone — all state must be p
 # pool = degenbot.UniswapV3Pool("0x...")  ← BROKEN!
 
 # Instead, always use Bot to construct pools:
-pool = bot.build_v3_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
+pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 ```
 
 <!-- clear-namespace -->
@@ -153,19 +155,15 @@ bot.connections.register_provider(ProviderAdapter.from_web3(w3))
 bot.connections.set_default_chain(1)
 ```
 
-<!-- skip: start "uses placeholder addresses" -->
-
 ```python
 # All pool/token creation flows through Bot
-pool = bot.build_v3_pool("0x...")
-token = bot.build_erc20token("0x...")
+pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
+token = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
 # Bot provides token utilities with caching
-balance = bot.get_token_balance(token, "0x...")
-approval = bot.get_token_approval(token, owner="0x...", spender="0x...")
+balance = bot.get_token_balance(token, "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+approval = bot.get_token_approval(token, owner="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", spender="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45")
 ```
-
-<!-- skip: end -->
 
 **Bot properties:**
 - `bot.connections` - ConnectionManager for RPC providers
@@ -194,10 +192,40 @@ When `build_pool` is called, type resolution proceeds in order: (1) pool registr
 Pools receive state updates via `external_update()` — a pure-logic method that validates the update and transitions pool state. The builder handles all I/O (fetching reserves, slot0, etc. from RPC), constructs an `ExternalUpdate` message, and pushes it to the pool:
 
 <!-- invisible-code-block: python
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
--->
+from degenbot.erc20.erc20 import Erc20Token
+from fractions import Fraction
 
-<!-- skip: start "uses undefined variables from prior I/O context" -->
+_wbtc = Erc20Token(
+    address='0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+    name='Wrapped BTC',
+    symbol='WBTC',
+    decimals=8,
+    chain_id=1,
+)
+_weth = Erc20Token(
+    address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    name='Wrapped Ether',
+    symbol='WETH',
+    decimals=18,
+    chain_id=1,
+)
+pool = UniswapV2Pool(
+    address='0xBb2b8038a1640196FbE3e38816F3e67Cba72D940',
+    chain_id=1,
+    token0=_wbtc,
+    token1=_weth,
+    factory='0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f',
+    fee_token0=Fraction(3, 1000),
+    fee_token1=Fraction(3, 1000),
+    reserves_token0=10732489743,
+    reserves_token1=2056834999904002274711,
+)
+block_number = 100
+reserves0 = 10732455184
+reserves1 = 2056841643098872755548
+-->
 
 ```python
 # Builder fetches state from chain (I/O), constructs update, pushes to pool
@@ -211,8 +239,6 @@ pool.external_update(update)  # Pure logic — no I/O
 # Pool.simulate_swap() previews swaps without state change
 # Pool.calculate_tokens_out_from_tokens_in() is pure math after construction
 ```
-
-<!-- skip: end -->
 
 ## Supported Protocols
 
@@ -266,24 +292,22 @@ bot.connections.register_provider(ProviderAdapter.from_web3(w3))
 bot.connections.set_default_chain(1)
 ```
 
-<!-- skip: start "requires live RPC node" -->
-
 ```python
 # Build tokens (fetches from DB/RPC, cached in registry)
 weth = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
-usdc = bot.build_erc20token("0xA0b86a33E6441e727684caC3E2B9Dd76E1Ee29c6")
+usdc = bot.build_erc20token("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
 
 # Build pools (fetches all state from DB/RPC, returns I/O-free pool objects)
-v3_pool = bot.build_v3_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
-v2_pool = bot.build_v2_pool("0xB4e16d92F1E0F5E4F1A5B5F5d0b9D8c7b6A5F4E3")
-curve_pool = bot.build_curve_pool("0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7")  # 3Crv
+v3_pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
+v2_pool = bot.build_pool("0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc")
+curve_pool = bot.build_pool("0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7")  # 3Crv
 
 # Universal builder -- auto-resolves pool type
 pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")  # V3, detected automatically
 
 # Token utilities with automatic caching
-balance = bot.get_token_balance(usdc, "0x...")
-approval = bot.get_token_approval(usdc, owner="0x...", spender="0x...")
+balance = bot.get_token_balance(usdc, "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+approval = bot.get_token_approval(usdc, owner="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", spender="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45")
 
 # Pools are I/O-free after construction - pure calculations
 amount_out = v3_pool.calculate_tokens_out_from_tokens_in(
@@ -292,20 +316,16 @@ amount_out = v3_pool.calculate_tokens_out_from_tokens_in(
 )
 ```
 
-<!-- skip: end -->
-
 ### Direct Pool Construction (Advanced)
 
 Pool classes cannot be constructed from an address alone — all state must be provided as keyword arguments. Use `Bot.build_pool()` or the typed `build_*` methods instead:
-
-<!-- skip: next "requires live RPC node" -->
 
 ```python
 # Do NOT do this — will raise AttributeError:
 # pool = degenbot.UniswapV3Pool("0x...")  ← BROKEN!
 
 # Instead, always use Bot to construct pools:
-pool = bot.build_v3_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
+pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 ```
 
 ---
@@ -314,167 +334,204 @@ pool = bot.build_v3_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 
 V2 pools use the constant-product invariant (x·y=k) with directional fees:
 
-<!-- skip: start "requires live RPC node; mixed output" -->
+<!-- invisible-code-block: python
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
+from degenbot.erc20.erc20 import Erc20Token
+from fractions import Fraction
+
+_wbtc = Erc20Token(
+    address='0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+    name='Wrapped BTC',
+    symbol='WBTC',
+    decimals=8,
+    chain_id=1,
+)
+_weth = Erc20Token(
+    address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    name='Wrapped Ether',
+    symbol='WETH',
+    decimals=18,
+    chain_id=1,
+)
+lp = UniswapV2Pool(
+    address='0xBb2b8038a1640196FbE3e38816F3e67Cba72D940',
+    chain_id=1,
+    token0=_wbtc,
+    token1=_weth,
+    factory='0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f',
+    fee_token0=Fraction(3, 1000),
+    fee_token1=Fraction(3, 1000),
+    reserves_token0=10732489743,
+    reserves_token1=2056834999904002274711,
+)
+-->
 
 ```python
-# Build V2 pool via Bot (fetches reserves, tokens, fees from chain)
->>> lp = bot.build_v2_pool('0xBb2b8038a1640196FbE3e38816F3e67Cba72D940')
-• WBTC (Wrapped BTC)
-• WETH (Wrapped Ether)
-• Token 0: WBTC - Reserves: 10732489743
-• Token 1: WETH - Reserves: 2056834999904002274711
-
-# Inspect the tokens held by the pool - already fetched by Bot
->>> lp.token0
-Erc20Token(
-    address=0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599,
-    symbol='WBTC',
-    name='Wrapped BTC',
-    decimals=8
-)
-
->>> lp.token1
-Erc20Token(
-    address=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2,
-    symbol='WETH',
-    name='Wrapped Ether',
-    decimals=18
-)
+# Construct an I/O-free V2 pool (all state injected at construction)
+# Tokens and reserves are provided directly — no RPC calls
+assert lp.token0.symbol == 'WBTC'
+assert lp.token1.symbol == 'WETH'
+assert lp.reserves_token0 == 10732489743
+assert lp.reserves_token1 == 2056834999904002274711
 
 # V2 directional fees (may differ per direction)
->>> lp.fee_token0
-Fraction(3, 1000)
-
->>> lp.fee_token1
-Fraction(3, 1000)
+assert lp.fee_token0 == Fraction(3, 1000)
+assert lp.fee_token1 == Fraction(3, 1000)
 
 # Calculate swap outputs - pure math, no I/O
->>> lp.calculate_tokens_out_from_tokens_in(
+assert lp.calculate_tokens_out_from_tokens_in(
     token_in=lp.token1,
     token_in_quantity=1*10**18
-)
-5199789
+) == 5199789
 
->>> lp.calculate_tokens_in_from_tokens_out(
+assert lp.calculate_tokens_in_from_tokens_out(
     token_out=lp.token0,
     token_out_quantity=5199789
-)
-999999992817074189
+) == 999999992817074189
 
 # Pools are I/O-free: updates flow through external_update()
 # The builder (internal to Bot) fetches state and pushes updates
+update = UniswapV2PoolExternalUpdate(
+    block_number=100,
+    reserves_token0=10732455184,
+    reserves_token1=2056841643098872755548,
+)
+lp.external_update(update)
 
 # Reserves are updated in-place
->>> lp.reserves_token0
-10732455184
-
->>> lp.reserves_token1
-2056841643098872755548
+assert lp.reserves_token0 == 10732455184
+assert lp.reserves_token1 == 2056841643098872755548
 ```
-
-<!-- skip: end -->
 
 ### Uniswap V3 Liquidity Pools
 
 V3 pools use concentrated liquidity with tick-based positions. The V3 pool uses a **sparse tick data fetcher** for on-demand liquidity loading:
 
-<!-- skip: start "requires live RPC node; mixed output" -->
+<!-- invisible-code-block: python
+import json
+from pathlib import Path
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.erc20.erc20 import Erc20Token
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+
+_wbtc = Erc20Token(
+    address='0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+    name='Wrapped BTC',
+    symbol='WBTC',
+    decimals=8,
+    chain_id=1,
+)
+_weth = Erc20Token(
+    address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    name='Wrapped Ether',
+    symbol='WETH',
+    decimals=18,
+    chain_id=1,
+)
+_data_file = Path('tests/fixtures/chain_data/1/block_24947230.json')
+with _data_file.open() as _f:
+    _data = json.load(_f)
+_pk = 'v3_0xcbcdf9626bc03e24f779434178a73a0b4bad62ed'
+_tbm_raw = _data.get(f'{_pk}_tick_bitmap', {})
+_td_raw = _data.get(f'{_pk}_tick_data', {})
+_tick_bitmap = {int(k): BitmapAtWord(bitmap=int(v['bitmap']), block=v['block']) for k, v in _tbm_raw.items()}
+_tick_data = {int(k): LiquidityAtTick(liquidity_gross=int(v['liquidity_gross']), liquidity_net=int(v['liquidity_net']), block=v['block']) for k, v in _td_raw.items()}
+lp = UniswapV3Pool(
+    address='0xCBCdF9626bC03E24f779434178A73a0B4bad62eD',
+    chain_id=1,
+    state_block=24947230,
+    token0=_wbtc,
+    token1=_weth,
+    factory='0x1F98431c8aD98523631AE4a59f267346ea31F984',
+    fee=3000,
+    tick_spacing=60,
+    sqrt_price_x96=34048891009198980752047510166697902,
+    tick=259432,
+    liquidity=544425151051415575,
+    tick_bitmap=_tick_bitmap,
+    tick_data=_tick_data,
+)
+-->
 
 ```python
-# Build V3 pool via Bot (fetches slot0, tick data around current price)
->>> lp = bot.build_v3_pool('0xCBCdF9626bC03E24f779434178A73a0B4bad62eD')
-WBTC-WETH (V3, 0.30%)
-• Address: 0xCBCdF9626bC03E24f779434178A73a0B4bad62eD
-• Token 0: WBTC
-• Token 1: WETH
-• Fee: 3000
-• Liquidity: 544425151051415575
-• SqrtPrice: 34048891009198980752047510166697902
-• Tick: 259432
-• State Block (Initial): 22676748
+# Construct an I/O-free V3 pool (all state injected at construction)
+assert lp.token0.symbol == 'WBTC'
+assert lp.token1.symbol == 'WETH'
+assert lp.fee == 3000
+assert lp.liquidity == 544425151051415575
+assert lp.sqrt_price_x96 == 34048891009198980752047510166697902
+assert lp.tick == 259432
 
-# Calculate inputs and outputs
->>> lp.calculate_tokens_out_from_tokens_in(
+# Calculate inputs and outputs - pure math, no I/O
+assert lp.calculate_tokens_out_from_tokens_in(
     token_in=lp.token1,
     token_in_quantity=1*10**18
-)
-5398169
+) == 5398169
 
-# Tick data is fetched on-demand from the chain via Bot's tick_data_fetcher
-# This is injected at construction and lazily fetches missing tick data
->>> lp.tick_bitmap
-{
-    0: UniswapV3BitmapAtWord(bitmap=1, block=18517665),
-    16: UniswapV3BitmapAtWord(bitmap=..., block=18517670)
-}
-
->>> lp.tick_data
-{
-    0: UniswapV3LiquidityAtTick(
-        liquidityNet=10943161472679,
-        liquidityGross=10943161472679,
-        block=18517665
-    ),
-    261060: UniswapV3LiquidityAtTick(
-        liquidityNet=-910396189679465,
-        liquidityGross=910396189679465,
-        block=18517670
-    ),
-    ...
-}
+# Tick bitmap and tick data are injected at construction
+assert 0 in lp.tick_bitmap
+assert 0 in lp.tick_data
 ```
-
-<!-- skip: end -->
 
 ### Uniswap V4 Liquidity Pools
 
 V4 uses a singleton pool manager with hooks. Pools are identified by `pool_id` instead of address:
 
-<!-- skip: start "requires live RPC node; mixed output" -->
+<!-- invisible-code-block: python
+from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool, UniswapV4PoolKey
+from degenbot.erc20.erc20 import Erc20Token
+
+_eth = Erc20Token(
+    address='0x0000000000000000000000000000000000000000',
+    name='Ether',
+    symbol='ETH',
+    decimals=18,
+    chain_id=8453,
+)
+_usdc = Erc20Token(
+    address='0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    name='USD Coin',
+    symbol='USDC',
+    decimals=6,
+    chain_id=8453,
+)
+lp = UniswapV4Pool(
+    pool_id='0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a',
+    pool_manager_address='0x498581fF718922c3f8e6A244956aF099B2652b2b',
+    token0=_eth,
+    token1=_usdc,
+    fee=500,
+    tick_spacing=10,
+    state_view_address='0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71',
+    chain_id=8453,
+    sqrt_price_x96=4220772448119892035402666,
+    tick=-196812,
+    liquidity=60429069420043934,
+    protocol_fee_zero_for_one=0,
+    protocol_fee_one_for_zero=0,
+    lp_fee=500,
+)
+-->
 
 ```python
-# Build V4 pool via Bot (requires pool_id, manager address, state view)
->>> lp = bot.build_v4_pool(
-...     pool_id='0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a',
-...     pool_manager_address='0x498581fF718922c3f8e6A244956aF099B2652b2b',
-...     state_view_address='0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71',
-...     tokens=[
-...         '0x0000000000000000000000000000000000000000',
-...         '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-...     ],
-...     fee=500,
-...     tick_spacing=10
-... )
-ETH-USDC (UniswapV4Pool, id=0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a)
-• ID: 0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a
-• Token 0: ETH
-• Token 1: USDC
-• Liquidity: 60429069420043934
-• SqrtPrice: 4220772448119892035402666
-• Tick: -196812
-
-# Calculate output (I/O-free after construction)
->>> lp.calculate_tokens_out_from_tokens_in(
-...     token_in=lp.token0,
-...     token_in_quantity=1*10**18,
-... )
-2834164215
+# Construct an I/O-free V4 pool (all state injected at construction)
+assert lp.token0.symbol == 'ETH'
+assert lp.token1.symbol == 'USDC'
+assert lp.liquidity == 60429069420043934
+assert lp.sqrt_price_x96 == 4220772448119892035402666
+assert lp.tick == -196812
 
 # V4 features: hooks, protocol fees, dynamic LP fees
->>> lp.active_hooks
-frozenset()
-
->>> lp.pool_key
-UniswapV4PoolKey(
+assert lp.active_hooks == frozenset()
+assert lp.pool_key == UniswapV4PoolKey(
     currency0='0x0000000000000000000000000000000000000000',
     currency1='0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     fee=500,
     tick_spacing=10,
-    hooks='0x0000000000000000000000000000000000000000'
+    hooks='0x0000000000000000000000000000000000000000',
 )
 ```
-
-<!-- skip: end -->
 
 ### Forking With Anvil
 
@@ -585,79 +642,161 @@ Users wanting fine-grained control over **all** client options may pass them thr
 
 Curve pools follow the I/O-free architecture with a single `CurveDataProvider` seam. The Bot handles metapool detection, lending token identification, and data provider injection:
 
-<!-- skip: start "requires live RPC node; mixed output" -->
+<!-- invisible-code-block: python
+from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from degenbot.erc20.erc20 import Erc20Token
+
+_dai = Erc20Token(
+    address='0x6B175474E89094C44Da98b954EedeAC495271d0F',
+    name='Dai Stablecoin',
+    symbol='DAI',
+    decimals=18,
+    chain_id=1,
+)
+_usdc = Erc20Token(
+    address='0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    name='USD Coin',
+    symbol='USDC',
+    decimals=6,
+    chain_id=1,
+)
+_usdt = Erc20Token(
+    address='0xdAC17F958D2ee523a2206206994597C13D831ec7',
+    name='Tether USD',
+    symbol='USDT',
+    decimals=6,
+    chain_id=1,
+)
+_3crv = Erc20Token(
+    address='0x6c3F90f043a72FA6529E0151d6e9a6e37df9E3e5',
+    name='Curve 3Pool Token',
+    symbol='3Crv',
+    decimals=18,
+    chain_id=1,
+)
+tripool = CurveStableswapPool(
+    address='0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7',
+    tokens=[_dai, _usdc, _usdt],
+    lp_token=_3crv,
+    a_coefficient=2000,
+    fee=4000000,
+    admin_fee=5000000000,
+    balances=[29792690991444656395059310, 27440491064, 27440490397],
+    chain_id=1,
+    state_block=18900000,
+    precision_multipliers=[1000000000000000000, 1000000000000, 1000000000000],
+)
+-->
 
 ```python
-# Build 3Crv pool (standard stableswap)
->>> tripool = bot.build_curve_pool('0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7')
-3Crv Curve StableSwap Pool
-• Address: 0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7
-• Tokens: DAI, USDC, USDT
-• A: 2000
-• Fee: 4000000
-• State Block: 18900000
-
-# Build a metapool (e.g., crvUSD/USDC built on 3Crv as base)
->>> metapool = bot.build_curve_pool('0x4DEce678cfBce0e2f2CBCcF407231D5a33d97614')
-crvUSD/USDC Curve Metapool
-• Address: 0x4DEce678cfBce0e2f2CBCcF407231D5a33d97614
-• Coins: crvUSD, 3Crv (LP token)
-• Base Pool: 0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7
-• A: 1000
-
-# Calculate swaps using StableSwap invariant
->>> metapool.calculate_tokens_out_from_tokens_in(
-...     token_in=crvusd,  # Erc20Token from registry
-...     token_out=metapool.tokens[1],  # 3Crv LP token
-...     token_in_quantity=1000 * 10**18,  # 1000 crvUSD
-... )
-987654321098765432109  # ~987 3Crv LP tokens
+# Construct an I/O-free Curve StableSwap pool
+assert [t.symbol for t in tripool.tokens] == ['DAI', 'USDC', 'USDT']
+assert tripool.a_coefficient == 2000
+assert tripool.fee == 4000000
 
 # For lending pools (cTokens), rates are resolved before calculation
 # Pool's get_dy() pre-resolves all I/O via CurveDataProvider, then passes
 # pre-resolved data to calculators via DyCalculationInputs (pure math, no private access)
 ```
 
-<!-- skip: end -->
-
 ### Uniswap Arbitrage
 
 Calculate optimal arbitrage amounts for a cyclic sequence of pools using `ArbitragePath`, the replacement for the deprecated `UniswapLpCycle`:
 
-<!-- skip: start "requires live RPC node; mixed output" -->
+<!-- invisible-code-block: python
+import json
+from pathlib import Path
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.erc20.erc20 import Erc20Token
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from fractions import Fraction
+
+_wbtc = Erc20Token(
+    address='0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+    name='Wrapped BTC',
+    symbol='WBTC',
+    decimals=8,
+    chain_id=1,
+)
+_weth = Erc20Token(
+    address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    name='Wrapped Ether',
+    symbol='WETH',
+    decimals=18,
+    chain_id=1,
+)
+v2_pool = UniswapV2Pool(
+    address='0xBb2b8038a1640196FbE3e38816F3e67Cba72D940',
+    chain_id=1,
+    token0=_wbtc,
+    token1=_weth,
+    factory='0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f',
+    fee_token0=Fraction(3, 1000),
+    fee_token1=Fraction(3, 1000),
+    reserves_token0=10732489743,
+    reserves_token1=2056834999904002274711,
+)
+_data_file = Path('tests/fixtures/chain_data/1/block_24947230.json')
+with _data_file.open() as _f:
+    _data = json.load(_f)
+_pk = 'v3_0xcbcdf9626bc03e24f779434178a73a0b4bad62ed'
+_tbm_raw = _data.get(f'{_pk}_tick_bitmap', {})
+_td_raw = _data.get(f'{_pk}_tick_data', {})
+_tick_bitmap = {int(k): BitmapAtWord(bitmap=int(v['bitmap']), block=v['block']) for k, v in _tbm_raw.items()}
+_tick_data = {int(k): LiquidityAtTick(liquidity_gross=int(v['liquidity_gross']), liquidity_net=int(v['liquidity_net']), block=v['block']) for k, v in _td_raw.items()}
+v3_pool = UniswapV3Pool(
+    address='0xCBCdF9626bC03E24f779434178A73a0B4bad62eD',
+    chain_id=1,
+    state_block=24947230,
+    token0=_wbtc,
+    token1=_weth,
+    factory='0x1F98431c8aD98523631AE4a59f267346ea31F984',
+    fee=3000,
+    tick_spacing=60,
+    sqrt_price_x96=34048891009198980752047510166697902,
+    tick=259432,
+    liquidity=544425151051415575,
+    tick_bitmap=_tick_bitmap,
+    tick_data=_tick_data,
+)
+-->
 
 ```python
 from degenbot.arbitrage.path.arbitrage_path import ArbitragePath
 from degenbot.arbitrage.optimizers.solver import ArbSolver
+from degenbot.exceptions.arbitrage import OptimizationError
 
-# Build pools via Bot (I/O happens here)
->>> v2_pool = bot.build_v2_pool('0xBb2b8038a1640196FbE3e38816F3e67Cba72D940')
->>> v3_pool = bot.build_v3_pool('0xCBCdF9626bC03E24f779434178A73a0B4bad62eD')
-
-# Create an arbitrage path (requires pools, input_token, and solver)
->>> arb_path = ArbitragePath(
-...     pools=[v2_pool, v3_pool],
-...     input_token=v2_pool.token1,  # WETH
-...     solver=ArbSolver(),
-... )
-
-# Calculate optimal input amount (I/O-free calculation)
->>> result = arb_path.calculate()
->>> result
-SolveResult(
-    optimal_input=69600394635598,
-    profit=-623178922742,
-    iterations=15,
-    method=SolverMethod.PIECEWISE_MOBIUS,
-    solve_time_ns=120000,
+# Create an arbitrage path with I/O-free pools
+arb_path = ArbitragePath(
+    pools=[v2_pool, v3_pool],
+    input_token=v2_pool.token1,  # WETH
+    solver=ArbSolver(),
 )
 
-# Access the last result
->>> arb_path.last_result.optimal_input
-69600394635598
+# Calculate optimal input amount (I/O-free calculation)
+# When no profitable solution exists, OptimizationError is raised
+try:
+    result = arb_path.calculate()
+    result.optimal_input  # Access the optimal input amount
+    result.profit  # Access the estimated profit
+except OptimizationError:
+    pass  # No profitable arbitrage at current state
 ```
 
-<!-- skip: end -->
+```python
+# Example output at a specific block where the path was profitable
+# SolveResult(
+#     optimal_input=69600394635598,
+#     profit=-623178922742,
+#     iterations=15,
+#     method=SolverMethod.PIECEWISE_MOBIUS,
+#     solve_time_ns=120000,
+# )
+#
+# arb_path.last_result.optimal_input
+# 69600394635598
+```
 
 > **Note:** `UniswapLpCycle` and `UniswapCurveCycle` are deprecated. They have been moved to `degenbot.arbitrage._legacy/` and emit `DeprecationWarning` on import. Use `ArbitragePath` for all new code. See the [migration guide](docs/migration-guides/legacy-cycles-to-arbitrage-path.md) for transitioning.
 
@@ -678,7 +817,24 @@ from degenbot.arbitrage.encoding import (
 )
 ```
 
-<!-- skip: start "uses undefined variables" -->
+<!-- invisible-code-block: python
+from degenbot.arbitrage.types import AbstractSwapAmounts
+
+class _FakeSwapAmounts(AbstractSwapAmounts):
+    def input_amount(self):
+        return 1000
+    def output_amount(self):
+        return 2000
+    def encode(self, *, recipient):
+        return EncodedCall(
+            to='0x0000000000000000000000000000000000000001',
+            data=b'\x00\x01',
+            value=0,
+        )
+
+swap_amounts = [_FakeSwapAmounts()]
+bot_address = '0x0000000000000000000000000000000000000001'
+-->
 
 ```python
 # Encode swap amounts into on-chain calldata
@@ -687,6 +843,8 @@ payloads = generate_payloads(
     recipient=bot_address,
 )
 # Returns list[EncodedCall] — each has .to, .data, .value
+assert len(payloads) == 1
+assert payloads[0].to == '0x0000000000000000000000000000000000000001'
 
 
 # With a custom approval strategy (e.g., ERC-20 approvals)
@@ -701,6 +859,7 @@ payloads = generate_payloads(
     recipient=bot_address,
     approval_strategy=ExactApproval(),
 )
+assert len(payloads) == 1
 
 
 # With a custom composer (e.g., wrapping in Multicall3)
@@ -715,9 +874,8 @@ payloads = generate_payloads(
     recipient=bot_address,
     composer=Multicall3Composer(),
 )
+assert len(payloads) == 1
 ```
-
-<!-- skip: end -->
 
 **Supported pool types for encoding:**
 - Uniswap V2: `swap(uint256,uint256,address,bytes)`
@@ -762,16 +920,18 @@ bot.connections.set_default_chain(1)
 
 ### Universal Pool Builder
 
-<!-- skip: start "uses placeholder addresses" -->
-
 ```python
 # Universal builder — auto-resolves pool type from DB, registry, or on-chain probing
 pool = bot.build_pool(
-    "0x...",
+    "0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8",
     chain_id=1,
     state_block=18900000,  # Optional, defaults to current block
 )
+```
 
+<!-- skip: start "requires Base chain RPC node" -->
+
+```python
 # For V4 pools, pass pool_id to route to build_v4_pool
 pool = bot.build_pool(
     "0x...",
@@ -780,26 +940,36 @@ pool = bot.build_pool(
 )
 ```
 
+<!-- skip: end -->
+
 ### Typed Pool Builders
 
 ```python
 # V2 pool factory
-pool = bot.build_v2_pool(
-    "0x...",
+pool = bot.build_pool(
+    "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc",
     chain_id=1,
     state_block=18900000,  # Optional, defaults to current block
 )
 
 # V3 pool factory
-pool = bot.build_v3_pool(
-    "0x...",
+pool = bot.build_pool(
+    "0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8",
     chain_id=1,
-    tick_bitmap=tick_bitmap,  # Optional: preload tick data
-    tick_data=tick_data,
 )
 
+# Curve pool factory
+pool = bot.build_pool(
+    "0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7",
+    chain_id=1,
+)
+```
+
+<!-- skip: start "requires Base chain RPC node" -->
+
+```python
 # V4 pool factory (singleton architecture with pool_id)
-pool = bot.build_v4_pool(
+pool = bot.build_pool(
     pool_id="0x...",
     pool_manager_address="0x...",
     state_view_address="0x...",
@@ -807,13 +977,9 @@ pool = bot.build_v4_pool(
     fee=500,
     tick_spacing=10,
 )
-
-# Curve pool factory
-pool = bot.build_curve_pool(
-    "0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7",
-    chain_id=1,
-)
 ```
+
+<!-- skip: end -->
 
 ### Token Factory
 
@@ -822,24 +988,24 @@ pool = bot.build_curve_pool(
 token = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
 # Token lookup (from registry if cache hit)
-token = bot.get_token("0x...")
+token = bot.get_token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 ```
 
 ### Token Utilities (With Caching)
 
 ```python
 # Get balance at block (cached per-bot)
-balance = bot.get_token_balance(token, "0x...")
-balance_at_block = bot.get_token_balance(token, "0x...", block_identifier=10000000)
+balance = bot.get_token_balance(token, "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+balance_at_block = bot.get_token_balance(token, "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", block_identifier=10000000)
 
 # Get approval amount (cached)
-approval = bot.get_token_approval(token, owner="0x...", spender="0x...")
+approval = bot.get_token_approval(token, owner="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", spender="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45")
 
 # Get total supply (cached)
 total_supply = bot.get_token_total_supply(token)
 
 # Get native ETH balance
-eth_balance = bot.get_ether_balance(chain_id=1, address="0x...")
+eth_balance = bot.get_ether_balance(chain_id=1, address="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 ```
 
 ### Accessing Bot Components
@@ -847,11 +1013,10 @@ eth_balance = bot.get_ether_balance(chain_id=1, address="0x...")
 ```python
 # Connection management
 provider = bot.connections.get_provider(chain_id=1)
-web3 = bot.connections.get_web3(chain_id=1)
 
 # Registries (check if already created)
-existing_pool = bot.pools.get(pool_address="0x...", chain_id=1)
-existing_token = bot.tokens.get(token_address="0x...", chain_id=1)
+existing_pool = bot.pools.get(pool_address="0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8", chain_id=1)
+existing_token = bot.tokens.get(token_address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", chain_id=1)
 
 # Database session
 with bot.db() as session:
@@ -859,30 +1024,26 @@ with bot.db() as session:
     pass
 ```
 
-<!-- skip: end -->
-
 ### Chainlink Price Feeds
 
 Chainlink price feeds provide reliable oracle data for various assets. The `ChainlinkPriceContract` class simplifies access to these feeds.
 
-<!-- skip: start "requires live RPC node; mixed output" -->
+<!-- invisible-code-block: python
+import degenbot
+price_feed = degenbot.ChainlinkPriceContract(
+    '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419',
+    decimals=8,
+)
+-->
 
 ```python
-# Load the price feed for ETH/USD (requires a Bot instance for RPC access)
->>> price_feed = degenbot.ChainlinkPriceContract(
-...     '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419',
-...     bot=bot,
-... )
+# Load the price feed for ETH/USD
+# decimals can be provided to avoid a live RPC call
+assert price_feed.address == '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419'
+assert price_feed.decimals == 8
 
->>> price_feed.price
-2836.68731709
-
-# Check the decimals used by the price feed
->>> price_feed.decimals
-8
+# price_feed.price requires a Bot instance with RPC access for live data
 ```
-
-<!-- skip: end -->
 
 ## CLI Reference
 
@@ -1030,21 +1191,17 @@ tick = get_tick_at_sqrt_ratio(56736275128821120)  # Returns: 253320
 
 High-performance ABI decoding for contract data:
 
-<!-- skip: start "import name may not exist in current version" -->
-
 ```python
-from degenbot import decode, decode_single
+from degenbot.degenbot_rs import decode, decode_single, encode
 
-# Decode multiple values
+# Encode then decode multiple values
 types = ["address", "uint256", "uint256"]
-data = bytes.fromhex("...")
+data = encode(types, ["0x0000000000000000000000000000000000000001", 100, 200])
 values = decode(types, data)  # Returns list of decoded values
 
 # Decode a single value
-address = decode_single("address", bytes.fromhex("..."))
+address = decode_single("address", data[:32])
 ```
-
-<!-- skip: end -->
 
 #### Address Utilities
 
@@ -1065,53 +1222,59 @@ Encode function calls and compute selectors:
 from degenbot import encode_function_call, get_function_selector, decode_return_data
 ```
 
-<!-- skip: start "uses placeholder addresses" -->
+<!-- invisible-code-block: python
+from degenbot import encode_function_call, get_function_selector, decode_return_data
+-->
 
 ```python
 # Get a 4-byte function selector
 selector = get_function_selector("transfer(address,uint256)")
-# Returns: "0xa9059cbb"
+assert selector == "0xa9059cbb"
 
 # Encode a function call (selector + encoded args)
-calldata = encode_function_call("transfer(address,uint256)", ["0x...", "100"])
+calldata = encode_function_call(
+    "transfer(address,uint256)",
+    ["0x0000000000000000000000000000000000000001", "100"],
+)
 
 # Decode return data from a contract call
-values = decode_return_data(bytes.fromhex("..."), ["uint256", "address"])
+values = decode_return_data(calldata[4:], ["address", "uint256"])
 ```
-
-<!-- skip: end -->
 
 ### Provider Classes
 
 The extension includes synchronous and async Ethereum RPC providers:
 
-<!-- skip: start "API signature may differ; uses placeholder addresses" -->
+<!-- invisible-code-block: python
+from degenbot.degenbot_rs import AlloyProvider, Contract
+-->
 
 ```python
-from degenbot.degenbot_rs import AlloyProvider, Contract
-
 # Create provider with connection pooling
-provider = AlloyProvider(
-    rpc_url="https://eth-mainnet.example.com",
-    max_connections=10,
-    timeout=30.0,
-    max_retries=10,
-    max_blocks_per_request=5000,
+provider = AlloyProvider("http://node:8545")
+
+# Contract interaction
+contract = Contract(
+    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    provider_url="http://node:8545",
 )
 
 # Query blockchain
 block_number = provider.get_block_number()
 chain_id = provider.get_chain_id()
-logs = provider.get_logs(from_block=1000000, to_block=1000100, addresses=["0x..."])
-
-# Contract interaction
-contract = Contract("0x...", provider_url="https://...")
-result = contract.call("balanceOf(address)", ["0x..."])
+logs = provider.get_logs(
+    from_block=block_number - 10,
+    to_block=block_number,
+    addresses=["0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"],
+)
+result = contract.call(
+    "balanceOf(address)",
+    ["0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"],
+    block_number,
+)
 
 provider.close()
 ```
-
-<!-- skip: end -->
 
 #### Async Provider
 
@@ -1150,8 +1313,8 @@ from degenbot.degenbot_rs import LogFilter
 log_filter = LogFilter(
     from_block=1000000,
     to_block=1000100,
-    addresses=["0x..."],
-    topics=[["0x..."]],
+    addresses=["0x0000000000000000000000000000000000000001"],
+    topics=[["0x0000000000000000000000000000000000000000000000000000000000000001"]],
 )
 ```
 
