@@ -30,6 +30,7 @@ infrastructure.
 ```python
 def some_value_fetcher(self, pool_address: ChecksumAddress) -> Any:
     chain_id = self._chain_id
+
     def fetcher(block_number: int) -> int:
         provider = self._connections.get_provider(chain_id)
         (result,) = eth_abi.abi.decode(
@@ -40,6 +41,7 @@ def some_value_fetcher(self, pool_address: ChecksumAddress) -> Any:
             ),
         )
         return cast("int", result)
+
     return fetcher
 ```
 
@@ -159,33 +161,36 @@ class _CurveDataProviderImpl:
     # ── CurveDataProvider protocol methods ──
 
     def D(self, block_number: int) -> int:
-        return cast("int", self._call_single(
-            self._pool_address, "get_D()", "uint256", block_number
-        ))
+        return cast(
+            "int", self._call_single(self._pool_address, "get_D()", "uint256", block_number)
+        )
 
     def gamma(self, block_number: int) -> int:
-        return cast("int", self._call_single(
-            self._pool_address, "gamma()", "uint256", block_number
-        ))
+        return cast(
+            "int", self._call_single(self._pool_address, "gamma()", "uint256", block_number)
+        )
 
     def virtual_price(self, block_number: int) -> int:
         target = self._base_pool_address or self._pool_address
-        return cast("int", self._call_single(
-            target, "get_virtual_price()", "uint256", block_number
-        ))
+        return cast(
+            "int", self._call_single(target, "get_virtual_price()", "uint256", block_number)
+        )
 
     def base_virtual_price(self, block_number: int) -> int:
         if self._base_pool_address is None:
             msg = "base_virtual_price requires a base pool"
             raise ValueError(msg)
-        return cast("int", self._call_single(
-            self._base_pool_address, "get_virtual_price()", "uint256", block_number
-        ))
+        return cast(
+            "int",
+            self._call_single(
+                self._base_pool_address, "get_virtual_price()", "uint256", block_number
+            ),
+        )
 
     def price_scale(self, block_number: int) -> int:
-        return cast("int", self._call_single(
-            self._pool_address, "price_scale()", "uint256", block_number
-        ))
+        return cast(
+            "int", self._call_single(self._pool_address, "price_scale()", "uint256", block_number)
+        )
 
     def admin_balances(self, block_number: int, index: int) -> int:
         sig = f"admin_balances(uint256)"
@@ -203,9 +208,10 @@ class _CurveDataProviderImpl:
         ...
 
     def redemption_price(self, block_number: int) -> int:
-        return cast("int", self._call_single(
-            self._pool_address, "redemption_price()", "uint256", block_number
-        ))
+        return cast(
+            "int",
+            self._call_single(self._pool_address, "redemption_price()", "uint256", block_number),
+        )
 
     def block_timestamp(self, block_number: int) -> int:
         return self._provider.get_block(block_number)["timestamp"]
@@ -307,9 +313,7 @@ of `_call_single()`:
 ```python
 def crypto_price_oracle(self, block_number: int, index: int) -> int:
     data = Web3.keccak(text="price_oracle(uint256)")[:4] + eth_abi.abi.encode(["uint256"], [index])
-    result = self._provider.call_raw(
-        {"to": self._pool_address, "data": data}, block=block_number
-    )
+    result = self._provider.call_raw({"to": self._pool_address, "data": data}, block=block_number)
     (value,) = eth_abi.abi.decode(types=["uint256"], data=result)
     return cast("int", value)
 ```

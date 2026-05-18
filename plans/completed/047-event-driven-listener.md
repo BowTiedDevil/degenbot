@@ -108,10 +108,13 @@ class Bot:
 listener = LogListener()
 for pool in pools:
     for topic, decoder in pool.LOG_HANDLERS.items():
+
         def make_handler(d=decoder, p=pool):
             def handler(log):
                 d(log)(p)
+
             return handler
+
         listener.register(pool.address, topic, make_handler())
 ```
 
@@ -136,9 +139,13 @@ pools = build_my_pools(bot, block=b_start - 1)
 listener = LogListener()
 for pool in pools:
     for topic, decoder in pool.LOG_HANDLERS.items():
+
         def make_handler(d=decoder, p=pool):
-            def handler(log): d(log)(p)
+            def handler(log):
+                d(log)(p)
+
             return handler
+
         listener.register(pool.address, topic, make_handler())
 
 # Replay buffered logs
