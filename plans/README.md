@@ -4,12 +4,27 @@ Plans are numbered sequentially in a single `0xx` series, grouped by domain.
 
 See the [skill vocabulary](https://github.com/user/skills/improve-codebase-architecture) for terms: **module**, **interface**, **depth**, **seam**, **adapter**, **leverage**, **locality**.
 
+## Writing Plans
+
+New plans **must** follow the [template](TEMPLATE.md). The template is derived from the clearest completed plans (035, 039, 040, 045). Key requirements:
+
+1. **Deletion test** — state what happens if you delete the code; this distinguishes reorganizing from removing
+2. **Specific friction table** — concrete, falsifiable rows (not vague complaints)
+3. **Vertical slices** — each slice ships independently with a green test suite
+4. **Design decisions** — record non-obvious choices with rationale so reviewers don't infer them
+5. **Relationship to other plans** — list every intersecting plan with its relationship (prerequisite / complementary / orthogonal / superseded)
+6. **Status checklist** — `[ ]` unchecked items; mark `[x]` and note results when complete
+
 ## Active Plans
 
 | # | Plan | Summary |
 |---|------|---------|
 | 014 | [Async REPL](014-async-repl.md) | `python -m degenbot` with top-level `await`. |
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
+| 048 | [Unify Bot and AsyncBot via Builder-Backed IO Seam](048-async-builder-shared.md) | AsyncBot delegates to async builders instead of duplicating construction. `PoolIO` protocol parameterizes builders over sync/async. ~965→~200 lines in AsyncBot. |
+| 049 | [Replace CurveFetcherFactory Closures with Structured CurveDataProvider Implementation](049-curve-data-provider-impl.md) | 850-line closure bag → structured `_CurveDataProviderImpl` with shared helpers. ~400 lines of boilerplate collapse. Readable stack traces, individually testable methods. |
+| 050 | [Generic StateCache for Pool State Temporal Navigation](050-generic-state-cache.md) | 4 near-identical deque+lock+navigation implementations → 1 `StateCache[T]`. Future pool types get state caching for free. |
+| 051 | [Extract BuilderContext from Bot Constructor Wiring](051-builder-context.md) | 35 lines of builder wiring → 1 `BuilderContext` + 7 one-liners. Adding a new builder: 2 lines, not 7. |
 
 ## Completed Plans
 
