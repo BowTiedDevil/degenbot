@@ -48,11 +48,13 @@ if TYPE_CHECKING:
 
     from degenbot.builders.protocol import PoolBuilder
     from degenbot.erc20.erc20 import Erc20Token
-    from degenbot.provider.interface import ProviderAdapter
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
-    from degenbot.types.aliases import ChainId
     from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+
+from degenbot.provider.interface import AsyncProviderAdapter, ProviderAdapter
+from degenbot.provider.subscription import Subscription  # noqa: TC001
+from degenbot.types.aliases import ChainId  # noqa: TC001
 
 
 class Bot:
@@ -133,6 +135,9 @@ class Bot:
         # Builder registry: concrete pool type → builder
         # Used by update() for O(1) dict lookup instead of isinstance chain
         self._builders: dict[type, PoolBuilder] = {}
+
+        # Async adapters for subscriptions, keyed by chain_id
+        self._async_adapters: dict[ChainId, AsyncProviderAdapter] = {}
         self.register_builder(UniswapV2Pool, self._v2_builder)
         self.register_builder(UniswapV3Pool, self._v3_builder)
         self.register_builder(UniswapV4Pool, self._v4_builder)
@@ -737,6 +742,57 @@ class Bot:
         Use ``get_provider(chain_id)`` instead.
         """
         return self.connections.get_web3(chain_id)
+
+    async def start_listening(
+        self,
+        chain_id: ChainId | None = None,
+    ) -> tuple[Subscription, Subscription]:
+        """Start WS subscriptions for newHeads and unfiltered logs.
+
+        Creates an AsyncProviderAdapter from the configured WS URI for
+        the given chain, subscribes to new block headers and unfiltered
+        log events (``eth_subscribe("logs", {})``), and returns both
+        subscriptions as a tuple ``(heads_sub, logs_sub)``.
+
+        The adapter is cached — calling again for the same chain_id
+        returns the existing adapter's subscriptions.
+
+        Args:
+            chain_id: Chain to subscribe on. Defaults to the default chain.
+
+        Returns:
+            Tuple of ``(heads_subscription, logs_subscription)``.
+
+        Raises:
+            DegenbotValueError: If no WS URI is configured for the chain.
+            SubscriptionNotSupported: If the provider doesn't support WS.
+        """
+        chain_id = chain_id or self.connections.default_chain_id
+
+        # Reuse existing adapter if already created
+        existing = self._async_adapters.get(chain_id)
+        if existing is not None:
+            heads = await existing.subscribe_blocks()
+            logs = await existing.subscribe_logs()
+            return heads, logs
+
+        # Look up WS URI from config
+        ws_uri = self.config.ws.get(chain_id)
+        if ws_uri is None:
+            msg = f"No WS URI configured for chain {chain_id}. Add [ws.{chain_id}] to config."
+            raise DegenbotValueError(message=msg)
+
+        # Create async alloy provider from WS URI
+        from degenbot.provider import AsyncAlloyProvider  # noqa: PLC0415
+
+        alloy = AsyncAlloyProvider(str(ws_uri))
+        adapter = AsyncProviderAdapter.from_alloy(alloy)
+
+        self._async_adapters[chain_id] = adapter
+
+        heads = await adapter.subscribe_blocks()
+        logs = await adapter.subscribe_logs()
+        return heads, logs
 
     def update(
         self,

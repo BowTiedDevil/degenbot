@@ -12,6 +12,22 @@ _Avoid_: Backend, sync backend, Ethereum provider (use **ProviderBackend**)
 The async counterpart of `ProviderBackend` — a `@runtime_checkable` protocol for async RPC backends. Formerly `_AsyncProviderBackend`; made public via Plan 042.
 _Avoid_: Async backend
 
+**Subscription**:
+A Rust-backed async iterator yielding push events from an Ethereum node via `eth_subscribe`. Created by `AsyncProviderAdapter.subscribe_*()` methods. Uses a double-buffer pattern: the Rust pump task writes raw events to an active buffer (zero GIL), and `drain()` atomically swaps + bulk-converts the stale buffer to Python dicts. Iterated with `async for` (which uses `drain()` internally with a local batch). `started()` awaits WS subscription confirmation; raises on failure. `drain()` returns `list[dict]` for bulk consumption. Terminates with `StopAsyncIteration` (clean) or `SubscriptionDisconnected` (connection lost). Requires WS or IPC transport; HTTP providers raise `SubscriptionNotSupported`.
+_Avoid_: subscription stream, subscription handle, event stream
+
+**LogListener**:
+A pure Python dispatch registry that maps `(address, topic0)` → handler set. Receives raw log dicts via `dispatch(log)`, looks up handlers by address and first topic, and calls them sequentially. Exact match only — no wildcards. Handlers are sync `Callable[[dict], None]`. Exceptions propagate (fail loudly). Used with unfiltered `eth_subscribe("logs", {})` which guarantees logIndex ordering. ~200ns per miss, ~160μs/block for 800 discarded events. Created by the user; not owned by Bot or any adapter.
+_Avoid_: subscription handler, event dispatcher, log dispatcher
+
+**LogSubscriptionFilter**:
+Filter parameters for log subscriptions with `addresses` and `topics` only — no block range (meaningless for push subscriptions). Separate from polling `LogFilter`.
+_Avoid_: log filter subscription, subscription filter
+
+**LOG_HANDLERS**:
+A `ClassVar[dict[str, Callable]]` on pool types that maps event topic0 → decoder function. Each decoder takes a raw log dict and returns a closure that applies the decoded update to a pool instance. V2/V3/V4/Aerodrome pools declare their events; Curve pools have `LOG_HANDLERS = {}` (polling only). The user wires `LOG_HANDLERS` to a **LogListener** after `build_pool()`.
+_Avoid_: event handlers, event decoders, pool handlers
+
 **Connection Manager**:
 A class managing provider instances keyed by chain ID; instances owned by Bot.
 _Avoid_: Connection

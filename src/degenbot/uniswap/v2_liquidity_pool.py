@@ -23,6 +23,7 @@ from degenbot.types.hop_types import ConstantProductHop, HopType
 from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
+from degenbot.uniswap.log_decoders import V2_SYNC_TOPIC, decode_v2_sync
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_functions import (
     generate_v2_pool_address,
@@ -45,6 +46,10 @@ class UniswapV2Pool(
     """
 
     variant: ClassVar[str | None] = None
+
+    LOG_HANDLERS: ClassVar[dict[str, Any]] = {
+        V2_SYNC_TOPIC: decode_v2_sync,
+    }
 
     type PoolState = UniswapV2PoolState
 

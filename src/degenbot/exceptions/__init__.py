@@ -23,6 +23,9 @@ from degenbot.exceptions.infrastructure import (
     NoPriceOracle,
     RegistryAlreadyInitialized,
     RegistryError,
+    SubscriptionDisconnected,
+    SubscriptionError,
+    SubscriptionNotSupported,
     Web3ConnectionTimeout,
 )
 from degenbot.exceptions.pool import (
@@ -88,6 +91,9 @@ __all__ = (
     "RateOfExchangeBelowMinimum",
     "RegistryAlreadyInitialized",
     "RegistryError",
+    "SubscriptionDisconnected",
+    "SubscriptionError",
+    "SubscriptionNotSupported",
     "TrackerAlreadyInitialized",
     "TrackerError",
     "UnknownPool",

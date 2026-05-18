@@ -20,6 +20,30 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import UniswapV3PoolState
 
 
+class FakeV2Pool:
+    """Minimal fake V2 pool that captures external_update calls."""
+
+    def __init__(self) -> None:
+        self.last_update = None
+
+    def external_update(self, update: object) -> None:
+        self.last_update = update
+
+
+class FakeV3Pool:
+    """Minimal fake V3 pool that captures external_update and update_liquidity_map calls."""
+
+    def __init__(self) -> None:
+        self.last_update = None
+        self.last_liquidity_update = None
+
+    def external_update(self, update: object) -> None:
+        self.last_update = update
+
+    def update_liquidity_map(self, update: object) -> None:
+        self.last_liquidity_update = update
+
+
 class FakeUniswapV4Pool(AbstractLiquidityPool):
     """Minimal fake Uniswap V4 pool for registry tests."""
 
@@ -34,10 +58,10 @@ class FakeUniswapV4Pool(AbstractLiquidityPool):
 
     def simulate_swap(
         self,
-        token_in: str,
-        amount_in: int,
-        token_out: str,
-        state_override: object | None = None,
+        _token_in: str,
+        _amount_in: int,
+        _token_out: str,
+        _state_override: object | None = None,
     ) -> object:
         return object()
 

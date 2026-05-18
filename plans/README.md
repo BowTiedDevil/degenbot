@@ -59,3 +59,5 @@ See the [skill vocabulary](https://github.com/user/skills/improve-codebase-archi
 | 043 | [Extract V2 Variant Builders](completed/043-extract-v2-variant-builders.md) | `V2PoolBuilder` 375→118 lines (68% reduction). Per-variant builders: `V2BuilderBase`, `AerodromeV2Builder`, `CamelotBuilder`. |
 | 044 | [Deprecate Bot Pass-Throughs](completed/044-deprecate-bot-pass-throughs.md) | `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool` emit `DeprecationWarning`. Use `build_pool()`. |
 | 045 | [Calculator Explicit Data](completed/045-calculator-explicit-data.md) | Replace `pool` parameter with `DyCalculationInputs` in DyCalculator. 77 SLF001 errors → 0. Calculators are pure consumers of pre-resolved data. |
+| 046 | [eth_subscribe Support](completed/046-eth-subscribe.md) | `eth_subscribe` via AlloyProvider with AsyncProviderAdapter wiring and SubscriptionManager callback layer. |
+| 047 | [Event-Driven Log Listener](completed/047-event-driven-listener.md) | Subscription double-buffer drain + LogListener dispatch registry + pool LOG_HANDLERS. Replaces SubscriptionManager. |

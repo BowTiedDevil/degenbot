@@ -148,3 +148,43 @@ class NoPriceOracle(Erc20TokenError):
 
     def __init__(self) -> None:
         super().__init__(message="Token does not have a price oracle.")
+
+
+# --- Subscriptions ---
+
+
+class SubscriptionError(DegenbotError):
+    """
+    Base exception for subscription-related errors.
+    """
+
+
+class SubscriptionNotSupported(SubscriptionError):
+    """
+    Raised when subscribe_*() is called on a provider that doesn't support
+    eth_subscribe (e.g., HTTP transport).
+    """
+
+    def __init__(self, transport: str, rpc_url: str) -> None:
+        self.transport = transport
+        self.rpc_url = rpc_url
+        msg = (
+            f"Subscriptions require a WebSocket or IPC transport. "
+            f"This provider was created with {transport} transport "
+            f"('{rpc_url}'). "
+            f"Use AsyncProviderAdapter with a WS/IPC URL instead."
+        )
+        super().__init__(message=msg)
+
+
+class SubscriptionDisconnected(SubscriptionError):
+    """
+    Raised when the WS/IPC connection drops during an active subscription.
+    """
+
+    def __init__(self, message: str, *, rpc_url: str | None = None) -> None:
+        self.rpc_url = rpc_url
+        detail = message
+        if rpc_url is not None:
+            detail += f" (RPC URL: {rpc_url})"
+        super().__init__(message=detail)

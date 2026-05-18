@@ -549,6 +549,14 @@ impl AlloyProvider {
         &self.rpc_url
     }
 
+    /// Get a reference-counted clone of the inner Alloy provider.
+    ///
+    /// Used by the subscription module to spawn pump tasks that
+    /// need access to the provider for subscription calls.
+    pub(crate) fn provider_arc(&self) -> Arc<dyn Provider<Ethereum>> {
+        Arc::clone(&self.inner)
+    }
+
     /// Execute an `eth_call`.
     ///
     /// # Errors

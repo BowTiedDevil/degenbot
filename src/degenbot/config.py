@@ -31,6 +31,10 @@ class DegenbotConfig(BaseSettings):
         ChainId,
         HttpUrl | WebsocketUrl | Path,
     ]
+    ws: dict[
+        ChainId,
+        WebsocketUrl,
+    ] = {}
 
     @field_validator("rpc", mode="after")
     def validate_paths(

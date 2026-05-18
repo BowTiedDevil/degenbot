@@ -24,6 +24,14 @@ from degenbot.uniswap.concentrated.state_manager import ConcentratedLiquiditySta
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.concentrated.v3_simulator import calculate_swap as _v3_swap
 from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
+from degenbot.uniswap.log_decoders import (
+    V3_BURN_TOPIC,
+    V3_MINT_TOPIC,
+    V3_SWAP_TOPIC,
+    decode_v3_burn,
+    decode_v3_mint,
+    decode_v3_swap,
+)
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import generate_v3_pool_address, get_tick_word_and_bit_position
 from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
@@ -73,6 +81,13 @@ class UniswapV3Pool(
     AbstractLiquidityPool,
 ):
     variant: ClassVar[str | None] = None
+
+    LOG_HANDLERS: ClassVar[dict[str, Any]] = {
+        V3_SWAP_TOPIC: decode_v3_swap,
+        V3_MINT_TOPIC: decode_v3_mint,
+        V3_BURN_TOPIC: decode_v3_burn,
+    }
+
     type PoolState = UniswapV3PoolState
     _state: PoolState
     _state_mgr: ConcentratedLiquidityStateManager[UniswapV3PoolState]
