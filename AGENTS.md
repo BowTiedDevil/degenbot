@@ -259,6 +259,8 @@ Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` f
 
 Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–045 are all complete; the only remaining active plan is 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
 
+**New plans must follow [`plans/TEMPLATE.md`](plans/TEMPLATE.md).** The template requires: deletion test, specific friction table, vertical slices, design decisions, relationship to other plans, and status checklist.
+
 When a plan is marked complete: (1) move its file from `plans/` to `plans/completed/`, (2) move its row in `plans/README.md` from the Active Plans table to the Completed Plans table, and (3) update the link to point to the new `completed/` path.
 
 ### Legacy Arbitrage Cycles (Deprecated)
