@@ -36,6 +36,15 @@ class FakeSyncProvider:
     def get_block(self, block_identifier: int | str) -> BlockData | None:
         return {"number": 42}  # type: ignore[return-value]
 
+    def get_block_timestamp(self, block: int | None = None) -> int:
+        return 1_700_000_000
+
+    def get_code(self, address: str, block: int | None = None) -> HexBytes:
+        return HexBytes(b"\x01")
+
+    def get_balance(self, address: str, block: int | None = None) -> int:
+        return 10**18
+
 
 class FakeAsyncProvider:
     """Minimal async fake satisfying AsyncPoolIO's delegate."""
@@ -51,7 +60,13 @@ class FakeAsyncProvider:
         return 42
 
     async def get_block(self, block_identifier: int | str) -> BlockData | None:
-        return {"number": 42}  # type: ignore[return-value]
+        return {"number": 42, "timestamp": 1_700_000_000}  # type: ignore[return-value]
+
+    async def get_code(self, address: str, block: int | None = None) -> HexBytes:
+        return HexBytes(b"\x01")
+
+    async def get_balance(self, address: str, block: int | None = None) -> int:
+        return 10**18
 
 
 # --- SyncPoolIO ---
@@ -90,6 +105,25 @@ class TestSyncPoolIO:
         assert block is not None
         assert block["number"] == 42
 
+    def test_get_block_timestamp_delegates(self) -> None:
+        """SyncPoolIO.get_block_timestamp() delegates to the wrapped provider."""
+        provider = FakeSyncProvider()
+        io = SyncPoolIO(provider)
+        assert io.get_block_timestamp() == 1_700_000_000
+
+    def test_get_code_delegates(self) -> None:
+        """SyncPoolIO.get_code() delegates to the wrapped provider."""
+        provider = FakeSyncProvider()
+        io = SyncPoolIO(provider)
+        result = io.get_code(address="0x01")
+        assert result == HexBytes(b"\x01")
+
+    def test_get_balance_delegates(self) -> None:
+        """SyncPoolIO.get_balance() delegates to the wrapped provider."""
+        provider = FakeSyncProvider()
+        io = SyncPoolIO(provider)
+        assert io.get_balance(address="0x01") == 10**18
+
     def test_satisfies_pool_io_protocol(self) -> None:
         """SyncPoolIO satisfies the PoolIO protocol at runtime."""
         io = SyncPoolIO(FakeSyncProvider())
@@ -123,6 +157,25 @@ class TestAsyncPoolIO:
         block = await io.get_block(42)
         assert block is not None
         assert block["number"] == 42
+
+    async def test_get_block_timestamp_delegates(self) -> None:
+        """AsyncPoolIO.get_block_timestamp() fetches block and extracts timestamp."""
+        provider = FakeAsyncProvider()
+        io = AsyncPoolIO(provider)
+        assert await io.get_block_timestamp() == 1_700_000_000
+
+    async def test_get_code_delegates(self) -> None:
+        """AsyncPoolIO.get_code() delegates to the wrapped provider."""
+        provider = FakeAsyncProvider()
+        io = AsyncPoolIO(provider)
+        result = await io.get_code(address="0x01")
+        assert result == HexBytes(b"\x01")
+
+    async def test_get_balance_delegates(self) -> None:
+        """AsyncPoolIO.get_balance() delegates to the wrapped provider."""
+        provider = FakeAsyncProvider()
+        io = AsyncPoolIO(provider)
+        assert await io.get_balance(address="0x01") == 10**18
 
     async def test_satisfies_async_pool_io_protocol(self) -> None:
         """AsyncPoolIO satisfies the AsyncPoolIOProtocol at runtime."""
