@@ -26,7 +26,13 @@ _Avoid_: Builder config, builder deps.
 
 **V2BuilderBase**: Base class for V2-family sync builders (V2, Aerodrome V2, Camelot). Owns shared pure helpers (`decode_immutable_data`, `extract_db_values`, `resolve_deployer_and_init_hash`, `_fetch_v2_common_data`, `_fetch_reserves`) that `AsyncV2PoolBuilder` calls independently.
 
-**Tick Data Fetcher**: A callable created by `make_tick_data_fetcher()` that fetches tick/bitmap data for V3/V4 pools. Accepts `io: PoolIO` for I/O. Stored on pool instances for lazy tick population.
+**V3BuilderBase**: Base class for V3-family sync builders. Owns shared pure-logic `@staticmethod` helpers: `decode_immutable_data()`, `decode_slot0()`, `extract_db_values()`, `load_tick_snapshot()`, `resolve_tick_data_args()`. Frozen dataclasses `V3ImmutableData`, `V3Slot0Data`, `V3DbValues` carry decoded values between helpers and builders. `AsyncV3PoolBuilder` calls these static methods independently (no inheritance).
+
+**V4BuilderBase**: Base class for V4 sync builder. Owns shared pure-logic `@staticmethod` helpers: `decode_slot0()`, `extract_db_values()`, `load_tick_snapshot()`, `resolve_tick_data_args()`. Frozen dataclasses `V4Slot0Data`, `V4DbValues` carry decoded values. `AsyncV4PoolBuilder` calls these static methods independently (no inheritance). V4's `decode_slot0()` differs from V3's — it unpacks packed protocol fees from the V4 `slot0` format.
+
+**Tick Data Fetcher**: A sync callable `Callable[[int, int], None]` created by `make_tick_data_fetcher()` that fetches tick/bitmap data for V3/V4 pools. Accepts `io: PoolIO` for I/O. Stored on pool instances for lazy tick population. Async-built pools currently pass `tick_data_fetcher=None` — an async counterpart is not viable because pool objects are synchronous and call the fetcher synchronously during `external_update()`.
+
+**Builder Base Dataclasses**: Frozen dataclasses (`V3ImmutableData`, `V3Slot0Data`, `V3DbValues`, `V4Slot0Data`, `V4DbValues`) carry decoded pure values between base-class helpers and concrete builders. They replace ad-hoc local variables and make the data flow explicit. Avoid: builder DTOs, builder value objects — use the specific dataclass name.
 
 ## Relationships
 
@@ -35,6 +41,8 @@ _Avoid_: Builder config, builder deps.
 - **All builders** are fully PoolIO-driven — they use `io.call()` / `io.call_raw()` instead of `self._connections.get_provider()`
 - **BuilderContext** no longer carries a `connections` field; builders receive `default_chain_id` for chain resolution and `io: PoolIO` for I/O at call sites
 - **Type resolution** functions in `type_resolution.py` replace ~330 lines of duplicated resolution logic that was in both `Bot` and `AsyncBot`
+- **V3BuilderBase** and **V4BuilderBase** extract ~150 lines of duplicated pure-logic per builder family (decode, DB extract, tick snapshot loading, tick-data-args resolution); async builders call the same `@staticmethod` helpers without inheritance — mirrors the V2 pattern (Plan 060)
+- **`load_tick_snapshot()`** re-queries the `pool_with_data` SQLAlchemy object inside the caller's session scope — lazy-loaded relationships (`initialization_maps`, `liquidity_positions`) require an active session
 
 ## Resolved ambiguities
 

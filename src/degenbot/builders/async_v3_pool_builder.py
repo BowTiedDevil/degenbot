@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 import eth_abi.abi
 from sqlalchemy import select
 
+from degenbot.builders.v3_builder_base import V3BuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import LiquidityPoolTable, UniswapV3PoolTableBase
 from degenbot.exceptions.base import DegenbotValueError
@@ -36,7 +37,7 @@ class AsyncV3PoolBuilder:
     """Async counterpart of V3PoolBuilder.
 
     Builds UniswapV3Pool instances using AsyncPoolIO for I/O.
-    Shares pure decode/resolve logic with V3PoolBuilder.
+    Shares pure decode/resolve logic with V3BuilderBase via static methods.
     """
 
     def __init__(self, ctx: AsyncBuilderContext) -> None:
@@ -87,18 +88,18 @@ class AsyncV3PoolBuilder:
 
         # Get immutable values
         if pool_from_db is not None:
-            factory = get_checksum_address(pool_from_db.exchange.factory)
-            token0_address = get_checksum_address(pool_from_db.token0.address)
-            token1_address = get_checksum_address(pool_from_db.token1.address)
-            if isinstance(pool_from_db, UniswapV3PoolTableBase):
-                fee = pool_from_db.fee_token0
-                tick_spacing_for_pool = pool_from_db.tick_spacing
-            else:
+            if not isinstance(pool_from_db, UniswapV3PoolTableBase):
                 msg = f"Expected UniswapV3PoolTableBase, got {type(pool_from_db).__name__}"
                 raise DegenbotValueError(message=msg)
 
-            if pool_from_db.exchange.deployer is not None:
-                deployer_address = pool_from_db.exchange.deployer
+            db_values = V3BuilderBase.extract_db_values(pool_from_db)
+            factory = db_values.factory
+            token0_address = db_values.token0_address
+            token1_address = db_values.token1_address
+            fee = db_values.fee
+            tick_spacing_for_pool = db_values.tick_spacing
+            if db_values.deployer_address is not None:
+                deployer_address = db_values.deployer_address
         else:
             try:
                 factory_result = await io.call(
@@ -124,17 +125,18 @@ class AsyncV3PoolBuilder:
             except Exception as exc:
                 raise LiquidityPoolError(message="Could not decode contract data") from exc
 
-            (factory_raw,) = eth_abi.abi.decode(types=["address"], data=factory_result)
-            (token0_raw,) = eth_abi.abi.decode(types=["address"], data=token0_result)
-            (token1_raw,) = eth_abi.abi.decode(types=["address"], data=token1_result)
-            (fee,) = eth_abi.abi.decode(types=["uint24"], data=fee_result)
-            (tick_spacing_for_pool,) = eth_abi.abi.decode(types=["int24"], data=tick_spacing_result)
-
-            factory = get_checksum_address(factory_raw)
-            token0_address = get_checksum_address(token0_raw)
-            token1_address = get_checksum_address(token1_raw)
-            fee = int(fee)
-            tick_spacing_for_pool = int(tick_spacing_for_pool)
+            immutable = V3BuilderBase.decode_immutable_data(
+                factory_result=factory_result,
+                token0_result=token0_result,
+                token1_result=token1_result,
+                fee_result=fee_result,
+                tick_spacing_result=tick_spacing_result,
+            )
+            factory = immutable.factory
+            token0_address = immutable.token0_address
+            token1_address = immutable.token1_address
+            fee = immutable.fee
+            tick_spacing_for_pool = immutable.tick_spacing
 
         # Build tokens (async)
         token0 = await self._erc20_builder.build(
@@ -159,10 +161,9 @@ class AsyncV3PoolBuilder:
         except Exception as exc:
             raise LiquidityPoolError(message="Could not decode contract data") from exc
 
-        sqrt_price_x96, tick, *_ = eth_abi.abi.decode(
-            types=["uint160", "int24", "uint16", "uint16", "uint16", "uint8", "bool"],
-            data=slot0_result,
-        )
+        slot0_data = V3BuilderBase.decode_slot0(slot0_result)
+        sqrt_price_x96 = slot0_data.sqrt_price_x96
+        tick = slot0_data.tick
         (liquidity,) = eth_abi.abi.decode(types=["uint128"], data=liquidity_result)
 
         # Fetch initial tick bitmap and tick data
@@ -171,7 +172,7 @@ class AsyncV3PoolBuilder:
         working_tick_data: dict[int, Any] = {}
 
         # Use provided tick data if given (snapshot or test fixtures)
-        if tick_bitmap is not None and tick_data is not None:  # noqa:PLR1702
+        if tick_bitmap is not None and tick_data is not None:
             working_tick_bitmap = dict(tick_bitmap)
             working_tick_data = dict(tick_data)
             db_snapshot_loaded = True
@@ -190,21 +191,9 @@ class AsyncV3PoolBuilder:
                         if pool_with_data is not None and isinstance(
                             pool_with_data, UniswapV3PoolTableBase
                         ):
-                            init_maps = pool_with_data.initialization_maps
-                            liq_positions = pool_with_data.liquidity_positions
-                            if init_maps and liq_positions:
-                                for init_map in init_maps:
-                                    working_tick_bitmap[int(init_map.word)] = BitmapAtWord(
-                                        bitmap=int(init_map.bitmap),
-                                        block=pool_with_data.liquidity_update_block or 0,
-                                    )
-                                for pos in liq_positions:
-                                    working_tick_data[int(pos.tick)] = LiquidityAtTick(
-                                        liquidity_net=int(pos.liquidity_net),
-                                        liquidity_gross=int(pos.liquidity_gross),
-                                        block=pool_with_data.liquidity_update_block or 0,
-                                    )
-                                db_snapshot_loaded = True
+                            working_tick_bitmap, working_tick_data, db_snapshot_loaded = (
+                                V3BuilderBase.load_tick_snapshot(pool_with_data)
+                            )
 
             if not db_snapshot_loaded:
                 word, _ = get_tick_word_and_bit_position(
@@ -270,12 +259,11 @@ class AsyncV3PoolBuilder:
         deployer = get_checksum_address(deployer_address) if deployer_address else deployer
 
         # Only pass tick data if we have a complete DB snapshot.
-        if db_snapshot_loaded and working_tick_data:
-            tick_bitmap_arg = working_tick_bitmap
-            tick_data_arg = working_tick_data
-        else:
-            tick_bitmap_arg = None
-            tick_data_arg = None
+        tick_bitmap_arg, tick_data_arg = V3BuilderBase.resolve_tick_data_args(
+            db_snapshot_loaded=db_snapshot_loaded,
+            working_tick_bitmap=working_tick_bitmap,
+            working_tick_data=working_tick_data,
+        )
 
         # Map factory addresses to pool classes for V3 variants
         pool_class = pool_type_registry.get_v3_class(chain_id, factory)
@@ -351,12 +339,9 @@ class AsyncV3PoolBuilder:
             data=encode_function_calldata("slot0()", None),
             block=block_number_,
         )
-        sqrt_price_x96, tick, *_ = cast(
-            "tuple[int, ...]",
-            eth_abi.abi.decode(
-                types=["uint160", "int24", "uint16", "uint16", "uint16"], data=slot0_result
-            ),
-        )
+        slot0_data = V3BuilderBase.decode_slot0(slot0_result)
+        sqrt_price_x96 = slot0_data.sqrt_price_x96
+        tick = slot0_data.tick
 
         (liquidity,) = cast(
             "tuple[int]",
