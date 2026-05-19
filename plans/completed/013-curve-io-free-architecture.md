@@ -1,5 +1,7 @@
 # Plan 013: Curve StableSwap Pool I/O-Free Architecture Migration
 
+> **Note**: References to `Bot.build_curve_pool()` are historical — this method was removed by Plan 059. Use `bot.build_pool(address)` instead.
+
 All Curve StableSwap pool I/O has been migrated from `_get_provider_for_chain()` to fetcher callbacks. All 14/14 Curve tests pass, including the tricrypto crypto pool.
 
 ## Summary

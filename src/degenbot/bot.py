@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING, Any
 
 from alembic.runtime.migration import MigrationContext
@@ -14,7 +13,6 @@ from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.pool_io import SyncPoolIO
 from degenbot.builders.type_resolution import (
-    fetch_factory_from_chain,
     pool_class_for_descriptor,
 )
 from degenbot.builders.type_resolution import (
@@ -34,7 +32,6 @@ from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.logging import logger
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
-from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
@@ -44,14 +41,12 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from eth_typing import ChecksumAddress
-    from web3 import Web3
     from web3.types import BlockIdentifier
 
     from degenbot.builders.protocol import PoolBuilder
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
-    from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 
 from degenbot.provider.interface import AsyncProviderAdapter, ProviderAdapter
 from degenbot.provider.subscription import Subscription  # noqa: TC001
@@ -352,65 +347,6 @@ class Bot:
         """
         return builder.build(address, chain_id=chain_id, **kwargs)
 
-    def build_v2_pool(
-        self,
-        pool_address: str,
-        *,
-        chain_id: ChainId | None = None,
-        deployer_address: str | None = None,
-        init_hash: str | None = None,
-        state_block: int | None = None,
-        silent: bool = False,
-    ) -> AbstractLiquidityPool:
-        """.. deprecated:: 0.x
-        Use ``build_pool(address)`` instead. Type resolution automatically
-        selects the correct builder.
-        """
-        warnings.warn(
-            "build_v2_pool() is deprecated — use build_pool(address) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        pool_address = get_checksum_address(pool_address)
-        chain_id = chain_id or self.connections.default_chain_id
-
-        # Determine the factory to identify the correct builder
-        provider = self.connections.get_provider(chain_id)
-        io = SyncPoolIO(provider)
-        factory = fetch_factory_from_chain(pool_address, chain_id=chain_id, io=io)
-        if factory is not None:
-            pool_class = pool_type_registry.get_v2_class(chain_id, factory)
-            if pool_class is not None and issubclass(pool_class, AerodromeV2Pool):
-                return self._aerodrome_v2_builder.build(
-                    pool_address,
-                    chain_id=chain_id,
-                    deployer_address=deployer_address,
-                    init_hash=init_hash,
-                    state_block=state_block,
-                    silent=silent,
-                    io=io,
-                )
-            if pool_class is not None and issubclass(pool_class, CamelotLiquidityPool):
-                return self._camelot_builder.build(
-                    pool_address,
-                    chain_id=chain_id,
-                    deployer_address=deployer_address,
-                    init_hash=init_hash,
-                    state_block=state_block,
-                    silent=silent,
-                    io=io,
-                )
-
-        return self._v2_builder.build(
-            pool_address,
-            chain_id=chain_id,
-            deployer_address=deployer_address,
-            init_hash=init_hash,
-            state_block=state_block,
-            silent=silent,
-            io=io,
-        )
-
     def get_token_balance(
         self,
         token: Erc20Token,
@@ -462,126 +398,8 @@ class Bot:
             chain_id, address, block_identifier=block_identifier, io=io
         )
 
-    def build_v3_pool(
-        self,
-        pool_address: str,
-        *,
-        chain_id: ChainId | None = None,
-        deployer_address: str | None = None,
-        init_hash: str | None = None,
-        state_block: int | None = None,
-        tick_bitmap: dict[int, BitmapAtWord] | None = None,
-        tick_data: dict[int, LiquidityAtTick] | None = None,
-        silent: bool = False,
-    ) -> AbstractLiquidityPool:
-        """.. deprecated:: 0.x
-        Use ``build_pool(address)`` instead. Type resolution automatically
-        selects the correct builder.
-        """
-        warnings.warn(
-            "build_v3_pool() is deprecated — use build_pool(address) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        pool_address = get_checksum_address(pool_address)
-        chain_id = chain_id or self.connections.default_chain_id
-        provider = self.connections.get_provider(chain_id)
-        io = SyncPoolIO(provider)
-        return self._v3_builder.build(
-            pool_address,
-            chain_id=chain_id,
-            deployer_address=deployer_address,
-            init_hash=init_hash,
-            state_block=state_block,
-            tick_bitmap=tick_bitmap,
-            tick_data=tick_data,
-            silent=silent,
-            io=io,
-        )
-
-    def build_v4_pool(
-        self,
-        *,
-        pool_id: str | bytes,
-        pool_manager_address: str,
-        state_view_address: str | None = None,
-        tokens: Sequence[str] | None = None,
-        fee: int | None = None,
-        tick_spacing: int | None = None,
-        hook_address: str | None = None,
-        chain_id: ChainId | None = None,
-        state_block: int | None = None,
-        tick_bitmap: dict[int, BitmapAtWord] | None = None,
-        tick_data: dict[int, LiquidityAtTick] | None = None,
-        silent: bool = False,
-    ) -> AbstractLiquidityPool:
-        """.. deprecated:: 0.x
-        Use ``build_pool(address, pool_id=...)`` instead.
-        """
-        warnings.warn(
-            "build_v4_pool() is deprecated — use build_pool(address, pool_id=...) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        chain_id = chain_id or self.connections.default_chain_id
-        provider = self.connections.get_provider(chain_id)
-        io = SyncPoolIO(provider)
-        return self._v4_builder.build(
-            pool_manager_address,
-            pool_id=pool_id,
-            pool_manager_address=pool_manager_address,
-            state_view_address=state_view_address,
-            tokens=tokens,
-            fee=fee,
-            tick_spacing=tick_spacing,
-            hook_address=hook_address,
-            chain_id=chain_id,
-            state_block=state_block,
-            tick_bitmap=tick_bitmap,
-            tick_data=tick_data,
-            silent=silent,
-            io=io,
-        )
-
-    def build_curve_pool(
-        self,
-        address: str,
-        *,
-        chain_id: ChainId | None = None,
-        state_block: int | None = None,
-        silent: bool = False,
-        state_cache_depth: int = 8,
-    ) -> AbstractLiquidityPool:
-        """.. deprecated:: 0.x
-        Use ``build_pool(address)`` instead. Type resolution automatically
-        selects the correct builder.
-        """
-        warnings.warn(
-            "build_curve_pool() is deprecated — use build_pool(address) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self._curve_builder.build(
-            address,
-            chain_id=chain_id,
-            state_block=state_block,
-            silent=silent,
-            state_cache_depth=state_cache_depth,
-            io=SyncPoolIO(
-                self.connections.get_provider(
-                    chain_id or self.connections.default_chain_id
-                )
-            ),
-        )
-
     def get_provider(self, *, chain_id: ChainId) -> ProviderAdapter:
         return self.connections.get_provider(chain_id)
-
-    def get_web3(self, *, chain_id: ChainId) -> Web3:
-        """.. deprecated:: 0.x
-        Use ``get_provider(chain_id)`` instead.
-        """
-        return self.connections.get_web3(chain_id)
 
     async def start_listening(
         self,

@@ -1,5 +1,7 @@
 # Plan 048: Unify Bot and AsyncBot via Builder-Backed IO Seam
 
+> **Note**: References to `build_v2_pool`, `build_v3_pool`, `build_v4_pool` are historical — these methods were removed by Plan 059. Use `build_pool()` instead.
+
 ## Overview
 
 AsyncBot (965 lines) duplicates nearly all pool construction, type resolution, and

@@ -266,7 +266,7 @@ class TestV4PoolIOFreeConstructor:
 class TestBotBuildV4Pool:
     """Bot.build_pool() constructs I/O-free V4 pools from on-chain data."""
 
-    def test_build_v4_pool_with_mock_provider(self, tmp_path: pathlib.Path) -> None:
+    def test_build_pool_with_mock_provider(self, tmp_path: pathlib.Path) -> None:
         """build_pool fetches immutable + mutable values and constructs an I/O-free pool."""
 
         config = _make_test_config(tmp_path)

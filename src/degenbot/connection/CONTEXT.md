@@ -5,8 +5,16 @@ An adapter wrapping an RPC connection for blockchain reads (sync or async). Impl
 _Avoid_: RPC client, web3
 
 **ProviderBackend**:
-A `@runtime_checkable` protocol defining the contract for sync RPC backends (methods like `get_block_number`, `eth_call`, `get_logs`, etc.). `ProviderAdapter` wraps any `ProviderBackend` and delegates via `__getattr__` for methods that don't need extra logic. Formerly split into `EthereumProvider` protocol + `_SyncProviderBackend` adapter; collapsed via Plan 042. `EthereumProvider` remains as a backward-compatible alias for `ProviderBackend`.
+A `@runtime_checkable` protocol defining the contract for sync RPC backends (methods like `get_block_number`, `eth_call`, `get_logs`, etc.). `ProviderAdapter` wraps any `ProviderBackend` and delegates via `__getattr__` for methods that don't need extra logic. Formerly split into `EthereumProvider` protocol + `_SyncProviderBackend` adapter; collapsed via Plan 042. The `EthereumProvider` backward-compatibility alias was removed by Plan 061.
 _Avoid_: Backend, sync backend, Ethereum provider (use **ProviderBackend**)
+
+**SyncSubscriptionSupport**:
+A mixin class providing default `raise SubscriptionNotSupported` implementations for all 5 `subscribe_*` methods on sync backends. Sync adapters (`_Web3Adapter`, `_AlloyAdapter`, `_OfflineAdapter`) and `ProviderAdapter` inherit this mixin instead of copy-pasting stubs. Subclasses override `_subscription_transport` and `_subscription_rpc_url` properties for error messages. Introduced by Plan 058.
+_Avoid_: subscription stubs, sync subscription base
+
+**AsyncSubscriptionSupport**:
+The async counterpart — a mixin providing default `raise SubscriptionNotSupported` async stubs for backends that don't support WS/IPC subscriptions (e.g. `_AsyncWeb3Adapter`). `_AsyncAlloyAdapter` does NOT inherit this — it has real subscription implementations. Introduced by Plan 058.
+_Avoid_: async subscription stubs, async subscription base
 
 **AsyncProviderBackend**:
 The async counterpart of `ProviderBackend` — a `@runtime_checkable` protocol for async RPC backends. Formerly `_AsyncProviderBackend`; made public via Plan 042.

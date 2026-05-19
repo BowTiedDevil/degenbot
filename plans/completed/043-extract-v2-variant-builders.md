@@ -1,5 +1,7 @@
 # Plan 043: Extract Per-Variant V2 Sub-Builders
 
+> **Note**: References to `build_v2_pool` are historical — this method was removed by Plan 059. Use `build_pool()` instead.
+
 ## Overview
 
 Replace the `issubclass` / `isinstance` dispatch inside `V2PoolBuilder` with per-variant sub-builders registered in the `Bot._builders` dict. Adding a new V2 variant becomes a single class + registration, not another `elif` branch inside the monolithic builder.

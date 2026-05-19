@@ -44,7 +44,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from eth_typing import ChecksumAddress
-    from web3 import AsyncBaseProvider, AsyncWeb3
     from web3.types import BlockIdentifier
 
     from degenbot.builders.protocol import AsyncPoolBuilder
@@ -459,9 +458,3 @@ class AsyncBot:
 
     def get_provider(self, *, chain_id: ChainId) -> AsyncProviderAdapter:
         return self.connections.get_provider(chain_id)
-
-    def get_web3(self, *, chain_id: ChainId) -> AsyncWeb3[AsyncBaseProvider]:
-        """.. deprecated:: 0.x
-        Use ``get_provider(chain_id)`` instead.
-        """
-        return self.connections.get_web3(chain_id)

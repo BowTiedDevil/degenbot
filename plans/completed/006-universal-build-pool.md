@@ -4,7 +4,7 @@
 
 ## Problem
 
-Bot has five separate `build_*_pool` methods, one per invariant family:
+Bot has five separate `build_*_pool` methods, one per invariant family (removed by Plan 059):
 
 - `build_v2_pool(address, ...)`
 - `build_v3_pool(address, ...)`
@@ -114,7 +114,7 @@ def build_pool(self, address, *, pool_id=None, chain_id=None, ...):
 
     # V4 fast path
     if pool_id is not None:
-        return self.build_v4_pool(
+        return self.build_v4_pool(  # removed by Plan 059
             pool_id=pool_id,
             pool_manager_address=address,
             chain_id=chain_id,
@@ -140,7 +140,7 @@ def build_pool(self, address, *, pool_id=None, chain_id=None, ...):
             return self._build_stableswap_pool(address, pool_type, chain_id=chain_id, ...)
 ```
 
-Each `_build_*_pool` private method contains the data-fetching and construction logic currently in `build_v2_pool`, `build_v3_pool`, `build_curve_pool`, and the Camelot branch. They receive the `PoolTypeDescriptor` so they know which variant class to instantiate.
+Each `_build_*_pool` private method contains the data-fetching and construction logic currently in `build_v2_pool`, `build_v3_pool`, `build_curve_pool`, and the Camelot branch (all removed by Plan 059). They receive the `PoolTypeDescriptor` so they know which variant class to instantiate.
 
 ### 5. kind → PoolTypeDescriptor mapping
 
@@ -206,7 +206,7 @@ Plan 002 can be implemented independently and first. This plan then layers the t
 ### Phase 3: Add `build_pool` entry point
 
 5. Add `build_pool()` as the universal entry point with V4 discriminator (`pool_id`).
-6. Implement dispatch to the existing `build_v2_pool`, `build_v3_pool`, `build_curve_pool` methods. Initially, `build_pool` delegates rather than replaces — the typed `build_*_pool` methods remain public as explicit paths for callers who already know the type.
+6. Implement dispatch to the existing `build_v2_pool`, `build_v3_pool`, `build_curve_pool` methods (removed by Plan 059). Initially, `build_pool` delegates rather than replaces — the typed `build_*_pool` methods remain public as explicit paths for callers who already know the type.
 
 ### Phase 4: Wire DB `kind` into resolution
 
@@ -223,13 +223,13 @@ Plan 002 can be implemented independently and first. This plan then layers the t
 ### Phase 6: Update call sites
 
 13. Update internal Bot methods and examples to use `build_pool` where appropriate.
-14. The typed `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool` methods remain public for backward compatibility and explicit use.
+14. The typed `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool` methods remain public for backward compatibility and explicit use (removed by Plan 059).
 
 ## Metrics
 
 | Metric | Before | After |
 |--------|--------|-------|
-| Entry points for pool construction | 4 separate methods (`build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`) | 1 universal entry point + 4 explicit paths |
+| Entry points for pool construction | 4 separate methods (`build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`) — removed by Plan 059 | 1 universal entry point + 4 explicit paths |
 | Caller must know pool type in advance | Yes | No (for V2/V3/Curve with DB or known factory) |
 | DB `kind` column used for type resolution | No (only factory address is used from DB) | Yes (direct, more informative) |
 | Unknown factory handling | Silent fallback to UniswapV2Pool / UniswapV3Pool | Explicit error with clear message |

@@ -182,6 +182,8 @@ This simplification removes ~30 lines of `if block is not None` guards across th
 EthereumProvider = ProviderBackend  # deprecated — use ProviderBackend
 ```
 
+> **Note:** This alias was subsequently removed by Plan 061, which deleted `EthereumProvider` and all stale references across the codebase.
+
 ## Implementation Order
 
 1. **Merge `EthereumProvider` and `_SyncProviderBackend`** into `ProviderBackend` protocol

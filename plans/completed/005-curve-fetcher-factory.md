@@ -1,5 +1,7 @@
 # Plan 005: Move Curve Fetcher Factories into Curve Module ✅
 
+> **Note**: References to `Bot.build_curve_pool()` and `connections.get_web3()` are historical — these methods were removed by Plan 059. Use `bot.build_pool(address)` and `connections.get_provider()` instead.
+
 ## Problem
 
 Bot contains 12 `_make_curve_*` methods totaling ~250 lines (lines 1997–2246). These are closures that capture `chain_id` and `pool_address`, then call `self.connections.get_web3(chain_id)` or `self.connections.get_provider(chain_id)` to perform I/O. They have no callers outside `build_curve_pool()` — they are pure implementation detail of the Curve pool construction path.

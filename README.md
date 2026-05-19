@@ -85,13 +85,7 @@ bot.connections.register_provider(provider)
 bot.connections.set_default_chain(1)
 ```
 
-<!-- invisible-code-block: python
-import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning, message="build_v.*_pool.*deprecated")
-warnings.filterwarnings("ignore", category=DeprecationWarning, message="build_curve_pool.*deprecated")
--->
-
-```python
+```
 # Create pools and tokens through Bot (I/O-free when possible)
 pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 token = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")  # WETH
@@ -172,18 +166,18 @@ approval = bot.get_token_approval(token, owner="0xd8dA6BF26964aF9D7eEd9e03E53415
 - `bot.managed_pools` - ManagedPoolRegistry for V4 pools
 - `bot.db` - DatabaseSessionManager for state snapshots
 
-Builders are internal to Bot and not exposed publicly. All pool/token creation goes through Bot's `build_*` methods.
+Builders are internal to Bot and not exposed publicly. All pool/token creation goes through `Bot.build_pool()`.
 
 ### Pool Types and Builders
 
-`build_pool(address)` is the universal entry point that auto-resolves pool type from DB, registry, and on-chain probing. Typed builders are also available for callers who already know the type:
+`build_pool(address)` is the universal entry point that auto-resolves pool type from DB, registry, and on-chain probing:
 
-| Pool Type | Universal | Typed Builder Method | Supports |
-|-----------|-----------|----------------------|----------|
-| Uniswap V2 | `bot.build_pool(address)` | `bot.build_v2_pool(address)` | Standard AMM, Camelot, other forks |
-| Uniswap V3 | `bot.build_pool(address)` | `bot.build_v3_pool(address)` | Full tick data, range orders |
-| Uniswap V4 | `bot.build_pool(address, pool_id=...)` | `bot.build_v4_pool(pool_id=..., pool_manager_address=...)` | Singleton architecture with hooks |
-| Curve V1 | `bot.build_pool(address)` | `bot.build_curve_pool(address)` | StableSwap, metapools, lending pools |
+| Pool Type | Method | Supports |
+|-----------|--------|----------|
+| Uniswap V2 | `bot.build_pool(address)` | Standard AMM, Camelot, other forks |
+| Uniswap V3 | `bot.build_pool(address)` | Full tick data, range orders |
+| Uniswap V4 | `bot.build_pool(address, pool_id=...)` | Singleton architecture with hooks |
+| Curve V1 | `bot.build_pool(address)` | StableSwap, metapools, lending pools |
 
 When `build_pool` is called, type resolution proceeds in order: (1) pool registry for existing pools, (2) database `kind` column, (3) pool type registry mapping `(chain_id, factory_address) → pool class`, (4) on-chain probing via `slot0()`, `getReserves()`, or `coins()`.
 
@@ -318,7 +312,7 @@ amount_out = v3_pool.calculate_tokens_out_from_tokens_in(
 
 ### Direct Pool Construction (Advanced)
 
-Pool classes cannot be constructed from an address alone — all state must be provided as keyword arguments. Use `Bot.build_pool()` or the typed `build_*` methods instead:
+Pool classes cannot be constructed from an address alone — all state must be provided as keyword arguments. Use `Bot.build_pool()` instead:
 
 ```python
 # Do NOT do this — will raise AttributeError:
@@ -932,7 +926,7 @@ pool = bot.build_pool(
 <!-- skip: start "requires Base chain RPC node" -->
 
 ```python
-# For V4 pools, pass pool_id to route to build_v4_pool
+# For V4 pools, pass pool_id for V4-specific dispatch
 pool = bot.build_pool(
     "0x...",
     pool_id="0x...",

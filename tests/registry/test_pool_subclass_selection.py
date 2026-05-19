@@ -116,12 +116,12 @@ class TestV3PoolSubclassSelection:
 
 
 class TestBotBuildPoolSubclassSelection:
-    """Tests that Bot.build_v3_pool returns the correct subclass based on factory."""
+    """Tests that Bot.build_pool returns the correct subclass based on factory."""
 
-    def test_build_v3_pool_returns_uniswap_v3_for_uniswap_factory(
+    def test_build_pool_returns_uniswap_v3_for_uniswap_factory(
         self, fork_mainnet_full: AnvilFork
     ) -> None:
-        """Bot.build_v3_pool should return UniswapV3Pool for Uniswap factory."""
+        """Bot.build_pool should return UniswapV3Pool for Uniswap factory."""
         bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
 
         pool = bot.build_pool(MAINNET_UNISWAP_V3_WETH_WBTC)

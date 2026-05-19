@@ -1,5 +1,7 @@
 # Plan 035: Builder Protocol — Replace Union Type with Shared Interface
 
+> **Note**: References to `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool` are historical — these methods were removed by Plan 059. Use `build_pool()` instead.
+
 ## Overview
 
 Replace the `V2PoolBuilder | V3PoolBuilder | V4PoolBuilder | CurvePoolBuilder` union type in Bot with a `PoolBuilder` protocol. Bot dispatches by dict lookup alone — no isinstance chains, no union type annotations. The typed `build_xxx_pool()` convenience methods are kept as narrowing delegates (not removed) due to heavy test usage.

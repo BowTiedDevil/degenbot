@@ -1,5 +1,7 @@
 # Plan 046: eth_subscribe Support via AlloyProvider
 
+> **Note**: The per-adapter `subscribe_*` stub methods that raise `SubscriptionNotSupported` were consolidated into `SyncSubscriptionSupport` and `AsyncSubscriptionSupport` mixins by Plan 058. New sync adapters now inherit stubs automatically instead of copy-pasting 5 methods each.
+
 ## Overview
 
 Add `eth_subscribe` support to the provider layer so that `AsyncAlloyProvider` and

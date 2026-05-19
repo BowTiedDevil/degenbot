@@ -1,5 +1,7 @@
 # Plan 012: `Bot` Session — replace module-level singletons with I/O-free domain objects and explicit session ownership
 
+> **Note**: References to `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`, and `get_web3` throughout this plan are historical — these methods were removed by Plan 059. Use `build_pool()` and `get_provider()` instead.
+>
 > **Status**: Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ Phase 5 ✅ Phase 6 ✅ Phase 7 ✅ Phase 8 ✅ Phase 9 ✅ Phase 10 ✅ Phase 11 ✅ Phase 12 ✅. All module-level singletons removed. `bot.update()` supports V2, V3, V4, AerodromeV2, Curve. All integration tests updated. `from_exchange()`, `auto_update()`, `_LazyConfig` removed. 1805 passed, 0 failures.
 > See [Implementation notes](#implementation-notes) for details on what was built and what was learned.
 
