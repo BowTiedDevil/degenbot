@@ -12,18 +12,18 @@ if TYPE_CHECKING:
 
 import numpy as np
 
-from degenbot.arbitrage.optimizers._solver_utils import _infer_zero_for_one
-from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult, SolverMethod
-from degenbot.arbitrage.optimizers.mobius import (
+from degenbot.arbitrage.optimizers._mobius_math import (
     MobiusFloatHop,
     V3TickRangeHop,
     V3TickRangeSequence,
     mobius_solve,
 )
-from degenbot.arbitrage.optimizers.mobius import (
+from degenbot.arbitrage.optimizers._mobius_math import (
     compute_mobius_coefficients as _float_compute_mobius_coefficients,
 )
-from degenbot.arbitrage.optimizers.mobius import simulate_path as _mobius_simulate_path
+from degenbot.arbitrage.optimizers._mobius_math import simulate_path as _mobius_simulate_path
+from degenbot.arbitrage.optimizers._solver_utils import _infer_zero_for_one
+from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult, SolverMethod
 from degenbot.arbitrage.optimizers.mobius_solver import MobiusSolver
 from degenbot.arbitrage.optimizers.v3_tick_predictor import estimate_price_impact
 from degenbot.degenbot_rs import (
