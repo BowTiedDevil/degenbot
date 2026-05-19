@@ -29,6 +29,7 @@
 | **CurveDataProvider** | A `@runtime_checkable` protocol with 13 methods (`D()`, `gamma()`, `virtual_price()`, `base_virtual_price()`, `price_scale()`, `admin_balances()`, `lending_rate()`, `redemption_price()`, `block_timestamp()`, `block_number()`, `token_balance()`, `token_total_supply()`, `is_crypto()`) that serves as the single I/O seam for Curve pools | Data provider, provider |
 | **CurveDataProviderImpl** | The production implementation of `CurveDataProvider` in `data_provider_impl.py` — a structured class with real methods and shared I/O helpers (`_call`, `_call_single`, `_call_raw_single`, `_wrap_revert`); constructed by the builder with a `ProviderAdapter` directly | Impl |
 | **FakeCurveDataProvider** | A test double implementing `CurveDataProvider` with fixed return values | Fake provider |
+| **CurveOnChainCache** | A consolidated on-chain data cache in `on_chain_cache.py` that owns all per-block `BoundedCache` instances for a Curve pool and provides accessor methods with the try-cache → call-provider → store → return pattern. Replaces the 10 individual cache fields that were previously scattered across the pool class. Pickled with `_data_provider` nulled out (matching the pool's `_data_provider` drop policy). | On-chain cache, cache object |
 
 ## Variant Enums
 
@@ -83,6 +84,7 @@
 - **A Coefficient** ramping uses **CurveDataProvider** `block_timestamp()`
 - A **CurveStableswapPoolTracker** tracks Curve pools and delegates construction to **Bot**
 - A **Pool** holds a single **CurveDataProvider** (injected by builder), replacing the former 13 individual fetcher callbacks
+- A **Pool** holds a single **CurveOnChainCache** that consolidates all per-block on-chain data caches and their accessor methods; the cache delegates to **CurveDataProvider** on miss
 - **DyCalculator** objects are held by **PoolStrategies** and replace dispatch branches in `get_dy()` / `_get_dy_underlying()`
 - **DyCalculationInputs** is constructed by `get_dy()` before calling the **DyCalculator**; all I/O, rate resolution, and cache lookups happen in `get_dy()`, so the calculator receives only pre-resolved data with no private member access
 - Pure math functions in `calculations/stableswap.py` raise `ValueError`; pool wrappers catch and re-raise as `EVMRevertError`

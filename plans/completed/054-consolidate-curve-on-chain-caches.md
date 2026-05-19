@@ -194,7 +194,7 @@ Existing Curve pool tests (`tests/curve/`) exercise `get_dy()` which calls throu
 
 ## Status
 
-[ ] Slice 1: Create `CurveOnChainCache` with generic helper
-[ ] Slice 2: Wire into pool, delete old accessors
-[ ] Slice 3: Simplify `_build_calculation_inputs`, delete dead code
-[ ] Slice 4: Validate and clean up
+[x] Slice 1: Create `CurveOnChainCache` with generic helper
+[x] Slice 2: Wire into pool, delete old accessors
+[x] Slice 3: Simplify `_build_calculation_inputs`, delete dead code
+[x] Slice 4: Validate and clean up

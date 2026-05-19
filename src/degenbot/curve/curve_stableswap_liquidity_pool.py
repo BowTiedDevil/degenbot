@@ -28,6 +28,7 @@ from degenbot.curve._pool_strategies import (
     _make_metapool_dy_calculator,
     _make_metapool_underlying_dy_calculator,
 )
+from degenbot.curve.on_chain_cache import CurveOnChainCache
 from degenbot.curve.stableswap_pool_state import StableswapPoolState
 from degenbot.curve.types import (
     CurveDataProvider,
@@ -184,8 +185,6 @@ class CurveStableswapPool(
         # On-chain data access
         self._data_provider = data_provider
 
-        self.base_cache_updated: int | None = None
-        self.base_virtual_price: int = 0
         self._coin_index_type = "uint256"
 
         # State caches
@@ -200,42 +199,20 @@ class CurveStableswapPool(
         self._state_cache[state_block] = self._state
         self._state_lock = Lock()
 
-        self._block_timestamps: dict[BlockNumber, int] = {}
-        self._cached_rates: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_scaled_redemption_price: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_admin_balances: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_base_cache_updated: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_base_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_price_scale: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_contract_D: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._cached_gamma: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
+        # Consolidated on-chain data cache
+        self._on_chain_cache = CurveOnChainCache(
+            data_provider=data_provider,
+            pool_address=self.address,
+            max_items=state_cache_depth,
         )
 
         # Pre-populate base cache values for metapools at construction time,
         # matching the contract's _vp_rate_ro() cache behavior.
         if self.base_pool is not None and state_block != 0:
             with contextlib.suppress(Exception):
-                self.base_cache_updated = self._get_base_cache_updated(block_number=state_block)
+                self._on_chain_cache.get_base_cache_updated(block_number=state_block)
             with contextlib.suppress(Exception):
-                self.base_virtual_price = self._get_base_virtual_price(block_number=state_block)
+                self._on_chain_cache.get_base_virtual_price(block_number=state_block)
 
         fee_string = f"{100 * self.fee / self.FEE_DENOMINATOR:.2f}"
         token_string = "-".join([token.symbol for token in self._tokens])
@@ -391,18 +368,9 @@ class CurveStableswapPool(
 
         block_number = self._resolve_block_number(block_identifier)
 
-        # Fetch and cache block timestamp for A ramping calculations
-        if block_number not in self._block_timestamps:
-            if self._data_provider is None:
-                raise MissingCurveData(
-                    self.address,
-                    "block_timestamp",
-                    "Block timestamp requires a data_provider. Provide one via Bot.build_pool().",
-                )
-            self._block_timestamps[block_number] = self._data_provider.block_timestamp(block_number)
-
+        block_timestamp = self._on_chain_cache.block_timestamp(block_number)
         xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
-        amp = self._a(timestamp=self._block_timestamps[block_number])
+        amp = self._a(timestamp=block_timestamp)
         d_0 = self._get_d(_xp=xp, _amp=amp)
 
         for i in range(n_coins):
@@ -426,18 +394,9 @@ class CurveStableswapPool(
     ) -> tuple[int, ...]:
         block_number = self._resolve_block_number(block_identifier)
 
-        # Fetch and cache block timestamp for A ramping calculations
-        if block_number not in self._block_timestamps:
-            if self._data_provider is None:
-                raise MissingCurveData(
-                    self.address,
-                    "block_timestamp",
-                    "Block timestamp requires a data_provider. Provide one via Bot.build_pool().",
-                )
-            self._block_timestamps[block_number] = self._data_provider.block_timestamp(block_number)
-
+        block_timestamp = self._on_chain_cache.block_timestamp(block_number)
         n_coins = len(self._tokens)
-        amp = self._a(timestamp=self._block_timestamps[block_number])
+        amp = self._a(timestamp=block_timestamp)
         total_supply = self._fetch_token_total_supply(self.lp_token, block_identifier=block_number)
         precisions = self.precision_multipliers
         xp = self._xp(rates=self.rate_multipliers, balances=self.balances)
@@ -457,21 +416,6 @@ class CurveStableswapPool(
 
         return dy, dy_0 - dy, total_supply
 
-    def _get_scaled_redemption_price(self, block_number: BlockNumber) -> int:
-        with contextlib.suppress(KeyError):
-            return self._cached_scaled_redemption_price[block_number]
-
-        if self._data_provider is not None:
-            result = self._data_provider.redemption_price(block_number)
-            self._cached_scaled_redemption_price[block_number] = result
-            return result
-
-        raise MissingCurveData(
-            self.address,
-            "redemption_price",
-            "Redemption price requires a data_provider. Provide one via Bot.build_pool().",
-        )
-
     def _build_calculation_inputs(
         self,
         block_number: int,
@@ -485,15 +429,7 @@ class CurveStableswapPool(
         pool_balances = override_state.balances if override_state is not None else self.balances
 
         # Resolve block timestamp
-        if block_number not in self._block_timestamps:
-            if self._data_provider is None:
-                raise MissingCurveData(
-                    self.address,
-                    "block_timestamp",
-                    "Block timestamp requires a data_provider. Provide one via Bot.build_pool().",
-                )
-            self._block_timestamps[block_number] = self._data_provider.block_timestamp(block_number)
-        block_timestamp = self._block_timestamps[block_number]
+        block_timestamp = self._on_chain_cache.block_timestamp(block_number)
 
         # Resolve amp (A ramping)
         amp = self._a(timestamp=block_timestamp)
@@ -551,29 +487,9 @@ class CurveStableswapPool(
 
         # ── Crypto-specific I/O ──
         if swap_style == SwapStyle.CRYPTO:
-            if self._data_provider is None:
-                raise MissingCurveData(
-                    self.address,
-                    "data_provider",
-                    "Crypto pool requires a data_provider for D, gamma, price_scale.",
-                )
-            try:
-                d_val = self._cached_contract_D[block_number]
-            except KeyError:
-                d_val = self._data_provider.D(block_number)
-                self._cached_contract_D[block_number] = d_val
-
-            try:
-                gamma_val = self._cached_gamma[block_number]
-            except KeyError:
-                gamma_val = self._data_provider.gamma(block_number)
-                self._cached_gamma[block_number] = gamma_val
-
-            try:
-                price_scale_val = self._cached_price_scale[block_number]
-            except KeyError:
-                price_scale_val = self._data_provider.price_scale(block_number)
-                self._cached_price_scale[block_number] = price_scale_val
+            d_val = self._on_chain_cache.contract_D(block_number)
+            gamma_val = self._on_chain_cache.gamma(block_number)
+            price_scale_val = self._on_chain_cache.price_scale(block_number)
 
             return dataclasses.replace(
                 inputs,
@@ -600,7 +516,7 @@ class CurveStableswapPool(
                 self._data_provider.token_balance(token.address, self.address, block_number)
                 for token in self._tokens
             )
-            admin_balances = self._get_admin_balances(block_number)
+            admin_balances = self._on_chain_cache.admin_balances(block_number)
             effective_balances = tuple(
                 lb - ab for lb, ab in zip(live_balances, admin_balances, strict=True)
             )
@@ -634,19 +550,6 @@ class CurveStableswapPool(
             )
 
         return inputs
-        with contextlib.suppress(KeyError):
-            return self._cached_scaled_redemption_price[block_number]
-
-        if self._data_provider is not None:
-            result = self._data_provider.redemption_price(block_number)
-            self._cached_scaled_redemption_price[block_number] = result
-            return result
-
-        raise MissingCurveData(
-            self.address,
-            "redemption_price",
-            "Redemption price requires a data_provider. Provide one via Bot.build_pool().",
-        )
 
     def get_dy(
         self,
@@ -711,12 +614,14 @@ class CurveStableswapPool(
         inputs = self._build_calculation_inputs(block_number, override_state)
 
         # Resolve virtual price
-        virtual_price = self._get_virtual_price(block_number)
+        virtual_price = self._on_chain_cache.virtual_price(
+            block_number, base_cache_expires=self.BASE_CACHE_EXPIRES
+        )
 
         # Resolve scaled redemption price (may not be available for all metapools)
         scaled_redemption_price: int | None = None
         with contextlib.suppress(MissingCurveData):
-            scaled_redemption_price = self._get_scaled_redemption_price(block_number)
+            scaled_redemption_price = self._on_chain_cache.scaled_redemption_price(block_number)
 
         return dataclasses.replace(
             inputs,
@@ -749,82 +654,6 @@ class CurveStableswapPool(
             override_state=override_state,
         )
 
-    def _get_base_cache_updated(self, block_number: BlockNumber) -> int:
-        with contextlib.suppress(KeyError):
-            return self._cached_base_cache_updated[block_number]
-
-        if self._data_provider is not None:
-            result = self._data_provider.base_cache_updated(block_number)
-            self._cached_base_cache_updated[block_number] = result
-            self.base_cache_updated = result
-            return result
-
-        raise MissingCurveData(
-            self.address,
-            "base_cache_updated",
-            "base_cache_updated requires a data_provider via Bot.build_pool().",
-        )
-
-    def _get_base_virtual_price(self, block_number: BlockNumber) -> int:
-        with contextlib.suppress(KeyError):
-            return self._cached_base_virtual_price[block_number]
-
-        if self._data_provider is not None:
-            result = self._data_provider.base_virtual_price(block_number)
-            self._cached_base_virtual_price[block_number] = result
-            return result
-
-        raise MissingCurveData(
-            self.address,
-            "base_virtual_price",
-            "Base virtual price requires a data_provider. Provide one via Bot.build_pool().",
-        )
-
-    def _get_virtual_price(self, block_number: BlockNumber) -> int:
-        if TYPE_CHECKING:
-            assert self.base_pool is not None
-
-        with contextlib.suppress(KeyError):
-            return self._cached_virtual_price[block_number]
-
-        base_virtual_price: int
-        if (
-            self.base_cache_updated is None
-            or self._block_timestamps.get(block_number, 0)
-            > self.base_cache_updated + self.BASE_CACHE_EXPIRES
-        ):
-            # Cache is not set or has expired — fetch live virtual price from base pool
-            if self._data_provider is not None:
-                base_virtual_price = self._data_provider.virtual_price(block_number)
-            else:
-                raise MissingCurveData(
-                    self.address,
-                    "virtual_price",
-                    "Virtual price requires a data_provider. Provide one via Bot.build_pool().",
-                )
-        else:
-            # Cache is still valid — use the cached base_virtual_price
-            base_virtual_price = self.base_virtual_price
-
-        self._cached_virtual_price[block_number] = base_virtual_price
-        self.base_virtual_price = base_virtual_price
-        return base_virtual_price
-
-    def _get_admin_balances(self, block_number: BlockNumber) -> tuple[int, ...]:
-        with contextlib.suppress(KeyError):
-            return self._cached_admin_balances[block_number]
-
-        if self._data_provider is not None:
-            result = self._data_provider.admin_balances(block_number)
-            self._cached_admin_balances[block_number] = result
-            return result
-
-        raise MissingCurveData(
-            self.address,
-            "admin_balances",
-            "Admin balances require an data_provider. Provide one via Bot.build_pool().",
-        )
-
     def _get_d(self, _xp: Sequence[int], _amp: int) -> int:
         """Solve for the Curve stableswap invariant D.
 
@@ -849,9 +678,12 @@ class CurveStableswapPool(
         the pool's A-ramping state and block timestamps before calling.
         """
         amp = (
-            self._a(timestamp=self._block_timestamps[self.update_block]) // self.A_PRECISION
+            self._a(timestamp=self._on_chain_cache.block_timestamp(self.update_block))
+            // self.A_PRECISION
             if self._strategies.y_variant == YVariant.VARIANT_0
-            else self._a(timestamp=self._block_timestamps[self.update_block])
+            else self._a(
+                timestamp=self._on_chain_cache.block_timestamp(self.update_block)
+            )
         )
         try:
             return stableswap_get_y(
