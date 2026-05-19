@@ -143,7 +143,6 @@ class TestAsyncV2PoolBuilder:
         db.side_effect = RuntimeError("no db")
 
         ctx = AsyncBuilderContext(
-            connections=MagicMock(),
             db=db,
             pools=MagicMock(spec=PoolRegistry),
             tokens=MagicMock(spec=TokenRegistry),

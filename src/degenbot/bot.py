@@ -90,7 +90,6 @@ class Bot:
             default_chain_id=None, db=self.db, tokens=self.tokens
         )
         ctx = BuilderContext(
-            connections=self.connections,
             db=self.db,
             pools=self.pools,
             tokens=self.tokens,

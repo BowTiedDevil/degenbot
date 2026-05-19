@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, cast
 import eth_abi.abi
 from sqlalchemy import select
 
-from degenbot.builders.pool_io import AsyncPoolIO
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import LiquidityPoolTable, UniswapV3PoolTableBase
 from degenbot.exceptions.base import DegenbotValueError
@@ -18,6 +17,9 @@ from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
+
+if TYPE_CHECKING:
+    from degenbot.builders.pool_io import AsyncPoolIO
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import UniswapV3PoolExternalUpdate
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
@@ -41,7 +43,7 @@ class AsyncV3PoolBuilder:
         assert ctx.managed_pools is not None, (
             "AsyncV3PoolBuilder requires managed_pools in BuilderContext"
         )
-        self._connections = ctx.connections
+        self._default_chain_id = ctx.default_chain_id
         self._db = ctx.db
         self._pools = ctx.pools
         self._tokens = ctx.tokens
@@ -66,11 +68,10 @@ class AsyncV3PoolBuilder:
         """Fetch pool data from DB/RPC and construct an I/O-free V3-style pool."""
 
         pool_address = get_checksum_address(address)
-        chain_id = chain_id or self._connections.default_chain_id
+        chain_id = chain_id or self._default_chain_id
+        assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
 
-        if io is None:
-            provider = self._connections.get_provider(chain_id)
-            io = AsyncPoolIO(provider)
+        assert io is not None
 
         state_block = state_block if state_block is not None else await io.get_block_number()
 
@@ -340,9 +341,7 @@ class AsyncV3PoolBuilder:
             raise TypeError(msg)
 
         assert pool.chain_id is not None
-        if io is None:
-            provider = self._connections.get_provider(pool.chain_id)
-            io = AsyncPoolIO(provider)
+        assert io is not None
 
         raw_block = block_number if block_number is not None else await io.get_block_number()
         block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block

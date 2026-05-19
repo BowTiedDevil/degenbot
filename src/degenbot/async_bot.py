@@ -78,7 +78,6 @@ class AsyncBot:
             default_chain_id=None, db=self.db, tokens=self.tokens
         )
         ctx = AsyncBuilderContext(
-            connections=self.connections,
             db=self.db,
             pools=self.pools,
             tokens=self.tokens,

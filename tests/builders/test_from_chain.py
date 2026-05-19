@@ -82,7 +82,6 @@ def _make_aerodrome_builder(provider: FakeProvider | None = None) -> AerodromeV2
     db.side_effect = RuntimeError("no db")
 
     ctx = BuilderContext(
-        connections=MagicMock(),
         db=db,
         pools=MagicMock(spec=PoolRegistry),
         tokens=MagicMock(spec=TokenRegistry),
@@ -106,7 +105,6 @@ def _make_camelot_builder(provider: FakeProvider | None = None) -> CamelotBuilde
     db.side_effect = RuntimeError("no db")
 
     ctx = BuilderContext(
-        connections=MagicMock(),
         db=db,
         pools=MagicMock(spec=PoolRegistry),
         tokens=MagicMock(spec=TokenRegistry),
