@@ -38,31 +38,7 @@ from eth_typing import ChecksumAddress
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve._variant_groups import resolve_d_variant, resolve_y_variant, resolve_yd_variant
-from degenbot.curve.calculators.crypto import CryptoDyCalculator
-from degenbot.curve.calculators.live_admin import (
-    LiveAdminDyCalculator,
-    LiveAdminDynamicDyCalculator,
-    LiveAdminDynamicPrecisionDyCalculator,
-    LiveAdminOracleDyCalculator,
-)
-from degenbot.curve.calculators.metapool import (
-    MetapoolPrecisionVpDyCalculator,
-    MetapoolRedemptionVpDyCalculator,
-    MetapoolStandardDyCalculator,
-    MetapoolUnderlyingPrecisionVpDyCalculator,
-    MetapoolUnderlyingRedemptionDyCalculator,
-    MetapoolUnderlyingStandardDyCalculator,
-)
-from degenbot.curve.calculators.standard import (
-    CytokenDyCalculator,
-    NoOneFeeRateDyCalculator,
-    RateAdjustedDyCalculator,
-    RateAdjustedNoOneDyCalculator,
-    RawBalanceDyCalculator,
-    StandardDyCalculator,
-)
 from degenbot.curve.types import (
-    DyCalculator,
     LendingRateStyle,
     MetapoolRateStyle,
     MetapoolUnderlyingStyle,
@@ -349,68 +325,18 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
 }
 
 
-def _make_dy_calculator(swap_style: SwapStyle) -> DyCalculator:
-    """Construct the appropriate DyCalculator for the given SwapStyle."""
-    match swap_style:
-        case SwapStyle.STANDARD:
-            return StandardDyCalculator()
-        case SwapStyle.RATE_ADJUSTED:
-            return RateAdjustedDyCalculator()
-        case SwapStyle.RATE_ADJUSTED_NO_ONE:
-            return RateAdjustedNoOneDyCalculator()
-        case SwapStyle.RAW_BALANCE:
-            return RawBalanceDyCalculator()
-        case SwapStyle.CRYPTO:
-            return CryptoDyCalculator()
-        case SwapStyle.LIVE_ADMIN:
-            return LiveAdminDyCalculator()
-        case SwapStyle.LIVE_ADMIN_DYNAMIC:
-            return LiveAdminDynamicDyCalculator()
-        case SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION:
-            return LiveAdminDynamicPrecisionDyCalculator()
-        case SwapStyle.LIVE_ADMIN_ORACLE:
-            return LiveAdminOracleDyCalculator()
-        case SwapStyle.NO_ONE_FEE_RATE:
-            return NoOneFeeRateDyCalculator()
-        case SwapStyle.CYTOKEN:
-            return CytokenDyCalculator()
-
-
-def _make_metapool_dy_calculator(metapool_rate_style: MetapoolRateStyle) -> DyCalculator:
-    """Construct the appropriate metapool DyCalculator for the given MetapoolRateStyle."""
-    match metapool_rate_style:
-        case MetapoolRateStyle.PRECISION_VP:
-            return MetapoolPrecisionVpDyCalculator()
-        case MetapoolRateStyle.REDEMPTION_VP:
-            return MetapoolRedemptionVpDyCalculator()
-        case MetapoolRateStyle.STANDARD:
-            return MetapoolStandardDyCalculator()
-
-
-def _make_metapool_underlying_dy_calculator(
-    metapool_underlying_style: MetapoolUnderlyingStyle,
-) -> DyCalculator:
-    """Construct the appropriate metapool underlying DyCalculator
-    for the given MetapoolUnderlyingStyle."""
-    match metapool_underlying_style:
-        case MetapoolUnderlyingStyle.PRECISION_VP:
-            return MetapoolUnderlyingPrecisionVpDyCalculator()
-        case MetapoolUnderlyingStyle.REDEMPTION:
-            return MetapoolUnderlyingRedemptionDyCalculator()
-        case MetapoolUnderlyingStyle.STANDARD:
-            return MetapoolUnderlyingStandardDyCalculator()
-
-
 def resolve_pool_strategies(pool_address: ChecksumAddress | str) -> PoolStrategies:
     """Resolve the complete PoolStrategies for a Curve pool address.
 
     Combines the address lookup from _POOL_STRATEGIES with the variant
     group resolution from _variant_groups. Returns a PoolStrategies with
     STANDARD/NONE defaults for any strategies not found in the mapping.
+
+    Calculators are auto-constructed from enum values by PoolStrategies.__post_init__.
     """
     pool_address = get_checksum_address(pool_address)
 
-    # Start with defaults
+    # Resolve variant groups
     d_variant = resolve_d_variant(pool_address)
     y_variant = resolve_y_variant(pool_address)
     yd_variant = resolve_yd_variant(pool_address)
@@ -419,16 +345,9 @@ def resolve_pool_strategies(pool_address: ChecksumAddress | str) -> PoolStrategi
     mapped = _POOL_STRATEGIES.get(pool_address)
 
     if mapped is not None:
-        # Merge: variant groups + mapped strategies + calculators
-        dy_calculator = _make_dy_calculator(mapped.swap_style)
-        metapool_dy_calculator: DyCalculator | None = None
-        metapool_underlying_dy_calculator: DyCalculator | None = None
-        if mapped.metapool_rate_style is not None:
-            metapool_dy_calculator = _make_metapool_dy_calculator(mapped.metapool_rate_style)
-        if mapped.metapool_underlying_style is not None:
-            metapool_underlying_dy_calculator = _make_metapool_underlying_dy_calculator(
-                mapped.metapool_underlying_style
-            )
+        # Merge: variant groups + mapped strategies.
+        # Calculators are auto-constructed from the swap_style, metapool_rate_style,
+        # and metapool_underlying_style enums.
         return PoolStrategies(
             d_variant=d_variant,
             y_variant=y_variant,
@@ -437,15 +356,11 @@ def resolve_pool_strategies(pool_address: ChecksumAddress | str) -> PoolStrategi
             metapool_rate_style=mapped.metapool_rate_style,
             metapool_underlying_style=mapped.metapool_underlying_style,
             lending_rate_style=mapped.lending_rate_style,
-            dy_calculator=dy_calculator,
-            metapool_dy_calculator=metapool_dy_calculator,
-            metapool_underlying_dy_calculator=metapool_underlying_dy_calculator,
         )
 
-    # No mapping found — use defaults (StandardDyCalculator)
+    # No mapping found — use defaults
     return PoolStrategies(
         d_variant=d_variant,
         y_variant=y_variant,
         yd_variant=yd_variant,
-        dy_calculator=StandardDyCalculator(),
     )

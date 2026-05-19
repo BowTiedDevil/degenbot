@@ -44,11 +44,11 @@
 
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|
-| **SwapStyle** | An enum identifying which computation path `get_dy()` uses for dy calculation | Fee style, swap type |
-| **MetapoolRateStyle** | An enum identifying how a metapool constructs its rate tuple | Metapool rate |
-| **MetapoolUnderlyingStyle** | An enum identifying how a metapool computes `get_dy_underlying()` | Underlying style |
+| **SwapStyle** | An enum identifying which computation path `get_dy()` uses for dy calculation. Has a `make_calculator()` factory method returning the matching `DyCalculator` instance. | Fee style, swap type |
+| **MetapoolRateStyle** | An enum identifying how a metapool constructs its rate tuple. Has a `make_calculator()` factory method returning the matching metapool `DyCalculator` instance. | Metapool rate |
+| **MetapoolUnderlyingStyle** | An enum identifying how a metapool computes `get_dy_underlying()`. Has a `make_calculator()` factory method returning the matching metapool underlying `DyCalculator` instance. | Underlying style |
 | **LendingRateStyle** | An enum identifying which rate source provides lending rates | Rate source, rate style |
-| **PoolStrategies** | A frozen dataclass combining all strategy enums and DyCalculator instances into a single value object | Strategies, pool config |
+| **PoolStrategies** | A frozen dataclass combining all strategy enums and DyCalculator instances into a single value object. Auto-constructs calculators from enum values in `__post_init__` via each enum's `make_calculator()` method. Explicitly-passed calculator arguments are preserved. | Strategies, pool config |
 
 ## DyCalculator Protocol
 
