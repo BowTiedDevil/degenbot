@@ -21,8 +21,10 @@ This repo has a `CONTEXT-MAP.md` at the root pointing to per-module `CONTEXT.md`
 │       ├── aave/CONTEXT.md
 │       ├── curve/CONTEXT.md           ← I/O-free pool architecture
 │       ├── uniswap/CONTEXT.md         ← V2/V3/V4 pools
-│       └── connection/CONTEXT.md
-└── UBIQUITOUS_LANGUAGE.md             ← legacy (replaced by CONTEXT-MAP.md)
+│       ├── chainlink/CONTEXT.md      ← price feeds, aggregators, round data
+│       ├── builders/CONTEXT.md       ← pool builders, PoolIO, BuilderContext
+│       ├── connection/CONTEXT.md     ← provider management, subscription primitives
+│       └── listener/CONTEXT.md       ← log listeners, dispatch registries
 ```
 
 ## Before exploring, read these
