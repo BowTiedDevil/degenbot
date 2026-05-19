@@ -113,7 +113,7 @@ WEB3_ETH_METHODS: dict[str, dict[str, Any]] = {
     # Contract factory
     "contract": {
         "web3_usage": "w3.eth.contract(address=..., abi=...)",
-        "locations": ["chainlink.py"],
+        "locations": ["chainlink/price_feed.py"],
         "alloy_equivalent": "None",
         "implemented": False,
         "note": "AlloyProvider does not provide contract factory. Use degenbot.contract module instead.",
@@ -152,7 +152,7 @@ WEB3_INSTANCE_METHODS: dict[str, dict[str, Any]] = {
     },
 }
 
-# Additional EthereumProvider protocol methods (from interface.py)
+# Additional ProviderBackend protocol methods (from interface.py)
 PROVIDER_PROTOCOL_METHODS: list[str] = [
     "chain_id",
     "block_number",
@@ -385,8 +385,8 @@ class TestAlloyProviderMethodSignatures:
         assert params["to_block"].kind == inspect.Parameter.KEYWORD_ONLY
 
 
-class TestEthereumProviderProtocol:
-    """Test that AlloyProvider satisfies EthereumProvider protocol."""
+class TestProviderBackendProtocolOnAlloy:
+    """Test that AlloyProvider satisfies ProviderBackend protocol."""
 
     @pytest.fixture
     def mock_alloy_provider(self):
@@ -395,7 +395,7 @@ class TestEthereumProviderProtocol:
 
     @pytest.mark.parametrize("method_name", PROVIDER_PROTOCOL_METHODS)
     def test_alloy_has_protocol_method(self, mock_alloy_provider, method_name: str):
-        """AlloyProvider must have all EthereumProvider protocol methods."""
+        """AlloyProvider must have all ProviderBackend protocol methods."""
         # Properties are also valid protocol members
         has_method = hasattr(mock_alloy_provider, method_name)
         assert has_method, f"AlloyProvider missing protocol method: {method_name}"
