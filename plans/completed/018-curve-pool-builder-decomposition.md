@@ -1,5 +1,7 @@
 # Plan 018: Decompose CurvePoolBuilder.build() into Detection Sub-Modules
 
+> **Note**: The `get_web3` call shown in this plan was replaced by `get_provider()` (Plan 025). `ConnectionManager.get_web3()` was deleted by Plan 059.
+
 **Status: READY**
 
 ## Overview

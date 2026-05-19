@@ -1,5 +1,7 @@
 # Plan 015: Extract ChainDataSource Abstraction from Bot
 
+> **Note**: This plan was superseded by Plan 001. References to `build_v2_pool`, `build_curve_pool`, `get_web3` are historical — these methods were removed by Plan 059. Use `build_pool()` and `get_provider()` instead.
+
 **Status: SUPERSEDED by Plan 001**
 
 Plan 001 extracted all pool-building I/O into typed builder classes that receive `connections` and `db` via dependency injection. The builders themselves are now the I/O seam — there is no remaining god class in Bot to extract from. A `ChainDataSource` or `ChainIO` protocol would add abstraction without a current consumer. If test isolation (fake I/O) or record/replay becomes a concrete need later, a narrow protocol can be introduced at the builder constructor boundary.

@@ -1,5 +1,7 @@
 # Plan 044: Deprecate Bot's Typed Build Pass-Throughs
 
+> **Note**: The deprecated methods `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`, and `get_web3` were deleted by Plan 059.
+
 ## Overview
 
 Mark the typed build methods on `Bot` (`build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`) as deprecated in favor of `build_pool()`. Also review the ERC-20 convenience methods (`get_token_balance`, `get_token_approval`, `get_token_total_supply`, `get_ether_balance`) for possible relocation.

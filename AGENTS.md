@@ -200,7 +200,7 @@ token = bot.build_erc20token("0x...")  # Fetches metadata, registers in token re
 
 V4 pools are identified by passing `pool_id` to `build_pool(address, pool_id=...)`.
 
-Typed builders (`build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`) emit `DeprecationWarning` (Plan 044) — use `build_pool()` instead. Adding a new pool family now requires only creating a builder and registering it via `register_builder()`, down from 5 touch points.
+Adding a new pool family now requires only creating a builder and registering it via `register_builder()`, down from 5 touch points. The typed `build_v2_pool`/`build_v3_pool`/`build_v4_pool`/`build_curve_pool` methods were removed by Plan 059 — `build_pool()` is the sole entry point.
 
 #### BuilderContext
 

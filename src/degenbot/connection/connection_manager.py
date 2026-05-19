@@ -1,10 +1,9 @@
-import warnings
 from json import JSONDecodeError
 from typing import TYPE_CHECKING, cast
 
 import tenacity
 from ujson import loads as ujson_loads
-from web3 import JSONBaseProvider, Web3
+from web3 import JSONBaseProvider
 from web3.types import RPCResponse
 
 from degenbot.exceptions import DegenbotValueError
@@ -52,35 +51,6 @@ class ConnectionManager:
             raise DegenbotValueError(
                 message="Chain ID does not have a registered provider."
             ) from None
-
-    def get_web3(self, chain_id: ChainId) -> Web3:
-        """Get the underlying Web3 instance for the specified chain ID.
-
-        .. deprecated:: 0.x
-            Use ``get_provider(chain_id)`` instead. This method will be
-            removed in a future release.
-
-        Args:
-            chain_id: The chain ID to get the Web3 instance for
-
-        Returns:
-            Web3 instance for the chain
-
-        Raises:
-            DegenbotValueError: If no provider is registered for the chain
-            DegenbotValueError: If the provider is not a Web3 provider
-        """
-        warnings.warn(
-            "get_web3() is deprecated — use get_provider() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        provider = self.get_provider(chain_id)
-        if provider.provider_type != "web3":
-            raise DegenbotValueError(message="Provider is not a Web3 provider.") from None
-        w3 = provider.as_web3()
-        assert w3 is not None
-        return w3
 
     def register_provider(
         self,

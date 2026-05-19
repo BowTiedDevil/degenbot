@@ -100,7 +100,7 @@ def test_curve_pool_tracker_returns_cached_pool() -> None:
     first = tracker.get_pool("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
     second = tracker.get_pool("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
     assert first is second
-    # build_curve_pool should only be called once
+    # build_pool should only be called once
     bot.build_pool.assert_called_once()
 
 

@@ -1,5 +1,7 @@
 # Plan 028: Builder Registry & Pool Class Restructuring
 
+> **Note**: References to `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool` are historical — these methods were removed by Plan 059. Use `build_pool()` instead.
+
 ## Overview
 
 Two interdependent changes:

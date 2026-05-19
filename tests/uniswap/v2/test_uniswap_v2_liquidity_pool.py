@@ -157,7 +157,6 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum_full: AnvilFork):
     # For direct construction, use I/O-free constructor
 
     # Build tokens I/O-free first, then construct the pool
-    # Actually, for Camelot we need to use build_v2_pool since it handles the RPC
     # The pool reference comes from the bot which handles the construction
     assert isinstance(lp, (CamelotLiquidityPool, UniswapV2Pool))
 

@@ -1,5 +1,7 @@
 # Plan 016: Unified Pool Type Registry
 
+> **Note**: References to `build_v2_pool`, `build_v3_pool` are historical — these methods were removed by Plan 059. Use `build_pool()` instead.
+
 **Status: COMPLETE** ✅
 
 ## Problem

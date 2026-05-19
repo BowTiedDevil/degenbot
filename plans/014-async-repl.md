@@ -12,10 +12,10 @@ When degenbot gains async APIs (per the async-first architecture discussed in th
 ```python
 >>> from degenbot import Bot
 >>> bot = Bot.from_config_file()
->>> # Can't just: pool = await bot.build_v3_pool("0x...")
+>>> # Can't just: pool = await bot.build_pool("0x...")
 >>> # Must: 
 >>> import asyncio
->>> pool = asyncio.run(bot.build_v3_pool("0x..."))
+>>> pool = asyncio.run(bot.build_pool("0x..."))
 ```
 
 `asyncio.run()` creates and destroys the loop each call, losing state. Wrapping in a temporary coroutine is verbose. The `python -m asyncio` built-in solves this but doesn't pre-import degenbot or set up the session.
@@ -28,7 +28,7 @@ degenbot async REPL (Python 3.12.0)
 Top-level `await` is supported. Type `help(degenbot)` for info.
 >>> from degenbot import Bot
 >>> bot = Bot.from_config_file()
->>> pool = await bot.build_v3_pool("0x...")   # works directly
+>>> pool = await bot.build_pool("0x...")   # works directly
 >>> 
 ```
 
@@ -288,7 +288,7 @@ If the user wants to start a `Bot` session inside the REPL, they can:
 
 ```python
 >>> bot = Bot.from_config_file()
->>> pool = await bot.build_v3_pool("0x...")
+>>> pool = await bot.build_pool("0x...")
 ```
 
 We could also support a `--config` CLI flag that auto-creates a `Bot`:

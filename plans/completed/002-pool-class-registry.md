@@ -14,7 +14,7 @@ v2_pool_class_map: dict[tuple[int, str], type[UniswapV2Pool]] = {
     # ... more entries
 }
 
-# Inside Bot.build_v3_pool() (bot.py ~line 790)
+# Inside Bot.build_v3_pool() (bot.py ~line 790) — removed by Plan 059
 v3_pool_class_map: dict[tuple[int, str], type[UniswapV3Pool]] = {
     (1, "0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F"): SushiswapV3Pool,
     # ... more entries
@@ -216,14 +216,14 @@ Two options:
 ### Consumption in builders / Bot
 
 ```python
-# Before (inside Bot.build_v2_pool):
+# Before (inside Bot.build_v2_pool) — removed by Plan 059:
 v2_pool_class_map: dict[tuple[int, str], type[UniswapV2Pool]] = {
     (1, "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"): SushiswapV2Pool,
     ...
 }
 pool_class = v2_pool_class_map.get((chain_id, factory), UniswapV2Pool)
 
-# After (inside V2PoolBuilder.build or Bot.build_v2_pool):
+# After (inside V2PoolBuilder.build or Bot.build_v2_pool) — removed by Plan 059:
 from degenbot.registry.pool_class import pool_class_registry
 pool_class = pool_class_registry.get_v2_pool_class(chain_id, factory)
 ```
@@ -246,8 +246,8 @@ pool_class = pool_class_registry.get_v2_pool_class(chain_id, factory)
 
 ### Phase 3: Replace class maps in Bot / builders
 
-8. Replace the `v2_pool_class_map` dict in `Bot.build_v2_pool()` (or `V2PoolBuilder.build()`) with `pool_class_registry.get_v2_pool_class(chain_id, factory)`.
-9. Replace the `v3_pool_class_map` dict in `Bot.build_v3_pool()` (or `V3PoolBuilder.build()`) with `pool_class_registry.get_v3_pool_class(chain_id, factory)`.
+8. Replace the `v2_pool_class_map` dict in `Bot.build_v2_pool()` (or `V2PoolBuilder.build()`) — removed by Plan 059 — with `pool_class_registry.get_v2_pool_class(chain_id, factory)`.
+9. Replace the `v3_pool_class_map` dict in `Bot.build_v3_pool()` (or `V3PoolBuilder.build()`) — removed by Plan 059 — with `pool_class_registry.get_v3_pool_class(chain_id, factory)`.
 10. Remove the now-unused imports from `bot.py` (SushiswapV2Pool, SushiswapV3Pool, PancakeswapV2Pool, PancakeswapV3Pool, AerodromeV3Pool).
 
 ### Phase 4: Tests

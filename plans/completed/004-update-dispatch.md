@@ -1,5 +1,7 @@
 # Plan 004: Eliminate isinstance Dispatch in Bot.update()
 
+> **Note**: The `get_web3` call shown in this plan was replaced by `get_provider()` (Plan 025). `ConnectionManager.get_web3()` was deleted by Plan 059.
+
 ## Problem
 
 `Bot.update()` is a manual type dispatch with 5 `isinstance` checks, each delegating to a private method that knows a specific pool type's on-chain read pattern:
