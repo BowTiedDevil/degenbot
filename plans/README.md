@@ -24,7 +24,6 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | 048 | [Unify Bot and AsyncBot via Builder-Backed IO Seam](completed/048-async-builder-shared.md) | AsyncBot delegates to async builders instead of duplicating construction. `PoolIO` protocol parameterizes builders over sync/async. ~965→~466 lines in AsyncBot. |
 | 052 | [Migrate V3/V4/Curve/ERC20 Builders to Full PoolIO](completed/052-v3v4curve-poolio-migration.md) | Remove all `ProviderAdapter`/`ConnectionManager` dependencies from V3, V4, Curve, and ERC20 builders. Remove `connections` from `BuilderContext`. |
 | 056 | [Externalize Curve Address→Strategy Mapping to Database](056-externalize-curve-strategy-mapping-to-db.md) | Move hard-coded address→`PoolStrategies` mapping to database. Builder reads from DB; falls back to detection inference for unknown pools. |
-| 057 | [Document Curve Pool's Partial I/O Status](057-document-curve-pool-partial-io-status.md) | Rename `_build_calculation_inputs` → `_resolve_calculation_inputs_via_io`. Add `requires_io_at_calculation_time` property. Amend ADR-001. |
 
 
 ## Completed Plans
@@ -83,3 +82,4 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | 053 | [Delete Old Optimizer Hierarchy](completed/053-delete-old-optimizer-hierarchy.md) | Remove deprecated `ArbitrageOptimizer` ABC, `OptimizerResult`/`OptimizerType`, and 7 concrete classes with zero production callers. Extract pure Möbius math into `_mobius_math.py`. |
 | 054 | [Consolidate Curve Pool On-Chain Caches](completed/054-consolidate-curve-on-chain-caches.md) | 10 individual `BoundedCache` fields → single `CurveOnChainCache` object with try-cache→call-provider→store→return pattern. Delete dead code after `return inputs`. Pool class 1160→988 lines (−15%). |
 | 055 | [Delete Deprecated Fetcher Protocol Dead Code](completed/055-delete-deprecated-fetcher-protocols.md) | Delete 8 deprecated `*Fetcher` protocol classes from `curve/types.py`. Zero callers; superseded by `CurveDataProvider` (Plan 040). |
+| 057 | [Document Curve Pool's Partial I/O Status](completed/057-document-curve-pool-partial-io-status.md) | Rename `_build_calculation_inputs` → `_resolve_calculation_inputs_via_io`. Add `requires_io_at_calculation_time` property. Amend ADR-001 with construction-time vs calculation-time I/O table. |

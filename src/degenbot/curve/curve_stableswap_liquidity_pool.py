@@ -128,6 +128,19 @@ class CurveStableswapPool(
         A Curve V1 (StableSwap) pool.
 
         Constructed from pre-fetched data only. Use Bot.build_pool() to fetch from chain.
+
+        I/O boundary:
+            Construction is I/O-free — all immutable parameters (A, fee, tokens, strategies)
+            are provided by the builder. However, get_dy() and related calculation
+            methods may call CurveDataProvider methods for per-block on-chain data.
+
+            I/O-free at calculation time for: plain pools (STANDARD, RAW_BALANCE).
+            I/O-required at calculation time for: lending pools, crypto pools,
+            live-admin pools, metapools, and pools with A ramping.
+
+            The data_provider must be available for calculation-time I/O. Pools
+            constructed without a data_provider can only perform calculations
+            that don't require on-chain data.
         """
 
         self.address = get_checksum_address(address)
@@ -244,6 +257,34 @@ class CurveStableswapPool(
         if TYPE_CHECKING:
             assert self.state.block is not None
         return self.state.block
+
+    @property
+    def requires_io_at_calculation_time(self) -> bool:
+        """Whether this pool may call data_provider during swap calculations.
+
+        Returns True for pools that need per-block on-chain data (D, gamma,
+        price_scale, lending rates, admin balances, virtual price for
+        metapools, block timestamps for A ramping). Returns False only for
+        plain pools with static rate multipliers and no A ramping.
+        """
+        if self._strategies.swap_style in {
+            SwapStyle.CRYPTO,
+            SwapStyle.LIVE_ADMIN,
+            SwapStyle.LIVE_ADMIN_DYNAMIC,
+            SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION,
+            SwapStyle.LIVE_ADMIN_ORACLE,
+        }:
+            return True
+        if self._strategies.lending_rate_style != LendingRateStyle.NONE:
+            return True
+        if self.base_pool is not None:
+            return True
+        if any([
+            self.future_a_coefficient is not None,
+            self.initial_a_coefficient is not None,
+        ]):
+            return True
+        return False
 
     def external_update(self, update: CurveStableswapPoolExternalUpdate) -> None:
         """Apply an external state update with new balances."""
@@ -416,7 +457,7 @@ class CurveStableswapPool(
 
         return dy, dy_0 - dy, total_supply
 
-    def _build_calculation_inputs(
+    def _resolve_calculation_inputs_via_io(
         self,
         block_number: int,
         override_state: CurveStableswapPoolState | None = None,
@@ -574,7 +615,7 @@ class CurveStableswapPool(
 
         if self.base_pool is not None:
             # Metapool path — resolve metapool-specific inputs
-            inputs = self._build_metapool_inputs(block_number, override_state)
+            inputs = self._resolve_metapool_inputs_via_io(block_number, override_state)
             calculator = self._strategies.metapool_dy_calculator
             if calculator is None:
                 calculator = _make_metapool_dy_calculator(self._strategies.metapool_rate_style)
@@ -587,7 +628,7 @@ class CurveStableswapPool(
             )
 
         # Non-metapool path — resolve standard/crypto/live-admin inputs
-        inputs = self._build_calculation_inputs(block_number, override_state)
+        inputs = self._resolve_calculation_inputs_via_io(block_number, override_state)
 
         calculator = self._strategies.dy_calculator
         if calculator is None:
@@ -601,7 +642,7 @@ class CurveStableswapPool(
             override_state=override_state,
         )
 
-    def _build_metapool_inputs(
+    def _resolve_metapool_inputs_via_io(
         self,
         block_number: int,
         override_state: CurveStableswapPoolState | None = None,
@@ -611,7 +652,7 @@ class CurveStableswapPool(
         Extends the base inputs with metapool-specific I/O (virtual price,
         redemption price, base pool reference).
         """
-        inputs = self._build_calculation_inputs(block_number, override_state)
+        inputs = self._resolve_calculation_inputs_via_io(block_number, override_state)
 
         # Resolve virtual price
         virtual_price = self._on_chain_cache.virtual_price(
@@ -639,7 +680,7 @@ class CurveStableswapPool(
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
         block_number = self._resolve_block_number(block_identifier)
-        inputs = self._build_metapool_inputs(block_number, override_state)
+        inputs = self._resolve_metapool_inputs_via_io(block_number, override_state)
 
         calculator = self._strategies.metapool_underlying_dy_calculator
         if calculator is None:

@@ -2,7 +2,7 @@
 
 ## Status
 
-**Implemented** — All pool types (Curve, V2, V3, V4, Aerodrome, Camelot) are I/O-free. Phase 4 cleanup complete.
+**Implemented** — All pool types are I/O-free at construction time. V2/V3/V4/Aerodrome/Camelot pools are also fully I/O-free at calculation time. Curve pools with non-plain swap styles may call `CurveDataProvider` at calculation time for per-block on-chain data (see I/O Status table below).
 
 ## Context
 
@@ -154,6 +154,21 @@ def test_curve_pool_live(bot):
     assert pool.virtual_price & gt
     0
 ```
+
+## Amendment: Calculation-Time I/O Boundary
+
+The original ADR stated all pools are "I/O-free." This is precise for construction time (all immutable parameters are provided by builders), but not for calculation time.
+
+### I/O-Free Status by Pool Family
+
+| Pool Family | Construction I/O-Free | Calculation I/O-Free | Notes |
+|-------------|----------------------|----------------------|-------|
+| V2/V3/V4/Aerodrome/Camelot | ✅ | ✅ | Builders fetch all data; pools are pure logic |
+| Curve (STANDARD, RAW_BALANCE) | ✅ | ✅ | Rate multipliers are static |
+| Curve (lending/crypto/live-admin/metapool) | ✅ | ❌ | `get_dy()` may call `CurveDataProvider` for per-block data |
+| Curve (A ramping) | ✅ | ❌ | `_a()` needs `block_timestamp` via data provider |
+
+The `CurveStableswapPool.requires_io_at_calculation_time` property exposes this distinction at runtime. The `_resolve_calculation_inputs_via_io` method name signals that I/O may occur during calculation input resolution.
 
 ## Related Decisions
 

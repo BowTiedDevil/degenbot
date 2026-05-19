@@ -221,7 +221,7 @@ No changes needed. Existing tests that construct pools with `data_provider=None`
 
 ## Status
 
-[ ] Slice 1: Rename methods + add docstring
-[ ] Slice 2: Add `requires_io_at_calculation_time` property
-[ ] Slice 3: Update ADR-001
-[ ] Slice 4: Validate and clean up
+[x] Slice 1: Rename methods + add docstring
+[x] Slice 2: Add `requires_io_at_calculation_time` property
+[x] Slice 3: Update ADR-001
+[x] Slice 4: Validate and clean up

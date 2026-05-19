@@ -30,6 +30,7 @@
 | **CurveDataProviderImpl** | The production implementation of `CurveDataProvider` in `data_provider_impl.py` — a structured class with real methods and shared I/O helpers (`_call`, `_call_single`, `_call_raw_single`, `_wrap_revert`); constructed by the builder with a `ProviderAdapter` directly | Impl |
 | **FakeCurveDataProvider** | A test double implementing `CurveDataProvider` with fixed return values | Fake provider |
 | **CurveOnChainCache** | A consolidated on-chain data cache in `on_chain_cache.py` that owns all per-block `BoundedCache` instances for a Curve pool and provides accessor methods with the try-cache → call-provider → store → return pattern. Replaces the 10 individual cache fields that were previously scattered across the pool class. Pickled with `_data_provider` nulled out (matching the pool's `_data_provider` drop policy). | On-chain cache, cache object |
+| **Calculation-time I/O** | The property that a pool may call `CurveDataProvider` methods during `get_dy()` and related calculation methods, as opposed to construction-time I/O (which is absent for all pools). Exposed by the `requires_io_at_calculation_time` property. The method `_resolve_calculation_inputs_via_io` signals that I/O may occur during calculation input resolution. | I/O at calc time, runtime I/O |
 
 ## Variant Enums
 
