@@ -1,7 +1,7 @@
 """
 Offline provider for testing without RPC calls.
 
-This module provides an EthereumProvider implementation that serves
+This module provides a ProviderBackend implementation that serves
 pre-recorded chain data from JSON files, allowing tests to run without
 requiring a live blockchain connection.
 
@@ -63,7 +63,7 @@ class OfflineProvider:
     """
     Ethereum provider that serves pre-recorded chain data.
 
-    This class implements the EthereumProvider Protocol (minus async methods)
+    This class implements the ProviderBackend Protocol (minus async methods)
     by loading recorded RPC responses from JSON files. It allows tests to
     run without requiring a live blockchain connection.
 

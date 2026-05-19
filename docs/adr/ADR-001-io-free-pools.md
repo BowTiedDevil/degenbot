@@ -121,11 +121,11 @@ class CurveDataProvider(Protocol):
 - Plan 017 complete
 
 ### Phase 4: Cleanup ✅
-- Typed pool builders (`build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`) emit `DeprecationWarning` — use `build_pool()` instead (Plan 044)
+- Typed pool builders (`build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`) emit `DeprecationWarning` — use `build_pool()` instead (Plan 044). Removed by Plan 059.
 - `PoolFamily`/`PoolInvariant` enum naming resolved (Plan 020)
 - Curve fetcher callbacks collapsed into single `CurveDataProvider` seam (Plan 040)
 - V2 variant builders extracted from `V2PoolBuilder` into per-variant builders (Plan 043)
-- `ProviderBackend` protocol replaces `EthereumProvider` + `_SyncProviderBackend` mirror (Plan 042)
+- `ProviderBackend` protocol replaces `EthereumProvider` + `_SyncProviderBackend` mirror (Plan 042); `EthereumProvider` backward-compatibility alias removed (Plan 061); subscription stubs consolidated into `SyncSubscriptionSupport`/`AsyncSubscriptionSupport` mixins (Plan 058)
 - DyCalculator `pool` parameter replaced with `DyCalculationInputs` frozen dataclass; 77 SLF001 errors → 0; calculators are pure consumers of pre-resolved data (Plan 045)
 - Old optimizer hierarchy deleted: `ArbitrageOptimizer` ABC, `OptimizerResult`/`OptimizerType`, and 7 concrete classes removed (zero production callers); pure Möbius math extracted to `_mobius_math.py` (Plan 053)
 - Curve on-chain caches consolidated: 10 individual `BoundedCache` fields → single `CurveOnChainCache` object (Plan 054)

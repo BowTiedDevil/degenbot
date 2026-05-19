@@ -1,7 +1,7 @@
 """
 Tests for AlloyProvider's direct interface.
 
-These tests verify that AlloyProvider exposes the EthereumProvider
+These tests verify that AlloyProvider exposes the ProviderBackend
 interface with correct method signatures and default values.
 """
 

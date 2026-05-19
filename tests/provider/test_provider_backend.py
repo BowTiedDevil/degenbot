@@ -2,7 +2,7 @@
 Tests for ProviderBackend protocol and explicit method delegation.
 
 Validates that:
-1. ProviderBackend merges EthereumProvider + _SyncProviderBackend
+1. ProviderBackend merges the former EthereumProvider + _SyncProviderBackend
 2. Explicit methods on ProviderAdapter delegate to backend correctly
 3. Explicit methods take precedence over any fallback behavior
 4. Block guard simplification works for _Web3Adapter
@@ -46,11 +46,11 @@ class TestProviderBackendProtocol:
         assert isinstance(backend, ProviderBackend)
 
     def test_protocol_has_call_raw(self) -> None:
-        """ProviderBackend includes call_raw (was missing from EthereumProvider)."""
+        """ProviderBackend includes call_raw (was missing from the former EthereumProvider)."""
         assert hasattr(ProviderBackend, "call_raw")
 
     def test_protocol_has_close(self) -> None:
-        """ProviderBackend includes close (was missing from EthereumProvider)."""
+        """ProviderBackend includes close (was missing from the former EthereumProvider)."""
         assert hasattr(ProviderBackend, "close")
 
 

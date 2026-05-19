@@ -42,7 +42,7 @@ class TestProviderAdapter:
         assert adapter.is_connected() is True
 
     def test_adapter_has_required_interface(self, alloy_provider: AlloyProvider):
-        """Test that adapter satisfies EthereumProvider protocol."""
+        """Test that adapter satisfies ProviderBackend protocol."""
         adapter = ProviderAdapter.from_alloy(alloy_provider)
 
         # Should have all required properties and methods (check class, not instance)

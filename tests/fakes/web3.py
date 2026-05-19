@@ -60,6 +60,7 @@ class FakeW3:
     """Fake web3.py Web3 instance."""
 
     eth = FakeW3Eth()
+    provider = "https://fake-rpc.example.com"
 
     def is_connected(self) -> bool:
         return True
@@ -118,6 +119,7 @@ class FakeAsyncW3:
     """Fake async web3.py Web3 instance."""
 
     eth = FakeAsyncW3Eth()
+    provider = "https://fake-async-rpc.example.com"
 
     def close(self) -> None:
         pass
