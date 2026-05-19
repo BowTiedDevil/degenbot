@@ -23,7 +23,7 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.provider.interface import ProviderAdapter
+    from degenbot.builders.pool_io import PoolIO
 
 
 # 3Crv LP token — used as fallback base pool detection
@@ -32,7 +32,7 @@ _THREE_CRV_POOL_ADDRESS = get_checksum_address("0xbEbc44782C7dB0a1A60Cb6fe97d0b4
 
 
 def detect_metapool(
-    provider: ProviderAdapter,
+    io: PoolIO,
     pool_address: ChecksumAddress,
     token_addresses: tuple[ChecksumAddress, ...],
     *,
@@ -46,7 +46,7 @@ def detect_metapool(
     """
     for registry_address in registry_addresses:
         try:
-            is_meta_result = provider.call_raw(
+            is_meta_result = io.call_raw(
                 {
                     "to": registry_address,
                     "data": encode_function_calldata(
@@ -63,11 +63,11 @@ def detect_metapool(
 
             # Get base pool address from the pool contract itself
             base_pool_address = _resolve_base_pool_address(
-                provider, pool_address, token_addresses, registry_address, block_identifier
+                io, pool_address, token_addresses, registry_address, block_identifier
             )
 
             # Get underlying coins from registry
-            underlying_coins_result = provider.call_raw(
+            underlying_coins_result = io.call_raw(
                 {
                     "to": registry_address,
                     "data": encode_function_calldata(
@@ -105,7 +105,7 @@ def detect_metapool(
 
 
 def _resolve_base_pool_address(
-    provider: ProviderAdapter,
+    io: PoolIO,
     pool_address: ChecksumAddress,
     token_addresses: tuple[ChecksumAddress, ...],
     registry_address: ChecksumAddress,
@@ -114,7 +114,7 @@ def _resolve_base_pool_address(
     """Resolve the base pool address, trying multiple methods in order."""
     # Try base_pool() on the pool contract
     try:
-        base_pool_result = provider.call_raw(
+        base_pool_result = io.call_raw(
             {
                 "to": pool_address,
                 "data": encode_function_calldata(
@@ -131,7 +131,7 @@ def _resolve_base_pool_address(
 
     # Try get_base_pool() on the registry
     try:
-        base_pool_result = provider.call_raw(
+        base_pool_result = io.call_raw(
             {
                 "to": registry_address,
                 "data": encode_function_calldata(

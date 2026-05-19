@@ -1,6 +1,6 @@
 from web3.exceptions import Web3Exception
 
-from tests.curve.detection.fake_provider import make_fake_curve_provider
+from tests.curve.detection.fake_provider import make_fake_pool_io
 
 """Tests for Curve pool LP token discovery."""
 
@@ -32,12 +32,12 @@ class TestFindLpToken:
         def handle_get_lp_token(to: str, data: bytes, block: int) -> bytes:
             return _encode_address(THREE_CRV_LP)
 
-        provider = make_fake_curve_provider({
+        io = make_fake_pool_io({
             GET_LP_TOKEN: handle_get_lp_token,
         })
 
         result = find_lp_token(
-            provider,
+            io,
             POOL_ADDR,
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS),
             block_identifier=18_000_000,
@@ -55,12 +55,12 @@ class TestFindLpToken:
                 return _encode_address(ZERO_ADDR)
             return _encode_address(THREE_CRV_LP)
 
-        provider = make_fake_curve_provider({
+        io = make_fake_pool_io({
             GET_LP_TOKEN: handle_get_lp_token,
         })
 
         result = find_lp_token(
-            provider,
+            io,
             POOL_ADDR,
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS),
             block_identifier=18_000_000,
@@ -70,10 +70,10 @@ class TestFindLpToken:
     def testNoLpTokenFound(self):
         """Both registries revert or return zero — no LP token found."""
 
-        provider = make_fake_curve_provider({})  # All calls revert
+        io = make_fake_pool_io({})  # All calls revert
 
         result = find_lp_token(
-            provider,
+            io,
             POOL_ADDR,
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS),
             block_identifier=18_000_000,
@@ -88,12 +88,12 @@ class TestFindLpToken:
                 raise Web3Exception("revert")
             return _encode_address(THREE_CRV_LP)
 
-        provider = make_fake_curve_provider({
+        io = make_fake_pool_io({
             GET_LP_TOKEN: handle_get_lp_token,
         })
 
         result = find_lp_token(
-            provider,
+            io,
             POOL_ADDR,
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS),
             block_identifier=18_000_000,

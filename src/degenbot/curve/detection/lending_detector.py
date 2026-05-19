@@ -20,12 +20,12 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
+    from degenbot.builders.pool_io import PoolIO
     from degenbot.erc20.erc20 import Erc20Token
-    from degenbot.provider.interface import ProviderAdapter
 
 
 def detect_lending_tokens(
-    provider: ProviderAdapter,
+    io: PoolIO,
     pool_address: ChecksumAddress,  # noqa: ARG001
     token_addresses: tuple[ChecksumAddress, ...],
     tokens: tuple[Erc20Token, ...],
@@ -48,7 +48,7 @@ def detect_lending_tokens(
 
         # Check if token is a cToken using isCToken()
         try:
-            is_ctoken_result = provider.call_raw(
+            is_ctoken_result = io.call_raw(
                 {
                     "to": checksummed_addr,
                     "data": encode_function_calldata(
@@ -63,7 +63,7 @@ def detect_lending_tokens(
                 is_lending = True
                 # cToken: get underlying token decimals via underlying() method
                 try:
-                    underlying_result = provider.call_raw(
+                    underlying_result = io.call_raw(
                         {
                             "to": checksummed_addr,
                             "data": encode_function_calldata(
@@ -79,7 +79,7 @@ def detect_lending_tokens(
                     underlying_addr = get_checksum_address(underlying_addr)
                     # Fetch underlying decimals
                     try:
-                        underlying_dec_result = provider.call_raw(
+                        underlying_dec_result = io.call_raw(
                             {
                                 "to": underlying_addr,
                                 "data": encode_function_calldata(
@@ -104,7 +104,7 @@ def detect_lending_tokens(
         # Check if token is a yToken (has token() method returning underlying)
         if not is_lending:
             try:
-                ytoken_result = provider.call_raw(
+                ytoken_result = io.call_raw(
                     {
                         "to": checksummed_addr,
                         "data": encode_function_calldata(

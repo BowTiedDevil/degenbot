@@ -27,7 +27,6 @@ if TYPE_CHECKING:
     from degenbot.builders.pool_io import PoolIO
     from degenbot.curve.detection.types import MetapoolDetectionResult
     from degenbot.erc20 import Erc20Token
-    from degenbot.provider.interface import ProviderAdapter
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
@@ -65,24 +64,21 @@ class CurvePoolBuilder:
 
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._connections.default_chain_id
-        provider = self._connections.get_provider(chain_id)
-        state_block = state_block if state_block is not None else (
-            io.get_block_number() if io is not None else provider.get_block_number()
-        )
+        state_block = state_block if state_block is not None else io.get_block_number()
 
         # 1. Discover coins and balances
-        coins = discover_coins(provider, pool_address, block_identifier=state_block)
+        coins = discover_coins(io, pool_address, block_identifier=state_block)
 
         # 2. Fetch A, fee, admin_fee
         a_coefficient, fee, admin_fee = _fetch_pool_params(
-            provider, pool_address, block_identifier=state_block
+            io, pool_address, block_identifier=state_block
         )
 
         # 3. Detect A ramping
-        a_ramping = detect_a_ramping(provider, pool_address, block_identifier=state_block)
+        a_ramping = detect_a_ramping(io, pool_address, block_identifier=state_block)
 
         # 4. Get block timestamp
-        create_timestamp = provider.get_block_timestamp(block=state_block)
+        create_timestamp = io.get_block_timestamp(block=state_block)
 
         # 5. Build tokens
         tokens = tuple(
@@ -92,15 +88,15 @@ class CurvePoolBuilder:
 
         # 6. Detect lending tokens
         lending = detect_lending_tokens(
-            provider, pool_address, coins.token_addresses, tokens, block_identifier=state_block
+            io, pool_address, coins.token_addresses, tokens, block_identifier=state_block
         )
 
         # 7. Detect crypto pool parameters
-        crypto = detect_crypto_params(provider, pool_address, block_identifier=state_block)
+        crypto = detect_crypto_params(io, pool_address, block_identifier=state_block)
 
         # 8. Find LP token
         lp_token_address = find_lp_token(
-            provider,
+            io,
             pool_address,
             registry_addresses=_REGISTRY_ADDRESSES,
             block_identifier=state_block,
@@ -108,7 +104,7 @@ class CurvePoolBuilder:
 
         # 9. Detect metapool
         metapool = detect_metapool(
-            provider,
+            io,
             pool_address,
             coins.token_addresses,
             registry_addresses=_REGISTRY_ADDRESSES,
@@ -153,7 +149,7 @@ class CurvePoolBuilder:
             pm * 10**18 for pm in (lending.precision_multipliers or [1] * len(tokens))
         )
         data_provider = CurveDataProviderImpl(
-            provider=provider,
+            io=io,
             pool_address=pool_address,
             base_pool_address=metapool.base_pool_address if metapool.is_meta else None,
             n_coins=len(tokens),
@@ -293,13 +289,13 @@ class CurvePoolBuilder:
 
 
 def _fetch_pool_params(
-    provider: ProviderAdapter,
+    io: PoolIO,
     pool_address: str,
     *,
     block_identifier: int,
 ) -> tuple[int, int, int]:
     """Fetch A, fee, and admin_fee from a Curve pool contract."""
-    a_result = provider.call_raw(
+    a_result = io.call_raw(
         {
             "to": pool_address,
             "data": encode_function_calldata(function_prototype="A()", function_arguments=[]),
@@ -308,7 +304,7 @@ def _fetch_pool_params(
     )
     (a_coefficient,) = eth_abi.abi.decode(types=["uint256"], data=a_result)
 
-    fee_result = provider.call_raw(
+    fee_result = io.call_raw(
         {
             "to": pool_address,
             "data": encode_function_calldata(function_prototype="fee()", function_arguments=[]),
@@ -317,7 +313,7 @@ def _fetch_pool_params(
     )
     (fee,) = eth_abi.abi.decode(types=["uint256"], data=fee_result)
 
-    admin_fee_result = provider.call_raw(
+    admin_fee_result = io.call_raw(
         {
             "to": pool_address,
             "data": encode_function_calldata(

@@ -1,16 +1,19 @@
-from web3.exceptions import Web3Exception
-
 """Fake ProviderAdapter for Curve pool detection tests.
 
 Provides a configurable fake that returns pre-programmed responses to
 provider.call_raw() based on the method selector in the calldata.
 """
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from hexbytes import HexBytes
 
 from degenbot.provider.interface import ProviderAdapter
+
+if TYPE_CHECKING:
+    from degenbot.builders.pool_io import SyncPoolIO
 
 
 class FakeCurveBackend:
@@ -82,6 +85,9 @@ class FakeCurveBackend:
         pass
 
 
+from web3.exceptions import Web3Exception
+
+
 def make_fake_curve_provider(call_responses: dict[bytes, Any]) -> ProviderAdapter:
     """Create a ProviderAdapter backed by a FakeCurveBackend.
 
@@ -90,7 +96,7 @@ def make_fake_curve_provider(call_responses: dict[bytes, Any]) -> ProviderAdapte
             COINS_UINT256_SELECTOR: lambda to, data, block: ...,
             BALANCES_UINT256_SELECTOR: ...,
         })
-        result = discover_coins(provider, pool_address, block_identifier=18_000_000)
+        result = discover_coins(io=SyncPoolIO(provider), pool_address, block_identifier=18_000_000)
     """
     backend = FakeCurveBackend(call_responses)
     # Bypass factory methods — inject the backend directly
@@ -99,3 +105,22 @@ def make_fake_curve_provider(call_responses: dict[bytes, Any]) -> ProviderAdapte
     adapter._provider_type = "alloy"  # not "web3" — we're testing the abstracted path
     adapter._raw_provider = None
     return adapter
+
+
+def make_fake_pool_io(call_responses: dict[bytes, Any]) -> SyncPoolIO:
+    """Create a SyncPoolIO backed by a FakeCurveBackend.
+
+    Thin wrapper around make_fake_curve_provider that returns a SyncPoolIO
+    instead of a bare ProviderAdapter. Preferred for detection module tests
+    that now accept io: PoolIO instead of provider: ProviderAdapter.
+
+    Usage:
+        io = make_fake_pool_io({
+            COINS_UINT256_SELECTOR: lambda to, data, block: ...,
+            BALANCES_UINT256_SELECTOR: ...,
+        })
+        result = discover_coins(io, pool_address, block_identifier=18_000_000)
+    """
+    from degenbot.builders.pool_io import SyncPoolIO
+
+    return SyncPoolIO(make_fake_curve_provider(call_responses))

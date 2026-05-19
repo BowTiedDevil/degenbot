@@ -20,11 +20,11 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.provider.interface import ProviderAdapter
+    from degenbot.builders.pool_io import PoolIO
 
 
 def detect_crypto_params(
-    provider: ProviderAdapter,
+    io: PoolIO,
     pool_address: ChecksumAddress,
     *,
     block_identifier: int,
@@ -41,7 +41,7 @@ def detect_crypto_params(
     offpeg_fee_multiplier: int | None = None
 
     try:
-        fee_gamma_result = provider.call_raw(
+        fee_gamma_result = io.call_raw(
             {
                 "to": pool_address,
                 "data": encode_function_calldata(
@@ -57,7 +57,7 @@ def detect_crypto_params(
 
             # Fetch related crypto pool parameters
             try:
-                mid_fee_result = provider.call_raw(
+                mid_fee_result = io.call_raw(
                     {
                         "to": pool_address,
                         "data": encode_function_calldata(
@@ -73,7 +73,7 @@ def detect_crypto_params(
                 pass
 
             try:
-                out_fee_result = provider.call_raw(
+                out_fee_result = io.call_raw(
                     {
                         "to": pool_address,
                         "data": encode_function_calldata(
@@ -89,7 +89,7 @@ def detect_crypto_params(
                 pass
 
             try:
-                gamma_result = provider.call_raw(
+                gamma_result = io.call_raw(
                     {
                         "to": pool_address,
                         "data": encode_function_calldata(
@@ -108,7 +108,7 @@ def detect_crypto_params(
 
     # Fetch offpeg_fee_multiplier (used by some lending/crypto pools)
     try:
-        offpeg_result = provider.call_raw(
+        offpeg_result = io.call_raw(
             {
                 "to": pool_address,
                 "data": encode_function_calldata(
