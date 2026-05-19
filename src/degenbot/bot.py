@@ -87,7 +87,7 @@ class Bot:
         # Builders own I/O orchestration; Bot hands them its I/O dependencies.
         # Erc20Builder is a leaf — constructed before BuilderContext.
         self._erc20_builder = Erc20Builder(
-            connections=self.connections, db=self.db, tokens=self.tokens
+            default_chain_id=None, db=self.db, tokens=self.tokens
         )
         ctx = BuilderContext(
             connections=self.connections,
@@ -209,7 +209,9 @@ class Bot:
         silent: bool = False,
     ) -> Erc20Token:
         """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token."""
-        return self._erc20_builder.build(address, chain_id=chain_id, silent=silent)
+        resolved_chain_id = chain_id or self.connections.default_chain_id
+        io = SyncPoolIO(self.connections.get_provider(resolved_chain_id))
+        return self._erc20_builder.build(address, chain_id=resolved_chain_id, silent=silent, io=io)
 
     def get_token(self, address: str, *, chain_id: ChainId | None = None) -> Erc20Token:
         """Get or create a token. Bot handles DB lookup, RPC calls, and registration."""
@@ -417,8 +419,10 @@ class Bot:
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
         """Retrieve the ERC-20 balance for the given address."""
+        assert token.chain_id is not None
+        io = SyncPoolIO(self.connections.get_provider(token.chain_id))
         return self._erc20_builder.get_token_balance(
-            token, address, block_identifier=block_identifier
+            token, address, block_identifier=block_identifier, io=io
         )
 
     def get_token_approval(
@@ -429,8 +433,10 @@ class Bot:
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
         """Retrieve the amount that can be spent by `spender` on behalf of `owner`."""
+        assert token.chain_id is not None
+        io = SyncPoolIO(self.connections.get_provider(token.chain_id))
         return self._erc20_builder.get_token_approval(
-            token, owner, spender, block_identifier=block_identifier
+            token, owner, spender, block_identifier=block_identifier, io=io
         )
 
     def get_token_total_supply(
@@ -439,7 +445,11 @@ class Bot:
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
         """Retrieve the total supply for this token."""
-        return self._erc20_builder.get_token_total_supply(token, block_identifier=block_identifier)
+        assert token.chain_id is not None
+        io = SyncPoolIO(self.connections.get_provider(token.chain_id))
+        return self._erc20_builder.get_token_total_supply(
+            token, block_identifier=block_identifier, io=io
+        )
 
     def get_ether_balance(
         self,
@@ -448,8 +458,9 @@ class Bot:
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
         """Retrieve the native ETH balance for the given address."""
+        io = SyncPoolIO(self.connections.get_provider(chain_id))
         return self._erc20_builder.get_ether_balance(
-            chain_id, address, block_identifier=block_identifier
+            chain_id, address, block_identifier=block_identifier, io=io
         )
 
     def build_v3_pool(

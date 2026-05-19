@@ -83,7 +83,7 @@ class CurvePoolBuilder:
 
         # 5. Build tokens
         tokens = tuple(
-            self._erc20_builder.build(addr, chain_id=chain_id, silent=silent)
+            self._erc20_builder.build(addr, chain_id=chain_id, silent=silent, io=io)
             for addr in coins.token_addresses
         )
 
@@ -124,7 +124,7 @@ class CurvePoolBuilder:
 
         # 11. Build LP token
         lp_token = (
-            self._erc20_builder.build(lp_token_address, chain_id=chain_id, silent=silent)
+            self._erc20_builder.build(lp_token_address, chain_id=chain_id, silent=silent, io=io)
             if lp_token_address is not None
             else None
         )
@@ -232,7 +232,7 @@ class CurvePoolBuilder:
             return base_pool, None
 
         tokens_underlying = tuple(
-            self._erc20_builder.build(addr, chain_id=chain_id, silent=silent)
+            self._erc20_builder.build(addr, chain_id=chain_id, silent=silent, io=io)
             for addr in metapool.tokens_underlying
         )
 

@@ -166,10 +166,10 @@ class AsyncV2PoolBuilder:
 
         # Build tokens (async)
         token0 = await self._erc20_builder.build(
-            common.token0_address, chain_id=chain_id, silent=silent
+            common.token0_address, chain_id=chain_id, silent=silent, io=io
         )
         token1 = await self._erc20_builder.build(
-            common.token1_address, chain_id=chain_id, silent=silent
+            common.token1_address, chain_id=chain_id, silent=silent, io=io
         )
 
         # Determine pool class from registry

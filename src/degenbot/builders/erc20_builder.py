@@ -20,14 +20,14 @@ from degenbot.erc20.erc20 import (
 )
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
+from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
+    from hexbytes import HexBytes
     from web3.types import BlockIdentifier
 
     from degenbot.builders.pool_io import PoolIO
-    from degenbot.connection.connection_manager import ConnectionManager
     from degenbot.database.session_manager import DatabaseSessionManager
-    from degenbot.provider.interface import ProviderAdapter
     from degenbot.registry import TokenRegistry
     from degenbot.types.aliases import ChainId
 
@@ -43,11 +43,11 @@ class Erc20Builder:
     def __init__(
         self,
         *,
-        connections: ConnectionManager,
+        default_chain_id: ChainId | None = None,
         db: DatabaseSessionManager,
         tokens: TokenRegistry,
     ) -> None:
-        self._connections = connections
+        self._default_chain_id = default_chain_id
         self._db = db
         self._tokens = tokens
 
@@ -57,12 +57,13 @@ class Erc20Builder:
         *,
         chain_id: ChainId | None = None,
         silent: bool = False,
-        io: PoolIO | None = None,  # noqa: ARG002
+        io: PoolIO | None = None,
     ) -> Erc20Token:
         """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token."""
 
         address = get_checksum_address(address)
-        chain_id = chain_id or self._connections.default_chain_id
+        chain_id = chain_id or self._default_chain_id
+        assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
 
         # Check registry first
         if (existing := self._tokens.get(token_address=address, chain_id=chain_id)) is not None:
@@ -99,23 +100,21 @@ class Erc20Builder:
 
         # Fetch missing values from chain
         if name is None or symbol is None or decimals is None:
-            provider = self._connections.get_provider(chain_id)
+            assert io is not None
 
-            if not provider.get_code(address):
+            if not io.get_code(address):
                 raise DegenbotValueError(message="No contract deployed at this address")
 
             try:
                 fetched_name, fetched_symbol, fetched_decimals = (
-                    Erc20Token.fetch_name_symbol_decimals_batched(
-                        address=address, provider=provider
-                    )
+                    _fetch_name_symbol_decimals_batched(address=address, io=io)
                 )
             except (Web3Exception, DecodingError):
                 # Fallback: try individual calls with alternate prototypes
                 for func_prototype in ("name()", "NAME()"):
                     try:
-                        fetched_name = Erc20Token.fetch_name(
-                            address=address, provider=provider, func_prototype=func_prototype
+                        fetched_name = _fetch_name(
+                            address=address, io=io, func_prototype=func_prototype
                         )
                         break
                     except (Web3Exception, DecodingError):
@@ -125,8 +124,8 @@ class Erc20Builder:
 
                 for func_prototype in ("symbol()", "SYMBOL()"):
                     try:
-                        fetched_symbol = Erc20Token.fetch_symbol(
-                            address=address, provider=provider, func_prototype=func_prototype
+                        fetched_symbol = _fetch_symbol(
+                            address=address, io=io, func_prototype=func_prototype
                         )
                         break
                     except (Web3Exception, DecodingError):
@@ -136,8 +135,8 @@ class Erc20Builder:
 
                 for func_prototype in ("decimals()", "DECIMALS()"):
                     try:
-                        fetched_decimals = Erc20Token.fetch_decimals(
-                            address=address, provider=provider, func_prototype=func_prototype
+                        fetched_decimals = _fetch_decimals(
+                            address=address, io=io, func_prototype=func_prototype
                         )
                         break
                     except (Web3Exception, DecodingError):
@@ -178,23 +177,21 @@ class Erc20Builder:
 
         return token
 
-    def get_token_balance(
+    def get_token_balance(  # noqa: PLR6301
         self,
         token: Erc20Token,
         address: str,
         block_identifier: BlockIdentifier | None = None,
+        *,
+        io: PoolIO | None = None,
     ) -> int:
         """Retrieve the ERC-20 balance for the given address."""
 
         address = get_checksum_address(address)
         assert token.chain_id is not None
-        provider = self._connections.get_provider(token.chain_id)
+        assert io is not None
 
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else self._resolve_block_number(provider, block_identifier)
-        )
+        block_number = _resolve_block_number(io, block_identifier)
 
         # Check cache
         if (balance := token.get_cached_balance(address, block_number)) is not None:
@@ -202,7 +199,7 @@ class Erc20Builder:
 
         (balance,) = eth_abi.abi.decode(
             types=["uint256"],
-            data=provider.call(
+            data=io.call(
                 to=token.address,
                 data=Web3.keccak(text="balanceOf(address)")[:4]
                 + eth_abi.abi.encode(types=["address"], args=[address]),
@@ -213,25 +210,23 @@ class Erc20Builder:
         token.set_cached_balance(address, block_number, cast("int", balance))
         return cast("int", balance)
 
-    def get_token_approval(
+    def get_token_approval(  # noqa: PLR6301
         self,
         token: Erc20Token,
         owner: str,
         spender: str,
         block_identifier: BlockIdentifier | None = None,
+        *,
+        io: PoolIO | None = None,
     ) -> int:
         """Retrieve the amount that can be spent by `spender` on behalf of `owner`."""
 
         owner = get_checksum_address(owner)
         spender = get_checksum_address(spender)
         assert token.chain_id is not None
-        provider = self._connections.get_provider(token.chain_id)
+        assert io is not None
 
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else self._resolve_block_number(provider, block_identifier)
-        )
+        block_number = _resolve_block_number(io, block_identifier)
 
         # Check cache
         if (approval := token.get_cached_approval(block_number, owner, spender)) is not None:
@@ -239,7 +234,7 @@ class Erc20Builder:
 
         (approval,) = eth_abi.abi.decode(
             types=["uint256"],
-            data=provider.call(
+            data=io.call(
                 to=token.address,
                 data=Web3.keccak(text="allowance(address,address)")[:4]
                 + eth_abi.abi.encode(types=["address", "address"], args=[owner, spender]),
@@ -250,21 +245,19 @@ class Erc20Builder:
         token.set_cached_approval(block_number, owner, spender, cast("int", approval))
         return cast("int", approval)
 
-    def get_token_total_supply(
+    def get_token_total_supply(  # noqa: PLR6301
         self,
         token: Erc20Token,
         block_identifier: BlockIdentifier | None = None,
+        *,
+        io: PoolIO | None = None,
     ) -> int:
         """Retrieve the total supply for this token."""
 
         assert token.chain_id is not None
-        provider = self._connections.get_provider(token.chain_id)
+        assert io is not None
 
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else self._resolve_block_number(provider, block_identifier)
-        )
+        block_number = _resolve_block_number(io, block_identifier)
 
         # Check cache
         if (total_supply := token.get_cached_total_supply(block_number)) is not None:
@@ -272,7 +265,7 @@ class Erc20Builder:
 
         (total_supply,) = eth_abi.abi.decode(
             types=["uint256"],
-            data=provider.call(
+            data=io.call(
                 to=token.address,
                 data=Web3.keccak(text="totalSupply()")[:4],
                 block=block_number,
@@ -283,30 +276,111 @@ class Erc20Builder:
         token.set_cached_total_supply(block_number, total_supply)
         return total_supply
 
-    def get_ether_balance(
+    def get_ether_balance(  # noqa: PLR6301
         self,
-        chain_id: ChainId,
+        chain_id: ChainId,  # noqa: ARG002
         address: str,
         block_identifier: BlockIdentifier | None = None,
+        *,
+        io: PoolIO | None = None,
     ) -> int:
         """Retrieve the native ETH balance for the given address."""
         address = get_checksum_address(address)
-        provider = self._connections.get_provider(chain_id)
-        block_number = (
-            block_identifier
-            if isinstance(block_identifier, int)
-            else self._resolve_block_number(provider, block_identifier)
-        )
-        return provider.get_balance(address, block=block_number)
+        assert io is not None
 
-    @staticmethod
-    def _resolve_block_number(
-        provider: ProviderAdapter, block_identifier: BlockIdentifier | None
-    ) -> int:
-        """Resolve a block identifier to a block number."""
-        if block_identifier is None:
-            return provider.get_block_number()
-        if isinstance(block_identifier, int):
-            return block_identifier
-        # For string identifiers like 'latest', 'earliest', 'pending'
-        return provider.get_block_number()
+        block_number = _resolve_block_number(io, block_identifier)
+        return io.get_balance(address, block=block_number)
+
+
+# --- Package-level helpers (PoolIO equivalents of Erc20Token.fetch_*) ---
+
+
+def _resolve_block_number(
+    io: PoolIO, block_identifier: BlockIdentifier | None
+) -> int:
+    """Resolve a block identifier to a block number."""
+    if block_identifier is None:
+        return io.get_block_number()
+    if isinstance(block_identifier, int):
+        return block_identifier
+    # For string identifiers like 'latest', 'earliest', 'pending'
+    return io.get_block_number()
+
+
+def _fetch_name_symbol_decimals_batched(
+    *, address: str, io: PoolIO
+) -> tuple[str, str, int]:
+    """Fetch token name, symbol, and decimals via batched RPC calls."""
+    name_calldata = encode_function_calldata(
+        function_prototype="name()",
+        function_arguments=None,
+    )
+    symbol_calldata = encode_function_calldata(
+        function_prototype="symbol()",
+        function_arguments=None,
+    )
+    decimals_calldata = encode_function_calldata(
+        function_prototype="decimals()",
+        function_arguments=None,
+    )
+
+    name_result = io.call(to=address, data=name_calldata)
+    symbol_result = io.call(to=address, data=symbol_calldata)
+    decimals_result = io.call(to=address, data=decimals_calldata)
+
+    (name,) = eth_abi.abi.decode(types=["string"], data=name_result)
+    (symbol,) = eth_abi.abi.decode(types=["string"], data=symbol_result)
+    (decimals,) = eth_abi.abi.decode(types=["uint256"], data=decimals_result)
+
+    return cast("str", name), cast("str", symbol), cast("int", decimals)
+
+
+def _fetch_name(*, address: str, io: PoolIO, func_prototype: str = "name()") -> str:
+    """Fetch token name via RPC call."""
+    result = io.call(
+        to=address,
+        data=encode_function_calldata(
+            function_prototype=func_prototype,
+            function_arguments=None,
+        ),
+    )
+
+    try:
+        (name,) = eth_abi.abi.decode(types=["string"], data=result)
+        return cast("str", name)
+    except DecodingError:
+        (name,) = eth_abi.abi.decode(types=["bytes32"], data=result)
+        return cast("HexBytes", name).decode("utf-8", errors="ignore").strip("\x00")
+
+
+def _fetch_symbol(*, address: str, io: PoolIO, func_prototype: str = "symbol()") -> str:
+    """Fetch token symbol via RPC call."""
+    result = io.call(
+        to=address,
+        data=encode_function_calldata(
+            function_prototype=func_prototype,
+            function_arguments=None,
+        ),
+    )
+
+    try:
+        (symbol,) = eth_abi.abi.decode(types=["string"], data=result)
+        return cast("str", symbol)
+    except DecodingError:
+        (symbol,) = eth_abi.abi.decode(types=["bytes32"], data=result)
+        return cast("HexBytes", symbol).decode("utf-8", errors="ignore").strip("\x00")
+
+
+def _fetch_decimals(*, address: str, io: PoolIO, func_prototype: str = "decimals()") -> int:
+    """Fetch token decimals via RPC call."""
+    (result,) = eth_abi.abi.decode(
+        types=["uint256"],
+        data=io.call(
+            to=address,
+            data=encode_function_calldata(
+                function_prototype=func_prototype,
+                function_arguments=None,
+            ),
+        ),
+    )
+    return cast("int", result)

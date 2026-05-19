@@ -75,7 +75,7 @@ class AsyncBot:
         # Async builders own I/O orchestration; AsyncBot hands them its I/O dependencies.
         # AsyncErc20Builder is a leaf — constructed before AsyncBuilderContext.
         self._erc20_builder = AsyncErc20Builder(
-            connections=self.connections, db=self.db, tokens=self.tokens
+            default_chain_id=None, db=self.db, tokens=self.tokens
         )
         ctx = AsyncBuilderContext(
             connections=self.connections,
@@ -150,7 +150,9 @@ class AsyncBot:
         silent: bool = False,
     ) -> Erc20Token:
         """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token."""
-        return await self._erc20_builder.build(address, chain_id=chain_id, silent=silent)
+        resolved_chain_id = chain_id or self.connections.default_chain_id
+        io = AsyncPoolIO(self.connections.get_provider(resolved_chain_id))
+        return await self._erc20_builder.build(address, chain_id=resolved_chain_id, silent=silent, io=io)
 
     def get_token(self, address: str, *, chain_id: ChainId | None = None) -> Erc20Token | None:
         """Get a token from the registry (sync — no async I/O)."""

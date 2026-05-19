@@ -56,8 +56,12 @@ class CamelotBuilder(V2BuilderBase):
         )
 
         # Build tokens
-        token0 = self._erc20_builder.build(common.token0_address, chain_id=chain_id, silent=silent)
-        token1 = self._erc20_builder.build(common.token1_address, chain_id=chain_id, silent=silent)
+        token0 = self._erc20_builder.build(
+            common.token0_address, chain_id=chain_id, silent=silent, io=io
+        )
+        token1 = self._erc20_builder.build(
+            common.token1_address, chain_id=chain_id, silent=silent, io=io
+        )
 
         # Camelot-specific: fetch stableSwap, fee denominator, and fee percents
         stable_swap_result = io.call(

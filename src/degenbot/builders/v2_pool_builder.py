@@ -63,8 +63,12 @@ class V2PoolBuilder(V2BuilderBase):
         )
 
         # Build tokens
-        token0 = self._erc20_builder.build(common.token0_address, chain_id=chain_id, silent=silent)
-        token1 = self._erc20_builder.build(common.token1_address, chain_id=chain_id, silent=silent)
+        token0 = self._erc20_builder.build(
+            common.token0_address, chain_id=chain_id, silent=silent, io=io
+        )
+        token1 = self._erc20_builder.build(
+            common.token1_address, chain_id=chain_id, silent=silent, io=io
+        )
 
         # Determine pool class from registry
         pool_class = pool_type_registry.get_v2_class(chain_id, common.factory)

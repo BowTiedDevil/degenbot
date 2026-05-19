@@ -167,8 +167,12 @@ class V4PoolBuilder:
             tick_spacing_for_pool = tick_spacing
 
         # Build tokens
-        token0 = self._erc20_builder.build(currency0_address, chain_id=chain_id, silent=silent)
-        token1 = self._erc20_builder.build(currency1_address, chain_id=chain_id, silent=silent)
+        token0 = self._erc20_builder.build(
+            currency0_address, chain_id=chain_id, silent=silent, io=io
+        )
+        token1 = self._erc20_builder.build(
+            currency1_address, chain_id=chain_id, silent=silent, io=io
+        )
 
         # Fetch slot0 + liquidity via state view contract
         try:

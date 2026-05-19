@@ -72,7 +72,7 @@ def _make_aerodrome_builder(provider: FakeProvider | None = None) -> AerodromeV2
     """Create an AerodromeV2Builder with mock dependencies."""
     erc20_builder = MagicMock(spec=Erc20Builder)
 
-    def _build_token(address, *, chain_id=None, silent=False):  # noqa: ARG001
+    def _build_token(address, *, chain_id=None, silent=False, io=None):  # noqa: ARG001
         return _make_erc20(address, chain_id=chain_id or AERO_CHAIN_ID)
 
     erc20_builder.build = _build_token
@@ -96,7 +96,7 @@ def _make_camelot_builder(provider: FakeProvider | None = None) -> CamelotBuilde
     """Create a CamelotBuilder with mock dependencies."""
     erc20_builder = MagicMock(spec=Erc20Builder)
 
-    def _build_token(address, *, chain_id=None, silent=False):  # noqa: ARG001
+    def _build_token(address, *, chain_id=None, silent=False, io=None):  # noqa: ARG001
         return _make_erc20(address, chain_id=chain_id or CAMELOT_CHAIN_ID)
 
     erc20_builder.build = _build_token
