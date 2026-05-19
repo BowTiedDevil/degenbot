@@ -85,6 +85,50 @@ class SwapStyle(Enum):
     CYTOKEN = auto()  # dy = xp[j] - y - 1, then (dy-fee)*PRECISION//rates[j]
     RATE_ADJUSTED_NO_ONE = auto()  # dy = (xp[j]-y)*PRECISION//rates[j], fee on converted dy
 
+    def make_calculator(self) -> DyCalculator:
+        """Construct the appropriate DyCalculator for this swap style."""
+        # Lazy imports to avoid circular dependency: calculator modules
+        # import from this module at runtime.
+        from degenbot.curve.calculators.crypto import CryptoDyCalculator  # noqa: PLC0415
+        from degenbot.curve.calculators.live_admin import (  # noqa: PLC0415
+            LiveAdminDyCalculator,
+            LiveAdminDynamicDyCalculator,
+            LiveAdminDynamicPrecisionDyCalculator,
+            LiveAdminOracleDyCalculator,
+        )
+        from degenbot.curve.calculators.standard import (  # noqa: PLC0415
+            CytokenDyCalculator,
+            NoOneFeeRateDyCalculator,
+            RateAdjustedDyCalculator,
+            RateAdjustedNoOneDyCalculator,
+            RawBalanceDyCalculator,
+            StandardDyCalculator,
+        )
+
+        match self:
+            case SwapStyle.STANDARD:
+                return StandardDyCalculator()
+            case SwapStyle.RATE_ADJUSTED:
+                return RateAdjustedDyCalculator()
+            case SwapStyle.RATE_ADJUSTED_NO_ONE:
+                return RateAdjustedNoOneDyCalculator()
+            case SwapStyle.RAW_BALANCE:
+                return RawBalanceDyCalculator()
+            case SwapStyle.CRYPTO:
+                return CryptoDyCalculator()
+            case SwapStyle.LIVE_ADMIN:
+                return LiveAdminDyCalculator()
+            case SwapStyle.LIVE_ADMIN_DYNAMIC:
+                return LiveAdminDynamicDyCalculator()
+            case SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION:
+                return LiveAdminDynamicPrecisionDyCalculator()
+            case SwapStyle.LIVE_ADMIN_ORACLE:
+                return LiveAdminOracleDyCalculator()
+            case SwapStyle.NO_ONE_FEE_RATE:
+                return NoOneFeeRateDyCalculator()
+            case SwapStyle.CYTOKEN:
+                return CytokenDyCalculator()
+
 
 class MetapoolRateStyle(Enum):
     """Which rates to use for the metapool branch in get_dy."""
@@ -93,6 +137,22 @@ class MetapoolRateStyle(Enum):
     PRECISION_VP = auto()  # (PRECISION, virtual_price)
     REDEMPTION_VP = auto()  # (redemption_price, virtual_price)
 
+    def make_calculator(self) -> DyCalculator:
+        """Construct the appropriate metapool DyCalculator for this rate style."""
+        from degenbot.curve.calculators.metapool import (  # noqa: PLC0415
+            MetapoolPrecisionVpDyCalculator,
+            MetapoolRedemptionVpDyCalculator,
+            MetapoolStandardDyCalculator,
+        )
+
+        match self:
+            case MetapoolRateStyle.PRECISION_VP:
+                return MetapoolPrecisionVpDyCalculator()
+            case MetapoolRateStyle.REDEMPTION_VP:
+                return MetapoolRedemptionVpDyCalculator()
+            case MetapoolRateStyle.STANDARD:
+                return MetapoolStandardDyCalculator()
+
 
 class MetapoolUnderlyingStyle(Enum):
     """Which computation path to use in _get_dy_underlying."""
@@ -100,6 +160,22 @@ class MetapoolUnderlyingStyle(Enum):
     STANDARD = auto()  # rate_multipliers with VP for base pool LP token
     REDEMPTION = auto()  # redemption_price for first coin, VP for second
     PRECISION_VP = auto()  # (PRECISION, virtual_price) — no rate multiplier for first coin
+
+    def make_calculator(self) -> DyCalculator:
+        """Construct the appropriate metapool underlying DyCalculator."""
+        from degenbot.curve.calculators.metapool import (  # noqa: PLC0415
+            MetapoolUnderlyingPrecisionVpDyCalculator,
+            MetapoolUnderlyingRedemptionDyCalculator,
+            MetapoolUnderlyingStandardDyCalculator,
+        )
+
+        match self:
+            case MetapoolUnderlyingStyle.PRECISION_VP:
+                return MetapoolUnderlyingPrecisionVpDyCalculator()
+            case MetapoolUnderlyingStyle.REDEMPTION:
+                return MetapoolUnderlyingRedemptionDyCalculator()
+            case MetapoolUnderlyingStyle.STANDARD:
+                return MetapoolUnderlyingStandardDyCalculator()
 
 
 class LendingRateStyle(Enum):
@@ -205,6 +281,10 @@ class PoolStrategies:
 
     Set at construction time by the builder from the pool address.
     The pool class is address-agnostic — it only reads these strategy values.
+
+    Calculator instances are auto-constructed from the enum values in
+    __post_init__ if not explicitly provided. Callers may pass explicit
+    calculator instances to override the default factory (e.g., in tests).
     """
 
     d_variant: DVariant = DVariant.STANDARD
@@ -215,11 +295,27 @@ class PoolStrategies:
     metapool_underlying_style: MetapoolUnderlyingStyle = MetapoolUnderlyingStyle.STANDARD
     lending_rate_style: LendingRateStyle = LendingRateStyle.NONE
 
-    # Calculator instances — carry the actual swap formula implementation.
+    # Calculator instances — auto-constructed from enum values if not provided.
     # Enum values remain for introspection (e.g., logging).
-    dy_calculator: DyCalculator | None = dataclasses.field(default=None)
-    metapool_dy_calculator: DyCalculator | None = None
-    metapool_underlying_dy_calculator: DyCalculator | None = None
+    dy_calculator: DyCalculator = dataclasses.field(default=None)  # type: ignore[assignment]
+    metapool_dy_calculator: DyCalculator = dataclasses.field(default=None)  # type: ignore[assignment]
+    metapool_underlying_dy_calculator: DyCalculator = dataclasses.field(default=None)  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        # Auto-construct calculators from enum values when not explicitly set.
+        # Uses object.__setattr__ because the dataclass is frozen.
+        if self.dy_calculator is None:
+            object.__setattr__(self, "dy_calculator", self.swap_style.make_calculator())
+        if self.metapool_dy_calculator is None:
+            object.__setattr__(
+                self, "metapool_dy_calculator", self.metapool_rate_style.make_calculator()
+            )
+        if self.metapool_underlying_dy_calculator is None:
+            object.__setattr__(
+                self,
+                "metapool_underlying_dy_calculator",
+                self.metapool_underlying_style.make_calculator(),
+            )
 
 
 # ── Data Provider Protocol ──

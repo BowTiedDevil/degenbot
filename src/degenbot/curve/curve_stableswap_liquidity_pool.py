@@ -23,11 +23,6 @@ from degenbot.calculations.stableswap import (
     stableswap_reduction_coefficient,
 )
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.curve._pool_strategies import (
-    _make_dy_calculator,
-    _make_metapool_dy_calculator,
-    _make_metapool_underlying_dy_calculator,
-)
 from degenbot.curve.on_chain_cache import CurveOnChainCache
 from degenbot.curve.stableswap_pool_state import StableswapPoolState
 from degenbot.curve.types import (
@@ -616,10 +611,7 @@ class CurveStableswapPool(
         if self.base_pool is not None:
             # Metapool path — resolve metapool-specific inputs
             inputs = self._resolve_metapool_inputs_via_io(block_number, override_state)
-            calculator = self._strategies.metapool_dy_calculator
-            if calculator is None:
-                calculator = _make_metapool_dy_calculator(self._strategies.metapool_rate_style)
-            return calculator.calculate(
+            return self._strategies.metapool_dy_calculator.calculate(
                 i,
                 j,
                 dx,
@@ -630,11 +622,7 @@ class CurveStableswapPool(
         # Non-metapool path — resolve standard/crypto/live-admin inputs
         inputs = self._resolve_calculation_inputs_via_io(block_number, override_state)
 
-        calculator = self._strategies.dy_calculator
-        if calculator is None:
-            # Fallback: lazily construct calculator
-            calculator = _make_dy_calculator(self._strategies.swap_style)
-        return calculator.calculate(
+        return self._strategies.dy_calculator.calculate(
             i,
             j,
             dx,
@@ -682,12 +670,7 @@ class CurveStableswapPool(
         block_number = self._resolve_block_number(block_identifier)
         inputs = self._resolve_metapool_inputs_via_io(block_number, override_state)
 
-        calculator = self._strategies.metapool_underlying_dy_calculator
-        if calculator is None:
-            calculator = _make_metapool_underlying_dy_calculator(
-                self._strategies.metapool_underlying_style
-            )
-        return calculator.calculate(
+        return self._strategies.metapool_underlying_dy_calculator.calculate(
             i,
             j,
             dx,

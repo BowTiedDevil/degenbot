@@ -162,3 +162,32 @@ class TestPoolStrategiesDataclass:
         )
         roundtripped = pickle.loads(pickle.dumps(s))
         assert roundtripped == s
+
+    def test_calculators_always_set(self):
+        """PoolStrategies auto-constructs calculators from enum values."""
+        s = PoolStrategies()
+        assert s.dy_calculator is not None
+        assert s.metapool_dy_calculator is not None
+        assert s.metapool_underlying_dy_calculator is not None
+
+    def test_calculators_match_swap_style(self):
+        """Calculator type matches the swap_style enum value."""
+        from degenbot.curve.calculators.crypto import CryptoDyCalculator
+        from degenbot.curve.calculators.standard import RateAdjustedDyCalculator, StandardDyCalculator
+
+        assert isinstance(PoolStrategies().dy_calculator, StandardDyCalculator)
+        assert isinstance(
+            PoolStrategies(swap_style=SwapStyle.CRYPTO).dy_calculator, CryptoDyCalculator
+        )
+        assert isinstance(
+            PoolStrategies(swap_style=SwapStyle.RATE_ADJUSTED).dy_calculator,
+            RateAdjustedDyCalculator,
+        )
+
+    def test_explicit_calculator_overrides_auto(self):
+        """Explicit calculator arg is preserved, not overwritten by __post_init__."""
+        from degenbot.curve.calculators.standard import StandardDyCalculator
+
+        explicit = StandardDyCalculator()
+        s = PoolStrategies(swap_style=SwapStyle.CRYPTO, dy_calculator=explicit)
+        assert s.dy_calculator is explicit

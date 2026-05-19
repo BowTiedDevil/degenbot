@@ -23,7 +23,7 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
 | 048 | [Unify Bot and AsyncBot via Builder-Backed IO Seam](completed/048-async-builder-shared.md) | AsyncBot delegates to async builders instead of duplicating construction. `PoolIO` protocol parameterizes builders over sync/async. ~965→~466 lines in AsyncBot. |
 | 052 | [Migrate V3/V4/Curve/ERC20 Builders to Full PoolIO](completed/052-v3v4curve-poolio-migration.md) | Remove all `ProviderAdapter`/`ConnectionManager` dependencies from V3, V4, Curve, and ERC20 builders. Remove `connections` from `BuilderContext`. |
-| 056 | [Externalize Curve Address→Strategy Mapping to Database](056-externalize-curve-strategy-mapping-to-db.md) | Move hard-coded address→`PoolStrategies` mapping to database. Builder reads from DB; falls back to detection inference for unknown pools. |
+| 056 | [Move Calculator Factory Functions to Enum Types](056-externalize-curve-strategy-mapping-to-db.md) | Move `_make_dy_calculator` etc. from `_pool_strategies.py` onto enum types. Remove pool class import dependency on strategy resolution module. Make calculators non-optional on `PoolStrategies`. |
 
 
 ## Completed Plans
