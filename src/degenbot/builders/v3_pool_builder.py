@@ -12,7 +12,7 @@ from degenbot.database.models.pools import LiquidityPoolTable, UniswapV3PoolTabl
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
-from degenbot.provider.call_helpers import encode_function_calldata, raw_call
+from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
@@ -45,7 +45,7 @@ class V3PoolBuilder:
         assert ctx.managed_pools is not None, (
             "V3PoolBuilder requires managed_pools in BuilderContext"
         )
-        self._connections = ctx.connections
+        self._default_chain_id = ctx.default_chain_id
         self._db = ctx.db
         self._pools = ctx.pools
         self._tokens = ctx.tokens
@@ -90,15 +90,10 @@ class V3PoolBuilder:
         """Fetch pool data from DB/RPC and construct an I/O-free V3-style pool."""
 
         pool_address = get_checksum_address(address)
-        chain_id = chain_id or self._connections.default_chain_id
-        provider = self._connections.get_provider(chain_id)
+        chain_id = chain_id or self._default_chain_id
+        assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
 
-        state_block = state_block if state_block is not None else (
-            io.get_block_number() if io is not None else provider.get_block_number()
-        )
-
-        # Choose the I/O call function: io overrides provider when provided
-        call_fn = io.call if io is not None else provider.call
+        state_block = state_block if state_block is not None else io.get_block_number()
 
         # Try DB first
         pool_from_db = None
@@ -126,23 +121,23 @@ class V3PoolBuilder:
                 deployer_address = pool_from_db.exchange.deployer
         else:
             try:
-                factory_result = call_fn(
+                factory_result = io.call(
                     to=pool_address,
                     data=encode_function_calldata("factory()", None),
                 )
-                token0_result = call_fn(
+                token0_result = io.call(
                     to=pool_address,
                     data=encode_function_calldata("token0()", None),
                 )
-                token1_result = call_fn(
+                token1_result = io.call(
                     to=pool_address,
                     data=encode_function_calldata("token1()", None),
                 )
-                fee_result = call_fn(
+                fee_result = io.call(
                     to=pool_address,
                     data=encode_function_calldata("fee()", None),
                 )
-                tick_spacing_result = call_fn(
+                tick_spacing_result = io.call(
                     to=pool_address,
                     data=encode_function_calldata("tickSpacing()", None),
                 )
@@ -167,12 +162,12 @@ class V3PoolBuilder:
 
         # Fetch slot0 + liquidity
         try:
-            slot0_result = call_fn(
+            slot0_result = io.call(
                 to=pool_address,
                 data=encode_function_calldata("slot0()", None),
                 block=state_block,
             )
-            liquidity_result = call_fn(
+            liquidity_result = io.call(
                 to=pool_address,
                 data=encode_function_calldata("liquidity()", None),
                 block=state_block,
@@ -233,23 +228,14 @@ class V3PoolBuilder:
                     tick=int(tick), tick_spacing=tick_spacing_for_pool
                 )
 
-                if io is not None:
-                    (bitmap_at_word,) = eth_abi.abi.decode(
-                        types=["uint256"],
-                        data=io.call(
-                            to=pool_address,
-                            data=encode_function_calldata("tickBitmap(int16)", [word]),
-                            block=state_block,
-                        ),
-                    )
-                else:
-                    (bitmap_at_word,) = raw_call(
-                        provider,
-                        address=pool_address,
-                        calldata=encode_function_calldata("tickBitmap(int16)", [word]),
-                        return_types=["uint256"],
-                        block_identifier=state_block,
-                    )
+                (bitmap_at_word,) = eth_abi.abi.decode(
+                    types=["uint256"],
+                    data=io.call(
+                        to=pool_address,
+                        data=encode_function_calldata("tickBitmap(int16)", [word]),
+                        block=state_block,
+                    ),
+                )
 
                 if bitmap_at_word != 0:
                     active_ticks = [
@@ -259,7 +245,7 @@ class V3PoolBuilder:
                     ]
 
                     for active_tick in active_ticks:
-                        result = call_fn(
+                        result = io.call(
                             to=pool_address,
                             data=encode_function_calldata("ticks(int24)", [active_tick]),
                             block=state_block,
@@ -356,12 +342,12 @@ class V3PoolBuilder:
 
         return pool
 
-    def update(
+    def update(  # noqa: PLR6301
         self,
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
-        io: PoolIO | None = None,  # noqa: ARG002
+        io: PoolIO | None = None,
     ) -> bool:
         """Fetch current state from chain and push update to the pool."""
 
@@ -372,12 +358,12 @@ class V3PoolBuilder:
             msg = f"V3PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 
+        assert io is not None
         assert pool.chain_id is not None
-        provider = self._connections.get_provider(pool.chain_id)
-        raw_block = block_number if block_number is not None else provider.get_block_number()
+        raw_block = block_number if block_number is not None else io.get_block_number()
         block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block
 
-        slot0_result = provider.call(
+        slot0_result = io.call(
             to=pool.address,
             data=encode_function_calldata("slot0()", None),
             block=block_number_,
@@ -393,7 +379,7 @@ class V3PoolBuilder:
             "tuple[int]",
             eth_abi.abi.decode(
                 types=["uint256"],
-                data=provider.call(
+                data=io.call(
                     to=pool.address,
                     data=encode_function_calldata("liquidity()", None),
                     block=block_number_,

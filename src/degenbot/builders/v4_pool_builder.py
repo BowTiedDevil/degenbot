@@ -14,7 +14,7 @@ from degenbot.database.models.pools import PoolManagerTable, UniswapV4PoolTable
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
-from degenbot.provider.call_helpers import encode_function_calldata, raw_call
+from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
@@ -45,7 +45,7 @@ class V4PoolBuilder:
         assert ctx.managed_pools is not None, (
             "V4PoolBuilder requires managed_pools in BuilderContext"
         )
-        self._connections = ctx.connections
+        self._default_chain_id = ctx.default_chain_id
         self._db = ctx.db
         self._pools = ctx.pools
         self._tokens = ctx.tokens
@@ -107,15 +107,10 @@ class V4PoolBuilder:
         assert pool_id is not None
         pool_manager_address = get_checksum_address(pool_manager_address)
         pool_id_bytes = HexBytes(pool_id)
-        chain_id = chain_id or self._connections.default_chain_id
-        provider = self._connections.get_provider(chain_id)
+        chain_id = chain_id or self._default_chain_id
+        assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
 
-        state_block = state_block if state_block is not None else (
-            io.get_block_number() if io is not None else provider.get_block_number()
-        )
-
-        # Choose the I/O call function: io overrides provider when provided
-        call_fn = io.call if io is not None else provider.call
+        state_block = state_block if state_block is not None else io.get_block_number()
 
         # Try DB first
         pool_from_db = None
@@ -187,12 +182,12 @@ class V4PoolBuilder:
             )
 
             assert state_view_address is not None
-            slot0_result = call_fn(
+            slot0_result = io.call(
                 to=state_view_address,
                 data=slot0_calldata,
                 block=state_block,
             )
-            liquidity_result = call_fn(
+            liquidity_result = io.call(
                 to=state_view_address,
                 data=liquidity_calldata,
                 block=state_block,
@@ -257,29 +252,17 @@ class V4PoolBuilder:
                 )
 
                 assert state_view_address is not None
-                if io is not None:
-                    (bitmap_at_word,) = eth_abi.abi.decode(
-                        types=["uint256"],
-                        data=io.call(
-                            to=state_view_address,
-                            data=encode_function_calldata(
-                                "getTickBitmap(bytes32,int16)",
-                                [pool_id_bytes, word],
-                            ),
-                            block=state_block,
-                        ),
-                    )
-                else:
-                    (bitmap_at_word,) = raw_call(
-                        provider,
-                        address=state_view_address,
-                        calldata=encode_function_calldata(
+                (bitmap_at_word,) = eth_abi.abi.decode(
+                    types=["uint256"],
+                    data=io.call(
+                        to=state_view_address,
+                        data=encode_function_calldata(
                             "getTickBitmap(bytes32,int16)",
                             [pool_id_bytes, word],
                         ),
-                        return_types=["uint256"],
-                        block_identifier=state_block,
-                    )
+                        block=state_block,
+                    ),
+                )
 
                 if bitmap_at_word != 0:
                     active_ticks = [
@@ -289,7 +272,7 @@ class V4PoolBuilder:
                     ]
 
                     for active_tick in active_ticks:
-                        result = call_fn(
+                        result = io.call(
                             to=state_view_address,
                             data=encode_function_calldata(
                                 "getTickLiquidity(bytes32,int24)",
@@ -360,25 +343,25 @@ class V4PoolBuilder:
 
         return pool
 
-    def update(
+    def update(  # noqa: PLR6301
         self,
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
-        io: PoolIO | None = None,  # noqa: ARG002
+        io: PoolIO | None = None,
     ) -> bool:
         """Fetch current state from chain and push update to the pool."""
         if not isinstance(pool, UniswapV4Pool):
             msg = f"V4PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 
+        assert io is not None
         assert pool.chain_id is not None
-        provider = self._connections.get_provider(pool.chain_id)
-        raw_block = block_number if block_number is not None else provider.get_block_number()
+        raw_block = block_number if block_number is not None else io.get_block_number()
         block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block
 
         slot0_calldata = encode_function_calldata("getSlot0(bytes32)", [pool.pool_id])
-        slot0_result = provider.call(
+        slot0_result = io.call(
             to=pool._state_view_address,  # noqa: SLF001
             data=slot0_calldata,
             block=block_number_,
@@ -393,7 +376,7 @@ class V4PoolBuilder:
             "tuple[int]",
             eth_abi.abi.decode(
                 types=["uint256"],
-                data=provider.call(
+                data=io.call(
                     to=pool._state_view_address,  # noqa: SLF001
                     data=liquidity_calldata,
                     block=block_number_,
