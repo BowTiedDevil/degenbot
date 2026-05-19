@@ -53,7 +53,7 @@ class V3PoolBuilder:
         self._erc20_builder = ctx.erc20_builder
 
     def _make_tick_data_fetcher(
-        self, pool_address: str, chain_id: int
+        self, pool_address: str, chain_id: int, io: PoolIO
     ) -> Callable[[int, int], None]:
         """Create a tick data fetcher callback for a V3 pool."""
         return make_tick_data_fetcher(
@@ -64,7 +64,7 @@ class V3PoolBuilder:
                     pool_address=get_checksum_address(pool_address),
                 ),
             ),
-            provider_lookup=lambda: self._connections.get_provider(chain_id),
+            io=io,
             types=TickDataTypes(
                 bitmap_at_word=BitmapAtWord,
                 liquidity_at_tick=LiquidityAtTick,
@@ -332,7 +332,7 @@ class V3PoolBuilder:
             tick_data=tick_data_arg,
             deployer_address=deployer,
             init_hash=init_hash,
-            tick_data_fetcher=self._make_tick_data_fetcher(pool_address, chain_id),
+            tick_data_fetcher=self._make_tick_data_fetcher(pool_address, chain_id, io=io),
             state_cache_depth=state_cache_depth,
         )
 

@@ -53,7 +53,12 @@ class V4PoolBuilder:
         self._erc20_builder = ctx.erc20_builder
 
     def _make_tick_data_fetcher(
-        self, pool_id: HexBytes, pool_manager_address: str, state_view_address: str, chain_id: int
+        self,
+        pool_id: HexBytes,
+        pool_manager_address: str,
+        state_view_address: str,
+        chain_id: int,
+        io: PoolIO,
     ) -> Callable[[int, int], None]:
         """Create a tick data fetcher callback for a V4 pool."""
         pool_manager_address_ = get_checksum_address(pool_manager_address)
@@ -66,7 +71,7 @@ class V4PoolBuilder:
                     pool_id=pool_id,
                 ),
             ),
-            provider_lookup=lambda: self._connections.get_provider(chain_id),
+            io=io,
             types=TickDataTypes(
                 bitmap_at_word=BitmapAtWord,
                 liquidity_at_tick=LiquidityAtTick,
@@ -331,7 +336,7 @@ class V4PoolBuilder:
             tick_bitmap=tick_bitmap_arg,
             tick_data=tick_data_arg,
             tick_data_fetcher=self._make_tick_data_fetcher(
-                pool_id_bytes, pool_manager_address, state_view_address, chain_id
+                pool_id_bytes, pool_manager_address, state_view_address, chain_id, io=io
             ),
             state_cache_depth=state_cache_depth,
         )

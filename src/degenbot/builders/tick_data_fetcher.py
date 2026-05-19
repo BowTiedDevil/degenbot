@@ -7,14 +7,14 @@ import eth_abi.abi
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.logging import logger
-from degenbot.provider.call_helpers import encode_function_calldata, raw_call
+from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from eth_typing import ChecksumAddress
 
-    from degenbot.provider.interface import ProviderAdapter
+    from degenbot.builders.pool_io import PoolIO
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
     from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
@@ -44,7 +44,7 @@ class _PoolRef:
 
 def make_tick_data_fetcher(
     pool_lookup: Callable[[int], UniswapV3Pool | UniswapV4Pool | None],
-    provider_lookup: Callable[[], ProviderAdapter],
+    io: PoolIO,
     types: TickDataTypes,
     *,
     state_view_address: str | None = None,
@@ -53,8 +53,8 @@ def make_tick_data_fetcher(
     """
     Create a tick data fetcher callback for a concentrated-liquidity pool.
 
-    The returned fetcher captures the pool-lookup and provider-lookup
-    closures so the calling builder does not need to hold references
+    The returned fetcher captures the pool-lookup closure and PoolIO
+    reference so the calling builder does not need to hold references
     to registries or connection managers.
 
     For V4 pools, pass ``state_view_address`` and ``pool_id`` so the
@@ -71,14 +71,13 @@ def make_tick_data_fetcher(
         if pool is None:
             return
 
-        provider = provider_lookup()
         working_tick_bitmap = dict(pool.tick_bitmap)
         working_tick_data = dict(pool.tick_data)
         pool_ref = _PoolRef(address=pool.address, tick_spacing=pool.tick_spacing)
 
         if is_v4:
             _fetch_v4(
-                provider=provider,
+                io=io,
                 state_view_address=cast("str", state_view_address),
                 pool_id=cast("bytes", pool_id),
                 pool_ref=pool_ref,
@@ -90,7 +89,7 @@ def make_tick_data_fetcher(
             )
         else:
             _fetch_v3(
-                provider=provider,
+                io=io,
                 pool_ref=pool_ref,
                 word_position=word_position,
                 block_number=block_number,
@@ -110,7 +109,7 @@ def make_tick_data_fetcher(
 
 def _fetch_v3(
     *,
-    provider: ProviderAdapter,
+    io: PoolIO,
     pool_ref: _PoolRef,
     word_position: int,
     block_number: int,
@@ -120,12 +119,13 @@ def _fetch_v3(
 ) -> None:
     """Fetch tick bitmap + data for a V3 pool using its direct contract calls."""
     try:
-        (bitmap_value,) = raw_call(
-            provider,
-            address=pool_ref.address,
-            calldata=encode_function_calldata("tickBitmap(int16)", [word_position]),
-            return_types=["uint256"],
-            block_identifier=block_number,
+        (bitmap_value,) = eth_abi.abi.decode(
+            types=["uint256"],
+            data=io.call(
+                to=pool_ref.address,
+                data=encode_function_calldata("tickBitmap(int16)", [word_position]),
+                block=block_number,
+            ),
         )
     except Exception:  # noqa: BLE001
         return
@@ -143,7 +143,7 @@ def _fetch_v3(
 
         for active_tick in active_ticks:
             try:
-                result = provider.call(
+                result = io.call(
                     to=pool_ref.address,
                     data=encode_function_calldata("ticks(int24)", [active_tick]),
                     block=block_number,
@@ -165,7 +165,7 @@ def _fetch_v3(
 
 def _fetch_v4(
     *,
-    provider: ProviderAdapter,
+    io: PoolIO,
     state_view_address: str,
     pool_id: bytes,
     pool_ref: _PoolRef,
@@ -177,14 +177,15 @@ def _fetch_v4(
 ) -> None:
     """Fetch tick bitmap + data for a V4 pool via the state-view contract."""
     try:
-        (bitmap_value,) = raw_call(
-            provider,
-            address=get_checksum_address(state_view_address),
-            calldata=encode_function_calldata(
-                "getTickBitmap(bytes32,int16)", [pool_id, word_position]
+        (bitmap_value,) = eth_abi.abi.decode(
+            types=["uint256"],
+            data=io.call(
+                to=get_checksum_address(state_view_address),
+                data=encode_function_calldata(
+                    "getTickBitmap(bytes32,int16)", [pool_id, word_position]
+                ),
+                block=block_number,
             ),
-            return_types=["uint256"],
-            block_identifier=block_number,
         )
     except Exception:  # noqa: BLE001
         return
@@ -202,7 +203,7 @@ def _fetch_v4(
 
         for active_tick in active_ticks:
             try:
-                result = provider.call(
+                result = io.call(
                     to=state_view_address,
                     data=encode_function_calldata(
                         "getTickLiquidity(bytes32,int24)",
