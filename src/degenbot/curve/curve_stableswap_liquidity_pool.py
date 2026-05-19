@@ -274,12 +274,10 @@ class CurveStableswapPool(
             return True
         if self.base_pool is not None:
             return True
-        if any([
+        return any([
             self.future_a_coefficient is not None,
             self.initial_a_coefficient is not None,
-        ]):
-            return True
-        return False
+        ])
 
     def external_update(self, update: CurveStableswapPoolExternalUpdate) -> None:
         """Apply an external state update with new balances."""
