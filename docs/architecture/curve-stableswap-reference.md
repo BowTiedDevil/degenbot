@@ -110,9 +110,9 @@ Crypto pools (e.g., Tricrypto USDT-WBTC-WETH) use a fundamentally different calc
 
 | Component | Purpose | I/O Required |
 |-----------|---------|--------------|
-| `D` | Current invariant value | Fetched on-chain via `DFetcher` |
-| `gamma` | Curve shape parameter | Fetched on-chain via `GammaFetcher` |
-| `price_scale` | Current prices of volatile assets | Fetched on-chain via `PriceScaleFetcher` |
+| `D` | Current invariant value | Fetched on-chain via `CurveDataProvider.D()` |
+| `gamma` | Curve shape parameter | Fetched on-chain via `CurveDataProvider.gamma()` |
+| `price_scale` | Current prices of volatile assets | Fetched on-chain via `CurveDataProvider.price_scale()` |
 | `_newton_y()` | Newton's method solver for y | Pure math (no I/O) |
 | `_reduction_coefficient()` | Fee reduction based on imbalance | Pure math (no I/O) |
 | Dynamic fee | Interpolation between mid_fee and out_fee using fee_gamma | Uses pool state (no I/O) |
@@ -126,7 +126,7 @@ where f = _reduction_coefficient(xp, fee_gamma)
 
 ### Crypto pool detection
 
-A pool with `fee_gamma > 0` is identified as a crypto pool during `the Curve Pool Builder (invoked via Bot.build_pool())`. This triggers creation of the D, gamma, and price_scale fetchers.
+A pool with `fee_gamma > 0` is identified as a crypto pool during `the Curve Pool Builder (invoked via Bot.build_pool())`. This triggers creation of the D, gamma, and price_scale data provider methods.
 
 ### Contract parameters
 
@@ -185,7 +185,7 @@ This is fetched via `underlying()` contract call + `decimals()` on the underlyin
 | Exception | When Raised |
 |-----------|-------------|
 | `CurveError` | Base class for all Curve-specific errors |
-| `MissingCurveData` | Required on-chain data unavailable via fetchers (e.g., D_fetcher is None for a crypto pool) |
+| `MissingCurveData` | Required on-chain data unavailable via data_provider (e.g., data_provider is None for a crypto pool) |
 | `BrokenPool` | Pool has < 2 tokens or returns invalid data |
 | `InvalidSwapInputAmount` | Swap amount exceeds available liquidity |
 | `NoLiquidity` | Pool has zero reserves for the requested direction |
@@ -218,7 +218,7 @@ Curve V1 pools are written in Vyper. The source is the ground truth for all calc
 
 The address→strategy mapping in `_pool_strategies.py` was derived from old class-level frozensets, not verified against contract source. Two common errors:
 
-1. **Wrong `LendingRateStyle`.** A pool was grouped into a cToken/yToken frozenset because the old Python code routed it through `_stored_rates_from_ctokens()`, but the contract has `USE_LENDING = [False, ...]`. The old code worked because the `_stored_rates_from_*()` method returns `PRECISION * LENDING_PRECISION` when `use_lending` is all-False — same as `rate_multipliers`. The new code creates a fetcher that makes spurious on-chain calls, potentially returning different rates.
+1. **Wrong `LendingRateStyle`.** A pool was grouped into a cToken/yToken frozenset because the old Python code routed it through `_stored_rates_from_ctokens()`, but the contract has `USE_LENDING = [False, ...]`. The old code worked because the `_stored_rates_from_*()` method returns `PRECISION * LENDING_PRECISION` when `use_lending` is all-False — same as `rate_multipliers`. The new code creates a data provider that makes spurious on-chain calls, potentially returning different rates.
 
 2. **Missing address.** A pool not in the mapping falls through to `PoolStrategies()` defaults (`SwapStyle.STANDARD`, `LendingRateStyle.NONE`). This is correct for plain 2-token stablecoin pools but wrong for unlisted lending, metapool, or crypto pools.
 

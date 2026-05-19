@@ -105,8 +105,8 @@ class MetapoolUnderlyingStyle(Enum):
 class LendingRateStyle(Enum):
     """Which rate-fetching method to use for lending tokens.
 
-    Used by get_dy() to select which _stored_rates_from_*() method to call.
-    Will be replaced by typed fetcher protocols in Plan 027.
+    Used by get_dy() to select which stored-rate resolution path to call
+    via CurveDataProvider.lending_rates().
     """
 
     NONE = auto()  # No lending tokens — use rate_multipliers directly
@@ -256,89 +256,7 @@ class CurveDataProvider(Protocol):
     def redemption_price(self, block_number: int) -> int: ...
 
 
-# ── Fetcher Protocols (deprecated — use CurveDataProvider) ──
-# These protocols define the interface for callbacks that fetch on-chain data
-# for Curve pools. They are injected by Bot.build_pool() to enable
-# on-demand data fetching while keeping the pool class I/O-free.
-
-
-class VirtualPriceFetcher(Protocol):
-    """Fetch virtual price from a base pool at a given block.
-
-    Used by metapools to get the LP token price of their base pool.
-    """
-
-    def __call__(self, block_number: int) -> int: ...
-
-
-class TimestampFetcher(Protocol):
-    """Fetch block timestamp for a given block number.
-
-    Used for A coefficient ramping calculations.
-    """
-
-    def __call__(self, block_number: int) -> int: ...
-
-
-class RedemptionPriceFetcher(Protocol):
-    """Fetch scaled redemption price for LSD pools at a given block.
-
-    Used by pools that wrap LSD tokens (e.g., stETH, frxETH).
-    """
-
-    def __call__(self, block_number: int) -> int: ...
-
-
-class AdminBalancesFetcher(Protocol):
-    """Fetch admin balances for the pool at a given block.
-
-    Used by pools that track accumulated admin fees separately.
-    """
-
-    def __call__(self, block_number: int) -> tuple[int, ...]: ...
-
-
-class DFetcher(Protocol):
-    """Fetch the invariant D for a crypto pool at a given block.
-
-    Used by crypto (volatile) Curve pools that need the on-chain D value
-    instead of computing it locally.
-    """
-
-    def __call__(self, block_number: int) -> int: ...
-
-
-class GammaFetcher(Protocol):
-    """Fetch the gamma parameter for a crypto pool at a given block.
-
-    Used by crypto (volatile) Curve pools for dynamic fee calculation.
-    """
-
-    def __call__(self, block_number: int) -> int: ...
-
-
-class PriceScaleFetcher(Protocol):
-    """Fetch price_scale values for a crypto pool at a given block.
-
-    Returns a tuple of (n_coins - 1) price scale values.
-    Used by crypto (volatile) Curve pools for multi-asset price normalization.
-    """
-
-    def __call__(self, block_number: int) -> tuple[int, ...]: ...
-
-
-class LendingRateFetcher(Protocol):
-    """Fetch lending rates for all tokens in a Curve pool at a given block.
-
-    Returns per-token rates scaled to PRECISION (10^18).
-    Non-lending tokens return PRECISION. Lending tokens return
-    their rate (e.g., cToken exchange rate, yToken PPS).
-    """
-
-    def __call__(self, block_number: int) -> tuple[int, ...]: ...
-
-
-# ── Data Classes ──
+# ── Provider & State Types ──
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
