@@ -22,7 +22,7 @@ _Avoid_: Fork, local chain
 - [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — StableSwap pools, CurveDataProvider seam, DyCalculator, variant and strategy enums (with `make_calculator()` factory methods), CurveOnChainCache
 - [Connection Management](src/degenbot/connection/CONTEXT.md) — connection managers, provider references, and subscription primitives
 - [Chainlink](src/degenbot/chainlink/CONTEXT.md) — price feeds, aggregators, round data
-- [Builders](src/degenbot/builders/CONTEXT.md) — pool builders, PoolIO seam (7-method protocol), BuilderContext, PoolBuilder/AsyncPoolBuilder protocols, and shared type resolution
+- [Builders](src/degenbot/builders/CONTEXT.md) — pool builders, PoolIO seam (7-method protocol), BuilderContext, PoolBuilder/AsyncPoolBuilder protocols, V2BuilderBase/V3BuilderBase/V4BuilderBase shared helpers, and shared type resolution
 
 ## Instructions
 
