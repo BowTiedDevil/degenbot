@@ -43,7 +43,7 @@ class CurvePoolBuilder:
     """
 
     def __init__(self, ctx: BuilderContext) -> None:
-        self._connections = ctx.connections
+        self._default_chain_id = ctx.default_chain_id
         self._db = ctx.db
         self._pools = ctx.pools
         self._tokens = ctx.tokens
@@ -63,7 +63,8 @@ class CurvePoolBuilder:
         """Fetch pool data from RPC and construct an I/O-free CurveStableswapPool."""
 
         pool_address = get_checksum_address(address)
-        chain_id = chain_id or self._connections.default_chain_id
+        chain_id = chain_id or self._default_chain_id
+        assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
         state_block = state_block if state_block is not None else io.get_block_number()
 
         # 1. Discover coins and balances
@@ -237,21 +238,21 @@ class CurvePoolBuilder:
 
         return base_pool, tokens_underlying
 
-    def update(
+    def update(  # noqa: PLR6301
         self,
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
-        io: PoolIO | None = None,  # noqa: ARG002
+        io: PoolIO | None = None,
     ) -> bool:
         """Fetch current state from chain and push update to the pool."""
         if not isinstance(pool, CurveStableswapPool):
             msg = f"CurvePoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 
+        assert io is not None
         assert pool.chain_id is not None
-        provider = self._connections.get_provider(pool.chain_id)
-        raw_block_number = block_number if block_number is not None else provider.get_block_number()
+        raw_block_number = block_number if block_number is not None else io.get_block_number()
         block_number_: int = (
             raw_block_number if isinstance(raw_block_number, int) else int(raw_block_number)
         )
@@ -263,7 +264,7 @@ class CurvePoolBuilder:
                 "tuple[int]",
                 eth_abi.abi.decode(
                     types=["uint256"],
-                    data=provider.call_raw(
+                    data=io.call_raw(
                         {
                             "to": pool.address,
                             "data": encode_function_calldata(
