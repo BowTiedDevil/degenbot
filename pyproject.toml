@@ -189,7 +189,6 @@ dev = [
     "hypothesis",
     "maturin",
     "pytest-asyncio",
-    "pytest-benchmark",
     "pytest-cov",
     "pytest-random-order",
     "pytest-xdist",
