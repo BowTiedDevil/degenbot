@@ -206,6 +206,14 @@ Adding a new pool family now requires only creating a builder and registering it
 
 All pool builders accept a `BuilderContext` (frozen dataclass in `src/degenbot/builders/context.py`) instead of 5–6 individual constructor parameters. Bot creates one context object and passes it to all builders. Adding a new builder requires a one-line construction + `register_builder()` — zero additional wiring. `Erc20Builder` is the one exception (it's a leaf dependency used *by* the context, so it keeps its standalone constructor).
 
+#### Builder Base Classes
+
+Sync pool builders for each pool family inherit a base class with shared `@staticmethod` helpers for pure-logic operations (decode, DB extract, snapshot loading). Async builders call the same static methods without inheriting — mirroring the `AsyncV2PoolBuilder` pattern established in Plan 043.
+
+- **`V2BuilderBase`** — helpers: `decode_immutable_data`, `extract_db_values`, `resolve_deployer_and_init_hash` (`V2PoolBuilder`, `AerodromeV2Builder`, `CamelotBuilder` inherit)
+- **`V3BuilderBase`** — helpers: `decode_immutable_data`, `decode_slot0`, `extract_db_values`, `load_tick_snapshot`, `resolve_tick_data_args`; frozen dataclasses `V3ImmutableData`, `V3Slot0Data`, `V3DbValues` (`V3PoolBuilder` inherits; `AsyncV3PoolBuilder` calls static methods)
+- **`V4BuilderBase`** — helpers: `decode_slot0`, `extract_db_values`, `load_tick_snapshot`, `resolve_tick_data_args`; frozen dataclasses `V4Slot0Data`, `V4DbValues` (`V4PoolBuilder` inherits; `AsyncV4PoolBuilder` calls static methods)
+
 ### Fetcher Protocols
 
 **Curve pools** use a **CurveDataProvider** seam for fully I/O-free operation — all on-chain data access flows through a single injected object with 13 methods (`D()`, `gamma()`, `virtual_price()`, `base_virtual_price()`, `price_scale()`, `admin_balances()`, `lending_rate()`, `redemption_price()`, `block_timestamp()`, `block_number()`, `token_balance()`, `token_total_supply()`, `is_crypto()`). The pool calls `self._data_provider.xxx()` on-demand:
@@ -264,7 +272,7 @@ Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` f
 
 ## Architecture Plans
 
-Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–062 are all complete except 048 (active). The other active plans are 014 (Async REPL), 060 (Unify Builder Orchestration), and the arbitrage optimizer project. See `plans/README.md` for the full list.
+Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–062 are all complete. The only active plans are 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
 
 **New plans must follow [`plans/TEMPLATE.md`](plans/TEMPLATE.md).** The template requires: deletion test, specific friction table, vertical slices, design decisions, relationship to other plans, and status checklist.
 
