@@ -297,9 +297,9 @@ class PoolStrategies:
 
     # Calculator instances — auto-constructed from enum values if not provided.
     # Enum values remain for introspection (e.g., logging).
-    dy_calculator: DyCalculator = dataclasses.field(default=None)  # type: ignore[assignment]
-    metapool_dy_calculator: DyCalculator = dataclasses.field(default=None)  # type: ignore[assignment]
-    metapool_underlying_dy_calculator: DyCalculator = dataclasses.field(default=None)  # type: ignore[assignment]
+    dy_calculator: DyCalculator | None = dataclasses.field(default=None)
+    metapool_dy_calculator: DyCalculator | None = dataclasses.field(default=None)
+    metapool_underlying_dy_calculator: DyCalculator | None = dataclasses.field(default=None)
 
     def __post_init__(self) -> None:
         # Auto-construct calculators from enum values when not explicitly set.

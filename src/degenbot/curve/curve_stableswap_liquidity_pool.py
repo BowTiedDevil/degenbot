@@ -611,6 +611,7 @@ class CurveStableswapPool(
         if self.base_pool is not None:
             # Metapool path — resolve metapool-specific inputs
             inputs = self._resolve_metapool_inputs_via_io(block_number, override_state)
+            assert self._strategies.metapool_dy_calculator is not None
             return self._strategies.metapool_dy_calculator.calculate(
                 i,
                 j,
@@ -622,6 +623,7 @@ class CurveStableswapPool(
         # Non-metapool path — resolve standard/crypto/live-admin inputs
         inputs = self._resolve_calculation_inputs_via_io(block_number, override_state)
 
+        assert self._strategies.dy_calculator is not None
         return self._strategies.dy_calculator.calculate(
             i,
             j,
@@ -670,6 +672,7 @@ class CurveStableswapPool(
         block_number = self._resolve_block_number(block_identifier)
         inputs = self._resolve_metapool_inputs_via_io(block_number, override_state)
 
+        assert self._strategies.metapool_underlying_dy_calculator is not None
         return self._strategies.metapool_underlying_dy_calculator.calculate(
             i,
             j,
