@@ -19,7 +19,7 @@ _Avoid_: Fork, local chain
 - [Pool Registries](src/degenbot/registry/CONTEXT.md) — address-based registries and the pool type registry
 - [Arbitrage, Solvers & Adapters](src/degenbot/arbitrage/CONTEXT.md) — arbitrage cycles, solvers, adapters, and swap encoding
 - [Aave](src/degenbot/aave/CONTEXT.md) — lending markets, assets, collateral, debt, and liquidation
-- [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — StableSwap pools, CurveDataProvider seam, DyCalculator, variant and strategy enums
+- [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — StableSwap pools, CurveDataProvider seam, DyCalculator, variant and strategy enums (with `make_calculator()` factory methods), CurveOnChainCache
 - [Connection Management](src/degenbot/connection/CONTEXT.md) — connection managers, provider references, and subscription primitives
 - [Builders](src/degenbot/builders/CONTEXT.md) — pool builders, PoolIO seam (7-method protocol), BuilderContext, PoolBuilder/AsyncPoolBuilder protocols, and shared type resolution
 
@@ -48,7 +48,9 @@ _Avoid_: Fork, local chain
 - **Pool → Hop conversion** flows through each pool's `to_hop_state()` method (single source of truth; `solver_hop_builders.py` deleted)
 - An **Aave Market** contains many **Assets**, each wrapping an **Erc20Token** plus lending state
 - A **Curve Pool Tracker** tracks **Curve StableSwap Pools** and delegates construction to **Bot**
-- A **CurveDataProvider** is injected into **Curve Pools** by the **Curve Pool Builder** (invoked via `Bot.build_pool()`); pools never access connections directly. The former 13 individual fetcher callbacks have been collapsed into a single `CurveDataProvider` seam (Plan 040)
+- A **CurveDataProvider** is injected into **Curve Pools** by the **Curve Pool Builder** (invoked via `Bot.build_pool()`); pools never access connections directly. The builder creates a `CurveDataProviderImpl` (structured class with real methods, Plan 049) that wraps a `ProviderAdapter` — the former 850-line `CurveFetcherFactory` closure bag and 13 individual fetcher callbacks have been replaced
+- A **CurveOnChainCache** consolidates all per-block on-chain data caches for a **Curve Pool** into a single object with the try-cache→call-provider→store→return pattern; replaces the former 10 individual `BoundedCache` fields scattered across the pool class (Plan 054)
+- Strategy enums (`SwapStyle`, `MetapoolRateStyle`, `MetapoolUnderlyingStyle`) provide `make_calculator()` factory methods returning the matching `DyCalculator` instance; `PoolStrategies` auto-constructs calculators from enum values (Plan 056)
 - V2/V3/V4/Aerodrome **Pools** are fully I/O-free — **Builders** fetch all data from DB/RPC and pass values; no pool class imports `ProviderAdapter` or carries provider-dependent methods
 - **PoolIO** is the builder-facing I/O seam — a 7-method protocol (`call`, `call_raw`, `get_block_number`, `get_block`, `get_block_timestamp`, `get_code`, `get_balance`) with sync (`SyncPoolIO`) and async (`AsyncPoolIO`) adapters wrapping `ProviderAdapter`/`AsyncProviderAdapter`; **Bot** and **AsyncBot** create the appropriate adapter and pass `io=` to all builder calls; `BuilderContext` no longer carries a `connections` field — all I/O flows through `io: PoolIO` at call sites
 - **Type Resolution** (`type_resolution.py`) provides shared pure-logic functions for pool class resolution, replacing ~330 lines of duplicated resolution code in Bot and AsyncBot; I/O-bearing steps come in sync/async pairs that accept `PoolIO`/`AsyncPoolIO`

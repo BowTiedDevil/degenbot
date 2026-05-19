@@ -21,11 +21,6 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 |---|------|---------|
 | 014 | [Async REPL](014-async-repl.md) | `python -m degenbot` with top-level `await`. |
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
-| 048 | [Unify Bot and AsyncBot via Builder-Backed IO Seam](completed/048-async-builder-shared.md) | AsyncBot delegates to async builders instead of duplicating construction. `PoolIO` protocol parameterizes builders over sync/async. ~965→~466 lines in AsyncBot. |
-| 052 | [Migrate V3/V4/Curve/ERC20 Builders to Full PoolIO](completed/052-v3v4curve-poolio-migration.md) | Remove all `ProviderAdapter`/`ConnectionManager` dependencies from V3, V4, Curve, and ERC20 builders. Remove `connections` from `BuilderContext`. |
-
-
-
 ## Completed Plans
 
 | # | Plan | Summary |
@@ -79,6 +74,8 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | 050 | [Generic StateCache for Pool State Temporal Navigation](completed/050-generic-state-cache.md) | 4 near-identical deque+lock+navigation implementations → 1 `StateCache[T]`. PEP 695 syntax. Caller holds lock. |
 | 051 | [Extract BuilderContext from Bot Constructor Wiring](completed/051-builder-context.md) | 35 lines of builder wiring → 1 `BuilderContext` + 7 one-liners. Adding a new builder: 2 lines, not 7. |
 | 049 | [Replace CurveFetcherFactory Closures with Structured CurveDataProvider Implementation](completed/049-curve-data-provider-impl.md) | 850-line closure bag → structured `CurveDataProviderImpl` (~350 lines) with shared helpers. 13 closures → real methods. Readable stack traces, individually testable methods, simpler pickle. |
+| 048 | [Unify Bot and AsyncBot via Builder-Backed IO Seam](completed/048-async-builder-shared.md) | AsyncBot delegates to async builders instead of duplicating construction. `PoolIO` protocol parameterizes builders over sync/async. ~965→~466 lines in AsyncBot. |
+| 052 | [Migrate V3/V4/Curve/ERC20 Builders to Full PoolIO](completed/052-v3v4curve-poolio-migration.md) | Remove all `ProviderAdapter`/`ConnectionManager` dependencies from V3, V4, Curve, and ERC20 builders. Remove `connections` from `BuilderContext`. |
 | 053 | [Delete Old Optimizer Hierarchy](completed/053-delete-old-optimizer-hierarchy.md) | Remove deprecated `ArbitrageOptimizer` ABC, `OptimizerResult`/`OptimizerType`, and 7 concrete classes with zero production callers. Extract pure Möbius math into `_mobius_math.py`. |
 | 054 | [Consolidate Curve Pool On-Chain Caches](completed/054-consolidate-curve-on-chain-caches.md) | 10 individual `BoundedCache` fields → single `CurveOnChainCache` object with try-cache→call-provider→store→return pattern. Delete dead code after `return inputs`. Pool class 1160→988 lines (−15%). |
 | 055 | [Delete Deprecated Fetcher Protocol Dead Code](completed/055-delete-deprecated-fetcher-protocols.md) | Delete 8 deprecated `*Fetcher` protocol classes from `curve/types.py`. Zero callers; superseded by `CurveDataProvider` (Plan 040). |

@@ -43,13 +43,13 @@ If the concept you need isn't in the glossary yet, that's a signal — either yo
 
 When working with Curve pools or other I/O-free features, use these terms as defined in `src/degenbot/curve/CONTEXT.md`:
 
-- **Fetcher** — a callable protocol injected at construction for on-demand data
-- **Fetcher Callback** — the actual function passed to fetch data (e.g., `RateFetcher`)
+- **Data Provider** — a protocol (`CurveDataProvider`) injected at pool construction for on-demand data; replaces the former individual fetcher callbacks
+- **Provider Method** — a single method on a DataProvider (e.g., `CurveDataProvider.D()`) called lazily when data is needed
 - **I/O Decoupling** — the architectural separation of pool logic from on-chain I/O
-- **Fetcher Factory** — the pattern where `Bot.build_*_pool()` creates closures and injects them
+- **CurveDataProviderImpl** — the production implementation of `CurveDataProvider`; a structured class with real methods and shared I/O helpers, created by the builder with a `ProviderAdapter`
 
 **Incorrect**: "the pool fetches rates from the provider"
-**Correct**: "the pool calls its injected RateFetcher callback"
+**Correct**: "the pool calls its injected CurveDataProvider methods"
 
 ## Enum Naming: PoolFamily vs PoolInvariant
 
