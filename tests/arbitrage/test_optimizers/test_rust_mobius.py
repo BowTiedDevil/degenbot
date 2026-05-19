@@ -5,8 +5,8 @@ from itertools import starmap
 
 import degenbot.degenbot_rs as rs_mobius
 from degenbot.arbitrage.optimizers._solver_utils import _compute_mobius_coefficients
-from degenbot.arbitrage.optimizers.mobius import MobiusFloatHop
-from degenbot.arbitrage.optimizers.mobius import mobius_solve as py_solve
+from degenbot.arbitrage.optimizers._mobius_math import MobiusFloatHop
+from degenbot.arbitrage.optimizers._mobius_math import mobius_solve as py_solve
 from degenbot.types.hop_types import ConstantProductHop
 
 # Reserve pairs that are profitable after fees.

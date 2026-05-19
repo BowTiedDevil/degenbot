@@ -11,8 +11,7 @@ from dataclasses import dataclass
 import hypothesis
 import hypothesis.strategies as st
 
-from degenbot.arbitrage.optimizers.chain_rule import PoolState as ChainPoolState
-from degenbot.arbitrage.optimizers.mobius import (
+from degenbot.arbitrage.optimizers._mobius_math import (
     MobiusFloatHop,
     compute_mobius_coefficients,
     mobius_solve,
@@ -65,13 +64,6 @@ def hop_from_def(pd: PoolDef) -> MobiusFloatHop:
         fee=pd.fee,
     )
 
-
-def chain_state_from_def(pd: PoolDef) -> ChainPoolState:
-    return ChainPoolState(
-        reserve_in=pd.reserve_in,
-        reserve_out=pd.reserve_out,
-        fee=pd.fee,
-    )
 
 
 def make_n_pool_path(

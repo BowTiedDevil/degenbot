@@ -167,7 +167,7 @@ Existing `tests/arbitrage/` integration tests cover `ArbitragePath` → `ArbSolv
 
 ## Status
 
-[ ] Slice 1: Extract `_mobius_math.py`
-[ ] Slice 2: Delete old-protocol files
-[ ] Slice 3: Migrate or archive old-protocol tests
-[ ] Slice 4: Validate and clean up
+[x] Slice 1: Extract `_mobius_math.py`
+[x] Slice 2: Delete old-protocol files
+[x] Slice 3: Migrate or archive old-protocol tests
+[x] Slice 4: Validate and clean up

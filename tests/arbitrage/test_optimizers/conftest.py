@@ -3,7 +3,7 @@ from fractions import Fraction
 from scipy.optimize import minimize_scalar
 
 import degenbot.degenbot_rs as rs_mobius
-from degenbot.arbitrage.optimizers.mobius import MobiusFloatHop, V3TickRangeHop, simulate_path
+from degenbot.arbitrage.optimizers._mobius_math import MobiusFloatHop, V3TickRangeHop, simulate_path
 from degenbot.arbitrage.optimizers.solver import SolveInput
 from degenbot.arbitrage.optimizers.v3_tick_predictor import tick_to_sqrt_price
 from degenbot.types.hop_types import ConstantProductHop
