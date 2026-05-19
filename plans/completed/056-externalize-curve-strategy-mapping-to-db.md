@@ -181,7 +181,7 @@ Each slice runs the test suite.
 
 ## Status
 
-[ ] Slice 1: Add `make_calculator()` to enums
-[ ] Slice 2: Simplify `PoolStrategies` — always compute calculators
-[ ] Slice 3: Remove pool class factory imports and lazy construction
-[ ] Slice 4: Validate and clean up
+[x] Slice 1: Add `make_calculator()` to enums
+[x] Slice 2: Simplify `PoolStrategies` — always compute calculators
+[x] Slice 3: Remove pool class factory imports and lazy construction
+[x] Slice 4: Validate and clean up
