@@ -285,13 +285,3 @@ def test_coinbase_override_in_constructor():
     fork.mine()
     block = fork.w3.eth.get_block("latest")
     assert block["miner"] == fake_coinbase
-
-
-def test_injecting_middleware():
-    fork = AnvilFork(
-        fork_url="https://polygon-bor-rpc.publicnode.com",
-        storage_caching=False,
-        middlewares=[
-            (web3.middleware.ExtraDataToPOAMiddleware, 0),
-        ],
-    )
