@@ -140,10 +140,10 @@ class AsyncV4PoolBuilder:
 
         # Build tokens (async)
         token0 = await self._erc20_builder.build(
-            currency0_address, chain_id=chain_id, silent=silent
+            currency0_address, chain_id=chain_id, silent=silent, io=io
         )
         token1 = await self._erc20_builder.build(
-            currency1_address, chain_id=chain_id, silent=silent
+            currency1_address, chain_id=chain_id, silent=silent, io=io
         )
 
         # Fetch slot0 + liquidity via state view contract

@@ -57,8 +57,12 @@ class AerodromeV2Builder(V2BuilderBase):
         )
 
         # Build tokens
-        token0 = self._erc20_builder.build(common.token0_address, chain_id=chain_id, silent=silent)
-        token1 = self._erc20_builder.build(common.token1_address, chain_id=chain_id, silent=silent)
+        token0 = self._erc20_builder.build(
+            common.token0_address, chain_id=chain_id, silent=silent, io=io
+        )
+        token1 = self._erc20_builder.build(
+            common.token1_address, chain_id=chain_id, silent=silent, io=io
+        )
 
         # Aerodrome-specific: fetch stable flag and fee
         stable_result = io.call(

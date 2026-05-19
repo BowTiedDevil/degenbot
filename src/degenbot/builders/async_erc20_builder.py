@@ -10,7 +10,6 @@ import sqlalchemy.exc
 from eth_abi.exceptions import DecodingError
 from web3.exceptions import Web3Exception
 
-from degenbot.builders.pool_io import AsyncPoolIO
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import EtherPlaceholder
 from degenbot.erc20.erc20 import (
@@ -24,7 +23,7 @@ from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
-    from degenbot.connection.async_connection_manager import AsyncConnectionManager
+    from degenbot.builders.pool_io import AsyncPoolIO
     from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.registry import TokenRegistry
     from degenbot.types.aliases import ChainId
@@ -40,11 +39,11 @@ class AsyncErc20Builder:
     def __init__(
         self,
         *,
-        connections: AsyncConnectionManager,
+        default_chain_id: ChainId | None = None,
         db: DatabaseSessionManager,
         tokens: TokenRegistry,
     ) -> None:
-        self._connections = connections
+        self._default_chain_id = default_chain_id
         self._db = db
         self._tokens = tokens
 
@@ -59,7 +58,8 @@ class AsyncErc20Builder:
         """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token."""
 
         address = get_checksum_address(address)
-        chain_id = chain_id or self._connections.default_chain_id
+        chain_id = chain_id or self._default_chain_id
+        assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
 
         # Check registry first
         if (existing := self._tokens.get(token_address=address, chain_id=chain_id)) is not None:
@@ -96,9 +96,7 @@ class AsyncErc20Builder:
 
         # Fetch missing values from chain
         if name is None or symbol is None or decimals is None:
-            if io is None:
-                provider = self._connections.get_provider(chain_id)
-                io = AsyncPoolIO(provider)
+            assert io is not None
 
             try:
                 fetched_name, fetched_symbol, fetched_decimals = (

@@ -137,10 +137,10 @@ class AsyncV3PoolBuilder:
 
         # Build tokens (async)
         token0 = await self._erc20_builder.build(
-            token0_address, chain_id=chain_id, silent=silent
+            token0_address, chain_id=chain_id, silent=silent, io=io
         )
         token1 = await self._erc20_builder.build(
-            token1_address, chain_id=chain_id, silent=silent
+            token1_address, chain_id=chain_id, silent=silent, io=io
         )
 
         # Fetch slot0 + liquidity

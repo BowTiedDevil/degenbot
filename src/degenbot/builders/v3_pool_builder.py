@@ -157,8 +157,8 @@ class V3PoolBuilder:
             tick_spacing_for_pool = int(tick_spacing_for_pool)
 
         # Build tokens
-        token0 = self._erc20_builder.build(token0_address, chain_id=chain_id, silent=silent)
-        token1 = self._erc20_builder.build(token1_address, chain_id=chain_id, silent=silent)
+        token0 = self._erc20_builder.build(token0_address, chain_id=chain_id, silent=silent, io=io)
+        token1 = self._erc20_builder.build(token1_address, chain_id=chain_id, silent=silent, io=io)
 
         # Fetch slot0 + liquidity
         try:
