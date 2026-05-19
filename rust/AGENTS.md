@@ -258,32 +258,6 @@ AbiDecodeError ──→ ContractError ──→ ProviderError ──→ PyErr
 
 When adding a new error type, decide which chain it belongs to. If it can arise in both standalone and contract contexts, implement `From<NewError> for PyErr` directly AND `From<NewError> for ContractError`.
 
-### Linting Rules
-
-From `Cargo.toml`:
-- `warnings = "deny"` - All Rust warnings are errors
-- `unwrap_used = "deny"` - No `.unwrap()` in production code
-- `expect_used = "deny"` - No `.expect()` in production code
-- `pedantic = "warn"` - Clippy pedantic lints (warnings, not errors)
-- `nursery = "warn"` - Clippy nursery lints (warnings, not errors)
-- `missing_errors_doc = "allow"` - Allowed since error docs are covered by `# Errors` sections
-
-In test code, allow explicitly:
-```rust
-#[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-mod tests { ... }
-```
-
-For property-based test modules, use the inner attribute form:
-```rust
-#[cfg(test)]
-mod proptests {
-    #![allow(clippy::unwrap_used)]
-    // ...
-}
-```
-
 ### Documentation
 
 Module-level docs with `//!`:

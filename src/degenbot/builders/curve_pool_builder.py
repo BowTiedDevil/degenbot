@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from web3.types import BlockIdentifier
 
     from degenbot.builders.context import BuilderContext
+    from degenbot.builders.pool_io import PoolIO
     from degenbot.curve.detection.types import MetapoolDetectionResult
     from degenbot.erc20 import Erc20Token
     from degenbot.provider.interface import ProviderAdapter
@@ -57,6 +58,7 @@ class CurvePoolBuilder:
         state_block: int | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
+        io: PoolIO,
         **kwargs: Any,  # noqa: ARG002
     ) -> AbstractLiquidityPool:
         """Fetch pool data from RPC and construct an I/O-free CurveStableswapPool."""
@@ -64,7 +66,9 @@ class CurvePoolBuilder:
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._connections.default_chain_id
         provider = self._connections.get_provider(chain_id)
-        state_block = state_block if state_block is not None else provider.get_block_number()
+        state_block = state_block if state_block is not None else (
+            io.get_block_number() if io is not None else provider.get_block_number()
+        )
 
         # 1. Discover coins and balances
         coins = discover_coins(provider, pool_address, block_identifier=state_block)
@@ -118,6 +122,7 @@ class CurvePoolBuilder:
             state_block,
             silent=silent,
             state_cache_depth=state_cache_depth,
+            io=io,
         )
 
         # 11. Build LP token
@@ -207,6 +212,7 @@ class CurvePoolBuilder:
         *,
         silent: bool,
         state_cache_depth: int,
+        io: PoolIO,
     ) -> tuple[CurveStableswapPool | None, tuple[Erc20Token, ...] | None]:
         """Build base pool and underlying tokens for a metapool."""
         if not metapool.is_meta:
@@ -221,6 +227,7 @@ class CurvePoolBuilder:
             state_block=state_block,
             silent=silent,
             state_cache_depth=state_cache_depth,
+            io=io,
         )
         assert isinstance(base_pool, CurveStableswapPool)
 
@@ -239,6 +246,7 @@ class CurvePoolBuilder:
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
+        io: PoolIO | None = None,  # noqa: ARG002
     ) -> bool:
         """Fetch current state from chain and push update to the pool."""
         if not isinstance(pool, CurveStableswapPool):

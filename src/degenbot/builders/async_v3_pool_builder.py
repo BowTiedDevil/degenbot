@@ -1,3 +1,5 @@
+"""Async builder for V3-style concentrated-liquidity pools."""
+
 from __future__ import annotations
 
 import contextlib
@@ -6,44 +8,38 @@ from typing import TYPE_CHECKING, Any, cast
 import eth_abi.abi
 from sqlalchemy import select
 
-from degenbot.builders.tick_data_fetcher import TickDataTypes, make_tick_data_fetcher
+from degenbot.builders.pool_io import AsyncPoolIO
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import LiquidityPoolTable, UniswapV3PoolTableBase
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
-from degenbot.provider.call_helpers import encode_function_calldata, raw_call
+from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_types import (
-    UniswapV3PoolExternalUpdate,
-)
+from degenbot.uniswap.v3_types import UniswapV3PoolExternalUpdate
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from web3.types import BlockIdentifier
 
-    from degenbot.builders.context import BuilderContext
-    from degenbot.builders.pool_io import PoolIO
+    from degenbot.builders.async_context import AsyncBuilderContext
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
 
-class V3PoolBuilder:
-    """
-    Builds and updates V3-style concentrated-liquidity pools.
+class AsyncV3PoolBuilder:
+    """Async counterpart of V3PoolBuilder.
 
-    Owns the full I/O choreography: DB lookup → RPC fetch → decode →
-    construct pool → register.
+    Builds UniswapV3Pool instances using AsyncPoolIO for I/O.
+    Shares pure decode/resolve logic with V3PoolBuilder.
     """
 
-    def __init__(self, ctx: BuilderContext) -> None:
+    def __init__(self, ctx: AsyncBuilderContext) -> None:
         assert ctx.managed_pools is not None, (
-            "V3PoolBuilder requires managed_pools in BuilderContext"
+            "AsyncV3PoolBuilder requires managed_pools in BuilderContext"
         )
         self._connections = ctx.connections
         self._db = ctx.db
@@ -52,27 +48,7 @@ class V3PoolBuilder:
         self._managed_pools = ctx.managed_pools
         self._erc20_builder = ctx.erc20_builder
 
-    def _make_tick_data_fetcher(
-        self, pool_address: str, chain_id: int
-    ) -> Callable[[int, int], None]:
-        """Create a tick data fetcher callback for a V3 pool."""
-        return make_tick_data_fetcher(
-            pool_lookup=lambda _block: cast(
-                "UniswapV3Pool | None",
-                self._pools.get(
-                    chain_id=chain_id,
-                    pool_address=get_checksum_address(pool_address),
-                ),
-            ),
-            provider_lookup=lambda: self._connections.get_provider(chain_id),
-            types=TickDataTypes(
-                bitmap_at_word=BitmapAtWord,
-                liquidity_at_tick=LiquidityAtTick,
-                tick_struct_types=UniswapV3Pool.TICK_STRUCT_TYPES,
-            ),
-        )
-
-    def build(
+    async def build(
         self,
         address: str,
         *,
@@ -84,21 +60,19 @@ class V3PoolBuilder:
         tick_data: dict[int, LiquidityAtTick] | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
-        io: PoolIO,
+        io: AsyncPoolIO,
         **kwargs: Any,  # noqa: ARG002
     ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free V3-style pool."""
 
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._connections.default_chain_id
-        provider = self._connections.get_provider(chain_id)
 
-        state_block = state_block if state_block is not None else (
-            io.get_block_number() if io is not None else provider.get_block_number()
-        )
+        if io is None:
+            provider = self._connections.get_provider(chain_id)
+            io = AsyncPoolIO(provider)
 
-        # Choose the I/O call function: io overrides provider when provided
-        call_fn = io.call if io is not None else provider.call
+        state_block = state_block if state_block is not None else await io.get_block_number()
 
         # Try DB first
         pool_from_db = None
@@ -126,23 +100,23 @@ class V3PoolBuilder:
                 deployer_address = pool_from_db.exchange.deployer
         else:
             try:
-                factory_result = call_fn(
+                factory_result = await io.call(
                     to=pool_address,
                     data=encode_function_calldata("factory()", None),
                 )
-                token0_result = call_fn(
+                token0_result = await io.call(
                     to=pool_address,
                     data=encode_function_calldata("token0()", None),
                 )
-                token1_result = call_fn(
+                token1_result = await io.call(
                     to=pool_address,
                     data=encode_function_calldata("token1()", None),
                 )
-                fee_result = call_fn(
+                fee_result = await io.call(
                     to=pool_address,
                     data=encode_function_calldata("fee()", None),
                 )
-                tick_spacing_result = call_fn(
+                tick_spacing_result = await io.call(
                     to=pool_address,
                     data=encode_function_calldata("tickSpacing()", None),
                 )
@@ -161,18 +135,22 @@ class V3PoolBuilder:
             fee = int(fee)
             tick_spacing_for_pool = int(tick_spacing_for_pool)
 
-        # Build tokens
-        token0 = self._erc20_builder.build(token0_address, chain_id=chain_id, silent=silent)
-        token1 = self._erc20_builder.build(token1_address, chain_id=chain_id, silent=silent)
+        # Build tokens (async)
+        token0 = await self._erc20_builder.build(
+            token0_address, chain_id=chain_id, silent=silent
+        )
+        token1 = await self._erc20_builder.build(
+            token1_address, chain_id=chain_id, silent=silent
+        )
 
         # Fetch slot0 + liquidity
         try:
-            slot0_result = call_fn(
+            slot0_result = await io.call(
                 to=pool_address,
                 data=encode_function_calldata("slot0()", None),
                 block=state_block,
             )
-            liquidity_result = call_fn(
+            liquidity_result = await io.call(
                 to=pool_address,
                 data=encode_function_calldata("liquidity()", None),
                 block=state_block,
@@ -200,7 +178,6 @@ class V3PoolBuilder:
             raise DegenbotValueError(message="Provide both tick_bitmap and tick_data, or neither.")
         else:
             # Try DB snapshot tables first
-            db_snapshot_loaded = False
             if pool_from_db is not None and hasattr(pool_from_db, "liquidity_positions"):
                 with contextlib.suppress(Exception), self._db() as session:
                     if hasattr(pool_from_db, "pool_id"):
@@ -233,23 +210,14 @@ class V3PoolBuilder:
                     tick=int(tick), tick_spacing=tick_spacing_for_pool
                 )
 
-                if io is not None:
-                    (bitmap_at_word,) = eth_abi.abi.decode(
-                        types=["uint256"],
-                        data=io.call(
-                            to=pool_address,
-                            data=encode_function_calldata("tickBitmap(int16)", [word]),
-                            block=state_block,
-                        ),
-                    )
-                else:
-                    (bitmap_at_word,) = raw_call(
-                        provider,
-                        address=pool_address,
-                        calldata=encode_function_calldata("tickBitmap(int16)", [word]),
-                        return_types=["uint256"],
-                        block_identifier=state_block,
-                    )
+                (bitmap_at_word,) = eth_abi.abi.decode(
+                    types=["uint256"],
+                    data=await io.call(
+                        to=pool_address,
+                        data=encode_function_calldata("tickBitmap(int16)", [word]),
+                        block=state_block,
+                    ),
+                )
 
                 if bitmap_at_word != 0:
                     active_ticks = [
@@ -259,7 +227,7 @@ class V3PoolBuilder:
                     ]
 
                     for active_tick in active_ticks:
-                        result = call_fn(
+                        result = await io.call(
                             to=pool_address,
                             data=encode_function_calldata("ticks(int24)", [active_tick]),
                             block=state_block,
@@ -299,7 +267,6 @@ class V3PoolBuilder:
                 deployer = get_checksum_address(registry_deployment.deployer)
 
         deployer = get_checksum_address(deployer_address) if deployer_address else deployer
-        init_hash = init_hash or init_hash
 
         # Only pass tick data if we have a complete DB snapshot.
         if db_snapshot_loaded and working_tick_data:
@@ -332,7 +299,7 @@ class V3PoolBuilder:
             tick_data=tick_data_arg,
             deployer_address=deployer,
             init_hash=init_hash,
-            tick_data_fetcher=self._make_tick_data_fetcher(pool_address, chain_id),
+            tick_data_fetcher=None,
             state_cache_depth=state_cache_depth,
         )
 
@@ -356,28 +323,31 @@ class V3PoolBuilder:
 
         return pool
 
-    def update(
+    async def update(
         self,
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
-        io: PoolIO | None = None,  # noqa: ARG002
+        io: AsyncPoolIO | None = None,
     ) -> bool:
         """Fetch current state from chain and push update to the pool."""
 
         if isinstance(pool, UniswapV4Pool):
-            msg = f"V3PoolBuilder cannot update {type(pool).__name__}"
+            msg = f"AsyncV3PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
         if not isinstance(pool, UniswapV3Pool):
-            msg = f"V3PoolBuilder cannot update {type(pool).__name__}"
+            msg = f"AsyncV3PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 
         assert pool.chain_id is not None
-        provider = self._connections.get_provider(pool.chain_id)
-        raw_block = block_number if block_number is not None else provider.get_block_number()
+        if io is None:
+            provider = self._connections.get_provider(pool.chain_id)
+            io = AsyncPoolIO(provider)
+
+        raw_block = block_number if block_number is not None else await io.get_block_number()
         block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block
 
-        slot0_result = provider.call(
+        slot0_result = await io.call(
             to=pool.address,
             data=encode_function_calldata("slot0()", None),
             block=block_number_,
@@ -393,7 +363,7 @@ class V3PoolBuilder:
             "tuple[int]",
             eth_abi.abi.decode(
                 types=["uint256"],
-                data=provider.call(
+                data=await io.call(
                     to=pool.address,
                     data=encode_function_calldata("liquidity()", None),
                     block=block_number_,

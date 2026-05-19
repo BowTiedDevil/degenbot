@@ -9,8 +9,7 @@ Use Red/Green TDD while refactoring and implementing new features.
 Uses `just` (see justfile) and `uv` as the package runner. Key commands:
 
 ### Python
-- `just test-python` - Run Python tests (includes `compile-test-contracts` via Forge)
-- `just test-python-cov` - Run Python tests with coverage
+- `just test-python` - Run Python tests
 - `just test-rust-python` - Run Rust-wrapped Python tests
 
 ### Rust

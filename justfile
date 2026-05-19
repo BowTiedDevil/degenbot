@@ -13,7 +13,7 @@ test-rust:
 
 # Run wrapped Rust Python tests
 test-rust-python:
-    uv run pytest tests/rust --lf -n0 -x -q --no-header
+    uv run pytest tests/rust --ff -x -q --no-header
 
 # Run Rust linter (clippy)
 lint-rust:
@@ -43,7 +43,7 @@ compile-test-contracts:
 
 # Run Python tests
 test-python: compile-test-contracts
-    uv run pytest tests/ --lf -n0 -x -q --no-header
+    uv run pytest tests/ --ff -x -q --no-header
 
 # Run all tests (Rust + Python)
 test-all: test-rust test-python

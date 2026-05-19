@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from web3.types import BlockIdentifier
 
     from degenbot.builders.context import BuilderContext
+    from degenbot.builders.pool_io import PoolIO
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
@@ -36,13 +37,14 @@ class CamelotBuilder(V2BuilderBase):
         init_hash: str | None = None,
         state_block: int | None = None,
         silent: bool = False,
-        state_cache_depth: int = 8,
-        **kwargs: Any,
+        state_cache_depth: int = 8,  # noqa: ARG002
+        io: PoolIO,
+        **kwargs: Any,  # noqa: ARG002
     ) -> AbstractLiquidityPool:
         pool_address = get_checksum_address(address)
-        chain_id = chain_id or self._connections.default_chain_id
-        provider = self._connections.get_provider(chain_id)
-        state_block = state_block if state_block is not None else provider.get_block_number()
+        chain_id = chain_id or self._default_chain_id
+        assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
+        state_block = state_block if state_block is not None else io.get_block_number()
 
         common = self._fetch_v2_common_data(
             pool_address,
@@ -50,7 +52,7 @@ class CamelotBuilder(V2BuilderBase):
             state_block=state_block,
             deployer_address=deployer_address,
             init_hash=init_hash,
-            provider=provider,
+            io=io,
         )
 
         # Build tokens
@@ -58,28 +60,28 @@ class CamelotBuilder(V2BuilderBase):
         token1 = self._erc20_builder.build(common.token1_address, chain_id=chain_id, silent=silent)
 
         # Camelot-specific: fetch stableSwap, fee denominator, and fee percents
-        stable_swap_result = provider.call(
+        stable_swap_result = io.call(
             to=pool_address,
             data=encode_function_calldata("stableSwap()", None),
             block=state_block,
         )
         (stable_swap,) = eth_abi.abi.decode(types=["bool"], data=stable_swap_result)
 
-        fee_denom_result = provider.call(
+        fee_denom_result = io.call(
             to=pool_address,
             data=encode_function_calldata("FEE_DENOMINATOR()", None),
             block=state_block,
         )
         (fee_denominator,) = eth_abi.abi.decode(types=["uint256"], data=fee_denom_result)
 
-        fee0_result = provider.call(
+        fee0_result = io.call(
             to=pool_address,
             data=encode_function_calldata("token0FeePercent()", None),
             block=state_block,
         )
         (fee_token0_raw,) = eth_abi.abi.decode(types=["uint16"], data=fee0_result)
 
-        fee1_result = provider.call(
+        fee1_result = io.call(
             to=pool_address,
             data=encode_function_calldata("token1FeePercent()", None),
             block=state_block,
@@ -125,17 +127,18 @@ class CamelotBuilder(V2BuilderBase):
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
+        io: PoolIO | None = None,
     ) -> bool:
         if not isinstance(pool, CamelotLiquidityPool):
             msg = f"CamelotBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 
         assert pool.chain_id is not None
-        provider = self._connections.get_provider(pool.chain_id)
-        raw_block = block_number if block_number is not None else provider.get_block_number()
-        block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block
+        assert io is not None, "io must be provided for update()"
+        block_number_ = block_number if block_number is not None else io.get_block_number()
+        block_number_ = int(block_number_) if not isinstance(block_number_, int) else block_number_
         reserves0, reserves1 = self._fetch_reserves(
-            pool.address, provider, block_identifier=block_number_
+            pool.address, io, block_identifier=block_number_
         )
 
         if pool.reserves_token0 == reserves0 and pool.reserves_token1 == reserves1:
