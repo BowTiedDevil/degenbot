@@ -11,7 +11,7 @@ Curve StableSwap state is significantly different from V2/V3/V4:
 - Multiple tokens (not just 2)
 - A coefficient (amplification parameter) with ramping
 - Strategy enums for variant computation
-- Many fetcher callbacks for on-chain data
+- CurveDataProvider for on-chain data access
 - Block-scoped caches for rate/virtual price data
 """
 

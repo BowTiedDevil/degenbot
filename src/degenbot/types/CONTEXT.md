@@ -69,7 +69,7 @@
 - A **Pool** holds paired tokens for swapping
 - A **Pool State** belongs to exactly one **Pool** and is captured at one **State Block**
 - A **Pool Tracker** tracks many **Pools** for one **Exchange Deployment**
-- A **Pool State** may be updated via **Fetcher Callbacks** (e.g., Curve pools call RateFetcher, VirtualPriceFetcher on-demand)
+- A **Pool State** may be updated via **data_provider** (e.g., Curve pools call `CurveDataProvider` methods on-demand)
 - A **StateCache** stores a temporal sequence of **Pool State** snapshots for one **Pool**
 - A **ConcentratedLiquidityStateManager** wraps a **StateCache** and adds CL-specific read conveniences
 
@@ -77,8 +77,8 @@
 
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|
-| **Fetcher** | A callable protocol injected at pool construction that fetches on-chain data on-demand | Data fetcher |
-| **Fetcher Callback** | The actual function passed to a pool as a Fetcher; called lazily when data is needed | Fetcher function |
+| **DataProvider** | A protocol (e.g., `CurveDataProvider`) injected at pool construction that provides on-chain data on-demand via named methods | Data provider, fetcher |
+| **Provider Method** | A single method on a DataProvider (e.g., `CurveDataProvider.D()`) called lazily when data is needed | Fetcher callback |
 | **PoolFamily** | An enum identifying a pool's mathematical invariant family for type resolution: `CONSTANT_PRODUCT`, `CONCENTRATED_LIQUIDITY`, `STABLESWAP`, `WEIGHTED` | Pool family (lowercase) |
 | **CacheablePool** | A protocol for pools that register with the Rust solver cache, requiring `reserves_for_cache()` and `fee_for_cache()` methods | Cacheable adapter |
 | **V4PoolKey** | A frozen dataclass carrying the V4 pool identification struct (currency0, currency1, fee, tick_spacing, hooks) | Pool key, V4 key |

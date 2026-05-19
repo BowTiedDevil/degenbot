@@ -100,7 +100,7 @@ class CurveStableswapPool(
         chain_id: ChainId | None = None,
         state_block: BlockNumber | None = None,
         state_cache_depth: int = 8,
-        # On-chain data access (replaces 13 individual fetcher callbacks)
+        # On-chain data access (replaces 13 individual callback parameters)
         data_provider: CurveDataProvider | None = None,
         # Pool configuration
         base_pool: "CurveStableswapPool | None" = None,
@@ -244,7 +244,7 @@ class CurveStableswapPool(
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
         # I/O access for on-chain data fetching
-        # I/O is done via fetcher callbacks injected by Bot.build_pool()
+        # I/O is done via data_provider injected by Bot.build_pool()
 
     def __repr__(self) -> str:  # pragma: no cover
         token_string = "-".join([token.symbol for token in self._tokens])
@@ -506,7 +506,7 @@ class CurveStableswapPool(
                 raise MissingCurveData(
                     self.address,
                     "lending_rate",
-                    "Lending rate fetcher is required for pools with"
+                    "Data provider is required for pools with"
                     " lending tokens. Provide one via Bot.build_pool().",
                 )
             resolved_rates = self._data_provider.lending_rates(block_number)
@@ -895,7 +895,7 @@ class CurveStableswapPool(
     ) -> tuple[int, ...]:
         """Select rates based on the pool's lending rate style.
 
-        Returns rate_multipliers for NONE, or calls the lending rate fetcher
+        Returns rate_multipliers for NONE, or calls the data provider
         for lending pools.
         """
         if self._strategies.lending_rate_style == LendingRateStyle.NONE:
@@ -905,7 +905,7 @@ class CurveStableswapPool(
             raise MissingCurveData(
                 self.address,
                 "lending_rate",
-                "Lending rate fetcher is required for pools with lending tokens. "
+                "Data provider is required for pools with lending tokens. "
                 "Provide one via Bot.build_pool().",
             )
         return self._data_provider.lending_rates(block_number)

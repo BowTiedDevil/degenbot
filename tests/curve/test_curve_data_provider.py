@@ -235,7 +235,7 @@ class TestBlockNumber:
         assert impl.block_number() == 18_000_000
 
 
-class TestDFetcher:
+class TestD:
     """Test the D method for crypto pools."""
 
     def test_d_fetches_from_pool(self) -> None:
@@ -251,7 +251,7 @@ class TestDFetcher:
         assert impl.D(18_000_000) == d_value
 
 
-class TestGammaFetcher:
+class TestGamma:
     """Test the gamma method for crypto pools."""
 
     def test_gamma_fetches_from_pool(self) -> None:
