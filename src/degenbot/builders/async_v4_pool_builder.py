@@ -19,7 +19,6 @@ from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
-from degenbot.uniswap.v3_types import BitmapWord, Tick
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.uniswap.v4_types import UniswapV4PoolExternalUpdate
 
@@ -32,6 +31,7 @@ if TYPE_CHECKING:
     from degenbot.builders.pool_io import AsyncPoolIO
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
+    from degenbot.uniswap.v3_types import BitmapWord, Tick
 
 
 class AsyncV4PoolBuilder:
@@ -277,8 +277,14 @@ class AsyncV4PoolBuilder:
             protocol_fee_one_for_zero=slot0_data.protocol_fee_one_to_zero,
             lp_fee=slot0_data.lp_fee,
             state_block=state_block,
-            tick_bitmap=cast("dict[BitmapWord, dict[str, Any] | BitmapAtWord] | None", tick_bitmap_arg),
-            tick_data=cast("dict[Tick, dict[str, Any] | LiquidityAtTick] | None", tick_data_arg),
+            tick_bitmap=cast(
+                "dict[BitmapWord, dict[str, Any] | BitmapAtWord] | None",
+                tick_bitmap_arg,
+            ),
+            tick_data=cast(
+                "dict[Tick, dict[str, Any] | LiquidityAtTick] | None",
+                tick_data_arg,
+            ),
             tick_data_fetcher=None,
             state_cache_depth=state_cache_depth,
         )

@@ -150,7 +150,9 @@ class AsyncBot:
         """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token."""
         resolved_chain_id = chain_id or self.connections.default_chain_id
         io = AsyncPoolIO(self.connections.get_provider(resolved_chain_id))
-        return await self._erc20_builder.build(address, chain_id=resolved_chain_id, silent=silent, io=io)
+        return await self._erc20_builder.build(
+            address, chain_id=resolved_chain_id, silent=silent, io=io
+        )
 
     def get_token(self, address: str, *, chain_id: ChainId | None = None) -> Erc20Token | None:
         """Get a token from the registry (sync — no async I/O)."""

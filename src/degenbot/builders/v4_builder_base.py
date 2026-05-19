@@ -8,13 +8,14 @@ from typing import TYPE_CHECKING
 import eth_abi.abi
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database.models.pools import UniswapV4PoolTableBase
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-from degenbot.uniswap.v3_types import BitmapWord, Tick
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
     from hexbytes import HexBytes
+
+    from degenbot.database.models.pools import UniswapV4PoolTableBase
+    from degenbot.uniswap.v3_types import BitmapWord, Tick
 
 
 @dataclass(frozen=True)
