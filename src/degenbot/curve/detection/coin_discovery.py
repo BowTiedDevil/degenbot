@@ -19,11 +19,11 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.provider.interface import ProviderAdapter
+    from degenbot.builders.pool_io import PoolIO
 
 
 def discover_coins(
-    provider: ProviderAdapter,
+    io: PoolIO,
     pool_address: ChecksumAddress,
     *,
     block_identifier: int,
@@ -44,7 +44,7 @@ def discover_coins(
         if coin_prototype is None:
             # Try uint256 first
             try:
-                coin_addr = provider.call_raw(
+                coin_addr = io.call_raw(
                     {
                         "to": pool_address,
                         "data": encode_function_calldata(
@@ -65,7 +65,7 @@ def discover_coins(
             # Try int128 if uint256 failed
             if coin_prototype is None:
                 try:
-                    coin_addr = provider.call_raw(
+                    coin_addr = io.call_raw(
                         {
                             "to": pool_address,
                             "data": encode_function_calldata(
@@ -96,7 +96,7 @@ def discover_coins(
             assert coin_prototype is not None
             assert balance_prototype is not None
             try:
-                coin_addr = provider.call_raw(
+                coin_addr = io.call_raw(
                     {
                         "to": pool_address,
                         "data": encode_function_calldata(
@@ -117,7 +117,7 @@ def discover_coins(
         # Fetch balance
         assert balance_prototype is not None
         try:
-            balance_result = provider.call_raw(
+            balance_result = io.call_raw(
                 {
                     "to": pool_address,
                     "data": encode_function_calldata(

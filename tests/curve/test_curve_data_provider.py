@@ -10,6 +10,7 @@ from hexbytes import HexBytes
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 
+from degenbot.builders.pool_io import SyncPoolIO
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.data_provider_impl import CurveDataProviderImpl
 from degenbot.curve.types import CurveDataProvider, LendingRateStyle
@@ -133,7 +134,7 @@ class TestCurveDataProviderProtocol:
         """CurveDataProviderImpl satisfies CurveDataProvider."""
         provider = _make_fake_provider()
         impl = CurveDataProviderImpl(
-            provider=provider,
+            io=SyncPoolIO(provider),
             pool_address=POOL_ADDRESS,
         )
         assert isinstance(impl, CurveDataProvider)
@@ -151,7 +152,7 @@ class TestVirtualPrice:
             ),
         })
         impl = CurveDataProviderImpl(
-            provider=fake,
+            io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
         )
         assert impl.virtual_price(18_000_000) == vp_value
@@ -165,7 +166,7 @@ class TestVirtualPrice:
             ),
         })
         impl = CurveDataProviderImpl(
-            provider=fake,
+            io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
             base_pool_address=BASE_POOL_ADDRESS,
         )
@@ -184,7 +185,7 @@ class TestBaseVirtualPrice:
             ),
         })
         impl = CurveDataProviderImpl(
-            provider=fake,
+            io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
         )
         assert impl.base_virtual_price(18_000_000) == bvp_value
@@ -202,7 +203,7 @@ class TestBaseCacheUpdated:
             ),
         })
         impl = CurveDataProviderImpl(
-            provider=fake,
+            io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
         )
         assert impl.base_cache_updated(18_000_000) == bcu_value
@@ -215,7 +216,7 @@ class TestBlockTimestamp:
         """block_timestamp() delegates to ProviderAdapter.get_block_timestamp()."""
         fake = _make_fake_provider(block_timestamp=1_700_000_000)
         impl = CurveDataProviderImpl(
-            provider=fake,
+            io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
         )
         assert impl.block_timestamp(18_000_000) == 1_700_000_000
@@ -228,7 +229,7 @@ class TestBlockNumber:
         """block_number() delegates to ProviderAdapter.get_block_number()."""
         fake = _make_fake_provider(block_number=18_000_000)
         impl = CurveDataProviderImpl(
-            provider=fake,
+            io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
         )
         assert impl.block_number() == 18_000_000
@@ -244,7 +245,7 @@ class TestDFetcher:
             _selector("D()"): eth_abi.abi.encode(["uint256"], [d_value]),
         })
         impl = CurveDataProviderImpl(
-            provider=fake,
+            io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
         )
         assert impl.D(18_000_000) == d_value
@@ -260,7 +261,7 @@ class TestGammaFetcher:
             _selector("gamma()"): eth_abi.abi.encode(["uint256"], [gamma_value]),
         })
         impl = CurveDataProviderImpl(
-            provider=fake,
+            io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
         )
         assert impl.gamma(18_000_000) == gamma_value
@@ -284,7 +285,7 @@ class TestRedemptionPrice:
             ),
         })
         impl = CurveDataProviderImpl(
-            provider=fake,
+            io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
         )
         assert impl.redemption_price(18_000_000) == raw_rate // 10**9
@@ -305,7 +306,7 @@ class TestPriceScale:
             ),
         })
         impl = CurveDataProviderImpl(
-            provider=fake,
+            io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
             n_coins=3,
         )
@@ -327,7 +328,7 @@ class TestTokenBalance:
             ),
         })
         impl = CurveDataProviderImpl(
-            provider=fake,
+            io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
         )
         token_addr = "0x0000000000000000000000000000000000000004"
@@ -347,7 +348,7 @@ class TestTokenTotalSupply:
             ),
         })
         impl = CurveDataProviderImpl(
-            provider=fake,
+            io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
         )
         token_addr = "0x0000000000000000000000000000000000000004"
@@ -370,7 +371,7 @@ class TestAdminBalances:
         # response for the same selector. To test the break-on-revert behavior,
         # we'd need per-index responses. For now, test that it returns a tuple.
         impl = CurveDataProviderImpl(
-            provider=fake,
+            io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
         )
         result = impl.admin_balances(18_000_000)
@@ -402,7 +403,7 @@ class TestLendingRatesCToken:
             ),
         })
         impl = CurveDataProviderImpl(
-            provider=fake,
+            io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
             lending_rate_style=LendingRateStyle.CTOKEN,
             token_addresses=[token0_addr, token1_addr],
@@ -430,7 +431,7 @@ class TestLendingRatesYToken:
             ),
         })
         impl = CurveDataProviderImpl(
-            provider=fake,
+            io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
             lending_rate_style=LendingRateStyle.YTOKEN,
             token_addresses=[token0_addr, token1_addr],
@@ -448,7 +449,7 @@ class TestLendingRatesNone:
         """lending_rates() with NONE style raises ValueError."""
         fake = _make_fake_provider({})
         impl = CurveDataProviderImpl(
-            provider=fake,
+            io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
             lending_rate_style=LendingRateStyle.NONE,
         )
@@ -468,7 +469,7 @@ class TestEVMRevertWrapping:
         """virtual_price() converts ContractLogicError to EVMRevertError."""
         provider = _make_reverting_provider()
         impl = CurveDataProviderImpl(
-            provider=provider,
+            io=SyncPoolIO(provider),
             pool_address=POOL_ADDRESS,
         )
         try:

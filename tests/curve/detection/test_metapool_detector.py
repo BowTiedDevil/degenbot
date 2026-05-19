@@ -1,6 +1,6 @@
 from web3.exceptions import Web3Exception
 
-from tests.curve.detection.fake_provider import make_fake_curve_provider
+from tests.curve.detection.fake_provider import make_fake_pool_io
 
 """Tests for Curve pool metapool detection."""
 
@@ -53,12 +53,12 @@ class TestDetectMetapool:
         def handle_is_meta(to: str, data: bytes, block: int) -> bytes:
             return _encode_bool(False)
 
-        provider = make_fake_curve_provider({
+        io = make_fake_pool_io({
             IS_META: handle_is_meta,
         })
 
         result = detect_metapool(
-            provider,
+            io,
             POOL_ADDR,
             (DAI, USDC),
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS,),
@@ -85,14 +85,14 @@ class TestDetectMetapool:
             msg = f"Unexpected selector: {selector.hex()}"
             raise Web3Exception(msg)
 
-        provider = make_fake_curve_provider({
+        io = make_fake_pool_io({
             IS_META: handle_call,
             BASE_POOL: handle_call,
             GET_UNDERLYING_COINS: handle_call,
         })
 
         result = detect_metapool(
-            provider,
+            io,
             POOL_ADDR,
             (DAI, THREE_CRV_LP),
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS,),
@@ -123,7 +123,7 @@ class TestDetectMetapool:
             msg = f"Unexpected selector: {selector.hex()}"
             raise Web3Exception(msg)
 
-        provider = make_fake_curve_provider({
+        io = make_fake_pool_io({
             IS_META: handle_call,
             BASE_POOL: handle_call,
             GET_BASE_POOL: handle_call,
@@ -131,7 +131,7 @@ class TestDetectMetapool:
         })
 
         result = detect_metapool(
-            provider,
+            io,
             POOL_ADDR,
             (DAI, THREE_CRV_LP),
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS,),
@@ -158,7 +158,7 @@ class TestDetectMetapool:
             msg = f"Unexpected selector: {selector.hex()}"
             raise Web3Exception(msg)
 
-        provider = make_fake_curve_provider({
+        io = make_fake_pool_io({
             IS_META: handle_call,
             BASE_POOL: handle_call,
             GET_BASE_POOL: handle_call,
@@ -166,7 +166,7 @@ class TestDetectMetapool:
         })
 
         result = detect_metapool(
-            provider,
+            io,
             POOL_ADDR,
             (DAI, THREE_CRV_LP),
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS,),
@@ -196,14 +196,14 @@ class TestDetectMetapool:
             msg = f"Unexpected selector: {selector.hex()}"
             raise Web3Exception(msg)
 
-        provider = make_fake_curve_provider({
+        io = make_fake_pool_io({
             IS_META: handle_call,
             BASE_POOL: handle_call,
             GET_UNDERLYING_COINS: handle_call,
         })
 
         result = detect_metapool(
-            provider,
+            io,
             POOL_ADDR,
             (DAI, THREE_CRV_LP),
             registry_addresses=(CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS),

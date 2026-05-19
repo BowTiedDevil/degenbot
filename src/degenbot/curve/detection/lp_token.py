@@ -19,11 +19,11 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.provider.interface import ProviderAdapter
+    from degenbot.builders.pool_io import PoolIO
 
 
 def find_lp_token(
-    provider: ProviderAdapter,
+    io: PoolIO,
     pool_address: ChecksumAddress,
     *,
     registry_addresses: tuple[ChecksumAddress, ...],
@@ -37,7 +37,7 @@ def find_lp_token(
     """
     for registry_address in registry_addresses:
         try:
-            lp_token_result = provider.call_raw(
+            lp_token_result = io.call_raw(
                 {
                     "to": registry_address,
                     "data": encode_function_calldata(

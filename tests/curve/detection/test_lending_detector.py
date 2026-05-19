@@ -1,6 +1,6 @@
 from web3.exceptions import Web3Exception
 
-from tests.curve.detection.fake_provider import make_fake_curve_provider
+from tests.curve.detection.fake_provider import make_fake_pool_io
 
 """Tests for Curve pool lending token detection."""
 
@@ -61,12 +61,12 @@ class TestDetectLendingTokens:
         tokens = tuple(starmap(FakeErc20Token, [(DAI, 18), (USDC, 6), (USDT, 6)]))
 
         # isCToken() returns False for all, token() reverts for all
-        provider = make_fake_curve_provider({
+        io = make_fake_pool_io({
             IS_CTOKEN: _encode_bool(False),
         })
 
         result = detect_lending_tokens(
-            provider,
+            io,
             POOL_ADDR,
             token_addresses,
             tokens,
@@ -98,14 +98,14 @@ class TestDetectLendingTokens:
             # DAI has 18 decimals
             return _encode_uint8(18)
 
-        provider = make_fake_curve_provider({
+        io = make_fake_pool_io({
             IS_CTOKEN: handle_is_ctoken,
             UNDERLYING: handle_underlying,
             DECIMALS: handle_decimals,
         })
 
         result = detect_lending_tokens(
-            provider,
+            io,
             POOL_ADDR,
             token_addresses,
             tokens,
@@ -137,14 +137,14 @@ class TestDetectLendingTokens:
                 return _encode_uint8(6)
             return _encode_uint8(18)
 
-        provider = make_fake_curve_provider({
+        io = make_fake_pool_io({
             IS_CTOKEN: handle_is_ctoken,
             UNDERLYING: handle_underlying,
             DECIMALS: handle_decimals,
         })
 
         result = detect_lending_tokens(
-            provider,
+            io,
             POOL_ADDR,
             token_addresses,
             tokens,
@@ -170,13 +170,13 @@ class TestDetectLendingTokens:
                 return _encode_address(DAI)
             return _encode_address(ZERO_ADDR)
 
-        provider = make_fake_curve_provider({
+        io = make_fake_pool_io({
             IS_CTOKEN: handle_is_ctoken,
             TOKEN: handle_token,
         })
 
         result = detect_lending_tokens(
-            provider,
+            io,
             POOL_ADDR,
             token_addresses,
             tokens,
@@ -200,13 +200,13 @@ class TestDetectLendingTokens:
             # Returns zero address — not a yToken
             return _encode_address(ZERO_ADDR)
 
-        provider = make_fake_curve_provider({
+        io = make_fake_pool_io({
             IS_CTOKEN: handle_is_ctoken,
             TOKEN: handle_token,
         })
 
         result = detect_lending_tokens(
-            provider,
+            io,
             POOL_ADDR,
             token_addresses,
             tokens,

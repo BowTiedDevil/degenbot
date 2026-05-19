@@ -25,7 +25,7 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.provider.interface import ProviderAdapter
+    from degenbot.builders.pool_io import PoolIO
 
 
 class CurveDataProviderImpl:
@@ -38,7 +38,7 @@ class CurveDataProviderImpl:
     def __init__(
         self,
         *,
-        provider: ProviderAdapter,
+        io: PoolIO,
         pool_address: ChecksumAddress,
         base_pool_address: ChecksumAddress | None = None,
         n_coins: int = 2,
@@ -48,7 +48,7 @@ class CurveDataProviderImpl:
         precision_multipliers: list[int] | None = None,
         rate_multipliers: tuple[int, ...] | None = None,
     ) -> None:
-        self._provider = provider
+        self._io = io
         self._pool_address = pool_address
         self._base_pool_address = base_pool_address
         self._n_coins = n_coins
@@ -71,7 +71,7 @@ class CurveDataProviderImpl:
         block_number: int,
     ) -> tuple[Any, ...]:
         """Call a contract method and decode the result."""
-        data = self._provider.call_raw(
+        data = self._io.call_raw(
             {"to": to, "data": Web3.keccak(text=method_sig)[:4]},
             block=block_number,
         )
@@ -96,7 +96,7 @@ class CurveDataProviderImpl:
         block_number: int,
     ) -> Any:
         """Call with raw data, decode a single return value."""
-        result = self._provider.call_raw(
+        result = self._io.call_raw(
             {"to": to, "data": data},
             block=block_number,
         )
@@ -150,7 +150,7 @@ class CurveDataProviderImpl:
         balances: list[int] = []
         for token_index in range(8):  # max 8 tokens for Curve V1
             try:
-                balance = self._provider.call(
+                balance = self._io.call(
                     to=self._pool_address,
                     data=encode_function_calldata(
                         function_prototype="admin_balances(uint256)",
@@ -186,7 +186,7 @@ class CurveDataProviderImpl:
             data = Web3.keccak(text="price_scale(uint256)")[:4] + eth_abi.abi.encode(
                 types=["uint256"], args=[token_index]
             )
-            result = self._provider.call_raw(
+            result = self._io.call_raw(
                 {"to": self._pool_address, "data": data},
                 block=block_number,
             )
@@ -194,16 +194,16 @@ class CurveDataProviderImpl:
         return tuple(price_scale)
 
     def block_timestamp(self, block_number: int) -> int:
-        return self._provider.get_block_timestamp(block=block_number)
+        return self._io.get_block_timestamp(block=block_number)
 
     def block_number(self) -> int:
-        return self._provider.get_block_number()
+        return self._io.get_block_number()
 
     def token_balance(self, token_address: str, holder_address: str, block_number: int) -> int:
         data = encode_function_calldata(
             "balanceOf(address)", [get_checksum_address(holder_address)]
         )
-        result = self._provider.call(
+        result = self._io.call(
             to=get_checksum_address(token_address),
             data=data,
             block=block_number,
@@ -213,7 +213,7 @@ class CurveDataProviderImpl:
 
     def token_total_supply(self, token_address: str, block_number: int) -> int:
         data = encode_function_calldata("totalSupply()", None)
-        result = self._provider.call(
+        result = self._io.call(
             to=get_checksum_address(token_address),
             data=data,
             block=block_number,

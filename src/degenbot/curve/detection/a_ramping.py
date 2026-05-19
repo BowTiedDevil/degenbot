@@ -18,11 +18,11 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.provider.interface import ProviderAdapter
+    from degenbot.builders.pool_io import PoolIO
 
 
 def detect_a_ramping(
-    provider: ProviderAdapter,
+    io: PoolIO,
     pool_address: ChecksumAddress,
     *,
     block_identifier: int,
@@ -33,7 +33,7 @@ def detect_a_ramping(
     If any call reverts, returns has_ramping=False.
     """
     try:
-        initial_a_result = provider.call_raw(
+        initial_a_result = io.call_raw(
             {
                 "to": pool_address,
                 "data": encode_function_calldata(
@@ -45,7 +45,7 @@ def detect_a_ramping(
         )
         (initial_a,) = eth_abi.abi.decode(types=["uint256"], data=initial_a_result)
 
-        initial_a_time_result = provider.call_raw(
+        initial_a_time_result = io.call_raw(
             {
                 "to": pool_address,
                 "data": encode_function_calldata(
@@ -57,7 +57,7 @@ def detect_a_ramping(
         )
         (initial_a_time,) = eth_abi.abi.decode(types=["uint256"], data=initial_a_time_result)
 
-        future_a_result = provider.call_raw(
+        future_a_result = io.call_raw(
             {
                 "to": pool_address,
                 "data": encode_function_calldata(
@@ -69,7 +69,7 @@ def detect_a_ramping(
         )
         (future_a,) = eth_abi.abi.decode(types=["uint256"], data=future_a_result)
 
-        future_a_time_result = provider.call_raw(
+        future_a_time_result = io.call_raw(
             {
                 "to": pool_address,
                 "data": encode_function_calldata(
