@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from web3.types import BlockIdentifier
 
     from degenbot.builders.context import BuilderContext
+    from degenbot.builders.pool_io import PoolIO
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
@@ -42,14 +43,15 @@ class V2PoolBuilder(V2BuilderBase):
         state_block: int | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
-        **kwargs: Any,
+        io: PoolIO,
+        **kwargs: Any,  # noqa: ARG002
     ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free V2-style pool."""
 
         pool_address = get_checksum_address(address)
-        chain_id = chain_id or self._connections.default_chain_id
-        provider = self._connections.get_provider(chain_id)
-        state_block = state_block if state_block is not None else provider.get_block_number()
+        chain_id = chain_id or self._default_chain_id
+        assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
+        state_block = state_block if state_block is not None else io.get_block_number()
 
         common = self._fetch_v2_common_data(
             pool_address,
@@ -57,7 +59,7 @@ class V2PoolBuilder(V2BuilderBase):
             state_block=state_block,
             deployer_address=deployer_address,
             init_hash=init_hash,
-            provider=provider,
+            io=io,
         )
 
         # Build tokens
@@ -101,6 +103,7 @@ class V2PoolBuilder(V2BuilderBase):
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
+        io: PoolIO | None = None,
     ) -> bool:
         """Fetch current state from chain and push update to the pool."""
         if not isinstance(pool, UniswapV2Pool):
@@ -108,11 +111,11 @@ class V2PoolBuilder(V2BuilderBase):
             raise TypeError(msg)
 
         assert pool.chain_id is not None
-        provider = self._connections.get_provider(pool.chain_id)
-        raw_block = block_number if block_number is not None else provider.get_block_number()
-        block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block
+        assert io is not None, "io must be provided for update()"
+        block_number_ = block_number if block_number is not None else io.get_block_number()
+        block_number_ = int(block_number_) if not isinstance(block_number_, int) else block_number_
         reserves0, reserves1 = self._fetch_reserves(
-            pool.address, provider, block_identifier=block_number_
+            pool.address, io, block_identifier=block_number_
         )
 
         if pool.reserves_token0 == reserves0 and pool.reserves_token1 == reserves1:

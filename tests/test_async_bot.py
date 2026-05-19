@@ -1,5 +1,6 @@
 """
 Tests for Phase 7: AsyncBot with async build_* and I/O methods.
+Updated for Plan 048, Slice 4: AsyncBot delegates to async builders via build_pool().
 """
 
 import pathlib
@@ -103,7 +104,7 @@ class TestAsyncBotBuildErc20Token:
             decimals_calldata: decimals_encoded,
         }
 
-        async def mock_call(*, to, data, block=None):
+        async def mock_call(*, to, data, block=None):  # noqa: RUF029, ARG001
             return responses[data]
 
         provider.call = AsyncMock(side_effect=mock_call)
@@ -120,12 +121,11 @@ class TestAsyncBotBuildErc20Token:
         assert bot.tokens.get(token_address=WETH_ADDR, chain_id=1) is token
 
 
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-class TestAsyncBotBuildV2Pool:
-    """AsyncBot.build_v2_pool() fetches pool data async."""
+class TestAsyncBotBuildPoolV2:
+    """AsyncBot.build_pool() builds a V2 pool via async builder."""
 
     @pytest.mark.asyncio
-    async def test_build_v2_pool(self, tmp_path: pathlib.Path) -> None:
+    async def test_build_pool_v2(self, tmp_path: pathlib.Path) -> None:
 
         config = _make_test_config(tmp_path)
         bot = AsyncBot(config)
@@ -137,11 +137,13 @@ class TestAsyncBotBuildV2Pool:
         await bot.connections.register_provider(provider)
         bot.connections.set_default_chain(1)
 
-        # Pre-register tokens
+        # Pre-register tokens so async ERC20 builder doesn't need chain calls
         weth = _make_weth()
         usdc = _make_usdc()
         bot.tokens.add(token_address=WETH_ADDR, chain_id=1, token=weth)
         bot.tokens.add(token_address=USDC_ADDR, chain_id=1, token=usdc)
+
+        # V2 factory is already registered in pool_type_registry at import time
 
         # Mock responses
         factory_calldata = encode_function_calldata("factory()", None)
@@ -161,23 +163,22 @@ class TestAsyncBotBuildV2Pool:
             reserves_calldata: reserves_encoded,
         }
 
-        async def mock_call(*, to, data, block=None):
+        async def mock_call(*, to, data, block=None):  # noqa: RUF029, ARG001
             return responses[data]
 
         provider.call = AsyncMock(side_effect=mock_call)
 
-        pool = await bot.build_v2_pool(pool_address=USDC_WETH_V2_POOL, chain_id=1)
+        pool = await bot.build_pool(USDC_WETH_V2_POOL, chain_id=1)
 
         assert isinstance(pool, UniswapV2Pool)
         assert pool.address == get_checksum_address(USDC_WETH_V2_POOL)
 
 
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-class TestAsyncBotBuildV3Pool:
-    """AsyncBot.build_v3_pool() fetches pool data async."""
+class TestAsyncBotBuildPoolV3:
+    """AsyncBot.build_pool() builds a V3 pool via async builder."""
 
     @pytest.mark.asyncio
-    async def test_build_v3_pool(self, tmp_path: pathlib.Path) -> None:
+    async def test_build_pool_v3(self, tmp_path: pathlib.Path) -> None:
 
         config = _make_test_config(tmp_path)
         bot = AsyncBot(config)
@@ -194,6 +195,8 @@ class TestAsyncBotBuildV3Pool:
         usdc = _make_usdc()
         bot.tokens.add(token_address=WETH_ADDR, chain_id=1, token=weth)
         bot.tokens.add(token_address=USDC_ADDR, chain_id=1, token=usdc)
+
+        # V3 factory is already registered in pool_type_registry at import time
 
         # Mock responses
         sqrt_price = 2198666895605149686863
@@ -228,7 +231,7 @@ class TestAsyncBotBuildV3Pool:
             liquidity_calldata: liquidity_encoded,
         }
 
-        async def mock_call(*, to, data, block=None):
+        async def mock_call(*, to, data, block=None):  # noqa: RUF029, ARG001
             if data in responses:
                 return responses[data]
             if data[:4] == tick_bitmap_selector:
@@ -238,7 +241,7 @@ class TestAsyncBotBuildV3Pool:
 
         provider.call = AsyncMock(side_effect=mock_call)
 
-        pool = await bot.build_v3_pool(pool_address=USDC_WETH_V3_POOL, chain_id=1)
+        pool = await bot.build_pool(USDC_WETH_V3_POOL, chain_id=1)
 
         assert isinstance(pool, UniswapV3Pool)
         assert pool.address == get_checksum_address(USDC_WETH_V3_POOL)
@@ -247,18 +250,17 @@ class TestAsyncBotBuildV3Pool:
         assert pool.liquidity == liquidity
 
 
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-class TestAsyncBotBuildV4Pool:
-    """AsyncBot.build_v4_pool() fetches pool data async."""
+class TestAsyncBotBuildPoolV4:
+    """AsyncBot.build_pool() builds a V4 pool via async builder."""
 
     @pytest.mark.asyncio
-    async def test_build_v4_pool(self, tmp_path: pathlib.Path) -> None:
+    async def test_build_pool_v4(self, tmp_path: pathlib.Path) -> None:
 
-        V4_POOL_MANAGER = "0x000000000004444c5dc75cB358380D2e3dE08A90"
-        V4_STATE_VIEW = "0x7fFE42C4a5DEeA5b0feC41C94C136Cf115597227"
-        V4_POOL_ID = "0x21c67e77068de97969ba93d4aab21826d33ca12bb9f565d8496e8fda8a82ca27"
-        V4_FEE = 500
-        V4_TICK_SPACING = 10
+        v4_pool_manager = "0x000000000004444c5dc75cB358380D2e3dE08A90"
+        v4_state_view = "0x7fFE42C4a5DEeA5b0feC41C94C136Cf115597227"
+        v4_pool_id = "0x21c67e77068de97969ba93d4aab21826d33ca12bb9f565d8496e8fda8a82ca27"
+        v4_fee = 500
+        v4_tick_spacing = 10
 
         native_eth = Erc20Token(
             ZERO_ADDRESS,
@@ -287,9 +289,9 @@ class TestAsyncBotBuildV4Pool:
         liquidity = 1234567890
         lp_fee = 500000
 
-        slot0_calldata = encode_function_calldata("getSlot0(bytes32)", [HexBytes(V4_POOL_ID)])
+        slot0_calldata = encode_function_calldata("getSlot0(bytes32)", [HexBytes(v4_pool_id)])
         liquidity_calldata = encode_function_calldata(
-            "getLiquidity(bytes32)", [HexBytes(V4_POOL_ID)]
+            "getLiquidity(bytes32)", [HexBytes(v4_pool_id)]
         )
         tick_bitmap_selector = Web3.keccak(text="getTickBitmap(bytes32,int16)")[:4]
 
@@ -304,7 +306,7 @@ class TestAsyncBotBuildV4Pool:
             liquidity_calldata: liquidity_encoded,
         }
 
-        async def mock_call(*, to, data, block=None):
+        async def mock_call(*, to, data, block=None):  # noqa: RUF029, ARG001
             if data in responses:
                 return responses[data]
             if data[:4] == tick_bitmap_selector:
@@ -314,13 +316,13 @@ class TestAsyncBotBuildV4Pool:
 
         provider.call = AsyncMock(side_effect=mock_call)
 
-        pool = await bot.build_v4_pool(
-            pool_id=V4_POOL_ID,
-            pool_manager_address=V4_POOL_MANAGER,
-            state_view_address=V4_STATE_VIEW,
+        pool = await bot.build_pool(
+            v4_pool_manager,
+            pool_id=v4_pool_id,
             chain_id=1,
-            fee=V4_FEE,
-            tick_spacing=V4_TICK_SPACING,
+            state_view_address=v4_state_view,
+            fee=v4_fee,
+            tick_spacing=v4_tick_spacing,
             hook_address=ZERO_ADDRESS,
             tokens=[ZERO_ADDRESS, USDC_ADDR],
         )
@@ -352,7 +354,7 @@ class TestAsyncBotIOMethods:
         balance_calldata = encode_function_calldata("balanceOf(address)", [holder_address])
         balance_encoded = eth_abi.abi.encode(types=["uint256"], args=[1000000000])
 
-        async def mock_call(*, to, data, block=None):
+        async def mock_call(*, to, data, block=None):  # noqa: RUF029, ARG001
             if data == balance_calldata:
                 return balance_encoded
             msg = f"Unexpected call: data={data!r}"
@@ -390,7 +392,7 @@ class TestAsyncBotIOMethods:
         )
         approval_encoded = eth_abi.abi.encode(types=["uint256"], args=[500000000])
 
-        async def mock_call(*, to, data, block=None):
+        async def mock_call(*, to, data, block=None):  # noqa: RUF029, ARG001
             if data == approval_calldata:
                 return approval_encoded
             msg = f"Unexpected call: data={data!r}"
@@ -425,7 +427,7 @@ class TestAsyncBotIOMethods:
         total_supply_calldata = encode_function_calldata("totalSupply()", None)
         total_supply_encoded = eth_abi.abi.encode(types=["uint256"], args=[10**27])
 
-        async def mock_call(*, to, data, block=None):
+        async def mock_call(*, to, data, block=None):  # noqa: RUF029, ARG001
             if data == total_supply_calldata:
                 return total_supply_encoded
             msg = f"Unexpected call: data={data!r}"

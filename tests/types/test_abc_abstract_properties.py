@@ -1,5 +1,4 @@
-"""
-Tests verifying that concrete pool classes satisfy their pool-shape protocols
+"""Tests verifying that concrete pool classes satisfy their pool-shape protocols
 (ConstantProductPool, ConcentratedLiquidityPool, StableswapPool) and that
 AbstractLiquidityPool remains the root ABC.
 """

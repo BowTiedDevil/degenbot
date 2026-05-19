@@ -1,3 +1,5 @@
+"""Async builder for V4 singleton-architecture concentrated-liquidity pools."""
+
 from __future__ import annotations
 
 import contextlib
@@ -7,43 +9,39 @@ import eth_abi.abi
 from hexbytes import HexBytes
 from sqlalchemy import select
 
-from degenbot.builders.tick_data_fetcher import TickDataTypes, make_tick_data_fetcher
+from degenbot.builders.pool_io import AsyncPoolIO
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.database.models.pools import PoolManagerTable, UniswapV4PoolTable
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
-from degenbot.provider.call_helpers import encode_function_calldata, raw_call
+from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-from degenbot.uniswap.v4_types import (
-    UniswapV4PoolExternalUpdate,
-)
+from degenbot.uniswap.v4_types import UniswapV4PoolExternalUpdate
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Sequence
 
     from web3.types import BlockIdentifier
 
-    from degenbot.builders.context import BuilderContext
-    from degenbot.builders.pool_io import PoolIO
+    from degenbot.builders.async_context import AsyncBuilderContext
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
 
-class V4PoolBuilder:
-    """
-    Builds and updates V4 singleton-architecture concentrated-liquidity pools.
+class AsyncV4PoolBuilder:
+    """Async counterpart of V4PoolBuilder.
 
-    Owns the full I/O choreography: DB lookup → RPC fetch → decode →
-    construct pool → register.
+    Builds UniswapV4Pool instances using AsyncPoolIO for I/O.
+    Shares pure decode/resolve logic with V4PoolBuilder.
     """
 
-    def __init__(self, ctx: BuilderContext) -> None:
+    def __init__(self, ctx: AsyncBuilderContext) -> None:
         assert ctx.managed_pools is not None, (
-            "V4PoolBuilder requires managed_pools in BuilderContext"
+            "AsyncV4PoolBuilder requires managed_pools in BuilderContext"
         )
         self._connections = ctx.connections
         self._db = ctx.db
@@ -52,31 +50,7 @@ class V4PoolBuilder:
         self._managed_pools = ctx.managed_pools
         self._erc20_builder = ctx.erc20_builder
 
-    def _make_tick_data_fetcher(
-        self, pool_id: HexBytes, pool_manager_address: str, state_view_address: str, chain_id: int
-    ) -> Callable[[int, int], None]:
-        """Create a tick data fetcher callback for a V4 pool."""
-        pool_manager_address_ = get_checksum_address(pool_manager_address)
-        return make_tick_data_fetcher(
-            pool_lookup=lambda _: cast(
-                "UniswapV4Pool | None",
-                self._managed_pools.get(
-                    chain_id=chain_id,
-                    pool_manager_address=pool_manager_address_,
-                    pool_id=pool_id,
-                ),
-            ),
-            provider_lookup=lambda: self._connections.get_provider(chain_id),
-            types=TickDataTypes(
-                bitmap_at_word=BitmapAtWord,
-                liquidity_at_tick=LiquidityAtTick,
-                tick_struct_types=("uint128", "int128"),
-            ),
-            state_view_address=state_view_address,
-            pool_id=bytes(pool_id),
-        )
-
-    def build(
+    async def build(
         self,
         address: str,
         *,
@@ -91,7 +65,7 @@ class V4PoolBuilder:
         state_block: int | None = None,
         tick_bitmap: dict[int, BitmapAtWord] | None = None,
         tick_data: dict[int, LiquidityAtTick] | None = None,
-        io: PoolIO,
+        io: AsyncPoolIO,
         silent: bool = False,
         state_cache_depth: int = 8,
         **kwargs: Any,  # noqa: ARG002
@@ -103,14 +77,12 @@ class V4PoolBuilder:
         pool_manager_address = get_checksum_address(pool_manager_address)
         pool_id_bytes = HexBytes(pool_id)
         chain_id = chain_id or self._connections.default_chain_id
-        provider = self._connections.get_provider(chain_id)
 
-        state_block = state_block if state_block is not None else (
-            io.get_block_number() if io is not None else provider.get_block_number()
-        )
+        if io is None:
+            provider = self._connections.get_provider(chain_id)
+            io = AsyncPoolIO(provider)
 
-        # Choose the I/O call function: io overrides provider when provided
-        call_fn = io.call if io is not None else provider.call
+        state_block = state_block if state_block is not None else await io.get_block_number()
 
         # Try DB first
         pool_from_db = None
@@ -166,9 +138,13 @@ class V4PoolBuilder:
             fee_for_pool = fee
             tick_spacing_for_pool = tick_spacing
 
-        # Build tokens
-        token0 = self._erc20_builder.build(currency0_address, chain_id=chain_id, silent=silent)
-        token1 = self._erc20_builder.build(currency1_address, chain_id=chain_id, silent=silent)
+        # Build tokens (async)
+        token0 = await self._erc20_builder.build(
+            currency0_address, chain_id=chain_id, silent=silent
+        )
+        token1 = await self._erc20_builder.build(
+            currency1_address, chain_id=chain_id, silent=silent
+        )
 
         # Fetch slot0 + liquidity via state view contract
         try:
@@ -182,12 +158,12 @@ class V4PoolBuilder:
             )
 
             assert state_view_address is not None
-            slot0_result = call_fn(
+            slot0_result = await io.call(
                 to=state_view_address,
                 data=slot0_calldata,
                 block=state_block,
             )
-            liquidity_result = call_fn(
+            liquidity_result = await io.call(
                 to=state_view_address,
                 data=liquidity_calldata,
                 block=state_block,
@@ -252,29 +228,17 @@ class V4PoolBuilder:
                 )
 
                 assert state_view_address is not None
-                if io is not None:
-                    (bitmap_at_word,) = eth_abi.abi.decode(
-                        types=["uint256"],
-                        data=io.call(
-                            to=state_view_address,
-                            data=encode_function_calldata(
-                                "getTickBitmap(bytes32,int16)",
-                                [pool_id_bytes, word],
-                            ),
-                            block=state_block,
-                        ),
-                    )
-                else:
-                    (bitmap_at_word,) = raw_call(
-                        provider,
-                        address=state_view_address,
-                        calldata=encode_function_calldata(
+                (bitmap_at_word,) = eth_abi.abi.decode(
+                    types=["uint256"],
+                    data=await io.call(
+                        to=state_view_address,
+                        data=encode_function_calldata(
                             "getTickBitmap(bytes32,int16)",
                             [pool_id_bytes, word],
                         ),
-                        return_types=["uint256"],
-                        block_identifier=state_block,
-                    )
+                        block=state_block,
+                    ),
+                )
 
                 if bitmap_at_word != 0:
                     active_ticks = [
@@ -284,7 +248,7 @@ class V4PoolBuilder:
                     ]
 
                     for active_tick in active_ticks:
-                        result = call_fn(
+                        result = await io.call(
                             to=state_view_address,
                             data=encode_function_calldata(
                                 "getTickLiquidity(bytes32,int24)",
@@ -330,9 +294,7 @@ class V4PoolBuilder:
             state_block=state_block,
             tick_bitmap=tick_bitmap_arg,
             tick_data=tick_data_arg,
-            tick_data_fetcher=self._make_tick_data_fetcher(
-                pool_id_bytes, pool_manager_address, state_view_address, chain_id
-            ),
+            tick_data_fetcher=None,
             state_cache_depth=state_cache_depth,
         )
 
@@ -355,25 +317,28 @@ class V4PoolBuilder:
 
         return pool
 
-    def update(
+    async def update(
         self,
         pool: AbstractLiquidityPool,
         *,
+        io: AsyncPoolIO | None = None,
         block_number: BlockIdentifier | None = None,
-        io: PoolIO | None = None,  # noqa: ARG002
     ) -> bool:
         """Fetch current state from chain and push update to the pool."""
         if not isinstance(pool, UniswapV4Pool):
-            msg = f"V4PoolBuilder cannot update {type(pool).__name__}"
+            msg = f"AsyncV4PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 
         assert pool.chain_id is not None
-        provider = self._connections.get_provider(pool.chain_id)
-        raw_block = block_number if block_number is not None else provider.get_block_number()
+        if io is None:
+            provider = self._connections.get_provider(pool.chain_id)
+            io = AsyncPoolIO(provider)
+
+        raw_block = block_number if block_number is not None else await io.get_block_number()
         block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block
 
         slot0_calldata = encode_function_calldata("getSlot0(bytes32)", [pool.pool_id])
-        slot0_result = provider.call(
+        slot0_result = await io.call(
             to=pool._state_view_address,  # noqa: SLF001
             data=slot0_calldata,
             block=block_number_,
@@ -388,7 +353,7 @@ class V4PoolBuilder:
             "tuple[int]",
             eth_abi.abi.decode(
                 types=["uint256"],
-                data=provider.call(
+                data=await io.call(
                     to=pool._state_view_address,  # noqa: SLF001
                     data=liquidity_calldata,
                     block=block_number_,

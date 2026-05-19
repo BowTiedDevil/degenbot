@@ -24,6 +24,7 @@ from degenbot.logging import logger
 if TYPE_CHECKING:
     from web3.types import BlockIdentifier
 
+    from degenbot.builders.pool_io import PoolIO
     from degenbot.connection.connection_manager import ConnectionManager
     from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.provider.interface import ProviderAdapter
@@ -56,6 +57,7 @@ class Erc20Builder:
         *,
         chain_id: ChainId | None = None,
         silent: bool = False,
+        io: PoolIO | None = None,  # noqa: ARG002
     ) -> Erc20Token:
         """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token."""
 

@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-import contextlib
 import warnings
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
-import eth_abi.abi
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from eth_abi.exceptions import DecodingError
-from sqlalchemy import select
-from web3.exceptions import Web3Exception
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
@@ -17,6 +12,14 @@ from degenbot.builders.camelot_builder import CamelotBuilder
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
+from degenbot.builders.pool_io import SyncPoolIO
+from degenbot.builders.type_resolution import (
+    fetch_factory_from_chain,
+    pool_class_for_descriptor,
+)
+from degenbot.builders.type_resolution import (
+    resolve_pool_type as _resolve_pool_type_impl,
+)
 from degenbot.builders.v2_pool_builder import V2PoolBuilder
 from degenbot.builders.v3_pool_builder import V3PoolBuilder
 from degenbot.builders.v4_pool_builder import V4PoolBuilder
@@ -25,16 +28,13 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
 from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from degenbot.database.models.pools import LiquidityPoolTable
 from degenbot.database.operations import get_alembic_config, get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.logging import logger
-from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
@@ -95,6 +95,7 @@ class Bot:
             pools=self.pools,
             tokens=self.tokens,
             erc20_builder=self._erc20_builder,
+            default_chain_id=None,
             managed_pools=self.managed_pools,
         )
         self._v2_builder = V2PoolBuilder(ctx)
@@ -243,6 +244,8 @@ class Bot:
         """
         address = get_checksum_address(address)
         chain_id = chain_id or self.connections.default_chain_id
+        provider = self.connections.get_provider(chain_id)
+        io = SyncPoolIO(provider)
 
         # V4 fast path: pool_id discriminates V4 managed pools
         if pool_id is not None:
@@ -267,7 +270,7 @@ class Bot:
                 v4_kwargs["tick_bitmap"] = tick_bitmap
             if tick_data is not None:
                 v4_kwargs["tick_data"] = tick_data
-            return self._v4_builder.build(address, **v4_kwargs)
+            return self._v4_builder.build(address, io=io, **v4_kwargs)
 
         # Check pool registry — return existing pool if already built
         existing = self.pools.get(chain_id=chain_id, pool_address=address)
@@ -279,7 +282,9 @@ class Bot:
         # If type resolution fails (e.g. Curve pools lack a factory() method),
         # fall back to the typed builder methods which handle their own discovery.
         try:
-            pool_type = self._resolve_pool_type(address, chain_id=chain_id)
+            pool_type = _resolve_pool_type_impl(
+                address, chain_id=chain_id, io=io, db=self.db
+            )
         except DegenbotValueError:
             # Fallback: try Curve builder as last resort
             return self._curve_builder.build(
@@ -288,10 +293,11 @@ class Bot:
                 state_block=state_block,
                 silent=silent,
                 state_cache_depth=state_cache_depth,
+                io=io,
             )
 
         # Look up the concrete pool class from the registry
-        pool_class = self._pool_class_for_descriptor(pool_type, chain_id=chain_id)
+        pool_class = pool_class_for_descriptor(pool_type, chain_id=chain_id)
         builder = self._builders.get(pool_class)
         if builder is None:
             # Fallback: walk MRO of pool_class looking for a registered builder
@@ -325,6 +331,7 @@ class Bot:
             builder=builder,
             address=address,
             chain_id=chain_id,
+            io=io,
             **dispatch_kwargs,
         )
 
@@ -343,174 +350,6 @@ class Bot:
         build_pool() routes to the wrong builder.
         """
         return builder.build(address, chain_id=chain_id, **kwargs)
-
-    def _resolve_pool_type(
-        self,
-        address: ChecksumAddress,
-        *,
-        chain_id: ChainId,
-    ) -> PoolTypeDescriptor:
-        """
-        Resolve the pool type for the given address.
-
-        Consults these sources in order:
-        1. Database `kind` column (exact polymorphic type)
-        2. PoolTypeRegistry registration (factory address → descriptor)
-        3. On-chain probing (slot0 vs getReserves) when factory is unknown
-
-        Raises DegenbotValueError if the type cannot be determined.
-        """
-        # Step 1: DB lookup — the `kind` column is the most direct signal
-        with contextlib.suppress(Exception), self.db() as session:
-            pool_from_db = session.scalar(
-                select(LiquidityPoolTable).where(
-                    LiquidityPoolTable.address == address,
-                    LiquidityPoolTable.chain == chain_id,
-                )
-            )
-            if pool_from_db is not None:
-                kind = pool_from_db.kind
-                descriptor = pool_type_registry.get_descriptor_by_kind(kind)
-                if descriptor is not None:
-                    return PoolTypeDescriptor(
-                        family=descriptor.family,
-                        variant=descriptor.variant,
-                        kind=descriptor.kind,
-                        factory=get_checksum_address(pool_from_db.exchange.factory),
-                    )
-
-        # Step 2: Factory address lookup via PoolTypeRegistry
-        factory = self._fetch_factory_from_chain(address, chain_id=chain_id)
-        if factory is not None:
-            # Check if the factory is registered in the pool type registry
-            registry_descriptor = pool_type_registry.get_descriptor(chain_id, factory)
-            if registry_descriptor is not None:
-                return registry_descriptor
-
-            # Step 3: No registry match — probe the contract to determine invariant
-            return self._resolve_pool_type_by_probing(address, chain_id=chain_id, factory=factory)
-
-        raise DegenbotValueError(
-            message=f"Cannot resolve pool type for address {address} on chain {chain_id}. "
-            f"The factory() call failed and no database entry exists. "
-            f"Cannot resolve pool type for address {address} on chain {chain_id}. "
-            f"The factory() call failed and no database entry exists."
-        )
-
-    def _resolve_pool_type_by_probing(
-        self,
-        address: ChecksumAddress,
-        *,
-        chain_id: ChainId,
-        factory: ChecksumAddress,
-    ) -> PoolTypeDescriptor:
-        """
-        Determine pool type by probing the contract on-chain.
-
-        Tries V3 methods first (slot0), then V2 methods (getReserves),
-        then Curve methods (coins). This is the fallback when neither
-        the DB nor the registry identifies the factory.
-        """
-        provider = self.connections.get_provider(chain_id)
-
-        # Try V3: slot0() exists → CONCENTRATED_LIQUIDITY
-        try:
-            provider.call(
-                to=address,
-                data=encode_function_calldata("slot0()", None),
-            )
-        except Web3Exception:
-            pass
-        else:
-            # If we got here without reverting, it's a V3 pool
-            registry_descriptor = pool_type_registry.get_descriptor(chain_id, factory)
-            if registry_descriptor is not None:
-                return registry_descriptor
-            return PoolTypeDescriptor(
-                family=PoolFamily.CONCENTRATED_LIQUIDITY,
-                variant=None,
-                kind=derive_kind(PoolFamily.CONCENTRATED_LIQUIDITY, None),
-                factory=factory,
-            )
-
-        # Try V2: getReserves() exists → CONSTANT_PRODUCT
-        try:
-            provider.call(
-                to=address,
-                data=encode_function_calldata("getReserves()", None),
-            )
-        except Web3Exception:
-            pass
-        else:
-            registry_descriptor = pool_type_registry.get_descriptor(chain_id, factory)
-            if registry_descriptor is not None:
-                return registry_descriptor
-            return PoolTypeDescriptor(
-                family=PoolFamily.CONSTANT_PRODUCT,
-                variant=None,
-                kind=derive_kind(PoolFamily.CONSTANT_PRODUCT, None),
-                factory=factory,
-            )
-
-        # Fall through to Curve — assume STABLESWAP if nothing else matched
-        return PoolTypeDescriptor(
-            family=PoolFamily.STABLESWAP,
-            variant=None,
-            kind=derive_kind(PoolFamily.STABLESWAP, None),
-            factory=factory,
-        )
-
-    @staticmethod
-    def _pool_class_for_descriptor(
-        pool_type: PoolTypeDescriptor,
-        *,
-        chain_id: ChainId,
-    ) -> type[AbstractLiquidityPool]:
-        """Resolve a PoolTypeDescriptor to a concrete pool class.
-
-        Consults the pool_type_registry to find the registered class
-        for this factory on this chain. Falls back to a default class
-        based on the family if no specific registration exists.
-        """
-        if pool_type.factory is not None:
-            pool_class = pool_type_registry.get_class(chain_id, pool_type.factory)
-            if pool_class is not None:
-                return pool_class
-
-        # Default classes when no factory-specific registration exists
-        match pool_type.family:
-            case PoolFamily.CONSTANT_PRODUCT:
-                return cast(
-                    "type[AbstractLiquidityPool]",
-                    pool_type_registry.get_v2_class(chain_id, pool_type.factory or "")
-                    or UniswapV2Pool,
-                )
-            case PoolFamily.CONCENTRATED_LIQUIDITY:
-                return cast(
-                    "type[AbstractLiquidityPool]",
-                    pool_type_registry.get_v3_class(chain_id, pool_type.factory or "")
-                    or UniswapV3Pool,
-                )
-            case PoolFamily.STABLESWAP:
-                return CurveStableswapPool
-            case _:
-                msg = f"No pool class for family {pool_type.family.value!r}"
-                raise DegenbotValueError(message=msg)
-
-    def _fetch_factory_from_chain(
-        self, address: ChecksumAddress, *, chain_id: ChainId
-    ) -> ChecksumAddress | None:
-        """Fetch the factory address from the pool contract's factory() method."""
-        provider = self.connections.get_provider(chain_id)
-        try:
-            factory_result = provider.call(
-                to=address,
-                data=encode_function_calldata("factory()", None),
-            )
-            (factory_raw,) = eth_abi.abi.decode(types=["address"], data=factory_result)
-            return get_checksum_address(factory_raw)
-        except (Web3Exception, DecodingError):
-            return None
 
     def build_v2_pool(
         self,
@@ -535,7 +374,9 @@ class Bot:
         chain_id = chain_id or self.connections.default_chain_id
 
         # Determine the factory to identify the correct builder
-        factory = self._fetch_factory_from_chain(pool_address, chain_id=chain_id)
+        provider = self.connections.get_provider(chain_id)
+        io = SyncPoolIO(provider)
+        factory = fetch_factory_from_chain(pool_address, chain_id=chain_id, io=io)
         if factory is not None:
             pool_class = pool_type_registry.get_v2_class(chain_id, factory)
             if pool_class is not None and issubclass(pool_class, AerodromeV2Pool):
@@ -546,6 +387,7 @@ class Bot:
                     init_hash=init_hash,
                     state_block=state_block,
                     silent=silent,
+                    io=io,
                 )
             if pool_class is not None and issubclass(pool_class, CamelotLiquidityPool):
                 return self._camelot_builder.build(
@@ -555,6 +397,7 @@ class Bot:
                     init_hash=init_hash,
                     state_block=state_block,
                     silent=silent,
+                    io=io,
                 )
 
         return self._v2_builder.build(
@@ -564,6 +407,7 @@ class Bot:
             init_hash=init_hash,
             state_block=state_block,
             silent=silent,
+            io=io,
         )
 
     def get_token_balance(
@@ -629,6 +473,10 @@ class Bot:
             DeprecationWarning,
             stacklevel=2,
         )
+        pool_address = get_checksum_address(pool_address)
+        chain_id = chain_id or self.connections.default_chain_id
+        provider = self.connections.get_provider(chain_id)
+        io = SyncPoolIO(provider)
         return self._v3_builder.build(
             pool_address,
             chain_id=chain_id,
@@ -638,6 +486,7 @@ class Bot:
             tick_bitmap=tick_bitmap,
             tick_data=tick_data,
             silent=silent,
+            io=io,
         )
 
     def build_v4_pool(
@@ -664,6 +513,9 @@ class Bot:
             DeprecationWarning,
             stacklevel=2,
         )
+        chain_id = chain_id or self.connections.default_chain_id
+        provider = self.connections.get_provider(chain_id)
+        io = SyncPoolIO(provider)
         return self._v4_builder.build(
             pool_manager_address,
             pool_id=pool_id,
@@ -678,6 +530,7 @@ class Bot:
             tick_bitmap=tick_bitmap,
             tick_data=tick_data,
             silent=silent,
+            io=io,
         )
 
     def build_curve_pool(
@@ -704,6 +557,11 @@ class Bot:
             state_block=state_block,
             silent=silent,
             state_cache_depth=state_cache_depth,
+            io=SyncPoolIO(
+                self.connections.get_provider(
+                    chain_id or self.connections.default_chain_id
+                )
+            ),
         )
 
     def get_provider(self, *, chain_id: ChainId) -> ProviderAdapter:
@@ -784,7 +642,9 @@ class Bot:
             if block_number is not None and not isinstance(block_number, int)
             else block_number
         )
-        return builder.update(pool, block_number=resolved_block_number)
+        provider = self.connections.get_provider(pool.chain_id)  # ty: ignore
+        io = SyncPoolIO(provider)
+        return builder.update(pool, block_number=resolved_block_number, io=io)
 
     def _builder_for_pool(
         self,

@@ -25,6 +25,7 @@ def _make_ctx(**overrides) -> BuilderContext:
         "pools": fake_pools,
         "tokens": fake_tokens,
         "erc20_builder": fake_erc20,
+        "default_chain_id": 1,
         "managed_pools": None,
     }
     defaults.update(overrides)
@@ -41,6 +42,7 @@ class TestBuilderContextConstruction:
         assert ctx.pools is not None
         assert ctx.tokens is not None
         assert ctx.erc20_builder is not None
+        assert ctx.default_chain_id == 1
         assert ctx.managed_pools is None
 
     def test_managed_pools_optional(self) -> None:
@@ -61,7 +63,7 @@ class TestBuilderContextConstruction:
 
     def test_field_count(self) -> None:
         fields = dataclasses.fields(BuilderContext)
-        assert len(fields) == 6
+        assert len(fields) == 7
         field_names = {f.name for f in fields}
         assert field_names == {
             "connections",
@@ -69,9 +71,15 @@ class TestBuilderContextConstruction:
             "pools",
             "tokens",
             "erc20_builder",
+            "default_chain_id",
             "managed_pools",
         }
 
     def test_managed_pools_default_is_none(self) -> None:
         ctx = _make_ctx()
         assert ctx.managed_pools is None
+
+    def test_default_chain_id_default_is_none(self) -> None:
+        """default_chain_id can be None if not yet configured."""
+        ctx = _make_ctx(default_chain_id=None)
+        assert ctx.default_chain_id is None

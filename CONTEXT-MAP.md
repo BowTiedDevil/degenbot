@@ -21,7 +21,7 @@ _Avoid_: Fork, local chain
 - [Aave](src/degenbot/aave/CONTEXT.md) — lending markets, assets, collateral, debt, and liquidation
 - [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — StableSwap pools, CurveDataProvider seam, DyCalculator, variant and strategy enums
 - [Connection Management](src/degenbot/connection/CONTEXT.md) — connection managers, provider references, and subscription primitives
-- **Builders** (`src/degenbot/builders/`) — pool builders, BuilderContext, and the PoolBuilder protocol
+- [Builders](src/degenbot/builders/CONTEXT.md) — pool builders, PoolIO seam, BuilderContext, PoolBuilder/AsyncPoolBuilder protocols, and shared type resolution
 
 ## Instructions
 
@@ -50,6 +50,8 @@ _Avoid_: Fork, local chain
 - A **Curve Pool Tracker** tracks **Curve StableSwap Pools** and delegates construction to **Bot**
 - A **CurveDataProvider** is injected into **Curve Pools** by the **Curve Pool Builder** (invoked via `Bot.build_pool()`); pools never access connections directly. The former 13 individual fetcher callbacks have been collapsed into a single `CurveDataProvider` seam (Plan 040)
 - V2/V3/V4/Aerodrome **Pools** are fully I/O-free — **Builders** fetch all data from DB/RPC and pass values; no pool class imports `ProviderAdapter` or carries provider-dependent methods
+- **PoolIO** is the builder-facing I/O seam — a protocol with sync (`SyncPoolIO`) and async (`AsyncPoolIO`) adapters wrapping `ProviderAdapter`/`AsyncProviderAdapter`; **Bot** and **AsyncBot** create the appropriate adapter and pass `io=` to all builder calls
+- **Type Resolution** (`type_resolution.py`) provides shared pure-logic functions for pool class resolution, replacing ~330 lines of duplicated resolution code in Bot and AsyncBot; I/O-bearing steps come in sync/async pairs that accept `PoolIO`/`AsyncPoolIO`
 - **DyCalculationInputs** is a frozen dataclass constructed by `CurveStableswapPool.get_dy()` that carries pre-resolved data for a single dy calculation; **DyCalculator** implementations receive this instead of the pool object, eliminating all private member access (Plan 045)
 - **PoolFamily** (identity enum in `types/pool_type.py`) is the sole identity enum; **Pool Invariant** (in `types/hop_types.py`) is the solver-dispatch enum
 - **CacheablePool** protocol enables **Pool Cache Adapter** registration without introspection

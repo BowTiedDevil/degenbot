@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from degenbot.connection.connection_manager import ConnectionManager
     from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
+    from degenbot.types.aliases import ChainId
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -26,6 +27,11 @@ class BuilderContext:
     dependency — it is constructed before the context and passed in.
 
     ``managed_pools`` is optional because only V3/V4 builders need it.
+
+    ``connections`` is retained for V3/V4/Curve builders that still
+    use it for tick data fetcher callbacks and lazy provider lookups.
+    V2-family builders (UniswapV2, Aerodrome, Camelot) use ``io``
+    exclusively and do not reference ``connections``.
     """
 
     connections: ConnectionManager
@@ -33,4 +39,5 @@ class BuilderContext:
     pools: PoolRegistry
     tokens: TokenRegistry
     erc20_builder: Erc20Builder
+    default_chain_id: ChainId | None = None
     managed_pools: ManagedPoolRegistry | None = None

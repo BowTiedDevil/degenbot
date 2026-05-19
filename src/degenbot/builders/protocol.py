@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from typing import Any
 
+    from degenbot.builders.pool_io import AsyncPoolIO, PoolIO
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
 
 
@@ -37,6 +38,7 @@ class PoolBuilder(Protocol):
         chain_id: int | None = None,
         state_block: int | None = None,
         silent: bool = False,
+        io: PoolIO,
         **kwargs: Any,
     ) -> AbstractLiquidityPool: ...
 
@@ -44,5 +46,33 @@ class PoolBuilder(Protocol):
         self,
         pool: AbstractLiquidityPool,
         *,
+        io: PoolIO | None = None,
+        block_number: int | None = None,
+    ) -> bool: ...
+
+
+class AsyncPoolBuilder(Protocol):
+    """Async counterpart of PoolBuilder.
+
+    Satisfies the same interface but with async build/update methods.
+    Used by AsyncBot.
+    """
+
+    async def build(
+        self,
+        address: str,
+        *,
+        chain_id: int | None = None,
+        state_block: int | None = None,
+        silent: bool = False,
+        io: AsyncPoolIO,
+        **kwargs: Any,
+    ) -> AbstractLiquidityPool: ...
+
+    async def update(
+        self,
+        pool: AbstractLiquidityPool,
+        *,
+        io: AsyncPoolIO | None = None,
         block_number: int | None = None,
     ) -> bool: ...
