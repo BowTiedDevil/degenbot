@@ -7,7 +7,7 @@ Each builder owns:
 
 Builders do NOT own:
 - Pool type resolution (Bot's job)
-- Connection management (received via ConnectionManager)
+- I/O routing (received via PoolIO / AsyncPoolIOProtocol)
 - Database lifecycle (received via DatabaseSessionManager)
 """
 

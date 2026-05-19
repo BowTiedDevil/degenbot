@@ -573,11 +573,11 @@ Existing test suites cover the full build/update paths:
 
 ## Status
 
-[ ] Slice 1: Expand PoolIO protocol
-[ ] Slice 2: Migrate Curve detection modules and CurveDataProviderImpl to PoolIO
-[ ] Slice 3: Migrate CurvePoolBuilder to full PoolIO
-[ ] Slice 4: Migrate tick_data_fetcher to PoolIO
-[ ] Slice 5: Migrate V3/V4 builders to full PoolIO
-[ ] Slice 6: Migrate Erc20Builder to full PoolIO
-[ ] Slice 7: Remove `connections` from BuilderContext and async builders
-[ ] Slice 8: Validate and clean up
+[x] Slice 1: Expand PoolIO protocol
+[x] Slice 2: Migrate Curve detection modules and CurveDataProviderImpl to PoolIO
+[x] Slice 3: Migrate CurvePoolBuilder to full PoolIO
+[x] Slice 4: Migrate tick_data_fetcher to PoolIO
+[x] Slice 5: Migrate V3/V4 builders to full PoolIO
+[x] Slice 6: Migrate Erc20Builder to full PoolIO
+[x] Slice 7: Remove `connections` from BuilderContext and async builders
+[x] Slice 8: Validate and clean up

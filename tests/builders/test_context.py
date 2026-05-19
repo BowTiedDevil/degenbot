@@ -6,21 +6,18 @@ import pytest
 
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.erc20_builder import Erc20Builder
-from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 
 
 def _make_ctx(**overrides) -> BuilderContext:
     """Create a BuilderContext with fakes for required fields."""
-    fake_connections = object.__new__(ConnectionManager)
     fake_db = object.__new__(DatabaseSessionManager)
     fake_pools = object.__new__(PoolRegistry)
     fake_tokens = object.__new__(TokenRegistry)
     fake_erc20 = object.__new__(Erc20Builder)
 
     defaults = {
-        "connections": fake_connections,
         "db": fake_db,
         "pools": fake_pools,
         "tokens": fake_tokens,
@@ -37,7 +34,6 @@ class TestBuilderContextConstruction:
 
     def test_required_fields(self) -> None:
         ctx = _make_ctx()
-        assert ctx.connections is not None
         assert ctx.db is not None
         assert ctx.pools is not None
         assert ctx.tokens is not None
@@ -53,7 +49,7 @@ class TestBuilderContextConstruction:
     def test_frozen(self) -> None:
         ctx = _make_ctx()
         with pytest.raises(dataclasses.FrozenInstanceError):
-            ctx.connections = None  # type: ignore[misc]
+            ctx.db = None  # type: ignore[misc]
 
     def test_slots_frozen_blocks_new_attrs(self) -> None:
         ctx = _make_ctx()
@@ -63,10 +59,9 @@ class TestBuilderContextConstruction:
 
     def test_field_count(self) -> None:
         fields = dataclasses.fields(BuilderContext)
-        assert len(fields) == 7
+        assert len(fields) == 6
         field_names = {f.name for f in fields}
         assert field_names == {
-            "connections",
             "db",
             "pools",
             "tokens",

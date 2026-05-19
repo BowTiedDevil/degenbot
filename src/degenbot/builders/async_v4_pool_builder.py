@@ -9,7 +9,6 @@ import eth_abi.abi
 from hexbytes import HexBytes
 from sqlalchemy import select
 
-from degenbot.builders.pool_io import AsyncPoolIO
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.database.models.pools import PoolManagerTable, UniswapV4PoolTable
@@ -28,6 +27,7 @@ if TYPE_CHECKING:
     from web3.types import BlockIdentifier
 
     from degenbot.builders.async_context import AsyncBuilderContext
+    from degenbot.builders.pool_io import AsyncPoolIO
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
@@ -43,7 +43,7 @@ class AsyncV4PoolBuilder:
         assert ctx.managed_pools is not None, (
             "AsyncV4PoolBuilder requires managed_pools in BuilderContext"
         )
-        self._connections = ctx.connections
+        self._default_chain_id = ctx.default_chain_id
         self._db = ctx.db
         self._pools = ctx.pools
         self._tokens = ctx.tokens
@@ -76,11 +76,10 @@ class AsyncV4PoolBuilder:
         assert pool_id is not None
         pool_manager_address = get_checksum_address(pool_manager_address)
         pool_id_bytes = HexBytes(pool_id)
-        chain_id = chain_id or self._connections.default_chain_id
+        chain_id = chain_id or self._default_chain_id
+        assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
 
-        if io is None:
-            provider = self._connections.get_provider(chain_id)
-            io = AsyncPoolIO(provider)
+        assert io is not None
 
         state_block = state_block if state_block is not None else await io.get_block_number()
 
@@ -330,9 +329,7 @@ class AsyncV4PoolBuilder:
             raise TypeError(msg)
 
         assert pool.chain_id is not None
-        if io is None:
-            provider = self._connections.get_provider(pool.chain_id)
-            io = AsyncPoolIO(provider)
+        assert io is not None
 
         raw_block = block_number if block_number is not None else await io.get_block_number()
         block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block

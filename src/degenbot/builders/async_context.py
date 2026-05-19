@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from degenbot.builders.async_erc20_builder import AsyncErc20Builder
-    from degenbot.connection.async_connection_manager import AsyncConnectionManager
     from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
     from degenbot.types.aliases import ChainId
@@ -27,7 +26,6 @@ class AsyncBuilderContext:
     ``managed_pools`` is optional because only V3/V4 builders need it.
     """
 
-    connections: AsyncConnectionManager
     db: DatabaseSessionManager
     pools: PoolRegistry
     tokens: TokenRegistry
