@@ -54,7 +54,7 @@ class ProviderBackend(Protocol):
     """Protocol for sync provider backends.
 
     Replaces the former EthereumProvider (public) and _SyncProviderBackend (private)
-    with a single merged protocol.
+    with a single merged protocol. The EthereumProvider alias was removed by Plan 061.
     """
 
     @property
@@ -142,8 +142,124 @@ class ProviderBackend(Protocol):
         ...
 
 
-# Backward compatibility alias
-EthereumProvider = ProviderBackend
+# ============================================================================
+# Subscription support mixins
+# ============================================================================
+
+
+class SyncSubscriptionSupport:
+    """Mixin providing default subscription stubs for sync backends.
+
+    Sync providers never support subscriptions. This mixin satisfies
+    the ProviderBackend protocol requirement without duplicating 5 identical
+    stubs per adapter.
+
+    Subclasses must define ``_subscription_transport`` and ``_subscription_rpc_url``
+    so error messages include the transport type and endpoint.
+    """
+
+    @property
+    def _subscription_transport(self) -> str:  # type: ignore[override]
+        return "sync"
+
+    @property
+    def _subscription_rpc_url(self) -> str:
+        return "unknown"
+
+    def subscribe_blocks(self) -> None:
+        """Not available on sync providers."""
+        raise SubscriptionNotSupported(
+            transport=self._subscription_transport,
+            rpc_url=self._subscription_rpc_url,
+        )
+
+    def subscribe_full_blocks(self) -> None:
+        """Not available on sync providers."""
+        raise SubscriptionNotSupported(
+            transport=self._subscription_transport,
+            rpc_url=self._subscription_rpc_url,
+        )
+
+    def subscribe_pending_transactions(self) -> None:
+        """Not available on sync providers."""
+        raise SubscriptionNotSupported(
+            transport=self._subscription_transport,
+            rpc_url=self._subscription_rpc_url,
+        )
+
+    def subscribe_full_pending_transactions(self) -> None:
+        """Not available on sync providers."""
+        raise SubscriptionNotSupported(
+            transport=self._subscription_transport,
+            rpc_url=self._subscription_rpc_url,
+        )
+
+    def subscribe_logs(
+        self,
+        _addresses: list[str] | None = None,
+        _topics: list[list[str]] | None = None,
+    ) -> None:
+        """Not available on sync providers."""
+        raise SubscriptionNotSupported(
+            transport=self._subscription_transport,
+            rpc_url=self._subscription_rpc_url,
+        )
+
+
+class AsyncSubscriptionSupport:
+    """Mixin providing default subscription stubs for async backends
+    that don't support WS/IPC subscriptions (e.g. AsyncWeb3 over HTTP).
+
+    Subclasses must define ``_subscription_transport`` and ``_subscription_rpc_url``
+    so error messages include the transport type and endpoint.
+    """
+
+    @property
+    def _subscription_transport(self) -> str:
+        return "async"
+
+    @property
+    def _subscription_rpc_url(self) -> str:
+        return "unknown"
+
+    async def subscribe_blocks(self) -> Subscription:
+        """Not available — requires WS/IPC transport."""
+        raise SubscriptionNotSupported(
+            transport=self._subscription_transport,
+            rpc_url=self._subscription_rpc_url,
+        )
+
+    async def subscribe_full_blocks(self) -> Subscription:
+        """Not available — requires WS/IPC transport."""
+        raise SubscriptionNotSupported(
+            transport=self._subscription_transport,
+            rpc_url=self._subscription_rpc_url,
+        )
+
+    async def subscribe_pending_transactions(self) -> Subscription:
+        """Not available — requires WS/IPC transport."""
+        raise SubscriptionNotSupported(
+            transport=self._subscription_transport,
+            rpc_url=self._subscription_rpc_url,
+        )
+
+    async def subscribe_full_pending_transactions(self) -> Subscription:
+        """Not available — requires WS/IPC transport."""
+        raise SubscriptionNotSupported(
+            transport=self._subscription_transport,
+            rpc_url=self._subscription_rpc_url,
+        )
+
+    async def subscribe_logs(
+        self,
+        addresses: list[str] | None = None,  # ruff: ignore[ARG002]
+        topics: list[list[str]] | None = None,  # ruff: ignore[ARG002]
+    ) -> Subscription:
+        """Not available — requires WS/IPC transport."""
+        raise SubscriptionNotSupported(
+            transport=self._subscription_transport,
+            rpc_url=self._subscription_rpc_url,
+        )
 
 
 # ============================================================================
@@ -151,11 +267,23 @@ EthereumProvider = ProviderBackend
 # ============================================================================
 
 
-class _Web3Adapter:
+class _Web3Adapter(SyncSubscriptionSupport):
     """Adapter wrapping a web3.py Web3 instance to satisfy ProviderBackend."""
 
     def __init__(self, w3: Web3) -> None:
         self._w3 = w3
+
+    # --- Subscription support override ---
+
+    @property
+    def _subscription_transport(self) -> str:  # type: ignore[override]
+        return "web3"
+
+    @property
+    def _subscription_rpc_url(self) -> str:
+        return str(self._w3.provider)
+
+    # --- Core methods ---
 
     @property
     def chain_id(self) -> int:
@@ -211,36 +339,18 @@ class _Web3Adapter:
         if hasattr(self._w3, "close"):
             self._w3.close()  # ty:ignore[call-non-callable]
 
-    def subscribe_blocks(self) -> None:
-        """Not available on sync providers."""
-        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
 
-    def subscribe_full_blocks(self) -> None:
-        """Not available on sync providers."""
-        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
-
-    def subscribe_pending_transactions(self) -> None:
-        """Not available on sync providers."""
-        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
-
-    def subscribe_full_pending_transactions(self) -> None:
-        """Not available on sync providers."""
-        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
-
-    def subscribe_logs(
-        self,
-        _addresses: list[str] | None = None,
-        _topics: list[list[str]] | None = None,
-    ) -> None:
-        """Not available on sync providers."""
-        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
-
-
-class _AlloyAdapter:
+class _AlloyAdapter(SyncSubscriptionSupport):
     """Adapter wrapping an AlloyProvider instance to satisfy ProviderBackend."""
 
     def __init__(self, alloy: AlloyProvider) -> None:
         self._alloy = alloy
+
+    # --- Subscription support override ---
+
+    @property
+    def _subscription_rpc_url(self) -> str:
+        return self._alloy.rpc_url
 
     @property
     def chain_id(self) -> int:
@@ -303,36 +413,22 @@ class _AlloyAdapter:
         if hasattr(self._alloy, "close"):
             self._alloy.close()
 
-    def subscribe_blocks(self) -> None:
-        """Not available on sync providers."""
-        raise SubscriptionNotSupported(transport="sync", rpc_url=self._alloy.rpc_url)
 
-    def subscribe_full_blocks(self) -> None:
-        """Not available on sync providers."""
-        raise SubscriptionNotSupported(transport="sync", rpc_url=self._alloy.rpc_url)
-
-    def subscribe_pending_transactions(self) -> None:
-        """Not available on sync providers."""
-        raise SubscriptionNotSupported(transport="sync", rpc_url=self._alloy.rpc_url)
-
-    def subscribe_full_pending_transactions(self) -> None:
-        """Not available on sync providers."""
-        raise SubscriptionNotSupported(transport="sync", rpc_url=self._alloy.rpc_url)
-
-    def subscribe_logs(
-        self,
-        _addresses: list[str] | None = None,
-        _topics: list[list[str]] | None = None,
-    ) -> None:
-        """Not available on sync providers."""
-        raise SubscriptionNotSupported(transport="sync", rpc_url=self._alloy.rpc_url)
-
-
-class _OfflineAdapter:
+class _OfflineAdapter(SyncSubscriptionSupport):
     """Adapter wrapping an OfflineProvider instance to satisfy ProviderBackend."""
 
     def __init__(self, offline: OfflineProvider) -> None:
         self._offline = offline
+
+    # --- Subscription support override ---
+
+    @property
+    def _subscription_transport(self) -> str:  # type: ignore[override]
+        return "offline"
+
+    @property
+    def _subscription_rpc_url(self) -> str:
+        return "offline"
 
     @property
     def chain_id(self) -> int:
@@ -387,37 +483,13 @@ class _OfflineAdapter:
         if hasattr(self._offline, "close"):
             self._offline.close()  # ty:ignore[call-non-callable]
 
-    def subscribe_blocks(self) -> None:  # noqa: PLR6301
-        """Not available on offline providers."""
-        raise SubscriptionNotSupported(transport="offline", rpc_url="offline")
-
-    def subscribe_full_blocks(self) -> None:  # noqa: PLR6301
-        """Not available on offline providers."""
-        raise SubscriptionNotSupported(transport="offline", rpc_url="offline")
-
-    def subscribe_pending_transactions(self) -> None:  # noqa: PLR6301
-        """Not available on offline providers."""
-        raise SubscriptionNotSupported(transport="offline", rpc_url="offline")
-
-    def subscribe_full_pending_transactions(self) -> None:  # noqa: PLR6301
-        """Not available on offline providers."""
-        raise SubscriptionNotSupported(transport="offline", rpc_url="offline")
-
-    def subscribe_logs(  # noqa: PLR6301
-        self,
-        _addresses: list[str] | None = None,
-        _topics: list[list[str]] | None = None,
-    ) -> None:
-        """Not available on offline providers."""
-        raise SubscriptionNotSupported(transport="offline", rpc_url="offline")
-
 
 # ============================================================================
 # ProviderAdapter (sync)
 # ============================================================================
 
 
-class ProviderAdapter:
+class ProviderAdapter(SyncSubscriptionSupport):
     """
     Adapter that wraps Web3, AlloyProvider, or OfflineProvider.
 
@@ -448,9 +520,13 @@ class ProviderAdapter:
         self._provider_type = provider_type
         self._raw_provider = raw_provider
 
-    # -------------------------------------------------------------------------
-    # Pickle support
-    # -------------------------------------------------------------------------
+    # --- Subscription support override ---
+
+    @property
+    def _subscription_rpc_url(self) -> str:
+        return str(self._raw_provider)
+
+    # --- Pickle support ---
 
     def __getstate__(self) -> dict[str, Any]:
         """Pickle by storing only the type label; the provider must be re-acquired."""
@@ -724,47 +800,6 @@ class ProviderAdapter:
     def __repr__(self) -> str:
         return f"ProviderAdapter(type={self._provider_type})"
 
-    # --- Subscription stubs (sync providers do not support subscriptions) ---
-
-    def subscribe_blocks(self) -> None:
-        """Not available on sync providers.
-
-        Use AsyncProviderAdapter.subscribe_blocks() instead.
-        """
-        raise SubscriptionNotSupported(transport="sync", rpc_url=str(self._raw_provider))
-
-    def subscribe_full_blocks(self) -> None:
-        """Not available on sync providers.
-
-        Use AsyncProviderAdapter.subscribe_full_blocks() instead.
-        """
-        raise SubscriptionNotSupported(transport="sync", rpc_url=str(self._raw_provider))
-
-    def subscribe_pending_transactions(self) -> None:
-        """Not available on sync providers.
-
-        Use AsyncProviderAdapter.subscribe_pending_transactions() instead.
-        """
-        raise SubscriptionNotSupported(transport="sync", rpc_url=str(self._raw_provider))
-
-    def subscribe_full_pending_transactions(self) -> None:
-        """Not available on sync providers.
-
-        Use AsyncProviderAdapter.subscribe_full_pending_transactions() instead.
-        """
-        raise SubscriptionNotSupported(transport="sync", rpc_url=str(self._raw_provider))
-
-    def subscribe_logs(
-        self,
-        _addresses: list[str] | None = None,
-        _topics: list[list[str]] | None = None,
-    ) -> None:
-        """Not available on sync providers.
-
-        Use AsyncProviderAdapter.subscribe_logs() instead.
-        """
-        raise SubscriptionNotSupported(transport="sync", rpc_url=str(self._raw_provider))
-
 
 # ============================================================================
 # Private async backend protocol
@@ -855,11 +890,21 @@ class AsyncProviderBackend(Protocol):
 # ============================================================================
 
 
-class _AsyncWeb3Adapter:
+class _AsyncWeb3Adapter(AsyncSubscriptionSupport):
     """Adapter wrapping an AsyncWeb3 instance to satisfy AsyncProviderBackend."""
 
     def __init__(self, w3: AsyncWeb3[Any]) -> None:
         self._w3 = w3
+
+    # --- Subscription support override ---
+
+    @property
+    def _subscription_transport(self) -> str:
+        return "web3"
+
+    @property
+    def _subscription_rpc_url(self) -> str:
+        return str(self._w3.provider)
 
     async def get_block_number(self) -> int:
         return await self._w3.eth.get_block_number()
@@ -908,25 +953,6 @@ class _AsyncWeb3Adapter:
     def close(self) -> None:
         if hasattr(self._w3, "close"):
             self._w3.close()  # ty:ignore[call-non-callable]
-
-    async def subscribe_blocks(self) -> Subscription:
-        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
-
-    async def subscribe_full_blocks(self) -> Subscription:
-        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
-
-    async def subscribe_pending_transactions(self) -> Subscription:
-        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
-
-    async def subscribe_full_pending_transactions(self) -> Subscription:
-        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
-
-    async def subscribe_logs(
-        self,
-        addresses: list[str] | None = None,  # ruff: ignore[ARG002]
-        topics: list[list[str]] | None = None,  # ruff: ignore[ARG002]
-    ) -> Subscription:
-        raise SubscriptionNotSupported(transport="web3", rpc_url=str(self._w3.provider))
 
 
 class _AsyncAlloyAdapter:
@@ -1333,11 +1359,10 @@ def _backend_for_type(
             raise ValueError(msg)
 
 
-# Keep public API surface unchanged
+# Public API
 __all__ = [
     "AsyncProviderAdapter",
     "AsyncProviderBackend",
-    "EthereumProvider",
     "ProviderAdapter",
     "ProviderBackend",
 ]

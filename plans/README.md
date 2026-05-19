@@ -21,6 +21,7 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 |---|------|---------|
 | 014 | [Async REPL](014-async-repl.md) | `python -m degenbot` with top-level `await`. |
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
+| 060 | [Unify Sync/Async Builder Orchestration](060-unify-builder-orchestration.md) | Extract shared pure-logic decode/construct/register helpers into V3BuilderBase and V4BuilderBase, mirroring V2BuilderBase pattern. |
 ## Completed Plans
 
 | # | Plan | Summary |
@@ -67,7 +68,7 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | 041 | [Elevate Curve State Mixin](completed/041-elevate-curve-state-mixin.md) | 25 attributes + 22 properties with `_xxx` private pattern. `StableswapPoolState` mixin. |
 | 042 | [Collapse Provider Adapter Mirror](completed/042-collapse-provider-adapter-mirror.md) | Merged `EthereumProvider`+`_SyncProviderBackend`→`ProviderBackend`. `__getattr__` dispatch replaces 15× delegation methods. Block guards simplified. 914→780 lines (−15%). |
 | 043 | [Extract V2 Variant Builders](completed/043-extract-v2-variant-builders.md) | `V2PoolBuilder` 375→118 lines (68% reduction). Per-variant builders: `V2BuilderBase`, `AerodromeV2Builder`, `CamelotBuilder`. |
-| 044 | [Deprecate Bot Pass-Throughs](completed/044-deprecate-bot-pass-throughs.md) | `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool` emit `DeprecationWarning`. Use `build_pool()`. |
+| 044 | [Deprecate Bot Pass-Throughs](completed/044-deprecate-bot-pass-throughs.md) | Deprecated `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool` with `DeprecationWarning`. Removed by Plan 059. |
 | 045 | [Calculator Explicit Data](completed/045-calculator-explicit-data.md) | Replace `pool` parameter with `DyCalculationInputs` in DyCalculator. 77 SLF001 errors → 0. Calculators are pure consumers of pre-resolved data. |
 | 046 | [eth_subscribe Support](completed/046-eth-subscribe.md) | `eth_subscribe` via AlloyProvider with AsyncProviderAdapter wiring and SubscriptionManager callback layer. |
 | 047 | [Event-Driven Log Listener](completed/047-event-driven-listener.md) | Subscription double-buffer drain + LogListener dispatch registry + pool LOG_HANDLERS. Replaces SubscriptionManager. |
@@ -81,3 +82,7 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | 055 | [Delete Deprecated Fetcher Protocol Dead Code](completed/055-delete-deprecated-fetcher-protocols.md) | Delete 8 deprecated `*Fetcher` protocol classes from `curve/types.py`. Zero callers; superseded by `CurveDataProvider` (Plan 040). |
 | 057 | [Document Curve Pool's Partial I/O Status](completed/057-document-curve-pool-partial-io-status.md) | Rename `_build_calculation_inputs` → `_resolve_calculation_inputs_via_io`. Add `requires_io_at_calculation_time` property. Amend ADR-001 with construction-time vs calculation-time I/O table. |
 | 056 | [Move Calculator Factory Functions to Enum Types](completed/056-externalize-curve-strategy-mapping-to-db.md) | Move `_make_dy_calculator` etc. from `_pool_strategies.py` onto enum types. Remove pool class import dependency on strategy resolution module. Make calculators non-optional on `PoolStrategies`. |
+| 061 | [Delete `EthereumProvider` Backward-Compatibility Alias](completed/061-delete-ethereum-provider-alias.md) | Delete `EthereumProvider = ProviderBackend` alias and update all stale references (code, docstrings, domain docs, tests). Zero callers. |
+| 059 | [Delete Deprecated `build_*` Pass-Throughs and `get_web3`](completed/059-delete-deprecated-build-pass-throughs.md) | Delete `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`, `get_web3` from Bot/AsyncBot/ConnectionManagers. ~243 lines. |
+| 058 | [Collapse Subscription Stubs in Provider Adapters](completed/058-collapse-subscription-stubs.md) | `SyncSubscriptionSupport` and `AsyncSubscriptionSupport` mixins replace 25 duplicated `raise SubscriptionNotSupported` stubs across 5 adapters. Stub count: 25→10. |
+| 062 | [Extract Chainlink into Package](completed/062-extract-chainlink-package.md) | Move `chainlink.py` into `chainlink/` package with CONTEXT.md. Delete unused `CHAINLINK_PRICE_FEED_ABI`. 3-file package: `__init__.py`, `price_feed.py`, `CONTEXT.md`. |

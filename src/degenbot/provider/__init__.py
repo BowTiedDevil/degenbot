@@ -39,7 +39,6 @@ from degenbot.degenbot_rs import AsyncAlloyProvider
 from degenbot.provider.interface import (
     AsyncProviderAdapter,
     AsyncProviderBackend,
-    EthereumProvider,
     ProviderAdapter,
     ProviderBackend,
 )
@@ -440,7 +439,6 @@ __all__ = [
     "AsyncProviderAdapter",
     "AsyncProviderBackend",
     "BlockNotRecordedError",
-    "EthereumProvider",
     "LogFilter",
     "LogSubscriptionFilter",
     "OfflineDataMissing",
