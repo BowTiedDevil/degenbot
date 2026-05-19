@@ -21,7 +21,7 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 |---|------|---------|
 | 014 | [Async REPL](014-async-repl.md) | `python -m degenbot` with top-level `await`. |
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
-| 060 | [Unify Sync/Async Builder Orchestration](060-unify-builder-orchestration.md) | Extract shared pure-logic decode/construct/register helpers into V3BuilderBase and V4BuilderBase, mirroring V2BuilderBase pattern. |
+
 ## Completed Plans
 
 | # | Plan | Summary |
@@ -85,4 +85,5 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | 058 | [Collapse Subscription Stubs in Provider Adapters](completed/058-collapse-subscription-stubs.md) | `SyncSubscriptionSupport` and `AsyncSubscriptionSupport` mixins replace 25 duplicated `raise SubscriptionNotSupported` stubs across 5 adapters. Stub count: 25→10. |
 | 059 | [Delete Deprecated `build_*` Pass-Throughs and `get_web3`](completed/059-delete-deprecated-build-pass-throughs.md) | Delete `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`, `get_web3` from Bot/AsyncBot/ConnectionManagers. ~243 lines. |
 | 061 | [Delete `EthereumProvider` Backward-Compatibility Alias](completed/061-delete-ethereum-provider-alias.md) | Delete `EthereumProvider = ProviderBackend` alias and update all stale references (code, docstrings, domain docs, tests). Zero callers. |
+| 060 | [Unify Sync/Async Builder Orchestration](completed/060-unify-builder-orchestration.md) | V3BuilderBase and V4BuilderBase with shared @staticmethod helpers (decode_slot0, extract_db_values, load_tick_snapshot). Frozen dataclasses for decoded values. ~150 lines of duplication removed. Async tick fetcher not viable (pool objects are sync). |
 | 062 | [Extract Chainlink into Package](completed/062-extract-chainlink-package.md) | Move `chainlink.py` into `chainlink/` package with CONTEXT.md. Delete unused `CHAINLINK_PRICE_FEED_ABI`. 3-file package: `__init__.py`, `price_feed.py`, `CONTEXT.md`. |
