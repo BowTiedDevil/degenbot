@@ -21,8 +21,8 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 |---|------|---------|
 | 014 | [Async REPL](014-async-repl.md) | `python -m degenbot` with top-level `await`. |
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
-| 048 | [Unify Bot and AsyncBot via Builder-Backed IO Seam](048-async-builder-shared.md) | AsyncBot delegates to async builders instead of duplicating construction. `PoolIO` protocol parameterizes builders over sync/async. ~965→~466 lines in AsyncBot. |
-| 052 | [Migrate V3/V4/Curve/ERC20 Builders to Full PoolIO](052-v3v4curve-poolio-migration.md) | Remove all `ProviderAdapter`/`ConnectionManager` dependencies from V3, V4, Curve, and ERC20 builders. Remove `connections` from `BuilderContext`. |
+| 048 | [Unify Bot and AsyncBot via Builder-Backed IO Seam](completed/048-async-builder-shared.md) | AsyncBot delegates to async builders instead of duplicating construction. `PoolIO` protocol parameterizes builders over sync/async. ~965→~466 lines in AsyncBot. |
+| 052 | [Migrate V3/V4/Curve/ERC20 Builders to Full PoolIO](completed/052-v3v4curve-poolio-migration.md) | Remove all `ProviderAdapter`/`ConnectionManager` dependencies from V3, V4, Curve, and ERC20 builders. Remove `connections` from `BuilderContext`. |
 
 
 ## Completed Plans
