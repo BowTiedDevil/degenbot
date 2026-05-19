@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING
 import eth_abi.abi
 
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.database.models.pools import UniswapV4PoolTableBase
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.v3_types import BitmapWord, Tick
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
@@ -75,22 +77,22 @@ class V4BuilderBase:
         )
 
     @staticmethod
-    def extract_db_values(pool_from_db: object) -> V4DbValues:
+    def extract_db_values(pool_from_db: UniswapV4PoolTableBase) -> V4DbValues:
         """Extract currency addresses, hook, tick spacing, fee, state_view from a V4 DB row."""
 
         return V4DbValues(
-            currency0_address=get_checksum_address(pool_from_db.currency0.address),  # type: ignore[attr-defined]
-            currency1_address=get_checksum_address(pool_from_db.currency1.address),  # type: ignore[attr-defined]
-            hook_address=get_checksum_address(pool_from_db.hooks),  # type: ignore[attr-defined]
-            tick_spacing=pool_from_db.tick_spacing,  # type: ignore[attr-defined]
-            fee=pool_from_db.fee_currency0,  # type: ignore[attr-defined]
-            state_view_address=pool_from_db.manager.state_view,  # type: ignore[attr-defined]
+            currency0_address=get_checksum_address(pool_from_db.currency0.address),
+            currency1_address=get_checksum_address(pool_from_db.currency1.address),
+            hook_address=get_checksum_address(pool_from_db.hooks),
+            tick_spacing=pool_from_db.tick_spacing,
+            fee=pool_from_db.fee_currency0,
+            state_view_address=pool_from_db.manager.state_view,
         )
 
     @staticmethod
     def load_tick_snapshot(
-        pool_with_data: object,
-    ) -> tuple[dict[int, BitmapAtWord], dict[int, LiquidityAtTick], bool]:
+        pool_with_data: UniswapV4PoolTableBase,
+    ) -> tuple[dict[BitmapWord, BitmapAtWord], dict[Tick, LiquidityAtTick], bool]:
         """Load tick bitmap and tick data from a re-queried V4 DB row with active relationships.
 
         The caller is responsible for re-querying the pool row within an
@@ -101,16 +103,16 @@ class V4BuilderBase:
         If the snapshot cannot be loaded, returns ({}, {}, False).
         """
 
-        init_maps = pool_with_data.initialization_maps  # type: ignore[attr-defined]
-        liq_positions = pool_with_data.liquidity_positions  # type: ignore[attr-defined]
+        init_maps = pool_with_data.initialization_maps
+        liq_positions = pool_with_data.liquidity_positions
 
         if not init_maps or not liq_positions:
             return {}, {}, False
 
-        update_block = pool_with_data.liquidity_update_block or 0  # type: ignore[attr-defined]
+        update_block = pool_with_data.liquidity_update_block or 0
 
-        working_tick_bitmap: dict[int, BitmapAtWord] = {}
-        working_tick_data: dict[int, LiquidityAtTick] = {}
+        working_tick_bitmap: dict[BitmapWord, BitmapAtWord] = {}
+        working_tick_data: dict[Tick, LiquidityAtTick] = {}
 
         for init_map in init_maps:
             working_tick_bitmap[int(init_map.word)] = BitmapAtWord(
@@ -129,9 +131,9 @@ class V4BuilderBase:
     @staticmethod
     def resolve_tick_data_args(
         *,
-        working_tick_data: dict[int, LiquidityAtTick],
-        working_tick_bitmap: dict[int, BitmapAtWord],
-    ) -> tuple[dict[int, BitmapAtWord] | None, dict[int, LiquidityAtTick] | None]:
+        working_tick_data: dict[Tick, LiquidityAtTick],
+        working_tick_bitmap: dict[BitmapWord, BitmapAtWord],
+    ) -> tuple[dict[BitmapWord, BitmapAtWord] | None, dict[Tick, LiquidityAtTick] | None]:
         """Decide whether to pass tick data to the pool constructor.
 
         V4 passes tick data when any tick data was populated.

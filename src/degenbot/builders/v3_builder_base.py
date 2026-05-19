@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import eth_abi.abi
 
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.database.models.pools import UniswapV3PoolTableBase
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 
 if TYPE_CHECKING:
@@ -108,23 +109,23 @@ class V3BuilderBase:
         )
 
     @staticmethod
-    def extract_db_values(pool_from_db: object) -> V3DbValues:
+    def extract_db_values(pool_from_db: UniswapV3PoolTableBase) -> V3DbValues:
         """Extract factory, token addresses, fee, tick_spacing, deployer from a DB row."""
 
         return V3DbValues(
-            factory=get_checksum_address(pool_from_db.exchange.factory),  # type: ignore[attr-defined]
-            token0_address=get_checksum_address(pool_from_db.token0.address),  # type: ignore[attr-defined]
-            token1_address=get_checksum_address(pool_from_db.token1.address),  # type: ignore[attr-defined]
-            fee=pool_from_db.fee_token0,  # type: ignore[attr-defined]
-            tick_spacing=pool_from_db.tick_spacing,  # type: ignore[attr-defined]
-            deployer_address=pool_from_db.exchange.deployer  # type: ignore[attr-defined]
-            if pool_from_db.exchange.deployer is not None  # type: ignore[attr-defined]
+            factory=get_checksum_address(pool_from_db.exchange.factory),
+            token0_address=get_checksum_address(pool_from_db.token0.address),
+            token1_address=get_checksum_address(pool_from_db.token1.address),
+            fee=pool_from_db.fee_token0,
+            tick_spacing=pool_from_db.tick_spacing,
+            deployer_address=pool_from_db.exchange.deployer
+            if pool_from_db.exchange.deployer is not None
             else None,
         )
 
     @staticmethod
     def load_tick_snapshot(
-        pool_with_data: object,
+        pool_with_data: UniswapV3PoolTableBase,
     ) -> tuple[dict[int, BitmapAtWord], dict[int, LiquidityAtTick], bool]:
         """Load tick bitmap and tick data from a re-queried DB row with active relationships.
 
@@ -136,13 +137,13 @@ class V3BuilderBase:
         If the snapshot cannot be loaded, returns ({}, {}, False).
         """
 
-        init_maps = pool_with_data.initialization_maps  # type: ignore[attr-defined]
-        liq_positions = pool_with_data.liquidity_positions  # type: ignore[attr-defined]
+        init_maps = pool_with_data.initialization_maps
+        liq_positions = pool_with_data.liquidity_positions
 
         if not init_maps or not liq_positions:
             return {}, {}, False
 
-        update_block = pool_with_data.liquidity_update_block or 0  # type: ignore[attr-defined]
+        update_block = pool_with_data.liquidity_update_block or 0
 
         working_tick_bitmap: dict[int, BitmapAtWord] = {}
         working_tick_data: dict[int, LiquidityAtTick] = {}
