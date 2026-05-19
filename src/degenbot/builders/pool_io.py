@@ -1,9 +1,10 @@
 """PoolIO and AsyncPoolIO protocols and adapters for builder I/O.
 
 These protocols define the narrow I/O surface that pool builders need:
-`call`, `call_raw`, `get_block_number`, and `get_block`. By parameterizing
-builders on `PoolIO` (sync) or `AsyncPoolIO` (async), the same builder logic
-can be reused by both Bot and AsyncBot.
+`call`, `call_raw`, `get_block_number`, `get_block`, `get_block_timestamp`,
+`get_code`, and `get_balance`. By parameterizing builders on `PoolIO` (sync)
+or `AsyncPoolIO` (async), the same builder logic can be reused by both Bot
+and AsyncBot.
 
 `chain_id` is intentionally excluded — it is a configuration value, not an
 I/O operation. Builders already receive `chain_id` as a `build()` kwarg.
@@ -34,6 +35,12 @@ class PoolIO(Protocol):
 
     def get_block(self, block_identifier: int | str) -> BlockData | None: ...
 
+    def get_block_timestamp(self, block: int | None = None) -> int: ...
+
+    def get_code(self, address: str, block: int | None = None) -> HexBytes: ...
+
+    def get_balance(self, address: str, block: int | None = None) -> int: ...
+
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes: ...
 
     def call_raw(
@@ -53,6 +60,12 @@ class AsyncPoolIOProtocol(Protocol):
 
     async def get_block(self, block_identifier: int | str) -> BlockData | None: ...
 
+    async def get_block_timestamp(self, block: int | None = None) -> int: ...
+
+    async def get_code(self, address: str, block: int | None = None) -> HexBytes: ...
+
+    async def get_balance(self, address: str, block: int | None = None) -> int: ...
+
     async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes: ...
 
 
@@ -67,6 +80,15 @@ class SyncPoolIO:
 
     def get_block(self, block_identifier: int | str) -> BlockData | None:
         return self._provider.get_block(block_identifier)
+
+    def get_block_timestamp(self, block: int | None = None) -> int:
+        return self._provider.get_block_timestamp(block=block)
+
+    def get_code(self, address: str, block: int | None = None) -> HexBytes:
+        return self._provider.get_code(address, block=block)
+
+    def get_balance(self, address: str, block: int | None = None) -> int:
+        return self._provider.get_balance(address, block=block)
 
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         return self._provider.call(to=to, data=data, block=block)
@@ -92,6 +114,19 @@ class AsyncPoolIO:
 
     async def get_block(self, block_identifier: int | str) -> BlockData | None:
         return await self._provider.get_block(block_identifier)
+
+    async def get_block_timestamp(self, block: int | None = None) -> int:
+        block_data = await self._provider.get_block(block if block is not None else "latest")
+        if block_data is None:
+            msg = f"Block {block} not found"
+            raise ValueError(msg)
+        return block_data["timestamp"]
+
+    async def get_code(self, address: str, block: int | None = None) -> HexBytes:
+        return await self._provider.get_code(address, block=block)
+
+    async def get_balance(self, address: str, block: int | None = None) -> int:
+        return await self._provider.get_balance(address, block=block)
 
     async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         return await self._provider.call(to=to, data=data, block=block)
