@@ -8,6 +8,7 @@ from hexbytes import HexBytes
 from sqlalchemy import select
 
 from degenbot.builders.tick_data_fetcher import TickDataTypes, make_tick_data_fetcher
+from degenbot.builders.v4_builder_base import V4BuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.database.models.pools import PoolManagerTable, UniswapV4PoolTable
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
     from degenbot.types.aliases import ChainId
 
 
-class V4PoolBuilder:
+class V4PoolBuilder(V4BuilderBase):
     """
     Builds and updates V4 singleton-architecture concentrated-liquidity pools.
 
@@ -131,12 +132,13 @@ class V4PoolBuilder:
 
         # Get immutable values
         if pool_from_db is not None:
-            currency0_address = get_checksum_address(pool_from_db.currency0.address)
-            currency1_address = get_checksum_address(pool_from_db.currency1.address)
-            hook_address = get_checksum_address(pool_from_db.hooks)
-            tick_spacing_for_pool = pool_from_db.tick_spacing
-            fee_for_pool = pool_from_db.fee_currency0
-            state_view_address = pool_from_db.manager.state_view
+            db_values = V4BuilderBase.extract_db_values(pool_from_db)
+            currency0_address = db_values.currency0_address
+            currency1_address = db_values.currency1_address
+            hook_address = db_values.hook_address
+            tick_spacing_for_pool = db_values.tick_spacing
+            fee_for_pool = db_values.fee
+            state_view_address = db_values.state_view_address
         else:
             if state_view_address is None:
                 raise DegenbotValueError(
@@ -199,25 +201,18 @@ class V4PoolBuilder:
         except Exception as exc:
             raise LiquidityPoolError(message="Could not decode contract data") from exc
 
-        price, tick_val, protocol_fee_val, lp_fee_val = eth_abi.abi.decode(
-            types=["uint160", "int24", "uint24", "uint24"],
-            data=slot0_result,
-        )
+        slot0_data = V4BuilderBase.decode_slot0(slot0_result)
         (liquidity_val,) = eth_abi.abi.decode(
             types=["uint256"],
             data=liquidity_result,
         )
-
-        # Extract two fees (uint12) from packed uint24
-        protocol_fee_one_to_zero = protocol_fee_val >> 12
-        protocol_fee_zero_to_one = protocol_fee_val & 0xFFF
 
         # Fetch initial tick bitmap and tick data
         working_tick_bitmap: dict[int, Any] = {}
         working_tick_data: dict[int, Any] = {}
 
         # Use provided tick data if given (snapshot or test fixtures)
-        if tick_bitmap is not None and tick_data is not None:  # noqa:PLR1702
+        if tick_bitmap is not None and tick_data is not None:
             working_tick_bitmap = dict(tick_bitmap)
             working_tick_data = dict(tick_data)
         elif tick_bitmap is not None or tick_data is not None:
@@ -234,25 +229,13 @@ class V4PoolBuilder:
                             )
                         )
                         if pool_with_data is not None:
-                            init_maps = pool_with_data.initialization_maps
-                            liq_positions = pool_with_data.liquidity_positions
-                            if init_maps and liq_positions:
-                                for init_map in init_maps:
-                                    working_tick_bitmap[int(init_map.word)] = BitmapAtWord(
-                                        bitmap=int(init_map.bitmap),
-                                        block=pool_with_data.liquidity_update_block or 0,
-                                    )
-                                for pos in liq_positions:
-                                    working_tick_data[int(pos.tick)] = LiquidityAtTick(
-                                        liquidity_net=int(pos.liquidity_net),
-                                        liquidity_gross=int(pos.liquidity_gross),
-                                        block=pool_with_data.liquidity_update_block or 0,
-                                    )
-                                db_snapshot_loaded = True
+                            working_tick_bitmap, working_tick_data, db_snapshot_loaded = (
+                                V4BuilderBase.load_tick_snapshot(pool_with_data)
+                            )
 
             if not db_snapshot_loaded:
                 word, _ = get_tick_word_and_bit_position(
-                    tick=int(tick_val), tick_spacing=tick_spacing_for_pool
+                    tick=int(slot0_data.tick), tick_spacing=tick_spacing_for_pool
                 )
 
                 assert state_view_address is not None
@@ -300,8 +283,10 @@ class V4PoolBuilder:
                 )
 
         # If tick data was populated, pass both. Otherwise pass None (sparse mode).
-        tick_bitmap_arg = working_tick_bitmap if working_tick_data else None
-        tick_data_arg = working_tick_data or None
+        tick_bitmap_arg, tick_data_arg = V4BuilderBase.resolve_tick_data_args(
+            working_tick_data=working_tick_data,
+            working_tick_bitmap=working_tick_bitmap,
+        )
 
         assert state_view_address is not None
         pool = UniswapV4Pool(
@@ -313,12 +298,12 @@ class V4PoolBuilder:
             tick_spacing=tick_spacing_for_pool,
             hook_address=hook_address,
             state_view_address=state_view_address,
-            sqrt_price_x96=int(price),
-            tick=int(tick_val),
+            sqrt_price_x96=slot0_data.sqrt_price_x96,
+            tick=slot0_data.tick,
             liquidity=int(liquidity_val),
-            protocol_fee_zero_for_one=protocol_fee_zero_to_one,
-            protocol_fee_one_for_zero=protocol_fee_one_to_zero,
-            lp_fee=int(lp_fee_val),
+            protocol_fee_zero_for_one=slot0_data.protocol_fee_zero_to_one,
+            protocol_fee_one_for_zero=slot0_data.protocol_fee_one_to_zero,
+            lp_fee=slot0_data.lp_fee,
             state_block=state_block,
             tick_bitmap=tick_bitmap_arg,
             tick_data=tick_data_arg,
@@ -370,10 +355,7 @@ class V4PoolBuilder:
             data=slot0_calldata,
             block=block_number_,
         )
-        price, tick, _protocol_fee, _lp_fee = cast(
-            "tuple[int, ...]",
-            eth_abi.abi.decode(types=["uint160", "int24", "uint24", "uint24"], data=slot0_result),
-        )
+        slot0_data = V4BuilderBase.decode_slot0(slot0_result)
 
         liquidity_calldata = encode_function_calldata("getLiquidity(bytes32)", [pool.pool_id])
         (liquidity_val,) = cast(
@@ -388,13 +370,17 @@ class V4PoolBuilder:
             ),
         )
 
-        if pool.sqrt_price_x96 == price and pool.liquidity == liquidity_val and pool.tick == tick:
+        if (
+            pool.sqrt_price_x96 == slot0_data.sqrt_price_x96
+            and pool.liquidity == liquidity_val
+            and pool.tick == slot0_data.tick
+        ):
             return False
 
         update = UniswapV4PoolExternalUpdate(
             block_number=block_number_,
-            sqrt_price_x96=price,
-            tick=tick,
+            sqrt_price_x96=slot0_data.sqrt_price_x96,
+            tick=slot0_data.tick,
             liquidity=liquidity_val,
         )
         pool.external_update(update)
