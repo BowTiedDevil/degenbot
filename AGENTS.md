@@ -264,7 +264,7 @@ Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` f
 
 ## Architecture Plans
 
-Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–051 are all complete except 048 (active). The only other active plan is 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
+Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–062 are all complete except 048 (active). The other active plans are 014 (Async REPL), 060 (Unify Builder Orchestration), and the arbitrage optimizer project. See `plans/README.md` for the full list.
 
 **New plans must follow [`plans/TEMPLATE.md`](plans/TEMPLATE.md).** The template requires: deletion test, specific friction table, vertical slices, design decisions, relationship to other plans, and status checklist.
 

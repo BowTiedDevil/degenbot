@@ -104,7 +104,7 @@ print(f"Output: {amount_out}")
 
 ### Direct Pool Construction (Advanced)
 
-Pool classes cannot be constructed from an address alone — all state must be provided as keyword arguments. Use `Bot.build_pool()` or the typed `build_*` methods instead:
+Pool classes cannot be constructed from an address alone — all state must be provided as keyword arguments. Use `Bot.build_pool()` instead:
 
 ```python
 # Do NOT do this — will raise AttributeError:
@@ -936,23 +936,23 @@ pool = bot.build_pool(
 
 <!-- skip: end -->
 
-### Typed Pool Builders
+### Pool Construction by Type
 
 ```python
-# V2 pool factory
+# V2 pool (auto-detected from factory)
 pool = bot.build_pool(
     "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc",
     chain_id=1,
     state_block=18900000,  # Optional, defaults to current block
 )
 
-# V3 pool factory
+# V3 pool (auto-detected from factory)
 pool = bot.build_pool(
     "0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8",
     chain_id=1,
 )
 
-# Curve pool factory
+# Curve pool (auto-detected from on-chain probing)
 pool = bot.build_pool(
     "0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7",
     chain_id=1,
@@ -962,7 +962,7 @@ pool = bot.build_pool(
 <!-- skip: start "requires Base chain RPC node" -->
 
 ```python
-# V4 pool factory (singleton architecture with pool_id)
+# V4 pool (singleton architecture with pool_id)
 pool = bot.build_pool(
     pool_id="0x...",
     pool_manager_address="0x...",
@@ -1359,6 +1359,8 @@ Each module has a `CONTEXT.md` defining domain terminology:
 - [Arbitrage](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Solver, Optimizer, Hop State
 - [Registries](src/degenbot/registry/CONTEXT.md) — Pool, Token, Managed Pool registries
 - [Connection](src/degenbot/connection/CONTEXT.md) — Provider management, RPC routing
+- [Chainlink](src/degenbot/chainlink/CONTEXT.md) — price feeds, aggregators, round data
+- [Builders](src/degenbot/builders/CONTEXT.md) — pool builders, PoolIO seam, BuilderContext, PoolBuilder/AsyncPoolBuilder protocols
 - [Context Map](CONTEXT-MAP.md) — Cross-module relationships and ambiguity rulings
 
 ## Contributing
