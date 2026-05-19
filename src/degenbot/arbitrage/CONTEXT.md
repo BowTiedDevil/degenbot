@@ -53,7 +53,7 @@
 
 **Ruling: **Solver** = single-path input optimization. **Optimizer** = multi-path coordination. Never substitute.**
 
-The codebase enforces this hierarchy: `Solver` / `SolverProtocol` receives a sequence of **Hop States** and returns a result for one path. `ArbitrageOptimizer` coordinates across multiple paths, calling Solvers internally. An Optimizer decides *which* path is best; a Solver decides *how much* to input on a given path.
+The codebase enforces this hierarchy: `Solver` / `SolverProtocol` receives a sequence of **Hop States** and returns a result for one path. An **Optimizer** coordinates across multiple paths, calling Solvers internally. An Optimizer decides *which* path is best; a Solver decides *how much* to input on a given path.
 
 - ✅ "The **Mobius Solver** found an optimal **Input Amount** of 5 ETH for this path"
 - ✅ "The **Optimizer** compared 12 paths and selected the best one"

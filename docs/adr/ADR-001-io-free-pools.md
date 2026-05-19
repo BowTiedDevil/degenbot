@@ -127,6 +127,11 @@ class CurveDataProvider(Protocol):
 - V2 variant builders extracted from `V2PoolBuilder` into per-variant builders (Plan 043)
 - `ProviderBackend` protocol replaces `EthereumProvider` + `_SyncProviderBackend` mirror (Plan 042)
 - DyCalculator `pool` parameter replaced with `DyCalculationInputs` frozen dataclass; 77 SLF001 errors → 0; calculators are pure consumers of pre-resolved data (Plan 045)
+- Old optimizer hierarchy deleted: `ArbitrageOptimizer` ABC, `OptimizerResult`/`OptimizerType`, and 7 concrete classes removed (zero production callers); pure Möbius math extracted to `_mobius_math.py` (Plan 053)
+- Curve on-chain caches consolidated: 10 individual `BoundedCache` fields → single `CurveOnChainCache` object (Plan 054)
+- Deprecated `*Fetcher` protocol classes deleted from `curve/types.py`; superseded by `CurveDataProvider` (Plan 055)
+- Strategy enum factory methods: `make_calculator()` on `SwapStyle`/`MetapoolRateStyle`/`MetapoolUnderlyingStyle`; `PoolStrategies` auto-constructs calculators from enum values (Plan 056)
+- Calculation-time I/O boundary documented: `_build_calculation_inputs` → `_resolve_calculation_inputs_via_io`, `requires_io_at_calculation_time` property (Plan 057)
 
 ## Testing Patterns
 

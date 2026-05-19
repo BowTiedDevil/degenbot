@@ -100,7 +100,7 @@ Identifies which `_stored_rates_from_*()` method provides lending rates.
 | `RETH` | rETH oracle rates |
 | `ORACLE` | Oracle-based rates |
 
-Strategy resolution is done by `resolve_pool_strategies()` in `_pool_strategies.py`, which combines the address→strategy mapping with variant group resolution. The `PoolStrategies` dataclass is frozen (immutable after creation) and picklable (contains only enums).
+Strategy resolution is done by `resolve_pool_strategies()` in `_pool_strategies.py`, which combines the address→strategy mapping with variant group resolution. The `PoolStrategies` dataclass is frozen (immutable after creation) and picklable. Calculators are auto-constructed from enum values in `__post_init__` via each enum's `make_calculator()` factory method; explicitly-passed calculator arguments are preserved.
 
 ## Crypto Pool Internals
 

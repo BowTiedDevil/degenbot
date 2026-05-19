@@ -78,7 +78,7 @@
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|
 | **DataProvider** | A protocol (e.g., `CurveDataProvider`) injected at pool construction that provides on-chain data on-demand via named methods | Data provider, fetcher |
-| **Provider Method** | A single method on a DataProvider (e.g., `CurveDataProvider.D()`) called lazily when data is needed | Fetcher callback |
+| **Provider Method** | A single method on a DataProvider (e.g., `CurveDataProvider.D()`) called lazily when data is needed | — |
 | **PoolFamily** | An enum identifying a pool's mathematical invariant family for type resolution: `CONSTANT_PRODUCT`, `CONCENTRATED_LIQUIDITY`, `STABLESWAP`, `WEIGHTED` | Pool family (lowercase) |
 | **CacheablePool** | A protocol for pools that register with the Rust solver cache, requiring `reserves_for_cache()` and `fee_for_cache()` methods | Cacheable adapter |
 | **V4PoolKey** | A frozen dataclass carrying the V4 pool identification struct (currency0, currency1, fee, tick_spacing, hooks) | Pool key, V4 key |

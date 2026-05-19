@@ -31,20 +31,20 @@ class OldStylePool:
 
 ```python
 class IoFreePool:
-    def __init__(self, address, rate_fetcher: RateFetcher):
+    def __init__(self, address, data_provider: CurveDataProvider | None = None):
         self.address = address
-        self._rate_fetcher = rate_fetcher  # Injected callback
+        self._data_provider = data_provider  # Injected seam
     
     def get_rate(self, block_number):
-        # Pure call: no I/O knowledge, just delegates to callback
-        return self._rate_fetcher(block_number)
+        # Pure delegation: pool doesn't know about providers
+        return self._data_provider.lending_rate(block_number, token_address)
 ```
 
 **Benefits:**
-1. **Testability**: Pass a lambda/fake function; no mocking needed
-2. **Clean separation**: Pool logic is pure; I/O lives in callbacks
-3. **Flexibility**: Fetchers can be sync or async; caller decides
-4. **Serialization**: Fetchers are just callables (or None); easy to pickle
+1. **Testability**: Pass `FakeCurveDataProvider` with fixed return values; no mocking needed
+2. **Clean separation**: Pool logic is pure; I/O lives in data provider implementations
+3. **Flexibility**: Data providers can be sync or async; caller decides
+4. **Serialization**: Data provider is dropped on pickle, reconstructed on unpickle via builder
 
 ## Architecture
 
@@ -110,9 +110,12 @@ The builder creates a `_CurveDataProviderImpl` via the fetcher factory:
 
 ```python
 def build(self, pool_address):
-    # Create data provider (wraps all 13 fetcher closures into a single object)
-    fetchers = CurveFetcherFactory(connections=self._connections, chain_id=chain_id)
-    data_provider = fetchers.create_provider(pool_address)
+    # Create data provider (structured class, not closure factory)
+    data_provider = CurveDataProviderImpl(
+        provider=ProviderAdapter(...),
+        pool_address=pool_address,
+        ...,
+    )
     
     # Inject single data_provider into pool
     return CurveStableswapPool(
@@ -142,6 +145,12 @@ def build(self, pool_address):
 - **Legacy arbitrage cycles** — moved to `_legacy/` with deprecation warnings; `AbstractArbitrage` and `get_arbitrage_helpers()` deleted (Plan 038)
 - **Bot typed builders deprecated** — `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool` emit `DeprecationWarning`; use `build_pool()` (Plan 044)
 - **Functions module** — `functions.py` split into domain-aligned modules: `provider/call_helpers.py`, `provider/log_fetching.py`, `contract/addresses.py`, `calculations/evm_math.py`, `provider/block_helpers.py`; `eip_191_hash` deleted as dead code (Plan 037)
+- **CurveDataProviderImpl** — 850-line closure bag (`CurveFetcherFactory`) replaced by structured `CurveDataProviderImpl` (~350 lines) with real methods and shared I/O helpers (Plan 049)
+- **Curve on-chain cache** — 10 individual `BoundedCache` fields consolidated into single `CurveOnChainCache` object with try-cache→call-provider→store→return pattern; pool class 1160→988 lines (Plan 054)
+- **Deprecated fetcher protocols** — 8 deprecated `*Fetcher` protocol classes deleted from `curve/types.py`; superseded by `CurveDataProvider` (Plan 055)
+- **Strategy enum factory methods** — `make_calculator()` on `SwapStyle`, `MetapoolRateStyle`, `MetapoolUnderlyingStyle`; `PoolStrategies` auto-constructs calculators from enum values (Plan 056)
+- **Calculation-time I/O** — `_build_calculation_inputs` → `_resolve_calculation_inputs_via_io`, `requires_io_at_calculation_time` property, ADR-001 amended with construction-time vs calculation-time I/O table (Plan 057)
+- **Old optimizer hierarchy** — `ArbitrageOptimizer` ABC, `OptimizerResult`/`OptimizerType`, and 7 concrete classes deleted (zero production callers); pure Möbius math extracted to `_mobius_math.py` (Plan 053)
 
 ## Migration Guide
 
@@ -200,11 +209,14 @@ class V2PoolBuilder:
             # No provider reference passed to pool
         )
 
-# Curve construction: builder creates data_provider, injects into pool
+# Curve construction: builder creates CurveDataProviderImpl, injects into pool
 class CurvePoolBuilder:
     def build(self, address, *, chain_id, ...):
-        fetchers = CurveFetcherFactory(connections=self._connections, chain_id=chain_id)
-        data_provider = fetchers.create_provider(pool_address)  # Single seam
+        data_provider = CurveDataProviderImpl(
+            provider=ProviderAdapter(...),
+            pool_address=address,
+            ...,
+        )
         pool = CurveStableswapPool(
             ...,
             data_provider=data_provider,  # Single parameter replaces 13 fetcher callbacks
@@ -309,6 +321,10 @@ Curve pools use a **CurveDataProvider** seam — a single `@runtime_checkable` p
 
 Calculators receive a **DyCalculationInputs** frozen dataclass instead of the pool object. The pool's `get_dy()` performs all I/O (rate resolution, cache lookups, block data, invariant solver closure construction) before constructing a `DyCalculationInputs` and passing it to the calculator. This eliminates all private member access from calculators — they are pure math consumers of pre-resolved data (Plan 045).
 
+On-chain data caches are consolidated into a single **CurveOnChainCache** object that owns all per-block `BoundedCache` instances and provides accessor methods with the try-cache→call-provider→store→return pattern (Plan 054). The pool class no longer has 10 individual cache fields.
+
+Each strategy enum (`SwapStyle`, `MetapoolRateStyle`, `MetapoolUnderlyingStyle`) has a **`make_calculator()`** factory method that returns the matching `DyCalculator` instance. `PoolStrategies` auto-constructs calculators from enum values in `__post_init__` via these factory methods; explicitly-passed calculator arguments are preserved (Plan 056).
+
 | Method | Purpose | When Needed |
 |--------|---------|-------------|
 | `D()` | On-chain invariant D value | Crypto pools |
@@ -349,4 +365,4 @@ Pools participating in the Rust solver cache implement the `CacheablePool` proto
 
 ---
 
-*Last updated: 2026-05-16*
+*Last updated: 2026-05-19*
