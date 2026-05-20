@@ -5,7 +5,8 @@ import pickle
 import pytest
 
 from degenbot.curve._pool_strategies import resolve_pool_strategies
-from degenbot.curve.calculators.standard import StandardDyCalculator
+from degenbot.curve.calculators.crypto import CryptoDyCalculator
+from degenbot.curve.calculators.standard import RateAdjustedDyCalculator, StandardDyCalculator
 from degenbot.curve.types import (
     DVariant,
     LendingRateStyle,
@@ -172,8 +173,6 @@ class TestPoolStrategiesDataclass:
 
     def test_calculators_match_swap_style(self):
         """Calculator type matches the swap_style enum value."""
-        from degenbot.curve.calculators.crypto import CryptoDyCalculator
-        from degenbot.curve.calculators.standard import RateAdjustedDyCalculator, StandardDyCalculator
 
         assert isinstance(PoolStrategies().dy_calculator, StandardDyCalculator)
         assert isinstance(
@@ -186,7 +185,6 @@ class TestPoolStrategiesDataclass:
 
     def test_explicit_calculator_overrides_auto(self):
         """Explicit calculator arg is preserved, not overwritten by __post_init__."""
-        from degenbot.curve.calculators.standard import StandardDyCalculator
 
         explicit = StandardDyCalculator()
         s = PoolStrategies(swap_style=SwapStyle.CRYPTO, dy_calculator=explicit)

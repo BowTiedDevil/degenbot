@@ -10,7 +10,6 @@ import time
 from dataclasses import dataclass
 
 import pytest
-
 from degenbot.arbitrage.optimizers.chain_rule import (
     PoolState as ChainPoolState,
 )

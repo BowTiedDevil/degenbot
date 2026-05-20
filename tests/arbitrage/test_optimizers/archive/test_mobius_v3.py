@@ -11,7 +11,6 @@ Verifies that:
 """
 
 import pytest
-
 from degenbot.arbitrage.optimizers.mobius import (
     MobiusFloatHop,
     MobiusOptimizer,
@@ -21,6 +20,7 @@ from degenbot.arbitrage.optimizers.mobius import (
     mobius_solve,
     simulate_path,
 )
+
 from degenbot.arbitrage.optimizers.v3_tick_predictor import tick_to_sqrt_price
 from degenbot.exceptions.arbitrage import OptimizationError
 

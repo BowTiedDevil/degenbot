@@ -6,7 +6,6 @@ correct outputs from known inputs, independent of I/O.
 """
 
 import eth_abi.abi
-import pytest
 
 from degenbot.builders.v3_builder_base import (
     V3BuilderBase,
@@ -16,7 +15,6 @@ from degenbot.builders.v3_builder_base import (
 )
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-
 
 # --- decode_immutable_data ---
 

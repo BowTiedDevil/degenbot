@@ -3,12 +3,14 @@ from typing import TYPE_CHECKING, cast
 
 import tenacity
 from ujson import loads as ujson_loads
-from web3 import JSONBaseProvider
 from web3.types import RPCResponse
 
 from degenbot.exceptions import DegenbotValueError
 from degenbot.provider import AsyncProviderAdapter
 from degenbot.types.aliases import ChainId
+
+if TYPE_CHECKING:
+    from web3 import JSONBaseProvider
 
 
 def _fast_decode_rpc_response(raw_response: bytes) -> RPCResponse:

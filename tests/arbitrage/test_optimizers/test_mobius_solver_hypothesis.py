@@ -65,7 +65,6 @@ def hop_from_def(pd: PoolDef) -> MobiusFloatHop:
     )
 
 
-
 def make_n_pool_path(
     n: int, profit_factor: float = 1.1, base_reserve: float = 1_000_000.0, fee: float = 0.003
 ) -> list[PoolDef]:
