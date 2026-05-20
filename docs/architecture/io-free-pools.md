@@ -151,6 +151,7 @@ def build(self, pool_address):
 - **Strategy enum factory methods** — `make_calculator()` on `SwapStyle`, `MetapoolRateStyle`, `MetapoolUnderlyingStyle`; `PoolStrategies` auto-constructs calculators from enum values (Plan 056)
 - **Calculation-time I/O** — `_build_calculation_inputs` → `_resolve_calculation_inputs_via_io`, `requires_io_at_calculation_time` property, ADR-001 amended with construction-time vs calculation-time I/O table (Plan 057)
 - **Old optimizer hierarchy** — `ArbitrageOptimizer` ABC, `OptimizerResult`/`OptimizerType`, and 7 concrete classes deleted (zero production callers); pure Möbius math extracted to `_mobius_math.py` (Plan 053)
+- **Rust extension GIL discipline & allocation reduction** — removed `py.detach()` from sub-μs functions (tick math, address utils); two-level `CachedAbiTypes` intern (string `Arc<str>` interner + `Arc<CachedAbiTypes>` value return + `Arc<[Arc<str>]>` key); `Arc`-shared `LogFilter` fields; `IntHopState` pre-converted U512 fields; `PyPoolCache` with `parking_lot::Mutex<LruCache>` (10K cap) replacing unbounded `HashMap`; subscription `drain_raw()` for pure-Rust buffer mechanics; concurrency stress tests; `f64_to_u256` 4-limb decomposition fix; criterion benchmarks for ABI decode/encode and Möbius solver (Plan 063)
 
 ## Migration Guide
 
@@ -365,4 +366,4 @@ Pools participating in the Rust solver cache implement the `CacheablePool` proto
 
 ---
 
-*Last updated: 2026-05-19*
+*Last updated: 2026-05-20*

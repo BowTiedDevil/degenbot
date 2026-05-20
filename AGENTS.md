@@ -272,7 +272,7 @@ Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` f
 
 ## Architecture Plans
 
-Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–062 are all complete. The only active plans are 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
+Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–063 are all complete. The only active plans are 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
 
 **New plans must follow [`plans/TEMPLATE.md`](plans/TEMPLATE.md).** The template requires: deletion test, specific friction table, vertical slices, design decisions, relationship to other plans, and status checklist.
 
@@ -308,3 +308,38 @@ The legacy cycle classes (`UniswapLpCycle`, `UniswapCurveCycle`, etc.) have been
 
 ### Porting to Python
 - Solidity contracts requires explicit integer division to match the EVM. The Python `//` operator is equivalent to the Solidity `/` operator.
+
+## Rust Extension
+
+The Rust extension (`rust/`) provides PyO3-wrapped ABI encoding/decoding, subscription handling, and Möbius solver integration. See `rust/CONTEXT.md` for full domain terminology.
+
+### GIL Discipline
+
+- **Hold the GIL** for sub-μs pure-compute functions (tick math, address utils). GIL release/reacquire overhead (~200ns) exceeds compute time (~20ns), so `py.detach()` is a net slowdown.
+- **Release the GIL** for I/O-bound operations (`py.detach()` before `block_on()` in async provider and subscription code). All `Python::attach()` call sites have `// SAFETY` comments documenting the no-circular-wait contract.
+- **Free-threaded Python 3.14+**: `RefCell` is unsafe under free-threaded builds; use `Mutex` for interior mutability.
+
+### ABI Type Cache
+
+`CachedAbiTypes` uses two-level interning to eliminate heap allocations on cache hits:
+1. **String interner** (`TYPE_STR_INTERNER`) deduplicates the ~20 Solidity type strings → `Arc<str>`
+2. **Value `Arc<CachedAbiTypes>`** — cache returns `Arc::clone` (O(1)) instead of deep-cloning the `DynSolType` tree
+3. **Key type** — `TypeCacheKey = Arc<[Arc<str>]>` for cheap comparison and `Borrow` compatibility
+
+`FunctionSignature` stores `Option<Arc<CachedAbiTypes>>` to avoid deep clones when cloning signatures.
+
+### Optimizer Cache
+
+`PyPoolCache` uses `parking_lot::Mutex<LruCache<u64, IntHopState>>` (10K capacity) instead of `HashMap` to bound memory in long-running processes. `IntHopState` pre-converts U256 fields to U512 at construction time, eliminating per-swap conversions.
+
+### Subscription Buffer
+
+`SubscriptionHandle` uses a double-buffer pattern with `drain_raw()` (pure Rust, no GIL) for GIL-free accumulation. The Python-facing `drain_buffer()` wraps it with `Python::attach()`.
+
+### Testing
+
+- **293 Rust tests**: 269 unit + 1 concurrency_stress + 14 integration + 9 doc-tests
+- **`auto-initialize` is the default Cargo feature** — simplifies test gating
+- **Proptests** use full U256 range with `arb_u256()` and sign-bit-concentrated strategies (`arb_u256_near_sign_bit()`)
+- **Strict clippy**: `-D clippy::unwrap_used`, `-D clippy::expect_used`, and more (see `just lint-rust`)
+- **Benchmarks**: `benches/address_utils.rs`, `benches/abi_decode.rs`, `benches/abi_encode.rs`, `benches/mobius_solver.rs`
