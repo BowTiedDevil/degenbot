@@ -7,7 +7,24 @@ on:
       - 'test-*'
 
 jobs:
+  validate-branch:
+    name: Verify tag is on main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check tag is on main
+        run: |
+          if ! git merge-base --is-ancestor ${{ github.sha }} origin/main; then
+            echo "Tag ${{ github.ref_name }} is not on main branch"
+            exit 1
+          fi
+          echo "Tag ${{ github.ref_name }} is on main branch"
+
   build-wheels:
+    needs: validate-branch
     name: Build wheels on ${{ matrix.os }} (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -58,6 +75,7 @@ jobs:
           path: dist/*.whl
 
   build-sdist:
+    needs: validate-branch
     name: Build source distribution
     runs-on: ubuntu-latest
     steps:
