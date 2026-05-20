@@ -138,8 +138,8 @@ impl IntoProviderError for RpcError<TransportErrorKind> {
 pub struct LogFilter {
     from_block: Option<u64>,
     to_block: Option<u64>,
-    addresses: Vec<Address>,
-    topics: Vec<Vec<B256>>,
+    addresses: Arc<[Address]>,
+    topics: Arc<[Vec<B256>]>,
 }
 
 impl LogFilter {
@@ -208,8 +208,8 @@ impl LogFilter {
         Ok(Self {
             from_block: Some(from_block),
             to_block: Some(to_block),
-            addresses: parsed_addresses,
-            topics: parsed_topics,
+            addresses: parsed_addresses.into(),
+            topics: parsed_topics.into(),
         })
     }
 
@@ -239,7 +239,7 @@ impl LogFilter {
         }
 
         if !self.addresses.is_empty() {
-            filter = filter.address(self.addresses.clone());
+            filter = filter.address(self.addresses.to_vec());
         }
 
         for (i, topic_list) in self.topics.iter().enumerate() {
@@ -922,8 +922,8 @@ impl LogFetcher {
                 let chunk_filter = LogFilter {
                     from_block: Some(chunk_start),
                     to_block: Some(chunk_end),
-                    addresses: base_filter.addresses.clone(),
-                    topics: base_filter.topics.clone(),
+                    addresses: Arc::clone(&base_filter.addresses),
+                    topics: Arc::clone(&base_filter.topics),
                 };
                 provider.get_logs(&chunk_filter).await
             });

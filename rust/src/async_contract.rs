@@ -135,12 +135,3 @@ impl PyAsyncContract {
         format!("{:#x}", self.contract.address())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[tokio::test]
-    async fn test_async_contract_creation() {
-        // This test verifies the async contract can be created
-        // Note: This would need a real RPC URL to test properly
-    }
-}

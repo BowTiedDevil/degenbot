@@ -1,7 +1,12 @@
 //! `PyO3` wrappers for Uniswap V3 tick math functions.
 //!
-//! Thin binding layer that extracts Python arguments, releases the GIL,
-//! calls the pure Rust core, and converts results back to Python types.
+//! Thin binding layer that extracts Python arguments, calls the pure Rust
+//! core, and converts results back to Python types.
+//!
+//! The GIL is held (not released) during computation because tick math
+//! operations take ~20ns — far less than the ~200ns GIL release/reacquire
+//! overhead. Releasing the GIL for sub-microsecond functions is a net
+//! slowdown.
 
 use alloy::primitives::aliases::U160;
 use pyo3::{exceptions::PyTypeError, exceptions::PyValueError, prelude::*, types::PyAny, PyTypeInfo};
@@ -80,7 +85,9 @@ fn extract_u160(obj: &Bound<'_, PyAny>) -> PyResult<U160> {
 /// ```
 #[pyfunction(signature = (tick))]
 pub fn get_sqrt_ratio_at_tick(py: Python<'_>, tick: i32) -> PyResult<Bound<'_, PyAny>> {
-    let result = py.detach(|| get_sqrt_ratio_at_tick_internal(tick))?;
+    // SAFETY: get_sqrt_ratio_at_tick_internal takes ~20ns — far less than
+    // the ~200ns GIL release/reacquire overhead. Holding the GIL is faster.
+    let result = get_sqrt_ratio_at_tick_internal(tick)?;
     // U160 is at most 160 bits, so it fits in U256
     let u256 = alloy::primitives::U256::from(result);
     alloy_py::u256_to_py(py, &u256)
@@ -117,8 +124,10 @@ pub fn get_sqrt_ratio_at_tick(py: Python<'_>, tick: i32) -> PyResult<Bound<'_, P
 /// tick = get_tick_at_sqrt_ratio(79228162514264337593543950336)
 /// ```
 #[pyfunction(signature = (sqrt_price_x96))]
-pub fn get_tick_at_sqrt_ratio(py: Python<'_>, sqrt_price_x96: &Bound<'_, PyAny>) -> PyResult<i32> {
+pub fn get_tick_at_sqrt_ratio(sqrt_price_x96: &Bound<'_, PyAny>) -> PyResult<i32> {
     let sqrt_price = extract_u160(sqrt_price_x96)?;
-    let tick = py.detach(|| get_tick_at_sqrt_ratio_internal(sqrt_price))?;
+    // SAFETY: get_tick_at_sqrt_ratio_internal takes ~20ns — far less than
+    // the ~200ns GIL release/reacquire overhead. Holding the GIL is faster.
+    let tick = get_tick_at_sqrt_ratio_internal(sqrt_price)?;
     Ok(tick.as_i32())
 }

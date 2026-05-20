@@ -668,7 +668,9 @@ impl PyArbSolver {
 // RustPoolCache — direct pool state to Rust solver
 // ==========================================================================
 
-use std::collections::HashMap;
+use lru::LruCache;
+use parking_lot::Mutex;
+use std::num::NonZeroUsize;
 
 /// Cached pool state for fast arbitrage solving by pool ID.
 ///
@@ -678,17 +680,27 @@ use std::collections::HashMap;
 ///
 /// The solve path becomes: `cache.solve([pool_id_0, pool_id_1])` —
 /// just two Python integers passed to Rust.
+///
+/// Uses LRU eviction (capacity 10,000) to prevent unbounded memory
+/// growth in long-running processes. `Mutex` is required because
+/// `LruCache::get()` takes `&mut self` (it updates LRU ordering on
+/// access), but `PyPoolCache::solve(&self, ...)` must remain `&self`
+/// (pyo3 convention). `Mutex` is safe under both GIL-enabled and
+/// free-threaded Python builds: the lock is uncontended in normal use
+/// (GIL-enabled: only one thread runs Python code at a time), and the
+/// solve path calls no Python code while holding the lock.
 #[pyclass(name = "RustPoolCache")]
 pub struct PyPoolCache {
-    pools: HashMap<u64, IntHopState>,
+    pools: Mutex<LruCache<u64, IntHopState>>,
 }
-
 #[pymethods]
 impl PyPoolCache {
     #[new]
     fn new() -> Self {
+        /// LRU capacity for the pool cache.
+        const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(10_000).unwrap(); // infallible for non-zero literal
         Self {
-            pools: HashMap::new(),
+            pools: Mutex::new(LruCache::new(CACHE_CAPACITY)),
         }
     }
 
@@ -709,7 +721,7 @@ impl PyPoolCache {
     ///     Fee denominator (e.g. 1000 for 0.3% fee). Must fit in u64.
     #[pyo3(signature = (pool_id, reserve_in, reserve_out, gamma_numer, fee_denom))]
     fn insert(
-        &mut self,
+        &self,
         pool_id: u64,
         reserve_in: &Bound<'_, PyAny>,
         reserve_out: &Bound<'_, PyAny>,
@@ -725,10 +737,9 @@ impl PyPoolCache {
             )));
         }
 
-        self.pools.insert(
-            pool_id,
-            IntHopState::new(r_in, r_out, gamma_numer, fee_denom),
-        );
+        self.pools
+            .lock()
+            .put(pool_id, IntHopState::new(r_in, r_out, gamma_numer, fee_denom));
         Ok(())
     }
 
@@ -741,8 +752,11 @@ impl PyPoolCache {
     ///
     /// Returns True if the pool was found and removed, False otherwise.
     #[pyo3(signature = (pool_id))]
-    fn remove(&mut self, pool_id: u64) -> bool {
-        self.pools.remove(&pool_id).is_some()
+    fn remove(&self, pool_id: u64) -> bool {
+        self.pools
+            .lock()
+            .pop(&pool_id)
+            .is_some()
     }
 
     /// Solve an arbitrage path using cached pool states.
@@ -781,14 +795,18 @@ impl PyPoolCache {
         let mut base_hops: Vec<HopState> = Vec::with_capacity(pool_ids.len());
 
         for &pool_id in &pool_ids {
-            let hop_state = self.pools.get(&pool_id).ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(format!(
-                    "Pool ID {pool_id} not found in cache"
-                ))
-            })?;
+            let hop_state = self
+                .pools
+                .lock()
+                .get(&pool_id)
+                .cloned()
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Pool ID {pool_id} not found in cache"
+                    ))
+                })?;
 
             int_hops.push(hop_state.clone());
-
             let r_in_f64 = u256_to_f64(hop_state.reserve_in);
             let r_out_f64 = u256_to_f64(hop_state.reserve_out);
             let fee_f64 = 1.0 - (hop_state.gamma_numer as f64 / hop_state.fee_denom as f64);
@@ -801,22 +819,27 @@ impl PyPoolCache {
     /// Check if a pool ID is in the cache.
     #[pyo3(signature = (pool_id))]
     fn contains(&self, pool_id: u64) -> bool {
-        self.pools.contains_key(&pool_id)
+        self.pools.lock().contains(&pool_id)
     }
 
     /// Number of pools in the cache.
     fn __len__(&self) -> usize {
-        self.pools.len()
+        self.pools.lock().len()
     }
 
     /// Check if the cache is empty.
     #[must_use]
     fn __bool__(&self) -> bool {
-        !self.pools.is_empty()
+        !self.pools.lock().is_empty()
     }
 
     fn __repr__(&self) -> String {
-        format!("RustPoolCache(pools={})", self.pools.len())
+        format!("RustPoolCache(pools={})", self.pools.lock().len())
+    }
+
+    /// Clear all pools from the cache.
+    fn clear(&self) {
+        self.pools.lock().clear();
     }
 }
 

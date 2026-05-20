@@ -38,7 +38,7 @@ thiserror = { version = "^2.0" }
 tokio = { version = "^1.50", features = ["rt-multi-thread", "time", "macros", "sync"] }
 
 [features]
-default = []
+default = ["auto-initialize"]
 extension-module = ["pyo3/extension-module"]
 auto-initialize = ["pyo3/auto-initialize"]
 
@@ -51,8 +51,29 @@ name = "tick_math"
 harness = false
 required-features = ["auto-initialize"]
 
+[[bench]]
+name = "address_utils"
+harness = false
+required-features = ["auto-initialize"]
+
+[[bench]]
+name = "abi_decode"
+harness = false
+
+[[bench]]
+name = "abi_encode"
+harness = false
+
+[[bench]]
+name = "mobius_solver"
+harness = false
+
 [[test]]
 name = "python_integration"
+required-features = ["auto-initialize"]
+
+[[test]]
+name = "concurrency_stress"
 required-features = ["auto-initialize"]
 
 [profile.release]

@@ -12,7 +12,7 @@ use crate::errors::AbiDecodeError;
 use lru::LruCache;
 use parking_lot::Mutex;
 use std::num::NonZeroUsize;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 // =============================================================================
 // Global type cache
@@ -22,9 +22,37 @@ use std::sync::LazyLock;
 #[allow(clippy::expect_used)]
 const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(10_000).expect("10_000 is non-zero");
 
+// =============================================================================
+// String interner (Level 1)
+// =============================================================================
+
+/// Interns individual Solidity type strings ("uint256", "address", etc.).
+/// ~20 entries, fixed set, no eviction needed.
+pub(crate) static TYPE_STR_INTERNER: LazyLock<Mutex<std::collections::HashMap<String, Arc<str>>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+/// Intern a type string: returns `Arc::clone` on hit, allocates on miss.
+fn intern_type_str(s: &str) -> Arc<str> {
+    let mut cache = TYPE_STR_INTERNER.lock();
+    if let Some(interned) = cache.get(s) {
+        return Arc::clone(interned);
+    }
+    let arc_str: Arc<str> = Arc::from(s);
+    cache.insert(s.to_string(), Arc::clone(&arc_str));
+    drop(cache);
+    arc_str
+}
+
+// =============================================================================
+// Type cache (Level 2)
+// =============================================================================
+
+/// Type alias for the type cache key: interned type strings.
+type TypeCacheKey = Arc<[Arc<str>]>;
+
 /// Global LRU cache for parsed ABI types.
-/// Key is the actual type strings (not a hash) to avoid collision risk.
-pub(crate) static TYPE_CACHE: LazyLock<Mutex<LruCache<Vec<String>, CachedAbiTypes>>> =
+/// Key is interned type strings; value is `Arc<CachedAbiTypes>` for cheap cloning.
+pub(crate) static TYPE_CACHE: LazyLock<Mutex<LruCache<TypeCacheKey, Arc<CachedAbiTypes>>>> =
     LazyLock::new(|| Mutex::new(LruCache::new(CACHE_CAPACITY)));
 
 /// Return the current number of entries in the type cache (test-only helper).
@@ -39,27 +67,42 @@ pub fn cache_clear() {
     TYPE_CACHE.lock().clear();
 }
 
+/// Global mutex to serialize tests that depend on the shared type cache.
+/// Callers must hold the lock for the duration of cache assertions.
+#[cfg(test)]
+static CACHE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Acquire the global cache-test mutex. Drop the guard to release.
+#[cfg(test)]
+#[allow(clippy::missing_panics_doc, clippy::unwrap_used)]
+pub fn cache_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    CACHE_TEST_MUTEX.lock().unwrap()
+}
+
 /// Get or create cached types for the given type strings.
 ///
 /// This function checks the global cache first, and only parses
 /// if the types haven't been seen before. Uses LRU eviction when cache is full.
 ///
 /// This is the single caching point for both encoding and decoding.
-/// The cache is keyed by the actual type strings (not a hash) to avoid collision risk.
+/// The cache is keyed by interned type strings to avoid collision risk.
+///
+/// Returns `Arc<CachedAbiTypes>` — cloning the Arc is O(1), avoiding
+/// deep-clone of the `DynSolType` tree on every cache hit.
 ///
 /// # Errors
 ///
 /// Returns `AbiDecodeError` if any type string is invalid.
-pub fn get_cached_types(types: &[&str]) -> Result<CachedAbiTypes, AbiDecodeError> {
-    let key: Vec<String> = types.iter().map(std::string::ToString::to_string).collect();
+pub fn get_cached_types(types: &[&str]) -> Result<Arc<CachedAbiTypes>, AbiDecodeError> {
+    let key: Arc<[Arc<str>]> = types.iter().map(|&s| intern_type_str(s)).collect();
 
     let mut cache = TYPE_CACHE.lock();
     if let Some(cached) = cache.get(&key) {
-        return Ok(cached.clone());
+        return Ok(Arc::clone(cached));
     }
 
-    let cached = CachedAbiTypes::new(types)?;
-    cache.put(key, cached.clone());
+    let cached = Arc::new(CachedAbiTypes::new(types)?);
+    cache.put(key, Arc::clone(&cached));
     drop(cache);
     Ok(cached)
 }
@@ -163,6 +206,9 @@ impl CachedAbiTypes {
     /// Use this when you already have `AbiType` instances
     /// (e.g., from `FunctionSignature::inputs`).
     ///
+    /// Returns `Arc<CachedAbiTypes>` — consistent with `get_cached_types`.
+    /// Cloning the Arc is O(1), avoiding deep-clone of the `DynSolType` tree.
+    ///
     /// # Arguments
     ///
     /// * `types` - Slice of `AbiType` values
@@ -170,7 +216,7 @@ impl CachedAbiTypes {
     /// # Errors
     ///
     /// Returns `AbiDecodeError` if conversion to alloy types fails.
-    pub fn from_abi_types(types: &[AbiType]) -> Result<Self, AbiDecodeError> {
+    pub fn from_abi_types(types: &[AbiType]) -> Result<Arc<Self>, AbiDecodeError> {
         if types.is_empty() {
             return Err(AbiDecodeError::EmptyTypesList);
         }
@@ -185,12 +231,12 @@ impl CachedAbiTypes {
 
         let tuple_type = alloy::dyn_abi::DynSolType::Tuple(alloy_types.clone());
 
-        Ok(Self {
+        Ok(Arc::new(Self {
             types: types.to_vec(),
             alloy_types,
             tuple_type,
             type_strings,
-        })
+        }))
     }
 
     /// Decode ABI-encoded data using cached types.

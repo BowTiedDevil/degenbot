@@ -20,6 +20,7 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | # | Plan | Summary |
 |---|------|---------|
 | 014 | [Async REPL](014-async-repl.md) | `python -m degenbot` with top-level `await`. |
+| 063 | [Rust GIL, Alloc, Testing](063-rust-gil-alloc-testing.md) | GIL discipline fixes, allocation reduction in ABI cache & optimizer, testing gaps. |
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
 
 ## Completed Plans

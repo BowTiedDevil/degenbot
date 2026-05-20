@@ -2,6 +2,13 @@
 //!
 //! Provides functions to convert Python objects to `serde_json::Value` for
 //! JSON-RPC requests. Used by both sync and async provider implementations.
+//!
+//! # GIL Safety
+//!
+//! `Python::attach()` calls in this module run on Tokio worker threads after
+//! async RPC calls complete. These may block briefly while the Python event
+//! loop or another Python thread holds the GIL. This cannot deadlock — see
+//! `async_provider.rs` module-level comment for the full reasoning.
 
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyList};

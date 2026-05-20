@@ -311,6 +311,7 @@ mod tests {
 
     use super::*;
     use alloy::primitives::{I256, U256};
+    use std::sync::Arc;
 
     #[test]
     fn test_decode_uint256_rust() {
@@ -645,45 +646,29 @@ mod tests {
 
     #[test]
     fn test_type_caching() {
-        use crate::abi_types::cached::{cache_clear, cache_len};
+        use crate::abi_types::cached::get_cached_types;
 
-        // Ensure cache starts empty
-        cache_clear();
+        // Two calls with the same key return the same Arc allocation
+        let cached1 = get_cached_types(&["uint256"]).unwrap();
+        let cached2 = get_cached_types(&["uint256"]).unwrap();
+        assert!(Arc::ptr_eq(&cached1, &cached2));
 
-        // First call should populate cache
-        let data = vec![0u8; 32];
-        let _result1 = decode_single_rust("uint256", &data).unwrap();
-        assert_eq!(cache_len(), 1);
-
-        // Second call should use cache (same key)
-        let _result2 = decode_single_rust("uint256", &data).unwrap();
-        assert_eq!(cache_len(), 1); // Still 1, not 2
-
-        // Different type should add to cache
-        let _result3 = decode_single_rust("address", &data).unwrap();
-        assert_eq!(cache_len(), 2);
+        // Different key returns a different Arc
+        let cached3 = get_cached_types(&["address"]).unwrap();
+        assert!(!Arc::ptr_eq(&cached1, &cached3));
     }
 
     #[test]
     fn test_type_caching_multiple_types() {
-        use crate::abi_types::cached::{cache_clear, cache_len};
+        use crate::abi_types::cached::get_cached_types;
 
-        cache_clear();
+        // Same multi-type key returns same Arc
+        let cached1 = get_cached_types(&["uint256", "bool"]).unwrap();
+        let cached2 = get_cached_types(&["uint256", "bool"]).unwrap();
+        assert!(Arc::ptr_eq(&cached1, &cached2));
 
-        let mut data = Vec::new();
-        data.extend(vec![0u8; 32]); // uint256
-        data.extend(vec![0u8; 32]); // bool
-
-        // First call with these types
-        let _result1 = decode_rust(&["uint256", "bool"], &data).unwrap();
-        assert_eq!(cache_len(), 1);
-
-        // Second call with same types should use cache
-        let _result2 = decode_rust(&["uint256", "bool"], &data).unwrap();
-        assert_eq!(cache_len(), 1);
-
-        // Different order is a different cache entry
-        let _result3 = decode_rust(&["bool", "uint256"], &data).unwrap();
-        assert_eq!(cache_len(), 2);
+        // Different order is a different key
+        let cached3 = get_cached_types(&["bool", "uint256"]).unwrap();
+        assert!(!Arc::ptr_eq(&cached1, &cached3));
     }
 }
