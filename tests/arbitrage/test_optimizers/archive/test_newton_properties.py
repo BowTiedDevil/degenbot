@@ -7,14 +7,13 @@ or too lenient.
 """
 
 import pytest
-from hypothesis import given, settings
-from hypothesis import strategies as st
-
 from degenbot.arbitrage.optimizers.newton import (
     DEFAULT_MAX_STEP_MULTIPLIER,
     v2_optimal_arbitrage_newton,
     v2_profit_gradient_and_hessian,
 )
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 
 class TestStepBound:

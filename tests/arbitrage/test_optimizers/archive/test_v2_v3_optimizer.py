@@ -6,7 +6,6 @@ import math
 from dataclasses import dataclass
 
 import pytest
-
 from degenbot.arbitrage.optimizers.v2_v3_optimizer import (
     V2PoolState,
     V2V3OptimizationResult,
@@ -20,6 +19,7 @@ from degenbot.arbitrage.optimizers.v2_v3_optimizer import (
     solve_v2_v3_single_range,
     sort_ranges_by_equilibrium_distance,
 )
+
 from degenbot.arbitrage.optimizers.v3_tick_predictor import (
     TickRange,
     tick_range_to_bounded_product,

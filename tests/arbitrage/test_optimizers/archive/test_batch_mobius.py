@@ -10,7 +10,6 @@ import time
 
 import numpy as np
 import pytest
-
 from degenbot.arbitrage.optimizers.base import OptimizerType
 from degenbot.arbitrage.optimizers.batch_mobius import (
     BatchMobiusOptimizer,

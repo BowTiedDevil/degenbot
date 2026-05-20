@@ -6,9 +6,9 @@ from fractions import Fraction
 
 import pytest
 
+from degenbot.arbitrage.optimizers._mobius_math import V3TickRangeHop, V3TickRangeSequence
 from degenbot.arbitrage.optimizers._v3_utils import _tick_range_cache
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, SolverMethod
-from degenbot.arbitrage.optimizers._mobius_math import V3TickRangeHop, V3TickRangeSequence
 from degenbot.arbitrage.optimizers.mobius_solver import MobiusSolver
 from degenbot.arbitrage.optimizers.solver import (
     ArbSolver,
