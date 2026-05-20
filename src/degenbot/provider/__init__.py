@@ -49,6 +49,7 @@ from degenbot.provider.offline_provider import (
 )
 from degenbot.provider.subscription import LogSubscriptionFilter, Subscription
 from degenbot.types.aliases import BlockNumber
+from degenbot.types.rpc_types import BlockData, LogData, TransactionData, TransactionReceiptData
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +161,7 @@ class AlloyProvider:
         """Get current gas price in wei."""
         return self._provider.get_gas_price()
 
-    def get_block(self, block_number: int) -> dict[str, Any] | None:
+    def get_block(self, block_number: int) -> BlockData | None:
         """Get a block by number.
 
         Returns:
@@ -215,7 +216,7 @@ class AlloyProvider:
         to_block: BlockNumber | None = None,
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[LogData]:
         """
         Fetch event logs with automatic retry and dynamic block sizing.
 
@@ -279,7 +280,7 @@ class AlloyProvider:
             raise ValueError(msg)
 
         # Call Rust provider's get_logs with keyword arguments
-        # The Rust provider now returns list[dict[str, Any]] with HexBytes for hex fields
+        # The Rust provider returns list[LogData] with HexBytes for hex fields
         return self._provider.get_logs(
             from_block=from_block_val,
             to_block=to_block_val,
@@ -287,7 +288,7 @@ class AlloyProvider:
             topics=topics_val,
         )
 
-    def get_transaction(self, tx_hash: str) -> dict[str, Any] | None:
+    def get_transaction(self, tx_hash: str) -> TransactionData | None:
         """Get a transaction by hash.
 
         Args:
@@ -299,7 +300,7 @@ class AlloyProvider:
         """
         return self._provider.get_transaction(tx_hash)
 
-    def get_transaction_receipt(self, tx_hash: str) -> dict[str, Any] | None:
+    def get_transaction_receipt(self, tx_hash: str) -> TransactionReceiptData | None:
         """Get a transaction receipt by hash.
 
         Args:

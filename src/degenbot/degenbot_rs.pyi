@@ -10,6 +10,17 @@ from typing import Any, Literal, overload
 
 from hexbytes import HexBytes
 
+from degenbot.types.rpc_types import (
+    BlockData,
+    LogData,
+    TransactionData,
+    TransactionReceiptData,
+)
+
+# ------------------------------------------------------------------
+# ABI encoding / decoding
+# ------------------------------------------------------------------
+
 def get_sqrt_ratio_at_tick(tick: int) -> int:
     """
     Convert a tick value to its corresponding sqrt price (X96 format).
@@ -36,7 +47,7 @@ def decode(
     types: list[str],
     data: bytes,
     checksum: bool = True,
-) -> list[Any]:
+) -> list[str | bool | int | bytes | list[Any]]:
     """
     Decode ABI-encoded data for multiple types.
 
@@ -166,7 +177,7 @@ def decode_single(
 
 def encode(
     types: list[str],
-    values: list[Any],
+    values: list[str | bool | int | bytes],
 ) -> bytes:
     """
     Encode multiple ABI values.
@@ -197,13 +208,13 @@ def encode_function_call(function_signature: str, args: list[str]) -> bytes:
         ValueError: If the signature or arguments are invalid
     """
 
-def encode_single(abi_type: str, value: Any) -> bytes:
+def encode_single(abi_type: str, value: str | bool | int | bytes) -> bytes:
     """
     Encode a single ABI value.
 
     Args:
         abi_type: ABI type string (e.g., "uint256", "address", "bytes")
-        value: Python value to encode (int, bool, str, bytes, or list)
+        value: Python value to encode
 
     Returns:
         The ABI-encoded bytes.
@@ -316,9 +327,9 @@ class AlloyProvider:
     def get_block_number(self) -> int: ...
     def get_chain_id(self) -> int: ...
     def get_gas_price(self) -> int: ...
-    def get_block(self, block_number: int) -> dict[str, Any] | None: ...
-    def get_transaction(self, tx_hash: str) -> dict[str, Any] | None: ...
-    def get_transaction_receipt(self, tx_hash: str) -> dict[str, Any] | None: ...
+    def get_block(self, block_number: int) -> BlockData | None: ...
+    def get_transaction(self, tx_hash: str) -> TransactionData | None: ...
+    def get_transaction_receipt(self, tx_hash: str) -> TransactionReceiptData | None: ...
     def get_logs(
         self,
         *,
@@ -326,7 +337,7 @@ class AlloyProvider:
         to_block: int,
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[LogData]: ...
     def call(
         self,
         to: str,
@@ -365,8 +376,8 @@ class AlloyProvider:
     def make_request(
         self,
         method: str,
-        params: list[Any],
-    ) -> Any: ...
+        params: list[str | bool | int | bytes | None],
+    ) -> str | bool | int | bytes | list[Any] | dict[str, Any] | None: ...
     def close(self) -> None: ...
     def subscribe_blocks(self) -> AlloySubscription: ...
     def subscribe_full_blocks(self) -> AlloySubscription: ...
@@ -397,11 +408,11 @@ class AsyncAlloyProvider:
     def get_block_number(self) -> Coroutine[Any, Any, int]: ...
     def get_chain_id(self) -> Coroutine[Any, Any, int]: ...
     def get_gas_price(self) -> Coroutine[Any, Any, int]: ...
-    def get_block(self, block_number: int) -> Coroutine[Any, Any, dict[str, Any] | None]: ...
-    def get_transaction(self, tx_hash: str) -> Coroutine[Any, Any, dict[str, Any] | None]: ...
+    def get_block(self, block_number: int) -> Coroutine[Any, Any, BlockData | None]: ...
+    def get_transaction(self, tx_hash: str) -> Coroutine[Any, Any, TransactionData | None]: ...
     def get_transaction_receipt(
         self, tx_hash: str
-    ) -> Coroutine[Any, Any, dict[str, Any] | None]: ...
+    ) -> Coroutine[Any, Any, TransactionReceiptData | None]: ...
     def get_logs(
         self,
         *,
@@ -409,7 +420,7 @@ class AsyncAlloyProvider:
         to_block: int,
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
-    ) -> Coroutine[Any, Any, list[dict[str, Any]]]: ...
+    ) -> Coroutine[Any, Any, list[LogData]]: ...
     def call(
         self,
         to: str,
@@ -448,8 +459,8 @@ class AsyncAlloyProvider:
     def make_request(
         self,
         method: str,
-        params: list[Any],
-    ) -> Coroutine[Any, Any, Any]: ...
+        params: list[str | bool | int | bytes | None],
+    ) -> Coroutine[Any, Any, str | bool | int | bytes | list[Any] | dict[str, Any] | None]: ...
     def close(self) -> None: ...
     def subscribe_blocks(self) -> AlloySubscription: ...
     def subscribe_full_blocks(self) -> AlloySubscription: ...
@@ -465,8 +476,8 @@ class AlloySubscription:
     """Python wrapper for a subscription from the Rust layer."""
 
     def __aiter__(self) -> AlloySubscription: ...
-    def __anext__(self) -> Coroutine[Any, Any, Any]: ...
-    def drain(self) -> list[Any]: ...
+    def __anext__(self) -> Coroutine[Any, Any, BlockData | LogData | str]: ...
+    def drain(self) -> list[BlockData | LogData | str]: ...
     async def started(self) -> None: ...
     def unsubscribe(self) -> None: ...
 
@@ -669,7 +680,9 @@ __all__ = [
     "AlloySubscription",
     "AsyncAlloyProvider",
     "AsyncContract",
+    "BlockData",
     "Contract",
+    "LogData",
     "LogFilter",
     "RustArbResult",
     "RustArbSolver",
@@ -679,6 +692,8 @@ __all__ = [
     "RustTickRangeCrossing",
     "RustV3TickRangeHop",
     "RustV3TickRangeSequence",
+    "TransactionData",
+    "TransactionReceiptData",
     "decode",
     "decode_return_data",
     "decode_single",
