@@ -3,6 +3,13 @@
 //! This module provides direct Python conversions for Alloy's `U256` and `I256`
 //! types without intermediate `num-bigint` allocations.
 //!
+//! # GIL Safety
+//!
+//! `Python::attach()` calls in this module run on Tokio worker threads after
+//! async RPC calls complete. These may block briefly while the Python event
+//! loop or another Python thread holds the GIL. This cannot deadlock — see
+//! `async_provider.rs` module-level comment for the full reasoning.
+//!
 //! It also provides `abi_value_from_python` for converting arbitrary Python
 //! objects into `AbiValue` enums for ABI encoding.
 //!

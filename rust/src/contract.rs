@@ -45,10 +45,10 @@ pub struct FunctionSignature {
     pub selector: [u8; 4],
     /// Pre-built cached types for encoding input arguments.
     /// `None` when inputs are empty (no encoding needed).
-    input_cache: Option<CachedAbiTypes>,
+    input_cache: Option<Arc<CachedAbiTypes>>,
     /// Pre-built cached types for decoding output values.
     /// `None` when outputs are empty (no decoding needed).
-    output_cache: Option<CachedAbiTypes>,
+    output_cache: Option<Arc<CachedAbiTypes>>,
 }
 
 impl FunctionSignature {
@@ -118,14 +118,14 @@ impl FunctionSignature {
     /// Get the pre-built input cache for encoding.
     /// Returns `None` when inputs are empty.
     #[must_use]
-    pub const fn input_cache(&self) -> Option<&CachedAbiTypes> {
+    pub const fn input_cache(&self) -> Option<&Arc<CachedAbiTypes>> {
         self.input_cache.as_ref()
     }
 
     /// Get the pre-built output cache for decoding.
     /// Returns `None` when outputs are empty.
     #[must_use]
-    pub const fn output_cache(&self) -> Option<&CachedAbiTypes> {
+    pub const fn output_cache(&self) -> Option<&Arc<CachedAbiTypes>> {
         self.output_cache.as_ref()
     }
 }
@@ -171,7 +171,7 @@ pub fn encode_arguments(types: &[AbiType], args: &[String]) -> ContractResult<By
 ///
 /// Returns `ContractError` if argument count mismatch or encoding fails.
 pub fn encode_arguments_cached(
-    cached: &CachedAbiTypes,
+    cached: &Arc<CachedAbiTypes>,
     types: &[AbiType],
     args: &[String],
 ) -> ContractResult<Bytes> {
@@ -234,7 +234,7 @@ pub fn decode_return_data(data: &[u8], types: &[AbiType]) -> ContractResult<Vec<
 /// Returns `ContractError` if decoding fails or if data is empty when return
 /// types are expected.
 pub fn decode_return_data_cached(
-    cached: &CachedAbiTypes,
+    cached: &Arc<CachedAbiTypes>,
     data: &[u8],
     types: &[AbiType],
 ) -> ContractResult<Vec<String>> {

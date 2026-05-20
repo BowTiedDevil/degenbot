@@ -2,6 +2,19 @@
 //!
 //! Provides a Python-facing async provider that wraps `AlloyProvider`
 //! methods for non-blocking Ethereum RPC operations via `PyO3`.
+//!
+//! # GIL Safety
+//!
+//! All `Python::attach()` calls in this module run on Tokio worker threads
+//! after the Rust RPC call completes. These may block briefly while the
+//! Python event loop or another Python thread holds the `GIL`. This cannot
+//! deadlock because:
+//! - Sync provider methods release the `GIL` via `py.detach()` before `block_on()`
+//! - The Python event loop periodically releases the `GIL` during I/O polling
+//! - `CPython`'s thread scheduler yields the `GIL` every check interval
+//!
+//! If attach fails because the interpreter is shutting down, `try_attach`
+//! returns None and we propagate a clear error.
 
 use crate::provider::{AlloyProvider, LogFetcher};
 use crate::provider_py::PyAlloyProvider;

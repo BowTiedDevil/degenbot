@@ -712,3 +712,103 @@ mod tests {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Property-based tests for parse_int256_with_hex_prefix
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod proptests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::tuple_array_conversions)]
+
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Generate a U256 that exercises the Int256 sign-bit boundary at 2^255.
+    /// Produces values concentrated near 0, near 2^255-1 (max positive),
+    /// near 2^255 (min negative), and near 2^256-1 (max U256).
+    fn arb_u256_near_sign_bit() -> impl Strategy<Value = U256> {
+        prop_oneof![
+            // Near zero
+            (any::<u64>()).prop_map(|lo| U256::from(lo)),
+            // Near 2^255 - 1: set top limb to 0x7FFF_FFFF_FFFF_FFFF, random lower limbs
+            (any::<u64>(), any::<u64>(), any::<u64>())
+                .prop_map(|(b, c, d)| U256::from_limbs([0x7FFF_FFFF_FFFF_FFFF, b, c, d])),
+            // Near 2^255: set top limb to 0x8000_0000_0000_0000, random lower limbs
+            (any::<u64>(), any::<u64>(), any::<u64>())
+                .prop_map(|(b, c, d)| U256::from_limbs([0x8000_0000_0000_0000, b, c, d])),
+            // Near U256::MAX
+            (any::<u64>(), any::<u64>(), any::<u64>())
+                .prop_map(|(b, c, d)| U256::from_limbs([0xFFFF_FFFF_FFFF_FFFF, b, c, d])),
+            // Fully random
+            (any::<u64>(), any::<u64>(), any::<u64>(), any::<u64>())
+                .prop_map(|(a, b, c, d)| U256::from_limbs([a, b, c, d])),
+        ]
+    }
+
+    proptest! {
+        /// Positive hex values at and just below the sign bit (2^255) parse or
+        /// are correctly rejected.
+        #[test]
+        fn int256_hex_sign_bit_boundary(v in arb_u256_near_sign_bit()) {
+            let hex = format!("0x{v:x}");
+            let result = parse_int256_with_hex_prefix(&hex);
+            let max_positive = (U256::from(1u8) << 255) - U256::from(1u8);
+            if v <= max_positive {
+                // Valid positive I256
+                let parsed = result.expect("valid positive should parse");
+                assert!(parsed >= I256::ZERO);
+                assert_eq!(I256::from_raw(v), parsed, "value mismatch");
+            } else if v == U256::from(1u8) << 255 {
+                // This is I256::MIN — only valid as negative, not positive
+                assert!(result.is_err(), "2^255 as positive should be rejected");
+            } else {
+                // Above sign bit — should be rejected as positive
+                assert!(result.is_err(), "overflow value should be rejected");
+            }
+        }
+
+        /// Negative hex values round-trip correctly, including near I256::MIN.
+        #[test]
+        fn int256_hex_negative_roundtrip(v in arb_u256_near_sign_bit()) {
+            // Treat v as the absolute value of a negative number
+            // and construct the hex string "-0x{abs:x}"
+            let min_abs = U256::from(1u8) << 255; // |I256::MIN| = 2^255
+            let _max_positive = min_abs - U256::from(1u8); // 2^255 - 1
+            let hex = format!("-0x{v:x}");
+            let result = parse_int256_with_hex_prefix(&hex);
+
+            match v.cmp(&min_abs) {
+                std::cmp::Ordering::Equal => {
+                    // Exact I256::MIN case
+                    let parsed = result.expect("I256::MIN should parse");
+                    assert_eq!(parsed, I256::MIN);
+                }
+                std::cmp::Ordering::Greater => {
+                    // |abs_val| exceeds I256 range
+                    assert!(result.is_err(), "overflow negative should be rejected");
+                }
+                std::cmp::Ordering::Less => {
+                    // Valid negative value: 1 <= abs_val <= max_positive
+                    let parsed = result.expect("valid negative should parse");
+                    assert!(parsed < I256::ZERO);
+                    // Round-trip: construct the I256 from raw bits and verify
+                    let expected = I256::from_raw(v).wrapping_neg();
+                    assert_eq!(parsed, expected);
+                }
+            }
+        }
+
+        /// Zero should parse correctly in all representations.
+        #[test]
+        fn int256_zero_variants(prefix in 0u8..3u8) {
+            let s = match prefix % 3 {
+                0 => "0x0",
+                1 => "0X0",
+                _ => "0",
+            };
+            let result = parse_int256_with_hex_prefix(s).unwrap();
+            assert_eq!(result, I256::ZERO);
+        }
+    }
+}

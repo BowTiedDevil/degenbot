@@ -93,6 +93,7 @@ impl SubscriptionHandle {
 // ---------------------------------------------------------------------------
 
 /// Raw items from subscription streams, before Python conversion.
+#[derive(Debug)]
 pub enum RawSubItem {
     /// A block header.
     Header(alloy::rpc::types::Header),
@@ -337,6 +338,20 @@ pub(crate) async fn pump_logs(
 // Bulk conversion: RawSubItem → Python objects (called with GIL held)
 // ---------------------------------------------------------------------------
 
+/// Result of draining the raw (pre-conversion) buffer.
+#[derive(Debug)]
+pub(crate) enum RawDrainResult {
+    /// Normal items.
+    Items(Vec<RawSubItem>),
+    /// The subscription ended cleanly. Contains items before the end marker.
+    Ended(Vec<RawSubItem>),
+    /// The subscription disconnected. Contains items before the disconnect.
+    Disconnected {
+        items: Vec<RawSubItem>,
+        message: String,
+    },
+}
+
 /// Result of draining a buffer and converting to Python objects.
 pub(crate) enum DrainResult {
     /// Normal items converted to Python objects.
@@ -386,42 +401,67 @@ fn convert_item(py: Python<'_>, item: RawSubItem) -> PyResult<Option<Py<PyAny>>>
     }
 }
 
-/// Drain the stale buffer and convert all items to Python objects.
-/// Called with the GIL held. Clears the signaled flag first, then swaps buffers.
-pub(crate) fn drain_buffer(handle: &SubscriptionHandle, py: Python<'_>) -> PyResult<DrainResult> {
-    // Clear signal BEFORE swapping — any new event arriving during drain
-    // will see signaled=false and send a fresh wake-up
-    handle.signaled.store(false, Ordering::Relaxed);
+impl SubscriptionHandle {
+    /// Drain the stale buffer, returning raw items without `PyO3` conversion.
+    /// Clears the signaled flag first, then swaps buffers.
+    ///
+    /// This is the pure-Rust core of [`drain_buffer`], separated so the
+    /// double-buffer mechanics can be unit-tested without a Python interpreter.
+    pub(crate) fn drain_raw(&self) -> RawDrainResult {
+        // Clear signal BEFORE swapping — any new event arriving during drain
+        // will see signaled=false and send a fresh wake-up
+        self.signaled.store(false, Ordering::Relaxed);
 
-    // Swap active buffer: what was active becomes stale (for us to drain),
-    // what was stale becomes active (for pump to write to)
-    let stale = handle.active.fetch_xor(1, Ordering::AcqRel);
+        // Swap active buffer: what was active becomes stale (for us to drain),
+        // what was stale becomes active (for pump to write to)
+        let stale = self.active.fetch_xor(1, Ordering::AcqRel);
 
-    // Take the stale buffer contents (leaves it empty for next cycle)
-    let items = std::mem::take(&mut *handle.buffers[stale].lock());
+        // Take the stale buffer contents (leaves it empty for next cycle)
+        let items = std::mem::take(&mut *self.buffers[stale].lock());
 
-    // Convert all items
-    let mut converted = Vec::with_capacity(items.len());
-    for item in items {
-        match item {
-            RawSubItem::End => {
-                return Ok(DrainResult::Ended(converted));
-            }
-            RawSubItem::Disconnected { message } => {
-                return Ok(DrainResult::Disconnected {
-                    items: converted,
-                    message,
-                });
-            }
-            other => {
-                if let Some(py_obj) = convert_item(py, other)? {
-                    converted.push(py_obj);
+        // Scan for terminal markers (End / Disconnected)
+        let mut before_marker = Vec::new();
+        for item in items {
+            match item {
+                RawSubItem::End => return RawDrainResult::Ended(before_marker),
+                RawSubItem::Disconnected { message } => {
+                    return RawDrainResult::Disconnected {
+                        items: before_marker,
+                        message,
+                    };
                 }
+                other => before_marker.push(other),
             }
         }
-    }
 
-    Ok(DrainResult::Items(converted))
+        RawDrainResult::Items(before_marker)
+    }
+}
+
+/// Drain the stale buffer and convert all items to Python objects.
+/// Called with the GIL held. Delegates buffer mechanics to [`SubscriptionHandle::drain_raw`].
+pub(crate) fn drain_buffer(handle: &SubscriptionHandle, py: Python<'_>) -> PyResult<DrainResult> {
+    let raw = handle.drain_raw();
+
+    // Convert raw items to Python objects
+    let convert_all = |items: Vec<RawSubItem>| -> PyResult<Vec<Py<PyAny>>> {
+        let mut converted = Vec::with_capacity(items.len());
+        for item in items {
+            if let Some(py_obj) = convert_item(py, item)? {
+                converted.push(py_obj);
+            }
+        }
+        Ok(converted)
+    };
+
+    match raw {
+        RawDrainResult::Items(items) => Ok(DrainResult::Items(convert_all(items)?)),
+        RawDrainResult::Ended(items) => Ok(DrainResult::Ended(convert_all(items)?)),
+        RawDrainResult::Disconnected { items, message } => Ok(DrainResult::Disconnected {
+            items: convert_all(items)?,
+            message,
+        }),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -497,5 +537,223 @@ impl AlloyProvider {
     pub fn subscribe_logs(&self, filter: Filter) -> Arc<SubscriptionHandle> {
         let provider = self.provider_arc();
         spawn_subscription_arc(move |handle| pump_logs(provider, filter, handle))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    /// Create a `SubscriptionHandle` with double-buffer infrastructure for testing.
+    /// No pump task is spawned — tests push items directly into buffers.
+    fn make_handle() -> Arc<SubscriptionHandle> {
+        let (notify_tx, notify_rx) = mpsc::channel(16);
+        let (start_notify_tx, start_notify_rx) = mpsc::channel(1);
+
+        Arc::new(SubscriptionHandle {
+            buffers: [
+                parking_lot::Mutex::new(Vec::new()),
+                parking_lot::Mutex::new(Vec::new()),
+            ],
+            active: AtomicUsize::new(0),
+            signaled: AtomicBool::new(false),
+            notify_tx,
+            notify_rx: parking_lot::Mutex::new(Some(notify_rx)),
+            task: parking_lot::Mutex::new(None),
+            unsubscribed: AtomicBool::new(false),
+            started: AtomicBool::new(true),
+            start_failed: AtomicBool::new(false),
+            start_error: parking_lot::Mutex::new(None),
+            start_notify_tx,
+            start_notify_rx: parking_lot::Mutex::new(Some(start_notify_rx)),
+        })
+    }
+
+    #[test]
+    fn test_drain_raw_empty_buffer_returns_items_empty() {
+        let handle = make_handle();
+        let result = handle.drain_raw();
+        match result {
+            RawDrainResult::Items(items) => assert!(items.is_empty()),
+            _ => panic!("Expected Items variant with empty vec"),
+        }
+    }
+
+    #[test]
+    fn test_drain_raw_header_returns_items() {
+        let handle = make_handle();
+
+        // Push a header into buffer[0] (the active buffer)
+        let header = alloy::rpc::types::Header::default();
+        handle.buffers[0].lock().push(RawSubItem::Header(header));
+
+        let result = handle.drain_raw();
+        match result {
+            RawDrainResult::Items(items) => {
+                assert_eq!(items.len(), 1);
+                assert!(matches!(items[0], RawSubItem::Header(_)));
+            }
+            _ => panic!("Expected Items variant"),
+        }
+    }
+
+    #[test]
+    fn test_drain_raw_log_returns_items() {
+        let handle = make_handle();
+
+        let log = alloy::rpc::types::Log::default();
+        handle.buffers[0].lock().push(RawSubItem::Log(log));
+
+        let result = handle.drain_raw();
+        match result {
+            RawDrainResult::Items(items) => {
+                assert_eq!(items.len(), 1);
+                assert!(matches!(items[0], RawSubItem::Log(_)));
+            }
+            _ => panic!("Expected Items variant"),
+        }
+    }
+
+    #[test]
+    fn test_drain_raw_end_marker_returns_ended() {
+        let handle = make_handle();
+
+        // Push a header then an End marker
+        let header = alloy::rpc::types::Header::default();
+        handle.buffers[0].lock().push(RawSubItem::Header(header));
+        handle.buffers[0].lock().push(RawSubItem::End);
+
+        let result = handle.drain_raw();
+        match result {
+            RawDrainResult::Ended(items) => {
+                // Only the header; End is consumed by drain_raw
+                assert_eq!(items.len(), 1);
+                assert!(matches!(items[0], RawSubItem::Header(_)));
+            }
+            _ => panic!("Expected Ended variant"),
+        }
+    }
+
+    #[test]
+    fn test_drain_raw_disconnected_returns_disconnected() {
+        let handle = make_handle();
+
+        // Push a header then a Disconnected marker
+        let header = alloy::rpc::types::Header::default();
+        handle.buffers[0].lock().push(RawSubItem::Header(header));
+        handle.buffers[0].lock().push(RawSubItem::Disconnected {
+            message: "connection lost".to_string(),
+        });
+
+        let result = handle.drain_raw();
+        match result {
+            RawDrainResult::Disconnected { items, message } => {
+                assert_eq!(items.len(), 1);
+                assert_eq!(message, "connection lost");
+            }
+            _ => panic!("Expected Disconnected variant"),
+        }
+    }
+
+    #[test]
+    fn test_drain_raw_double_buffer_swap_isolates_reads_from_writes() {
+        let handle = make_handle();
+
+        // Write to buffer[0] (active=0)
+        let header1 = alloy::rpc::types::Header::default();
+        handle.buffers[0].lock().push(RawSubItem::Header(header1));
+
+        // First drain: swaps active to 1, drains buffer[0]
+        let result1 = handle.drain_raw();
+        match result1 {
+            RawDrainResult::Items(items) => assert_eq!(items.len(), 1),
+            _ => panic!("Expected Items"),
+        }
+        assert_eq!(handle.active.load(Ordering::Relaxed), 1);
+
+        // Write to buffer[1] (now active=1)
+        let header2 = alloy::rpc::types::Header::default();
+        handle.buffers[1].lock().push(RawSubItem::Header(header2));
+
+        // Second drain: swaps active to 0, drains buffer[1]
+        let result2 = handle.drain_raw();
+        match result2 {
+            RawDrainResult::Items(items) => assert_eq!(items.len(), 1),
+            _ => panic!("Expected Items"),
+        }
+        assert_eq!(handle.active.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_drain_raw_clears_signaled_flag() {
+        let handle = make_handle();
+        handle.signaled.store(true, Ordering::Relaxed);
+
+        let _ = handle.drain_raw();
+
+        assert!(!handle.signaled.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_drain_raw_buffer_is_empty_after_drain() {
+        let handle = make_handle();
+
+        let header = alloy::rpc::types::Header::default();
+        handle.buffers[0].lock().push(RawSubItem::Header(header));
+
+        let _ = handle.drain_raw();
+
+        // The drained buffer (was 0, now stale after swap) must be empty
+        assert!(handle.buffers[0].lock().is_empty());
+    }
+
+    #[test]
+    fn test_drain_raw_multiple_items_before_end() {
+        let handle = make_handle();
+
+        let header = alloy::rpc::types::Header::default();
+        let log = alloy::rpc::types::Log::default();
+        handle.buffers[0].lock().push(RawSubItem::Header(header));
+        handle.buffers[0].lock().push(RawSubItem::Log(log));
+        handle.buffers[0].lock().push(RawSubItem::End);
+
+        let result = handle.drain_raw();
+        match result {
+            RawDrainResult::Ended(items) => {
+                assert_eq!(items.len(), 2);
+                assert!(matches!(items[0], RawSubItem::Header(_)));
+                assert!(matches!(items[1], RawSubItem::Log(_)));
+            }
+            _ => panic!("Expected Ended variant"),
+        }
+    }
+
+    #[test]
+    fn test_drain_raw_disconnected_ignores_trailing_items() {
+        let handle = make_handle();
+
+        let header = alloy::rpc::types::Header::default();
+        let log = alloy::rpc::types::Log::default();
+        handle.buffers[0].lock().push(RawSubItem::Header(header));
+        handle.buffers[0].lock().push(RawSubItem::Disconnected {
+            message: "fail".to_string(),
+        });
+        // Items after Disconnected are unreachable — drain stops at the marker
+        handle.buffers[0].lock().push(RawSubItem::Log(log));
+
+        let result = handle.drain_raw();
+        match result {
+            RawDrainResult::Disconnected { items, message } => {
+                assert_eq!(items.len(), 1); // Only the header before the marker
+                assert_eq!(message, "fail");
+            }
+            _ => panic!("Expected Disconnected variant"),
+        }
     }
 }

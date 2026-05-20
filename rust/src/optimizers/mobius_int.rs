@@ -56,12 +56,23 @@ pub struct IntHopState {
     pub gamma_numer: u64,
     /// Fee denominator (e.g. 1000 for 0.3% fee).
     pub fee_denom: u64,
+    /// Pre-converted U512 reserve_in for swap hot path.
+    reserve_in_u512: U512,
+    /// Pre-converted U512 reserve_out for swap hot path.
+    reserve_out_u512: U512,
+    /// Pre-converted U512 gamma_numer for swap hot path.
+    gamma_numer_u512: U512,
+    /// Pre-converted U512 fee_denom for swap hot path.
+    fee_denom_u512: U512,
 }
 
 impl IntHopState {
     /// Create a new integer hop state.
+    ///
+    /// Not `const fn` because `U512::from(U256)` is not `const fn` in ruint.
+    /// The only call site (`PyIntHopState::new`) is a runtime call anyway.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         reserve_in: U256,
         reserve_out: U256,
         gamma_numer: u64,
@@ -72,6 +83,10 @@ impl IntHopState {
             reserve_out,
             gamma_numer,
             fee_denom,
+            reserve_in_u512: U512::from(reserve_in),
+            reserve_out_u512: U512::from(reserve_out),
+            gamma_numer_u512: U512::from(gamma_numer),
+            fee_denom_u512: U512::from(fee_denom),
         }
     }
 
@@ -81,21 +96,14 @@ impl IntHopState {
     #[must_use]
     pub fn swap(&self, x: U256) -> U256 {
         // y = gamma_numer * reserve_out * x / (fee_denom * reserve_in + gamma_numer * x)
-        let gn_u256 = U256::from(self.gamma_numer);
-        let fd_u256 = U256::from(self.fee_denom);
-
-        // Compute in U512 to avoid overflow in numerator and denominator
+        // All U512 values pre-converted at construction to avoid repeated conversions.
         let x_u512 = U512::from(x);
-        let r_in_u512 = U512::from(self.reserve_in);
-        let r_out_u512 = U512::from(self.reserve_out);
-        let gn_u512 = U512::from(gn_u256);
-        let fd_u512 = U512::from(fd_u256);
 
         // numerator = gamma_numer * reserve_out * x
-        let numerator = gn_u512 * r_out_u512 * x_u512;
+        let numerator = self.gamma_numer_u512 * self.reserve_out_u512 * x_u512;
 
         // denominator = fee_denom * reserve_in + gamma_numer * x
-        let denom = fd_u512 * r_in_u512 + gn_u512 * x_u512;
+        let denom = self.fee_denom_u512 * self.reserve_in_u512 + self.gamma_numer_u512 * x_u512;
 
         if denom.is_zero() {
             return U256::ZERO;
@@ -160,10 +168,10 @@ pub fn compute_int_mobius_coefficients(
     }
 
     let first = &hops[0];
-    let gn0 = U512::from(first.gamma_numer);
-    let fd0 = U512::from(first.fee_denom);
-    let r0 = U512::from(first.reserve_in);
-    let s0 = U512::from(first.reserve_out);
+    let gn0 = first.gamma_numer_u512;
+    let fd0 = first.fee_denom_u512;
+    let r0 = first.reserve_in_u512;
+    let s0 = first.reserve_out_u512;
 
     // Initialize 2x2 matrix from first hop:
     // [[gn0 * s0, 0],
@@ -176,10 +184,10 @@ pub fn compute_int_mobius_coefficients(
     // a01 is always zero: the upper-right entry of each hop matrix is 0,
     // and composing with [[fn'*s', 0; ...]] keeps (0,1) at 0.
     for hop in &hops[1..] {
-        let gn_i = U512::from(hop.gamma_numer);
-        let fd_i = U512::from(hop.fee_denom);
-        let r_i = U512::from(hop.reserve_in);
-        let s_i = U512::from(hop.reserve_out);
+        let gn_i = hop.gamma_numer_u512;
+        let fd_i = hop.fee_denom_u512;
+        let r_i = hop.reserve_in_u512;
+        let s_i = hop.reserve_out_u512;
 
         // Matrix multiply: result = current * hop
         let old_a00 = a00;
@@ -408,7 +416,9 @@ pub fn mobius_refine_int(
     }
 
     // Convert x_approx to U256
-    let x_floor_u256 = f64_to_u256(x_approx.floor());
+    // NOTE: .floor() is redundant — f64_to_u256 truncates toward zero,
+    // and x_approx is guaranteed positive by the guard above.
+    let x_floor_u256 = f64_to_u256(x_approx);
 
     // Determine search radius (same logic as Python _integer_refinement)
     let num_hops = hops.len();
@@ -419,7 +429,9 @@ pub fn mobius_refine_int(
     };
 
     // Convert max_input to U256 if present
-    let max_input_u256 = max_input.map(|m| f64_to_u256(m.floor()));
+    // NOTE: .floor() is redundant — f64_to_u256 truncates toward zero,
+    // and max_input is guaranteed positive by the caller.
+    let max_input_u256 = max_input.map(f64_to_u256);
 
     let mut best_x: U256 = U256::ZERO;
     let mut best_profit: U256 = U256::ZERO;
@@ -560,13 +572,28 @@ fn f64_to_u256(v: f64) -> U256 {
         return U256::from(v as u64);
     }
 
-    // For larger values, decompose into hi * 2^64 + lo
-    let hi_f64 = v / 2f64.powi(64);
-    let hi = hi_f64 as u64;
-    let lo_f64 = v - (hi as f64) * 2f64.powi(64);
-    let lo = lo_f64 as u64;
+    // For larger values, decompose into 4 u64 limbs by repeatedly
+    // extracting the lowest 64 bits.
+    //
+    // f64 has 52 bits of mantissa, so the round-trip through f64 preserves
+    // at most ~15-16 significant digits. For a U256 with up to 77 digits,
+    // the lower ~61 digits are lost. This is inherent to f64 precision and
+    // acceptable because this function is only used to convert intermediate
+    // floating-point computation results back to integer form.
+    let mut remaining = v;
+    let mut limbs = [0u64; 4];
+    for limb in &mut limbs {
+        let upper = remaining / 2f64.powi(64);
+        let lower_f64 = remaining - (upper as f64) * 2f64.powi(64);
+        // lower_f64 should be in [0, 2^64), safe to cast
+        *limb = lower_f64 as u64;
+        remaining = upper;
+        if upper == 0.0 {
+            break;
+        }
+    }
 
-    U256::from(hi) * U256::from(2u64).pow(U256::from(64u64)) + U256::from(lo)
+    U256::from_limbs(limbs)
 }
 
 #[cfg(test)]
@@ -815,6 +842,111 @@ mod tests {
             if output > candidate {
                 let profit = output - candidate;
                 assert!(profit <= result.profit, "Neighbor has better profit");
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Property-based tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod proptests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::tuple_array_conversions)]
+
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Generate a U256 value by filling from 4 u64 limbs.
+    /// This covers the full U256 range including near-zero and near-max values.
+    fn arb_u256() -> impl Strategy<Value = U256> {
+        (any::<u64>(), any::<u64>(), any::<u64>(), any::<u64>())
+            .prop_map(|(a, b, c, d)| U256::from_limbs([a, b, c, d]))
+    }
+
+    proptest! {
+        /// u512_to_f64 converts a U512 and back via f64_to_u256.
+        ///
+        /// For values that fit in u64, the roundtrip is exact (f64 can represent
+        /// every u64 value). For larger values, f64 precision is limited to ~15-16
+        /// significant digits, so the recovered value may undercount — but must
+        /// never exceed the original.
+        #[test]
+        fn u512_f64_roundtrip_within_ulp(v in arb_u256()) {
+            let v_u512 = U512::from(v);
+            let f = u512_to_f64(v_u512);
+            let recovered = f64_to_u256(f);
+
+            if v <= U256::from(u64::MAX) {
+                // u64-range values are exactly representable in f64
+                assert_eq!(recovered, v, "roundtrip not exact for u64-range value");
+            } else {
+                // Larger values may lose precision but must not exceed original
+                assert!(recovered <= v, "recovered {recovered} > original {v}");
+                // Verify relative error is bounded: |v - recovered| / v < 2^-50
+                // (generous bound accounting for decomposition rounding in f64)
+                // Skip if either value is infinite (roundtrip is lossy at extreme magnitudes)
+                if f.is_finite() && f != 0.0
+                    && !recovered.is_zero()
+                {
+                    let recovered_f = u512_to_f64(U512::from(recovered));
+                    if recovered_f.is_finite() && recovered_f != 0.0 {
+                        let rel_err = (f - recovered_f).abs() / f;
+                        assert!(
+                            rel_err < 2.0f64.powi(-50),
+                            "relative error {rel_err:.2e} too large for v={v}"
+                        );
+                    }
+                }
+            }
+        }
+
+        /// f64_to_u256 returns U256::ZERO for non-positive or non-finite inputs
+        #[test]
+        fn f64_to_u256_non_positive_returns_zero(v in any::<f64>()) {
+            let result = f64_to_u256(v);
+            if v <= 0.0 || !v.is_finite() {
+                assert_eq!(result, U256::ZERO);
+            }
+        }
+
+        /// `swap()` never panics or overflows with extreme reserves,
+        /// and output never exceeds reserve_out (constant-product invariant).
+        #[test]
+        fn int_mobius_extreme_reserves(
+            r_in_lo in 1u64..u64::MAX,
+            r_out_lo in 1u64..u64::MAX,
+        ) {
+            let r_in = U256::from(r_in_lo);
+            let r_out = U256::from(r_out_lo);
+            let hop = IntHopState::new(r_in, r_out, 997, 1000);
+
+            let output = hop.swap(U256::from(1u64));
+            // Output must not exceed reserve_out (constant-product invariant)
+            assert!(output <= r_out, "swap output {output} exceeds reserve_out {r_out}");
+        }
+
+        /// `int_mobius_solve` never panics with extreme reserves, and returns
+        /// a structurally valid result (output is U256, profit ≤ output).
+        #[test]
+        fn int_mobius_solve_extreme_reserves(
+            r_in_lo in 1u64..u64::MAX,
+            r_out_lo in 1u64..u64::MAX,
+        ) {
+            let r_in = U256::from(r_in_lo);
+            let r_out = U256::from(r_out_lo);
+            let hops = vec![IntHopState::new(r_in, r_out, 997, 1000)];
+
+            let result = int_mobius_solve(&hops);
+            assert!(result.is_ok(), "int_mobius_solve panicked with r_in={r_in}, r_out={r_out}");
+            let result = result.unwrap();
+            if result.success {
+                assert!(!result.optimal_input.is_zero());
+                let simulated = int_simulate_path(result.optimal_input, &hops);
+                assert!(simulated >= result.optimal_input);
+                let expected_profit = simulated - result.optimal_input;
+                assert_eq!(result.profit, expected_profit);
             }
         }
     }

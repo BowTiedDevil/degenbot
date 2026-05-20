@@ -3,6 +3,14 @@
 //! Exposes `AlloySubscription` as a Python class implementing the async iterator
 //! protocol (`__aiter__` / `__anext__`) plus a `drain()` method for bulk
 //! consumption and a `started()` method that awaits WS subscription confirmation.
+//!
+//! # GIL Safety
+//!
+//! `Python::attach()` is used in async contexts (Tokio worker threads) to
+//! construct Python objects from subscription data. These may block briefly
+//! while the Python event loop or another Python thread holds the GIL. This
+//! cannot deadlock — see `async_provider.rs` module-level comment for the
+//! full reasoning.
 
 use crate::subscription::{drain_buffer, DrainResult, SubscriptionHandle};
 use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration};
