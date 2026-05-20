@@ -23,6 +23,7 @@ _Avoid_: Fork, local chain
 - [Connection Management](src/degenbot/connection/CONTEXT.md) — connection managers, provider references, and subscription primitives
 - [Chainlink](src/degenbot/chainlink/CONTEXT.md) — price feeds, aggregators, round data
 - [Builders](src/degenbot/builders/CONTEXT.md) — pool builders, PoolIO seam (7-method protocol), BuilderContext, PoolBuilder/AsyncPoolBuilder protocols, V2BuilderBase/V3BuilderBase/V4BuilderBase shared helpers, and shared type resolution
+- [Rust Extension](rust/CONTEXT.md) — PyO3-wrapped ABI encode/decode, GIL discipline, subscription double-buffer, Möbius solver cache, two-level type intern, f64↔U256 conversion
 
 ## Instructions
 
@@ -65,6 +66,7 @@ _Avoid_: Fork, local chain
 - **LogSubscriptionFilter** carries `addresses` + `topics` only (no block range) for log subscriptions
 - **LOG_HANDLERS** is a `ClassVar[dict[str, Callable]]` on pool types mapping event topic0 → decoder function; each decoder takes a log dict and returns a closure that applies the update to a pool instance; the user wires LOG_HANDLERS to a LogListener after `build_pool()`
 - **Bot.start_listening()** creates newHeads + unfiltered logs subscriptions for a chain, returns the subscription pair; stores the AsyncProviderAdapter per chain in `_async_adapters`
+- The **Rust extension** provides PyO3-wrapped ABI encode/decode (`CachedAbiTypes` two-level intern: string `Arc<str>` interner + value `Arc<CachedAbiTypes>` return), subscription double-buffer (`drain_raw()` for pure-Rust GIL-free accumulation, `drain_buffer()` for Python), and Möbius solver cache (`PyPoolCache` with `parking_lot::Mutex<LruCache<u64, IntHopState>>`, 10K cap, pre-converted U512 fields). GIL discipline: hold for sub-μs compute (tick math, address utils), release for I/O (`py.detach()` before `block_on()`); all `Python::attach()` call sites have `// SAFETY` comments. `f64_to_u256` uses iterative 4-limb decomposition (fixed from 2-limb which silently failed for values > 128 bits). `auto-initialize` is the default Cargo feature (Plan 063)
 
 Module-internal relationships are documented in each module's context file.
 
