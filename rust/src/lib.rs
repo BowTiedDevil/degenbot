@@ -61,6 +61,22 @@ pub use errors::{AbiDecodeError, AddressError, ProviderError, TickMathError};
 pub use tick_math::{get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MIN_SQRT_RATIO, MAX_SQRT_RATIO};
 pub use tick_math_py::{get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio};
 
+/// Ensure Python is initialized before the test harness spawns threads.
+///
+/// Without this, multiple test threads racing to call `Python::attach()` can
+/// trigger `Py_InitializeEx()` concurrently. CPython's `Py_InitializeEx()` sets
+/// `Py_IsInitialized()` before completing all setup (e.g. importing site.py),
+/// so a second thread that sees the flag and proceeds can hit
+/// `_PyImport_Init: global import state already initialized`.
+///
+/// The `ctor` attribute runs this before `main()`, guaranteeing single-threaded
+/// initialization regardless of how many threads the test harness later spawns.
+#[cfg(test)]
+#[ctor::ctor]
+fn init_python_before_test_threads() {
+    pyo3::Python::initialize();
+}
+
 use pyo3::prelude::*;
 
 #[pymodule]
