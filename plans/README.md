@@ -20,7 +20,6 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | # | Plan | Summary |
 |---|------|---------|
 | 014 | [Async REPL](014-async-repl.md) | `python -m degenbot` with top-level `await`. |
-| 063 | [Rust GIL, Alloc, Testing](063-rust-gil-alloc-testing.md) | GIL discipline fixes, allocation reduction in ABI cache & optimizer, testing gaps. |
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
 
 ## Completed Plans
@@ -88,3 +87,4 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | 061 | [Delete `EthereumProvider` Backward-Compatibility Alias](completed/061-delete-ethereum-provider-alias.md) | Delete `EthereumProvider = ProviderBackend` alias and update all stale references (code, docstrings, domain docs, tests). Zero callers. |
 | 060 | [Unify Sync/Async Builder Orchestration](completed/060-unify-builder-orchestration.md) | V3BuilderBase and V4BuilderBase with shared @staticmethod helpers (decode_slot0, extract_db_values, load_tick_snapshot). Frozen dataclasses for decoded values. ~150 lines of duplication removed. Async tick fetcher not viable (pool objects are sync). |
 | 062 | [Extract Chainlink into Package](completed/062-extract-chainlink-package.md) | Move `chainlink.py` into `chainlink/` package with CONTEXT.md. Delete unused `CHAINLINK_PRICE_FEED_ABI`. 3-file package: `__init__.py`, `price_feed.py`, `CONTEXT.md`. |
+| 063 | [Rust GIL, Alloc, Testing](completed/063-rust-gil-alloc-testing.md) | GIL discipline fixes, allocation reduction (ABI type cache, optimizer), testing gaps (concurrency, subscriptions, proptests). Fixed `f64_to_u256` bug (128-bit decomposition → 256-bit). |

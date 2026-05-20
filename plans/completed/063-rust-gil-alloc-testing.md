@@ -566,7 +566,7 @@ proptest! {
 - **Plan —** (Arbitrage Optimizer): Complementary — the `IntHopState` U512 pre-conversion and `PyPoolCache` LRU eviction directly benefit the optimizer hot path
 - **Independent**: All other completed plans (001–062) — this plan operates entirely within the `rust/` subtree with no Python-side changes
 
-## Status
+## Status — Complete
 
 [x] Slice 1: Remove GIL detach from sub-μs functions
 [x] Slice 2: GIL contention tests + safety comments + Arc-wrap CachedAbiTypes and cache key
