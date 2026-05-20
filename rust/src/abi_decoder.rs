@@ -539,33 +539,30 @@ mod tests {
 
     #[test]
     fn test_abi_value_to_python_roundtrip() {
-        #[allow(unsafe_code)]
-        unsafe {
-            pyo3::with_embedded_python_interpreter(|py| {
-                let val = AbiValue::Uint(U256::from(123_456_789_u64), 256);
-                let py_val = abi_value_to_python(&val, py, true).expect("should convert to Python");
-                let n: u64 = py_val.extract().expect("should extract as u64");
-                assert_eq!(n, 123_456_789_u64);
+        pyo3::Python::attach(|py| {
+            let val = AbiValue::Uint(U256::from(123_456_789_u64), 256);
+            let py_val = abi_value_to_python(&val, py, true).expect("should convert to Python");
+            let n: u64 = py_val.extract().expect("should extract as u64");
+            assert_eq!(n, 123_456_789_u64);
 
-                let val = AbiValue::Bool(true);
-                let py_val = abi_value_to_python(&val, py, true).expect("should convert to Python");
-                let b: bool = py_val.extract().expect("should extract as bool");
-                assert!(b);
+            let val = AbiValue::Bool(true);
+            let py_val = abi_value_to_python(&val, py, true).expect("should convert to Python");
+            let b: bool = py_val.extract().expect("should extract as bool");
+            assert!(b);
 
-                let val = AbiValue::String("Hello".to_string());
-                let py_val = abi_value_to_python(&val, py, true).expect("should convert to Python");
-                let s: String = py_val.extract().expect("should extract as String");
-                assert_eq!(s, "Hello");
+            let val = AbiValue::String("Hello".to_string());
+            let py_val = abi_value_to_python(&val, py, true).expect("should convert to Python");
+            let s: String = py_val.extract().expect("should extract as String");
+            assert_eq!(s, "Hello");
 
-                let val = AbiValue::Array(vec![
-                    AbiValue::Uint(U256::from(1u64), 256),
-                    AbiValue::Uint(U256::from(2u64), 256),
-                ]);
-                let py_val = abi_value_to_python(&val, py, true).expect("should convert to Python");
-                let list: Vec<u64> = py_val.extract().expect("should extract as Vec<u64>");
-                assert_eq!(list, vec![1, 2]);
-            });
-        }
+            let val = AbiValue::Array(vec![
+                AbiValue::Uint(U256::from(1u64), 256),
+                AbiValue::Uint(U256::from(2u64), 256),
+            ]);
+            let py_val = abi_value_to_python(&val, py, true).expect("should convert to Python");
+            let list: Vec<u64> = py_val.extract().expect("should extract as Vec<u64>");
+            assert_eq!(list, vec![1, 2]);
+        });
     }
 
     // =========================================================================

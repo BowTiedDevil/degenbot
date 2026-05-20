@@ -25,7 +25,19 @@ jobs:
           node-version: 22
 
       - name: Lint commit messages
-        run: npx --yes @commitlint/cli --from=origin/main --to=HEAD
+        # On push: lint only the commits being pushed (before..after).
+        # On PRs: lint all commits in the PR (merge-base..HEAD).
+        # Fallback: lint the last 20 commits on the branch.
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            FROM="${{ github.event.before }}"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            FROM=$(git merge-base origin/main HEAD)
+          else
+            FROM=HEAD~20
+          fi
+          echo "Linting commits from $FROM to HEAD"
+          npx --yes @commitlint/cli --from="$FROM" --to=HEAD
 
   markdownlint:
     name: Markdown Lint

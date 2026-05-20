@@ -43,6 +43,7 @@ extension-module = ["pyo3/extension-module"]
 auto-initialize = ["pyo3/auto-initialize"]
 
 [dev-dependencies]
+ctor = "^0.4"
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "^1.10"
 
