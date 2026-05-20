@@ -71,8 +71,14 @@ pub use tick_math_py::{get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio};
 ///
 /// The `ctor` attribute runs this before `main()`, guaranteeing single-threaded
 /// initialization regardless of how many threads the test harness later spawns.
+///
+/// # Safety
+///
+/// This is safe because `Python::initialize()` uses a `std::sync::Once` guard
+/// internally and only calls `Py_InitializeEx()` when the interpreter is not
+/// yet running, making multiple calls harmless.
 #[cfg(test)]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_python_before_test_threads() {
     pyo3::Python::initialize();
 }
