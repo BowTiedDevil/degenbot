@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, ClassVar
 
+import cvxpy
 import eth_abi.abi
 import numpy as np
 import web3
@@ -217,8 +218,8 @@ def _build_convex_problem(num_pools: int) -> Problem:
             <= compressed_reserves_pre_swap[pool_lo_index, forward_token_index],
         ],
     )
-    problem.solve(solver="CLARABEL")
     assert problem.is_dcp(dpp=True)
+    problem.solve(solver=cvxpy.CLARABEL)
     return problem
 
 
@@ -2391,7 +2392,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
-                    problem.solve(solver="CLARABEL")
+                    problem.solve(solver=cvxpy.CLARABEL, enforce_dpp=True)
             except SolverError as exc:
                 logger.exception("Cvxpy solver error")
                 raise ArbitrageError(message="Solver error") from exc
@@ -2410,7 +2411,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                     )
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
-                        new_problem.solve(solver="CLARABEL")
+                        new_problem.solve(solver=cvxpy.CLARABEL)
                 except SolverError as exc:
                     raise ArbitrageError(message="Solver error") from exc
                 else:

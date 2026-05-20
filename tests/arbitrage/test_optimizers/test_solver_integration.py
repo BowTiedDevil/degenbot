@@ -9,14 +9,9 @@ Also includes CVXPY solver comparison tests for property-based validation.
 import time
 from fractions import Fraction
 
-import cvxpy
 import cvxpy.settings
 import hypothesis
-import numpy as np
 import pytest
-from cvxpy.atoms.affine.binary_operators import multiply as cvxpy_multiply
-from cvxpy.atoms.affine.bmat import bmat as cvxpy_bmat
-from cvxpy.atoms.geo_mean import geo_mean
 
 from degenbot.arbitrage.optimizers import SolveInput, SolveResult, SolverMethod
 from degenbot.arbitrage.optimizers._solver_utils import (
@@ -35,6 +30,7 @@ from tests.arbitrage.generator.hypothesis_strategies import (
     seed_strategy,
 )
 
+from ._cvxpy_problem_factory import build_2pool_cvxpy_problem
 from .conftest import (
     FEE_0_05_PCT,
     FEE_0_3_PCT,
@@ -677,100 +673,15 @@ class TestCVXPYSolverComparison:
         Verifies that CVXPY finds a profitable arbitrage for a known
         pair of pools with specific reserves.
         """
-        # WBTC (8 decimals) / WETH (18 decimals)
-        decimals0 = 8
-        decimals1 = 18
-        fee = Fraction(3, 1000)
-
-        # Pool A: 900 WBTC, 2100 WETH
-        reserves0_a = 900 * 10**decimals0
-        reserves1_a = 2100 * 10**decimals1
-
-        # Pool B: 925 WBTC, 2100 WETH (WBTC cheaper)
-        reserves0_b = 925 * 10**decimals0
-        reserves1_b = 2100 * 10**decimals1
-
-        # Build CVXPY problem
-        num_pools = 2
-        num_tokens = 2
-
-        # Double compression factors
-        compression_factor_0 = max(
-            Fraction(reserves0_a, 10**decimals0),
-            Fraction(reserves0_b, 10**decimals0),
+        problem = build_2pool_cvxpy_problem(
+            reserves0_a=900 * 10**8,
+            reserves1_a=2100 * 10**18,
+            reserves0_b=925 * 10**8,
+            reserves1_b=2100 * 10**18,
+            decimals0=8,
+            decimals1=18,
+            fee=Fraction(3, 1000),
         )
-        compression_factor_1 = max(
-            Fraction(reserves1_a, 10**decimals1),
-            Fraction(reserves1_b, 10**decimals1),
-        )
-
-        compressed_reserves_a = (
-            Fraction(reserves0_a, 10**decimals0) / compression_factor_0,
-            Fraction(reserves1_a, 10**decimals1) / compression_factor_1,
-        )
-        compressed_reserves_b = (
-            Fraction(reserves0_b, 10**decimals0) / compression_factor_0,
-            Fraction(reserves1_b, 10**decimals1) / compression_factor_1,
-        )
-
-        compressed_reserves_pre_swap = cvxpy.Parameter(
-            name="compressed_reserves_pre_swap",
-            shape=(num_pools, num_tokens),
-            value=np.array(
-                (compressed_reserves_a, compressed_reserves_b),
-                dtype=np.float64,
-            ),
-        )
-
-        pool_a_pre_swap_k = cvxpy.Parameter(
-            name="pool_a_pre_swap_k",
-            value=geo_mean(compressed_reserves_pre_swap[0]).value,
-        )
-        pool_b_pre_swap_k = cvxpy.Parameter(
-            name="pool_b_pre_swap_k",
-            value=geo_mean(compressed_reserves_pre_swap[1]).value,
-        )
-
-        # Variables
-        forward_token_amount = cvxpy.Variable(name="forward_token_amount", nonneg=True)
-        profit_token_in = cvxpy.Variable(name="profit_token_in", nonneg=True)
-        profit_token_out = cvxpy.Variable(name="profit_token_out", nonneg=True)
-
-        # Fee multiplier
-        fee_float = float(fee)
-        fee_multiplier = cvxpy_bmat((
-            (1 - fee_float, 1 - fee_float),
-            (1 - fee_float, 1 - fee_float),
-        ))
-
-        # Deposits and withdrawals
-        # Pool A: deposit token0, withdraw token1
-        # Pool B: deposit token1, withdraw token0
-        deposits = cvxpy_bmat(((forward_token_amount, 0), (0, profit_token_in)))
-        withdrawals = cvxpy_bmat(((0, profit_token_out), (forward_token_amount, 0)))
-
-        fees_removed = cvxpy_multiply(fee_multiplier, deposits)
-
-        compressed_reserves_post_swap = (
-            compressed_reserves_pre_swap + deposits - withdrawals - fees_removed
-        )
-
-        pool_a_post_swap_k = geo_mean(compressed_reserves_post_swap[0])
-        pool_b_post_swap_k = geo_mean(compressed_reserves_post_swap[1])
-
-        # Objective: maximize profit (withdrawals - deposits)
-        objective = cvxpy.Maximize(profit_token_out - profit_token_in)
-
-        # Constraints
-        constraints = [
-            pool_a_post_swap_k >= pool_a_pre_swap_k,
-            pool_b_post_swap_k >= pool_b_pre_swap_k,
-            profit_token_out <= compressed_reserves_pre_swap[0, 1],
-            forward_token_amount <= compressed_reserves_pre_swap[1, 0],
-        ]
-
-        problem = cvxpy.Problem(objective, constraints)
-        problem.solve(solver=cvxpy.CLARABEL)
 
         # Should find an optimal solution
         assert problem.status in cvxpy.settings.SOLUTION_PRESENT
@@ -799,60 +710,23 @@ class TestCVXPYSolverAccuracy:
 
         For any price discrepancy > total fees, arbitrage should be profitable.
         """
-        decimals = 18
-
         # Pool A: base reserves
-        reserves_a_0 = 1000 * 10**decimals
-        reserves_a_1 = 2000 * 10**decimals
+        reserves_a_0 = 1000 * 10**18
+        reserves_a_1 = 2000 * 10**18
 
         # Pool B: different price (price_ratio > 1 means pool B has different rate)
         reserves_b_0 = reserves_a_0
         reserves_b_1 = int(reserves_a_1 / price_ratio)
 
-        # Build simple CVXPY problem
-        compression = max(reserves_a_0, reserves_a_1, reserves_b_0, reserves_b_1) / 10**decimals
-
-        compressed_a = np.array([
-            reserves_a_0 / 10**decimals / compression,
-            reserves_a_1 / 10**decimals / compression,
-        ])
-        compressed_b = np.array([
-            reserves_b_0 / 10**decimals / compression,
-            reserves_b_1 / 10**decimals / compression,
-        ])
-
-        reserves_pre = cvxpy.Parameter(shape=(2, 2), value=np.array([compressed_a, compressed_b]))
-
-        k_a = cvxpy.Parameter(value=geo_mean(reserves_pre[0]).value)
-        k_b = cvxpy.Parameter(value=geo_mean(reserves_pre[1]).value)
-
-        # Variables
-        amount_in = cvxpy.Variable(nonneg=True)
-        amount_out = cvxpy.Variable(nonneg=True)
-        forward = cvxpy.Variable(nonneg=True)
-
-        fee_float = float(fee)
-
-        # Pool A: deposit token0, withdraw token1
-        # Pool B: deposit token1, withdraw token0
-        deposits = cvxpy_bmat(((forward, 0), (0, amount_in)))
-        withdrawals = cvxpy_bmat(((0, amount_out), (forward, 0)))
-
-        reserves_post = reserves_pre + deposits - withdrawals - cvxpy_multiply(fee_float, deposits)
-
-        k_a_post = geo_mean(reserves_post[0])
-        k_b_post = geo_mean(reserves_post[1])
-
-        objective = cvxpy.Maximize(amount_out - amount_in)
-        constraints = [
-            k_a_post >= k_a,
-            k_b_post >= k_b,
-            amount_out <= reserves_pre[0, 1],
-            forward <= reserves_pre[1, 0],
-        ]
-
-        problem = cvxpy.Problem(objective, constraints)
-        problem.solve(solver=cvxpy.CLARABEL)
+        problem = build_2pool_cvxpy_problem(
+            reserves0_a=reserves_a_0,
+            reserves1_a=reserves_a_1,
+            reserves0_b=reserves_b_0,
+            reserves1_b=reserves_b_1,
+            decimals0=18,
+            decimals1=18,
+            fee=fee,
+        )
 
         # Should find solution
         assert problem.status in cvxpy.settings.SOLUTION_PRESENT
@@ -860,7 +734,7 @@ class TestCVXPYSolverAccuracy:
         # Value indicates if profitable
         # Note: with price_ratio > 1 and fees, profit may be zero or positive
         # depending on whether the spread exceeds the fee cost
-        total_fee_cost = 2 * fee_float  # Fees paid on both swaps
+        total_fee_cost = 2 * float(fee)  # Fees paid on both swaps
         price_diff = price_ratio - 1.0
 
         if price_diff > total_fee_cost:
@@ -874,49 +748,15 @@ class TestCVXPYSolverAccuracy:
         When pools have identical reserves and fees, there should be
         no profitable arbitrage (profit <= 0 after fees).
         """
-        decimals = 18
-        fee = Fraction(3, 1000)
-
-        # Identical pools
-        reserves_0 = 1000 * 10**decimals
-        reserves_1 = 2000 * 10**decimals
-
-        compression = max(reserves_0, reserves_1) / 10**decimals
-
-        compressed = np.array([
-            reserves_0 / 10**decimals / compression,
-            reserves_1 / 10**decimals / compression,
-        ])
-
-        reserves_pre = cvxpy.Parameter(shape=(2, 2), value=np.array([compressed, compressed]))
-
-        k_a = cvxpy.Parameter(value=geo_mean(reserves_pre[0]).value)
-        k_b = cvxpy.Parameter(value=geo_mean(reserves_pre[1]).value)
-
-        amount_in = cvxpy.Variable(nonneg=True)
-        amount_out = cvxpy.Variable(nonneg=True)
-        forward = cvxpy.Variable(nonneg=True)
-
-        fee_float = float(fee)
-
-        deposits = cvxpy_bmat(((forward, 0), (0, amount_in)))
-        withdrawals = cvxpy_bmat(((0, amount_out), (forward, 0)))
-
-        reserves_post = reserves_pre + deposits - withdrawals - cvxpy_multiply(fee_float, deposits)
-
-        k_a_post = geo_mean(reserves_post[0])
-        k_b_post = geo_mean(reserves_post[1])
-
-        objective = cvxpy.Maximize(amount_out - amount_in)
-        constraints = [
-            k_a_post >= k_a,
-            k_b_post >= k_b,
-            amount_out <= reserves_pre[0, 1],
-            forward <= reserves_pre[1, 0],
-        ]
-
-        problem = cvxpy.Problem(objective, constraints)
-        problem.solve(solver=cvxpy.CLARABEL)
+        problem = build_2pool_cvxpy_problem(
+            reserves0_a=1000 * 10**18,
+            reserves1_a=2000 * 10**18,
+            reserves0_b=1000 * 10**18,
+            reserves1_b=2000 * 10**18,
+            decimals0=18,
+            decimals1=18,
+            fee=Fraction(3, 1000),
+        )
 
         # Should find solution but profit should be essentially zero
         # (after fees, arbitrage is unprofitable for identical prices)
