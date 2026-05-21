@@ -1,10 +1,8 @@
-from collections.abc import Sequence
-from fractions import Fraction
-from threading import Lock
-from typing import Any, ClassVar
-from weakref import WeakSet
+from __future__ import annotations
 
-from eth_typing import ChecksumAddress
+from threading import Lock
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
+from weakref import WeakSet
 
 from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.libraries.stable_math import (
@@ -13,15 +11,63 @@ from degenbot.balancer.libraries.stable_math import (
     _calculate_invariant_deployed,
 )
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
-from degenbot.types.aliases import BlockNumber, ChainId
+from degenbot.exceptions.pool import PossibleInaccurateResult
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 
 from .types import BalancerV2PoolState
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from fractions import Fraction
+
+    from eth_typing import ChecksumAddress
+
+    from degenbot.erc20 import Erc20Token
+    from degenbot.types.abstract import AbstractPoolState
+    from degenbot.types.aliases import BlockNumber, ChainId
+
+from degenbot.types.abstract import AbstractLiquidityPool
+
+
+@runtime_checkable
+class BalancerRateProvider(Protocol):
+    """Fetches per-block scaling factor rates from on-chain rate providers.
+
+    ComposableStablePools override ``_beforeSwapJoinExit()`` to refresh rate
+    caches before reading ``_scalingFactors()``. To match this on-chain behavior,
+    off-chain calculations must fetch fresh rates at the block the calculation
+    targets.
+
+    Implementations should call ``getRate()`` on each token's rate provider
+    contract, using ``eth_call`` with the provided block identifier so the
+    result matches on-chain state at that block.
+    """
+
+    def get_rates(self, block_identifier: int | str | None = None) -> tuple[int, ...]:
+        """Return the current rate for each pool token.
+
+        The returned tuple has one entry per pool token (including BPT if
+        present). Tokens without a rate provider should return ONE (1e18).
+        """
+        ...
+
+
+class _StaticRateProvider:
+    """A rate provider that always returns construction-time rates.
+
+    Used when no I/O-capable provider is injected. Returns the same rates
+    on every call, which matches on-chain behavior only at the block where
+    the rates were originally fetched.
+    """
+
+    def __init__(self, rates: tuple[int, ...]) -> None:
+        self._rates = rates
+
+    def get_rates(self, block_identifier: int | str | None = None) -> tuple[int, ...]:  # noqa: ARG002
+        return self._rates
 
 
 class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
@@ -35,6 +81,19 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
     Swap fee application order:
       GIVEN_IN:  subtractFee → upscale → compute(outGivenIn) → downscaleDown
       GIVEN_OUT: upscale → compute(inGivenOut) → downscaleUp → addFee
+
+    Rate handling:
+      ComposableStablePools have time-varying rates (yield accrual in
+      bb-a-* tokens). The deployed contract refreshes rate caches before
+      each swap via ``_beforeSwapJoinExit()``. For exact-integer matching,
+      inject a ``BalancerRateProvider`` and pass ``block_identifier`` to
+      swap methods. Without a live rate provider, the pool uses construction-time
+      scaling factors and raises ``PossibleInaccurateResult`` for
+      ComposableStablePools to warn that rates may be stale.
+
+      MetaStablePools have near-static rate providers (e.g. wstETH/wETH
+      conversion rate), so construction-time scaling factors produce exact
+      matching without a rate provider.
     """
 
     type PoolState = BalancerV2PoolState
@@ -43,10 +102,12 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
     _pickle_drops: ClassVar[frozenset[str]] = frozenset({
         "_state_lock",
         "_subscribers",
+        "_rate_provider",
     })
     _pickle_reconstructs: ClassVar[dict[str, Any]] = {
         "_state_lock": Lock,
         "_subscribers": WeakSet,
+        "_rate_provider": lambda: None,
     }
 
     def __init__(
@@ -61,12 +122,14 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         amp: int,
         scaling_factors: Sequence[int],
         bpt_idx: int | None = None,
+        base_scaling_factors: Sequence[int] | None = None,
+        rate_provider: BalancerRateProvider | None = None,
         chain_id: ChainId | None = None,
         state_block: BlockNumber | None = None,
     ) -> None:
         self.address = get_checksum_address(address)
 
-        self._chain_id = chain_id if chain_id is not None else tokens[0].chain_id
+        self._chain_id = chain_id if chain_id not in {None, 0} else tokens[0].chain_id
         state_block = state_block if state_block is not None else 0
 
         self.pool_id = pool_id
@@ -75,8 +138,35 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         self._tokens = tuple(tokens)
         self.fee = fee
         self.amp = amp
-        self.scaling_factors = tuple(scaling_factors)
         self.bpt_idx = bpt_idx
+
+        # Base scaling factors: 10^(18 - token_decimals) for each token.
+        # These are the decimal-adjustment-only scaling factors (no rate).
+        # Used alongside rate_provider rates to compute full scaling factors
+        # as base_sf * rate // ONE (mulDown, matching deployed contract).
+        if base_scaling_factors is not None:
+            self._base_scaling_factors = tuple(base_scaling_factors)
+        else:
+            # Fallback: if base_scaling_factors not provided, derive from
+            # scaling_factors assuming rate=ONE (i.e. scaling_factor IS base_sf)
+            self._base_scaling_factors = tuple(scaling_factors)
+
+        # Construction-time scaling factors (base_sf * rate_at_construction // ONE).
+        # Used as fallback when no rate_provider is available.
+        self.scaling_factors = tuple(scaling_factors)
+
+        # Rate provider for per-block rate resolution.
+        # If not provided, a static provider wraps the construction-time rates.
+        if rate_provider is not None:
+            self._rate_provider = rate_provider
+        else:
+            # Extract construction-time rates from scaling_factors.
+            # rate = sf * ONE // base_sf for each token.
+            construction_rates = tuple(
+                sf * ONE // bsf
+                for sf, bsf in zip(scaling_factors, self._base_scaling_factors, strict=True)
+            )
+            self._rate_provider = _StaticRateProvider(construction_rates)
 
         # Precompute non-BPT index mapping for ComposableStablePool
         if bpt_idx is not None:
@@ -116,8 +206,29 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         return self._state
 
     @property
-    def tokens(self) -> tuple[Erc20Token, ...]:
+    def tokens(self) -> tuple[tuple[Erc20Token, ...] | tuple[()]]:
         return self._tokens
+
+    @property
+    def rate_provider(self) -> BalancerRateProvider | None:
+        """The rate provider for per-block rate resolution, if available."""
+        prov = self._rate_provider
+        if isinstance(prov, _StaticRateProvider):
+            return None
+        return prov
+
+    @property
+    def requires_io_at_calculation_time(self) -> bool:
+        """Whether this pool may call its rate_provider during swap calculations.
+
+        Returns True for ComposableStablePools with a live rate provider
+        (time-varying rates from yield-bearing tokens). Returns False for
+        MetaStablePools and for pools with only a static rate provider.
+        """
+        # ComposableStablePools always need fresh rates for exact matching
+        return self.bpt_idx is not None and not isinstance(
+            self._rate_provider, _StaticRateProvider
+        )
 
     @staticmethod
     def _upscale(amount: int, scaling_factor: int) -> int:
@@ -147,9 +258,33 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         denominator = ONE - fee_scaled
         return numerator // denominator + (1 if numerator % denominator > 0 else 0)
 
-    def _upscale_balances(self, balances: list[int]) -> list[int]:
-        """Upscale all balances using scaling factors."""
-        return [b * sf // ONE for b, sf in zip(balances, self.scaling_factors, strict=False)]
+    def _resolve_scaling_factors(
+        self, block_identifier: int | str | None = None
+    ) -> tuple[int, ...]:
+        """Resolve scaling factors at the given block.
+
+        If a live rate provider is available, fetches rates for the block
+        and computes scaling factors as base_sf * rate // ONE (mulDown).
+        Otherwise, falls back to construction-time scaling factors.
+        """
+        if isinstance(self._rate_provider, _StaticRateProvider):
+            return self.scaling_factors
+
+        rates = self._rate_provider.get_rates(block_identifier)
+        return tuple(
+            bsf * rate // ONE
+            for bsf, rate in zip(self._base_scaling_factors, rates, strict=True)
+        )
+
+    @staticmethod
+    def _upscale_balances(
+        balances: Sequence[int], scaling_factors: Sequence[int]
+    ) -> list[int]:
+        """Upscale all balances using the given scaling factors."""
+        return [
+            b * sf // ONE
+            for b, sf in zip(balances, scaling_factors, strict=False)
+        ]
 
     def _compute_invariant(self, upscaled_balances: list[int]) -> int:
         """Compute invariant using deployed version with roundUp=True."""
@@ -171,21 +306,41 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
             return index
         return index if index < self.bpt_idx else index - 1
 
+    def _should_warn_stale_rates(self) -> bool:
+        """Whether a PossibleInaccurateResult should wrap the computed result.
+
+        ComposableStablePools have time-varying rates (bb-a-* tokens accrue
+        yield). Without a live rate provider, the construction-time rates
+        become stale as blocks pass. MetaStablePools have near-static rates
+        (wstETH/wETH conversion), so stale rates are not a concern.
+        """
+        if self.bpt_idx is None:
+            # MetaStablePool: rates are near-static, no warning needed
+            return False
+        # ComposableStablePool: warn if using static (stale) rates
+        return isinstance(self._rate_provider, _StaticRateProvider)
+
     def calculate_tokens_out_from_tokens_in(
         self,
         token_in: Erc20Token,
         token_out: Erc20Token,
         token_in_quantity: int,
         override_state: PoolState | None = None,
+        block_identifier: int | str | None = None,
     ) -> int:
         """
         Compute the amount of token_out received for a GIVEN_IN swap.
 
         Flow (matches deployed MetaStablePool and ComposableStablePool):
         1. Subtract swap fee from raw input amount
-        2. Upscale fee-adjusted input and balances
+        2. Upscale fee-adjusted input and balances (using block-specific rates)
         3. Compute outGivenIn (in scaled space, using adjusted indices)
         4. Downscale down the output
+
+        For ComposableStablePools without a live rate provider, the result
+        is wrapped in ``PossibleInaccurateResult`` because construction-time
+        rates may be stale. Pass ``block_identifier`` with a live rate provider
+        for exact-integer matching.
         """
         if override_state is not None:
             raise NotImplementedError
@@ -193,13 +348,16 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         token_in_idx = self._tokens.index(token_in)
         token_out_idx = self._tokens.index(token_out)
 
+        # Resolve scaling factors at the target block
+        sf = self._resolve_scaling_factors(block_identifier)
+
         # Step 1: Subtract fee from raw amount
         amount_after_fee = self._subtract_swap_fee_amount(token_in_quantity)
 
         # Step 2: Upscale balances and fee-adjusted amount
         balances = list(self.balances)
-        upscaled_balances = self._upscale_balances(balances)
-        amount_in_scaled = self._upscale(amount_after_fee, self.scaling_factors[token_in_idx])
+        upscaled_balances = self._upscale_balances(balances, sf)
+        amount_in_scaled = self._upscale(amount_after_fee, sf[token_in_idx])
 
         # Step 3: Compute outGivenIn with adjusted indices
         adjusted_in = self._skip_bpt_index(token_in_idx)
@@ -223,7 +381,16 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         )
 
         # Step 4: Downscale down
-        return self._downscale_down(amount_out_scaled, self.scaling_factors[token_out_idx])
+        result = self._downscale_down(amount_out_scaled, sf[token_out_idx])
+
+        if self._should_warn_stale_rates():
+            raise PossibleInaccurateResult(
+                amount_in=token_in_quantity,
+                amount_out=result,
+                hooks={},
+            )
+
+        return result
 
     def calculate_tokens_in_from_tokens_out(
         self,
@@ -231,15 +398,21 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         token_out: Erc20Token,
         token_out_quantity: int,
         override_state: PoolState | None = None,
+        block_identifier: int | str | None = None,
     ) -> int:
         """
         Compute the amount of token_in needed for a GIVEN_OUT swap.
 
         Flow (matches deployed MetaStablePool and ComposableStablePool):
-        1. Upscale output amount and balances
+        1. Upscale output amount and balances (using block-specific rates)
         2. Compute inGivenOut (in scaled space, using adjusted indices)
         3. Downscale up the input amount
         4. Add swap fee to raw amount
+
+        For ComposableStablePools without a live rate provider, the result
+        is wrapped in ``PossibleInaccurateResult`` because construction-time
+        rates may be stale. Pass ``block_identifier`` with a live rate provider
+        for exact-integer matching.
         """
         if override_state is not None:
             raise NotImplementedError
@@ -247,10 +420,13 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         token_in_idx = self._tokens.index(token_in)
         token_out_idx = self._tokens.index(token_out)
 
+        # Resolve scaling factors at the target block
+        sf = self._resolve_scaling_factors(block_identifier)
+
         # Step 1: Upscale balances and output amount
         balances = list(self.balances)
-        upscaled_balances = self._upscale_balances(balances)
-        amount_out_scaled = self._upscale(token_out_quantity, self.scaling_factors[token_out_idx])
+        upscaled_balances = self._upscale_balances(balances, sf)
+        amount_out_scaled = self._upscale(token_out_quantity, sf[token_out_idx])
 
         # Step 2: Compute inGivenOut with adjusted indices
         adjusted_in = self._skip_bpt_index(token_in_idx)
@@ -274,10 +450,19 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         )
 
         # Step 3: Downscale up
-        in_raw = self._downscale_up(amount_in_scaled, self.scaling_factors[token_in_idx])
+        in_raw = self._downscale_up(amount_in_scaled, sf[token_in_idx])
 
         # Step 4: Add fee
-        return self._add_swap_fee_amount(in_raw)
+        result = self._add_swap_fee_amount(in_raw)
+
+        if self._should_warn_stale_rates():
+            raise PossibleInaccurateResult(
+                amount_in=result,
+                amount_out=token_out_quantity,
+                hooks={},
+            )
+
+        return result
 
     def simulate_swap(
         self,
@@ -285,6 +470,7 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         amount_in: int,
         token_out: ChecksumAddress,
         state_override: AbstractPoolState | None = None,
+        block_identifier: int | str | None = None,
     ) -> SimulationResult:
         balancer_state: BalancerV2PoolState | None = None
         if state_override is not None:
@@ -307,6 +493,7 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
             token_in_quantity=amount_in,
             token_out=token_out_obj,
             override_state=balancer_state,
+            block_identifier=block_identifier,
         )
         return SimulationResult(
             amount_in=amount_in,
