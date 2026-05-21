@@ -1000,6 +1000,29 @@ class TestComposableStablePoolSwaps:
                 label=f"pct=1/{pct}: ",
             )
 
+    @pytest.mark.parametrize("pct", [100, 1000])
+    def test_given_out_usdt_for_dai(self, bb_s_usd_data, fork_mainnet_archive, pct):
+        """Test GIVEN_OUT swap: requesting bb-s-USDT out, paying bb-s-DAI."""
+        i_in, i_out = 3, 2  # DAI in, USDT out
+        amount_out = bb_s_usd_data["balances"][i_out] // pct
+
+        python_result = _compute_composable_given_out(bb_s_usd_data, i_in, i_out, amount_out)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            bb_s_usd_data["pool_id"],
+            bb_s_usd_data["tokens"][i_in],
+            bb_s_usd_data["tokens"][i_out],
+            amount_out,
+            kind=1,
+        )
+
+        if on_chain_result > 0:
+            _assert_close(
+                python_result,
+                on_chain_result,
+                label=f"pct=1/{pct}: ",
+            )
+
     # --- TUSD BSP (3 tokens: TUSD + BPT + USDC) ---
 
     @pytest.mark.parametrize("pct", [100, 1000])
@@ -1052,6 +1075,29 @@ class TestComposableStablePoolSwaps:
     def test_given_out_usdc_for_tusd(self, tusd_bsp_data, fork_mainnet_archive, pct):
         """Test GIVEN_OUT swap: requesting USDC out for TUSD."""
         i_in, i_out = 0, 2  # BPT is at index 1
+        amount_out = tusd_bsp_data["balances"][i_out] // pct
+
+        python_result = _compute_composable_given_out(tusd_bsp_data, i_in, i_out, amount_out)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            tusd_bsp_data["pool_id"],
+            tusd_bsp_data["tokens"][i_in],
+            tusd_bsp_data["tokens"][i_out],
+            amount_out,
+            kind=1,
+        )
+
+        if on_chain_result > 0:
+            _assert_close(
+                python_result,
+                on_chain_result,
+                label=f"pct=1/{pct}: ",
+            )
+
+    @pytest.mark.parametrize("pct", [100, 1000])
+    def test_given_out_tusd_for_usdc(self, tusd_bsp_data, fork_mainnet_archive, pct):
+        """Test GIVEN_OUT swap: requesting TUSD out for USDC."""
+        i_in, i_out = 2, 0  # USDC in, TUSD out
         amount_out = tusd_bsp_data["balances"][i_out] // pct
 
         python_result = _compute_composable_given_out(tusd_bsp_data, i_in, i_out, amount_out)
