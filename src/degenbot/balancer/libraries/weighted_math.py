@@ -1,4 +1,4 @@
-from degenbot.balancer.libraries.constants import ONE
+from degenbot.balancer.libraries.constants import ONE, PowVersion
 from degenbot.balancer.libraries.fixed_point import (
     complement,
     div_down,
@@ -31,11 +31,19 @@ _MAX_INVARIANT_RATIO = 3 * 10**18
 _MIN_INVARIANT_RATIO = int(0.7 * 10**18)
 
 
-def calculate_invariant(normalized_weights: list[int], balances: list[int]) -> int:
+def calculate_invariant(
+    normalized_weights: list[int],
+    balances: list[int],
+    *,
+    version: PowVersion = PowVersion.V1,
+) -> int:
     invariant = ONE
 
     for i in range(len(normalized_weights)):
-        invariant = mul_down(invariant, pow_down(balances[i], normalized_weights[i]))
+        invariant = mul_down(
+            invariant,
+            pow_down(balances[i], normalized_weights[i], version=version),
+        )
 
     if invariant <= 0:
         raise EVMRevertError(error="ZERO_INVARIANT")
@@ -49,6 +57,8 @@ def _calc_out_given_in(
     balance_out: int,
     weight_out: int,
     amount_in: int,
+    *,
+    version: PowVersion = PowVersion.V1,
 ) -> int:
     """
     Computes how many tokens can be taken out of a pool if `amountIn` are sent, given the
@@ -80,7 +90,7 @@ def _calc_out_given_in(
     denominator = balance_in + amount_in
     base = div_up(balance_in, denominator)
     exponent = div_down(weight_in, weight_out)
-    power = pow_up(base, exponent)
+    power = pow_up(base, exponent, version=version)
     return int(mul_down(balance_out, complement(power)))
 
 
@@ -90,6 +100,8 @@ def _calc_in_given_out(
     balance_out: int,
     weight_out: int,
     amount_out: int,
+    *,
+    version: PowVersion = PowVersion.V1,
 ) -> int:
     """
     Computes how many tokens must be sent to a pool in order to take `amountOut`, given the
@@ -117,7 +129,7 @@ def _calc_in_given_out(
 
     base = div_up(balance_out, balance_out - amount_out)
     exponent = div_up(weight_out, weight_in)
-    power = pow_up(base, exponent)
+    power = pow_up(base, exponent, version=version)
     # Because the base is larger than one (and the power rounds up), the power should always be
     # larger than one, so the following subtraction should never revert.
     ratio = power - ONE

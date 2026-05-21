@@ -6,6 +6,7 @@ from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
 
+from degenbot.balancer.libraries.constants import PowVersion
 from degenbot.balancer.libraries.scaling_helpers import (
     _compute_scaling_factor,
     _downscale_down,
@@ -29,6 +30,27 @@ from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import HopType
 from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
+
+# Hex representation of the TWO constant (2e18 = 0x1bc16d674ec80000)
+# This value only appears in the bytecode of V2 WeightedPool contracts that include
+# the fast-path optimizations for y == ONE / TWO / FOUR in powDown/powUp.
+_V2_TWO_HEX = "1bc16d674ec80000"
+
+
+def detect_pow_version(bytecode: str) -> PowVersion:
+    """Detect which FixedPoint library version a pool contract uses from its bytecode.
+
+    V2 (WeightedPool) contracts include fast paths for y == ONE, TWO, FOUR in
+    powDown/powUp. These reference the TWO and FOUR constants, which are absent
+    from V1 (WeightedPool2Tokens) bytecode.
+
+    The detection works by checking for the TWO constant (0x1bc16d674ec80000)
+    in the deployed bytecode. This constant is used in the `y == TWO` fast-path
+    comparison and does not appear in V1 contracts.
+    """
+    if _V2_TWO_HEX in bytecode:
+        return PowVersion.V2
+    return PowVersion.V1
 
 
 class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
@@ -54,6 +76,7 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         balances: Sequence[int],
         fee: Fraction,
         weights: Sequence[int],
+        pow_version: PowVersion = PowVersion.V1,
         chain_id: ChainId | None = None,
         state_block: BlockNumber | None = None,
     ) -> None:
@@ -69,6 +92,7 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         self.scaling_factors = tuple(_compute_scaling_factor(token) for token in self._tokens)
         self.fee = fee
         self.weights = tuple(weights)
+        self.pow_version = pow_version
 
         self._state_lock = Lock()
         self._state = BalancerV2PoolState(
@@ -124,6 +148,7 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
             balance_out=int(balances[token_out_index]),
             weight_out=self.weights[token_out_index],
             amount_in=int(amount_new),
+            version=self.pow_version,
         )
 
         return int(
@@ -159,19 +184,20 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
             balance_out=int(balances[token_out_index]),
             weight_out=self.weights[token_out_index],
             amount_out=int(amount_out_scaled),
+            version=self.pow_version,
         )
 
-        # Add swap fee on top of the calculated amount
-        amount_in_with_fee = _add_swap_fee_amount(
-            amount=amount_in,
-            fee_percentage=fee_scaled,
-        )
-
-        return int(
+        # Downscale first, then add fee — matching Solidity's onSwap GIVEN_OUT path
+        amount_in_token = int(
             _downscale_up(
-                amount=amount_in_with_fee,
+                amount=amount_in,
                 scaling_factor=self.scaling_factors[token_in_index],
             )
+        )
+
+        return _add_swap_fee_amount(
+            amount=amount_in_token,
+            fee_percentage=fee_scaled,
         )
 
     def simulate_swap(

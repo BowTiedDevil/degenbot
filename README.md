@@ -18,6 +18,7 @@ Python classes to aid rapid development of Uniswap (V2, V3, V4), Curve V1, Solid
   - [Uniswap V4 Liquidity Pools](#uniswap-v4-liquidity-pools)
   - [Forking With Anvil](#forking-with-anvil)
   - [Curve StableSwap Pools](#curve-stableswap-pools-io-free)
+  - [Balancer V2 Weighted Pools](#balancer-v2-weighted-pools)
   - [Uniswap Arbitrage](#uniswap-arbitrage)
   - [Chainlink Price Feeds](#chainlink-price-feeds)
 - [Bot API Reference](#bot-api-reference)
@@ -246,7 +247,7 @@ pool.external_update(update)  # Pure logic — no I/O
 | SushiSwap | V2, V3 | Ethereum, Base |
 | Curve | V1 | Ethereum |
 | Solidly | V2 | Ethereum, Base | *(utility functions only, no pool class)*
-| Balancer | V2 | Ethereum | *(internal, not in public API)* |
+| Balancer | V2 | Ethereum | Weighted pools, PowVersion detection |
 | Camelot | V2 | Arbitrum |
 | SwapBased | V2 | Base |
 
@@ -693,9 +694,69 @@ assert tripool.fee == 4000000
 # pre-resolved data to calculators via DyCalculationInputs (pure math, no private access)
 ```
 
+### Balancer V2 Weighted Pools
+
+Balancer V2 weighted pools use the weighted product invariant with configurable token weights and a singleton Vault architecture. The math libraries are ported from the [Balancer V2 Solidity monorepo](https://github.com/balancer/balancer-v2-monorepo) with exact integer-level matching against on-chain results.
+
+Key design points:
+- **PowVersion detection**: Different deployed pool contracts embed different versions of the FixedPoint library. `WeightedPool2Tokens` (V1) uses the general LogExpMath path with error bounds; `WeightedPool` (V2) includes fast paths for y == ONE/TWO/FOUR. The version is detected from bytecode at construction time.
+- **Rounding direction**: GIVEN_IN rounds down (seller gets less), GIVEN_OUT rounds up (buyer pays more).
+- **Fee ordering**: GIVEN_OUT applies downscale-up first, then add swap fee — matching Solidity's exact operation order.
+- **Scaling**: Tokens with non-18 decimals are normalized via scaling factors computed as `ONE * 10**(18 - decimals)`.
+
+```python
+from degenbot.balancer.pools import BalancerV2Pool, detect_pow_version
+from degenbot.balancer.libraries.constants import PowVersion
+
+# Detect pow version from deployed pool bytecode
+bytecode = w3.eth.get_code(pool_address).hex()
+pow_version = detect_pow_version(bytecode)  # PowVersion.V1 or V2
+
+# Construct a Balancer V2 weighted pool (all state injected at construction)
+pool = BalancerV2Pool(
+    address="0x5c6Ee304399DBdB9C8Ef030aB642B10820DB8F56",
+    pool_id=bytes.fromhex("..."),
+    vault="0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+    tokens=[weth, bal],
+    balances=[1000 * 10**18, 5000 * 10**18],
+    fee=Fraction(1, 1000),  # 0.1% swap fee
+    weights=[800000000000000000, 200000000000000000],  # 80/20
+    pow_version=pow_version,
+    chain_id=1,
+)
+
+# Calculate swaps - pure math, no I/O
+amount_out = pool.calculate_tokens_out_from_tokens_in(
+    token_in=weth,
+    token_out=bal,
+    token_in_quantity=10**18,
+)
+
+# GIVEN_OUT: compute input needed for desired output
+amount_in = pool.calculate_tokens_in_from_tokens_out(
+    token_in=weth,
+    token_out=bal,
+    token_out_quantity=100 * 10**18,
+)
+```
+
+Contract addresses and broken pool filters are centralized in `degenbot.balancer.deployments`:
+
+```python
+from degenbot.balancer.deployments import (
+    BALANCER_V2_VAULT_ADDRESS,
+    BALANCERQUERIES_CONTRACT_ADDRESS,
+    BROKEN_BALANCER_V2_POOLS,
+)
+
+# Filter out pools with disabled swaps
+if pool_address not in BROKEN_BALANCER_V2_POOLS:
+    pool = bot.build_pool(pool_address)
+```
+
 ### Uniswap Arbitrage
 
-Calculate optimal arbitrage amounts for a cyclic sequence of pools using `ArbitragePath`, the replacement for the deprecated `UniswapLpCycle`:
+Calculate optimal arbitrage amounts for a cyclic sequence of pools using `ArbitragePath`, the replacement for the deprecated `UniswapLpCycle`: the replacement for the deprecated `UniswapLpCycle`:
 
 <!-- invisible-code-block: python
 import json
@@ -1355,6 +1416,7 @@ Each module has a `CONTEXT.md` defining domain terminology:
 - [Pool Types & Trackers](src/degenbot/types/CONTEXT.md) — Pool, Pool State, Reserves, Tick, Fee representations
 - [Uniswap](src/degenbot/uniswap/CONTEXT.md) — V2/V3/V4 pools, Pool Tracker, Managed Pool, Pool ID
 - [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — Metapools, lending pools, CurveDataProvider seam, DyCalculationInputs, DyCalculator, A coefficient
+- [Balancer V2](src/degenbot/balancer/CONTEXT.md) — Weighted pools, FixedPoint math, PowVersion detection, scaling helpers
 - [Aave](src/degenbot/aave/CONTEXT.md) — Market, Asset, Reserve, Enrichment, Liquidation
 - [Arbitrage](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Solver, Optimizer, Hop State
 - [Registries](src/degenbot/registry/CONTEXT.md) — Pool, Token, Managed Pool registries

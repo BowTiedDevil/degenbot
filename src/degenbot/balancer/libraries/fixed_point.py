@@ -1,5 +1,5 @@
 from degenbot.balancer.libraries import log_exp_math
-from degenbot.balancer.libraries.constants import MAX_POW_RELATIVE_ERROR, ONE
+from degenbot.balancer.libraries.constants import FOUR, MAX_POW_RELATIVE_ERROR, ONE, TWO, PowVersion
 from degenbot.constants import MAX_UINT256
 from degenbot.exceptions.pool import EVMRevertError
 
@@ -64,17 +64,23 @@ def div_up(a: int, b: int) -> int:
     return ((a_inflated - 1) // b) + 1
 
 
-def pow_down(x: int, y: int) -> int:
+def pow_down(x: int, y: int, *, version: PowVersion = PowVersion.V1) -> int:
     """
     Returns x^y, assuming both are fixed point numbers, rounding down. The result is guaranteed to
     not be above the true value (that is, the error function expected - actual is always positive).
-    """
 
-    # Note: the on-chain contract does NOT have fast paths for y == 1, y == 2, or y == 4 — those
-    # were added to a later version of the monorepo. The deployed WeightedPool2Tokens uses the
-    # general path via LogExpMath.pow for all cases, so we must match that behavior exactly.
-    # In particular, the general path applies an error bound (max_error) that the fast paths skip,
-    # causing different rounding behavior that cascades through complement() and mul operations.
+    The `version` parameter controls which deployed contract implementation to match:
+    - V1: General path only (no fast paths). Used by WeightedPool2Tokens and other older contracts.
+    - V2: Includes fast paths for y == ONE, TWO, FOUR. Used by newer WeightedPool contracts.
+    """
+    if version == PowVersion.V2:
+        if y == ONE:
+            return x
+        if y == TWO:
+            return mul_down(x, x)
+        if y == FOUR:
+            square = mul_down(x, x)
+            return mul_down(square, square)
 
     raw = log_exp_math.pow(x, y)
     max_error = add(mul_up(raw, MAX_POW_RELATIVE_ERROR), 1)
@@ -84,17 +90,23 @@ def pow_down(x: int, y: int) -> int:
     return sub(raw, max_error)
 
 
-def pow_up(x: int, y: int) -> int:
+def pow_up(x: int, y: int, *, version: PowVersion = PowVersion.V1) -> int:
     """
     Returns x^y, assuming both are fixed point numbers, rounding up. The result is guaranteed to not
     be below the true value (that is, the error function expected - actual is always negative).
-    """
 
-    # Note: the on-chain contract does NOT have fast paths for y == 1, y == 2, or y == 4 — those
-    # were added to a later version of the monorepo. The deployed WeightedPool2Tokens uses the
-    # general path via LogExpMath.pow for all cases, so we must match that behavior exactly.
-    # In particular, the general path applies an error bound (max_error) that the fast paths skip,
-    # causing different rounding behavior that cascades through complement() and mul operations.
+    The `version` parameter controls which deployed contract implementation to match:
+    - V1: General path only (no fast paths). Used by WeightedPool2Tokens and other older contracts.
+    - V2: Includes fast paths for y == ONE, TWO, FOUR. Used by newer WeightedPool contracts.
+    """
+    if version == PowVersion.V2:
+        if y == ONE:
+            return x
+        if y == TWO:
+            return mul_up(x, x)
+        if y == FOUR:
+            square = mul_up(x, x)
+            return mul_up(square, square)
 
     raw = log_exp_math.pow(x, y)
     max_error = add(mul_up(raw, MAX_POW_RELATIVE_ERROR), 1)
