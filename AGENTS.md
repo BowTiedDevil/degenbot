@@ -189,6 +189,8 @@ token = bot.build_erc20token("0x...")  # Fetches metadata, registers in token re
 
 **Don't** instantiate pools directly from classes in new code — that's the **deprecated singleton pattern**.
 
+**AsyncBot** mirrors `Bot`'s delegation pattern: its public I/O methods (`get_token_balance`, `get_token_approval`, `get_token_total_supply`, `get_ether_balance`) delegate to `AsyncErc20Builder` instead of duplicating the logic inline, matching `Bot`'s delegation to `Erc20Builder` (Plan 065).
+
 #### Type Resolution
 
 `build_pool(address)` automatically determines the concrete pool subclass by consulting these sources in order:
@@ -197,6 +199,8 @@ token = bot.build_erc20token("0x...")  # Fetches metadata, registers in token re
 2. **Database `kind` column** — the polymorphic identity (e.g., `sushiswap_v2`) directly identifies the invariant and variant
 3. **Pool Type Registry** — a module-level singleton mapping `(chain_id, factory_address) → pool class + identity + deployment data`; each DEX module self-registers at import time via `pool_type_registry.register()`
 4. **On-chain probing** — fallback: call `slot0()`, `getReserves()`, or `coins()` to identify the invariant
+
+The type resolution code in `type_resolution.py` collapses sync/async mirrors into thin wrappers over shared pure functions (`_build_descriptor_from_db_result`, `_descriptor_from_probing_result`), eliminating ~56 lines of duplicated logic (Plan 066).
 
 V4 pools are identified by passing `pool_id` to `build_pool(address, pool_id=...)`.
 

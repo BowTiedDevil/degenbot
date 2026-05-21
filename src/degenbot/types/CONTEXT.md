@@ -41,7 +41,7 @@
 | **Pool Invariant** | A solver-dispatch enum identifying which mathematical invariant governs a pool's swap pricing for the arbitrage solver: `CONSTANT_PRODUCT`, `BOUNDED_PRODUCT`, `SOLIDLY_STABLE`, `CURVE_STABLESWAP`, `BALANCER_WEIGHTED`, `BALANCER_MULTI_TOKEN`; see [Arbitrage CONTEXT.md](../arbitrage/CONTEXT.md) | Pool family, pool category |
 | **Pool Type Descriptor** | A frozen dataclass carrying the resolved pool identity: `PoolFamily` + variant name (e.g., `"sushiswap"`) + factory address | Type descriptor, pool descriptor |
 | **Pool Variant** | A string identifying the DEX-specific subclass within an invariant family (e.g., `"sushiswap"`, `"camelot"`, `"aerodrome"`); `None` for the canonical Uniswap variant | DEX variant, subclass name |
-| **Type Resolution** | The process of determining a pool's `PoolTypeDescriptor` from its address, consulting DB `kind` column → Pool Type Registry → on-chain probing | Pool discovery, type detection |
+| **Type Resolution** | The process of determining a pool's `PoolTypeDescriptor` from its address, consulting DB `kind` column → Pool Type Registry → on-chain probing; sync/async top-level functions are thin wrappers delegating to shared pure functions `_build_descriptor_from_db_result` and `_descriptor_from_probing_result` (Plan 066) | Pool discovery, type detection |
 | **Kind** | The polymorphic identity string stored in the database `kind` column (e.g., `"uniswap_v2"`, `"sushiswap_v3"`, `"camelot_v2"`); derived from `derive_kind(family, variant)` — the family adds the `_v2`/`_v3` suffix | Polymorphic type, DB type |
 | **Builder variant method** | A method on a pool builder that fetches class-specific state from chain and constructs variant pools | Variant builder, chain constructor |
 
