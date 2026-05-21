@@ -61,7 +61,7 @@
 | **MetaStablePool** | A 2-token stable pool with rate providers. Uses `BaseMinimalSwapInfoPool` (specialization=1). `_cacheTokenRatesIfNecessary()` is called inside `_onSwapGivenIn` AFTER upscaling | Meta stable, stable v1 |
 | **ComposableStablePool** | A multi-token stable pool that includes its own BPT token. Uses `BaseGeneralPool` (specialization=0). Overrides `_beforeSwapJoinExit()` to call `_cacheTokenRatesIfNecessary()` BEFORE reading `_scalingFactors()` | Composable, phantom stable |
 | **BPT Index** | In ComposableStablePools, the BPT token's position in the token list. Must be dropped before invariant and swap calculations. `bpt_idx` parameter distinguishes MetaStable (`None`) from Composable (`int`) | Phantom token index |
-| **Invariant Rounding** | Deployed contracts use `_calculateInvariant(amp, balances, roundUp=True)` for swaps. The `round_up` parameter controls whether the last iteration rounds up (swap) or down (monorepo default) | Rounding direction |
+| **Invariant Rounding** | Deployed contracts use two different StableMath versions: V1 (always-roundDown, D_P accumulation, no `roundUp` param) and V2 (with `roundUp` param, P_D accumulation). V1 used by most ComposableStablePools; V2 used by MetaStablePools. The version must match the deployed contract for exact output. | Invariant version |
 
 ### _beforeSwapJoinExit Rate Refresh
 
@@ -72,17 +72,38 @@
 
 For off-chain matching, builders must provide scaling factors computed from **fresh** rates for ComposableStablePools and from **cached** rates for MetaStablePools. In practice, both approaches use fresh rates from rate providers because the MetaStablePool's cached rates happen to be close to fresh rates for the pools we've tested (exact 0-wei matching achieved).
 
+### Cache-Aware Rate Resolution
+
+**`CacheAwareRateProvider`** (in tests) replicates the on-chain `_cacheTokenRateIfNecessary()` flow exactly:
+1. Reads `getTokenRateCache(token)` at the target block → `(rate, oldRate, duration, expires)`
+2. Gets the block's timestamp via `eth_getBlockByNumber`
+3. If `timestamp > expires`: calls `provider.getRate()` at that block (cache expired, refresh needed)
+4. If `timestamp <= expires`: uses the cached `rate` (cache still valid)
+5. For BPT tokens: returns ONE
+6. For tokens without a rate provider: returns ONE
+
+This gives **exact 0-wei matching** because we replicate the exact same logic the on-chain code uses. The naive approach of always calling `getRate()` fails when the cache is still valid (stale cached rate differs from fresh rate by up to ~0.2%).
+
+### Invariant Versions (INVARIANT_V1 vs INVARIANT_V2)
+
+Deployed contracts have **two different StableMath implementations**:
+
+- **V1 (`INVARIANT_V1`)**: `_calculateInvariant(amp, balances)` — no `roundUp` parameter, always rounds down (Math.divDown), uses D_P accumulation `(D^(n+1) / (n^n * P))`. Matches the monorepo `_calculate_invariant`. Used by most deployed ComposableStablePools (TUSD BSP, bb-s-USD). Comment: "Always round down, to match Vyper's arithmetic."
+- **V2 (`INVARIANT_V2`)**: `_calculateInvariant(amp, balances, roundUp)` — with `roundUp` parameter, uses P_D accumulation `(n^n * P / D^(n-1))`. Matches `_calculate_invariant_deployed`. Called with `roundUp=True` for swaps. Used by MetaStablePools (wstETH/WETH).
+
+**V2 with `roundUp=True` produces an invariant 1 wei higher than V1**, which cascades to a 1-wei output difference. Using the wrong version gives a systematic ±1 wei error.
+
 ### BalancerRateProvider and Stale Rate Warning
 
-**`BalancerRateProvider`** is a `runtime_checkable` protocol with a single method `get_rates(block_identifier) -> tuple[int, ...]` that returns per-token rates. It follows the same pattern as Curve's `CurveDataProvider` — injected at construction time, called at calculation time to resolve rates for a specific block.
+**`BalancerRateProvider`** is a `runtime_checkable` protocol with a single method `get_rates(block_identifier) -> tuple[int, ...]` that returns per-token rates. Injected at construction time, called at calculation time to resolve rates for a specific block.
 
 **`_StaticRateProvider`** is an internal wrapper that always returns construction-time rates. Used when no live rate provider is available.
 
 **`PossibleInaccurateResult`** exception: ComposableStablePools without a live `BalancerRateProvider` raise this exception (same pattern as `UniswapV4Pool` with hooks). The computed `amount_in` and `amount_out` are available as attributes on the exception. Callers must `try/except` to access the values, explicitly acknowledging that rates may be stale.
 
-**Exact matching guarantee**: When both the pool data (balances, amp, fee) and the rate provider data (`get_rates()` with `block_identifier`) are fetched at the same block, results match on-chain within ≤3000 wei. The residual comes from the rate providers being called in separate `eth_call` operations — the on-chain `querySwap` refreshes rates inside a single call, while our off-chain code makes a separate `getRate()` call that may differ by 1-2 wei, amplified through the invariant computation. This is structurally unavoidable without performing the entire swap simulation in a single contract call.
+**Exact matching guarantee**: With a `CacheAwareRateProvider` that replicates `_cacheTokenRateIfNecessary()`, and the correct `invariant_version`, results match on-chain with **0 wei error**. The previous tolerance of ≤3000 wei was due to (a) always calling `getRate()` instead of checking cache validity, and (b) using the wrong invariant version.
 
-**MetaStablePool exception**: MetaStablePools do NOT raise `PossibleInaccurateResult` because their rate providers return near-static values (e.g., wstETH/wETH conversion rate). Construction-time scaling factors produce exact 0-wei matching without a rate provider.
+**MetaStablePool exception**: MetaStablePools do NOT raise `PossibleInaccurateResult` because they have no rate cache — they call `getRate()` directly on each swap. Construction-time scaling factors produce exact 0-wei matching without a rate provider for the pools we've tested (near-static rate providers).
 
 ## Library File Layout
 
