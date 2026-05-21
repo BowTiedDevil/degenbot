@@ -16,8 +16,8 @@ from degenbot.exceptions.pool import (
     PoolNotAssociated,
 )
 from degenbot.logging import logger
+from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
-from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.uniswap.trackers import AbstractUniswapV3PoolTracker
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
@@ -109,15 +109,11 @@ class AerodromeV2PoolTracker(
         if chain_id is None:
             chain_id = bot.connections.default_chain_id
 
-        try:
-            factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]
-            deployer_address = (
-                factory_deployment.deployer
-                if factory_deployment.deployer is not None
-                else factory_address
-            )
-            pool_init_hash = factory_deployment.pool_init_hash
-        except KeyError:
+        deployment = pool_type_registry.get_deployment(chain_id, factory_address)
+        if deployment is not None:
+            deployer_address = deployment.deployer
+            pool_init_hash = deployment.pool_init_hash
+        else:
             if pool_init_hash is None:  # pragma: no branch
                 logger.info("Pool init hash is unknown. Using Uniswap V3 mainnet default.")
                 pool_init_hash = UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH

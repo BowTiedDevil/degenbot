@@ -7,7 +7,6 @@ modules will eventually produce, and validates every field against the
 deployment data in uniswap/deployments.py.
 """
 
-import eth_typing
 import pytest
 
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
@@ -18,7 +17,6 @@ from degenbot.sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
 from degenbot.swapbased.pools import SwapbasedV2Pool
 from degenbot.types.pool_type import PoolFamily
 from degenbot.uniswap.deployments import (
-    FACTORY_DEPLOYMENTS,
     ArbitrumCamelotV2,
     ArbitrumSushiswapV2,
     ArbitrumSushiswapV3,
@@ -273,7 +271,7 @@ class TestFullRegistration:
         ids=[f"{c}-{f[:10]}…" for (c, f) in REGISTRATIONS],
     )
     def test_deployment_data(self, registry: PoolTypeRegistry, chain_id: int, factory: str) -> None:
-        """Deployment data matches FACTORY_DEPLOYMENTS."""
+        """Deployment data matches hardcoded registration data."""
         deployment = REGISTRATIONS[chain_id, factory][1]
         result = registry.get_deployment(chain_id, factory)
         assert result is not None
@@ -295,8 +293,12 @@ class TestFullRegistration:
         assert desc.factory == factory
 
 
-class TestDeploymentDataMatchesFactoriesModule:
-    """Cross-check that the registration data matches FACTORY_DEPLOYMENTS exactly."""
+class TestDeploymentDataMatchesPoolTypeRegistry:
+    """Validate that pool_type_registry has correct deployment data.
+
+    pool_type_registry is the sole source of truth — there is no longer
+    a separate FACTORY_DEPLOYMENTS dict to cross-check against.
+    """
 
     @pytest.fixture
     def registry(self) -> PoolTypeRegistry:
@@ -312,51 +314,37 @@ class TestDeploymentDataMatchesFactoriesModule:
         return reg
 
     def test_ethereum_mainnet_factories(self, registry: PoolTypeRegistry) -> None:
-        """All ETH mainnet factories in FACTORY_DEPLOYMENTS are registered."""
-
-        eth_factories = FACTORY_DEPLOYMENTS[eth_typing.ChainId.ETH]
-        for factory in eth_factories:
-            assert registry.has_registration(1, factory), (
+        """All ETH mainnet deployments are registered."""
+        eth_entries = [(c, f) for c, f in REGISTRATIONS if c == 1]
+        for chain_id, factory in eth_entries:
+            assert registry.has_registration(chain_id, factory), (
                 f"ETH mainnet factory {factory} not registered"
             )
 
     def test_base_factories(self, registry: PoolTypeRegistry) -> None:
-        """All Base factories in FACTORY_DEPLOYMENTS are registered."""
-
-        base_factories = FACTORY_DEPLOYMENTS[eth_typing.ChainId.BASE]
-        # Aerodrome V2 is excluded (different constructor signature)
-        for factory in base_factories:
-            if registry.has_registration(8453, factory):
-                # Already registered, check deployment data
-                deployment = registry.get_deployment(8453, factory)
-                assert deployment is not None
-            else:
-                # Only Aerodrome V2 should be missing
-                assert factory == BaseAerodromeV2.factory.address, (
-                    f"Unexpected unregistered Base factory: {factory}"
-                )
+        """All Base deployments are registered."""
+        base_entries = [(c, f) for c, f in REGISTRATIONS if c == 8453]
+        for chain_id, factory in base_entries:
+            assert registry.has_registration(chain_id, factory), (
+                f"Base factory {factory} not registered"
+            )
 
     def test_arbitrum_factories(self, registry: PoolTypeRegistry) -> None:
-        """All Arbitrum factories in FACTORY_DEPLOYMENTS are registered."""
-
-        arb_factories = FACTORY_DEPLOYMENTS[eth_typing.ChainId.ARB1]
-        for factory in arb_factories:
-            assert registry.has_registration(42161, factory), (
+        """All Arbitrum deployments are registered."""
+        arb_entries = [(c, f) for c, f in REGISTRATIONS if c == 42161]
+        for chain_id, factory in arb_entries:
+            assert registry.has_registration(chain_id, factory), (
                 f"Arbitrum factory {factory} not registered"
             )
 
     def test_init_hashes_match(self, registry: PoolTypeRegistry) -> None:
-        """pool_init_hash in registry matches FACTORY_DEPLOYMENTS."""
-
+        """pool_init_hash in registry matches hardcoded deployment data."""
         for chain_id, factory in REGISTRATIONS:
             reg_deployment = registry.get_deployment(chain_id, factory)
             assert reg_deployment is not None
-
-            if chain_id in FACTORY_DEPLOYMENTS and factory in FACTORY_DEPLOYMENTS[chain_id]:
-                fact_init_hash = FACTORY_DEPLOYMENTS[chain_id][factory].pool_init_hash
-                # Treat empty string as None
-                expected = fact_init_hash or None
-                assert reg_deployment.pool_init_hash == expected
+            expected_deployment = REGISTRATIONS[chain_id, factory][1]
+            expected = _init_hash(expected_deployment)
+            assert reg_deployment.pool_init_hash == expected
 
 
 class TestAerodromeV2Registration:

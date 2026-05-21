@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from degenbot.builders.pool_io import AsyncPoolIO, PoolIO
-    from degenbot.builders.request import BuildPoolRequest
+    from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
 
 
@@ -37,7 +37,7 @@ class PoolBuilder(Protocol):
         *,
         chain_id: int | None = None,
         io: PoolIO,
-        request: BuildPoolRequest,
+        request: BuildRequest,
     ) -> AbstractLiquidityPool: ...
 
     def update(
@@ -62,7 +62,7 @@ class AsyncPoolBuilder(Protocol):
         *,
         chain_id: int | None = None,
         io: AsyncPoolIO,
-        request: BuildPoolRequest,
+        request: BuildRequest,
     ) -> AbstractLiquidityPool: ...
 
     async def update(

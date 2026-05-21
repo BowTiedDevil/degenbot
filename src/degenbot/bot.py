@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from hexbytes import HexBytes
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.balancer.pools import BalancerV2Pool
@@ -15,7 +16,7 @@ from degenbot.builders.context import BuilderContext
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.pool_io import SyncPoolIO
-from degenbot.builders.request import BuildPoolRequest
+from degenbot.builders.request import BuildManagedPoolRequest, BuildPoolRequest, BuildRequest
 from degenbot.builders.type_resolution import (
     pool_class_for_descriptor,
 )
@@ -222,28 +223,17 @@ class Bot:
         self,
         address: str,
         *,
-        pool_id: str | bytes | None = None,
         chain_id: ChainId | None = None,
         state_block: int | None = None,
         silent: bool = False,
-        deployer_address: str | None = None,
-        init_hash: str | None = None,
         tick_bitmap: dict[int, Any] | None = None,
         tick_data: dict[int, Any] | None = None,
         state_cache_depth: int = 8,
-        # V4-specific kwargs
-        state_view_address: str | None = None,
-        tokens: Sequence[str] | None = None,
-        fee: int | None = None,
-        tick_spacing: int | None = None,
-        hook_address: str | None = None,
     ) -> AbstractLiquidityPool:
         """
         Build a pool from an address, automatically resolving its type.
 
-        When `pool_id` is provided, `address` is interpreted as a V4 PoolManager
-        contract. Without it, `address` is a pool contract and the type is resolved
-        from the pool registry, database, or factory address.
+        V4 managed pools should use ``build_managed_pool()`` instead.
         """
         address = get_checksum_address(address)
         chain_id = chain_id or self.connections.default_chain_id
@@ -254,27 +244,9 @@ class Bot:
             silent=silent,
             state_block=state_block,
             state_cache_depth=state_cache_depth,
-            deployer_address=deployer_address,
-            init_hash=init_hash,
             tick_bitmap=tick_bitmap,
             tick_data=tick_data,
-            pool_id=pool_id,
-            state_view_address=state_view_address,
-            tokens=tokens,
-            fee=fee,
-            tick_spacing=tick_spacing,
-            hook_address=hook_address,
         )
-
-        # V4 fast path: pool_id discriminates V4 managed pools
-        if pool_id is not None:
-            return self._dispatch_build(
-                builder=self._v4_builder,
-                address=address,
-                chain_id=chain_id,
-                io=io,
-                request=request,
-            )
 
         # Check pool registry — return existing pool if already built
         existing = self.pools.get(chain_id=chain_id, pool_address=address)
@@ -327,10 +299,76 @@ class Bot:
         address: ChecksumAddress,
         chain_id: ChainId,
         io: SyncPoolIO,
-        request: BuildPoolRequest,
+        request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Dispatch to the builder with a typed request."""
         return builder.build(address, chain_id=chain_id, io=io, request=request)
+
+    def build_managed_pool(
+        self,
+        address: str,
+        pool_id: str | bytes,
+        *,
+        chain_id: ChainId | None = None,
+        state_block: int | None = None,
+        silent: bool = False,
+        state_cache_depth: int = 8,
+        # V4 immutable data — required if not in DB
+        state_view_address: str | None = None,
+        tokens: Sequence[str] | None = None,
+        fee: int | None = None,
+        tick_spacing: int | None = None,
+        hook_address: str | None = None,
+        # Pre-fetched tick data
+        tick_bitmap: dict[int, Any] | None = None,
+        tick_data: dict[int, Any] | None = None,
+    ) -> UniswapV4Pool:
+        """
+        Build a V4 managed pool from a PoolManager address and pool ID.
+
+        ``address`` is the PoolManager contract. ``pool_id`` identifies the
+        pool within the manager.
+
+        When the pool is not in the database, ``state_view_address``,
+        ``tokens``, ``fee``, ``tick_spacing`` must all be provided.
+        """
+        address = get_checksum_address(address)
+        chain_id = chain_id or self.connections.default_chain_id
+
+        # Check managed pool registry — return existing pool if already built
+        pool_id_bytes = HexBytes(pool_id)
+        existing = self.managed_pools.get(
+            chain_id=chain_id,
+            pool_manager_address=address,
+            pool_id=pool_id_bytes,
+        )
+        if existing is not None:
+            return existing
+
+        provider = self.connections.get_provider(chain_id)
+        io = SyncPoolIO(provider)
+
+        request = BuildManagedPoolRequest(
+            pool_id=pool_id,
+            silent=silent,
+            state_block=state_block,
+            state_cache_depth=state_cache_depth,
+            state_view_address=state_view_address,
+            tokens=tokens,
+            fee=fee,
+            tick_spacing=tick_spacing,
+            hook_address=hook_address,
+            tick_bitmap=tick_bitmap,
+            tick_data=tick_data,
+        )
+
+        return self._dispatch_build(  # type: ignore[return-value]
+            builder=self._v4_builder,
+            address=address,
+            chain_id=chain_id,
+            io=io,
+            request=request,
+        )
 
     def get_token_balance(
         self,

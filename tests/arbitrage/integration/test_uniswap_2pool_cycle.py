@@ -74,9 +74,9 @@ def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
 @pytest.fixture
 def wbtc_ether_v4_lp(fork_mainnet_full: AnvilFork) -> UniswapV4Pool:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    return bot.build_pool(
+    return bot.build_managed_pool(
         V4_POOL_MANAGER,
-        pool_id=WBTC_ETH_V4_POOL_ID,
+        WBTC_ETH_V4_POOL_ID,
         state_view_address=V4_STATE_VIEW_ADDRESS,
         tokens=[WBTC_ADDRESS, NATIVE_ADDRESS],
         fee=WBTC_ETH_V4_POOL_FEE,

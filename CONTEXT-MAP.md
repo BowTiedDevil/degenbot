@@ -143,7 +143,11 @@ The following were previously module-level singletons; they are now classes inst
 >
 > **Dev:** "What about V4 pools that don't have their own contract address?"
 >
-> **Domain expert:** "V4 **Managed Pools** live inside a **PoolManager** contract and are identified by **Pool ID**, not address. Call `build_pool(address, pool_id=...)` — the `pool_id` argument is the V4 discriminator. Without it, `address` is treated as a pool contract."
+> **Domain expert:** "V4 **Managed Pools** live inside a **PoolManager** contract and are identified by **Pool ID**, not address. Call `build_managed_pool(address, pool_id)` — the `address` is the PoolManager and `pool_id` is required. They have their own `BuildManagedPoolRequest` dataclass with `pool_id` as a required field, separate from `BuildPoolRequest` used for V2/V3/Curve/Balancer."
+>
+> **Dev:** "So `build_pool()` doesn't accept `pool_id` anymore?"
+>
+> **Domain expert:** "Right — `build_pool()` is for non-V4 pools only now. 6 kwargs, down from 14. V4 pools go through `build_managed_pool()`, which returns the concrete `UniswapV4Pool` type instead of the generic `AbstractLiquidityPool`. The deployer and init-hash resolution used to be passed through `build_pool()` kwargs or silently overwritten from `FACTORY_DEPLOYMENTS` — now `pool_type_registry` is the sole source of truth."
 >
 > **Dev:** "And for the **Arbitrage Path**, I just add the V4 pool to `swap_pools`?"
 >

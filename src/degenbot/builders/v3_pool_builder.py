@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-import dataclasses
 from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
@@ -117,8 +116,7 @@ class V3PoolBuilder(V3BuilderBase):
             token1_address = db_values.token1_address
             fee = db_values.fee
             tick_spacing_for_pool = db_values.tick_spacing
-            if db_values.deployer_address is not None:
-                request = dataclasses.replace(request, deployer_address=db_values.deployer_address)
+            db_deployer = db_values.deployer_address
         else:
             try:
                 factory_result = io.call(
@@ -265,22 +263,19 @@ class V3PoolBuilder(V3BuilderBase):
                     block=state_block,
                 )
 
-        # Determine deployer and init_hash
+        # Determine deployer and init_hash from DB (if available) or pool type registry
         deployer = factory
         init_hash = UniswapV3Pool.UNISWAP_V3_MAINNET_POOL_INIT_HASH
-        registry_deployment = pool_type_registry.get_deployment(chain_id, factory)
-        if registry_deployment is not None:
-            if registry_deployment.pool_init_hash is not None:
-                init_hash = registry_deployment.pool_init_hash
-            if registry_deployment.deployer is not None:
-                deployer = get_checksum_address(registry_deployment.deployer)
-
-        deployer = (
-            get_checksum_address(request.deployer_address)
-            if request.deployer_address
-            else deployer
-        )
-        init_hash = request.init_hash or init_hash
+        db_deployer = locals().get("db_deployer")  # Set if pool was found in DB
+        if db_deployer is not None:
+            deployer = get_checksum_address(db_deployer)
+        else:
+            registry_deployment = pool_type_registry.get_deployment(chain_id, factory)
+            if registry_deployment is not None:
+                if registry_deployment.pool_init_hash is not None:
+                    init_hash = registry_deployment.pool_init_hash
+                if registry_deployment.deployer is not None:
+                    deployer = get_checksum_address(registry_deployment.deployer)
 
         # Only pass tick data if we have a complete DB snapshot.
         tick_bitmap_arg, tick_data_arg = V3BuilderBase.resolve_tick_data_args(

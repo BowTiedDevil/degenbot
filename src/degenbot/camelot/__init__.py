@@ -9,15 +9,13 @@ __all__ = ("CamelotLiquidityPool",)
 import eth_typing
 
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, ArbitrumCamelotV2
 
-_factory_address = ArbitrumCamelotV2.factory.address
+_factory_address = "0x6EcCab422D763aC031210895C81787E87B43A652"
 _chain_id = eth_typing.ChainId.ARB1
-_deployment = FACTORY_DEPLOYMENTS.get(_chain_id, {}).get(_factory_address)
 pool_type_registry.register(
     CamelotLiquidityPool,
     chain_id=_chain_id,
     factory_address=_factory_address,
-    pool_init_hash=_deployment.pool_init_hash or None if _deployment else None,
-    deployer=_deployment.deployer if _deployment and _deployment.deployer else None,
+    pool_init_hash="0xa856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1",
+    deployer=None,
 )

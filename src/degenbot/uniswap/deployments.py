@@ -4,7 +4,6 @@ import eth_typing
 from eth_typing import ChecksumAddress
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.exceptions import DegenbotValueError
 from degenbot.types.abstract import AbstractExchangeDeployment
 
 
@@ -39,16 +38,6 @@ class UniswapV3ExchangeDeployment(AbstractExchangeDeployment):
 class UniswapV4ExchangeDeployment(AbstractExchangeDeployment):
     pool_manager: UniswapPoolManagerDeployment
     state_view: UniswapStateViewDeployment
-
-
-def register_exchange(exchange: UniswapV2ExchangeDeployment | UniswapV3ExchangeDeployment) -> None:
-    if exchange.chain_id not in FACTORY_DEPLOYMENTS:
-        FACTORY_DEPLOYMENTS[exchange.chain_id] = {}
-
-    if exchange.factory.address in FACTORY_DEPLOYMENTS[exchange.chain_id]:
-        raise DegenbotValueError(message="Exchange is already registered.")
-
-    FACTORY_DEPLOYMENTS[exchange.chain_id][exchange.factory.address] = exchange.factory
 
 
 # Mainnet DEX --------------- START
@@ -252,33 +241,3 @@ ArbitrumSushiswapV3 = UniswapV3ExchangeDeployment(
     ),
 )
 # ----------------------------- END
-
-
-FACTORY_DEPLOYMENTS: dict[
-    int,  # chain ID
-    dict[ChecksumAddress, UniswapFactoryDeployment],
-] = {
-    eth_typing.ChainId.ETH: {
-        EthereumMainnetSushiswapV2.factory.address: EthereumMainnetSushiswapV2.factory,
-        EthereumMainnetSushiswapV3.factory.address: EthereumMainnetSushiswapV3.factory,
-        EthereumMainnetUniswapV2.factory.address: EthereumMainnetUniswapV2.factory,
-        EthereumMainnetUniswapV3.factory.address: EthereumMainnetUniswapV3.factory,
-    },
-    eth_typing.ChainId.BASE: {
-        BaseAerodromeV2.factory.address: BaseAerodromeV2.factory,
-        BaseAerodromeV3.factory.address: BaseAerodromeV3.factory,
-        BasePancakeswapV2.factory.address: BasePancakeswapV2.factory,
-        BasePancakeswapV3.factory.address: BasePancakeswapV3.factory,
-        BaseSushiswapV2.factory.address: BaseSushiswapV2.factory,
-        BaseSushiswapV3.factory.address: BaseSushiswapV3.factory,
-        BaseSwapbasedV2.factory.address: BaseSwapbasedV2.factory,
-        BaseUniswapV2.factory.address: BaseUniswapV2.factory,
-        BaseUniswapV3.factory.address: BaseUniswapV3.factory,
-    },
-    eth_typing.ChainId.ARB1: {
-        ArbitrumCamelotV2.factory.address: ArbitrumCamelotV2.factory,
-        ArbitrumSushiswapV2.factory.address: ArbitrumSushiswapV2.factory,
-        ArbitrumSushiswapV3.factory.address: ArbitrumSushiswapV3.factory,
-        ArbitrumUniswapV3.factory.address: ArbitrumUniswapV3.factory,
-    },
-}

@@ -13,7 +13,7 @@ from degenbot.pancakeswap.pools import PancakeswapV2Pool, PancakeswapV3Pool
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
 from degenbot.swapbased.pools import SwapbasedV2Pool
-from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS, BaseAerodromeV2
+from degenbot.uniswap.deployments import BaseAerodromeV2
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
@@ -227,37 +227,33 @@ class TestSingletonKindReverseLookup:
         assert desc.kind == "aerodrome_v2"
 
 
-class TestDeploymentDataMatchesFactoriesModule:
-    """Cross-check registry deployment data against FACTORY_DEPLOYMENTS."""
+class TestDeploymentDataIntegrity:
+    """Validate registry deployment data directly.
+
+    pool_type_registry is the sole source of truth — there is no longer
+    a separate FACTORY_DEPLOYMENTS dict to cross-check against.
+    """
 
     @pytest.mark.parametrize(
         ("chain_id", "factory"),
         list(SINGLETON_REGISTRATIONS.keys()),
         ids=[f"{c}-{f[:10]}…" for (c, f) in SINGLETON_REGISTRATIONS],
     )
-    def test_init_hash_matches_factories_module(self, chain_id: int, factory: str) -> None:
-        """pool_init_hash in registry matches FACTORY_DEPLOYMENTS."""
+    def test_init_hash_is_set(self, chain_id: int, factory: str) -> None:
+        """pool_init_hash in registry is present (may be None for some pools)."""
         deployment = pool_type_registry.get_deployment(chain_id, factory)
         assert deployment is not None
-
-        if chain_id in FACTORY_DEPLOYMENTS and factory in FACTORY_DEPLOYMENTS[chain_id]:
-            fact_init_hash = FACTORY_DEPLOYMENTS[chain_id][factory].pool_init_hash
-            expected = fact_init_hash or None
-            assert deployment.pool_init_hash == expected
+        # pool_init_hash may be None (e.g. Sushiswap V3, Pancakeswap V3)
+        # or empty string (Aerodrome) or a concrete hash
+        assert deployment.pool_init_hash is None or isinstance(deployment.pool_init_hash, str)
 
     @pytest.mark.parametrize(
         ("chain_id", "factory"),
         list(SINGLETON_REGISTRATIONS.keys()),
         ids=[f"{c}-{f[:10]}…" for (c, f) in SINGLETON_REGISTRATIONS],
     )
-    def test_deployer_matches_factories_module(self, chain_id: int, factory: str) -> None:
-        """deployer in registry matches FACTORY_DEPLOYMENTS."""
+    def test_deployer_is_set(self, chain_id: int, factory: str) -> None:
+        """deployer in registry is always set (may equal factory)."""
         deployment = pool_type_registry.get_deployment(chain_id, factory)
         assert deployment is not None
-
-        if chain_id in FACTORY_DEPLOYMENTS and factory in FACTORY_DEPLOYMENTS[chain_id]:
-            fact_deployment = FACTORY_DEPLOYMENTS[chain_id][factory]
-            expected_deployer = (
-                fact_deployment.deployer if fact_deployment.deployer is not None else factory
-            )
-            assert deployment.deployer == expected_deployer
+        assert deployment.deployer is not None

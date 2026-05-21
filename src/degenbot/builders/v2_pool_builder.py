@@ -57,8 +57,6 @@ class V2PoolBuilder(V2BuilderBase):
             pool_address,
             chain_id=chain_id,
             state_block=state_block,
-            deployer_address=request.deployer_address,
-            init_hash=request.init_hash,
             io=io,
         )
 

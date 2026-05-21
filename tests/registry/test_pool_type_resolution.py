@@ -6,7 +6,6 @@ import pytest
 
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor
-from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 
 
 class TestPoolTypeDescriptor:
@@ -142,10 +141,9 @@ class TestPoolTypeInvariants:
 
     def test_all_v2_pool_classes_derive_constant_product(self) -> None:
 
-        for chain_id, factories in FACTORY_DEPLOYMENTS.items():
-            for factory_addr in factories:
-                desc = pool_type_registry.get_descriptor(chain_id, factory_addr)
-                if desc is not None:
+        for key, (pool_class, desc, deployment) in pool_type_registry.registrations.items():
+            chain_id, factory_addr = key
+            if desc is not None:
                     assert "_" in desc.kind, f"Expected kind with underscore, got {desc.kind}"
 
     def test_sushiswap_registered(self) -> None:

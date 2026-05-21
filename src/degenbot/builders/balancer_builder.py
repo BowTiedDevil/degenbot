@@ -95,15 +95,8 @@ class BalancerBuilder(BalancerBuilderBase):
         if pool_address in BROKEN_BALANCER_V2_POOLS:
             raise BrokenPool
 
-        # 2. Fetch pool ID (or use request pool_id if provided)
-        if request.pool_id is not None:
-            pool_id = (
-                bytes.fromhex(request.pool_id[2:])
-                if isinstance(request.pool_id, str)
-                else bytes(request.pool_id)
-            )
-        else:
-            pool_id = self._fetch_pool_id(io, pool_address, state_block)
+        # 2. Fetch pool ID from chain
+        pool_id = self._fetch_pool_id(io, pool_address, state_block)
 
         # 3. Decode specialization from pool_id
         pool_id_decoded = self.decode_pool_id(pool_id)

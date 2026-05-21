@@ -254,12 +254,6 @@ class AsyncV3PoolBuilder:
             if registry_deployment.deployer is not None:
                 deployer = get_checksum_address(registry_deployment.deployer)
 
-        deployer = (
-            get_checksum_address(request.deployer_address)
-            if request.deployer_address
-            else deployer
-        )
-
         # Only pass tick data if we have a complete DB snapshot.
         tick_bitmap_arg, tick_data_arg = V3BuilderBase.resolve_tick_data_args(
             db_snapshot_loaded=db_snapshot_loaded,

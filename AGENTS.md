@@ -180,7 +180,7 @@ Each module has a `CONTEXT.md` defining domain terms, aliases to avoid, and reso
 
 ### The Bot Session Pattern
 
-All pool and token creation flows through the `Bot` class. `Bot` owns registries (`pools`, `tokens`, `managed_pools`) and connection managers. Pool updates use a **Builder Registry** (`dict[type, PoolBuilder]`) keyed by concrete pool class — no isinstance chains. The `PoolBuilder` protocol (`src/degenbot/builders/protocol.py`) replaces the former 4-way union type, and `_dispatch_build()` forwards a typed `BuildPoolRequest` object instead of `**kwargs` dict forwarding.
+All pool and token creation flows through the `Bot` class. `Bot` owns registries (`pools`, `tokens`, `managed_pools`) and connection managers. Pool updates use a **Builder Registry** (`dict[type, PoolBuilder]`) keyed by concrete pool class — no isinstance chains. The `PoolBuilder` protocol (`src/degenbot/builders/protocol.py`) replaces the former 4-way union type, and `_dispatch_build()` forwards a typed `BuildRequest` object (`BuildPoolRequest | BuildManagedPoolRequest`) instead of `**kwargs` dict forwarding.
 
 ```python
 # Correct: Bot handles I/O and injects data into I/O-free pools
@@ -204,9 +204,9 @@ token = bot.build_erc20token("0x...")  # Fetches metadata, registers in token re
 
 The type resolution code in `type_resolution.py` collapses sync/async mirrors into thin wrappers over shared pure functions (`_build_descriptor_from_db_result`, `_descriptor_from_probing_result`), eliminating ~56 lines of duplicated logic (Plan 066).
 
-V4 pools are identified by passing `pool_id` to `build_pool(address, pool_id=...)`.
+V4 pools are built via `build_managed_pool(address, pool_id)` — a dedicated method with `BuildManagedPoolRequest` that requires `pool_id`. `build_pool()` no longer accepts `pool_id` or V4-specific kwargs.
 
-Adding a new pool family now requires only creating a builder and registering it via `register_builder()`, down from 5 touch points. The typed `build_v2_pool`/`build_v3_pool`/`build_v4_pool`/`build_curve_pool` methods were removed by Plan 059 — `build_pool()` is the sole entry point.
+Adding a new pool family now requires only creating a builder and registering it via `register_builder()`, down from 5 touch points. The typed `build_v2_pool`/`build_v3_pool`/`build_v4_pool`/`build_curve_pool` methods were removed by Plan 059 — `build_pool()` handles all non-V4 pools, `build_managed_pool()` handles V4.
 
 #### BuilderContext
 

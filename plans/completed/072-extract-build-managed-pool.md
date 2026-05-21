@@ -472,9 +472,9 @@ The deployer-resolution tests (`test_pool_constructor_trusts_builder_values`, `t
 
 ## Status
 
-[ ] Slice 1: Create `BuildManagedPoolRequest` and `build_managed_pool()`
-[ ] Slice 2: Migrate V4 call sites to `build_managed_pool()`
-[ ] Slice 3: Remove V4 kwargs and `pool_id` from `build_pool()`
-[ ] Slice 4: Consolidate `FACTORY_DEPLOYMENTS` into `pool_type_registry`
-[ ] Slice 5: Remove `deployer_address`/`init_hash` from `build_pool()` and `BuildPoolRequest`
-[ ] Slice 6: Validate and clean up
+[x] Slice 1: Create `BuildManagedPoolRequest` and `build_managed_pool()`
+[x] Slice 2: Migrate V4 call sites to `build_managed_pool()`
+[x] Slice 3: Remove V4 kwargs and `pool_id` from `build_pool()`
+[x] Slice 4: Consolidate `FACTORY_DEPLOYMENTS` into `pool_type_registry`
+[x] Slice 5: Remove `deployer_address`/`init_hash` from `build_pool()` and `BuildPoolRequest`
+[x] Slice 6: Validate and clean up
