@@ -20,9 +20,11 @@ _Avoid_: Builder config, builder deps.
 
 **AsyncBuilderContext**: Frozen dataclass passed to async builders at construction. Mirrors `BuilderContext` with async counterparts: `erc20_builder: AsyncErc20Builder`.
 
+**AsyncErc20Builder I/O Methods**: Five async methods (`get_token_balance`, `get_token_approval`, `get_token_total_supply`, `get_ether_balance`, plus `_resolve_block_number` module-level helper) that perform on-chain reads for token and ether balances. Accept `io: AsyncPoolIO` parameter; use `Erc20Token` cache before querying chain. `AsyncBot` delegates its public I/O methods to these builder methods instead of duplicating the logic inline (Plan 065). The sync `Erc20Builder` has equivalent methods that `Bot` delegates to.
+
 **Builder Registry**: A `dict[type, PoolBuilder]` (sync) or `dict[type, AsyncPoolBuilder]` (async) mapping concrete pool classes to their builders. Bot/AsyncBot dispatch through this registry after type resolution.
 
-**Type Resolution**: Shared pure-logic functions (in `type_resolution.py`) that determine the concrete pool class for an address. Both `Bot` and `AsyncBot` use the same `pool_class_for_descriptor()` pure function; I/O-bearing steps (`fetch_factory_from_chain`, `resolve_pool_type_by_probing`) come in sync/async pairs that accept `PoolIO` / `AsyncPoolIO`.
+**Type Resolution**: Shared pure-logic functions (in `type_resolution.py`) that determine the concrete pool class for an address. Sync/async top-level functions are thin wrappers that delegate to `_build_descriptor_from_db_result` (DB path) and `_descriptor_from_probing_result` (on-chain probing path) — pure functions that take domain objects and return `PoolTypeDescriptor`; the wrappers handle DB sessions and I/O. `pool_class_for_descriptor()` is the final pure lookup from descriptor → class. I/O-bearing steps (`fetch_factory_from_chain`) come in sync/async pairs that accept `PoolIO` / `AsyncPoolIO` (Plan 066).
 
 **V2BuilderBase**: Base class for V2-family sync builders (V2, Aerodrome V2, Camelot). Owns shared pure helpers (`decode_immutable_data`, `extract_db_values`, `resolve_deployer_and_init_hash`, `_fetch_v2_common_data`, `_fetch_reserves`) that `AsyncV2PoolBuilder` calls independently.
 
@@ -40,9 +42,10 @@ _Avoid_: Builder config, builder deps.
 - **AsyncBot** creates an `AsyncPoolIO(provider)` and passes `io=io` to all async builder calls
 - **All builders** are fully PoolIO-driven — they use `io.call()` / `io.call_raw()` instead of `self._connections.get_provider()`
 - **BuilderContext** no longer carries a `connections` field; builders receive `default_chain_id` for chain resolution and `io: PoolIO` for I/O at call sites
-- **Type resolution** functions in `type_resolution.py` replace ~330 lines of duplicated resolution logic that was in both `Bot` and `AsyncBot`
+- **Type resolution** functions in `type_resolution.py` replace ~330 lines of duplicated resolution logic that was in both `Bot` and `AsyncBot`; sync/async mirror pairs collapsed to thin wrappers over shared pure functions `_build_descriptor_from_db_result` and `_descriptor_from_probing_result` (Plan 066)
 - **V3BuilderBase** and **V4BuilderBase** extract ~150 lines of duplicated pure-logic per builder family (decode, DB extract, tick snapshot loading, tick-data-args resolution); async builders call the same `@staticmethod` helpers without inheritance — mirrors the V2 pattern (Plan 060)
 - **`load_tick_snapshot()`** re-queries the `pool_with_data` SQLAlchemy object inside the caller's session scope — lazy-loaded relationships (`initialization_maps`, `liquidity_positions`) require an active session
+- **AsyncBot** delegates its 4 public I/O methods (`get_token_balance`, `get_token_approval`, `get_token_total_supply`, `get_ether_balance`) to `AsyncErc20Builder`, matching the pattern where `Bot` delegates to `Erc20Builder` (Plan 065)
 
 ## Resolved ambiguities
 

@@ -132,6 +132,8 @@ class CurveDataProvider(Protocol):
 - Deprecated `*Fetcher` protocol classes deleted from `curve/types.py`; superseded by `CurveDataProvider` (Plan 055)
 - Strategy enum factory methods: `make_calculator()` on `SwapStyle`/`MetapoolRateStyle`/`MetapoolUnderlyingStyle`; `PoolStrategies` auto-constructs calculators from enum values (Plan 056)
 - Calculation-time I/O boundary documented: `_build_calculation_inputs` → `_resolve_calculation_inputs_via_io`, `requires_io_at_calculation_time` property (Plan 057)
+- AsyncBot inline I/O methods collapsed: 4 token/ether balance methods routed through `AsyncErc20Builder` instead of duplicating logic inline; AsyncBot 462→401 lines (Plan 065)
+- Type resolution sync/async duplication collapsed: 4 mirror functions → 2 thin wrappers + 2 shared pure functions (`_build_descriptor_from_db_result`, `_descriptor_from_probing_result`); ~56 lines of duplication removed (Plan 066)
 
 ## Testing Patterns
 
