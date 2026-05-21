@@ -3,7 +3,7 @@
 Provides pricing and fee calculation methods that operate on state held
 by V4PoolState. The swap calculation methods (calculate_tokens_in/out)
 stay in the pool class because they're tightly coupled to V4-specific
-internals (SwapDelta, Hooks, PossibleInaccurateResult).
+internals (SwapDelta, Hooks, HookedPoolResult).
 """
 
 from __future__ import annotations

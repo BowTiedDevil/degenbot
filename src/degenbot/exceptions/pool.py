@@ -18,7 +18,6 @@ from degenbot.types.aliases import BlockNumber
 if TYPE_CHECKING:
     from degenbot.uniswap.v4_liquidity_pool import Hooks
 
-
 # --- EVM ---
 
 
@@ -172,21 +171,67 @@ class InvalidSwapInputAmount(LiquidityPoolError):
 
 
 class PossibleInaccurateResult(LiquidityPoolError):
-    def __init__(self, amount_in: int, amount_out: int, hooks: set["Hooks"]) -> None:
-        """
-        Raised if a pool has an active hook that might invalidate the calculated result.
-        """
+    """
+    Raised when a swap calculation may not match the on-chain result.
 
+    The computed ``amount_in`` and ``amount_out`` are available on the
+    exception so callers can inspect or use the approximate values
+    after explicitly catching this exception.
+
+    Subclasses add domain-specific context (hooks, stale rates, etc.).
+    """
+
+    def __init__(self, amount_in: int, amount_out: int, *, message: str) -> None:
         self.amount_in = amount_in
         self.amount_out = amount_out
-        self.hooks = hooks
-        super().__init__(
-            message="The pool has one or more hooks that might invalidate the calculated result."
-        )
+        super().__init__(message=message)
 
     def __reduce__(self) -> tuple[Any, ...]:
         # Pickling will raise an exception if a reduction method is not defined
+        return self.__class__, (self.amount_in, self.amount_out)
+
+
+class HookedPoolResult(PossibleInaccurateResult):
+    """
+    Raised when a V4 pool has active hooks that may mutate the swap result.
+
+    The pool's ``beforeSwap`` / ``afterSwap`` hooks can modify amounts or
+    revert, so the pure-math result may differ from what the contract returns.
+    The set of conflicting hooks is available on the ``hooks`` attribute.
+    """
+
+    def __init__(self, amount_in: int, amount_out: int, hooks: set["Hooks"]) -> None:
+        self.hooks = hooks
+        super().__init__(
+            amount_in=amount_in,
+            amount_out=amount_out,
+            message="The pool has one or more hooks that might invalidate the calculated result.",
+        )
+
+    def __reduce__(self) -> tuple[Any, ...]:
         return self.__class__, (self.amount_in, self.amount_out, self.hooks)
+
+
+class StaleRateResult(PossibleInaccurateResult):
+    """
+    Raised when a Balancer ComposableStablePool's rate cache is stale.
+
+    ComposableStablePools with time-varying rates (e.g. bb-a-* yield tokens)
+    cache rates in ``_tokenRateCaches`` and refresh them before each swap
+    via ``_beforeSwapJoinExit()``. Without a live ``BalancerRateProvider``,
+    the pool uses construction-time rates that become stale as blocks pass.
+    The computed amounts are available but may not match on-chain execution.
+    """
+
+    def __init__(self, amount_in: int, amount_out: int) -> None:
+        super().__init__(
+            amount_in=amount_in,
+            amount_out=amount_out,
+            message="The pool's rate cache is stale; the calculated result may not match on-chain.",
+        )
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return self.__class__, (self.amount_in, self.amount_out)
 
 
 class UnknownPool(LiquidityPoolError):

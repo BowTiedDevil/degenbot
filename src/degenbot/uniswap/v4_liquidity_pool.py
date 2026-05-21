@@ -17,9 +17,9 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
     EVMRevertError,
     ExternalUpdateError,
+    HookedPoolResult,
     IncompleteSwap,
     LiquidityPoolError,
-    PossibleInaccurateResult,
 )
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber, ChainId
@@ -446,7 +446,7 @@ class UniswapV4Pool(
             }
             & self.active_hooks
         ):
-            raise PossibleInaccurateResult(
+            raise HookedPoolResult(
                 amount_in=swap_delta.amount_in,
                 amount_out=swap_delta.amount_out,
                 hooks=conflicting_hooks,
@@ -492,7 +492,7 @@ class UniswapV4Pool(
             }
             & self.active_hooks
         ):
-            raise PossibleInaccurateResult(
+            raise HookedPoolResult(
                 amount_in=swap_delta.amount_in,
                 amount_out=swap_delta.amount_out,
                 hooks=conflicting_hooks,

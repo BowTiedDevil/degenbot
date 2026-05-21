@@ -7,7 +7,7 @@ calculate_tokens_in_from_tokens_out() match on-chain querySwap results.
 MetaStablePools: exact 0-wei matching (near-static rate providers).
 ComposableStablePools:
   - With live rate_provider: exact 0-wei matching per block
-  - Without rate_provider: raises PossibleInaccurateResult (stale rates)
+  - Without rate_provider: raises StaleRateResult (stale rates)
 """
 
 import json
@@ -30,7 +30,7 @@ from degenbot.balancer.stable_pools import (
 )
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
-from degenbot.exceptions.pool import PossibleInaccurateResult
+from degenbot.exceptions.pool import StaleRateResult
 
 # ---------- ABIs ----------
 
@@ -291,7 +291,7 @@ class TestBalancerV2StablePoolMetaStable:
 
     MetaStablePools have no BPT token and near-static rate providers,
     so construction-time scaling factors produce exact 0-wei matching.
-    No rate_provider injection is needed and no PossibleInaccurateResult
+    No rate_provider injection is needed and no StaleRateResult
     is raised.
     """
 
@@ -594,7 +594,7 @@ class TestBalancerV2StablePoolComposableExact:
 class TestBalancerV2StablePoolComposableStaleRates:
     """
     Test that ComposableStablePools without a live rate_provider raise
-    PossibleInaccurateResult, and that the wrapped values are close
+    StaleRateResult, and that the wrapped values are close
     to the on-chain result.
     """
 
@@ -610,11 +610,11 @@ class TestBalancerV2StablePoolComposableStaleRates:
     def test_stale_rates_raise_possible_inaccurate_result(
         self, tusd_bsp_pool_no_provider
     ):
-        """ComposableStablePool without rate_provider raises PossibleInaccurateResult."""
+        """ComposableStablePool without rate_provider raises StaleRateResult."""
         pool = tusd_bsp_pool_no_provider
         amount_in = pool.balances[0] // 100
 
-        with pytest.raises(PossibleInaccurateResult) as exc_info:
+        with pytest.raises(StaleRateResult) as exc_info:
             pool.calculate_tokens_out_from_tokens_in(
                 token_in=pool.tokens[0],
                 token_out=pool.tokens[2],
@@ -625,11 +625,11 @@ class TestBalancerV2StablePoolComposableStaleRates:
         assert exc_info.value.amount_out > 0
 
     def test_stale_rates_given_out_raises(self, tusd_bsp_pool_no_provider):
-        """ComposableStablePool GIVEN_OUT without rate_provider raises PossibleInaccurateResult."""
+        """ComposableStablePool GIVEN_OUT without rate_provider raises StaleRateResult."""
         pool = tusd_bsp_pool_no_provider
         amount_out = pool.balances[2] // 100
 
-        with pytest.raises(PossibleInaccurateResult) as exc_info:
+        with pytest.raises(StaleRateResult) as exc_info:
             pool.calculate_tokens_in_from_tokens_out(
                 token_in=pool.tokens[0],
                 token_out=pool.tokens[2],

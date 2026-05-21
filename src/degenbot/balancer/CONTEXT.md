@@ -99,11 +99,11 @@ Deployed contracts have **two different StableMath implementations**:
 
 **`_StaticRateProvider`** is an internal wrapper that always returns construction-time rates. Used when no live rate provider is available.
 
-**`PossibleInaccurateResult`** exception: ComposableStablePools without a live `BalancerRateProvider` raise this exception (same pattern as `UniswapV4Pool` with hooks). The computed `amount_in` and `amount_out` are available as attributes on the exception. Callers must `try/except` to access the values, explicitly acknowledging that rates may be stale.
+**`StaleRateResult`** exception: ComposableStablePools without a live `BalancerRateProvider` raise this exception (same pattern as `UniswapV4Pool` with hooks). The computed `amount_in` and `amount_out` are available as attributes on the exception. Callers must `try/except` to access the values, explicitly acknowledging that rates may be stale.
 
 **Exact matching guarantee**: With a `CacheAwareRateProvider` that replicates `_cacheTokenRateIfNecessary()`, and the correct `invariant_version`, results match on-chain with **0 wei error**. The previous tolerance of ≤3000 wei was due to (a) always calling `getRate()` instead of checking cache validity, and (b) using the wrong invariant version.
 
-**MetaStablePool exception**: MetaStablePools do NOT raise `PossibleInaccurateResult` because they have no rate cache — they call `getRate()` directly on each swap. Construction-time scaling factors produce exact 0-wei matching without a rate provider for the pools we've tested (near-static rate providers).
+**MetaStablePool exception**: MetaStablePools do NOT raise `StaleRateResult` because they have no rate cache — they call `getRate()` directly on each swap. Construction-time scaling factors produce exact 0-wei matching without a rate provider for the pools we've tested (near-static rate providers).
 
 ## Library File Layout
 
