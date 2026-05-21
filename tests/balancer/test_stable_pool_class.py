@@ -22,7 +22,12 @@ from degenbot.balancer.deployments import (
     BALANCERQUERIES_CONTRACT_ADDRESS,
 )
 from degenbot.balancer.libraries.constants import ONE
-from degenbot.balancer.stable_pools import BalancerRateProvider, BalancerV2StablePool
+from degenbot.balancer.stable_pools import (
+    INVARIANT_V1,
+    INVARIANT_V2,
+    BalancerRateProvider,
+    BalancerV2StablePool,
+)
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions.pool import PossibleInaccurateResult
@@ -31,7 +36,7 @@ from degenbot.exceptions.pool import PossibleInaccurateResult
 
 POOL_ABI = json.loads(
     """
-    [{"inputs":[],"name":"getAmplificationParameter","outputs":[{"internalType":"uint256","name":"value","type":"uint256"},{"internalType":"bool","name":"isUpdating","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getPoolId","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getSwapFeePercentage","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getRateProviders","outputs":[{"internalType":"contract IRateProvider[]","name":"","type":"address[]"}],"stateMutability":"view","type":"function"}]
+    [{"inputs":[],"name":"getAmplificationParameter","outputs":[{"internalType":"uint256","name":"value","type":"uint256"},{"internalType":"bool","name":"isUpdating","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getPoolId","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getSwapFeePercentage","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getRateProviders","outputs":[{"internalType":"contract IRateProvider[]","name":"","type":"address[]"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"}],"name":"getTokenRateCache","outputs":[{"internalType":"uint256","name":"rate","type":"uint256"},{"internalType":"uint256","name":"oldRate","type":"uint256"},{"internalType":"uint256","name":"duration","type":"uint256"},{"internalType":"uint256","name":"expires","type":"uint256"}],"stateMutability":"view","type":"function"}]
     """  # noqa:E501
 )
 
@@ -77,34 +82,84 @@ COMPOSABLE_STABLE_POOL_ADDRESSES = {
 # ---------- Rate Provider ----------
 
 
-class Web3RateProvider:
-    """Live rate provider that fetches rates from on-chain rate providers.
+class CacheAwareRateProvider:
+    """Rate provider that replicates the on-chain _cacheTokenRateIfNecessary flow.
 
-    Implements the BalancerRateProvider protocol. Calls getRate() on each
-    token's rate provider contract using the provided block_identifier,
-    matching the on-chain _beforeSwapJoinExit() rate cache refresh exactly.
+    For each token, reads getTokenRateCache() to get the cached (rate, oldRate,
+    duration, expires). If the cache has expired (block timestamp > expires),
+    calls the rate provider's getRate() for the fresh value. Otherwise, uses
+    the cached rate. This exactly matches the on-chain swap behavior where
+    _beforeSwapJoinExit() refreshes rate caches before reading _scalingFactors().
+
+    For BPT tokens and tokens without a rate provider, returns ONE (1e18).
     """
 
-    def __init__(self, rate_provider_addresses: list[str], w3) -> None:
-        self._addresses = rate_provider_addresses
+    def __init__(  # noqa: PLR0917
+        self,
+        pool_address: str,
+        pool_abi: list,
+        rate_provider_addresses: list[str],
+        token_addresses: list[str],
+        bpt_idx: int | None,
+        w3,
+        *,
+        zero_addr: str = "0x0000000000000000000000000000000000000000",
+    ) -> None:
+        self._pool = w3.eth.contract(
+            address=get_checksum_address(pool_address), abi=pool_abi
+        )
+        self._rate_contracts = []
+        self._bpt_idx = bpt_idx
         self._w3 = w3
-        self._contracts = [
-            w3.eth.contract(address=get_checksum_address(addr), abi=RATE_ABI)
-            if addr != "0x0000000000000000000000000000000000000000"
-            else None
-            for addr in rate_provider_addresses
-        ]
+
+        zero = zero_addr
+        for i, rp in enumerate(rate_provider_addresses):
+            if i == bpt_idx or rp == zero:
+                self._rate_contracts.append(None)
+            else:
+                self._rate_contracts.append(
+                    w3.eth.contract(address=get_checksum_address(rp), abi=RATE_ABI)
+                )
+        self._token_addresses = token_addresses
 
     def get_rates(self, block_identifier: int | str | None = None) -> tuple[int, ...]:
+        if block_identifier is None:
+            block_ts = self._w3.eth.get_block("latest")["timestamp"]
+        else:
+            block_ts = self._w3.eth.get_block(block_identifier)["timestamp"]
+
         rates: list[int] = []
-        for contract in self._contracts:
-            if contract is None:
+        for i, (rp_contract, token_addr) in enumerate(
+            zip(self._rate_contracts, self._token_addresses, strict=True)
+        ):
+            if i == self._bpt_idx or rp_contract is None:
                 rates.append(ONE)
-            else:
-                rate = contract.functions.getRate().call(
+                continue
+
+            try:
+                rate, _old_rate, _duration, expires = (
+                    self._pool.functions.getTokenRateCache(
+                        get_checksum_address(token_addr)
+                    ).call(block_identifier=block_identifier)
+                )
+            except ContractLogicError:
+                # Token doesn't have a rate provider — fall back to getRate()
+                rate = rp_contract.functions.getRate().call(
                     block_identifier=block_identifier
                 )
                 rates.append(rate)
+                continue
+
+            if block_ts > expires:
+                # Cache expired — on-chain would call provider.getRate()
+                fresh = rp_contract.functions.getRate().call(
+                    block_identifier=block_identifier
+                )
+                rates.append(fresh)
+            else:
+                # Cache valid — on-chain uses the cached rate
+                rates.append(rate)
+
         return tuple(rates)
 
 
@@ -116,11 +171,13 @@ def _build_stable_pool(
     pool_address: str,
     *,
     inject_rate_provider: bool = False,
+    invariant_version: int = INVARIANT_V2,
 ) -> BalancerV2StablePool:
     """Build a BalancerV2StablePool from on-chain data.
 
-    If inject_rate_provider is True, constructs a Web3RateProvider that
-    fetches rates at the given block for exact-integer matching.
+    If inject_rate_provider is True, constructs a CacheAwareRateProvider
+    that replicates the on-chain _cacheTokenRateIfNecessary flow for
+    exact-integer matching.
     """
     w3 = fork.w3
     vault = w3.eth.contract(
@@ -180,7 +237,14 @@ def _build_stable_pool(
     # Build rate provider if requested
     rate_provider: BalancerRateProvider | None = None
     if inject_rate_provider:
-        rate_provider = Web3RateProvider(rate_providers, w3)
+        rate_provider = CacheAwareRateProvider(
+            pool_address=pool_address,
+            pool_abi=json.loads(POOL_ABI) if isinstance(POOL_ABI, str) else POOL_ABI,
+            rate_provider_addresses=[str(rp) for rp in rate_providers],
+            token_addresses=[str(t) for t in tokens],
+            bpt_idx=bpt_idx,
+            w3=w3,
+        )
 
     return BalancerV2StablePool(
         address=pool_address,
@@ -194,6 +258,7 @@ def _build_stable_pool(
         base_scaling_factors=base_scaling_factors,
         bpt_idx=bpt_idx,
         rate_provider=rate_provider,
+        invariant_version=invariant_version,
     )
 
 
@@ -373,14 +438,13 @@ class TestBalancerV2StablePoolMetaStable:
 class TestBalancerV2StablePoolComposableExact:
     """
     Test BalancerV2StablePool against on-chain for ComposableStablePools
-    with a live rate_provider injected.
+    with a CacheAwareRateProvider injected.
 
-    With a Web3RateProvider that fetches rates at the same block as the
-    querySwap call, results match within ≤3000 wei. The residual comes
-    from the rate providers being called in separate eth_call operations —
-    the on-chain querySwap refreshes rates inside a single call, while we
-    make a separate getRate() call that may differ by 1-2 wei at the
-    rate provider level, which amplifies through the invariant computation.
+    The CacheAwareRateProvider replicates the on-chain _cacheTokenRateIfNecessary
+    flow exactly: reads getTokenRateCache(), checks if the cache has expired
+    at the target block's timestamp, and calls getRate() only if expired.
+    With this mechanism plus the V1 invariant (always-roundDown), exact
+    0-wei matching is achieved.
     """
 
     @pytest.fixture
@@ -389,6 +453,7 @@ class TestBalancerV2StablePoolComposableExact:
             fork_mainnet_archive,
             COMPOSABLE_STABLE_POOL_ADDRESSES["tusd_bsp"],
             inject_rate_provider=True,
+            invariant_version=INVARIANT_V1,
         )
 
     @pytest.fixture
@@ -397,24 +462,12 @@ class TestBalancerV2StablePoolComposableExact:
             fork_mainnet_archive,
             COMPOSABLE_STABLE_POOL_ADDRESSES["bb_s_usd"],
             inject_rate_provider=True,
-        )
-
-    def _assert_close(
-        self,
-        python_result: int,
-        on_chain_result: int,
-        max_wei_diff: int = 3000,
-        label: str = "",
-    ) -> None:
-        diff = abs(python_result - on_chain_result)
-        assert diff <= max_wei_diff, (
-            f"{label}Python={python_result}, On-chain={on_chain_result}, "
-            f"diff={diff} (max={max_wei_diff})"
+            invariant_version=INVARIANT_V1,
         )
 
     @pytest.mark.parametrize("pct", [100, 1000])
     def test_given_in_tusd_to_usdc(self, tusd_bsp_pool, fork_mainnet_archive, pct):
-        """GIVEN_IN TUSD→USDC using BalancerV2StablePool with live rates."""
+        """GIVEN_IN TUSD→USDC must match on-chain exactly."""
         pool = tusd_bsp_pool
         amount_in = pool.balances[0] // pct
 
@@ -433,11 +486,13 @@ class TestBalancerV2StablePoolComposableExact:
         )
 
         if on_chain_out > 0:
-            self._assert_close(python_out, on_chain_out, label=f"pct=1/{pct}: ")
+            assert python_out == on_chain_out, (
+                f"pct=1/{pct}: diff={python_out - on_chain_out}"
+            )
 
     @pytest.mark.parametrize("pct", [100, 1000])
     def test_given_in_usdc_to_tusd(self, tusd_bsp_pool, fork_mainnet_archive, pct):
-        """GIVEN_IN USDC→TUSD using BalancerV2StablePool with live rates."""
+        """GIVEN_IN USDC→TUSD must match on-chain exactly."""
         pool = tusd_bsp_pool
         amount_in = pool.balances[2] // pct
 
@@ -456,11 +511,13 @@ class TestBalancerV2StablePoolComposableExact:
         )
 
         if on_chain_out > 0:
-            self._assert_close(python_out, on_chain_out, label=f"pct=1/{pct}: ")
+            assert python_out == on_chain_out, (
+                f"pct=1/{pct}: diff={python_out - on_chain_out}"
+            )
 
     @pytest.mark.parametrize("pct", [100, 1000])
     def test_given_in_usdc_to_usdt(self, bb_s_usd_pool, fork_mainnet_archive, pct):
-        """GIVEN_IN bb-s-USDC→bb-s-USDT using BalancerV2StablePool with live rates."""
+        """GIVEN_IN bb-s-USDC→bb-s-USDT must match on-chain exactly."""
         pool = bb_s_usd_pool
         amount_in = pool.balances[1] // pct
 
@@ -479,11 +536,13 @@ class TestBalancerV2StablePoolComposableExact:
         )
 
         if on_chain_out > 0:
-            self._assert_close(python_out, on_chain_out, label=f"pct=1/{pct}: ")
+            assert python_out == on_chain_out, (
+                f"pct=1/{pct}: diff={python_out - on_chain_out}"
+            )
 
     @pytest.mark.parametrize("pct", [100, 1000])
     def test_given_out_usdc_for_tusd(self, tusd_bsp_pool, fork_mainnet_archive, pct):
-        """GIVEN_OUT: requesting USDC out for TUSD in with live rates."""
+        """GIVEN_OUT: requesting USDC out for TUSD in must match on-chain exactly."""
         pool = tusd_bsp_pool
         amount_out = pool.balances[2] // pct
 
@@ -502,11 +561,13 @@ class TestBalancerV2StablePoolComposableExact:
         )
 
         if on_chain_in > 0:
-            self._assert_close(python_in, on_chain_in, label=f"pct=1/{pct}: ")
+            assert python_in == on_chain_in, (
+                f"pct=1/{pct}: diff={python_in - on_chain_in}"
+            )
 
     @pytest.mark.parametrize("pct", [100, 1000])
     def test_given_out_usdt_for_usdc(self, bb_s_usd_pool, fork_mainnet_archive, pct):
-        """GIVEN_OUT: requesting bb-s-USDT out for bb-s-USDC in with live rates."""
+        """GIVEN_OUT: requesting bb-s-USDT out for bb-s-USDC in must match exactly."""
         pool = bb_s_usd_pool
         amount_out = pool.balances[2] // pct
 
@@ -525,7 +586,9 @@ class TestBalancerV2StablePoolComposableExact:
         )
 
         if on_chain_in > 0:
-            self._assert_close(python_in, on_chain_in, label=f"pct=1/{pct}: ")
+            assert python_in == on_chain_in, (
+                f"pct=1/{pct}: diff={python_in - on_chain_in}"
+            )
 
 
 class TestBalancerV2StablePoolComposableStaleRates:
@@ -541,6 +604,7 @@ class TestBalancerV2StablePoolComposableStaleRates:
             fork_mainnet_archive,
             COMPOSABLE_STABLE_POOL_ADDRESSES["tusd_bsp"],
             inject_rate_provider=False,
+            invariant_version=INVARIANT_V1,
         )
 
     def test_stale_rates_raise_possible_inaccurate_result(
@@ -557,7 +621,6 @@ class TestBalancerV2StablePoolComposableStaleRates:
                 token_in_quantity=amount_in,
             )
 
-        # The exception contains the computed values
         assert exc_info.value.amount_in == amount_in
         assert exc_info.value.amount_out > 0
 

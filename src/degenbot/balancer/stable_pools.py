@@ -8,6 +8,7 @@ from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.libraries.stable_math import (
     _calc_in_given_out,
     _calc_out_given_in,
+    _calculate_invariant,
     _calculate_invariant_deployed,
 )
 from degenbot.checksum_cache import get_checksum_address
@@ -30,6 +31,12 @@ if TYPE_CHECKING:
     from degenbot.types.aliases import BlockNumber, ChainId
 
 from degenbot.types.abstract import AbstractLiquidityPool
+
+# Enum for deployed StableMath invariant versions.
+# V1: always-roundDown with D_P accumulation (older ComposableStablePools)
+# V2: roundUp parameter with P_D accumulation (MetaStablePools, newer pools)
+INVARIANT_V1 = 1
+INVARIANT_V2 = 2
 
 
 @runtime_checkable
@@ -74,26 +81,32 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
     """
     Balancer V2 Stable Pool (MetaStablePool or ComposableStablePool).
 
-    Supports token-to-token swaps using StableMath with deployed-contract-matching
-    invariant computation (roundUp=True). For ComposableStablePools, the BPT token
-    is automatically dropped from the invariant and swap calculations.
+    Supports token-to-token swaps using StableMath. For ComposableStablePools,
+    the BPT token is automatically dropped from the invariant and swap calculations.
 
     Swap fee application order:
       GIVEN_IN:  subtractFee → upscale → compute(outGivenIn) → downscaleDown
       GIVEN_OUT: upscale → compute(inGivenOut) → downscaleUp → addFee
 
+    Invariant versions:
+      V1 (INVARIANT_V1): always-roundDown, D_P accumulation. Used by older
+        deployed ComposableStablePools (e.g. TUSD BSP, bb-s-USD). Matches the
+        monorepo ``_calculate_invariant``.
+      V2 (INVARIANT_V2): roundUp parameter, P_D accumulation. Used by
+        MetaStablePools and newer deployed pools. The swap path calls with
+        round_up=True. Matches ``_calculate_invariant_deployed``.
+
     Rate handling:
       ComposableStablePools have time-varying rates (yield accrual in
       bb-a-* tokens). The deployed contract refreshes rate caches before
       each swap via ``_beforeSwapJoinExit()``. For exact-integer matching,
-      inject a ``BalancerRateProvider`` and pass ``block_identifier`` to
-      swap methods. Without a live rate provider, the pool uses construction-time
+      inject a ``BalancerRateProvider`` that replicates this cache-aware
+      logic (read ``getTokenRateCache``, check expiry, call ``getRate()`` if
+      expired). Without a live rate provider, the pool uses construction-time
       scaling factors and raises ``PossibleInaccurateResult`` for
       ComposableStablePools to warn that rates may be stale.
 
-      MetaStablePools have near-static rate providers (e.g. wstETH/wETH
-      conversion rate), so construction-time scaling factors produce exact
-      matching without a rate provider.
+      MetaStablePools have no rate cache — they call ``getRate()`` directly.
     """
 
     type PoolState = BalancerV2PoolState
@@ -124,6 +137,7 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         bpt_idx: int | None = None,
         base_scaling_factors: Sequence[int] | None = None,
         rate_provider: BalancerRateProvider | None = None,
+        invariant_version: int = INVARIANT_V2,
         chain_id: ChainId | None = None,
         state_block: BlockNumber | None = None,
     ) -> None:
@@ -139,6 +153,7 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         self.fee = fee
         self.amp = amp
         self.bpt_idx = bpt_idx
+        self.invariant_version = invariant_version
 
         # Base scaling factors: 10^(18 - token_decimals) for each token.
         # These are the decimal-adjustment-only scaling factors (no rate).
@@ -287,13 +302,19 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         ]
 
     def _compute_invariant(self, upscaled_balances: list[int]) -> int:
-        """Compute invariant using deployed version with roundUp=True."""
+        """Compute invariant using the pool's deployed StableMath version.
+
+        V1 (INVARIANT_V1): always-roundDown, D_P accumulation.
+        V2 (INVARIANT_V2): round_up=True for swaps, P_D accumulation.
+        """
         # For ComposableStablePool, drop BPT before computing invariant
         if self.bpt_idx is not None:
             balances_for_inv = [upscaled_balances[i] for i in self._non_bpt_indices]
         else:
             balances_for_inv = upscaled_balances
 
+        if self.invariant_version == INVARIANT_V1:
+            return _calculate_invariant(self.amp, balances_for_inv)
         return _calculate_invariant_deployed(self.amp, balances_for_inv, round_up=True)
 
     def _skip_bpt_index(self, index: int) -> int:
