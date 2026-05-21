@@ -20,7 +20,8 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | # | Plan | Summary |
 |---|------|---------|
 | 014 | [Async REPL](014-async-repl.md) | `python -m degenbot` with top-level `await`. |
-| 070 | [Balancer Builder](070-balancer-builder.md) | Builder, type resolution, `to_hop_state()`, and `external_update()` for Balancer V2 pools. |
+| 070 | [Balancer Builder](completed/070-balancer-builder.md) | Builder, type resolution, `to_hop_state()`, `external_update()`, `BalancerPairView`, `build_swap_amount()` for Balancer V2 pools. |
+| 072 | [Scoped Build Pool Request](072-scoped-build-pool-request.md) | Refactor `BuildPoolRequest` so builder-specific options live in scoping sub-objects instead of flat fields. |
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
 
 ## Completed Plans

@@ -144,8 +144,8 @@ PoolClass -> PublisherMixin -> PoolPickleMixin -> StateMixin -> CalcMixin -> Abs
 | UniswapV3Pool | `V3PoolState` | `UniswapV3PoolCalc` | Base V3. Uses `ConcentratedLiquidityStateManager` which composes `StateCache` |
 | UniswapV4Pool | `V4PoolState` | `UniswapV4PoolCalc` | Same manager pattern as V3. V4-specific swap calc stays in pool |
 | CurveStableswapPool | `StableswapPoolState` | `DyCalculator` seam | Curve uses `BoundedCache` (dict-based) for per-block on-chain data, not `StateCache`. Per-block cache fields (`_cache_*`) with `_get_cached_*` accessors are private on the pool class (Plan 068). `_get_cached_base_cache_updated` and `_get_cached_base_virtual_price` update side-effect mirrors (`_base_cache_updated_value`, `_base_virtual_price_value`) read by `_get_cached_virtual_price` for base-cache-expiry logic. Calculators in `curve/calculators/`; pure math in `calculations/stableswap.py` |
-| BalancerV2Pool | `BalancerV2PoolState` | `WeightedMath` functions | Balancer uses no state cache. Math in `balancer/libraries/`; version-dependent pow via `PowVersion` enum |
-| BalancerV2StablePool | `BalancerV2PoolState` | `StableMath` functions | MetaStable or Composable pool. Two invariant versions (V1/V2). `StaleRateResult` when no rate provider. `BalancerRateProvider` protocol for cache-aware rate resolution |
+| BalancerV2Pool | `BalancerV2PoolState` | `WeightedMath` functions | Balancer uses no state cache. Math in `balancer/libraries/`; version-dependent pow via `PowVersion` enum. `external_update()` with `_state_lock`. `to_hop_state()` returns `BalancerWeightedHop` with `swap_fn`. `build_swap_amount()` raises for N>2 without explicit pair — use `BalancerPairView` for `ArbitragePathPool` conformance. Builder: `BalancerBuilder` (Plan 070) |
+| BalancerV2StablePool | `BalancerV2PoolState` | `StableMath` functions | MetaStable or Composable pool. Two invariant versions (V1/V2). `StaleRateResult` when no rate provider. `BalancerRateProvider` protocol for cache-aware rate resolution. `external_update()` with `_state_lock`. `to_hop_state()` returns `BalancerStableHop` with `swap_fn` that catches `StaleRateResult`. `build_swap_amount()` raises for N>2 without explicit pair — use `BalancerPairView` for `ArbitragePathPool` conformance. Builder: `BalancerBuilder` (Plan 070) |
 
 ### StateCache
 
@@ -219,6 +219,7 @@ Sync pool builders for each pool family inherit a base class with shared `@stati
 - **`V2BuilderBase`** — helpers: `decode_immutable_data`, `extract_db_values`, `resolve_deployer_and_init_hash` (`V2PoolBuilder`, `AerodromeV2Builder`, `CamelotBuilder` inherit)
 - **`V3BuilderBase`** — helpers: `decode_immutable_data`, `decode_slot0`, `extract_db_values`, `load_tick_snapshot`, `resolve_tick_data_args`; frozen dataclasses `V3ImmutableData`, `V3Slot0Data`, `V3DbValues` (`V3PoolBuilder` inherits; `AsyncV3PoolBuilder` calls static methods)
 - **`V4BuilderBase`** — helpers: `decode_slot0`, `extract_db_values`, `load_tick_snapshot`, `resolve_tick_data_args`; frozen dataclasses `V4Slot0Data`, `V4DbValues` (`V4PoolBuilder` inherits; `AsyncV4PoolBuilder` calls static methods)
+- **`BalancerBuilderBase`** — helpers: `decode_pool_id`, `decode_vault_tokens`, `detect_bpt_index`, `resolve_invariant_version`; frozen dataclasses `DecodedPoolId`, `VaultTokensResult`, `_BalancerPoolType` enum (`BalancerBuilder` inherits; future `AsyncBalancerBuilder` calls static methods) (Plan 070)
 
 ### Fetcher Protocols
 
@@ -244,9 +245,9 @@ See `docs/architecture/io-free-pools.md` and `src/degenbot/curve/CONTEXT.md` for
 
 Two enums cover related but distinct concepts:
 - **`PoolFamily`** (in `types/pool_type.py`) — identifies a pool's mathematical invariant family for type resolution and DB kind derivation. Values: `CONSTANT_PRODUCT`, `CONCENTRATED_LIQUIDITY`, `STABLESWAP`, `WEIGHTED`.
-- **`PoolInvariant`** (in `types/hop_types.py`) — identifies the solver dispatch path for arbitrage optimization. Values: `CONSTANT_PRODUCT`, `BOUNDED_PRODUCT`, `SOLIDLY_STABLE`, `CURVE_STABLESWAP`, `BALANCER_WEIGHTED`, `BALANCER_MULTI_TOKEN`.
+- **`PoolInvariant`** (in `types/hop_types.py`) — identifies the solver dispatch path for arbitrage optimization. Values: `CONSTANT_PRODUCT`, `BOUNDED_PRODUCT`, `SOLIDLY_STABLE`, `CURVE_STABLESWAP`, `BALANCER_WEIGHTED`, `BALANCER_MULTI_TOKEN`, `BALANCER_STABLESWAP`.
 
-A `PoolFamily` maps 1:1 to `PoolInvariant` for V2/V3, but N:1 for Curve/Stable and Balancer/Weighted (e.g., `STABLESWAP` → `CURVE_STABLESWAP` or `SOLIDLY_STABLE`).
+A `PoolFamily` maps 1:1 to `PoolInvariant` for V2/V3, but N:1 for Curve/Stable and Balancer/Weighted (e.g., `STABLESWAP` → `CURVE_STABLESWAP` or `SOLIDLY_STABLE` or `BALANCER_STABLESWAP`).
 
 ### CacheablePool Protocol
 
@@ -254,7 +255,7 @@ Pools that register with the Rust solver cache implement the `CacheablePool` pro
 
 ### Swap Encoding Pipeline
 
-Each `SwapAmounts` subclass (V2, V3, Curve, V4) has an `encode(recipient=)` method that produces an `EncodedCall(to, data, value)`, plus `input_amount()` / `output_amount()` for generic amount extraction (replacing the former match/case dispatch). Pool classes implement `build_swap_amount()` from the `ArbitragePathPool` protocol, making the per-pool swap-amount construction fully local. The `generate_payloads()` function wires a three-layer pipeline:
+Each `SwapAmounts` subclass (V2, V3, Curve, V4, Balancer) has an `encode(recipient=)` method that produces an `EncodedCall(to, data, value)`, plus `input_amount()` / `output_amount()` for generic amount extraction (replacing the former match/case dispatch). Pool classes implement `build_swap_amount()` from the `ArbitragePathPool` protocol, making the per-pool swap-amount construction fully local. `BalancerV2SwapAmounts` encodes a Vault.swap() call with SingleSwap and FundManagement structs (Plan 070). The `generate_payloads()` function wires a three-layer pipeline:
 
 1. **Per-hop encoding** — `SwapAmounts.encode()` (pool-type-specific ABI encoding)
 2. **Approval injection** — `ApprovalStrategy` protocol (default: `NoApprovals`)
@@ -278,7 +279,7 @@ Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` f
 
 ## Architecture Plans
 
-Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–069 are all complete. The only active plans are 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
+Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–070 are all complete. The only active plans are 014 (Async REPL), 072 (Scoped Build Pool Request), and the arbitrage optimizer project. See `plans/README.md` for the full list.
 
 **New plans must follow [`plans/TEMPLATE.md`](plans/TEMPLATE.md).** The template requires: deletion test, specific friction table, vertical slices, design decisions, relationship to other plans, and status checklist.
 

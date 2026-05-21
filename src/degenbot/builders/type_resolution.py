@@ -80,7 +80,24 @@ def pool_class_for_descriptor(
                 or UniswapV3Pool,
             )
         case PoolFamily.STABLESWAP:
+            # Variant-aware: reject Balancer stable pools without factory registration
+            if pool_type.variant is not None and pool_type.variant.startswith("balancer"):
+                msg = (
+                    f"Balancer stable pool with unregistered factory {pool_type.factory}. "
+                    f"Register the factory address in pool_type_registry first."
+                )
+                raise DegenbotValueError(message=msg)
             return CurveStableswapPool
+        case PoolFamily.WEIGHTED:
+            # No default Balancer weighted class — require factory registration
+            if pool_type.variant is not None and pool_type.variant.startswith("balancer"):
+                msg = (
+                    f"Balancer weighted pool with unregistered factory {pool_type.factory}. "
+                    f"Register the factory address in pool_type_registry first."
+                )
+                raise DegenbotValueError(message=msg)
+            msg = f"No pool class for WEIGHTED family with variant {pool_type.variant!r}"
+            raise DegenbotValueError(message=msg)
         case _:
             msg = f"No pool class for family {pool_type.family.value!r}"
             raise DegenbotValueError(message=msg)
@@ -221,6 +238,34 @@ def resolve_pool_type_by_probing(
             succeeded_method="getReserves", chain_id=chain_id, factory=factory,
         )
 
+    # Try Balancer: getPoolId() exists → Balancer pool
+    try:
+        io.call(
+            to=address,
+            data=encode_function_calldata("getPoolId()", None),
+        )
+    except Web3Exception:
+        pass
+    else:
+        # Balancer pool detected — determine weighted vs stable
+        try:
+            io.call(
+                to=address,
+                data=encode_function_calldata("getNormalizedWeights()", None),
+            )
+            variant = "balancer_weighted"
+            family = PoolFamily.WEIGHTED
+        except Web3Exception:
+            variant = "balancer_stable"
+            family = PoolFamily.STABLESWAP
+
+        return PoolTypeDescriptor(
+            family=family,
+            variant=variant,
+            kind=derive_kind(family, variant),
+            factory=factory,
+        )
+
     # Fall through to Curve — assume STABLESWAP if nothing else matched
     return _descriptor_from_probing_result(
         succeeded_method=None, chain_id=chain_id, factory=factory,
@@ -261,7 +306,35 @@ async def resolve_pool_type_by_probing_async(
             succeeded_method="getReserves", chain_id=chain_id, factory=factory,
         )
 
-    # Fall through to Curve — assume STABLESWAP
+    # Try Balancer: getPoolId() exists → Balancer pool
+    try:
+        await io.call(
+            to=address,
+            data=encode_function_calldata("getPoolId()", None),
+        )
+    except Web3Exception:
+        pass
+    else:
+        # Balancer pool detected — determine weighted vs stable
+        try:
+            await io.call(
+                to=address,
+                data=encode_function_calldata("getNormalizedWeights()", None),
+            )
+            variant = "balancer_weighted"
+            family = PoolFamily.WEIGHTED
+        except Web3Exception:
+            variant = "balancer_stable"
+            family = PoolFamily.STABLESWAP
+
+        return PoolTypeDescriptor(
+            family=family,
+            variant=variant,
+            kind=derive_kind(family, variant),
+            factory=factory,
+        )
+
+    # Fall through — assume STABLESWAP
     return _descriptor_from_probing_result(
         succeeded_method=None, chain_id=chain_id, factory=factory,
     )

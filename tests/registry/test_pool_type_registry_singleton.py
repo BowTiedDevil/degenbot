@@ -6,6 +6,8 @@ populated by DEX module self-registration at import time.
 import pytest
 
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
+from degenbot.balancer.pools import BalancerV2Pool
+from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.pancakeswap.pools import PancakeswapV2Pool, PancakeswapV3Pool
 from degenbot.registry.pool_type import pool_type_registry
@@ -94,6 +96,22 @@ SINGLETON_REGISTRATIONS: dict[tuple[int, str], tuple[type, str | None, str]] = {
         CamelotLiquidityPool,
         "camelot",
         "camelot_v2",
+    ),
+    # Balancer V2 (Ethereum Mainnet)
+    (1, "0x8e9AA87E45e92BAD7D5F7F9dd794cEa12f21707B"): (
+        BalancerV2Pool,
+        "balancer_weighted",
+        "balancer_weighted",
+    ),
+    (1, "0x8519f5a4A85678e0e03395586e2e223D70E9e09B"): (
+        BalancerV2StablePool,
+        "balancer_stable",
+        "balancer_stable",
+    ),
+    (1, "0xA8936f4824B2E6407fC0e94133909aEf7D48E876"): (
+        BalancerV2StablePool,
+        "balancer_stable",
+        "balancer_stable",
     ),
 }
 

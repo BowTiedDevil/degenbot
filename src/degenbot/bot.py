@@ -6,7 +6,10 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
+from degenbot.balancer.pools import BalancerV2Pool
+from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
+from degenbot.builders.balancer_builder import BalancerBuilder
 from degenbot.builders.camelot_builder import CamelotBuilder
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
@@ -99,6 +102,7 @@ class Bot:
         self._v3_builder = V3PoolBuilder(ctx)
         self._v4_builder = V4PoolBuilder(ctx)
         self._curve_builder = CurvePoolBuilder(ctx)
+        self._balancer_builder = BalancerBuilder(ctx)
 
         # Builder registry: concrete pool type → builder
         # Used by update() for O(1) dict lookup instead of isinstance chain
@@ -112,6 +116,8 @@ class Bot:
         self.register_builder(CurveStableswapPool, self._curve_builder)
         self.register_builder(AerodromeV2Pool, self._aerodrome_v2_builder)
         self.register_builder(CamelotLiquidityPool, self._camelot_builder)
+        self.register_builder(BalancerV2Pool, self._balancer_builder)
+        self.register_builder(BalancerV2StablePool, self._balancer_builder)
         # SushiswapV2Pool, PancakeSwapV2Pool, SwapbasedV2Pool, etc. inherit
         # UniswapV2Pool so they are handled by the V2 builder via MRO fallback
 

@@ -71,7 +71,7 @@ class TestPoolClassForDescriptor:
             kind="weighted",
             factory=None,
         )
-        with pytest.raises(DegenbotValueError, match="No pool class for family"):
+        with pytest.raises(DegenbotValueError, match="No pool class for WEIGHTED"):
             pool_class_for_descriptor(descriptor, chain_id=CHAIN_ID)
 
     def test_registered_factory_returns_registered_class(self) -> None:
