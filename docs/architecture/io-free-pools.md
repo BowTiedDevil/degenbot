@@ -125,7 +125,7 @@ def build(self, pool_address):
     )
 ```
 
-**Key insight**: The pool never touches `provider` or `connection_manager`. I/O lives in the `_CurveDataProviderImpl` which wraps fetcher closures that capture the provider.
+**Key insight**: The pool never touches `provider` or `connection_manager`. I/O lives in the `_CurveDataProviderImpl` which wraps a `ProviderAdapter`.
 
 ## Migration Status
 
@@ -136,7 +136,7 @@ def build(self, pool_address):
 - **Builder extraction** — pool construction I/O has been extracted from `Bot` into typed builder classes (`V2PoolBuilder`, `V3PoolBuilder`, `V4PoolBuilder`, `CurvePoolBuilder`, `Erc20Builder`); V2 variant builders extracted into `V2BuilderBase`, `AerodromeV2Builder`, `CamelotBuilder` (Plan 043); V3/V4 builder base classes with shared pure-logic helpers and frozen dataclasses (Plan 060)
 - **V2/V3/V4/Aerodrome pool classes** — all `ProviderAdapter`-taking methods removed; I/O for construction and updates lives entirely in builders (ADR-001 Phase 3 complete, Plan 017)
 - **Curve DyCalculator seam** — 14 `match`/`if` dispatch branches in `get_dy()` replaced by injectable calculator objects; pure math functions in `calculations/stableswap.py` (Plan 039)
-- **DyCalculationInputs** — `pool: CurveStableswapPool` parameter in `DyCalculator.calculate()` replaced with `inputs: DyCalculationInputs` frozen dataclass carrying pre-resolved data; 77 SLF001 errors → 0; calculators are pure consumers of pre-resolved data with no private member access (Plan 045)
+- **DyCalculationInputs** — `pool: CurveStableswapPool` parameter in `DyCalculator.calculate()` replaced with `inputs: DyCalculationInputs` frozen dataclass carrying pre-resolved data; 77 SLF001 errors → 0; calculators are pure consumers of pre-resolved data with no private member access (Plan 045). `DyCalculationInputs` is now a pure value object — all fields are ints, tuples, enums, or None (zero callables); calculators call `stableswap_get_y()` / `stableswap_newton_y()` directly with `EVMRevertError` wrapping (Plan 069).
 - **Curve state mixin** — 25 attributes + 22 properties with `_xxx` private pattern; `StableswapPoolState` (Plan 041)
 - **ProviderBackend** — merged `EthereumProvider` + `_SyncProviderBackend` → `ProviderBackend` protocol; `__getattr__` dispatch replaces 15× delegation methods (Plan 042); `EthereumProvider` backward-compatibility alias removed (Plan 061); subscription stubs consolidated into `SyncSubscriptionSupport`/`AsyncSubscriptionSupport` mixins (Plan 058)
 - **Builder Protocol** — `PoolBuilder` protocol replaces the 4-way union type annotation; `_dispatch_build()` isinstance chain eliminated via `**kwargs` forwarding (Plan 035)
@@ -152,6 +152,7 @@ def build(self, pool_address):
 - **Calculation-time I/O** — `_build_calculation_inputs` → `_resolve_calculation_inputs_via_io`, `requires_io_at_calculation_time` property, ADR-001 amended with construction-time vs calculation-time I/O table (Plan 057)
 - **Old optimizer hierarchy** — `ArbitrageOptimizer` ABC, `OptimizerResult`/`OptimizerType`, and 7 concrete classes deleted (zero production callers); pure Möbius math extracted to `_mobius_math.py` (Plan 053)
 - **Rust extension GIL discipline & allocation reduction** — removed `py.detach()` from sub-μs functions (tick math, address utils); two-level `CachedAbiTypes` intern (string `Arc<str>` interner + `Arc<CachedAbiTypes>` value return + `Arc<[Arc<str>]>` key); `Arc`-shared `LogFilter` fields; `IntHopState` pre-converted U512 fields; `PyPoolCache` with `parking_lot::Mutex<LruCache>` (10K cap) replacing unbounded `HashMap`; subscription `drain_raw()` for pure-Rust buffer mechanics; concurrency stress tests; `f64_to_u256` 4-limb decomposition fix; criterion benchmarks for ABI decode/encode and Möbius solver (Plan 063)
+- **DyCalculationInputs pure value object** — `get_y`/`newton_y` closure fields removed; replaced with `d_variant`/`y_variant`/`yd_variant`/`a_precision` fields; calculators call `stableswap_get_y()`/`stableswap_newton_y()` directly with `EVMRevertError` wrapping; `DyCalculationInputs` is now a pure value object (zero callables) (Plan 069)
 
 ## Migration Guide
 
@@ -318,9 +319,9 @@ The pool catches `MissingCurveData` (not `ContractLogicError` or `ConnectionErro
 
 ## Curve-Specific Implementation
 
-Curve pools use a **CurveDataProvider** seam — a single `@runtime_checkable` protocol with 13 methods that replaces the former 13 individual fetcher callback parameters. The pool calls `self._data_provider.xxx()` on-demand; the builder creates a `_CurveDataProviderImpl` that wraps existing fetcher closures.
+Curve pools use a **CurveDataProvider** seam — a single `@runtime_checkable` protocol with 13 methods that replaces the former 13 individual fetcher callback parameters. The pool calls `self._data_provider.xxx()` on-demand; the builder creates a `CurveDataProviderImpl` that wraps a `ProviderAdapter`.
 
-Calculators receive a **DyCalculationInputs** frozen dataclass instead of the pool object. The pool's `get_dy()` performs all I/O (rate resolution, cache lookups, block data, invariant solver closure construction) before constructing a `DyCalculationInputs` and passing it to the calculator. This eliminates all private member access from calculators — they are pure math consumers of pre-resolved data (Plan 045).
+Calculators receive a **DyCalculationInputs** frozen dataclass instead of the pool object. The pool's `get_dy()` performs all I/O (rate resolution, cache lookups, block data) before constructing a `DyCalculationInputs` with pre-resolved values (including `d_variant`/`y_variant`/`yd_variant`/`a_precision` for variant-aware invariant solving) and passing it to the calculator. Calculators call pure `stableswap_get_y()` / `stableswap_newton_y()` directly — no closures, no pool references. This eliminates all private member access from calculators (Plan 045, Plan 069).
 
 On-chain data caches are private `_cache_*` fields on `CurveStableswapPool` with `_get_cached_*` accessor methods implementing the try-cache→call-provider→store→return pattern. Formerly `CurveOnChainCache` (Plan 054), absorbed into the pool by Plan 068. The pool class no longer has 10 individual cache fields or a separate cache object. Two accessors (`_get_cached_base_cache_updated`, `_get_cached_base_virtual_price`) update side-effect mirrors (`_base_cache_updated_value`, `_base_virtual_price_value`) read by `_get_cached_virtual_price` for base-cache-expiry logic.
 

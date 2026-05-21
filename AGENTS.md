@@ -232,9 +232,9 @@ pool = bot.build_pool("0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7")
 
 The former 13 individual fetcher callback constructor parameters (`_D_fetcher`, `_gamma_fetcher`, `_virtual_price_fetcher`, etc.) were collapsed into a single `data_provider: CurveDataProvider | None` parameter (Plan 040). The 850-line closure-based `CurveFetcherFactory` has been replaced by `CurveDataProviderImpl` (Plan 049) — a structured class in `data_provider_impl.py` with real methods and shared I/O helpers (`_call`, `_call_single`, `_call_raw_single`, `_wrap_revert`). Builders construct `CurveDataProviderImpl` directly with a `ProviderAdapter`. Tests use `FakeCurveDataProvider` instead of individual lambda fetchers.
 
-The `DyCalculator` seam (Plan 039) replaces 14 `match`/`if` dispatch branches in `get_dy()` with injectable calculator objects keyed on `SwapStyle`, `MetapoolRateStyle`, and `MetapoolUnderlyingStyle` enums. Pure math functions in `calculations/stableswap.py` raise `ValueError`; pool wrappers catch and re-raise as `EVMRevertError` for backward compat.
+The `DyCalculator` seam (Plan 039) replaces 14 `match`/`if` dispatch branches in `get_dy()` with injectable calculator objects keyed on `SwapStyle`, `MetapoolRateStyle`, and `MetapoolUnderlyingStyle` enums. Pure math functions in `calculations/stableswap.py` raise `ValueError`; calculators call these directly and wrap with `EVMRevertError` (Plan 069).
 
-**DyCalculationInputs** (Plan 045) replaces the `pool: CurveStableswapPool` parameter in `DyCalculator.calculate()` with a frozen dataclass carrying pre-resolved data. The pool's `get_dy()` performs all I/O (rate resolution, cache lookups, block data, invariant solver closure construction) before constructing a `DyCalculationInputs` and passing it to the calculator. Calculators are pure consumers of this object — no private member access, no I/O, no cache mutation. This eliminated 77 SLF001 (private member access) errors across the calculator modules.
+**DyCalculationInputs** (Plan 045) replaces the `pool: CurveStableswapPool` parameter in `DyCalculator.calculate()` with a frozen dataclass carrying pre-resolved data (including `d_variant`/`y_variant`/`yd_variant`/`a_precision` for variant-aware invariant solving). The pool's `get_dy()` performs all I/O (rate resolution, cache lookups, block data) before constructing a `DyCalculationInputs` and passing it to the calculator. Calculators are pure consumers of this object — no private member access, no I/O, no cache mutation, no closures. `DyCalculationInputs` is now a pure value object (all fields are ints, tuples, enums, or None — zero callables); calculators call `stableswap_get_y()` / `stableswap_newton_y()` directly (Plan 069). This eliminated 77 SLF001 (private member access) errors across the calculator modules.
 
 **V2/V3/V4/Aerodrome/Camelot pools** are fully I/O-free — builders fetch all data from DB/RPC, pass it to the pool constructor, and no provider references remain on the pool object. All updates flow through `external_update()` (pure logic). No pool class imports `ProviderAdapter` or carries provider-dependent methods (ADR-001 Phase 3 complete).
 
@@ -278,7 +278,7 @@ Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` f
 
 ## Architecture Plans
 
-Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–068 are all complete. The only active plans are 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
+Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–069 are all complete. The only active plans are 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
 
 **New plans must follow [`plans/TEMPLATE.md`](plans/TEMPLATE.md).** The template requires: deletion test, specific friction table, vertical slices, design decisions, relationship to other plans, and status checklist.
 

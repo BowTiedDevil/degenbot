@@ -11,8 +11,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from degenbot.curve.types import CurveStableswapPoolState
 
-from degenbot.calculations.stableswap import stableswap_reduction_coefficient
+from degenbot.calculations.stableswap import stableswap_newton_y, stableswap_reduction_coefficient
 from degenbot.curve.types import DyCalculationInputs, SwapStyle
+from degenbot.exceptions.pool import EVMRevertError
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +65,13 @@ class CryptoDyCalculator:
             xp_[k + 1] = xp_[k + 1] * price_scale[k] * precisions[k + 1] // inputs.PRECISION
 
         amp = inputs.amp
-        y = inputs.newton_y(amp, gamma_val, xp_, d, j)
+        try:
+            y = stableswap_newton_y(
+                amp, gamma_val, xp=xp_, d=d, token_index=j,
+                n_coins=n_coins, a_multiplier=inputs.a_precision,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = xp_[j] - y - 1
 
         xp_[j] = y

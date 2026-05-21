@@ -55,7 +55,7 @@
 
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|
-| **DyCalculationInputs** | A frozen dataclass constructed by `CurveStableswapPool.get_dy()` carrying all pre-resolved data for a single dy calculation (balances, rates, xp, block data, invariant solver closures, and optional I/O results for crypto/live-admin/metapool). All I/O and cache lookups happen before this object is created — calculators read only from it. | Calculation inputs, inputs object |
+| **DyCalculationInputs** | A frozen dataclass constructed by `CurveStableswapPool.get_dy()` carrying all pre-resolved data for a single dy calculation (balances, rates, xp, block data, variant enums `d_variant`/`y_variant`/`yd_variant`, `a_precision`, and optional I/O results for crypto/live-admin/metapool). All I/O and cache lookups happen before this object is created — calculators read only from it and call pure `stableswap_get_y`/`stableswap_newton_y` functions directly. No callable fields. | Calculation inputs, inputs object |
 | **DyCalculator** | A runtime-checkable protocol defining `calculate(i, j, dx, *, inputs: DyCalculationInputs, override_state) -> int` | Dy strategy, dy solver |
 | **StandardDyCalculator** | Computes dy for STANDARD swap style (plain pool, no rate adjustment) | Basic calculator |
 | **RateAdjustedDyCalculator** | Computes dy for RATE_ADJUSTED swap style using `rate_multipliers` | Lending calculator |
@@ -89,6 +89,7 @@
 - A **Pool** holds per-block **cache fields** (`_cache_*`) with accessor methods (`_get_cached_*`) that implement try-cache→call-provider→store→return; on cache miss they delegate to **CurveDataProvider**
 - **DyCalculator** objects are held by **PoolStrategies** and replace dispatch branches in `get_dy()` / `_get_dy_underlying()`
 - **DyCalculationInputs** is constructed by `get_dy()` before calling the **DyCalculator**; all I/O, rate resolution, and cache lookups happen in `get_dy()`, so the calculator receives only pre-resolved data with no private member access
+- Calculators call pure `stableswap_get_y()` and `stableswap_newton_y()` directly from `calculations/stableswap.py`, passing variant enums (`d_variant`, `y_variant`, `yd_variant`) and `a_precision` from `DyCalculationInputs` — no closures, no pool references
 - Pure math functions in `calculations/stableswap.py` raise `ValueError`; pool wrappers catch and re-raise as `EVMRevertError`
 - `to_hop_state()` supports **Pair Selection** via `token_in`/`token_out` keyword-only kwargs; when both provided they resolve against `self.tokens` (top-level coins only); metapool-underlying swaps should use `get_dy()` directly (Plan 071)
 
@@ -153,4 +154,4 @@
 > **Domain expert:** "Mainnet Curve pools use different calculation formulas depending on the contract version. **DVariant**, **YVariant**, and **YDVariant** identify which formula a pool uses for D, y, and y_D calculations respectively. They replace the old class-level address frozensets that coupled configuration data to pool behavior."
 >
 > **Dev:** "How do the **DyCalculators** get their data? Do they access the pool directly?"
-> **Domain expert:** "No — that's the **DyCalculationInputs** pattern. `get_dy()` on the pool class does all the I/O and cache lookups first, then constructs a **DyCalculationInputs** frozen dataclass with pre-resolved rates, XP, block data, and invariant solver closures. The calculator receives that object instead of the pool, so there's zero private member access. The calculator is pure math."
+> **Domain expert:** "No — that's the **DyCalculationInputs** pattern. `get_dy()` on the pool class does all the I/O and cache lookups first, then constructs a **DyCalculationInputs** frozen dataclass with pre-resolved rates, XP, block data, variant enums, and a_precision. The calculator receives that object instead of the pool, so there's zero private member access. The calculator calls pure `stableswap_get_y()` and `stableswap_newton_y()` directly — no closures, no pool references. The calculator is pure math."

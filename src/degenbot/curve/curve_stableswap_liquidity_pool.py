@@ -618,8 +618,15 @@ class CurveStableswapPool(
         # Resolve block timestamp
         block_timestamp = self._get_cached_block_timestamp(block_number)
 
-        # Resolve amp (A ramping)
-        amp = self._a(timestamp=block_timestamp)
+        # Resolve amp with y_variant-aware A_PRECISION handling.
+        # stableswap_get_y expects amp to be already divided by A_PRECISION
+        # for VARIANT_0, and undivided for other variants.
+        raw_amp = self._a(timestamp=block_timestamp)
+        amp = (
+            raw_amp // self.A_PRECISION
+            if self._strategies.y_variant == YVariant.VARIANT_0
+            else raw_amp
+        )
 
         # Resolve rates (lending-rate I/O)
         if self._strategies.lending_rate_style == LendingRateStyle.NONE:
@@ -640,14 +647,6 @@ class CurveStableswapPool(
             for rate, balance in zip(resolved_rates, pool_balances, strict=True)
         )
 
-        # get_y closure — encapsulates amp resolution, variant dispatch, EVMRevertError wrapping
-        def get_y(i: int, j: int, x: int, xp_: Sequence[int]) -> int:
-            return self._get_y(i, j, x, xp_)
-
-        # newton_y closure — encapsulates crypto invariant solving
-        def newton_y(ann: int, gamma: int, xp_: Sequence[int], d: int, token_index: int) -> int:
-            return self._newton_y(ann, gamma, xp_, d, token_index)
-
         inputs = DyCalculationInputs(
             PRECISION=self.PRECISION,
             FEE_DENOMINATOR=self.FEE_DENOMINATOR,
@@ -666,8 +665,10 @@ class CurveStableswapPool(
             block_number=block_number,
             block_timestamp=block_timestamp,
             amp=amp,
-            get_y=get_y,
-            newton_y=newton_y,
+            d_variant=self._strategies.d_variant,
+            y_variant=self._strategies.y_variant,
+            yd_variant=self._strategies.yd_variant,
+            a_precision=self.A_PRECISION,
         )
 
         swap_style = self._strategies.swap_style
