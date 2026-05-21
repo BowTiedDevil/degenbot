@@ -106,10 +106,8 @@ class V2BuilderBase:
         chain_id: ChainId,
         factory: ChecksumAddress,
         default_init_hash: str,
-        deployer_override: str | None,
-        init_hash_override: str | None,
     ) -> tuple[str, str]:
-        """Resolve deployer address and init hash from registry + overrides."""
+        """Resolve deployer address and init hash from the pool type registry."""
         deployer = factory
         resolved_init_hash = default_init_hash
         registry_deployment = pool_type_registry.get_deployment(chain_id, factory)
@@ -119,8 +117,6 @@ class V2BuilderBase:
             if registry_deployment.deployer is not None:
                 deployer = get_checksum_address(registry_deployment.deployer)
 
-        deployer = get_checksum_address(deployer_override) if deployer_override else deployer
-        resolved_init_hash = init_hash_override or resolved_init_hash
         return deployer, resolved_init_hash
 
     def _fetch_v2_common_data(
@@ -129,8 +125,6 @@ class V2BuilderBase:
         *,
         chain_id: ChainId,
         state_block: int,
-        deployer_address: str | None,
-        init_hash: str | None,
         io: PoolIO,
     ) -> V2CommonData:
         """Fetch data shared by all V2 variants.
@@ -200,8 +194,6 @@ class V2BuilderBase:
             chain_id=chain_id,
             factory=factory,
             default_init_hash=UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH,
-            deployer_override=deployer_address,
-            init_hash_override=init_hash,
         )
 
         return V2CommonData(

@@ -11,8 +11,8 @@ from degenbot.exceptions.pool import (
     PoolNotAssociated,
 )
 from degenbot.logging import logger
+from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.abstract import AbstractPoolTracker
-from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.uniswap.v2_functions import generate_v2_pool_address
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_functions import generate_v3_pool_address
@@ -43,15 +43,11 @@ class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool
         if chain_id is None:
             chain_id = bot.connections.default_chain_id
 
-        try:
-            factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]
-            deployer_address = (
-                factory_deployment.deployer
-                if factory_deployment.deployer is not None
-                else factory_address
-            )
-            pool_init_hash = factory_deployment.pool_init_hash
-        except KeyError:
+        deployment = pool_type_registry.get_deployment(chain_id, factory_address)
+        if deployment is not None:
+            deployer_address = deployment.deployer
+            pool_init_hash = deployment.pool_init_hash
+        else:
             if pool_init_hash is None:  # pragma: no branch
                 logger.info("Pool init hash is unknown. Using Uniswap V3 mainnet default.")
                 pool_init_hash = UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH
@@ -107,8 +103,6 @@ class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool
             new_pool = self._bot.build_pool(
                 pool_address,
                 chain_id=self.chain_id,
-                deployer_address=self._deployer_address,
-                init_hash=self._pool_init_hash,
                 silent=silent,
             )
         except LiquidityPoolError as exc:
@@ -186,15 +180,11 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
 
         factory_address = get_checksum_address(factory_address)
 
-        try:
-            factory_deployment = FACTORY_DEPLOYMENTS[chain_id][factory_address]
-            deployer_address = (
-                factory_deployment.deployer
-                if factory_deployment.deployer is not None
-                else factory_address
-            )
-            pool_init_hash = factory_deployment.pool_init_hash
-        except KeyError:
+        deployment = pool_type_registry.get_deployment(chain_id, factory_address)
+        if deployment is not None:
+            deployer_address = deployment.deployer
+            pool_init_hash = deployment.pool_init_hash
+        else:
             if pool_init_hash is None:  # pragma: no branch
                 logger.info("Pool init hash is unknown. Using Uniswap V3 mainnet default.")
                 pool_init_hash = UniswapV3Pool.UNISWAP_V3_MAINNET_POOL_INIT_HASH
@@ -259,8 +249,6 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
             new_pool = self._bot.build_pool(
                 pool_address,
                 chain_id=self.chain_id,
-                deployer_address=self._deployer_address,
-                init_hash=self._pool_init_hash,
                 silent=silent,
                 tick_bitmap=self._snapshot.tick_bitmap(pool_address) if self._snapshot else None,
                 tick_data=self._snapshot.tick_data(pool_address) if self._snapshot else None,
@@ -306,9 +294,9 @@ class UniswapV3PoolTracker(AbstractUniswapV3PoolTracker[UniswapV3Pool], pool_fac
         """
 
         pool_address = generate_v3_pool_address(
+            deployer_address=self._deployer_address,
             token_addresses=sorted(token_addresses),
             fee=pool_fee,
-            deployer_address=self._deployer_address,
             init_hash=self._pool_init_hash,
         )
 

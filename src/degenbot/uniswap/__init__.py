@@ -1,6 +1,4 @@
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 
 from . import (
     abi as abi,
@@ -32,34 +30,34 @@ pool_type_registry.set_default_v3_class(UniswapV3Pool)
 
 
 def _register_uniswap_deployments() -> None:
-    v2_factories = [
-        (1, "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
-        (8453, "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6"),
+    # Deployment data previously sourced from FACTORY_DEPLOYMENTS.
+    # Now hardcoded directly — pool_type_registry is the sole source of truth.
+    v2_deployments = [
+        (1, "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f", "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f", None),  # noqa: E501
+        (8453, "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6", "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f", None),  # noqa: E501
     ]
-    v3_factories = [
-        (1, "0x1F98431c8aD98523631AE4a59f267346ea31F984"),
-        (8453, "0x33128a8fC17869897dcE68Ed026d694621f6FDfD"),
-        (42161, "0x1F98431c8aD98523631AE4a59f267346ea31F984"),
+    v3_deployments = [
+        (1, "0x1F98431c8aD98523631AE4a59f267346ea31F984", "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54", None),  # noqa: E501
+        (8453, "0x33128a8fC17869897dcE68Ed026d694621f6FDfD", "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54", None),  # noqa: E501
+        (42161, "0x1F98431c8aD98523631AE4a59f267346ea31F984", "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54", None),  # noqa: E501
     ]
 
-    for chain_id, factory in v2_factories:
-        deployment = FACTORY_DEPLOYMENTS.get(chain_id, {}).get(get_checksum_address(factory))
+    for chain_id, factory, init_hash, deployer in v2_deployments:
         pool_type_registry.register(
             UniswapV2Pool,
             chain_id=chain_id,
             factory_address=factory,
-            pool_init_hash=deployment.pool_init_hash or None if deployment else None,
-            deployer=deployment.deployer if deployment and deployment.deployer else None,
+            pool_init_hash=init_hash,
+            deployer=deployer,
         )
 
-    for chain_id, factory in v3_factories:
-        deployment = FACTORY_DEPLOYMENTS.get(chain_id, {}).get(get_checksum_address(factory))
+    for chain_id, factory, init_hash, deployer in v3_deployments:
         pool_type_registry.register(
             UniswapV3Pool,
             chain_id=chain_id,
             factory_address=factory,
-            pool_init_hash=deployment.pool_init_hash or None if deployment else None,
-            deployer=deployment.deployer if deployment and deployment.deployer else None,
+            pool_init_hash=init_hash,
+            deployer=deployer,
         )
 
 

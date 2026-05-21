@@ -1,4 +1,3 @@
-import contextlib
 import dataclasses
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -21,7 +20,6 @@ from degenbot.types.hop_types import ConstantProductHop, HopType
 from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.types.state_cache import StateCache
-from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS
 from degenbot.uniswap.log_decoders import V2_SYNC_TOPIC, decode_v2_sync
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_functions import (
@@ -94,18 +92,11 @@ class UniswapV2Pool(
         self._fee_token0 = fee_token0
         self._fee_token1 = fee_token1
 
-        # Derive deployer/init_hash from factory deployments or fallback
+        # Derive deployer/init_hash from constructor args or class defaults
         self.init_hash = (
             init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
         )
         self.deployer = get_checksum_address(deployer_address or self.factory)
-
-        with contextlib.suppress(KeyError):
-            if self._chain_id is not None:
-                factory_deployment = FACTORY_DEPLOYMENTS[self._chain_id][self.factory]
-                self.init_hash = factory_deployment.pool_init_hash
-                if factory_deployment.deployer is not None:
-                    self.deployer = factory_deployment.deployer
 
         state_block_ = state_block if state_block is not None else 0
 

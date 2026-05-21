@@ -15,7 +15,7 @@ Domain terms for Uniswap V2, V3, and V4 liquidity pools and pool trackers.
 | **Pool Tracker** | An off-chain Bot helper that discovers and tracks Pools for a specific DEX factory; distinct from on-chain **PoolManager** | Manager, Pool Manager |
 | **Factory** | The on-chain contract that creates new pools for a given DEX version | DEX factory |
 | **Pool Init Hash** | The keccak256 hash of pool creation init code, used with CREATE2 to compute pool addresses | Init code hash |
-| **Factory Deployment** | Configuration for a specific DEX factory on a chain (factory address, deployer, pool init hash) | Exchange deployment |
+| **Factory Deployment** | Configuration for a specific DEX factory on a chain (factory address, deployer, pool init hash); now stored exclusively in **Pool Type Registry** via `register()` — the former `FACTORY_DEPLOYMENTS` dict has been removed (Plan 072) | Exchange deployment |
 | **PairCreated Event** | The V2 factory event emitted when a new pool is created | Pool creation event |
 | **PoolCreated Event** | The V3 factory event emitted when a new pool is created | V3 pool creation event |
 | **Mint Event** | The V3 pool event emitted when liquidity is added | Add liquidity |
@@ -47,8 +47,10 @@ Domain terms for Uniswap V2, V3, and V4 liquidity pools and pool trackers.
 - ✅ "The **Pool Tracker** found a new Uniswap V3 pool"
 - ✅ "The **PoolManager** contract emitted a ModifyLiquidity event"
 - ✅ "This **Managed Pool** is identified by its Pool ID within the **PoolManager**"
+- ✅ "Build a V4 pool with `build_managed_pool(address, pool_id)` where `address` is the PoolManager"
 - ❌ "The pool manager found a new pool" (use **Pool Tracker** to avoid confusion with **PoolManager**)
 - ❌ "V4 pools have their own contract address" (they're **Managed Pools** inside a **PoolManager**)
+- ❌ "Call `build_pool(address, pool_id=...)` for V4" (use **build_managed_pool()** instead)
 
 ### 2. Fee representations
 

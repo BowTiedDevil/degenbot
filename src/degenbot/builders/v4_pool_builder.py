@@ -7,6 +7,7 @@ import eth_abi.abi
 from hexbytes import HexBytes
 from sqlalchemy import select
 
+from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.builders.tick_data_fetcher import TickDataTypes, make_tick_data_fetcher
 from degenbot.builders.v4_builder_base import V4BuilderBase
 from degenbot.checksum_cache import get_checksum_address
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.pool_io import PoolIO
-    from degenbot.builders.request import BuildPoolRequest
+    from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
     from degenbot.uniswap.v3_types import BitmapWord, Tick
@@ -90,21 +91,18 @@ class V4PoolBuilder(V4BuilderBase):
         *,
         chain_id: ChainId | None = None,
         io: PoolIO,
-        request: BuildPoolRequest,
+        request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free UniswapV4Pool."""
 
-        assert request.pool_id is not None
+        assert isinstance(request, BuildManagedPoolRequest)
+        pool_id_bytes = HexBytes(request.pool_id)
         pool_manager_address = get_checksum_address(address)
-        pool_id = request.pool_id
-        pool_id_bytes = HexBytes(pool_id)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
 
         state_block = (
-            request.state_block
-            if request.state_block is not None
-            else io.get_block_number()
+            request.state_block if request.state_block is not None else io.get_block_number()
         )
 
         # Try DB first

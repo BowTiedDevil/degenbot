@@ -49,8 +49,6 @@ class AsyncV2PoolBuilder:
         *,
         chain_id: ChainId,
         state_block: int,
-        deployer_address: str | None,
-        init_hash: str | None,
         io: AsyncPoolIO,
     ) -> V2CommonData:
         """Fetch data shared by all V2 variants using async I/O."""
@@ -116,8 +114,6 @@ class AsyncV2PoolBuilder:
             chain_id=chain_id,
             factory=factory,
             default_init_hash=UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH,
-            deployer_override=deployer_address,
-            init_hash_override=init_hash,
         )
 
         return V2CommonData(
@@ -159,8 +155,6 @@ class AsyncV2PoolBuilder:
             pool_address,
             chain_id=chain_id,
             state_block=state_block,
-            deployer_address=request.deployer_address,
-            init_hash=request.init_hash,
             io=io,
         )
 

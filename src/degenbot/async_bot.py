@@ -6,8 +6,9 @@ Returns the same I/O-free domain objects as Bot.
 
 from __future__ import annotations
 
-import contextlib
 from typing import TYPE_CHECKING, Any
+
+from hexbytes import HexBytes
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.builders.async_context import AsyncBuilderContext
@@ -16,7 +17,7 @@ from degenbot.builders.async_v2_pool_builder import AsyncV2PoolBuilder
 from degenbot.builders.async_v3_pool_builder import AsyncV3PoolBuilder
 from degenbot.builders.async_v4_pool_builder import AsyncV4PoolBuilder
 from degenbot.builders.pool_io import AsyncPoolIO
-from degenbot.builders.request import BuildPoolRequest
+from degenbot.builders.request import BuildManagedPoolRequest, BuildPoolRequest, BuildRequest
 from degenbot.builders.type_resolution import (
     pool_class_for_descriptor,
 )
@@ -32,8 +33,8 @@ from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
+from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolTracker
-from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
@@ -165,28 +166,17 @@ class AsyncBot:
         self,
         address: str,
         *,
-        pool_id: str | bytes | None = None,
         chain_id: ChainId | None = None,
         state_block: int | None = None,
         silent: bool = False,
-        deployer_address: str | None = None,
-        init_hash: str | None = None,
         tick_bitmap: dict[int, Any] | None = None,
         tick_data: dict[int, Any] | None = None,
         state_cache_depth: int = 8,
-        # V4-specific kwargs
-        state_view_address: str | None = None,
-        tokens: Sequence[str] | None = None,
-        fee: int | None = None,
-        tick_spacing: int | None = None,
-        hook_address: str | None = None,
     ) -> AbstractLiquidityPool:
         """
         Build a pool from an address, automatically resolving its type.
 
-        When `pool_id` is provided, `address` is interpreted as a V4 PoolManager
-        contract. Without it, `address` is a pool contract and the type is resolved
-        from the pool registry, database, or factory address.
+        V4 managed pools should use ``build_managed_pool()`` instead.
         """
         address = get_checksum_address(address)
         chain_id = chain_id or self.connections.default_chain_id
@@ -197,27 +187,9 @@ class AsyncBot:
             silent=silent,
             state_block=state_block,
             state_cache_depth=state_cache_depth,
-            deployer_address=deployer_address,
-            init_hash=init_hash,
             tick_bitmap=tick_bitmap,
             tick_data=tick_data,
-            pool_id=pool_id,
-            state_view_address=state_view_address,
-            tokens=tokens,
-            fee=fee,
-            tick_spacing=tick_spacing,
-            hook_address=hook_address,
         )
-
-        # V4 fast path: pool_id discriminates V4 managed pools
-        if pool_id is not None:
-            return await self._dispatch_build(
-                builder=self._v4_builder,
-                address=address,
-                chain_id=chain_id,
-                io=io,
-                request=request,
-            )
 
         # Check pool registry — return existing pool if already built
         existing = self.pools.get(chain_id=chain_id, pool_address=address)
@@ -264,10 +236,80 @@ class AsyncBot:
         address: ChecksumAddress,
         chain_id: ChainId,
         io: AsyncPoolIO,
-        request: BuildPoolRequest,
+        request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Dispatch to the async builder with a typed request."""
         return await builder.build(address, chain_id=chain_id, io=io, request=request)
+
+    # ------------------------------------------------------------------
+    # V4 managed pool factory
+    # ------------------------------------------------------------------
+
+    async def build_managed_pool(
+        self,
+        address: str,
+        pool_id: str | bytes,
+        *,
+        chain_id: ChainId | None = None,
+        state_block: int | None = None,
+        silent: bool = False,
+        state_cache_depth: int = 8,
+        # V4 immutable data — required if not in DB
+        state_view_address: str | None = None,
+        tokens: Sequence[str] | None = None,
+        fee: int | None = None,
+        tick_spacing: int | None = None,
+        hook_address: str | None = None,
+        # Pre-fetched tick data
+        tick_bitmap: dict[int, Any] | None = None,
+        tick_data: dict[int, Any] | None = None,
+    ) -> UniswapV4Pool:
+        """
+        Build a V4 managed pool from a PoolManager address and pool ID.
+
+        ``address`` is the PoolManager contract. ``pool_id`` identifies the
+        pool within the manager.
+
+        When the pool is not in the database, ``state_view_address``,
+        ``tokens``, ``fee``, ``tick_spacing`` must all be provided.
+        """
+        address = get_checksum_address(address)
+        chain_id = chain_id or self.connections.default_chain_id
+
+        # Check managed pool registry — return existing pool if already built
+        pool_id_bytes = HexBytes(pool_id)
+        existing = self.managed_pools.get(
+            chain_id=chain_id,
+            pool_manager_address=address,
+            pool_id=pool_id_bytes,
+        )
+        if existing is not None:
+            return existing
+
+        provider = self.connections.get_provider(chain_id)
+        io = AsyncPoolIO(provider)
+
+        request = BuildManagedPoolRequest(
+            pool_id=pool_id,
+            silent=silent,
+            state_block=state_block,
+            state_cache_depth=state_cache_depth,
+            state_view_address=state_view_address,
+            tokens=tokens,
+            fee=fee,
+            tick_spacing=tick_spacing,
+            hook_address=hook_address,
+            tick_bitmap=tick_bitmap,
+            tick_data=tick_data,
+        )
+
+        return await self._dispatch_build(  # type: ignore[return-value]
+            builder=self._v4_builder,
+            address=address,
+            chain_id=chain_id,
+            io=io,
+            request=request,
+        )
 
     # ------------------------------------------------------------------
     # Pool type resolution (async counterpart of Bot's resolution)
@@ -283,24 +325,14 @@ class AsyncBot:
         chain_id: ChainId,
         factory: ChecksumAddress,
         default_init_hash: str,
-        deployer_address: str | None = None,
-        init_hash: str | None = None,
     ) -> tuple[str, str]:
-        """Resolve deployer address and pool init-hash from factory deployments."""
+        """Resolve deployer address and pool init-hash from the pool type registry."""
         resolved_deployer: str = factory
         resolved_init_hash = default_init_hash
-        with contextlib.suppress(KeyError):
-            factory_deployment = _FACTORY_DEPLOYMENTS[chain_id][factory]
-            resolved_init_hash = factory_deployment.pool_init_hash
-            if factory_deployment.deployer is not None:
-                resolved_deployer = get_checksum_address(factory_deployment.deployer)
-
-        resolved_deployer = (
-            get_checksum_address(deployer_address)
-            if deployer_address is not None
-            else resolved_deployer
-        )
-        resolved_init_hash = init_hash or resolved_init_hash
+        deployment = pool_type_registry.get_deployment(chain_id, factory)
+        if deployment is not None:
+            resolved_deployer = deployment.deployer
+            resolved_init_hash = deployment.pool_init_hash
         return resolved_deployer, resolved_init_hash
 
     # ------------------------------------------------------------------

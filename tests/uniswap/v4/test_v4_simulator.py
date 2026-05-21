@@ -30,9 +30,9 @@ STATE_VIEW_ADDRESS = get_checksum_address("0x7fFE42C4a5DEeA5b0feC41C94C136Cf1155
 def eth_usdc_v4(fork_mainnet_full: AnvilFork) -> UniswapV4Pool:
     """Same fixture as test_uniswap_v4_liquidity_pool.py."""
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    return bot.build_pool(
+    return bot.build_managed_pool(
         V4_POOL_MANAGER_ADDRESS,
-        pool_id=HexBytes(ETH_USDC_V4_POOL_ID),
+        HexBytes(ETH_USDC_V4_POOL_ID),
         state_view_address=STATE_VIEW_ADDRESS,
         tokens=[USDC_CONTRACT_ADDRESS, NATIVE_CURRENCY_ADDRESS],
         fee=ETH_USDC_V4_POOL_FEE,

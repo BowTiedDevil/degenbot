@@ -18,8 +18,6 @@ class BuildPoolRequest:
     builder.build() as positional/keyword arguments.
 
     Builders read the fields they recognize and ignore the rest.
-    When ``pool_id`` is not None, the caller's ``address`` refers to the
-    PoolManager contract (V4 managed-pool semantics).
     """
 
     # Common options
@@ -27,23 +25,44 @@ class BuildPoolRequest:
     state_block: int | None = None
     state_cache_depth: int = 8
 
-    # V2-family options
-    deployer_address: str | None = None
-    init_hash: str | None = None
-
-    # V3/V4 tick options
+    # V3 tick options
     tick_bitmap: dict[int, Any] | None = None
     tick_data: dict[int, Any] | None = None
 
-    # V4-specific options
-    pool_id: str | bytes | None = None
+    # Balancer options (flat fields matching existing pattern)
+    bpt_idx: int | None = None        # Override BPT index detection
+    invariant_version: int | None = None  # Override: INVARIANT_V1 or INVARIANT_V2
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class BuildManagedPoolRequest:
+    """Typed request object for V4 managed-pool construction.
+
+    ``pool_id`` is required — V4 pools cannot be discovered without it.
+    Immutable data (``state_view_address``, ``tokens``, ``fee``,
+    ``tick_spacing``, ``hook_address``) is required when the pool is not
+    in the database; otherwise it is fetched from DB.
+    """
+
+    # Required — V4 pools cannot be discovered without a pool ID
+    pool_id: str | bytes
+
+    # Common options (mirrors BuildPoolRequest's universal fields)
+    silent: bool = False
+    state_block: int | None = None
+    state_cache_depth: int = 8
+
+    # V4 immutable data — required if not in DB
     state_view_address: str | None = None
     tokens: Sequence[str] | None = None
     fee: int | None = None
     tick_spacing: int | None = None
     hook_address: str | None = None
 
-    # Balancer options (flat fields matching existing pattern;
-    # Plan 072 will scope these into BalancerBuildOptions)
-    bpt_idx: int | None = None        # Override BPT index detection
-    invariant_version: int | None = None  # Override: INVARIANT_V1 or INVARIANT_V2
+    # Pre-fetched tick data (DB snapshot or test fixtures)
+    tick_bitmap: dict[int, Any] | None = None
+    tick_data: dict[int, Any] | None = None
+
+
+# Union type for dispatch methods that accept either request shape.
+BuildRequest = BuildPoolRequest | BuildManagedPoolRequest

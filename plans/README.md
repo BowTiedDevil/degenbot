@@ -20,8 +20,6 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | # | Plan | Summary |
 |---|------|---------|
 | 014 | [Async REPL](014-async-repl.md) | `python -m degenbot` with top-level `await`. |
-| 070 | [Balancer Builder](completed/070-balancer-builder.md) | Builder, type resolution, `to_hop_state()`, `external_update()`, `BalancerPairView`, `build_swap_amount()` for Balancer V2 pools. |
-| 072 | [Scoped Build Pool Request](072-scoped-build-pool-request.md) | Refactor `BuildPoolRequest` so builder-specific options live in scoping sub-objects instead of flat fields. |
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
 
 ## Completed Plans
@@ -97,3 +95,4 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | 068 | [Absorb CurveOnChainCache into CurveStableswapPool](completed/068-absorb-curve-on-chain-cache.md) | Merge `CurveOnChainCache` into `CurveStableswapPool` as private `_cache_*` fields and `_get_cached_*` methods. Eliminates `getattr` dynamic dispatch, duplicate `_data_provider` reference, and separate pickle policy. |
 | 069 | [Remove DyCalculation Closures](completed/069-remove-dy-calculation-closures.md) | Replace `get_y`/`newton_y` closures on `DyCalculationInputs` with `d_variant`/`y_variant`/`yd_variant`/`a_precision` fields. Calculators call `stableswap_get_y()`/`stableswap_newton_y()` directly with `EVMRevertError` wrapping. `DyCalculationInputs` is now a pure value object (zero callables). |
 | 071 | [Curve Hop State Pair Selection](completed/071-curve-hop-state-pair-selection.md) | Add `token_in`/`token_out` kwargs to `to_hop_state()` for N-token pool pair selection. Resolves Curve N-token ambiguity; enables Plan 070's `BalancerPairView` delegation. |
+| 072 | [Extract Build Managed Pool](completed/072-extract-build-managed-pool.md) | Extract `build_managed_pool`, consolidate `FACTORY_DEPLOYMENTS` into `pool_type_registry`, remove V4/deployer kwargs from `BuildPoolRequest`. `build_pool()` 14→6 kwargs. |

@@ -1,4 +1,3 @@
-import contextlib
 import dataclasses
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
@@ -22,7 +21,6 @@ from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot, Mi
 from degenbot.uniswap.concentrated.state_manager import ConcentratedLiquidityStateManager
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.concentrated.v3_simulator import calculate_swap as _v3_swap
-from degenbot.uniswap.deployments import FACTORY_DEPLOYMENTS as _FACTORY_DEPLOYMENTS
 from degenbot.uniswap.log_decoders import (
     V3_BURN_TOPIC,
     V3_MINT_TOPIC,
@@ -166,20 +164,13 @@ class UniswapV3Pool(
         state_block_ = state_block if state_block is not None else 0
         self._initial_state_block = state_block_
 
-        # Derive deployer/init_hash from factory deployments or fallback
+        # Derive deployer/init_hash from constructor args or class defaults
         self.deployer_address = (
             get_checksum_address(deployer_address) if deployer_address is not None else self.factory
         )
         self.init_hash = (
             init_hash if init_hash is not None else self.UNISWAP_V3_MAINNET_POOL_INIT_HASH
         )
-
-        with contextlib.suppress(KeyError):
-            if self._chain_id is not None:
-                factory_deployment = _FACTORY_DEPLOYMENTS[self._chain_id][self.factory]
-                self.init_hash = factory_deployment.pool_init_hash
-                if factory_deployment.deployer is not None:
-                    self.deployer_address = factory_deployment.deployer
 
         self.name = (
             f"{self._token0}-{self._token1} ({self.__class__.__name__}, "

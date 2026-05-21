@@ -324,9 +324,9 @@ class TestBotBuildV4Pool:
 
         provider.call = MagicMock(side_effect=mock_call)
 
-        pool = bot.build_pool(
+        pool = bot.build_managed_pool(
             V4_POOL_MANAGER,
-            pool_id=V4_POOL_ID,
+            V4_POOL_ID,
             state_view_address=V4_STATE_VIEW,
             chain_id=1,
             fee=V4_FEE,

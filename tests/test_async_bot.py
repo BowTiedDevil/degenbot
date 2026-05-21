@@ -316,9 +316,9 @@ class TestAsyncBotBuildPoolV4:
 
         provider.call = AsyncMock(side_effect=mock_call)
 
-        pool = await bot.build_pool(
+        pool = await bot.build_managed_pool(
             v4_pool_manager,
-            pool_id=v4_pool_id,
+            v4_pool_id,
             chain_id=1,
             state_view_address=v4_state_view,
             fee=v4_fee,

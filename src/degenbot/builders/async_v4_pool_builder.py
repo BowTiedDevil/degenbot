@@ -9,6 +9,7 @@ import eth_abi.abi
 from hexbytes import HexBytes
 from sqlalchemy import select
 
+from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.builders.v4_builder_base import V4BuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
 
     from degenbot.builders.async_context import AsyncBuilderContext
     from degenbot.builders.pool_io import AsyncPoolIO
-    from degenbot.builders.request import BuildPoolRequest
+    from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
     from degenbot.uniswap.v3_types import BitmapWord, Tick
@@ -58,13 +59,13 @@ class AsyncV4PoolBuilder:
         *,
         chain_id: ChainId | None = None,
         io: AsyncPoolIO,
-        request: BuildPoolRequest,
+        request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free UniswapV4Pool."""
 
         # For V4, `address` is the pool manager address
         pool_manager_address = get_checksum_address(address)
-        assert request.pool_id is not None
+        assert isinstance(request, BuildManagedPoolRequest)
         pool_id_bytes = HexBytes(request.pool_id)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
