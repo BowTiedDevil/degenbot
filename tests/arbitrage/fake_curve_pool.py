@@ -33,6 +33,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 from weakref import WeakSet
 
+from degenbot.exceptions import DegenbotValueError
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.concrete import PublisherMixin
 from degenbot.types.hop_types import CurveStableswapHop, HopType, PoolInvariant
@@ -253,15 +254,32 @@ class FakeCurveStableswapPool(PublisherMixin, AbstractLiquidityPool):
         self,
         zero_for_one: bool,  # noqa: FBT001
         state_override: AbstractPoolState | None = None,
+        *,
+        token_in: FakeToken | None = None,  # type: ignore[override]
+        token_out: FakeToken | None = None,  # type: ignore[override]
     ) -> HopType:
         """Create a CurveStableswapHop for the solver.
 
         For 2-token pools: zero_for_one=True means tokens[0] -> tokens[1]
+        For N-token pools: pass token_in/token_out to select the pair.
         """
         state = state_override if isinstance(state_override, FakeCurvePoolState) else self._state
 
-        # For 2-token pools, map zero_for_one to token indices
-        if zero_for_one:
+        if token_in is not None and token_out is not None:
+            try:
+                i = self.tokens.index(token_in)
+            except ValueError:
+                msg = f"token_in ({token_in}) is not a top-level pool token"
+                raise DegenbotValueError(message=msg) from None
+            try:
+                j = self.tokens.index(token_out)
+            except ValueError:
+                msg = f"token_out ({token_out}) is not a top-level pool token"
+                raise DegenbotValueError(message=msg) from None
+        elif token_in is not None or token_out is not None:
+            msg = "token_in and token_out must both be provided, or both omitted"
+            raise DegenbotValueError(message=msg)
+        elif zero_for_one:
             i, j = 0, 1
         else:
             i, j = 1, 0

@@ -54,7 +54,7 @@ class FakePoolSimulation:
 class FakeArbitragePool(FakePoolSimulation):
     """Extends FakePoolSimulation with arbitrage capability."""
 
-    def to_hop_state(self, zero_for_one, state_override=None):
+    def to_hop_state(self, zero_for_one, state_override=None, *, token_in=None, token_out=None):  # noqa: ARG002
 
         return ConstantProductHop(
             reserve_in=1000,

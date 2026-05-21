@@ -92,7 +92,11 @@ class FakeUniswapV2Pool(PublisherMixin):
         self,
         zero_for_one: bool,  # noqa: FBT001
         state_override: AbstractPoolState | None = None,
+        *,
+        token_in: object | None = None,  # noqa: ARG002
+        token_out: object | None = None,  # noqa: ARG002
     ) -> HopType:
+        # token_in/token_out unused — 2-token pools determine pair from zero_for_one
         state = state_override if isinstance(state_override, FakeV2PoolState) else self._state
         if zero_for_one:
             return ConstantProductHop(
@@ -240,7 +244,11 @@ class FakeConcentratedLiquidityPool(PublisherMixin):
         self,
         zero_for_one: bool,  # noqa: FBT001
         state_override: AbstractPoolState | None = None,
+        *,
+        token_in: object | None = None,  # noqa: ARG002
+        token_out: object | None = None,  # noqa: ARG002
     ) -> HopType:
+        # token_in/token_out unused — 2-token pools determine pair from zero_for_one
 
         state = state_override if isinstance(state_override, FakeCLPoolState) else self._state
         reserve_in, reserve_out = v3_virtual_reserves(
@@ -365,7 +373,11 @@ class FakeAerodromeV2Pool(PublisherMixin):
         self,
         zero_for_one: bool,  # noqa: FBT001
         state_override: AbstractPoolState | None = None,
+        *,
+        token_in: object | None = None,  # noqa: ARG002
+        token_out: object | None = None,  # noqa: ARG002
     ) -> HopType:
+        # token_in/token_out unused — 2-token pools determine pair from zero_for_one
         state = state_override if isinstance(state_override, FakeV2PoolState) else self._state
 
         if zero_for_one:
@@ -502,7 +514,11 @@ class FakeCamelotPool(PublisherMixin):
         self,
         zero_for_one: bool,  # noqa: FBT001
         state_override: AbstractPoolState | None = None,
+        *,
+        token_in: object | None = None,  # noqa: ARG002
+        token_out: object | None = None,  # noqa: ARG002
     ) -> HopType:
+        # token_in/token_out unused — 2-token pools determine pair from zero_for_one
         state = state_override if isinstance(state_override, FakeV2PoolState) else self._state
 
         if zero_for_one:

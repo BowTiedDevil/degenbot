@@ -21,6 +21,7 @@
 | **Stored Rates** | The exchange rates for lending tokens to their underlying assets | Lending rates |
 | **Precision Multipliers** | Scaling factors normalizing token decimals to 18 | Decimals adjustment |
 | **Admin Balances** | Accumulated fees held by pool admin before distribution | Fee balances |
+| **Pair Selection** | The choice of which two coins to use in a `to_hop_state()` call for an N-token pool; resolved by `token_in`/`token_out` keyword-only kwargs (both-or-neither; both resolve against `self.tokens` top-level coins only). When both omitted, falls back to `zero_for_one` → `(0, 1)` / `(1, 0)`. | Token pair, coin pair |
 
 ## Data Provider
 
@@ -89,6 +90,7 @@
 - **DyCalculator** objects are held by **PoolStrategies** and replace dispatch branches in `get_dy()` / `_get_dy_underlying()`
 - **DyCalculationInputs** is constructed by `get_dy()` before calling the **DyCalculator**; all I/O, rate resolution, and cache lookups happen in `get_dy()`, so the calculator receives only pre-resolved data with no private member access
 - Pure math functions in `calculations/stableswap.py` raise `ValueError`; pool wrappers catch and re-raise as `EVMRevertError`
+- `to_hop_state()` supports **Pair Selection** via `token_in`/`token_out` keyword-only kwargs; when both provided they resolve against `self.tokens` (top-level coins only); metapool-underlying swaps should use `get_dy()` directly (Plan 071)
 
 ## Resolved Ambiguities
 

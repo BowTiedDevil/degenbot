@@ -222,6 +222,9 @@ class ArbitrageCapablePool(PoolSimulation, Protocol):
         self,
         zero_for_one: bool,  # noqa: FBT001
         state_override: AbstractPoolState | None = None,
+        *,
+        token_in: Erc20Token | None = None,
+        token_out: Erc20Token | None = None,
     ) -> HopType: ...
 
     def extract_fee(self, zero_for_one: bool) -> Fraction: ...  # noqa: FBT001
@@ -289,6 +292,9 @@ class ArbitragePathPool(PoolSimulation, Protocol):
         self,
         zero_for_one: bool,  # noqa: FBT001
         state_override: AbstractPoolState | None = None,
+        *,
+        token_in: Erc20Token | None = None,
+        token_out: Erc20Token | None = None,
     ) -> HopType: ...
 
     def extract_fee(self, zero_for_one: bool) -> Fraction: ...  # noqa: FBT001

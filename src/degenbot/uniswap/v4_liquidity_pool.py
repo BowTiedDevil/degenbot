@@ -827,7 +827,12 @@ class UniswapV4Pool(
         self,
         zero_for_one: bool,  # noqa: FBT001
         state_override: UniswapV4PoolState | None = None,
+        *,
+        token_in: Erc20Token | None = None,  # noqa: ARG002
+        token_out: Erc20Token | None = None,  # noqa: ARG002
     ) -> HopType:
+        # token_in/token_out unused — 2-token pools determine pair from zero_for_one.
+        # Callers should ensure these match pool.token0/pool.token1 if provided.
         state = state_override or self.state
         fee = self.extract_fee(zero_for_one=zero_for_one)
         reserve_in, reserve_out = v3_virtual_reserves(

@@ -857,9 +857,7 @@ class CurveStableswapPool(
             self._a(timestamp=self._get_cached_block_timestamp(self.update_block))
             // self.A_PRECISION
             if self._strategies.y_variant == YVariant.VARIANT_0
-            else self._a(
-                timestamp=self._get_cached_block_timestamp(self.update_block)
-            )
+            else self._a(timestamp=self._get_cached_block_timestamp(self.update_block))
         )
         try:
             return stableswap_get_y(
@@ -1119,12 +1117,14 @@ class CurveStableswapPool(
         self,
         zero_for_one: bool,  # noqa: FBT001
         state_override: CurveStableswapPoolState | None = None,
+        *,
+        token_in: Erc20Token | None = None,
+        token_out: Erc20Token | None = None,
     ) -> HopType:
         """Create a hop state for this pool.
 
         For 2-token pools, zero_for_one maps to token[0] -> token[1] direction.
-        For metapools or base pools, swap direction is still determined by
-        token index in the pool's tokens tuple.
+        For N-token pools, pass token_in/token_out to select the pair.
 
         NOTE: swap_fn is not pickleable for ProcessPoolExecutor. For
         multiprocessing, use constant-product approximation or build
@@ -1133,19 +1133,24 @@ class CurveStableswapPool(
         state = state_override or self.state
         balances = state.balances
 
-        # For 2-token pools, zero_for_one maps to tokens[0] -> tokens[1]
-        # For N-token pools, this is ambiguous; the caller should use
-        # token_in/token_out kwargs when available
-        if zero_for_one:
+        if token_in is not None and token_out is not None:
+            try:
+                i = self.tokens.index(token_in)
+            except ValueError:
+                msg = f"token_in ({token_in}) is not a top-level pool token"
+                raise DegenbotValueError(msg) from None
+            try:
+                j = self.tokens.index(token_out)
+            except ValueError:
+                msg = f"token_out ({token_out}) is not a top-level pool token"
+                raise DegenbotValueError(msg) from None
+        elif token_in is not None or token_out is not None:
+            msg = "token_in and token_out must both be provided, or both omitted"
+            raise DegenbotValueError(msg)
+        elif zero_for_one:
             i, j = 0, 1
         else:
             i, j = 1, 0
-
-        # Validate indices exist
-        if i >= len(balances) or j >= len(balances):
-            raise DegenbotValueError(
-                message=f"Invalid swap indices ({i}, {j}) for pool with {len(balances)} tokens"
-            )
 
         # Create swap_fn closure wrapping get_dy
         # NOTE: This closure captures `self` and is not pickleable!
