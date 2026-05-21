@@ -1,0 +1,638 @@
+"""
+On-chain swap calculation tests for Balancer V2 Stable pools.
+
+Tests GIVEN_IN and GIVEN_OUT swap calculations using the StableMath library,
+verified against the BalancerQueries contract.
+
+Uses _calculate_invariant_deployed (with round_up=True) which matches the deployed
+contract's invariant computation exactly. The deployed MetaStablePool calls
+_calculateInvariant with roundUp=True for swaps.
+
+The monorepo's _calculate_invariant (always roundDown) produces invariant values
+that differ by ~1 wei from the deployed version, cascading into ~0.01% swap output
+error. The deployed version eliminates this by using the same rounding as the
+on-chain contract.
+
+Swap fee application order for MetaStablePool:
+  upscale → subtractFee → compute(outGivenIn/inGivenOut) → downscale → addFee(GIVEN_OUT only)
+"""
+
+import json
+
+import pytest
+from web3.exceptions import ContractLogicError
+
+from degenbot.anvil_fork import AnvilFork
+from degenbot.balancer.deployments import (
+    BALANCER_V2_VAULT_ADDRESS,
+    BALANCERQUERIES_CONTRACT_ADDRESS,
+)
+from degenbot.balancer.libraries.fixed_point import ONE
+from degenbot.balancer.libraries.stable_math import (
+    _calc_in_given_out,
+    _calc_out_given_in,
+    _calculate_invariant_deployed,
+)
+from degenbot.checksum_cache import get_checksum_address
+
+# ---------- ABIs ----------
+
+POOL_ABI = json.loads(
+    """
+    [{"inputs":[],"name":"getAmplificationParameter","outputs":[{"internalType":"uint256","name":"value","type":"uint256"},{"internalType":"bool","name":"isUpdating","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getPoolId","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getSwapFeePercentage","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getScalingFactors","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getRateProviders","outputs":[{"internalType":"contract IRateProvider[]","name":"","type":"address[]"}],"stateMutability":"view","type":"function"}]
+    """  # noqa:E501
+)
+
+VAULT_ABI = json.loads(
+    """
+    [{"inputs":[{"internalType":"bytes32","name":"poolId","type":"bytes32"}],"name":"getPoolTokens","outputs":[{"internalType":"contract IERC20[]","name":"tokens","type":"address[]"},{"internalType":"uint256[]","name":"balances","type":"uint256[]"},{"internalType":"uint256","name":"lastChangeBlock","type":"uint256"}],"stateMutability":"view","type":"function"}]
+    """  # noqa:E501
+)
+
+QUERIES_ABI = json.loads(
+    """
+    [{"inputs":[{"components":[{"internalType":"bytes32","name":"poolId","type":"bytes32"},{"internalType":"enum IVault.SwapKind","name":"kind","type":"uint8"},{"internalType":"contract IAsset","name":"assetIn","type":"address"},{"internalType":"contract IAsset","name":"assetOut","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"bytes","name":"userData","type":"bytes"}],"internalType":"struct IVault.SingleSwap","name":"singleSwap","type":"tuple"},{"components":[{"internalType":"address","name":"sender","type":"address"},{"internalType":"bool","name":"fromInternalBalance","type":"bool"},{"internalType":"address payable","name":"recipient","type":"address"},{"internalType":"bool","name":"toInternalBalance","type":"bool"}],"internalType":"struct IVault.FundManagement","name":"funds","type":"tuple"}],"name":"querySwap","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"nonpayable","type":"function"}]
+    """  # noqa:E501
+)
+
+RATE_PROVIDER_ABI = json.loads(
+    """
+    [{"inputs":[],"name":"getRate","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"}]
+    """
+)
+
+VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+
+# ---------- Pool definitions ----------
+
+# MetaStablePools (all amp=50000, fee=0.04%, GENERAL specialization, 2 tokens)
+META_STABLE_POOLS = {
+    "wsteth_weth": {
+        "address": "0x32296969Ef14EB0c6d29669C550D4a0449130230",
+        "description": "wstETH/WETH",
+    },
+    "cbeth_wsteth": {
+        "address": "0x9c6d47Ff73e0F5E51BE5FD53236e3F595C5793F2",
+        "description": "cbETH/wstETH",
+    },
+    "ankreth_weth": {
+        "address": "0x8A34b5ad76F528bfEc06c80D85EF3b53dA7FC300",
+        "description": "ankrETH/WETH",
+    },
+    "reth_weth": {
+        "address": "0x1E19CF2D73a72Ef1332C882F20534B6519Be0276",
+        "description": "rETH/WETH",
+    },
+}
+
+
+def _build_pool_data(fork: AnvilFork, pool_address: str) -> dict:
+    """Fetch all needed on-chain data for a stable pool."""
+    w3 = fork.w3
+    vault = w3.eth.contract(
+        address=get_checksum_address(BALANCER_V2_VAULT_ADDRESS),
+        abi=VAULT_ABI,
+    )
+    pool = w3.eth.contract(
+        address=get_checksum_address(pool_address),
+        abi=POOL_ABI,
+    )
+
+    pool_id = pool.functions.getPoolId().call()
+    amp_value, _ = pool.functions.getAmplificationParameter().call()
+    swap_fee = pool.functions.getSwapFeePercentage().call()
+    scaling_factors = pool.functions.getScalingFactors().call()
+    rate_providers = pool.functions.getRateProviders().call()
+    tokens, balances, _ = vault.functions.getPoolTokens(pool_id).call()
+
+    # MetaStablePools cache rate provider values. When querySwap runs on-chain,
+    # it refreshes the cache via _cachePriceRatesIfNecessary before computing.
+    # We must use the FRESH rates (from rate providers) to match on-chain results.
+    fresh_scaling_factors = list(scaling_factors)
+    for i, rp in enumerate(rate_providers):
+        if rp != "0x0000000000000000000000000000000000000000":
+            rp_contract = w3.eth.contract(
+                address=get_checksum_address(rp),
+                abi=RATE_PROVIDER_ABI,
+            )
+            fresh_scaling_factors[i] = rp_contract.functions.getRate().call()
+
+    # Upscale balances using FRESH scaling factors
+    upscaled_balances = [
+        b * s // ONE for b, s in zip(balances, fresh_scaling_factors, strict=False)
+    ]
+
+    # Compute invariant using deployed version (roundUp=True, matching on-chain)
+    invariant = _calculate_invariant_deployed(
+        amp_value, upscaled_balances, round_up=True
+    )
+
+    return {
+        "pool_id": pool_id,
+        "pool_address": pool_address,
+        "amp": amp_value,
+        "swap_fee": swap_fee,
+        "tokens": tokens,
+        "balances": balances,
+        "scaling_factors": fresh_scaling_factors,
+        "upscaled_balances": upscaled_balances,
+        "invariant": invariant,
+    }
+
+
+def _query_swap(  # noqa: PLR0917
+    fork: AnvilFork,
+    pool_id: bytes,
+    token_in: str,
+    token_out: str,
+    amount: int,
+    kind: int,  # 0=GIVEN_IN, 1=GIVEN_OUT
+) -> int:
+    """Query the BalancerQueries contract for a swap result."""
+    w3 = fork.w3
+    queries = w3.eth.contract(
+        address=get_checksum_address(BALANCERQUERIES_CONTRACT_ADDRESS),
+        abi=QUERIES_ABI,
+    )
+
+    try:
+        return queries.functions.querySwap(
+            (pool_id, kind, token_in, token_out, amount, b""),
+            (VITALIK_ADDRESS, False, VITALIK_ADDRESS, False),
+        ).call()
+    except ContractLogicError as e:
+        pytest.skip(f"On-chain query reverted: {e}")
+
+
+def _compute_given_in(
+    pool_data: dict,
+    token_in_idx: int,
+    token_out_idx: int,
+    amount_in_raw: int,
+) -> int:
+    """
+    Compute the GIVEN_IN swap result using StableMath.
+
+    MetaStablePool flow (fees before scaling):
+    1. Subtract swap fee from raw input
+       (feeAmount = amount * fee / ONE, using mulUp; net = amount - feeAmount)
+    2. Upscale balances and fee-adjusted input
+    3. Compute outGivenIn (in scaled space)
+    4. Downscale down the output
+    """
+    amp = pool_data["amp"]
+    sf = pool_data["scaling_factors"]
+    swap_fee = pool_data["swap_fee"]
+    upscaled = pool_data["upscaled_balances"]
+    inv = pool_data["invariant"]
+
+    # Step 1: Subtract fee from raw amount (mulUp for fee amount)
+    fee_amount = (amount_in_raw * swap_fee + ONE - 1) // ONE  # mulUp
+    amount_after_fee_raw = amount_in_raw - fee_amount
+
+    # Step 2: Upscale fee-adjusted amount
+    amount_in_scaled = amount_after_fee_raw * sf[token_in_idx] // ONE  # mulDown
+
+    # Step 3: Compute out given in
+    out_scaled = _calc_out_given_in(
+        amp, list(upscaled), token_in_idx, token_out_idx, amount_in_scaled, inv
+    )
+
+    # Step 4: Downscale down
+    return out_scaled * ONE // sf[token_out_idx]  # divDown
+
+
+def _compute_given_out(
+    pool_data: dict,
+    token_in_idx: int,
+    token_out_idx: int,
+    amount_out_raw: int,
+) -> int:
+    """
+    Compute the GIVEN_OUT swap result using StableMath.
+
+    MetaStablePool flow (scaling before fees):
+    1. Upscale output amount
+    2. Compute inGivenOut (in scaled space)
+    3. Downscale UP the input amount
+    4. Add swap fee to raw amount (divUp: amount / (1 - fee))
+    """
+    amp = pool_data["amp"]
+    sf = pool_data["scaling_factors"]
+    swap_fee = pool_data["swap_fee"]
+    upscaled = pool_data["upscaled_balances"]
+    inv = pool_data["invariant"]
+
+    # Step 1: Upscale
+    amount_out_scaled = amount_out_raw * sf[token_out_idx] // ONE
+
+    # Step 2: Compute in given out
+    in_scaled = _calc_in_given_out(
+        amp, list(upscaled), token_in_idx, token_out_idx, amount_out_scaled, inv
+    )
+
+    # Step 3: Downscale up (round up since it's an amount in)
+    in_raw = (in_scaled * ONE + sf[token_in_idx] - 1) // sf[token_in_idx]
+
+    # Step 4: Add fee (deployed contract uses divUp: amount.divUp(ONE - fee))
+    numerator = in_raw * ONE
+    denominator = ONE - swap_fee
+    return numerator // denominator + (1 if numerator % denominator > 0 else 0)
+
+
+# ---------- Test classes ----------
+
+
+class TestMetaStablePoolSwaps:
+    """
+    Test swap calculations against BalancerQueries for MetaStablePools.
+
+    MetaStablePool uses roundUp=True for the invariant during swaps.
+    Using _calculate_invariant_deployed(round_up=True) should match on-chain
+    exactly for well-balanced pools. For pools with rate caching, there may
+    be a small residual error from stale vs fresh rateProvider values.
+    """
+
+    @pytest.fixture
+    def wsteth_weth_data(self, fork_mainnet_archive):
+        return _build_pool_data(
+            fork_mainnet_archive, META_STABLE_POOLS["wsteth_weth"]["address"]
+        )
+
+    @pytest.fixture
+    def cbeth_wsteth_data(self, fork_mainnet_archive):
+        return _build_pool_data(
+            fork_mainnet_archive, META_STABLE_POOLS["cbeth_wsteth"]["address"]
+        )
+
+    @pytest.fixture
+    def ankreth_weth_data(self, fork_mainnet_archive):
+        return _build_pool_data(
+            fork_mainnet_archive, META_STABLE_POOLS["ankreth_weth"]["address"]
+        )
+
+    @pytest.fixture
+    def reth_weth_data(self, fork_mainnet_archive):
+        return _build_pool_data(
+            fork_mainnet_archive, META_STABLE_POOLS["reth_weth"]["address"]
+        )
+
+    # --- wstETH/WETH ---
+
+    @pytest.mark.parametrize("pct", [100, 1000, 10000])
+    def test_given_in_wsteth_to_weth(self, wsteth_weth_data, fork_mainnet_archive, pct):
+        """Test GIVEN_IN swap from wstETH to WETH at various sizes."""
+        i_in, i_out = 0, 1
+        amount_in = wsteth_weth_data["balances"][i_in] // pct
+
+        python_result = _compute_given_in(wsteth_weth_data, i_in, i_out, amount_in)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            wsteth_weth_data["pool_id"],
+            wsteth_weth_data["tokens"][i_in],
+            wsteth_weth_data["tokens"][i_out],
+            amount_in,
+            kind=0,
+        )
+
+        if on_chain_result > 0:
+            assert python_result == on_chain_result, (
+                f"pct=1/{pct}: Python={python_result}, On-chain={on_chain_result}, "
+                f"diff={python_result - on_chain_result}"
+            )
+
+    @pytest.mark.parametrize("pct", [100, 1000, 10000])
+    def test_given_in_weth_to_wsteth(self, wsteth_weth_data, fork_mainnet_archive, pct):
+        """Test GIVEN_IN swap from WETH to wstETH at various sizes."""
+        i_in, i_out = 1, 0
+        amount_in = wsteth_weth_data["balances"][i_in] // pct
+
+        python_result = _compute_given_in(wsteth_weth_data, i_in, i_out, amount_in)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            wsteth_weth_data["pool_id"],
+            wsteth_weth_data["tokens"][i_in],
+            wsteth_weth_data["tokens"][i_out],
+            amount_in,
+            kind=0,
+        )
+
+        if on_chain_result > 0:
+            assert python_result == on_chain_result, (
+                f"pct=1/{pct}: Python={python_result}, On-chain={on_chain_result}, "
+                f"diff={python_result - on_chain_result}"
+            )
+
+    @pytest.mark.parametrize("pct", [100, 1000, 10000])
+    def test_given_out_weth_for_wsteth(self, wsteth_weth_data, fork_mainnet_archive, pct):
+        """Test GIVEN_OUT swap: requesting WETH out, paying wstETH."""
+        i_in, i_out = 0, 1
+        amount_out = wsteth_weth_data["balances"][i_out] // pct
+
+        python_result = _compute_given_out(wsteth_weth_data, i_in, i_out, amount_out)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            wsteth_weth_data["pool_id"],
+            wsteth_weth_data["tokens"][i_in],
+            wsteth_weth_data["tokens"][i_out],
+            amount_out,
+            kind=1,
+        )
+
+        if on_chain_result > 0:
+            assert python_result == on_chain_result, (
+                f"pct=1/{pct}: Python={python_result}, On-chain={on_chain_result}, "
+                f"diff={python_result - on_chain_result}"
+            )
+
+    @pytest.mark.parametrize("pct", [100, 1000, 10000])
+    def test_given_out_wsteth_for_weth(self, wsteth_weth_data, fork_mainnet_archive, pct):
+        """Test GIVEN_OUT swap: requesting wstETH out, paying WETH."""
+        i_in, i_out = 1, 0
+        amount_out = wsteth_weth_data["balances"][i_out] // pct
+
+        python_result = _compute_given_out(wsteth_weth_data, i_in, i_out, amount_out)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            wsteth_weth_data["pool_id"],
+            wsteth_weth_data["tokens"][i_in],
+            wsteth_weth_data["tokens"][i_out],
+            amount_out,
+            kind=1,
+        )
+
+        if on_chain_result > 0:
+            assert python_result == on_chain_result, (
+                f"pct=1/{pct}: Python={python_result}, On-chain={on_chain_result}, "
+                f"diff={python_result - on_chain_result}"
+            )
+
+    # --- cbETH/wstETH ---
+
+    @pytest.mark.parametrize("pct", [100, 1000, 10000])
+    def test_given_in_cbeth_to_wsteth(self, cbeth_wsteth_data, fork_mainnet_archive, pct):
+        """Test GIVEN_IN swap from cbETH to wstETH."""
+        i_in, i_out = 0, 1
+        amount_in = cbeth_wsteth_data["balances"][i_in] // pct
+
+        python_result = _compute_given_in(cbeth_wsteth_data, i_in, i_out, amount_in)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            cbeth_wsteth_data["pool_id"],
+            cbeth_wsteth_data["tokens"][i_in],
+            cbeth_wsteth_data["tokens"][i_out],
+            amount_in,
+            kind=0,
+        )
+
+        if on_chain_result > 0:
+            assert python_result == on_chain_result, (
+                f"pct=1/{pct}: Python={python_result}, On-chain={on_chain_result}, "
+                f"diff={python_result - on_chain_result}"
+            )
+
+    @pytest.mark.parametrize("pct", [100, 1000, 10000])
+    def test_given_in_wsteth_to_cbeth(self, cbeth_wsteth_data, fork_mainnet_archive, pct):
+        """Test GIVEN_IN swap from wstETH to cbETH."""
+        i_in, i_out = 1, 0
+        amount_in = cbeth_wsteth_data["balances"][i_in] // pct
+
+        python_result = _compute_given_in(cbeth_wsteth_data, i_in, i_out, amount_in)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            cbeth_wsteth_data["pool_id"],
+            cbeth_wsteth_data["tokens"][i_in],
+            cbeth_wsteth_data["tokens"][i_out],
+            amount_in,
+            kind=0,
+        )
+
+        if on_chain_result > 0:
+            assert python_result == on_chain_result, (
+                f"pct=1/{pct}: Python={python_result}, On-chain={on_chain_result}, "
+                f"diff={python_result - on_chain_result}"
+            )
+
+    @pytest.mark.parametrize("pct", [100, 1000])
+    def test_given_out_wsteth_for_cbeth(self, cbeth_wsteth_data, fork_mainnet_archive, pct):
+        """Test GIVEN_OUT swap: requesting wstETH out, paying cbETH."""
+        i_in, i_out = 0, 1
+        amount_out = cbeth_wsteth_data["balances"][i_out] // pct
+
+        python_result = _compute_given_out(cbeth_wsteth_data, i_in, i_out, amount_out)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            cbeth_wsteth_data["pool_id"],
+            cbeth_wsteth_data["tokens"][i_in],
+            cbeth_wsteth_data["tokens"][i_out],
+            amount_out,
+            kind=1,
+        )
+
+        if on_chain_result > 0:
+            assert python_result == on_chain_result, (
+                f"pct=1/{pct}: Python={python_result}, On-chain={on_chain_result}, "
+                f"diff={python_result - on_chain_result}"
+            )
+
+    @pytest.mark.parametrize("pct", [100, 1000, 10000])
+    def test_given_out_cbeth_for_wsteth(self, cbeth_wsteth_data, fork_mainnet_archive, pct):
+        """Test GIVEN_OUT swap: requesting cbETH out, paying wstETH."""
+        i_in, i_out = 1, 0
+        amount_out = cbeth_wsteth_data["balances"][i_out] // pct
+
+        python_result = _compute_given_out(cbeth_wsteth_data, i_in, i_out, amount_out)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            cbeth_wsteth_data["pool_id"],
+            cbeth_wsteth_data["tokens"][i_in],
+            cbeth_wsteth_data["tokens"][i_out],
+            amount_out,
+            kind=1,
+        )
+
+        if on_chain_result > 0:
+            assert python_result == on_chain_result, (
+                f"pct=1/{pct}: Python={python_result}, On-chain={on_chain_result}, "
+                f"diff={python_result - on_chain_result}"
+            )
+
+    # --- rETH/WETH ---
+
+    @pytest.mark.parametrize("pct", [100, 1000])
+    def test_given_in_reth_to_weth(self, reth_weth_data, fork_mainnet_archive, pct):
+        """Test GIVEN_IN swap from rETH to WETH."""
+        i_in, i_out = 0, 1
+        amount_in = reth_weth_data["balances"][i_in] // pct
+
+        python_result = _compute_given_in(reth_weth_data, i_in, i_out, amount_in)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            reth_weth_data["pool_id"],
+            reth_weth_data["tokens"][i_in],
+            reth_weth_data["tokens"][i_out],
+            amount_in,
+            kind=0,
+        )
+
+        if on_chain_result > 0:
+            assert python_result == on_chain_result, (
+                f"pct=1/{pct}: Python={python_result}, On-chain={on_chain_result}, "
+                f"diff={python_result - on_chain_result}"
+            )
+
+    @pytest.mark.parametrize("pct", [100, 1000])
+    def test_given_in_weth_to_reth(self, reth_weth_data, fork_mainnet_archive, pct):
+        """Test GIVEN_IN swap from WETH to rETH."""
+        i_in, i_out = 1, 0
+        amount_in = reth_weth_data["balances"][i_in] // pct
+
+        python_result = _compute_given_in(reth_weth_data, i_in, i_out, amount_in)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            reth_weth_data["pool_id"],
+            reth_weth_data["tokens"][i_in],
+            reth_weth_data["tokens"][i_out],
+            amount_in,
+            kind=0,
+        )
+
+        if on_chain_result > 0:
+            assert python_result == on_chain_result, (
+                f"pct=1/{pct}: Python={python_result}, On-chain={on_chain_result}, "
+                f"diff={python_result - on_chain_result}"
+            )
+
+    @pytest.mark.parametrize("pct", [100, 1000])
+    def test_given_out_weth_for_reth(self, reth_weth_data, fork_mainnet_archive, pct):
+        """Test GIVEN_OUT swap: requesting WETH out, paying rETH."""
+        i_in, i_out = 0, 1
+        amount_out = reth_weth_data["balances"][i_out] // pct
+
+        python_result = _compute_given_out(reth_weth_data, i_in, i_out, amount_out)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            reth_weth_data["pool_id"],
+            reth_weth_data["tokens"][i_in],
+            reth_weth_data["tokens"][i_out],
+            amount_out,
+            kind=1,
+        )
+
+        if on_chain_result > 0:
+            assert python_result == on_chain_result, (
+                f"pct=1/{pct}: Python={python_result}, On-chain={on_chain_result}, "
+                f"diff={python_result - on_chain_result}"
+            )
+
+    @pytest.mark.parametrize("pct", [100, 1000])
+    def test_given_out_reth_for_weth(self, reth_weth_data, fork_mainnet_archive, pct):
+        """Test GIVEN_OUT swap: requesting rETH out, paying WETH."""
+        i_in, i_out = 1, 0
+        amount_out = reth_weth_data["balances"][i_out] // pct
+
+        python_result = _compute_given_out(reth_weth_data, i_in, i_out, amount_out)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            reth_weth_data["pool_id"],
+            reth_weth_data["tokens"][i_in],
+            reth_weth_data["tokens"][i_out],
+            amount_out,
+            kind=1,
+        )
+
+        if on_chain_result > 0:
+            assert python_result == on_chain_result, (
+                f"pct=1/{pct}: Python={python_result}, On-chain={on_chain_result}, "
+                f"diff={python_result - on_chain_result}"
+            )
+
+    # --- ankrETH/WETH ---
+
+    @pytest.mark.parametrize("pct", [100, 1000])
+    def test_given_in_ankreth_to_weth(self, ankreth_weth_data, fork_mainnet_archive, pct):
+        """Test GIVEN_IN swap from ankrETH to WETH."""
+        i_in, i_out = 0, 1
+        amount_in = ankreth_weth_data["balances"][i_in] // pct
+
+        python_result = _compute_given_in(ankreth_weth_data, i_in, i_out, amount_in)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            ankreth_weth_data["pool_id"],
+            ankreth_weth_data["tokens"][i_in],
+            ankreth_weth_data["tokens"][i_out],
+            amount_in,
+            kind=0,
+        )
+
+        if on_chain_result > 0:
+            assert python_result == on_chain_result, (
+                f"pct=1/{pct}: Python={python_result}, On-chain={on_chain_result}, "
+                f"diff={python_result - on_chain_result}"
+            )
+
+    @pytest.mark.parametrize("pct", [100, 1000])
+    def test_given_in_weth_to_ankreth(self, ankreth_weth_data, fork_mainnet_archive, pct):
+        """Test GIVEN_IN swap from WETH to ankrETH."""
+        i_in, i_out = 1, 0
+        amount_in = ankreth_weth_data["balances"][i_in] // pct
+
+        python_result = _compute_given_in(ankreth_weth_data, i_in, i_out, amount_in)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            ankreth_weth_data["pool_id"],
+            ankreth_weth_data["tokens"][i_in],
+            ankreth_weth_data["tokens"][i_out],
+            amount_in,
+            kind=0,
+        )
+
+        if on_chain_result > 0:
+            assert python_result == on_chain_result, (
+                f"pct=1/{pct}: Python={python_result}, On-chain={on_chain_result}, "
+                f"diff={python_result - on_chain_result}"
+            )
+
+    @pytest.mark.parametrize("pct", [100, 1000])
+    def test_given_out_weth_for_ankreth(self, ankreth_weth_data, fork_mainnet_archive, pct):
+        """Test GIVEN_OUT swap: requesting WETH out, paying ankrETH."""
+        i_in, i_out = 0, 1
+        amount_out = ankreth_weth_data["balances"][i_out] // pct
+
+        python_result = _compute_given_out(ankreth_weth_data, i_in, i_out, amount_out)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            ankreth_weth_data["pool_id"],
+            ankreth_weth_data["tokens"][i_in],
+            ankreth_weth_data["tokens"][i_out],
+            amount_out,
+            kind=1,
+        )
+
+        if on_chain_result > 0:
+            assert python_result == on_chain_result, (
+                f"pct=1/{pct}: Python={python_result}, On-chain={on_chain_result}, "
+                f"diff={python_result - on_chain_result}"
+            )
+
+    @pytest.mark.parametrize("pct", [100, 1000])
+    def test_given_out_ankreth_for_weth(self, ankreth_weth_data, fork_mainnet_archive, pct):
+        """Test GIVEN_OUT swap: requesting ankrETH out, paying WETH."""
+        i_in, i_out = 1, 0
+        amount_out = ankreth_weth_data["balances"][i_out] // pct
+
+        python_result = _compute_given_out(ankreth_weth_data, i_in, i_out, amount_out)
+        on_chain_result = _query_swap(
+            fork_mainnet_archive,
+            ankreth_weth_data["pool_id"],
+            ankreth_weth_data["tokens"][i_in],
+            ankreth_weth_data["tokens"][i_out],
+            amount_out,
+            kind=1,
+        )
+
+        if on_chain_result > 0:
+            assert python_result == on_chain_result, (
+                f"pct=1/{pct}: Python={python_result}, On-chain={on_chain_result}, "
+                f"diff={python_result - on_chain_result}"
+            )
