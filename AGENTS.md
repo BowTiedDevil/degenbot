@@ -144,6 +144,7 @@ PoolClass -> PublisherMixin -> PoolPickleMixin -> StateMixin -> CalcMixin -> Abs
 | UniswapV3Pool | `V3PoolState` | `UniswapV3PoolCalc` | Base V3. Uses `ConcentratedLiquidityStateManager` which composes `StateCache` |
 | UniswapV4Pool | `V4PoolState` | `UniswapV4PoolCalc` | Same manager pattern as V3. V4-specific swap calc stays in pool |
 | CurveStableswapPool | `StableswapPoolState` | `DyCalculator` seam | Curve uses `BoundedCache` (dict-based), not `StateCache`. Calculators in `curve/calculators/`; pure math in `calculations/stableswap.py` |
+| BalancerV2Pool | `BalancerV2PoolState` | `WeightedMath` functions | Balancer uses no state cache. Math in `balancer/libraries/`; version-dependent pow via `PowVersion` enum |
 
 ### StateCache
 
@@ -178,7 +179,7 @@ Each module has a `CONTEXT.md` defining domain terms, aliases to avoid, and reso
 
 ### The Bot Session Pattern
 
-All pool and token creation flows through the `Bot` class. `Bot` owns registries (`pools`, `tokens`, `managed_pools`) and connection managers. Pool updates use a **Builder Registry** (`dict[type, PoolBuilder]`) keyed by concrete pool class — no isinstance chains. The `PoolBuilder` protocol (`src/degenbot/builders/protocol.py`) replaces the former 4-way union type, and `_dispatch_build()` forwards all kwargs uniformly instead of branching on builder type.
+All pool and token creation flows through the `Bot` class. `Bot` owns registries (`pools`, `tokens`, `managed_pools`) and connection managers. Pool updates use a **Builder Registry** (`dict[type, PoolBuilder]`) keyed by concrete pool class — no isinstance chains. The `PoolBuilder` protocol (`src/degenbot/builders/protocol.py`) replaces the former 4-way union type, and `_dispatch_build()` forwards a typed `BuildPoolRequest` object instead of `**kwargs` dict forwarding.
 
 ```python
 # Correct: Bot handles I/O and injects data into I/O-free pools
@@ -312,6 +313,7 @@ The legacy cycle classes (`UniswapLpCycle`, `UniswapCurveCycle`, etc.) have been
 
 ### Porting to Python
 - Solidity contracts requires explicit integer division to match the EVM. The Python `//` operator is equivalent to the Solidity `/` operator.
+- **Balancer V2**: When Solidity's `/` truncates toward zero for negative operands, Python's `//` floors toward -∞. The `_truncated_div` helper in `log_exp_math.py` matches Solidity's truncation-toward-zero semantics for Taylor series divisions. Deployed pool contracts use different `FixedPoint.pow` implementations depending on contract version — `PowVersion` (V1/V2) controls whether fast paths for y == ONE/TWO/FOUR are active. Fee ordering in GIVEN_OUT must match Solidity: downscale first, then add fee.
 
 ## Rust Extension
 

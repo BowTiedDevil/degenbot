@@ -11,7 +11,7 @@ from decimal import Decimal
 import pytest
 
 from degenbot.balancer.libraries import fixed_point
-from degenbot.balancer.libraries.constants import FOUR, ONE, TWO
+from degenbot.balancer.libraries.constants import FOUR, ONE, TWO, PowVersion
 from degenbot.balancer.libraries.helpers import fp
 from degenbot.constants import MAX_UINT256
 from degenbot.exceptions.pool import EVMRevertError
@@ -189,34 +189,52 @@ def check_pows(power: int, values: list[Decimal]):
 
 
 class TestPowDown:
-    def test_y_equals_one(self):
-        """x^1 via pow_down should be <= x (rounds down)."""
+    def test_y_equals_one_v1(self):
+        """x^1 via V1 pow_down (general path) should be <= x due to error bound."""
         x = 5 * ONE
-        result = fixed_point.pow_down(x, ONE)
-        # The on-chain contract always uses the general path (LogExpMath.pow + error bound),
-        # with no y==1 fast path. The error bound makes pow_down round down and pow_up round up.
+        result = fixed_point.pow_down(x, ONE, version=PowVersion.V1)
+        # V1 uses LogExpMath.pow + error bound, so pow_down(x, ONE) < x
         assert result <= x
         assert result == pytest.approx(x, rel=1e-10)
 
-    def test_y_equals_two(self):
-        """x^2 via pow_down should be <= the exact value (rounds down)."""
+    def test_y_equals_one_v2(self):
+        """x^1 via V2 pow_down (fast path) returns x exactly."""
+        x = 5 * ONE
+        result = fixed_point.pow_down(x, ONE, version=PowVersion.V2)
+        # V2 fast path for y == ONE simply returns x
+        assert result == x
+
+    def test_y_equals_two_v1(self):
+        """x^2 via V1 pow_down should be <= the exact value (rounds down)."""
         x = 3 * ONE
-        result = fixed_point.pow_down(x, TWO)
-        # pow_down rounds down; it goes through LogExpMath.pow - max_error,
-        # which differs slightly from mul_down(x, x) used in the monorepo fast path.
-        # The deployed on-chain contract does NOT have the fast path.
+        result = fixed_point.pow_down(x, TWO, version=PowVersion.V1)
         exact = fixed_point.mul_down(x, x)
         assert result <= exact  # must round down
         assert result == pytest.approx(exact, rel=1e-10)
 
-    def test_y_equals_four(self):
-        """x^4 via pow_down should be <= the exact value (rounds down)."""
+    def test_y_equals_two_v2(self):
+        """x^2 via V2 pow_down (fast path) returns mul_down(x, x)."""
         x = 3 * ONE
-        result = fixed_point.pow_down(x, FOUR)
+        result = fixed_point.pow_down(x, TWO, version=PowVersion.V2)
+        expected = fixed_point.mul_down(x, x)
+        assert result == expected
+
+    def test_y_equals_four_v1(self):
+        """x^4 via V1 pow_down should be <= the exact value (rounds down)."""
+        x = 3 * ONE
+        result = fixed_point.pow_down(x, FOUR, version=PowVersion.V1)
         square = fixed_point.mul_down(x, x)
         exact = fixed_point.mul_down(square, square)
         assert result <= exact  # must round down
         assert result == pytest.approx(exact, rel=1e-10)
+
+    def test_y_equals_four_v2(self):
+        """x^4 via V2 pow_down (fast path) returns mul_down(mul_down(x,x), mul_down(x,x))."""
+        x = 3 * ONE
+        result = fixed_point.pow_down(x, FOUR, version=PowVersion.V2)
+        square = fixed_point.mul_down(x, x)
+        expected = fixed_point.mul_down(square, square)
+        assert result == expected
 
     def test_fractional_exponent(self):
         """4^0.5 = 2, rounded down."""
@@ -225,29 +243,50 @@ class TestPowDown:
 
 
 class TestPowUp:
-    def test_y_equals_one(self):
-        """x^1 via pow_up should be >= x (rounds up)."""
+    def test_y_equals_one_v1(self):
+        """x^1 via V1 pow_up (general path) should be >= x due to error bound."""
         x = 5 * ONE
-        result = fixed_point.pow_up(x, ONE)
+        result = fixed_point.pow_up(x, ONE, version=PowVersion.V1)
         assert result >= x
         assert result == pytest.approx(x, rel=1e-10)
 
-    def test_y_equals_two(self):
-        """x^2 via pow_up should be >= the exact value (rounds up)."""
+    def test_y_equals_one_v2(self):
+        """x^1 via V2 pow_up (fast path) returns x exactly."""
+        x = 5 * ONE
+        result = fixed_point.pow_up(x, ONE, version=PowVersion.V2)
+        assert result == x
+
+    def test_y_equals_two_v1(self):
+        """x^2 via V1 pow_up should be >= the exact value (rounds up)."""
         x = 3 * ONE
-        result = fixed_point.pow_up(x, TWO)
+        result = fixed_point.pow_up(x, TWO, version=PowVersion.V1)
         exact = fixed_point.mul_up(x, x)
         assert result >= exact  # must round up
         assert result == pytest.approx(exact, rel=1e-10)
 
-    def test_y_equals_four(self):
-        """x^4 via pow_up should be >= the exact value (rounds up)."""
+    def test_y_equals_two_v2(self):
+        """x^2 via V2 pow_up (fast path) returns mul_up(x, x)."""
         x = 3 * ONE
-        result = fixed_point.pow_up(x, FOUR)
+        result = fixed_point.pow_up(x, TWO, version=PowVersion.V2)
+        expected = fixed_point.mul_up(x, x)
+        assert result == expected
+
+    def test_y_equals_four_v1(self):
+        """x^4 via V1 pow_up should be >= the exact value (rounds up)."""
+        x = 3 * ONE
+        result = fixed_point.pow_up(x, FOUR, version=PowVersion.V1)
         square = fixed_point.mul_up(x, x)
         exact = fixed_point.mul_up(square, square)
         assert result >= exact  # must round up
         assert result == pytest.approx(exact, rel=1e-10)
+
+    def test_y_equals_four_v2(self):
+        """x^4 via V2 pow_up (fast path) returns mul_up(mul_up(x,x), mul_up(x,x))."""
+        x = 3 * ONE
+        result = fixed_point.pow_up(x, FOUR, version=PowVersion.V2)
+        square = fixed_point.mul_up(x, x)
+        expected = fixed_point.mul_up(square, square)
+        assert result == expected
 
 
 class TestNonFractionalPow:
