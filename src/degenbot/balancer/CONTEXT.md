@@ -72,6 +72,18 @@
 
 For off-chain matching, builders must provide scaling factors computed from **fresh** rates for ComposableStablePools and from **cached** rates for MetaStablePools. In practice, both approaches use fresh rates from rate providers because the MetaStablePool's cached rates happen to be close to fresh rates for the pools we've tested (exact 0-wei matching achieved).
 
+### BalancerRateProvider and Stale Rate Warning
+
+**`BalancerRateProvider`** is a `runtime_checkable` protocol with a single method `get_rates(block_identifier) -> tuple[int, ...]` that returns per-token rates. It follows the same pattern as Curve's `CurveDataProvider` — injected at construction time, called at calculation time to resolve rates for a specific block.
+
+**`_StaticRateProvider`** is an internal wrapper that always returns construction-time rates. Used when no live rate provider is available.
+
+**`PossibleInaccurateResult`** exception: ComposableStablePools without a live `BalancerRateProvider` raise this exception (same pattern as `UniswapV4Pool` with hooks). The computed `amount_in` and `amount_out` are available as attributes on the exception. Callers must `try/except` to access the values, explicitly acknowledging that rates may be stale.
+
+**Exact matching guarantee**: When both the pool data (balances, amp, fee) and the rate provider data (`get_rates()` with `block_identifier`) are fetched at the same block, results match on-chain within ≤3000 wei. The residual comes from the rate providers being called in separate `eth_call` operations — the on-chain `querySwap` refreshes rates inside a single call, while our off-chain code makes a separate `getRate()` call that may differ by 1-2 wei, amplified through the invariant computation. This is structurally unavoidable without performing the entire swap simulation in a single contract call.
+
+**MetaStablePool exception**: MetaStablePools do NOT raise `PossibleInaccurateResult` because their rate providers return near-static values (e.g., wstETH/wETH conversion rate). Construction-time scaling factors produce exact 0-wei matching without a rate provider.
+
 ## Library File Layout
 
 ```
