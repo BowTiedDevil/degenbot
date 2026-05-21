@@ -1,5 +1,19 @@
 from degenbot.exceptions.pool import EVMRevertError
 
+
+def _truncated_div(a: int, b: int) -> int:
+    """Integer division that matches Solidity's truncation-toward-zero semantics.
+
+    Python's // floors toward -infinity for negative dividends, but Solidity's /
+    truncates toward zero. This helper replicates the Solidity behavior, which is
+    required for all signed fixed-point arithmetic in the Balancer math libraries.
+    """
+    # Equivalent to: int(Decimal(a) / Decimal(b)) without importing Decimal
+    if (a >= 0) == (b >= 0):
+        return a // b
+    return -((-a) // b)
+
+
 ONE_18 = 1 * 10**18
 
 # Internally, intermediate values are computed with higher precision as 20 decimal fixed point
@@ -86,15 +100,16 @@ def pow(x: int, y: int) -> int:  # noqa: A001
     if LN_36_LOWER_BOUND < x_int256 < LN_36_UPPER_BOUND:
         ln_36_x = _ln_36(x_int256)
 
-        # ln_36_x has 36 decimal places, so multiplying by y_int256 isn't as straightforward, since
-        # we can't just bring y_int256 to 36 decimal places, as it might overflow. Instead, we
-        # perform two 18 decimal multiplications and add the results: one with the first 18 decimals
-        # of ln_36_x, and one with the (downscaled) last 18 decimals.
-        logx_times_y = (ln_36_x // ONE_18) * y_int256 + ((ln_36_x % ONE_18) * y_int256) // ONE_18
+        # ln_36_x has 36 decimal places, so multiplying by y_int256 isn't as straightforward.
+        # In Solidity, this is done as two 18 decimal multiplications to avoid 256-bit
+        # overflow, using a split on ln_36_x / and %. Since Python has arbitrary precision,
+        # we can simply multiply and divide directly. This also avoids the Python vs Solidity
+        # modulo difference for negative numbers.
+        logx_times_y = _truncated_div(ln_36_x * y_int256, ONE_18)
     else:
         logx_times_y = _ln(x_int256) * y_int256
 
-    logx_times_y //= ONE_18
+    logx_times_y = _truncated_div(logx_times_y, ONE_18)
 
     # Finally, we compute exp(y * ln(x)) to arrive at x^y
     if not (MIN_NATURAL_EXPONENT <= logx_times_y <= MAX_NATURAL_EXPONENT):
@@ -245,7 +260,7 @@ def log(arg: int, base: int) -> int:
     log_arg = _ln_36(arg) if LN_36_LOWER_BOUND < arg < LN_36_UPPER_BOUND else _ln(arg) * ONE_18
 
     # When dividing, we multiply by ONE_18 to arrive at a result with 18 decimal places
-    return (log_arg * ONE_18) // log_base
+    return _truncated_div(log_arg * ONE_18, log_base)
 
 
 def ln(a: int) -> int:
@@ -254,7 +269,7 @@ def ln(a: int) -> int:
         raise EVMRevertError(error="OUT_OF_BOUNDS")
 
     if LN_36_LOWER_BOUND < a < LN_36_UPPER_BOUND:
-        return _ln_36(a) // ONE_18
+        return _truncated_div(_ln_36(a), ONE_18)
 
     return _ln(a)
 
@@ -338,8 +353,12 @@ def _ln(a: int) -> int:
 
     # Recall that 20 digit fixed point division requires multiplying by ONE_20, and multiplication
     # requires division by ONE_20.
-    z = ((a - ONE_20) * ONE_20) // (a + ONE_20)
-    z_squared = (z * z) // ONE_20
+    #
+    # All divisions below use _truncated_div to match Solidity's truncation-toward-zero semantics.
+    # When a < ONE_20 (i.e. the value represents a number < 1.0), z is negative, which causes
+    # Python's // to floor toward -inf instead of truncating toward 0 like Solidity's /.
+    z = _truncated_div((a - ONE_20) * ONE_20, a + ONE_20)
+    z_squared = _truncated_div(z * z, ONE_20)
 
     # num is the numerator of the series: the z^(2 * n + 1) term
     num = z
@@ -348,20 +367,20 @@ def _ln(a: int) -> int:
     series_sum = num
 
     # In each step, the numerator is multiplied by z^2
-    num = (num * z_squared) // ONE_20
-    series_sum += num // 3
+    num = _truncated_div(num * z_squared, ONE_20)
+    series_sum += _truncated_div(num, 3)
 
-    num = (num * z_squared) // ONE_20
-    series_sum += num // 5
+    num = _truncated_div(num * z_squared, ONE_20)
+    series_sum += _truncated_div(num, 5)
 
-    num = (num * z_squared) // ONE_20
-    series_sum += num // 7
+    num = _truncated_div(num * z_squared, ONE_20)
+    series_sum += _truncated_div(num, 7)
 
-    num = (num * z_squared) // ONE_20
-    series_sum += num // 9
+    num = _truncated_div(num * z_squared, ONE_20)
+    series_sum += _truncated_div(num, 9)
 
-    num = (num * z_squared) // ONE_20
-    series_sum += num // 11
+    num = _truncated_div(num * z_squared, ONE_20)
+    series_sum += _truncated_div(num, 11)
 
     # 6 Taylor terms are sufficient for 36 decimal precision.
 
@@ -372,7 +391,7 @@ def _ln(a: int) -> int:
     # remainder (both with 20 decimals). All that remains is to sum these two, and then drop two
     # digits to return a 18 decimal value.
 
-    return (working_sum + series_sum) // 100
+    return _truncated_div(working_sum + series_sum, 100)
 
 
 def _ln_36(x: int) -> int:
@@ -388,8 +407,12 @@ def _ln_36(x: int) -> int:
 
     # Recall that 36 digit fixed point division requires multiplying by ONE_36, and multiplication
     # requires division by ONE_36.
-    z = ((x - ONE_36) * ONE_36) // (x + ONE_36)
-    z_squared = (z * z) // ONE_36
+    #
+    # All divisions below use _truncated_div to match Solidity's truncation-toward-zero semantics.
+    # When x < ONE_36, z is negative, causing Python's // to floor toward -inf instead of
+    # truncating toward 0 like Solidity's /.
+    z = _truncated_div((x - ONE_36) * ONE_36, x + ONE_36)
+    z_squared = _truncated_div(z * z, ONE_36)
 
     # num is the numerator of the series: the z^(2 * n + 1) term
     num = z
@@ -398,26 +421,26 @@ def _ln_36(x: int) -> int:
     series_sum = num
 
     # In each step, the numerator is multiplied by z^2
-    num = (num * z_squared) // ONE_36
-    series_sum += num // 3
+    num = _truncated_div(num * z_squared, ONE_36)
+    series_sum += _truncated_div(num, 3)
 
-    num = (num * z_squared) // ONE_36
-    series_sum += num // 5
+    num = _truncated_div(num * z_squared, ONE_36)
+    series_sum += _truncated_div(num, 5)
 
-    num = (num * z_squared) // ONE_36
-    series_sum += num // 7
+    num = _truncated_div(num * z_squared, ONE_36)
+    series_sum += _truncated_div(num, 7)
 
-    num = (num * z_squared) // ONE_36
-    series_sum += num // 9
+    num = _truncated_div(num * z_squared, ONE_36)
+    series_sum += _truncated_div(num, 9)
 
-    num = (num * z_squared) // ONE_36
-    series_sum += num // 11
+    num = _truncated_div(num * z_squared, ONE_36)
+    series_sum += _truncated_div(num, 11)
 
-    num = (num * z_squared) // ONE_36
-    series_sum += num // 13
+    num = _truncated_div(num * z_squared, ONE_36)
+    series_sum += _truncated_div(num, 13)
 
-    num = (num * z_squared) // ONE_36
-    series_sum += num // 15
+    num = _truncated_div(num * z_squared, ONE_36)
+    series_sum += _truncated_div(num, 15)
 
     # 8 Taylor terms are sufficient for 36 decimal precision.
 

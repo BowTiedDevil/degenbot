@@ -132,3 +132,12 @@ def _subtract_swap_fee_amount(amount: int, fee_percentage: int) -> int:
     # This returns amount - fee amount, so we round up (favoring a higher fee amount).
     fee_amount = mul_up(amount, fee_percentage)
     return amount - fee_amount
+
+
+def _add_swap_fee_amount(amount: int, fee_percentage: int) -> int:
+    """
+    Adds swap fee amount to `amount`, returning a higher value.
+    """
+
+    # This returns amount + fee amount on top, so we round down (favoring a higher fee amount).
+    return div_up(amount, complement(fee_percentage))
