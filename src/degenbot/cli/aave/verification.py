@@ -8,9 +8,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, joinedload
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.cli.aave.db_assets import get_contract, get_gho_asset
+from degenbot.cli.aave.db_assets import get_gho_asset
 from degenbot.cli.aave.db_verification import verify_gho_discount_amounts, verify_stk_aave_balances
-from degenbot.cli.aave.types import TransactionContext
 from degenbot.constants import DEAD_ADDRESS, ZERO_ADDRESS
 from degenbot.database.models.aave import (
     AaveGhoToken,
@@ -23,79 +22,6 @@ from degenbot.database.models.aave import (
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.provider.interface import ProviderAdapter
-
-
-def get_current_borrow_index_from_pool(
-    provider: ProviderAdapter,
-    pool_address: ChecksumAddress,
-    underlying_asset_address: ChecksumAddress,
-    block_number: int,
-) -> int | None:
-    """
-    Fetch the current borrow index from the Aave Pool contract.
-
-    This is used when the asset's cached borrow_index is 0 (not yet updated
-    by a ReserveDataUpdated event) to get the current global index.
-
-    Args:
-        provider: ProviderAdapter for blockchain calls
-        pool_address: The Aave Pool contract address
-        underlying_asset_address: The underlying asset address (e.g., GHO token)
-        block_number: The block number to query at
-
-    Returns:
-        The current borrow index, or None if the call fails
-    """
-
-    borrow_index: int
-    (borrow_index,) = raw_call(
-        provider=provider,
-        address=pool_address,
-        calldata=encode_function_calldata(
-            function_prototype="getReserveNormalizedVariableDebt(address)",
-            function_arguments=[underlying_asset_address],
-        ),
-        return_types=["uint256"],
-        block_identifier=block_number,
-    )
-    return borrow_index
-
-
-def update_debt_position_index(
-    *,
-    tx_context: TransactionContext,
-    debt_asset: AaveV3Asset,
-    debt_position: AaveV3DebtPosition,
-    event_index: int,
-    event_block_number: int,
-) -> None:
-    """
-    Update debt position's last_index from current pool state.
-
-    Fetches the current global borrow index from the pool contract and updates
-    the position's last_index if the new index is greater than the current one.
-    """
-
-    pool_contract = get_contract(
-        session=tx_context.session,
-        market=tx_context.market,
-        contract_name="POOL",
-    )
-    assert pool_contract is not None
-
-    fetched_index = get_current_borrow_index_from_pool(
-        provider=tx_context.provider,
-        pool_address=get_checksum_address(pool_contract.address),
-        underlying_asset_address=get_checksum_address(debt_asset.underlying_token.address),
-        block_number=event_block_number,
-    )
-    # Use fetched index if available, otherwise fall back to event index
-    current_index = fetched_index if fetched_index is not None else event_index
-    # Only update last_index if the new index is greater than current
-    # This prevents earlier events (in log index order) from overwriting
-    # later events' indices when operations are processed out of order
-    if current_index > (debt_position.last_index or 0):
-        debt_position.last_index = current_index
 
 
 def cleanup_zero_balance_positions(

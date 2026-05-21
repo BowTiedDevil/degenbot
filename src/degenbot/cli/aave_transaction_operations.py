@@ -12,7 +12,7 @@ import eth_abi.abi
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from web3.types import LogReceipt
 
 from degenbot.aave.events import (
@@ -431,14 +431,23 @@ class TransactionOperationsParser:
     def _get_gho_asset(self) -> AaveGhoToken:
         """Get GHO token asset for the current market."""
 
-        gho_asset = self.session.scalar(
+        # AaveGhoToken is a tiny table (1 row per chain). Query it directly
+        # with eager-loaded relationships, then filter in Python to avoid
+        # the expensive JOIN through Erc20TokenTable (572K+ rows).
+        gho_assets = self.session.scalars(
             select(AaveGhoToken)
-            .join(AaveGhoToken.token)
-            .where(Erc20TokenTable.chain == self.market.chain_id)
-        )
-        assert gho_asset is not None
+            .options(
+                joinedload(AaveGhoToken.token),
+                joinedload(AaveGhoToken.v_token),
+            )
+        ).unique().all()
 
-        return gho_asset
+        for gho in gho_assets:
+            if gho.token.chain == self.market.chain_id:
+                return gho
+
+        msg = f"No GHO token found for chain {self.market.chain_id}"
+        raise ValueError(msg)
 
     def _get_token_type(self, token_address: ChecksumAddress) -> TokenType | None:
         """
