@@ -20,6 +20,7 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | # | Plan | Summary |
 |---|------|---------|
 | 014 | [Async REPL](014-async-repl.md) | `python -m degenbot` with top-level `await`. |
+| 069 | [Remove DyCalculation Closures](069-remove-dy-calculation-closures.md) | Replace `get_y`/`newton_y` closures on `DyCalculationInputs` with pre-resolved values; calculators call pure `stableswap_*` functions directly. Slice 1 partial. |
 | 070 | [Balancer Builder](070-balancer-builder.md) | Builder, type resolution, `to_hop_state()`, and `external_update()` for Balancer V2 pools. |
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
 
@@ -94,3 +95,4 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | 066 | [Unify Type Resolution Sync/Async](completed/066-unify-type-resolution-sync-async.md) | 4 mirror functions → 2 thin wrappers + 2 shared pure functions. ~56 lines of duplication removed. |
 | 067 | [BuildPoolRequest](completed/067-build-pool-request.md) | Replace `dispatch_kwargs` dict + `**kwargs` forwarding with typed `BuildPoolRequest` frozen dataclass. All 9 builders migrated one-shot. Eliminates silent typo-swallowing. |
 | 068 | [Absorb CurveOnChainCache into CurveStableswapPool](completed/068-absorb-curve-on-chain-cache.md) | Merge `CurveOnChainCache` into `CurveStableswapPool` as private `_cache_*` fields and `_get_cached_*` methods. Eliminates `getattr` dynamic dispatch, duplicate `_data_provider` reference, and separate pickle policy. |
+| 071 | [Curve Hop State Pair Selection](completed/071-curve-hop-state-pair-selection.md) | Add `token_in`/`token_out` kwargs to `to_hop_state()` for N-token pool pair selection. Resolves Curve N-token ambiguity; enables Plan 070's `BalancerPairView` delegation. |

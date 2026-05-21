@@ -208,7 +208,11 @@ class MockV2Pool:
         self,
         zero_for_one: bool,  # noqa: FBT001
         state_override: UniswapV2PoolState | None = None,
+        *,
+        token_in: object | None = None,  # noqa: ARG002
+        token_out: object | None = None,  # noqa: ARG002
     ) -> HopType:
+        # token_in/token_out unused — 2-token pools determine pair from zero_for_one
         state = state_override or self.state
         fee = self.extract_fee(zero_for_one=zero_for_one)
         if zero_for_one:

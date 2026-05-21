@@ -81,6 +81,7 @@
 | **Provider Method** | A single method on a DataProvider (e.g., `CurveDataProvider.D()`) called lazily when data is needed | — |
 | **PoolFamily** | An enum identifying a pool's mathematical invariant family for type resolution: `CONSTANT_PRODUCT`, `CONCENTRATED_LIQUIDITY`, `STABLESWAP`, `WEIGHTED` | Pool family (lowercase) |
 | **CacheablePool** | A protocol for pools that register with the Rust solver cache, requiring `reserves_for_cache()` and `fee_for_cache()` methods | Cacheable adapter |
+| **Pair Selection** | The `token_in`/`token_out` keyword-only kwargs on `to_hop_state()` (both `ArbitrageCapablePool` and `ArbitragePathPool` protocols) that allow N-token pools to select an arbitrary coin pair; both-or-neither, resolve against `self.tokens`, override `zero_for_one` when both provided (Plan 071) | Token pair kwargs |
 | **V4PoolKey** | A frozen dataclass carrying the V4 pool identification struct (currency0, currency1, fee, tick_spacing, hooks) | Pool key, V4 key |
 
 ## DEX Protocols (Supported)
