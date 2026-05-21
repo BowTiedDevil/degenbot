@@ -14,9 +14,9 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT128, ZERO_ADDRESS
 from degenbot.exceptions.pool import (
+    HookedPoolResult,
     IncompleteSwap,
     LiquidityPoolError,
-    PossibleInaccurateResult,
 )
 from degenbot.provider import ProviderAdapter
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
@@ -154,7 +154,7 @@ def _test_pool_exact_input(
             )
         except IncompleteSwap as exc:
             helper_amount_out = exc.amount_out
-        except PossibleInaccurateResult:
+        except HookedPoolResult:
             # The result might not match because a swap hook is not modeled
             continue
         except LiquidityPoolError as exc:
@@ -191,7 +191,7 @@ def _test_pool_exact_input(
             )
         except IncompleteSwap as exc:
             helper_amount_out = exc.amount_out
-        except PossibleInaccurateResult:
+        except HookedPoolResult:
             # The result might not match because a swap hook is not modeled
             continue
         except LiquidityPoolError as exc:
@@ -272,7 +272,7 @@ def _test_pool_exact_output(
             )
         except IncompleteSwap as exc:
             helper_amount_in = exc.amount_in
-        except PossibleInaccurateResult:
+        except HookedPoolResult:
             # The result might not match because a swap hook is not modeled
             continue
         except LiquidityPoolError as exc:
@@ -309,7 +309,7 @@ def _test_pool_exact_output(
             )
         except IncompleteSwap as exc:
             helper_amount_in = exc.amount_in
-        except PossibleInaccurateResult:
+        except HookedPoolResult:
             # The result might not match because a swap hook is not modeled
             continue
         except LiquidityPoolError as exc:

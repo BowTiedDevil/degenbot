@@ -13,7 +13,7 @@ from degenbot.balancer.libraries.stable_math import (
 )
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import PossibleInaccurateResult
+from degenbot.exceptions.pool import StaleRateResult
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
@@ -103,7 +103,7 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
       inject a ``BalancerRateProvider`` that replicates this cache-aware
       logic (read ``getTokenRateCache``, check expiry, call ``getRate()`` if
       expired). Without a live rate provider, the pool uses construction-time
-      scaling factors and raises ``PossibleInaccurateResult`` for
+      scaling factors and raises ``StaleRateResult`` for
       ComposableStablePools to warn that rates may be stale.
 
       MetaStablePools have no rate cache — they call ``getRate()`` directly.
@@ -328,7 +328,7 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         return index if index < self.bpt_idx else index - 1
 
     def _should_warn_stale_rates(self) -> bool:
-        """Whether a PossibleInaccurateResult should wrap the computed result.
+        """Whether a StaleRateResult should wrap the computed result.
 
         ComposableStablePools have time-varying rates (bb-a-* tokens accrue
         yield). Without a live rate provider, the construction-time rates
@@ -359,7 +359,7 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         4. Downscale down the output
 
         For ComposableStablePools without a live rate provider, the result
-        is wrapped in ``PossibleInaccurateResult`` because construction-time
+        is wrapped in ``StaleRateResult`` because construction-time
         rates may be stale. Pass ``block_identifier`` with a live rate provider
         for exact-integer matching.
         """
@@ -405,10 +405,9 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         result = self._downscale_down(amount_out_scaled, sf[token_out_idx])
 
         if self._should_warn_stale_rates():
-            raise PossibleInaccurateResult(
+            raise StaleRateResult(
                 amount_in=token_in_quantity,
                 amount_out=result,
-                hooks={},
             )
 
         return result
@@ -431,7 +430,7 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         4. Add swap fee to raw amount
 
         For ComposableStablePools without a live rate provider, the result
-        is wrapped in ``PossibleInaccurateResult`` because construction-time
+        is wrapped in ``StaleRateResult`` because construction-time
         rates may be stale. Pass ``block_identifier`` with a live rate provider
         for exact-integer matching.
         """
@@ -477,10 +476,9 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         result = self._add_swap_fee_amount(in_raw)
 
         if self._should_warn_stale_rates():
-            raise PossibleInaccurateResult(
+            raise StaleRateResult(
                 amount_in=result,
                 amount_out=token_out_quantity,
-                hooks={},
             )
 
         return result
