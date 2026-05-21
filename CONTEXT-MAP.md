@@ -24,7 +24,7 @@ _Avoid_: Fork, local chain
 - [Chainlink](src/degenbot/chainlink/CONTEXT.md) — price feeds, aggregators, round data
 - [Builders](src/degenbot/builders/CONTEXT.md) — pool builders, PoolIO seam (7-method protocol), BuilderContext, BuildPoolRequest, PoolBuilder/AsyncPoolBuilder protocols, V2BuilderBase/V3BuilderBase/V4BuilderBase shared helpers, and shared type resolution
 - [Rust Extension](rust/CONTEXT.md) — PyO3-wrapped ABI encode/decode, GIL discipline, subscription double-buffer, Möbius solver cache, two-level type intern, f64↔U256 conversion
-- [Balancer V2](src/degenbot/balancer/CONTEXT.md) — Weighted pools, FixedPoint math, PowVersion detection, scaling helpers, Vault architecture
+- [Balancer V2](src/degenbot/balancer/CONTEXT.md) — Weighted pools, FixedPoint math, PowVersion detection, scaling helpers, Vault architecture, StableMath invariant versions (V1/V2), MetaStablePool, ComposableStablePool with BPT index, CacheAwareRateProvider, BalancerRateProvider protocol, StaleRateResult
 
 ## Instructions
 
@@ -51,7 +51,8 @@ _Avoid_: Fork, local chain
 - **Pool → Hop conversion** flows through each pool's `to_hop_state()` method (single source of truth; `solver_hop_builders.py` deleted)
 - An **Aave Market** contains many **Assets**, each wrapping an **Erc20Token** plus lending state
 - A **Curve Pool Tracker** tracks **Curve StableSwap Pools** and delegates construction to **Bot**
-- A **BalancerV2Pool** is an I/O-free weighted pool with a **PowVersion** attribute detected from deployed bytecode; it delegates math to **WeightedMath** functions which delegate exponentiation to **FixedPoint.pow_down/pow_up** (version-aware fast paths)
+- A **BalancerV2StablePool** handles MetaStablePool (`bpt_idx=None`, `invariant_version=INVARIANT_V2`, no rate cache — direct `getRate()` calls) and ComposableStablePool (`bpt_idx=int`, `invariant_version=INVARIANT_V1` for most deployed pools, rate cache refreshed before each swap via `_beforeSwapJoinExit`). With a `CacheAwareRateProvider` that replicates `_cacheTokenRateIfNecessary` (read `getTokenRateCache()` → check expiry → call `getRate()` only if expired), exact 0-wei matching is achieved. Without a rate provider, `StaleRateResult` is raised (child of `PossibleInaccurateResult`). `HookedPoolResult` is the V4-specific child for pools with active hooks
+- **Invariant versions**: V1 (`INVARIANT_V1`, always-roundDown, D_P accumulation, matches monorepo `_calculate_invariant`) used by most ComposableStablePools; V2 (`INVARIANT_V2`, with `roundUp` param, P_D accumulation, matches `_calculate_invariant_deployed`) used by MetaStablePools. V2 with `roundUp=True` produces an invariant 1 wei higher than V1 — wrong version gives systematic ±1 wei error
 - **BROKEN_BALANCER_V2_POOLS** in `balancer/deployments.py` follows the same pattern as **BROKEN_CURVE_V1_POOLS** in `curve/deployments.py` — a frozenset of pool addresses where on-chain swaps are disabled or the pool is otherwise broken, used to filter during discovery and testing
 - A **CurveDataProvider** is injected into **Curve Pools** by the **Curve Pool Builder** (invoked via `Bot.build_pool()`); pools never access connections directly. The builder creates a `CurveDataProviderImpl` (structured class with real methods, Plan 049) that wraps a `ProviderAdapter` — the former 850-line `CurveFetcherFactory` closure bag and 13 individual fetcher callbacks have been replaced
 - A **CurveOnChainCache** consolidates all per-block on-chain data caches for a **Curve Pool** into a single object with the try-cache→call-provider→store→return pattern; replaces the former 10 individual `BoundedCache` fields scattered across the pool class (Plan 054)

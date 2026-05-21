@@ -145,6 +145,7 @@ PoolClass -> PublisherMixin -> PoolPickleMixin -> StateMixin -> CalcMixin -> Abs
 | UniswapV4Pool | `V4PoolState` | `UniswapV4PoolCalc` | Same manager pattern as V3. V4-specific swap calc stays in pool |
 | CurveStableswapPool | `StableswapPoolState` | `DyCalculator` seam | Curve uses `BoundedCache` (dict-based), not `StateCache`. Calculators in `curve/calculators/`; pure math in `calculations/stableswap.py` |
 | BalancerV2Pool | `BalancerV2PoolState` | `WeightedMath` functions | Balancer uses no state cache. Math in `balancer/libraries/`; version-dependent pow via `PowVersion` enum |
+| BalancerV2StablePool | `BalancerV2PoolState` | `StableMath` functions | MetaStable or Composable pool. Two invariant versions (V1/V2). `StaleRateResult` when no rate provider. `BalancerRateProvider` protocol for cache-aware rate resolution |
 
 ### StateCache
 
@@ -167,7 +168,7 @@ Standalone pure-math functions in `src/degenbot/calculations/`: `constant_produc
 
 4 domain-aligned files in `src/degenbot/exceptions/`:
 - `base.py` — `DegenbotError`, `DegenbotValueError`, `DegenbotTypeError`, `ExternalServiceError`
-- `pool.py` — EVM, Curve, Tracker, and LiquidityPool exceptions
+- `pool.py` — EVM, Curve, Tracker, and LiquidityPool exceptions. `PossibleInaccurateResult` is a parent class with two domain-specific subclasses: `HookedPoolResult` (V4 hooks) and `StaleRateResult` (Balancer stale rates)
 - `arbitrage.py` — Solver and swap encoding exceptions
 - `infrastructure.py` — Connection, Fetching, Registry, Database, Anvil, ERC20 exceptions
 
@@ -314,6 +315,7 @@ The legacy cycle classes (`UniswapLpCycle`, `UniswapCurveCycle`, etc.) have been
 ### Porting to Python
 - Solidity contracts requires explicit integer division to match the EVM. The Python `//` operator is equivalent to the Solidity `/` operator.
 - **Balancer V2**: When Solidity's `/` truncates toward zero for negative operands, Python's `//` floors toward -∞. The `_truncated_div` helper in `log_exp_math.py` matches Solidity's truncation-toward-zero semantics for Taylor series divisions. Deployed pool contracts use different `FixedPoint.pow` implementations depending on contract version — `PowVersion` (V1/V2) controls whether fast paths for y == ONE/TWO/FOUR are active. Fee ordering in GIVEN_OUT must match Solidity: downscale first, then add fee.
+- **Balancer V2 StableMath**: Deployed contracts use two different invariant versions. V1 (`INVARIANT_V1`, always-roundDown with D_P accumulation) matches the monorepo `_calculate_invariant` — used by most ComposableStablePools. V2 (`INVARIANT_V2`, with `roundUp` param and P_D accumulation) matches `_calculate_invariant_deployed` — used by MetaStablePools. Using V2 when V1 is needed produces a systematic 1-wei output error. ComposableStablePools with time-varying rates need a `CacheAwareRateProvider` that replicates `_cacheTokenRateIfNecessary` exactly (read `getTokenRateCache()`, check expiry, call `getRate()` only if expired). Without a rate provider, `StaleRateResult` is raised.
 
 ## Rust Extension
 
