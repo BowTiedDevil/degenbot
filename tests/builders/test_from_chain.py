@@ -20,6 +20,7 @@ from degenbot.builders.camelot_builder import CamelotBuilder
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.pool_io import SyncPoolIO
+from degenbot.builders.request import BuildPoolRequest
 from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.erc20 import Erc20Token
@@ -157,7 +158,7 @@ class TestAerodromeV2BuilderWithPoolIO:
         provider = _aerodrome_provider()
         io = SyncPoolIO(provider)
         builder = _make_aerodrome_builder()
-        pool = builder.build(self.POOL_ADDRESS, silent=True, io=io)
+        pool = builder.build(self.POOL_ADDRESS, io=io, request=BuildPoolRequest(silent=True))
         assert isinstance(pool, AerodromeV2Pool)
 
 
@@ -172,7 +173,7 @@ class TestAerodromeV2BuilderConstruction:
         provider = _aerodrome_provider()
         io = SyncPoolIO(provider)
         builder = _make_aerodrome_builder(provider)
-        pool = builder.build(self.POOL_ADDRESS, silent=True, io=io)
+        pool = builder.build(self.POOL_ADDRESS, io=io, request=BuildPoolRequest(silent=True))
         assert isinstance(pool, AerodromeV2Pool)
 
     def test_build_aerodrome_v2_fetches_stable_and_fee(self) -> None:
@@ -180,7 +181,7 @@ class TestAerodromeV2BuilderConstruction:
         provider = _aerodrome_provider(stable=True, fee=50)
         io = SyncPoolIO(provider)
         builder = _make_aerodrome_builder(provider)
-        pool = builder.build(self.POOL_ADDRESS, silent=True, io=io)
+        pool = builder.build(self.POOL_ADDRESS, io=io, request=BuildPoolRequest(silent=True))
         assert pool.stable is True
         assert pool.fee == Fraction(50, 10_000)
 
@@ -189,7 +190,7 @@ class TestAerodromeV2BuilderConstruction:
         provider = _aerodrome_provider(stable=False, fee=30)
         io = SyncPoolIO(provider)
         builder = _make_aerodrome_builder(provider)
-        pool = builder.build(self.POOL_ADDRESS, silent=True, io=io)
+        pool = builder.build(self.POOL_ADDRESS, io=io, request=BuildPoolRequest(silent=True))
         assert pool.stable is False
         assert pool.fee == Fraction(30, 10_000)
 
@@ -227,7 +228,7 @@ class TestCamelotBuilderConstruction:
         provider = _camelot_provider()
         io = SyncPoolIO(provider)
         builder = _make_camelot_builder(provider)
-        pool = builder.build(self.POOL_ADDRESS, silent=True, io=io)
+        pool = builder.build(self.POOL_ADDRESS, io=io, request=BuildPoolRequest(silent=True))
         assert isinstance(pool, CamelotLiquidityPool)
         assert isinstance(pool, UniswapV2Pool)
 
@@ -238,7 +239,7 @@ class TestCamelotBuilderConstruction:
         )
         io = SyncPoolIO(provider)
         builder = _make_camelot_builder(provider)
-        pool = builder.build(self.POOL_ADDRESS, silent=True, io=io)
+        pool = builder.build(self.POOL_ADDRESS, io=io, request=BuildPoolRequest(silent=True))
         assert pool.stable_swap is True
         assert pool.fee_denominator == 1000
         assert pool.fee_token0 == Fraction(5, 1000)
@@ -249,7 +250,7 @@ class TestCamelotBuilderConstruction:
         provider = _camelot_provider(stable_swap=False)
         io = SyncPoolIO(provider)
         builder = _make_camelot_builder(provider)
-        pool = builder.build(self.POOL_ADDRESS, silent=True, io=io)
+        pool = builder.build(self.POOL_ADDRESS, io=io, request=BuildPoolRequest(silent=True))
         assert pool.stable_swap is False
 
     def test_build_camelot_sets_fee_as_fraction(self) -> None:
@@ -257,7 +258,7 @@ class TestCamelotBuilderConstruction:
         provider = _camelot_provider(fee_denominator=10000, fee_token0=30, fee_token1=30)
         io = SyncPoolIO(provider)
         builder = _make_camelot_builder(provider)
-        pool = builder.build(self.POOL_ADDRESS, silent=True, io=io)
+        pool = builder.build(self.POOL_ADDRESS, io=io, request=BuildPoolRequest(silent=True))
         assert isinstance(pool.fee_token0, Fraction)
         assert isinstance(pool.fee_token1, Fraction)
         assert pool.fee_token0 == Fraction(30, 10000)

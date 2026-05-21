@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
 
+from degenbot.builders.request import BuildPoolRequest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve._pool_strategies import resolve_pool_strategies
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
@@ -54,18 +55,19 @@ class CurvePoolBuilder:
         address: str,
         *,
         chain_id: ChainId | None = None,
-        state_block: int | None = None,
-        silent: bool = False,
-        state_cache_depth: int = 8,
         io: PoolIO,
-        **kwargs: Any,  # noqa: ARG002
+        request: BuildPoolRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from RPC and construct an I/O-free CurveStableswapPool."""
 
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
-        state_block = state_block if state_block is not None else io.get_block_number()
+        state_block = (
+            request.state_block
+            if request.state_block is not None
+            else io.get_block_number()
+        )
 
         # 1. Discover coins and balances
         coins = discover_coins(io, pool_address, block_identifier=state_block)
@@ -83,7 +85,7 @@ class CurvePoolBuilder:
 
         # 5. Build tokens
         tokens = tuple(
-            self._erc20_builder.build(addr, chain_id=chain_id, silent=silent, io=io)
+            self._erc20_builder.build(addr, chain_id=chain_id, silent=request.silent, io=io)
             for addr in coins.token_addresses
         )
 
@@ -117,14 +119,15 @@ class CurvePoolBuilder:
             metapool,
             chain_id,
             state_block,
-            silent=silent,
-            state_cache_depth=state_cache_depth,
+            request=request,
             io=io,
         )
 
         # 11. Build LP token
         lp_token = (
-            self._erc20_builder.build(lp_token_address, chain_id=chain_id, silent=silent, io=io)
+            self._erc20_builder.build(
+                lp_token_address, chain_id=chain_id, silent=request.silent, io=io
+            )
             if lp_token_address is not None
             else None
         )
@@ -169,7 +172,7 @@ class CurvePoolBuilder:
             balances=coins.balances,
             chain_id=chain_id,
             state_block=state_block,
-            state_cache_depth=state_cache_depth,
+            state_cache_depth=request.state_cache_depth,
             initial_a_coefficient=a_ramping.initial_a,
             future_a_coefficient=a_ramping.future_a,
             initial_a_coefficient_time=a_ramping.initial_a_time,
@@ -192,7 +195,7 @@ class CurvePoolBuilder:
         # Register pool
         self._pools.add(pool, chain_id=chain_id, pool_address=pool.address)
 
-        if not silent:
+        if not request.silent:
             logger.info(pool.name)
             logger.info(f"• Address: {pool.address}")
             logger.info(f"• Tokens: {[t.symbol for t in pool.tokens]}")
@@ -207,8 +210,7 @@ class CurvePoolBuilder:
         chain_id: ChainId,
         state_block: int,
         *,
-        silent: bool,
-        state_cache_depth: int,
+        request: BuildPoolRequest,
         io: PoolIO,
     ) -> tuple[CurveStableswapPool | None, tuple[Erc20Token, ...] | None]:
         """Build base pool and underlying tokens for a metapool."""
@@ -221,10 +223,12 @@ class CurvePoolBuilder:
         base_pool = self.build(
             metapool.base_pool_address,
             chain_id=chain_id,
-            state_block=state_block,
-            silent=silent,
-            state_cache_depth=state_cache_depth,
             io=io,
+            request=BuildPoolRequest(
+                state_block=state_block,
+                silent=request.silent,
+                state_cache_depth=request.state_cache_depth,
+            ),
         )
         assert isinstance(base_pool, CurveStableswapPool)
 
@@ -232,7 +236,7 @@ class CurvePoolBuilder:
             return base_pool, None
 
         tokens_underlying = tuple(
-            self._erc20_builder.build(addr, chain_id=chain_id, silent=silent, io=io)
+            self._erc20_builder.build(addr, chain_id=chain_id, silent=request.silent, io=io)
             for addr in metapool.tokens_underlying
         )
 

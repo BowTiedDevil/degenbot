@@ -24,6 +24,9 @@ _Avoid_: Builder config, builder deps.
 
 **Builder Registry**: A `dict[type, PoolBuilder]` (sync) or `dict[type, AsyncPoolBuilder]` (async) mapping concrete pool classes to their builders. Bot/AsyncBot dispatch through this registry after type resolution.
 
+**BuildPoolRequest**: Frozen dataclass (in `request.py`) carrying all optional parameters for pool construction. Required parameters (`address`, `chain_id`, `io`) remain on `builder.build()` as positional/keyword arguments. `BuildPoolRequest` is the sole optional-parameters bag — builders read the fields they recognize and ignore the rest. Replaces the previous `dispatch_kwargs` dict + `**kwargs` forwarding pattern (Plan 067). When `pool_id` is not None, the caller's `address` refers to the PoolManager contract (V4 semantics).
+_Avoid_: request object, builder params, kwargs bag — use **BuildPoolRequest**.
+
 **Type Resolution**: Shared pure-logic functions (in `type_resolution.py`) that determine the concrete pool class for an address. Sync/async top-level functions are thin wrappers that delegate to `_build_descriptor_from_db_result` (DB path) and `_descriptor_from_probing_result` (on-chain probing path) — pure functions that take domain objects and return `PoolTypeDescriptor`; the wrappers handle DB sessions and I/O. `pool_class_for_descriptor()` is the final pure lookup from descriptor → class. I/O-bearing steps (`fetch_factory_from_chain`) come in sync/async pairs that accept `PoolIO` / `AsyncPoolIO` (Plan 066).
 
 **V2BuilderBase**: Base class for V2-family sync builders (V2, Aerodrome V2, Camelot). Owns shared pure helpers (`decode_immutable_data`, `extract_db_values`, `resolve_deployer_and_init_hash`, `_fetch_v2_common_data`, `_fetch_reserves`) that `AsyncV2PoolBuilder` calls independently.
@@ -41,6 +44,8 @@ _Avoid_: Builder config, builder deps.
 - **Bot** creates a `SyncPoolIO(provider)` and passes `io=io` to all builder `build()`/`update()` calls
 - **AsyncBot** creates an `AsyncPoolIO(provider)` and passes `io=io` to all async builder calls
 - **All builders** are fully PoolIO-driven — they use `io.call()` / `io.call_raw()` instead of `self._connections.get_provider()`
+- **All builders** accept `request: BuildPoolRequest` as the sole optional-parameters input; `build()` signatures are `(address, *, chain_id, io, request: BuildPoolRequest)` — no `**kwargs` forwarding
+- **Bot/AsyncBot** construct a single `BuildPoolRequest` from `build_pool()`'s optional parameters and pass it through `_dispatch_build()` to the builder
 - **BuilderContext** no longer carries a `connections` field; builders receive `default_chain_id` for chain resolution and `io: PoolIO` for I/O at call sites
 - **Type resolution** functions in `type_resolution.py` replace ~330 lines of duplicated resolution logic that was in both `Bot` and `AsyncBot`; sync/async mirror pairs collapsed to thin wrappers over shared pure functions `_build_descriptor_from_db_result` and `_descriptor_from_probing_result` (Plan 066)
 - **V3BuilderBase** and **V4BuilderBase** extract ~150 lines of duplicated pure-logic per builder family (decode, DB extract, tick snapshot loading, tick-data-args resolution); async builders call the same `@staticmethod` helpers without inheritance — mirrors the V2 pattern (Plan 060)
@@ -60,6 +65,15 @@ _Avoid_: Builder config, builder deps.
 ### Required vs Optional `io` Parameter
 
 **Ruling: `io: PoolIO` is required on `build()` (every construction needs I/O). `io: PoolIO | None = None` on `update()` (some update paths are event-driven and don't need chain I/O). Concrete builders assert `io is not None` when they need it.**
+
+### `**kwargs` vs BuildPoolRequest
+
+**Ruling: All optional parameters flow through `BuildPoolRequest`. No `**kwargs` forwarding in builders. `dispatch_kwargs` dict construction replaced by a single `BuildPoolRequest(...)` call in Bot/AsyncBot. Builders read `request.field` for the fields they need. This eliminates silent typo-swallowing (`**kwargs` would accept any key) and makes the optional-parameter contract explicit and type-checked.**
+
+- ✅ `builder.build(address, chain_id=chain_id, io=io, request=BuildPoolRequest(silent=True))`
+- ✅ `request.silent`, `request.pool_id`, `request.tick_bitmap` — typed access
+- ❌ `builder.build(address, **dispatch_kwargs)` — untyped dict forwarding
+- ❌ `**kwargs: Any` in builder signatures — silently swallows typos
 
 ### Separate Sync/Async Builder Classes
 
