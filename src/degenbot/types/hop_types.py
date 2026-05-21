@@ -22,6 +22,7 @@ class PoolInvariant(Enum):
     BALANCER_WEIGHTED = auto()
     BALANCER_MULTI_TOKEN = auto()
     CURVE_STABLESWAP = auto()
+    BALANCER_STABLESWAP = auto()
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +126,11 @@ class BalancerWeightedHop:
 
     Not a Möbius transformation — the swap function uses power-law exponents.
     A 50/50 pool reduces to constant product.
+
+    The optional ``swap_fn`` provides an integer-accurate swap simulation
+    wrapping the pool's calculate_tokens_out_from_tokens_in. When provided,
+    the solver uses it for exact path evaluation. When absent, the float
+    approximation using weight_in/weight_out is used.
     """
 
     reserve_in: int
@@ -132,6 +138,7 @@ class BalancerWeightedHop:
     fee: Fraction
     weight_in: int
     weight_out: int
+    swap_fn: Callable[[int], int] | None = field(default=None, compare=False, hash=False)
     invariant: PoolInvariant = PoolInvariant.BALANCER_WEIGHTED
 
     @property
@@ -171,6 +178,45 @@ class CurveStableswapHop:
 
 
 @dataclass(frozen=True, slots=True)
+class BalancerStableHop:
+    """
+    A Balancer stable pool hop (StableSwap invariant).
+
+    Not a Möbius transformation — the swap function requires iterative
+    invariant computation (Newton's method). Follows the same pattern as
+    CurveStableswapHop and SolidlyStableHop.
+
+    The ``invariant`` field carries a pre-computed D value for float
+    approximation. For integer-accurate evaluation, ``swap_fn`` calls
+    the pool's calculate_tokens_out_from_tokens_in directly.
+
+    ``swap_fn`` and ``StaleRateResult``: when the underlying pool has a
+    static rate provider, calculate_tokens_out_from_tokens_in raises
+    StaleRateResult. The swap_fn wraps the call and extracts the
+    approximate amount from the exception, so the solver can continue
+    with best-effort values rather than crashing.
+
+    ``token_index_in`` and ``token_index_out`` are indices in the
+    non-BPT token list (BPT-skipped), not the full token list.
+    """
+
+    reserve_in: int
+    reserve_out: int
+    fee: Fraction
+    amp: int
+    n_tokens: int
+    invariant: int  # Pre-computed D invariant for float approximation
+    token_index_in: int   # Index in the non-BPT token list (BPT-skipped)
+    token_index_out: int  # Index in the non-BPT token list (BPT-skipped)
+    swap_fn: Callable[[int], int] | None = field(default=None, compare=False, hash=False)
+    pool_invariant: PoolInvariant = PoolInvariant.BALANCER_STABLESWAP
+
+    @property
+    def gamma(self) -> float:
+        return 1.0 - float(self.fee)
+
+
+@dataclass(frozen=True, slots=True)
 class BalancerMultiTokenHop:
     """
     An N-token Balancer weighted pool for multi-token basket arbitrage.
@@ -200,6 +246,7 @@ HopType = (
     | BoundedProductHop
     | SolidlyStableHop
     | BalancerWeightedHop
+    | BalancerStableHop
     | CurveStableswapHop
     | BalancerMultiTokenHop
 )

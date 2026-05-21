@@ -42,3 +42,8 @@ class BuildPoolRequest:
     fee: int | None = None
     tick_spacing: int | None = None
     hook_address: str | None = None
+
+    # Balancer options (flat fields matching existing pattern;
+    # Plan 072 will scope these into BalancerBuildOptions)
+    bpt_idx: int | None = None        # Override BPT index detection
+    invariant_version: int | None = None  # Override: INVARIANT_V1 or INVARIANT_V2

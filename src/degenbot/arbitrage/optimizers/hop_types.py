@@ -69,6 +69,10 @@ class SolveInput:
         return any(h.invariant == _PoolInvariant.BALANCER_MULTI_TOKEN for h in self.hops)
 
     @property
+    def has_balancer_stableswap(self) -> bool:
+        return any(h.invariant == _PoolInvariant.BALANCER_STABLESWAP for h in self.hops)
+
+    @property
     def bounded_product_indices(self) -> tuple[int, ...]:
         return tuple(i for i, h in enumerate(self.hops) if isinstance(h, _BoundedProductHop))
 

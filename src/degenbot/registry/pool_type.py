@@ -144,6 +144,7 @@ class PoolTypeRegistry:
         factory_address: str,
         pool_init_hash: str | None = None,
         deployer: str | None = None,
+        family: PoolFamily | None = None,
     ) -> None:
         """
         Register a pool class for a specific (chain_id, factory) deployment.
@@ -158,6 +159,10 @@ class PoolTypeRegistry:
             factory_address: The factory contract address.
             pool_init_hash: The CREATE2 init code hash (V2 only).
             deployer: The CREATE2 deployer address (defaults to factory_address).
+            family: Override the auto-derived pool family. Use when the class
+                shape misleads ``_derive_family`` (e.g. BalancerV2Pool has
+                ``tokens`` but not ``fee_token0``, so it would derive as
+                STABLESWAP instead of WEIGHTED).
         """
         checksummed_factory = get_checksum_address(factory_address)
 
@@ -166,7 +171,7 @@ class PoolTypeRegistry:
             msg = f"Factory {factory_address} on chain {chain_id} is already registered."
             raise ValueError(msg)
 
-        family = _derive_family(pool_class)
+        family = family if family is not None else _derive_family(pool_class)
         variant = getattr(pool_class, "variant", None)
         kind = derive_kind(family, variant)
 

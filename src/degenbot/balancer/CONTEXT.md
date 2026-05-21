@@ -52,6 +52,9 @@
 |------|------------|------------------|
 | **BROKEN_BALANCER_V2_POOLS** | A frozenset of pool addresses where on-chain swaps are disabled or the pool is otherwise broken (e.g., BAL#327 SWAPS_DISABLED). Pools in this set should be skipped during discovery and testing | Broken pools, disabled pools |
 | **deployments.py** | Module centralizing contract addresses and broken pool addresses for Balancer V2, following the same pattern as `curve/deployments.py` | Addresses module |
+| **Weighted Pool Factory** | `0x8e9AA87E45e92BAD7D5F7F9dd794cEa12f21707B` — deploys `WeightedPool` and `WeightedPool2Tokens` contracts on Ethereum mainnet | V3 factory |
+| **Stable Pool Factory** | `0x8519f5a4A85678e0e03395586e2e223D70E9e09B` — deploys `MetaStablePool` contracts on Ethereum mainnet | V1 factory |
+| **ComposableStablePool Factory** | `0xA8936f4824B2E6407fC0e94133909aEf7D48E876` — deploys `ComposableStablePool` contracts on Ethereum mainnet | V2 factory |
 
 ## Stable Pool Semantics
 
@@ -111,7 +114,7 @@ Deployed contracts have **two different StableMath implementations**:
 balancer/
 ├── __init__.py
 ├── CONTEXT.md          (this file)
-├── deployments.py     (contract addresses, broken pool set)
+├── deployments.py     (contract addresses, broken pool set, factory addresses)
 ├── libraries/
 │   ├── constants.py    (ONE, TWO, FOUR, MAX_POW_RELATIVE_ERROR, PowVersion)
 │   ├── fixed_point.py  (mul_down/up, div_down/up, pow_down/up, complement)
@@ -121,10 +124,11 @@ balancer/
 │   ├── scaling_helpers.py (_upscale, _downscale_down/up, _compute_scaling_factor)
 │   ├── stable_math.py  (StableMath: invariant, outGivenIn, inGivenOut, BPT functions)
 │   └── weighted_math.py (calculate_invariant, _calc_out_given_in, _calc_in_given_in)
-├── managers.py         (empty — reserved for future pool tracker)
-├── pools.py            (BalancerV2Pool class, detect_pow_version)
-├── stable_pools.py     (BalancerV2StablePool class)
-└── types.py            (BalancerV2PoolState frozen dataclass)
+├── pair_view.py        (BalancerPairView — N-token to 2-token adapter with subscription relay)
+├── pools.py            (BalancerV2Pool class, detect_pow_version, external_update, to_hop_state, build_swap_amount)
+├── stable_pools.py     (BalancerV2StablePool class, external_update, to_hop_state, build_swap_amount)
+├── swap_amounts.py     (BalancerV2SwapAmounts — Vault.swap encoding)
+└── types.py            (BalancerV2PoolState, external update types, BalancerV2PoolStateUpdated)
 ```
 
 ## Relationships
@@ -170,3 +174,26 @@ The monorepo's `_calculateInvariant` always rounds the last iteration down. The 
 ### ComposableStablePool Rate Resolution
 
 ComposableStablePool on-chain tests achieve **exact 0-wei matching** when constructed with a `CacheAwareRateProvider`. The former tolerance of ≤3000 wei was eliminated by (a) replicating `_cacheTokenRateIfNecessary` exactly (read `getTokenRateCache()`, check expiry, call `getRate()` only if expired), and (b) using the correct invariant version (`INVARIANT_V1` for most deployed ComposableStablePools, `INVARIANT_V2` for MetaStablePools). Without a rate provider, `StaleRateResult` is raised — the computed amounts are approximate and should not be used for on-chain operations.
+
+## Builder, Pair View, and Swap Amounts (Plan 070)
+
+| Term | Definition | Aliases to avoid |
+|------|------------|------------------|
+| **BalancerBuilder** | Builder that owns the full I/O choreography for Balancer V2 pool construction — probes contract methods, fetches pool ID / vault tokens / fee / weights / amp / rate providers, constructs `BalancerV2Pool` or `BalancerV2StablePool` | Balancer pool builder |
+| **BalancerBuilderBase** | Base class with `@staticmethod` helpers for pure-logic operations (`decode_pool_id`, `decode_vault_tokens`, `detect_bpt_index`, `resolve_invariant_version`); `BalancerBuilder` inherits, future `AsyncBalancerBuilder` calls static methods without inheriting | Builder base |
+| **DecodedPoolId** | Frozen dataclass returned by `decode_pool_id()` — carries `pool_address`, `specialization`, `nonce` | Pool ID result |
+| **VaultTokensResult** | Frozen dataclass returned by `decode_vault_tokens()` — carries `tokens`, `balances`, `last_change_block` | Vault tokens result |
+| **_BalancerPoolType** | Internal `IntEnum` for `_detect_pool_type()` return values — `WEIGHTED` (1) or `STABLE` (2). Replaces string literals for type-checker exhaustiveness | Pool type enum |
+| **BalancerPairView** | Adapter that wraps an N-token Balancer pool + a chosen pair into a 2-token view satisfying `ArbitragePathPool`. Implements subscription relay — re-publishes notifications with `publisher=self` so `ArbitragePath._pool_index` identity checks work correctly | Pair view, balancer adapter |
+| **BalancerV2SwapAmounts** | `SwapAmounts` subclass encoding a Vault.swap() call with SingleSwap and FundManagement structs; validates `pool_id` is 32 bytes; requires `recipient` for encoding | Balancer swap amounts |
+| **BalancerWeightedHop** | Hop state for weighted pools — carries `weight_in`/`weight_out` and optional `swap_fn` for integer-accurate solver evaluation | Weighted hop |
+| **BalancerStableHop** | Hop state for stable pools — carries `amp`, `n_tokens`, `invariant` (pre-computed D), `token_index_in`/`token_index_out` (BPT-skipped indices), and `swap_fn` that catches `StaleRateResult` | Stable hop |
+| **PoolInvariant.BALANCER_STABLESWAP** | Solver dispatch enum value for Balancer stable pools, distinct from `CURVE_STABLESWAP` | Balancer invariant |
+| **PoolFamily.WEIGHTED** | Pool family value for weighted pools, activated by `family` override in `pool_type_registry.register()` | Weighted family |
+| **family override** | Optional `family` parameter on `register()` that bypasses `_derive_family()` — needed because `BalancerV2Pool` auto-derives as `STABLESWAP` (has `tokens` but not `fee_token0`) | Family bypass |
+| **variant class attribute** | `BalancerV2Pool.variant = "balancer_weighted"` and `BalancerV2StablePool.variant = "balancer_stable"` — class-level attributes for kind derivation | Variant string |
+| **BalancerV2WeightedPoolExternalUpdate** | Frozen dataclass carrying `block_number` + `balances` for weighted pool state updates | Weighted update |
+| **BalancerV2StablePoolExternalUpdate** | Frozen dataclass carrying `block_number` + `balances` for stable pool state updates. Amp omitted — treated as immutable after construction | Stable update |
+| **BalancerV2PoolStateUpdated** | `PoolStateMessage` subclass published when either Balancer pool class updates state | State message |
+| **build_swap_amount()** | Method on both pool classes returning `BalancerV2SwapAmounts`. Raises `DegenbotValueError` for N > 2 token pools without explicit `token_in`/`token_out` — use `BalancerPairView` instead | Swap amount builder |
+| **external_update()** | Method on both pool classes applying state updates with `_state_lock` (double-check-after-acquire pattern). No `StateCache` — simple `_state` replacement | State updater |
