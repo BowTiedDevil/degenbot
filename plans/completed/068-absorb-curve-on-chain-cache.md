@@ -302,3 +302,7 @@ No new tests needed — the cache methods are already tested through the pool. T
 [x] Slice 3: Delete `on_chain_cache.py` and update imports
 [x] Slice 4: Update documentation (CONTEXT.md, CONTEXT-MAP.md, ADR-001, io-free-pools.md, AGENTS.md)
 [x] Slice 5: Validate (line count, all tests, no external references)
+
+### Post-completion fix
+
+`_get_cached_base_virtual_price` was missing the `_base_virtual_price_value = result` side effect on both the cache-hit and cache-miss paths. This mirror field is read by `_get_cached_virtual_price` when the base cache has not expired. Without the side effect, `_base_virtual_price_value` stays at its initial value of `0`, causing metapool `get_dy` / `get_dy_underlying` calculations to return `0` for virtual-price-dependent terms. The bug was latent in the original `CurveOnChainCache.get_base_virtual_price()` too (it also didn't update `self.base_virtual_price`). It was only exposed at blocks where the base cache hadn't expired — the existing multi-block test at blocks 18,850,000–18,850,500 always had an expired cache, masking the bug.

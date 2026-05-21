@@ -283,6 +283,36 @@ def test_tricrypto_pool(fork_mainnet_full: AnvilFork):
     _test_calculations(lp=lp, w3=fork_mainnet_full.w3)
 
 
+def test_metapool_with_valid_base_cache():
+    """Regression test: virtual_price must use _base_virtual_price_value when the
+    base cache has not expired.
+
+    At block 25144000 the RAI/3Crv metapool's base_cache_updated is only ~180s old
+    (vs the 600s expiry), so the contract uses its cached virtual_price. Our pool
+    must do the same — _base_virtual_price_value must be populated from
+    _get_cached_base_virtual_price during __init__, not left at 0.
+    """
+    pool_address = "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d"
+    block = 25_144_000
+
+    fork = AnvilFork(
+        fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
+        fork_block=block,
+    )
+    lp = _build_pool(fork, pool_address)
+    assert lp.update_block == block
+
+    # The base cache must NOT be expired at this block
+    assert lp._base_cache_updated_value is not None
+    block_timestamp = lp._data_provider.block_timestamp(block)
+    assert block_timestamp <= lp._base_cache_updated_value + lp.BASE_CACHE_EXPIRES
+
+    # _base_virtual_price_value must be populated (was 0 before the fix)
+    assert lp._base_virtual_price_value != 0
+
+    _test_calculations(lp=lp, w3=fork.w3)
+
+
 def test_metapool_over_multiple_blocks_to_verify_cache_behavior():
     pool_address = "0x618788357D0EBd8A37e763ADab3bc575D54c2C7d"
     start_block = 18_850_000
