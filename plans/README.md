@@ -20,6 +20,7 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | # | Plan | Summary |
 |---|------|---------|
 | 014 | [Async REPL](014-async-repl.md) | `python -m degenbot` with top-level `await`. |
+| 070 | [Balancer Builder](070-balancer-builder.md) | Builder, type resolution, `to_hop_state()`, and `external_update()` for Balancer V2 pools. |
 | — | [Arbitrage Optimizer](arbitrage-optimizer/) | Multi-file project for production arbitrage optimization. |
 
 ## Completed Plans
@@ -92,3 +93,4 @@ New plans **must** follow the [template](TEMPLATE.md). The template is derived f
 | 065 | [Collapse AsyncBot Inline I/O](completed/065-collapse-asyncbot-inline-io.md) | 4 inline I/O methods (-61 lines) routed through AsyncErc20Builder. `str | Erc20Token` overloads on Bot, `str` on AsyncBot (auto-build wrapper). |
 | 066 | [Unify Type Resolution Sync/Async](completed/066-unify-type-resolution-sync-async.md) | 4 mirror functions → 2 thin wrappers + 2 shared pure functions. ~56 lines of duplication removed. |
 | 067 | [BuildPoolRequest](completed/067-build-pool-request.md) | Replace `dispatch_kwargs` dict + `**kwargs` forwarding with typed `BuildPoolRequest` frozen dataclass. All 9 builders migrated one-shot. Eliminates silent typo-swallowing. |
+| 068 | [Absorb CurveOnChainCache into CurveStableswapPool](completed/068-absorb-curve-on-chain-cache.md) | Merge `CurveOnChainCache` into `CurveStableswapPool` as private `_cache_*` fields and `_get_cached_*` methods. Eliminates `getattr` dynamic dispatch, duplicate `_data_provider` reference, and separate pickle policy. |

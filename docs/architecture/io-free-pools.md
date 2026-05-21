@@ -146,7 +146,7 @@ def build(self, pool_address):
 - **Bot typed builders deprecated** — `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool` emit `DeprecationWarning`; use `build_pool()` (Plan 044). Removed by Plan 059.
 - **Functions module** — `functions.py` split into domain-aligned modules: `provider/call_helpers.py`, `provider/log_fetching.py`, `contract/addresses.py`, `calculations/evm_math.py`, `provider/block_helpers.py`; `eip_191_hash` deleted as dead code (Plan 037)
 - **CurveDataProviderImpl** — 850-line closure bag (`CurveFetcherFactory`) replaced by structured `CurveDataProviderImpl` (~350 lines) with real methods and shared I/O helpers (Plan 049)
-- **Curve on-chain cache** — 10 individual `BoundedCache` fields consolidated into single `CurveOnChainCache` object with try-cache→call-provider→store→return pattern; pool class 1160→988 lines (Plan 054)
+- **Curve per-block caches** — 10 individual `BoundedCache` fields consolidated into `CurveOnChainCache` (Plan 054), then absorbed into `CurveStableswapPool` as `_cache_*` fields with `_get_cached_*` accessors (Plan 068)
 - **Deprecated fetcher protocols** — 8 deprecated `*Fetcher` protocol classes deleted from `curve/types.py`; superseded by `CurveDataProvider` (Plan 055)
 - **Strategy enum factory methods** — `make_calculator()` on `SwapStyle`, `MetapoolRateStyle`, `MetapoolUnderlyingStyle`; `PoolStrategies` auto-constructs calculators from enum values (Plan 056)
 - **Calculation-time I/O** — `_build_calculation_inputs` → `_resolve_calculation_inputs_via_io`, `requires_io_at_calculation_time` property, ADR-001 amended with construction-time vs calculation-time I/O table (Plan 057)
@@ -322,7 +322,7 @@ Curve pools use a **CurveDataProvider** seam — a single `@runtime_checkable` p
 
 Calculators receive a **DyCalculationInputs** frozen dataclass instead of the pool object. The pool's `get_dy()` performs all I/O (rate resolution, cache lookups, block data, invariant solver closure construction) before constructing a `DyCalculationInputs` and passing it to the calculator. This eliminates all private member access from calculators — they are pure math consumers of pre-resolved data (Plan 045).
 
-On-chain data caches are consolidated into a single **CurveOnChainCache** object that owns all per-block `BoundedCache` instances and provides accessor methods with the try-cache→call-provider→store→return pattern (Plan 054). The pool class no longer has 10 individual cache fields.
+On-chain data caches are private `_cache_*` fields on `CurveStableswapPool` with `_get_cached_*` accessor methods implementing the try-cache→call-provider→store→return pattern. Formerly `CurveOnChainCache` (Plan 054), absorbed into the pool by Plan 068. The pool class no longer has 10 individual cache fields or a separate cache object.
 
 Each strategy enum (`SwapStyle`, `MetapoolRateStyle`, `MetapoolUnderlyingStyle`) has a **`make_calculator()`** factory method that returns the matching `DyCalculator` instance. `PoolStrategies` auto-constructs calculators from enum values in `__post_init__` via these factory methods; explicitly-passed calculator arguments are preserved (Plan 056).
 
@@ -366,4 +366,4 @@ Pools participating in the Rust solver cache implement the `CacheablePool` proto
 
 ---
 
-*Last updated: 2026-05-20*
+*Last updated: 2026-05-21*

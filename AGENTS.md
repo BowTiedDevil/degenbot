@@ -143,7 +143,7 @@ PoolClass -> PublisherMixin -> PoolPickleMixin -> StateMixin -> CalcMixin -> Abs
 | CamelotLiquidityPool | (inherits V2) | `CamelotPoolCalc` | Inherits V2's `StateCache`. `if self.stable_swap` eliminated |
 | UniswapV3Pool | `V3PoolState` | `UniswapV3PoolCalc` | Base V3. Uses `ConcentratedLiquidityStateManager` which composes `StateCache` |
 | UniswapV4Pool | `V4PoolState` | `UniswapV4PoolCalc` | Same manager pattern as V3. V4-specific swap calc stays in pool |
-| CurveStableswapPool | `StableswapPoolState` | `DyCalculator` seam | Curve uses `BoundedCache` (dict-based), not `StateCache`. Calculators in `curve/calculators/`; pure math in `calculations/stableswap.py` |
+| CurveStableswapPool | `StableswapPoolState` | `DyCalculator` seam | Curve uses `BoundedCache` (dict-based) for per-block on-chain data, not `StateCache`. Per-block cache fields (`_cache_*`) with `_get_cached_*` accessors are private on the pool class (Plan 068). Calculators in `curve/calculators/`; pure math in `calculations/stableswap.py` |
 | BalancerV2Pool | `BalancerV2PoolState` | `WeightedMath` functions | Balancer uses no state cache. Math in `balancer/libraries/`; version-dependent pow via `PowVersion` enum |
 | BalancerV2StablePool | `BalancerV2PoolState` | `StableMath` functions | MetaStable or Composable pool. Two invariant versions (V1/V2). `StaleRateResult` when no rate provider. `BalancerRateProvider` protocol for cache-aware rate resolution |
 
@@ -222,7 +222,7 @@ Sync pool builders for each pool family inherit a base class with shared `@stati
 
 ### Fetcher Protocols
 
-**Curve pools** use a **CurveDataProvider** seam for fully I/O-free operation — all on-chain data access flows through a single injected object with 13 methods (`D()`, `gamma()`, `virtual_price()`, `base_virtual_price()`, `price_scale()`, `admin_balances()`, `lending_rate()`, `redemption_price()`, `block_timestamp()`, `block_number()`, `token_balance()`, `token_total_supply()`, `is_crypto()`). The pool calls `self._data_provider.xxx()` on-demand:
+**Curve pools** use a **CurveDataProvider** seam for fully I/O-free operation — all on-chain data access flows through a single injected object with 13 methods (`D()`, `gamma()`, `virtual_price()`, `base_virtual_price()`, `price_scale()`, `admin_balances()`, `lending_rates()`, `redemption_price()`, `block_timestamp()`, `block_number()`, `token_balance()`, `token_total_supply()`, `is_crypto()`). The pool calls `self._data_provider.xxx()` on-demand:
 
 ```python
 # Builder creates a CurveDataProviderImpl with a ProviderAdapter directly
@@ -278,7 +278,7 @@ Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` f
 
 ## Architecture Plans
 
-Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–063 are all complete. The only active plans are 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
+Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–068 are all complete. The only active plans are 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
 
 **New plans must follow [`plans/TEMPLATE.md`](plans/TEMPLATE.md).** The template requires: deletion test, specific friction table, vertical slices, design decisions, relationship to other plans, and status checklist.
 

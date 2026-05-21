@@ -23,7 +23,6 @@ from degenbot.calculations.stableswap import (
     stableswap_reduction_coefficient,
 )
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.curve.on_chain_cache import CurveOnChainCache
 from degenbot.curve.stableswap_pool_state import StableswapPoolState
 from degenbot.curve.types import (
     CurveDataProvider,
@@ -207,20 +206,46 @@ class CurveStableswapPool(
         self._state_cache[state_block] = self._state
         self._state_lock = Lock()
 
-        # Consolidated on-chain data cache
-        self._on_chain_cache = CurveOnChainCache(
-            data_provider=data_provider,
-            pool_address=self.address,
-            max_items=state_cache_depth,
+        # Per-block on-chain caches (formerly CurveOnChainCache, Plan 068)
+        # Note: _rates from CurveOnChainCache is dead code (never accessed) — not migrated
+        self._cache_scaled_redemption_price: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=state_cache_depth
         )
+        self._cache_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=state_cache_depth
+        )
+        self._cache_admin_balances: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
+            max_items=state_cache_depth
+        )
+        self._cache_base_cache_updated: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=state_cache_depth
+        )
+        self._cache_base_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=state_cache_depth
+        )
+        self._cache_price_scale: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
+            max_items=state_cache_depth
+        )
+        self._cache_contract_D: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=state_cache_depth
+        )
+        self._cache_gamma: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=state_cache_depth
+        )
+        self._cache_block_timestamps: BoundedCache[BlockNumber, int] = BoundedCache(
+            max_items=state_cache_depth
+        )
+        # Latest-value mirrors for virtual_price expiry logic
+        self._base_cache_updated_value: int | None = None
+        self._base_virtual_price_value: int = 0
 
         # Pre-populate base cache values for metapools at construction time,
         # matching the contract's _vp_rate_ro() cache behavior.
         if self.base_pool is not None and state_block != 0:
             with contextlib.suppress(Exception):
-                self._on_chain_cache.get_base_cache_updated(block_number=state_block)
+                self._get_cached_base_cache_updated(block_number=state_block)
             with contextlib.suppress(Exception):
-                self._on_chain_cache.get_base_virtual_price(block_number=state_block)
+                self._get_cached_base_virtual_price(block_number=state_block)
 
         fee_string = f"{100 * self.fee / self.FEE_DENOMINATOR:.2f}"
         token_string = "-".join([token.symbol for token in self._tokens])
@@ -331,6 +356,135 @@ class CurveStableswapPool(
             "Use Bot.update() or pass an explicit block number.",
         )
 
+    # ── Per-block cached accessors (formerly CurveOnChainCache, Plan 068) ──
+
+    def _get_cached_block_timestamp(self, block_number: BlockNumber) -> int:
+        """Fetch or retrieve cached block timestamp."""
+        with contextlib.suppress(KeyError):
+            return self._cache_block_timestamps[block_number]
+        if self._data_provider is None:
+            msg = "block_timestamp requires a data_provider. Provide one via Bot.build_pool()."
+            raise MissingCurveData(self.address, "block_timestamp", msg)
+        result = self._data_provider.block_timestamp(block_number)
+        self._cache_block_timestamps[block_number] = result
+        return result
+
+    def _get_cached_contract_D(self, block_number: BlockNumber) -> int:  # noqa: N802
+        """Fetch or retrieve cached contract D value (crypto pools)."""
+        with contextlib.suppress(KeyError):
+            return self._cache_contract_D[block_number]
+        if self._data_provider is None:
+            msg = "contract_D requires a data_provider. Provide one via Bot.build_pool()."
+            raise MissingCurveData(self.address, "D", msg)
+        result = self._data_provider.D(block_number)
+        self._cache_contract_D[block_number] = result
+        return result
+
+    def _get_cached_gamma(self, block_number: BlockNumber) -> int:
+        """Fetch or retrieve cached gamma value (crypto pools)."""
+        with contextlib.suppress(KeyError):
+            return self._cache_gamma[block_number]
+        if self._data_provider is None:
+            msg = "gamma requires a data_provider. Provide one via Bot.build_pool()."
+            raise MissingCurveData(self.address, "gamma", msg)
+        result = self._data_provider.gamma(block_number)
+        self._cache_gamma[block_number] = result
+        return result
+
+    def _get_cached_price_scale(self, block_number: BlockNumber) -> tuple[int, ...]:
+        """Fetch or retrieve cached price scale (crypto pools)."""
+        with contextlib.suppress(KeyError):
+            return self._cache_price_scale[block_number]
+        if self._data_provider is None:
+            msg = "price_scale requires a data_provider. Provide one via Bot.build_pool()."
+            raise MissingCurveData(self.address, "price_scale", msg)
+        result = self._data_provider.price_scale(block_number)
+        self._cache_price_scale[block_number] = result
+        return result
+
+    def _get_cached_admin_balances(self, block_number: BlockNumber) -> tuple[int, ...]:
+        """Fetch or retrieve cached admin balances."""
+        with contextlib.suppress(KeyError):
+            return self._cache_admin_balances[block_number]
+        if self._data_provider is None:
+            msg = "admin_balances requires a data_provider. Provide one via Bot.build_pool()."
+            raise MissingCurveData(self.address, "admin_balances", msg)
+        result = self._data_provider.admin_balances(block_number)
+        self._cache_admin_balances[block_number] = result
+        return result
+
+    def _get_cached_scaled_redemption_price(self, block_number: BlockNumber) -> int:
+        """Fetch or retrieve cached scaled redemption price."""
+        with contextlib.suppress(KeyError):
+            return self._cache_scaled_redemption_price[block_number]
+        if self._data_provider is None:
+            msg = (
+                "scaled_redemption_price requires a data_provider."
+                " Provide one via Bot.build_pool()."
+            )
+            raise MissingCurveData(self.address, "redemption_price", msg)
+        result = self._data_provider.redemption_price(block_number)
+        self._cache_scaled_redemption_price[block_number] = result
+        return result
+
+    def _get_cached_base_cache_updated(self, block_number: BlockNumber) -> int:
+        """Fetch or retrieve cached base_cache_updated block number.
+
+        Updates _base_cache_updated_value as a side effect.
+        """
+        with contextlib.suppress(KeyError):
+            return self._cache_base_cache_updated[block_number]
+        if self._data_provider is None:
+            msg = "base_cache_updated requires a data_provider. Provide one via Bot.build_pool()."
+            raise MissingCurveData(self.address, "base_cache_updated", msg)
+        result = self._data_provider.base_cache_updated(block_number)
+        self._cache_base_cache_updated[block_number] = result
+        # Side effect: mirror for virtual_price expiry logic
+        self._base_cache_updated_value = result
+        return result
+
+    def _get_cached_base_virtual_price(self, block_number: BlockNumber) -> int:
+        """Fetch or retrieve cached base pool virtual price."""
+        with contextlib.suppress(KeyError):
+            return self._cache_base_virtual_price[block_number]
+        if self._data_provider is None:
+            msg = "base_virtual_price requires a data_provider. Provide one via Bot.build_pool()."
+            raise MissingCurveData(self.address, "base_virtual_price", msg)
+        result = self._data_provider.base_virtual_price(block_number)
+        self._cache_base_virtual_price[block_number] = result
+        return result
+
+    def _get_cached_virtual_price(self, block_number: BlockNumber) -> int:
+        """Fetch or retrieve cached virtual price.
+
+        For metapools, uses base_cache_updated expiry logic:
+        - If base cache has expired or is unset, fetches live virtual_price
+        - If base cache is still valid, uses cached base_virtual_price
+        """
+        with contextlib.suppress(KeyError):
+            return self._cache_virtual_price[block_number]
+
+        # Determine virtual price from base pool cache expiry
+        # (metapool logic matching the contract's _vp_rate_ro() cache behavior)
+        base_virtual_price: int
+        if (
+            self._base_cache_updated_value is None
+            or self._cache_block_timestamps.get(block_number, 0)
+            > self._base_cache_updated_value + self.BASE_CACHE_EXPIRES
+        ):
+            # Cache is not set or has expired — fetch live virtual_price
+            if self._data_provider is None:
+                msg = "virtual_price requires a data_provider. Provide one via Bot.build_pool()."
+                raise MissingCurveData(self.address, "virtual_price", msg)
+            base_virtual_price = self._data_provider.virtual_price(block_number)
+        else:
+            # Cache is still valid — use the cached base_virtual_price
+            base_virtual_price = self._base_virtual_price_value
+
+        self._cache_virtual_price[block_number] = base_virtual_price
+        self._base_virtual_price_value = base_virtual_price
+        return base_virtual_price
+
     def _a(self, timestamp: int | None = None) -> int:
         """
         Handle ramping A up or down
@@ -353,14 +507,7 @@ class CurveStableswapPool(
             return self.future_a_coefficient
 
         if timestamp is None:
-            if self._data_provider is not None:
-                timestamp = self._data_provider.block_timestamp(0)
-            else:
-                raise MissingCurveData(
-                    self.address,
-                    "timestamp",
-                    "Timestamp requires A ramping but no data_provider",
-                )
+            timestamp = self._get_cached_block_timestamp(0)
 
         a_1 = self.future_a_coefficient
         t_1 = self.future_a_coefficient_time
@@ -402,7 +549,7 @@ class CurveStableswapPool(
 
         block_number = self._resolve_block_number(block_identifier)
 
-        block_timestamp = self._on_chain_cache.block_timestamp(block_number)
+        block_timestamp = self._get_cached_block_timestamp(block_number)
         xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
         amp = self._a(timestamp=block_timestamp)
         d_0 = self._get_d(_xp=xp, _amp=amp)
@@ -428,7 +575,7 @@ class CurveStableswapPool(
     ) -> tuple[int, ...]:
         block_number = self._resolve_block_number(block_identifier)
 
-        block_timestamp = self._on_chain_cache.block_timestamp(block_number)
+        block_timestamp = self._get_cached_block_timestamp(block_number)
         n_coins = len(self._tokens)
         amp = self._a(timestamp=block_timestamp)
         total_supply = self._fetch_token_total_supply(self.lp_token, block_identifier=block_number)
@@ -463,7 +610,7 @@ class CurveStableswapPool(
         pool_balances = override_state.balances if override_state is not None else self.balances
 
         # Resolve block timestamp
-        block_timestamp = self._on_chain_cache.block_timestamp(block_number)
+        block_timestamp = self._get_cached_block_timestamp(block_number)
 
         # Resolve amp (A ramping)
         amp = self._a(timestamp=block_timestamp)
@@ -521,9 +668,9 @@ class CurveStableswapPool(
 
         # ── Crypto-specific I/O ──
         if swap_style == SwapStyle.CRYPTO:
-            d_val = self._on_chain_cache.contract_D(block_number)
-            gamma_val = self._on_chain_cache.gamma(block_number)
-            price_scale_val = self._on_chain_cache.price_scale(block_number)
+            d_val = self._get_cached_contract_D(block_number)
+            gamma_val = self._get_cached_gamma(block_number)
+            price_scale_val = self._get_cached_price_scale(block_number)
 
             return dataclasses.replace(
                 inputs,
@@ -550,7 +697,7 @@ class CurveStableswapPool(
                 self._data_provider.token_balance(token.address, self.address, block_number)
                 for token in self._tokens
             )
-            admin_balances = self._on_chain_cache.admin_balances(block_number)
+            admin_balances = self._get_cached_admin_balances(block_number)
             effective_balances = tuple(
                 lb - ab for lb, ab in zip(live_balances, admin_balances, strict=True)
             )
@@ -643,14 +790,12 @@ class CurveStableswapPool(
         inputs = self._resolve_calculation_inputs_via_io(block_number, override_state)
 
         # Resolve virtual price
-        virtual_price = self._on_chain_cache.virtual_price(
-            block_number, base_cache_expires=self.BASE_CACHE_EXPIRES
-        )
+        virtual_price = self._get_cached_virtual_price(block_number)
 
         # Resolve scaled redemption price (may not be available for all metapools)
         scaled_redemption_price: int | None = None
         with contextlib.suppress(MissingCurveData):
-            scaled_redemption_price = self._on_chain_cache.scaled_redemption_price(block_number)
+            scaled_redemption_price = self._get_cached_scaled_redemption_price(block_number)
 
         return dataclasses.replace(
             inputs,
@@ -703,11 +848,11 @@ class CurveStableswapPool(
         the pool's A-ramping state and block timestamps before calling.
         """
         amp = (
-            self._a(timestamp=self._on_chain_cache.block_timestamp(self.update_block))
+            self._a(timestamp=self._get_cached_block_timestamp(self.update_block))
             // self.A_PRECISION
             if self._strategies.y_variant == YVariant.VARIANT_0
             else self._a(
-                timestamp=self._on_chain_cache.block_timestamp(self.update_block)
+                timestamp=self._get_cached_block_timestamp(self.update_block)
             )
         )
         try:
