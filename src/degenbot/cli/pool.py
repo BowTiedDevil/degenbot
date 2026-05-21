@@ -1,8 +1,7 @@
-import contextlib
 import itertools
 from collections import defaultdict
 from collections.abc import Callable
-from typing import Any, cast
+from typing import cast
 
 import click
 import eth_typing
@@ -18,6 +17,7 @@ from web3.types import LogReceipt
 
 from degenbot import abi_decode
 from degenbot.bot import Bot
+from degenbot.calculations.concentrated_liquidity import apply_liquidity_mapping_update
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
 from degenbot.cli.pool_updater_configs import (
@@ -56,99 +56,8 @@ from degenbot.provider import ProviderAdapter
 from degenbot.provider.block_helpers import get_number_for_block_identifier
 from degenbot.provider.log_fetching import fetch_logs_retrying
 from degenbot.types.aliases import ChainId, Tick, Word
-from degenbot.types.state_cache import StateCache
 from degenbot.uniswap.concentrated.types import BitmapAtWord as ConcentratedBitmapAtWord
 from degenbot.uniswap.concentrated.types import LiquidityAtTick as ConcentratedLiquidityAtTick
-from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_types import (
-    UniswapV3PoolLiquidityMappingUpdate,
-    UniswapV3PoolState,
-)
-from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-from degenbot.uniswap.v4_types import (
-    UniswapV4PoolExternalUpdate,
-    UniswapV4PoolKey,
-    UniswapV4PoolLiquidityMappingUpdate,
-    UniswapV4PoolState,
-)
-
-
-class MockV3LiquidityPool(UniswapV3Pool):
-    """
-    A lightweight mock for a V3 liquidity pool. Used to simulate liquidity updates and export
-    validated mappings.
-    """
-
-    def __init__(
-        self,
-        address: ChecksumAddress,
-        tick_bitmap: dict[int, ConcentratedBitmapAtWord] | None = None,
-        tick_data: dict[int, ConcentratedLiquidityAtTick] | None = None,
-        tick_spacing: int = 0,
-    ) -> None:
-        self._sparse_liquidity_map = False
-        self._initial_state_block = MAX_UINT256  # Skip the in-range liquidity modification step
-        self._tick_spacing = tick_spacing
-
-        initial_state = UniswapV3PoolState(
-            address=address,
-            block=0,
-            liquidity=0,
-            sqrt_price_x96=0,
-            tick=0,
-            tick_bitmap=tick_bitmap or {},
-            tick_data=tick_data or {},
-        )
-
-        # No-op context manager to avoid locking overhead
-        self._state_lock = contextlib.nullcontext()
-        state_cache: StateCache[UniswapV3PoolState] = StateCache(max_depth=1)
-        state_cache.append(initial_state)
-        self._state_cache = state_cache
-        self.name = "V3 POOL"
-
-    def _invalidate_range_cache_for_ticks(self, *args: Any, **kwargs: Any) -> None: ...
-
-    def _notify_subscribers(self, *args: Any, **kwargs: Any) -> None: ...
-
-
-class MockV4LiquidityPool(UniswapV4Pool):
-    """
-    A lightweight mock for a V4 liquidity pool. Used to simulate liquidity updates and export
-    validated mappings.
-    """
-
-    def __init__(
-        self,
-        address: ChecksumAddress,
-        pool_id: HexBytes,
-        tick_bitmap: dict[int, ConcentratedBitmapAtWord] | None = None,
-        tick_data: dict[int, ConcentratedLiquidityAtTick] | None = None,
-    ) -> None:
-        self._sparse_liquidity_map = False
-        self._initial_state_block = MAX_UINT256  # Skip the in-range liquidity modification step
-
-        initial_state = UniswapV4PoolState(
-            address=address,
-            block=0,
-            liquidity=0,
-            sqrt_price_x96=0,
-            tick=0,
-            tick_bitmap=tick_bitmap or {},
-            tick_data=tick_data or {},
-            id=pool_id,
-        )
-
-        # No-op context manager to avoid locking overhead
-        self._state_lock = contextlib.nullcontext()
-        state_cache: StateCache[UniswapV4PoolState] = StateCache(max_depth=1)
-        state_cache.append(initial_state)
-        self._state_cache = state_cache
-        self.name = "V4 POOL"
-
-    def _invalidate_range_cache_for_ticks(self, *args: Any, **kwargs: Any) -> None: ...
-
-    def _notify_subscribers(self, *args: Any, **kwargs: Any) -> None: ...
 
 
 class TicksAtWord(pydantic.BaseModel):
@@ -250,23 +159,20 @@ def apply_v3_liquidity_updates(
         },
     )
 
-    lp_helper = MockV3LiquidityPool(
-        address=pool_address,
-        tick_bitmap={
-            k: ConcentratedBitmapAtWord.model_construct(
-                bitmap=v.bitmap,
-            )
-            for k, v in pool_liquidity_map.tick_bitmap.items()
-        },
-        tick_data={
-            k: ConcentratedLiquidityAtTick.model_construct(
-                liquidity_gross=v.liquidity_gross,
-                liquidity_net=v.liquidity_net,
-            )
-            for k, v in pool_liquidity_map.tick_data.items()
-        },
-        tick_spacing=pool_in_db.tick_spacing,
-    )
+    current_tick_bitmap: dict[int, ConcentratedBitmapAtWord] = {
+        k: ConcentratedBitmapAtWord.model_construct(
+            bitmap=v.bitmap,
+        )
+        for k, v in pool_liquidity_map.tick_bitmap.items()
+    }
+    current_tick_data: dict[int, ConcentratedLiquidityAtTick] = {
+        k: ConcentratedLiquidityAtTick.model_construct(
+            liquidity_gross=v.liquidity_gross,
+            liquidity_net=v.liquidity_net,
+        )
+        for k, v in pool_liquidity_map.tick_data.items()
+    }
+    current_liquidity = 0
 
     for liquidity_event in liquidity_events:
         # Guard against applying a liquidity event that occurred in the past
@@ -297,14 +203,21 @@ def apply_v3_liquidity_updates(
         if amount == 0:
             continue
 
-        lp_helper.update_liquidity_map(
-            update=UniswapV3PoolLiquidityMappingUpdate(
-                block_number=liquidity_event["blockNumber"],
-                liquidity=amount,
-                tick_lower=tick_lower,
-                tick_upper=tick_upper,
-            )
+        result = apply_liquidity_mapping_update(
+            tick_bitmap=current_tick_bitmap,
+            tick_data=current_tick_data,
+            tick_spacing=pool_in_db.tick_spacing,
+            tick=0,
+            liquidity=current_liquidity,
+            initial_state_block=MAX_UINT256,  # Skip in-range liquidity adjustment
+            update_block=liquidity_event["blockNumber"],
+            tick_lower=tick_lower,
+            tick_upper=tick_upper,
+            liquidity_delta=amount,
         )
+        current_tick_bitmap = result.tick_bitmap
+        current_tick_data = result.tick_data
+        current_liquidity = result.liquidity
 
         pool_in_db.liquidity_update_block = liquidity_event["blockNumber"]
         pool_in_db.liquidity_update_log_index = liquidity_event["logIndex"]
@@ -312,7 +225,7 @@ def apply_v3_liquidity_updates(
     # After all events have been processed, write the liquidity positions and tick
     # initialization maps to the DB — adding new, updating existing, and dropping stale entries
     db_ticks = {position.tick for position in pool_in_db.liquidity_positions}
-    helper_ticks = set(lp_helper.tick_data)
+    helper_ticks = set(current_tick_data)
 
     # Drop any positions found in the DB but not the helper
     if ticks_to_drop := db_ticks - helper_ticks:
@@ -335,8 +248,8 @@ def apply_v3_liquidity_updates(
                 {
                     "pool_id": pool_in_db.id,
                     "tick": tick,
-                    "liquidity_net": lp_helper.tick_data[tick].liquidity_net,
-                    "liquidity_gross": lp_helper.tick_data[tick].liquidity_gross,
+                    "liquidity_net": current_tick_data[tick].liquidity_net,
+                    "liquidity_gross": current_tick_data[tick].liquidity_gross,
                 }
                 for tick in tick_chunk
             ])
@@ -357,7 +270,7 @@ def apply_v3_liquidity_updates(
     db_words = {map_.word for map_ in pool_in_db.initialization_maps}
     helper_words = {
         word
-        for word, map_ in lp_helper.tick_bitmap.items()
+        for word, map_ in current_tick_bitmap.items()
         if map_.bitmap != 0  # exclude maps where all ticks are uninitialized
     }
 
@@ -382,10 +295,10 @@ def apply_v3_liquidity_updates(
                 {
                     "pool_id": pool_in_db.id,
                     "word": word,
-                    "bitmap": lp_helper.tick_bitmap[word].bitmap,
+                    "bitmap": current_tick_bitmap[word].bitmap,
                 }
                 for word in word_chunk
-                if lp_helper.tick_bitmap[word].bitmap != 0
+                if current_tick_bitmap[word].bitmap != 0
             ])
             stmt = stmt.on_conflict_do_update(
                 index_elements=[
@@ -446,41 +359,20 @@ def apply_v4_liquidity_updates(
         },
     )
 
-    lp_helper = MockV4LiquidityPool(
-        address=pool_in_db.manager.exchange.factory,
-        pool_id=HexBytes(pool_in_db.pool_hash),
-        tick_bitmap={
-            k: ConcentratedBitmapAtWord.model_construct(
-                bitmap=v.bitmap,
-            )
-            for k, v in pool_liquidity_map.tick_bitmap.items()
-        },
-        tick_data={
-            k: ConcentratedLiquidityAtTick.model_construct(
-                liquidity_gross=v.liquidity_gross,
-                liquidity_net=v.liquidity_net,
-            )
-            for k, v in pool_liquidity_map.tick_data.items()
-        },
-    )
-
-    # Construct the PoolKey
-    lp_helper._pool_key = UniswapV4PoolKey(  # noqa: SLF001
-        currency0=pool_in_db.currency0.address,
-        currency1=pool_in_db.currency1.address,
-        fee=pool_in_db.fee_currency0,
-        tick_spacing=pool_in_db.tick_spacing,
-        hooks=pool_in_db.hooks,
-    )
-
-    lp_helper.external_update(
-        update=UniswapV4PoolExternalUpdate(
-            block_number=0,
-            liquidity=MAX_UINT256,
-            sqrt_price_x96=0,
-            tick=0,
+    current_tick_bitmap: dict[int, ConcentratedBitmapAtWord] = {
+        k: ConcentratedBitmapAtWord.model_construct(
+            bitmap=v.bitmap,
         )
-    )
+        for k, v in pool_liquidity_map.tick_bitmap.items()
+    }
+    current_tick_data: dict[int, ConcentratedLiquidityAtTick] = {
+        k: ConcentratedLiquidityAtTick.model_construct(
+            liquidity_gross=v.liquidity_gross,
+            liquidity_net=v.liquidity_net,
+        )
+        for k, v in pool_liquidity_map.tick_data.items()
+    }
+    current_liquidity = 0
 
     for liquidity_event in liquidity_events:
         # Guard against applying a liquidity event that occurred in the past
@@ -501,14 +393,21 @@ def apply_v4_liquidity_updates(
         if liquidity_delta == 0:
             continue
 
-        lp_helper.update_liquidity_map(
-            update=UniswapV4PoolLiquidityMappingUpdate(
-                block_number=liquidity_event["blockNumber"],
-                liquidity=liquidity_delta,
-                tick_lower=tick_lower,
-                tick_upper=tick_upper,
-            )
+        result = apply_liquidity_mapping_update(
+            tick_bitmap=current_tick_bitmap,
+            tick_data=current_tick_data,
+            tick_spacing=pool_in_db.tick_spacing,
+            tick=0,
+            liquidity=current_liquidity,
+            initial_state_block=MAX_UINT256,  # Skip in-range liquidity adjustment
+            update_block=liquidity_event["blockNumber"],
+            tick_lower=tick_lower,
+            tick_upper=tick_upper,
+            liquidity_delta=liquidity_delta,
         )
+        current_tick_bitmap = result.tick_bitmap
+        current_tick_data = result.tick_data
+        current_liquidity = result.liquidity
 
         pool_in_db.liquidity_update_block = liquidity_event["blockNumber"]
         pool_in_db.liquidity_update_log_index = liquidity_event["logIndex"]
@@ -517,7 +416,7 @@ def apply_v4_liquidity_updates(
     # maps to the DB, updating and adding positions as necessary and dropping stale entries
 
     db_ticks = {position.tick for position in pool_in_db.liquidity_positions}
-    helper_ticks = set(lp_helper.tick_data)
+    helper_ticks = set(current_tick_data)
 
     # Drop any positions found in the DB but not the helper
     if ticks_to_drop := db_ticks - helper_ticks:
@@ -540,8 +439,8 @@ def apply_v4_liquidity_updates(
                 {
                     "managed_pool_id": pool_in_db.id,
                     "tick": tick,
-                    "liquidity_net": lp_helper.tick_data[tick].liquidity_net,
-                    "liquidity_gross": lp_helper.tick_data[tick].liquidity_gross,
+                    "liquidity_net": current_tick_data[tick].liquidity_net,
+                    "liquidity_gross": current_tick_data[tick].liquidity_gross,
                 }
                 for tick in tick_chunk
             ])
@@ -567,7 +466,7 @@ def apply_v4_liquidity_updates(
     db_words = {map_.word for map_ in pool_in_db.initialization_maps}
     helper_words = {
         word
-        for word, map_ in lp_helper.tick_bitmap.items()
+        for word, map_ in current_tick_bitmap.items()
         if map_.bitmap != 0  # exclude maps where all ticks are uninitialized
     }
 
@@ -592,10 +491,10 @@ def apply_v4_liquidity_updates(
                 {
                     "managed_pool_id": pool_in_db.id,
                     "word": word,
-                    "bitmap": lp_helper.tick_bitmap[word].bitmap,
+                    "bitmap": current_tick_bitmap[word].bitmap,
                 }
                 for word in word_chunk
-                if lp_helper.tick_bitmap[word].bitmap != 0
+                if current_tick_bitmap[word].bitmap != 0
             ])
             stmt = stmt.on_conflict_do_update(
                 index_elements=[
