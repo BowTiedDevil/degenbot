@@ -1,5 +1,5 @@
 from degenbot.balancer.libraries import log_exp_math
-from degenbot.balancer.libraries.constants import FOUR, MAX_POW_RELATIVE_ERROR, ONE, TWO
+from degenbot.balancer.libraries.constants import MAX_POW_RELATIVE_ERROR, ONE
 from degenbot.constants import MAX_UINT256
 from degenbot.exceptions.pool import EVMRevertError
 
@@ -70,15 +70,11 @@ def pow_down(x: int, y: int) -> int:
     not be above the true value (that is, the error function expected - actual is always positive).
     """
 
-    # Optimize for when y equals 1.0, 2.0 or 4.0, as those are very simple to implement and occur
-    # often in 50/50 and 80/20 Weighted Pools
-    if y == ONE:
-        return x
-    if y == TWO:
-        return mul_down(x, x)
-    if y == FOUR:
-        square = mul_down(x, x)
-        return mul_down(square, square)
+    # Note: the on-chain contract does NOT have fast paths for y == 1, y == 2, or y == 4 — those
+    # were added to a later version of the monorepo. The deployed WeightedPool2Tokens uses the
+    # general path via LogExpMath.pow for all cases, so we must match that behavior exactly.
+    # In particular, the general path applies an error bound (max_error) that the fast paths skip,
+    # causing different rounding behavior that cascades through complement() and mul operations.
 
     raw = log_exp_math.pow(x, y)
     max_error = add(mul_up(raw, MAX_POW_RELATIVE_ERROR), 1)
@@ -94,15 +90,11 @@ def pow_up(x: int, y: int) -> int:
     be below the true value (that is, the error function expected - actual is always negative).
     """
 
-    # Optimize for when y equals 1.0, 2.0 or 4.0, as those are very simple to implement and occur
-    # often in 50/50 and 80/20 Weighted Pools
-    if y == ONE:
-        return x
-    if y == TWO:
-        return mul_up(x, x)
-    if y == FOUR:
-        square = mul_up(x, x)
-        return mul_up(square, square)
+    # Note: the on-chain contract does NOT have fast paths for y == 1, y == 2, or y == 4 — those
+    # were added to a later version of the monorepo. The deployed WeightedPool2Tokens uses the
+    # general path via LogExpMath.pow for all cases, so we must match that behavior exactly.
+    # In particular, the general path applies an error bound (max_error) that the fast paths skip,
+    # causing different rounding behavior that cascades through complement() and mul operations.
 
     raw = log_exp_math.pow(x, y)
     max_error = add(mul_up(raw, MAX_POW_RELATIVE_ERROR), 1)

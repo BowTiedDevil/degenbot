@@ -6,14 +6,19 @@ from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
 
-from degenbot.balancer.libraries.fixed_point import mul_up
 from degenbot.balancer.libraries.scaling_helpers import (
     _compute_scaling_factor,
     _downscale_down,
+    _downscale_up,
     _upscale,
     _upscale_array,
 )
-from degenbot.balancer.libraries.weighted_math import _calc_out_given_in, _subtract_swap_fee_amount
+from degenbot.balancer.libraries.weighted_math import (
+    _add_swap_fee_amount,
+    _calc_in_given_out,
+    _calc_out_given_in,
+    _subtract_swap_fee_amount,
+)
 from degenbot.balancer.types import BalancerV2PoolState
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
@@ -101,14 +106,10 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
 
         fee_scaled = int(self.fee * self.FEE_DENOMINATOR)
 
-        fee_amount = mul_up(token_in_quantity, fee_scaled)
-
         amount_new = _subtract_swap_fee_amount(
             amount=token_in_quantity,
             fee_percentage=fee_scaled,
         )
-
-        assert token_in_quantity - fee_amount == amount_new
 
         if override_state is not None:
             raise NotImplementedError
@@ -127,6 +128,50 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
 
         return int(
             _downscale_down(amount=amount_out, scaling_factor=self.scaling_factors[token_out_index])
+        )
+
+    def calculate_tokens_in_from_tokens_out(
+        self,
+        token_in: Erc20Token,
+        token_out: Erc20Token,
+        token_out_quantity: int,
+        override_state: PoolState | None = None,
+    ) -> int:
+        """Computes how many tokens must be sent to take `token_out_quantity` out."""
+        token_in_index = self._tokens.index(token_in)
+        token_out_index = self._tokens.index(token_out)
+
+        fee_scaled = int(self.fee * self.FEE_DENOMINATOR)
+
+        if override_state is not None:
+            raise NotImplementedError
+        balances = list(self.balances)  # make a copy because _upscale_array will mutate it
+
+        _upscale_array(amounts=balances, scaling_factors=self.scaling_factors)
+        amount_out_scaled = _upscale(
+            token_out_quantity,
+            scaling_factor=self.scaling_factors[token_out_index],
+        )
+
+        amount_in = _calc_in_given_out(
+            balance_in=int(balances[token_in_index]),
+            weight_in=self.weights[token_in_index],
+            balance_out=int(balances[token_out_index]),
+            weight_out=self.weights[token_out_index],
+            amount_out=int(amount_out_scaled),
+        )
+
+        # Add swap fee on top of the calculated amount
+        amount_in_with_fee = _add_swap_fee_amount(
+            amount=amount_in,
+            fee_percentage=fee_scaled,
+        )
+
+        return int(
+            _downscale_up(
+                amount=amount_in_with_fee,
+                scaling_factor=self.scaling_factors[token_in_index],
+            )
         )
 
     def simulate_swap(

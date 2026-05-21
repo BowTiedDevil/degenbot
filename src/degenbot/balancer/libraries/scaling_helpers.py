@@ -1,5 +1,4 @@
 from collections.abc import Sequence
-from itertools import starmap
 from typing import cast
 
 from degenbot.balancer.libraries.constants import ONE
@@ -51,29 +50,31 @@ def _downscale_up(
 
 def _upscale_array(amounts: list[int], scaling_factors: Sequence[int]) -> None:
     """
-    Same as `_upscale`, but for an entire array. This function does not return anything, but instead
-    *mutates* the `amounts` array.
+    Same as `_upscale`, but for an entire array. This function mutates the `amounts` array in-place.
     """
 
-    amounts = list(starmap(mul_down, zip(amounts, scaling_factors, strict=True)))
+    for i in range(len(amounts)):
+        amounts[i] = mul_down(amounts[i], scaling_factors[i])
 
 
 def _downscale_down_array(amounts: list[int], scaling_factors: list[int]) -> None:
     """
-    Same as `_downscale_down`, but for an entire array. This function does not return anything, but
-    instead *mutates* the `amounts` array.
+    Same as `_downscale_down`, but for an entire array. This function mutates the `amounts` array
+    in-place.
     """
 
-    amounts = list(starmap(div_down, zip(amounts, scaling_factors, strict=True)))
+    for i in range(len(amounts)):
+        amounts[i] = div_down(amounts[i], scaling_factors[i])
 
 
 def _downscale_up_array(amounts: list[int], scaling_factors: list[int]) -> None:
     """
-    Same as `_downscale_up`, but for an entire array. This function does not return anything, but
-    instead *mutates* the `amounts` array.
+    Same as `_downscale_up`, but for an entire array. This function mutates the `amounts` array
+    in-place.
     """
 
-    amounts = list(starmap(div_up, zip(amounts, scaling_factors, strict=True)))
+    for i in range(len(amounts)):
+        amounts[i] = div_up(amounts[i], scaling_factors[i])
 
 
 def _compute_scaling_factor(token: Erc20Token) -> int:
