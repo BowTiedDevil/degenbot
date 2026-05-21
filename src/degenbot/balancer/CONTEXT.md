@@ -1,4 +1,4 @@
-# Context — Balancer V2 Weighted Pools
+# Context — Balancer V2 Pools
 
 ## Pool Types
 
@@ -53,6 +53,25 @@
 | **BROKEN_BALANCER_V2_POOLS** | A frozenset of pool addresses where on-chain swaps are disabled or the pool is otherwise broken (e.g., BAL#327 SWAPS_DISABLED). Pools in this set should be skipped during discovery and testing | Broken pools, disabled pools |
 | **deployments.py** | Module centralizing contract addresses and broken pool addresses for Balancer V2, following the same pattern as `curve/deployments.py` | Addresses module |
 
+## Stable Pool Semantics
+
+| Term | Definition | Aliases to avoid |
+|------|------------|------------------|
+| **StableMath** | Library implementing the StableSwap invariant and swap calculations (`libraries/stable_math.py`) | Stable math, curve math (wrong DEX) |
+| **MetaStablePool** | A 2-token stable pool with rate providers. Uses `BaseMinimalSwapInfoPool` (specialization=1). `_cacheTokenRatesIfNecessary()` is called inside `_onSwapGivenIn` AFTER upscaling | Meta stable, stable v1 |
+| **ComposableStablePool** | A multi-token stable pool that includes its own BPT token. Uses `BaseGeneralPool` (specialization=0). Overrides `_beforeSwapJoinExit()` to call `_cacheTokenRatesIfNecessary()` BEFORE reading `_scalingFactors()` | Composable, phantom stable |
+| **BPT Index** | In ComposableStablePools, the BPT token's position in the token list. Must be dropped before invariant and swap calculations. `bpt_idx` parameter distinguishes MetaStable (`None`) from Composable (`int`) | Phantom token index |
+| **Invariant Rounding** | Deployed contracts use `_calculateInvariant(amp, balances, roundUp=True)` for swaps. The `round_up` parameter controls whether the last iteration rounds up (swap) or down (monorepo default) | Rounding direction |
+
+### _beforeSwapJoinExit Rate Refresh
+
+**Critical difference between pool types**: ComposableStablePools override `_beforeSwapJoinExit()` to refresh rate caches BEFORE `_scalingFactors()` is read. MetaStablePools do not have this override — they call `_cacheTokenRatesIfNecessary()` inside `_onSwapGivenIn` (after upscaling). This means:
+
+- **ComposableStablePool**: Scaling factors used during the swap come from **fresh** rates (just-cached by `_beforeSwapJoinExit`)
+- **MetaStablePool**: Scaling factors come from **stale** cached rates, but the subsequent `_cacheTokenRatesIfNecessary()` call in `_onSwapGivenIn` doesn't affect the already-computed memory values
+
+For off-chain matching, builders must provide scaling factors computed from **fresh** rates for ComposableStablePools and from **cached** rates for MetaStablePools. In practice, both approaches use fresh rates from rate providers because the MetaStablePool's cached rates happen to be close to fresh rates for the pools we've tested (exact 0-wei matching achieved).
+
 ## Library File Layout
 
 ```
@@ -67,19 +86,31 @@ balancer/
 │   ├── input_helpers.py (validation)
 │   ├── log_exp_math.py  (ln, pow via Taylor series with _truncated_div)
 │   ├── scaling_helpers.py (_upscale, _downscale_down/up, _compute_scaling_factor)
-│   └── weighted_math.py (calculate_invariant, _calc_out_given_in, _calc_in_given_out)
+│   ├── stable_math.py  (StableMath: invariant, outGivenIn, inGivenOut, BPT functions)
+│   └── weighted_math.py (calculate_invariant, _calc_out_given_in, _calc_in_given_in)
 ├── managers.py         (empty — reserved for future pool tracker)
 ├── pools.py            (BalancerV2Pool class, detect_pow_version)
+├── stable_pools.py     (BalancerV2StablePool class)
 └── types.py            (BalancerV2PoolState frozen dataclass)
 ```
 
 ## Relationships
+
+### Weighted Pool Chain
 
 - **BalancerV2Pool** delegates all math to **WeightedMath** functions, which in turn delegate exponentiation to **FixedPoint.pow_down/pow_up**
 - **FixedPoint.pow_down/pow_up** accept a `version: PowVersion` kwarg that controls whether fast paths for y == ONE/TWO/FOUR are active; the version is detected from bytecode at construction time and stored on the pool instance
 - **ScalingHelpers** are called directly by **BalancerV2Pool** — upscale before calculation, downscale after
 - **LogExpMath** is a private implementation detail of **FixedPoint** — no other module should import it directly
 - **BROKEN_BALANCER_V2_POOLS** in **deployments.py** is used by pool discovery and testing to filter out pools where on-chain swaps are disabled
+
+### Stable Pool Chain
+
+- **BalancerV2StablePool** delegates all math to **StableMath** functions via `_calc_out_given_in`, `_calc_in_given_out`, and `_calculate_invariant_deployed`
+- **BalancerV2StablePool** handles BPT dropping internally — `bpt_idx=None` for MetaStablePool, `bpt_idx=int` for ComposableStablePool
+- **StableMath** (`stable_math.py`) provides both monorepo (`_calculate_invariant`, always roundDown) and deployed-contract (`_calculate_invariant_deployed`, with `round_up` param) versions
+- Scaling factor computation is the builder's responsibility: fresh rates from rate providers for ComposableStablePools, cached rates for MetaStablePools
+- Both pool classes share **BalancerV2PoolState** from `types.py`
 
 ## Resolved ambiguities
 
@@ -94,3 +125,15 @@ In Balancer V2, the **Vault** holds all tokens and executes swaps. The **Pool Co
 ### Worker (scraper) vs Pool class
 
 The vault scraper script (`scripts/balancer_vault_scraper.py`) discovers pools by scanning Vault events. It is standalone and does not import from degenbot internals. The pool class (`BalancerV2Pool`) is the in-memory calculation object. They have no runtime dependency on each other.
+
+### MetaStablePool vs ComposableStablePool
+
+Both use StableMath but differ in specialization and rate caching behavior. ComposableStablePools include BPT in the token list and override `_beforeSwapJoinExit()` to refresh rate caches before reading `_scalingFactors()`. MetaStablePools do not include BPT and have no `_beforeSwapJoinExit` override. The class `BalancerV2StablePool` handles both via the `bpt_idx` parameter — `None` for MetaStable, integer for Composable.
+
+### Monorepo vs Deployed Invariant
+
+The monorepo's `_calculateInvariant` always rounds the last iteration down. The deployed contract uses a `round_up` parameter. For swaps, the deployed contract passes `roundUp=True`. Using `_calculate_invariant_deployed(round_up=True)` produces exact 0-wei matching for MetaStablePools and near-exact matching (<3000 wei) for ComposableStablePools. The monorepo version produces ~0.01% error for some pools due to the different rounding.
+
+### ComposableStablePool Rate Tolerance
+
+ComposableStablePool on-chain tests use `_assert_close` with up to 3000 wei tolerance rather than exact integer matching. The residual comes from a timing difference: we read fresh rates from rate providers in a separate `eth_call`, while the on-chain `_beforeSwapJoinExit` refreshes the cache in the same call as the swap. The rates may differ by a few wei due to block-level state changes between the two calls.
