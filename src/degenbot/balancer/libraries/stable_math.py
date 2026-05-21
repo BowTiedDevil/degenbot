@@ -81,11 +81,8 @@ def _calculate_invariant(
         prev_invariant = invariant
 
         invariant = _math_div_down(
-            (_math_div_down(amp_times_total * sum_, AMP_PRECISION) + d_p * num_tokens)
-            * invariant,
-            _math_div_down(
-                (amp_times_total - AMP_PRECISION) * invariant, AMP_PRECISION
-            )
+            (_math_div_down(amp_times_total * sum_, AMP_PRECISION) + d_p * num_tokens) * invariant,
+            _math_div_down((amp_times_total - AMP_PRECISION) * invariant, AMP_PRECISION)
             + (num_tokens + 1) * d_p,
         )
 
@@ -145,9 +142,7 @@ def _calculate_invariant_deployed(
 
         invariant = _math_div(
             _math_mul(num_tokens * invariant, invariant)
-            + _math_div(
-                _math_mul(amp_times_total, sum_) * p_d, AMP_PRECISION, round_up
-            ),
+            + _math_div(_math_mul(amp_times_total, sum_) * p_d, AMP_PRECISION, round_up),
             _math_mul((num_tokens + 1), invariant)
             + _math_div(
                 _math_mul(amp_times_total - AMP_PRECISION, p_d),
@@ -302,9 +297,7 @@ def _calc_bpt_out_given_exact_tokens_in(  # noqa: PLR0917
     for i in range(len(balances)):
         current_weight = div_down(balances[i], sum_balances)
         balance_ratios_with_fee[i] = div_down(balances[i] + amounts_in[i], balances[i])
-        invariant_ratio_with_fees += mul_down(
-            balance_ratios_with_fee[i], current_weight
-        )
+        invariant_ratio_with_fees += mul_down(balance_ratios_with_fee[i], current_weight)
 
     # Second loop: calculate new amounts in, taking into account the fee
     new_balances: list[int] = [0] * len(balances)
@@ -391,9 +384,7 @@ def _calc_bpt_in_given_exact_tokens_out(  # noqa: PLR0917
             balances[i] - amounts_out[i],
             balances[i],
         )
-        invariant_ratio_without_fees += mul_up(
-            balance_ratios_without_fee[i], current_weight
-        )
+        invariant_ratio_without_fees += mul_up(balance_ratios_without_fee[i], current_weight)
 
     # Second loop: calculate new amounts, taking into account the fee
     new_balances: list[int] = [0] * len(balances)

@@ -58,9 +58,7 @@ def _ref_calculate_invariant(
         prev_d = d
 
         numerator = (_math_div_down_dec(ann_dec * s, AMP_PRECISION) + d_p * n) * d
-        denominator = _math_div_down_dec(
-            (ann - AMP_PRECISION) * d, AMP_PRECISION
-        ) + (n + 1) * d_p
+        denominator = _math_div_down_dec((ann - AMP_PRECISION) * d, AMP_PRECISION) + (n + 1) * d_p
         d = numerator / denominator
 
         if abs(d - prev_d) <= 1:
@@ -184,9 +182,7 @@ class TestCalcOutGivenIn:
         invariant = _calculate_invariant(amp, balances)
         amount_in = ONE
 
-        amount_out = _calc_out_given_in(
-            amp, list(balances), 0, 1, amount_in, invariant
-        )
+        amount_out = _calc_out_given_in(amp, list(balances), 0, 1, amount_in, invariant)
         assert amount_out > 0
         assert amount_out < balances[1]
 
@@ -229,9 +225,7 @@ class TestCalcInGivenOut:
         invariant = _calculate_invariant(amp, balances)
         amount_out = ONE
 
-        amount_in = _calc_in_given_out(
-            amp, list(balances), 0, 1, amount_out, invariant
-        )
+        amount_in = _calc_in_given_out(amp, list(balances), 0, 1, amount_out, invariant)
         assert amount_in > 0
 
     def test_in_greater_than_out_for_imbalanced_pool(self):
@@ -401,9 +395,7 @@ class TestBptCalculations:
         bpt_total_supply = 100 * ONE
 
         bpt_amount_in = 10 * ONE  # 10% of supply
-        amounts_out = _calc_tokens_out_given_exact_bpt_in(
-            balances, bpt_amount_in, bpt_total_supply
-        )
+        amounts_out = _calc_tokens_out_given_exact_bpt_in(balances, bpt_amount_in, bpt_total_supply)
         # Each token should be roughly 10% of balance
         for amount_out in amounts_out:
             assert abs(amount_out - ONE) <= 1  # 10% of 10*ONE = ONE
@@ -419,9 +411,7 @@ class TestProtocolFees:
         balances = [10 * ONE, 10 * ONE]
         inv = _calculate_invariant(amp, balances)
 
-        fee = _calc_due_token_protocol_swap_fee_amount(
-            amp, balances, inv, 0, int(0.5 * ONE)
-        )
+        fee = _calc_due_token_protocol_swap_fee_amount(amp, balances, inv, 0, int(0.5 * ONE))
         assert fee == 0 or fee <= 2
 
 
