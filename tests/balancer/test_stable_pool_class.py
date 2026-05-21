@@ -261,6 +261,56 @@ class TestBalancerV2StablePoolMetaStable:
                 f"pct=1/{pct}: diff={python_out - on_chain_out}"
             )
 
+    @pytest.mark.parametrize("pct", [100, 1000])
+    def test_given_out_weth_for_wsteth(self, wsteth_weth_pool, fork_mainnet_archive, pct):
+        """GIVEN_OUT: requesting WETH out, paying wstETH must match on-chain exactly."""
+        pool = wsteth_weth_pool
+        amount_out = pool.balances[1] // pct
+
+        python_in = pool.calculate_tokens_in_from_tokens_out(
+            token_in=pool.tokens[0],
+            token_out=pool.tokens[1],
+            token_out_quantity=amount_out,
+        )
+        on_chain_in = _query_swap(
+            fork_mainnet_archive,
+            pool.pool_id,
+            pool.tokens[0].address,
+            pool.tokens[1].address,
+            amount_out,
+            kind=1,
+        )
+
+        if on_chain_in > 0:
+            assert python_in == on_chain_in, (
+                f"pct=1/{pct}: diff={python_in - on_chain_in}"
+            )
+
+    @pytest.mark.parametrize("pct", [100, 1000])
+    def test_given_out_wsteth_for_weth(self, wsteth_weth_pool, fork_mainnet_archive, pct):
+        """GIVEN_OUT: requesting wstETH out, paying WETH must match on-chain exactly."""
+        pool = wsteth_weth_pool
+        amount_out = pool.balances[0] // pct
+
+        python_in = pool.calculate_tokens_in_from_tokens_out(
+            token_in=pool.tokens[1],
+            token_out=pool.tokens[0],
+            token_out_quantity=amount_out,
+        )
+        on_chain_in = _query_swap(
+            fork_mainnet_archive,
+            pool.pool_id,
+            pool.tokens[1].address,
+            pool.tokens[0].address,
+            amount_out,
+            kind=1,
+        )
+
+        if on_chain_in > 0:
+            assert python_in == on_chain_in, (
+                f"pct=1/{pct}: diff={python_in - on_chain_in}"
+            )
+
 
 class TestBalancerV2StablePoolComposable:
     """
@@ -366,3 +416,49 @@ class TestBalancerV2StablePoolComposable:
 
         if on_chain_out > 0:
             self._assert_close(python_out, on_chain_out, label=f"pct=1/{pct}: ")
+
+    @pytest.mark.parametrize("pct", [100, 1000])
+    def test_given_out_usdc_for_tusd(self, tusd_bsp_pool, fork_mainnet_archive, pct):
+        """GIVEN_OUT: requesting USDC out for TUSD in using BalancerV2StablePool."""
+        pool = tusd_bsp_pool
+        amount_out = pool.balances[2] // pct  # USDC at index 2
+
+        python_in = pool.calculate_tokens_in_from_tokens_out(
+            token_in=pool.tokens[0],
+            token_out=pool.tokens[2],
+            token_out_quantity=amount_out,
+        )
+        on_chain_in = _query_swap(
+            fork_mainnet_archive,
+            pool.pool_id,
+            pool.tokens[0].address,
+            pool.tokens[2].address,
+            amount_out,
+            kind=1,
+        )
+
+        if on_chain_in > 0:
+            self._assert_close(python_in, on_chain_in, label=f"pct=1/{pct}: ")
+
+    @pytest.mark.parametrize("pct", [100, 1000])
+    def test_given_out_usdt_for_usdc(self, bb_s_usd_pool, fork_mainnet_archive, pct):
+        """GIVEN_OUT: requesting bb-s-USDT out for bb-s-USDC in."""
+        pool = bb_s_usd_pool
+        amount_out = pool.balances[2] // pct  # USDT at index 2
+
+        python_in = pool.calculate_tokens_in_from_tokens_out(
+            token_in=pool.tokens[1],
+            token_out=pool.tokens[2],
+            token_out_quantity=amount_out,
+        )
+        on_chain_in = _query_swap(
+            fork_mainnet_archive,
+            pool.pool_id,
+            pool.tokens[1].address,
+            pool.tokens[2].address,
+            amount_out,
+            kind=1,
+        )
+
+        if on_chain_in > 0:
+            self._assert_close(python_in, on_chain_in, label=f"pct=1/{pct}: ")
