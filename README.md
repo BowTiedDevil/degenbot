@@ -709,35 +709,36 @@ from degenbot.balancer.pools import BalancerV2Pool, detect_pow_version
 from degenbot.balancer.libraries.constants import PowVersion
 
 # Detect pow version from deployed pool bytecode
-bytecode = w3.eth.get_code(pool_address).hex()
-pow_version = detect_pow_version(bytecode)  # PowVersion.V1 or V2
+# pool_address = "0x..."  # your Balancer pool address
+# bytecode = w3.eth.get_code(pool_address).hex()
+# pow_version = detect_pow_version(bytecode)  # PowVersion.V1 or V2
 
 # Construct a Balancer V2 weighted pool (all state injected at construction)
-pool = BalancerV2Pool(
-    address="0x5c6Ee304399DBdB9C8Ef030aB642B10820DB8F56",
-    pool_id=bytes.fromhex("..."),
-    vault="0xBA12222222228d8Ba445958a75a0704d566BF2C8",
-    tokens=[weth, bal],
-    balances=[1000 * 10**18, 5000 * 10**18],
-    fee=Fraction(1, 1000),  # 0.1% swap fee
-    weights=[800000000000000000, 200000000000000000],  # 80/20
-    pow_version=pow_version,
-    chain_id=1,
-)
-
-# Calculate swaps - pure math, no I/O
-amount_out = pool.calculate_tokens_out_from_tokens_in(
-    token_in=weth,
-    token_out=bal,
-    token_in_quantity=10**18,
-)
-
-# GIVEN_OUT: compute input needed for desired output
-amount_in = pool.calculate_tokens_in_from_tokens_out(
-    token_in=weth,
-    token_out=bal,
-    token_out_quantity=100 * 10**18,
-)
+# pool = BalancerV2Pool(
+#     address="0x5c6Ee304399DBdB9C8Ef030aB642B10820DB8F56",
+#     pool_id=bytes.fromhex("..."),
+#     vault="0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+#     tokens=[weth, bal],
+#     balances=[1000 * 10**18, 5000 * 10**18],
+#     fee=Fraction(1, 1000),  # 0.1% swap fee
+#     weights=[800000000000000000, 200000000000000000],  # 80/20
+#     pow_version=pow_version,
+#     chain_id=1,
+# )
+#
+# # Calculate swaps - pure math, no I/O
+# amount_out = pool.calculate_tokens_out_from_tokens_in(
+#     token_in=weth,
+#     token_out=bal,
+#     token_in_quantity=10**18,
+# )
+#
+# # GIVEN_OUT: compute input needed for desired output
+# amount_in = pool.calculate_tokens_in_from_tokens_out(
+#     token_in=weth,
+#     token_out=bal,
+#     token_out_quantity=100 * 10**18,
+# )
 ```
 
 Contract addresses and broken pool filters are centralized in `degenbot.balancer.deployments`:
@@ -750,8 +751,8 @@ from degenbot.balancer.deployments import (
 )
 
 # Filter out pools with disabled swaps
-if pool_address not in BROKEN_BALANCER_V2_POOLS:
-    pool = bot.build_pool(pool_address)
+# if pool_address not in BROKEN_BALANCER_V2_POOLS:
+#     pool = bot.build_pool(pool_address)
 ```
 
 ### Uniswap Arbitrage

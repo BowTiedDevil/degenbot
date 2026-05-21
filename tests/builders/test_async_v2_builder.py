@@ -14,6 +14,7 @@ from degenbot.builders.async_context import AsyncBuilderContext
 from degenbot.builders.async_erc20_builder import AsyncErc20Builder
 from degenbot.builders.async_v2_pool_builder import AsyncV2PoolBuilder
 from degenbot.builders.pool_io import AsyncPoolIO
+from degenbot.builders.request import BuildPoolRequest
 from degenbot.builders.v2_builder_base import V2BuilderBase
 from degenbot.database.models.pools import UniswapFeeMixin
 from degenbot.database.session_manager import DatabaseSessionManager
@@ -154,8 +155,8 @@ class TestAsyncV2PoolBuilder:
         pool = await builder.build(
             "0x0000000000000000000000000000000000000001",
             chain_id=1,
-            silent=True,
             io=io,
+            request=BuildPoolRequest(silent=True),
         )
         assert isinstance(pool, UniswapV2Pool)
         assert pool.reserves_token0 == 1000

@@ -16,6 +16,7 @@ from degenbot.builders.async_v2_pool_builder import AsyncV2PoolBuilder
 from degenbot.builders.async_v3_pool_builder import AsyncV3PoolBuilder
 from degenbot.builders.async_v4_pool_builder import AsyncV4PoolBuilder
 from degenbot.builders.pool_io import AsyncPoolIO
+from degenbot.builders.request import BuildPoolRequest
 from degenbot.builders.type_resolution import (
     pool_class_for_descriptor,
 )
@@ -192,30 +193,31 @@ class AsyncBot:
         provider = self.connections.get_provider(chain_id)
         io = AsyncPoolIO(provider)
 
+        request = BuildPoolRequest(
+            silent=silent,
+            state_block=state_block,
+            state_cache_depth=state_cache_depth,
+            deployer_address=deployer_address,
+            init_hash=init_hash,
+            tick_bitmap=tick_bitmap,
+            tick_data=tick_data,
+            pool_id=pool_id,
+            state_view_address=state_view_address,
+            tokens=tokens,
+            fee=fee,
+            tick_spacing=tick_spacing,
+            hook_address=hook_address,
+        )
+
         # V4 fast path: pool_id discriminates V4 managed pools
         if pool_id is not None:
-            v4_kwargs: dict[str, Any] = {
-                "pool_id": pool_id,
-                "pool_manager_address": address,
-                "chain_id": chain_id,
-                "state_block": state_block,
-                "silent": silent,
-            }
-            if state_view_address is not None:
-                v4_kwargs["state_view_address"] = state_view_address
-            if tokens is not None:
-                v4_kwargs["tokens"] = tokens
-            if fee is not None:
-                v4_kwargs["fee"] = fee
-            if tick_spacing is not None:
-                v4_kwargs["tick_spacing"] = tick_spacing
-            if hook_address is not None:
-                v4_kwargs["hook_address"] = hook_address
-            if tick_bitmap is not None:
-                v4_kwargs["tick_bitmap"] = tick_bitmap
-            if tick_data is not None:
-                v4_kwargs["tick_data"] = tick_data
-            return await self._v4_builder.build(address, io=io, **v4_kwargs)
+            return await self._dispatch_build(
+                builder=self._v4_builder,
+                address=address,
+                chain_id=chain_id,
+                io=io,
+                request=request,
+            )
 
         # Check pool registry — return existing pool if already built
         existing = self.pools.get(chain_id=chain_id, pool_address=address)
@@ -247,28 +249,12 @@ class AsyncBot:
                 message=f"No async builder for pool class {pool_class.__name__}"
             )
 
-        # Build kwargs dict — only include non-None optional params
-        dispatch_kwargs: dict[str, Any] = {
-            "silent": silent,
-            "state_cache_depth": state_cache_depth,
-        }
-        if deployer_address is not None:
-            dispatch_kwargs["deployer_address"] = deployer_address
-        if init_hash is not None:
-            dispatch_kwargs["init_hash"] = init_hash
-        if state_block is not None:
-            dispatch_kwargs["state_block"] = state_block
-        if tick_bitmap is not None:
-            dispatch_kwargs["tick_bitmap"] = tick_bitmap
-        if tick_data is not None:
-            dispatch_kwargs["tick_data"] = tick_data
-
         return await self._dispatch_build(
             builder=builder,
             address=address,
             chain_id=chain_id,
             io=io,
-            **dispatch_kwargs,
+            request=request,
         )
 
     @staticmethod
@@ -277,10 +263,11 @@ class AsyncBot:
         builder: AsyncPoolBuilder,
         address: ChecksumAddress,
         chain_id: ChainId,
-        **kwargs: Any,
+        io: AsyncPoolIO,
+        request: BuildPoolRequest,
     ) -> AbstractLiquidityPool:
-        """Dispatch to the async builder, forwarding all kwargs."""
-        return await builder.build(address, chain_id=chain_id, **kwargs)
+        """Dispatch to the async builder with a typed request."""
+        return await builder.build(address, chain_id=chain_id, io=io, request=request)
 
     # ------------------------------------------------------------------
     # Pool type resolution (async counterpart of Bot's resolution)

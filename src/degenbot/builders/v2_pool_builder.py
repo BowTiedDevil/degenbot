@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from degenbot.builders.v2_builder_base import V2BuilderBase
 from degenbot.checksum_cache import get_checksum_address
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.pool_io import PoolIO
+    from degenbot.builders.request import BuildPoolRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
@@ -38,36 +39,35 @@ class V2PoolBuilder(V2BuilderBase):
         address: str,
         *,
         chain_id: ChainId | None = None,
-        deployer_address: str | None = None,
-        init_hash: str | None = None,
-        state_block: int | None = None,
-        silent: bool = False,
-        state_cache_depth: int = 8,
         io: PoolIO,
-        **kwargs: Any,  # noqa: ARG002
+        request: BuildPoolRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free V2-style pool."""
 
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
-        state_block = state_block if state_block is not None else io.get_block_number()
+        state_block = (
+            request.state_block
+            if request.state_block is not None
+            else io.get_block_number()
+        )
 
         common = self._fetch_v2_common_data(
             pool_address,
             chain_id=chain_id,
             state_block=state_block,
-            deployer_address=deployer_address,
-            init_hash=init_hash,
+            deployer_address=request.deployer_address,
+            init_hash=request.init_hash,
             io=io,
         )
 
         # Build tokens
         token0 = self._erc20_builder.build(
-            common.token0_address, chain_id=chain_id, silent=silent, io=io
+            common.token0_address, chain_id=chain_id, silent=request.silent, io=io
         )
         token1 = self._erc20_builder.build(
-            common.token1_address, chain_id=chain_id, silent=silent, io=io
+            common.token1_address, chain_id=chain_id, silent=request.silent, io=io
         )
 
         # Determine pool class from registry
@@ -89,13 +89,13 @@ class V2PoolBuilder(V2BuilderBase):
             state_block=common.state_block,
             deployer_address=common.deployer,
             init_hash=common.init_hash,
-            state_cache_depth=state_cache_depth,
+            state_cache_depth=request.state_cache_depth,
         )
 
         # Register pool
         self._register_pool(pool, chain_id=chain_id)
 
-        if not silent:
+        if not request.silent:
             logger.info(pool.name)
             logger.info(f"• Token 0: {token0} - Reserves: {common.reserves0}")
             logger.info(f"• Token 1: {token1} - Reserves: {common.reserves1}")

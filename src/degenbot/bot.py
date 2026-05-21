@@ -12,6 +12,7 @@ from degenbot.builders.context import BuilderContext
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.pool_io import SyncPoolIO
+from degenbot.builders.request import BuildPoolRequest
 from degenbot.builders.type_resolution import (
     pool_class_for_descriptor,
 )
@@ -243,30 +244,31 @@ class Bot:
         provider = self.connections.get_provider(chain_id)
         io = SyncPoolIO(provider)
 
+        request = BuildPoolRequest(
+            silent=silent,
+            state_block=state_block,
+            state_cache_depth=state_cache_depth,
+            deployer_address=deployer_address,
+            init_hash=init_hash,
+            tick_bitmap=tick_bitmap,
+            tick_data=tick_data,
+            pool_id=pool_id,
+            state_view_address=state_view_address,
+            tokens=tokens,
+            fee=fee,
+            tick_spacing=tick_spacing,
+            hook_address=hook_address,
+        )
+
         # V4 fast path: pool_id discriminates V4 managed pools
         if pool_id is not None:
-            v4_kwargs: dict[str, Any] = {
-                "pool_id": pool_id,
-                "pool_manager_address": address,
-                "chain_id": chain_id,
-                "state_block": state_block,
-                "silent": silent,
-            }
-            if state_view_address is not None:
-                v4_kwargs["state_view_address"] = state_view_address
-            if tokens is not None:
-                v4_kwargs["tokens"] = tokens
-            if fee is not None:
-                v4_kwargs["fee"] = fee
-            if tick_spacing is not None:
-                v4_kwargs["tick_spacing"] = tick_spacing
-            if hook_address is not None:
-                v4_kwargs["hook_address"] = hook_address
-            if tick_bitmap is not None:
-                v4_kwargs["tick_bitmap"] = tick_bitmap
-            if tick_data is not None:
-                v4_kwargs["tick_data"] = tick_data
-            return self._v4_builder.build(address, io=io, **v4_kwargs)
+            return self._dispatch_build(
+                builder=self._v4_builder,
+                address=address,
+                chain_id=chain_id,
+                io=io,
+                request=request,
+            )
 
         # Check pool registry — return existing pool if already built
         existing = self.pools.get(chain_id=chain_id, pool_address=address)
@@ -276,20 +278,19 @@ class Bot:
         # Resolve the pool type and dispatch to the appropriate builder
         #
         # If type resolution fails (e.g. Curve pools lack a factory() method),
-        # fall back to the typed builder methods which handle their own discovery.
+        # fall back to the Curve builder which handles its own discovery.
         try:
             pool_type = _resolve_pool_type_impl(
                 address, chain_id=chain_id, io=io, db=self.db
             )
         except DegenbotValueError:
             # Fallback: try Curve builder as last resort
-            return self._curve_builder.build(
-                address,
+            return self._dispatch_build(
+                builder=self._curve_builder,
+                address=address,
                 chain_id=chain_id,
-                state_block=state_block,
-                silent=silent,
-                state_cache_depth=state_cache_depth,
                 io=io,
+                request=request,
             )
 
         # Look up the concrete pool class from the registry
@@ -305,30 +306,12 @@ class Bot:
         if builder is None:
             raise DegenbotValueError(message=f"No builder for pool class {pool_class.__name__}")
 
-        # Build kwargs dict — only include non-None optional params
-        # so builders that don't accept tick_bitmap/tick_data etc.
-        # don't get unexpected keyword arguments.
-        dispatch_kwargs: dict[str, Any] = {
-            "silent": silent,
-            "state_cache_depth": state_cache_depth,
-        }
-        if deployer_address is not None:
-            dispatch_kwargs["deployer_address"] = deployer_address
-        if init_hash is not None:
-            dispatch_kwargs["init_hash"] = init_hash
-        if state_block is not None:
-            dispatch_kwargs["state_block"] = state_block
-        if tick_bitmap is not None:
-            dispatch_kwargs["tick_bitmap"] = tick_bitmap
-        if tick_data is not None:
-            dispatch_kwargs["tick_data"] = tick_data
-
         return self._dispatch_build(
             builder=builder,
             address=address,
             chain_id=chain_id,
             io=io,
-            **dispatch_kwargs,
+            request=request,
         )
 
     @staticmethod
@@ -337,15 +320,11 @@ class Bot:
         builder: PoolBuilder,
         address: ChecksumAddress,
         chain_id: ChainId,
-        **kwargs: Any,
+        io: SyncPoolIO,
+        request: BuildPoolRequest,
     ) -> AbstractLiquidityPool:
-        """Dispatch to the builder, forwarding all kwargs.
-
-        Each builder's build() accepts the kwargs it recognizes and raises
-        TypeError for unrecognized ones — which is correct behavior if
-        build_pool() routes to the wrong builder.
-        """
-        return builder.build(address, chain_id=chain_id, **kwargs)
+        """Dispatch to the builder with a typed request."""
+        return builder.build(address, chain_id=chain_id, io=io, request=request)
 
     def get_token_balance(
         self,

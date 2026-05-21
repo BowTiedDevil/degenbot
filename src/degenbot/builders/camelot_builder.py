@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import eth_abi.abi
 
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.pool_io import PoolIO
+    from degenbot.builders.request import BuildPoolRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
@@ -33,34 +34,33 @@ class CamelotBuilder(V2BuilderBase):
         address: str,
         *,
         chain_id: ChainId | None = None,
-        deployer_address: str | None = None,
-        init_hash: str | None = None,
-        state_block: int | None = None,
-        silent: bool = False,
-        state_cache_depth: int = 8,  # noqa: ARG002
         io: PoolIO,
-        **kwargs: Any,  # noqa: ARG002
+        request: BuildPoolRequest,
     ) -> AbstractLiquidityPool:
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
-        state_block = state_block if state_block is not None else io.get_block_number()
+        state_block = (
+            request.state_block
+            if request.state_block is not None
+            else io.get_block_number()
+        )
 
         common = self._fetch_v2_common_data(
             pool_address,
             chain_id=chain_id,
             state_block=state_block,
-            deployer_address=deployer_address,
-            init_hash=init_hash,
+            deployer_address=request.deployer_address,
+            init_hash=request.init_hash,
             io=io,
         )
 
         # Build tokens
         token0 = self._erc20_builder.build(
-            common.token0_address, chain_id=chain_id, silent=silent, io=io
+            common.token0_address, chain_id=chain_id, silent=request.silent, io=io
         )
         token1 = self._erc20_builder.build(
-            common.token1_address, chain_id=chain_id, silent=silent, io=io
+            common.token1_address, chain_id=chain_id, silent=request.silent, io=io
         )
 
         # Camelot-specific: fetch stableSwap, fee denominator, and fee percents
@@ -118,7 +118,7 @@ class CamelotBuilder(V2BuilderBase):
         self._register_pool(pool, chain_id=chain_id)
         self._log_pool(
             pool,
-            silent=silent,
+            silent=request.silent,
             token0=token0,
             token1=token1,
             reserves0=common.reserves0,

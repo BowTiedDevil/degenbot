@@ -16,9 +16,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from typing import Any
-
     from degenbot.builders.pool_io import AsyncPoolIO, PoolIO
+    from degenbot.builders.request import BuildPoolRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
 
 
@@ -27,8 +26,9 @@ class PoolBuilder(Protocol):
 
     Builders must accept ``address`` as the first positional-or-keyword
     parameter in ``build()``, and ``pool`` as the first positional-or-keyword
-    parameter in ``update()``. Extra builder-specific parameters are
-    forwarded through ``**kwargs`` by the dispatcher.
+    parameter in ``update()``. Optional parameters are forwarded via
+    ``request: BuildPoolRequest`` — builders read the fields they recognize
+    and ignore the rest.
     """
 
     def build(
@@ -36,10 +36,8 @@ class PoolBuilder(Protocol):
         address: str,
         *,
         chain_id: int | None = None,
-        state_block: int | None = None,
-        silent: bool = False,
         io: PoolIO,
-        **kwargs: Any,
+        request: BuildPoolRequest,
     ) -> AbstractLiquidityPool: ...
 
     def update(
@@ -63,10 +61,8 @@ class AsyncPoolBuilder(Protocol):
         address: str,
         *,
         chain_id: int | None = None,
-        state_block: int | None = None,
-        silent: bool = False,
         io: AsyncPoolIO,
-        **kwargs: Any,
+        request: BuildPoolRequest,
     ) -> AbstractLiquidityPool: ...
 
     async def update(

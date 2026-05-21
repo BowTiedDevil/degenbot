@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 from typing import TYPE_CHECKING, Any, cast
 
 import eth_abi.abi
@@ -20,17 +21,17 @@ from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 
 if TYPE_CHECKING:
-    from degenbot.builders.pool_io import AsyncPoolIO
-from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_types import UniswapV3PoolExternalUpdate
-from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-
-if TYPE_CHECKING:
     from web3.types import BlockIdentifier
 
     from degenbot.builders.async_context import AsyncBuilderContext
+    from degenbot.builders.pool_io import AsyncPoolIO
+    from degenbot.builders.request import BuildPoolRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
+
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.v3_types import UniswapV3PoolExternalUpdate
+from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 
 class AsyncV3PoolBuilder:
@@ -56,15 +57,8 @@ class AsyncV3PoolBuilder:
         address: str,
         *,
         chain_id: ChainId | None = None,
-        deployer_address: str | None = None,
-        init_hash: str | None = None,
-        state_block: int | None = None,
-        tick_bitmap: dict[int, BitmapAtWord] | None = None,
-        tick_data: dict[int, LiquidityAtTick] | None = None,
-        silent: bool = False,
-        state_cache_depth: int = 8,
         io: AsyncPoolIO,
-        **kwargs: Any,  # noqa: ARG002
+        request: BuildPoolRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free V3-style pool."""
 
@@ -74,7 +68,11 @@ class AsyncV3PoolBuilder:
 
         assert io is not None
 
-        state_block = state_block if state_block is not None else await io.get_block_number()
+        state_block = (
+            request.state_block
+            if request.state_block is not None
+            else await io.get_block_number()
+        )
 
         # Try DB first
         pool_from_db = None
@@ -99,7 +97,7 @@ class AsyncV3PoolBuilder:
             fee = db_values.fee
             tick_spacing_for_pool = db_values.tick_spacing
             if db_values.deployer_address is not None:
-                deployer_address = db_values.deployer_address
+                request = dataclasses.replace(request, deployer_address=db_values.deployer_address)
         else:
             try:
                 factory_result = await io.call(
@@ -140,10 +138,10 @@ class AsyncV3PoolBuilder:
 
         # Build tokens (async)
         token0 = await self._erc20_builder.build(
-            token0_address, chain_id=chain_id, silent=silent, io=io
+            token0_address, chain_id=chain_id, silent=request.silent, io=io
         )
         token1 = await self._erc20_builder.build(
-            token1_address, chain_id=chain_id, silent=silent, io=io
+            token1_address, chain_id=chain_id, silent=request.silent, io=io
         )
 
         # Fetch slot0 + liquidity
@@ -172,11 +170,11 @@ class AsyncV3PoolBuilder:
         working_tick_data: dict[int, Any] = {}
 
         # Use provided tick data if given (snapshot or test fixtures)
-        if tick_bitmap is not None and tick_data is not None:
-            working_tick_bitmap = dict(tick_bitmap)
-            working_tick_data = dict(tick_data)
+        if request.tick_bitmap is not None and request.tick_data is not None:
+            working_tick_bitmap = dict(request.tick_bitmap)
+            working_tick_data = dict(request.tick_data)
             db_snapshot_loaded = True
-        elif tick_bitmap is not None or tick_data is not None:
+        elif request.tick_bitmap is not None or request.tick_data is not None:
             raise DegenbotValueError(message="Provide both tick_bitmap and tick_data, or neither.")
         else:
             # Try DB snapshot tables first
@@ -256,7 +254,11 @@ class AsyncV3PoolBuilder:
             if registry_deployment.deployer is not None:
                 deployer = get_checksum_address(registry_deployment.deployer)
 
-        deployer = get_checksum_address(deployer_address) if deployer_address else deployer
+        deployer = (
+            get_checksum_address(request.deployer_address)
+            if request.deployer_address
+            else deployer
+        )
 
         # Only pass tick data if we have a complete DB snapshot.
         tick_bitmap_arg, tick_data_arg = V3BuilderBase.resolve_tick_data_args(
@@ -289,7 +291,7 @@ class AsyncV3PoolBuilder:
             deployer_address=deployer,
             init_hash=init_hash,
             tick_data_fetcher=None,
-            state_cache_depth=state_cache_depth,
+            state_cache_depth=request.state_cache_depth,
         )
 
         # Register pool
@@ -299,7 +301,7 @@ class AsyncV3PoolBuilder:
             pool_address=pool.address,
         )
 
-        if not silent:
+        if not request.silent:
             logger.info(pool.name)
             logger.info(f"• Address: {pool.address}")
             logger.info(f"• Token 0: {token0}")

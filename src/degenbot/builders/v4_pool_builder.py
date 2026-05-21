@@ -24,12 +24,13 @@ from degenbot.uniswap.v4_types import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
 
     from web3.types import BlockIdentifier
 
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.pool_io import PoolIO
+    from degenbot.builders.request import BuildPoolRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
     from degenbot.uniswap.v3_types import BitmapWord, Tick
@@ -87,32 +88,24 @@ class V4PoolBuilder(V4BuilderBase):
         self,
         address: str,
         *,
-        pool_id: str | bytes | None = None,
-        pool_manager_address: str | None = None,
-        state_view_address: str | None = None,
-        tokens: Sequence[str] | None = None,
-        fee: int | None = None,
-        tick_spacing: int | None = None,
-        hook_address: str | None = None,
         chain_id: ChainId | None = None,
-        state_block: int | None = None,
-        tick_bitmap: dict[int, BitmapAtWord] | None = None,
-        tick_data: dict[int, LiquidityAtTick] | None = None,
         io: PoolIO,
-        silent: bool = False,
-        state_cache_depth: int = 8,
-        **kwargs: Any,  # noqa: ARG002
+        request: BuildPoolRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free UniswapV4Pool."""
 
-        assert pool_manager_address is not None
-        assert pool_id is not None
-        pool_manager_address = get_checksum_address(pool_manager_address)
+        assert request.pool_id is not None
+        pool_manager_address = get_checksum_address(address)
+        pool_id = request.pool_id
         pool_id_bytes = HexBytes(pool_id)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
 
-        state_block = state_block if state_block is not None else io.get_block_number()
+        state_block = (
+            request.state_block
+            if request.state_block is not None
+            else io.get_block_number()
+        )
 
         # Try DB first
         pool_from_db = None
@@ -141,40 +134,42 @@ class V4PoolBuilder(V4BuilderBase):
             fee_for_pool = db_values.fee
             state_view_address = db_values.state_view_address
         else:
-            if state_view_address is None:
+            if request.state_view_address is None:
                 raise DegenbotValueError(
                     message="A state view contract address must be provided for a pool not in the database."  # noqa: E501
                 )
-            if fee is None:
+            if request.fee is None:
                 raise DegenbotValueError(
                     message="A fee must be provided for a pool not in the database."
                 )
-            if tick_spacing is None:
+            if request.tick_spacing is None:
                 raise DegenbotValueError(
                     message="A tick spacing must be provided for a pool not in the database."
                 )
-            if tokens is None:
+            if request.tokens is None:
                 raise DegenbotValueError(
                     message="Token addresses must be provided for a pool not in the database."
                 )
 
-            state_view_address = get_checksum_address(state_view_address)
+            state_view_address = get_checksum_address(request.state_view_address)
             currency0_address, currency1_address = sorted(
-                [get_checksum_address(t) for t in tokens],
+                [get_checksum_address(t) for t in request.tokens],
                 key=lambda t: t.lower(),
             )
             hook_address = (
-                get_checksum_address(hook_address) if hook_address is not None else _ZERO_ADDRESS
+                get_checksum_address(request.hook_address)
+                if request.hook_address is not None
+                else _ZERO_ADDRESS
             )
-            fee_for_pool = fee
-            tick_spacing_for_pool = tick_spacing
+            fee_for_pool = request.fee
+            tick_spacing_for_pool = request.tick_spacing
 
         # Build tokens
         token0 = self._erc20_builder.build(
-            currency0_address, chain_id=chain_id, silent=silent, io=io
+            currency0_address, chain_id=chain_id, silent=request.silent, io=io
         )
         token1 = self._erc20_builder.build(
-            currency1_address, chain_id=chain_id, silent=silent, io=io
+            currency1_address, chain_id=chain_id, silent=request.silent, io=io
         )
 
         # Fetch slot0 + liquidity via state view contract
@@ -213,10 +208,10 @@ class V4PoolBuilder(V4BuilderBase):
         working_tick_data: dict[int, Any] = {}
 
         # Use provided tick data if given (snapshot or test fixtures)
-        if tick_bitmap is not None and tick_data is not None:
-            working_tick_bitmap = dict(tick_bitmap)
-            working_tick_data = dict(tick_data)
-        elif tick_bitmap is not None or tick_data is not None:
+        if request.tick_bitmap is not None and request.tick_data is not None:
+            working_tick_bitmap = dict(request.tick_bitmap)
+            working_tick_data = dict(request.tick_data)
+        elif request.tick_bitmap is not None or request.tick_data is not None:
             raise DegenbotValueError(message="Provide both tick_bitmap and tick_data, or neither.")
         else:
             # Try DB snapshot tables first
@@ -317,7 +312,7 @@ class V4PoolBuilder(V4BuilderBase):
             tick_data_fetcher=self._make_tick_data_fetcher(
                 pool_id_bytes, pool_manager_address, state_view_address, chain_id, io=io
             ),
-            state_cache_depth=state_cache_depth,
+            state_cache_depth=request.state_cache_depth,
         )
 
         # Register pool in managed pool registry
@@ -328,7 +323,7 @@ class V4PoolBuilder(V4BuilderBase):
             pool_id=pool.pool_id,
         )
 
-        if not silent:
+        if not request.silent:
             logger.info(pool.name)
             logger.info(f"• ID: {pool.pool_id.to_0x_hex()}")
             logger.info(f"• Token 0: {token0}")
