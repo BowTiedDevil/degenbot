@@ -72,13 +72,23 @@ def get_gho_asset(
     Get GHO token asset for a given market.
     """
 
-    gho_asset = session.scalar(
+    # AaveGhoToken is a tiny table. Query it directly with eager-loaded
+    # relationships, then filter in Python to avoid the expensive JOIN
+    # through Erc20TokenTable (572K+ rows).
+    gho_assets = session.scalars(
         select(AaveGhoToken)
-        .join(AaveGhoToken.token)
-        .where(Erc20TokenTable.chain == market.chain_id)
-    )
-    assert gho_asset is not None
-    return gho_asset
+        .options(
+            joinedload(AaveGhoToken.token),
+            joinedload(AaveGhoToken.v_token),
+        )
+    ).unique().all()
+
+    for gho in gho_assets:
+        if gho.token.chain == market.chain_id:
+            return gho
+
+    msg = f"No GHO token found for chain {market.chain_id}"
+    raise ValueError(msg)
 
 
 def get_contract(

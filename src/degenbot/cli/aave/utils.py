@@ -10,7 +10,7 @@ import operator
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from web3.types import LogReceipt
 
 from degenbot.aave.events import ERC20Event
@@ -48,29 +48,25 @@ def _get_all_scaled_token_addresses(
     Get all aToken and vToken addresses for a given chain.
     """
 
-    a_token_addresses = list(
-        session.scalars(
-            select(Erc20TokenTable.address)
-            .join(
-                AaveV3Asset,
-                AaveV3Asset.a_token_id == Erc20TokenTable.id,
-            )
-            .where(Erc20TokenTable.chain == chain_id)
-        ).all()
-    )
+    # Query from AaveV3Asset (small table, ~7 rows) instead of Erc20TokenTable
+    # (572K+ rows) to avoid expensive full table scans.
+    assets = session.scalars(
+        select(AaveV3Asset)
+        .join(AaveV3Market, AaveV3Asset.market_id == AaveV3Market.id)
+        .where(AaveV3Market.chain_id == chain_id)
+        .options(
+            joinedload(AaveV3Asset.a_token),
+            joinedload(AaveV3Asset.v_token),
+        )
+    ).unique().all()
 
-    v_token_addresses = list(
-        session.scalars(
-            select(Erc20TokenTable.address)
-            .join(
-                AaveV3Asset,
-                AaveV3Asset.v_token_id == Erc20TokenTable.id,
-            )
-            .where(Erc20TokenTable.chain == chain_id)
-        ).all()
-    )
-
-    return a_token_addresses + v_token_addresses
+    addresses: list[ChecksumAddress] = []
+    for asset in assets:
+        if asset.a_token is not None:
+            addresses.append(asset.a_token.address)
+        if asset.v_token is not None:
+            addresses.append(asset.v_token.address)
+    return addresses
 
 
 def _build_transaction_contexts(

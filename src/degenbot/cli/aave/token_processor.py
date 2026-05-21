@@ -36,7 +36,6 @@ from degenbot.cli.aave.db_users import get_or_create_user
 from degenbot.cli.aave.stkaave import get_or_init_stk_aave_balance
 from degenbot.cli.aave.transfers import _process_collateral_transfer
 from degenbot.cli.aave.types import TokenType, TransactionContext
-from degenbot.cli.aave.verification import update_debt_position_index
 from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
 from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
@@ -583,13 +582,11 @@ def _process_debt_mint_with_match(
 
         # Apply the calculated balance delta
         debt_position.balance += gho_result.balance_delta
-        update_debt_position_index(
-            tx_context=tx_context,
-            debt_asset=debt_asset,
-            debt_position=debt_position,
-            event_index=scaled_event.index,
-            event_block_number=scaled_event.event["blockNumber"],
-        )
+
+        # Update last_index from the event's index (replaces the former
+        # update_debt_position_index RPC call which fetched the same value)
+        if gho_result.new_index > (debt_position.last_index or 0):
+            debt_position.last_index = gho_result.new_index
 
         # Refresh discount if needed
         if (
@@ -713,13 +710,7 @@ def _process_debt_mint_with_match(
                 position=debt_position,
             )
 
-        update_debt_position_index(
-            tx_context=tx_context,
-            debt_asset=debt_asset,
-            debt_position=debt_position,
-            event_index=scaled_event.index,
-            event_block_number=scaled_event.event["blockNumber"],
-        )
+        # last_index is already updated by _process_scaled_token_operation
 
 
 def _is_bad_debt_liquidation(user: "AaveV3User", tx_context: TransactionContext) -> bool:
@@ -840,13 +831,11 @@ def _process_debt_burn_with_match(
 
         # Apply the calculated balance delta
         debt_position.balance += gho_result.balance_delta
-        update_debt_position_index(
-            tx_context=tx_context,
-            debt_asset=debt_asset,
-            debt_position=debt_position,
-            event_index=scaled_event.index,
-            event_block_number=scaled_event.event["blockNumber"],
-        )
+
+        # Update last_index from the event's index (replaces the former
+        # update_debt_position_index RPC call which fetched the same value)
+        if gho_result.new_index > (debt_position.last_index or 0):
+            debt_position.last_index = gho_result.new_index
 
         # Refresh discount if needed
         if (
@@ -859,12 +848,11 @@ def _process_debt_burn_with_match(
                 log_index=scaled_event.event["logIndex"],
             )
             assert debt_position.last_index is not None
-            current_index = debt_position.last_index
             _refresh_discount_rate(
                 user=user,
                 discount_token_balance=discount_token_balance,
                 scaled_debt_balance=debt_position.balance,
-                debt_index=current_index,
+                debt_index=debt_position.last_index,
                 math_libs=gho_processor.get_math_libraries(),
             )
     else:
@@ -963,10 +951,4 @@ def _process_debt_burn_with_match(
             position=debt_position,
         )
 
-        update_debt_position_index(
-            tx_context=tx_context,
-            debt_asset=debt_asset,
-            debt_position=debt_position,
-            event_index=scaled_event.index,
-            event_block_number=scaled_event.event["blockNumber"],
-        )
+        # last_index is already updated by _process_scaled_token_operation
