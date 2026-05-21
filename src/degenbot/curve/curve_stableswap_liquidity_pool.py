@@ -444,14 +444,20 @@ class CurveStableswapPool(
         return result
 
     def _get_cached_base_virtual_price(self, block_number: BlockNumber) -> int:
-        """Fetch or retrieve cached base pool virtual price."""
+        """Fetch or retrieve cached base pool virtual price.
+
+        Updates _base_virtual_price_value as a side effect.
+        """
         with contextlib.suppress(KeyError):
-            return self._cache_base_virtual_price[block_number]
+            result = self._cache_base_virtual_price[block_number]
+            self._base_virtual_price_value = result
+            return result
         if self._data_provider is None:
             msg = "base_virtual_price requires a data_provider. Provide one via Bot.build_pool()."
             raise MissingCurveData(self.address, "base_virtual_price", msg)
         result = self._data_provider.base_virtual_price(block_number)
         self._cache_base_virtual_price[block_number] = result
+        self._base_virtual_price_value = result
         return result
 
     def _get_cached_virtual_price(self, block_number: BlockNumber) -> int:
