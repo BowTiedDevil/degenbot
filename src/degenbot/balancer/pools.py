@@ -102,6 +102,12 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         )
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"{self.__class__.__name__}(address={self.address}, tokens={len(self._tokens)})"
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.__class__.__name__} WeightedPool @ {self.address}"
+
     @property
     def balances(self) -> tuple[int, ...]:
         return self.state.balances
