@@ -222,19 +222,25 @@ Existing `tests/curve/test_pool_strategies.py` and `tests/curve/test_curve_io_fr
 
 ## Status
 
-[~] Slice 1: Add variant fields to `DyCalculationInputs`, keep closures temporarily
-    - **Done**: `d_variant`, `y_variant`, `yd_variant` fields added to `DyCalculationInputs`
-    - **Remaining**: `a_precision` field not yet added to `DyCalculationInputs` (pool passes it as `A_PRECISION` class constant but it's not on the dataclass)
-    - Note: `get_y` and `newton_y` callable fields still present (by design — kept for now)
-[ ] Slice 2: Migrate `standard.py` calculator to call `stableswap_get_y()` directly
-[ ] Slice 3: Migrate remaining calculators
-    - `standard.py`: 6 calls to `inputs.get_y()`
-    - `metapool.py`: 6 calls to `inputs.get_y()`
-    - `crypto.py`: 1 call to `inputs.newton_y()`
-    - `live_admin.py`: 4 calls to `inputs.get_y()`
-[ ] Slice 4: Remove closure fields from `DyCalculationInputs`
-    - Remove `get_y` and `newton_y` callable fields from `DyCalculationInputs`
-    - Remove closure construction from `_resolve_calculation_inputs_via_io` (lines 644–651)
-    - Remove `newton_y` closure (line 648–649)
-    - Update tests that construct `DyCalculationInputs` with closure fields
-[ ] Slice 5: Validate and clean up
+[x] Slice 1: Add variant fields to `DyCalculationInputs`, keep closures temporarily
+    - Added `d_variant`, `y_variant`, `yd_variant`, `a_precision` fields to `DyCalculationInputs`
+    - Pool passes these in `_resolve_calculation_inputs_via_io`
+    - Amp resolution now y_variant-aware (VARIANT_0 divides by A_PRECISION, others keep raw)
+[x] Slice 2: Migrate `standard.py` calculator to call `stableswap_get_y()` directly
+[x] Slice 3: Migrate remaining calculators
+    - `standard.py`: 6 calls — all call `stableswap_get_y()` + `EVMRevertError` wrapping
+    - `metapool.py`: 6 calls — all call `stableswap_get_y()` + `EVMRevertError` wrapping
+    - `crypto.py`: 1 call — calls `stableswap_newton_y()` + `EVMRevertError` wrapping
+    - `live_admin.py`: 4 calls — all call `stableswap_get_y()` + `EVMRevertError` wrapping
+[x] Slice 4: Remove closure fields from `DyCalculationInputs`
+    - Removed `get_y` and `newton_y` callable fields
+    - Removed `Callable`/`Sequence` imports from `types.py` (no longer needed)
+    - Removed closure construction from `_resolve_calculation_inputs_via_io` (10 lines)
+    - Removed `get_y`/`newton_y` from `DyCalculationInputs` constructor call
+    - Updated `DyCalculator` protocol docstring: "closures" → "variant enums"
+[x] Slice 5: Validate and clean up
+    - `just test-python`: 3022 passed
+    - `just test-rust`: all passed
+    - `ruff check`: no new errors (only pre-existing ones)
+    - `DyCalculationInputs` is now a pure value object (all fields are ints, tuples, enums, or None — zero callables)
+    - Updated `curve/CONTEXT.md`: DyCalculationInputs description, Relationships section, and example dialogue

@@ -15,7 +15,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from degenbot.curve.types import CurveStableswapPoolState
 
+from degenbot.calculations.stableswap import stableswap_get_y
 from degenbot.curve.types import DyCalculationInputs, MetapoolRateStyle, MetapoolUnderlyingStyle
+from degenbot.exceptions.pool import EVMRevertError
 
 # ── Metapool rate-style calculators (for get_dy metapool fast-path) ──
 
@@ -46,7 +48,14 @@ class MetapoolPrecisionVpDyCalculator:
             for rate, balance in zip(rates, pool_balances, strict=True)
         )
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)
+        try:
+            y = stableswap_get_y(
+                i, j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                d_variant=inputs.d_variant,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = xp[j] - y - 1
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return (dy - fee) * inputs.PRECISION // rates[j]
@@ -79,7 +88,14 @@ class MetapoolRedemptionVpDyCalculator:
             for rate, balance in zip(rates, pool_balances, strict=True)
         )
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)
+        try:
+            y = stableswap_get_y(
+                i, j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                d_variant=inputs.d_variant,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = xp[j] - y - 1
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return (dy - fee) * inputs.PRECISION // rates[j]
@@ -111,7 +127,14 @@ class MetapoolStandardDyCalculator:
             for rate, balance in zip(rates, pool_balances, strict=True)
         )
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)
+        try:
+            y = stableswap_get_y(
+                i, j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                d_variant=inputs.d_variant,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = xp[j] - y - 1
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return (dy - fee) * inputs.PRECISION // rates[j]
@@ -188,7 +211,14 @@ class MetapoolUnderlyingRedemptionDyCalculator:
                 override_state=(override_state.base if override_state is not None else None),
             )
 
-        y = inputs.get_y(meta_i, meta_j, x, xp)
+        try:
+            y = stableswap_get_y(
+                meta_i, meta_j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                d_variant=inputs.d_variant,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = xp[meta_j] - y - 1
         dy -= inputs.fee * dy // inputs.FEE_DENOMINATOR
         if j == redemption_coin:
@@ -270,7 +300,14 @@ class MetapoolUnderlyingPrecisionVpDyCalculator:
                 override_state=(override_state.base if override_state is not None else None),
             )
 
-        y = inputs.get_y(meta_i, meta_j, x, xp)
+        try:
+            y = stableswap_get_y(
+                meta_i, meta_j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                d_variant=inputs.d_variant,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = xp[meta_j] - y - 1
         dy -= inputs.fee * dy // inputs.FEE_DENOMINATOR
 
@@ -353,7 +390,14 @@ class MetapoolUnderlyingStandardDyCalculator:
                 override_state=(override_state.base if override_state is not None else None),
             )
 
-        y = inputs.get_y(meta_i, meta_j, x, xp)
+        try:
+            y = stableswap_get_y(
+                meta_i, meta_j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                d_variant=inputs.d_variant,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = xp[meta_j] - y - 1
         dy -= inputs.fee * dy // inputs.FEE_DENOMINATOR
 

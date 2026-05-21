@@ -5,8 +5,6 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
-
     from eth_typing import ChecksumAddress, HexAddress
 
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
@@ -246,9 +244,11 @@ class DyCalculationInputs:
     scaled_redemption_price: int | None = None
     base_pool: CurveStableswapPool | None = None
 
-    # ── Callable: invariant solver closures ──
-    get_y: Callable[[int, int, int, Sequence[int]], int] = dataclasses.field(default=None)  # ty:ignore[invalid-assignment]
-    newton_y: Callable[[int, int, Sequence[int], int, int], int] = dataclasses.field(default=None)  # ty:ignore[invalid-assignment]
+    # ── Pre-resolved variant enums for pure invariant solving ──
+    d_variant: DVariant = DVariant.STANDARD
+    y_variant: YVariant = YVariant.STANDARD
+    yd_variant: YDVariant = YDVariant.STANDARD
+    a_precision: int = 100
 
 
 class DyCalculator(Protocol):
@@ -259,7 +259,7 @@ class DyCalculator(Protocol):
     via PoolStrategies.dy_calculator.
 
     Calculators receive a DyCalculationInputs object carrying all
-    pre-resolved data (balances, rates, xp, closures for invariant
+    pre-resolved data (balances, rates, xp, variant enums for invariant
     solving). All I/O and cache lookups happen before the calculator
     is called — the calculator is pure math.
     """

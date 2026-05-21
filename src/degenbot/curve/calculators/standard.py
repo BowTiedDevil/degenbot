@@ -17,7 +17,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from degenbot.curve.types import CurveStableswapPoolState
 
+from degenbot.calculations.stableswap import stableswap_get_y
 from degenbot.curve.types import DyCalculationInputs, SwapStyle
+from degenbot.exceptions.pool import EVMRevertError
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,7 +43,14 @@ class StandardDyCalculator:
         rates = inputs.resolved_rates
         xp = inputs.xp
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)
+        try:
+            y = stableswap_get_y(
+                i, j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                d_variant=inputs.d_variant,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = xp[j] - y - 1
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return (dy - fee) * inputs.PRECISION // rates[j]
@@ -68,7 +77,14 @@ class RateAdjustedDyCalculator:
         rates = inputs.resolved_rates
         xp = inputs.xp
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)
+        try:
+            y = stableswap_get_y(
+                i, j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                d_variant=inputs.d_variant,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = (xp[j] - y - 1) * inputs.PRECISION // rates[j]
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return dy - fee
@@ -95,7 +111,14 @@ class RateAdjustedNoOneDyCalculator:
         rates = inputs.resolved_rates
         xp = inputs.xp
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)
+        try:
+            y = stableswap_get_y(
+                i, j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                d_variant=inputs.d_variant,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = (xp[j] - y) * inputs.PRECISION // rates[j]
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return dy - fee
@@ -121,7 +144,14 @@ class RawBalanceDyCalculator:
     ) -> int:
         xp = inputs.balances
         x = xp[i] + dx
-        y = inputs.get_y(i, j, x, xp)
+        try:
+            y = stableswap_get_y(
+                i, j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                d_variant=inputs.d_variant,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = xp[j] - y - 1
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return dy - fee
@@ -148,7 +178,14 @@ class NoOneFeeRateDyCalculator:
         rates = inputs.resolved_rates
         xp = inputs.xp
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)
+        try:
+            y = stableswap_get_y(
+                i, j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                d_variant=inputs.d_variant,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = xp[j] - y
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return (dy - fee) * inputs.PRECISION // rates[j]
@@ -175,6 +212,13 @@ class CytokenDyCalculator:
         rates = inputs.resolved_rates
         xp = inputs.xp
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)
+        try:
+            y = stableswap_get_y(
+                i, j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                d_variant=inputs.d_variant,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = xp[j] - y - 1
         return (dy - (inputs.fee * dy // inputs.FEE_DENOMINATOR)) * inputs.PRECISION // rates[j]

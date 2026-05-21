@@ -111,7 +111,7 @@ class CurveDataProvider(Protocol):
 - Keep old I/O paths as fallback for backwards compatibility
 
 ### Phase 2: Bot Integration ✅
-- The Curve Pool Builder creates closures and injects them
+- The Curve Pool Builder creates a data provider and injects it
 - Remove provider from pool constructor
 - Builder extraction complete (`CurvePoolBuilder`)
 
@@ -126,7 +126,7 @@ class CurveDataProvider(Protocol):
 - Curve fetcher callbacks collapsed into single `CurveDataProvider` seam (Plan 040)
 - V2 variant builders extracted from `V2PoolBuilder` into per-variant builders (Plan 043); V3/V4 builder base classes with shared pure-logic helpers and frozen dataclasses (Plan 060)
 - `ProviderBackend` protocol replaces `EthereumProvider` + `_SyncProviderBackend` mirror (Plan 042); `EthereumProvider` backward-compatibility alias removed (Plan 061); subscription stubs consolidated into `SyncSubscriptionSupport`/`AsyncSubscriptionSupport` mixins (Plan 058)
-- DyCalculator `pool` parameter replaced with `DyCalculationInputs` frozen dataclass; 77 SLF001 errors → 0; calculators are pure consumers of pre-resolved data (Plan 045)
+- DyCalculator `pool` parameter replaced with `DyCalculationInputs` frozen dataclass; 77 SLF001 errors → 0; calculators are pure consumers of pre-resolved data (Plan 045). `DyCalculationInputs` is a pure value object — all fields are ints, tuples, enums, or None (zero callables); calculators call `stableswap_get_y()` / `stableswap_newton_y()` directly with `EVMRevertError` wrapping (Plan 069).
 - Old optimizer hierarchy deleted: `ArbitrageOptimizer` ABC, `OptimizerResult`/`OptimizerType`, and 7 concrete classes removed (zero production callers); pure Möbius math extracted to `_mobius_math.py` (Plan 053)
 - Curve on-chain caches consolidated into `CurveOnChainCache` (Plan 054), then absorbed back into `CurveStableswapPool` as `_cache_*` fields with `_get_cached_*` accessors (Plan 068)
 - Deprecated `*Fetcher` protocol classes deleted from `curve/types.py`; superseded by `CurveDataProvider` (Plan 055)

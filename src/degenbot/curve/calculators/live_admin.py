@@ -14,7 +14,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from degenbot.curve.types import CurveStableswapPoolState
 
+from degenbot.calculations.stableswap import stableswap_get_y
 from degenbot.curve.types import DyCalculationInputs, SwapStyle
+from degenbot.exceptions.pool import EVMRevertError
 
 
 def _dynamic_fee(xpi: int, xpj: int, _fee: int, _feemul: int, fee_denominator: int) -> int:
@@ -45,7 +47,14 @@ class LiveAdminDyCalculator:
         rates = inputs.rate_multipliers
         xp = inputs.xp
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)
+        try:
+            y = stableswap_get_y(
+                i, j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                d_variant=inputs.d_variant,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = xp[j] - y - 1
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return (dy - fee) * inputs.PRECISION // rates[j]
@@ -69,7 +78,14 @@ class LiveAdminDynamicDyCalculator:
         assert inputs.effective_balances is not None
         xp_ = list(inputs.effective_balances)
         x = xp_[i] + dx
-        y = inputs.get_y(i, j, x, xp_)
+        try:
+            y = stableswap_get_y(
+                i, j, x=x, xp=xp_, amp=inputs.amp, n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                d_variant=inputs.d_variant,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = xp_[j] - y
         fee_ = (
             _dynamic_fee(
@@ -108,7 +124,14 @@ class LiveAdminDynamicPrecisionDyCalculator:
         ]
 
         x = xp_[i] + dx * inputs.precision_multipliers[i]
-        y = inputs.get_y(i, j, x, xp_)
+        try:
+            y = stableswap_get_y(
+                i, j, x=x, xp=xp_, amp=inputs.amp, n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                d_variant=inputs.d_variant,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = (xp_[j] - y) // inputs.precision_multipliers[j]
 
         fee_ = (
@@ -143,7 +166,14 @@ class LiveAdminOracleDyCalculator:
         rates = inputs.resolved_rates
         xp = inputs.xp
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        y = inputs.get_y(i, j, x, xp)
+        try:
+            y = stableswap_get_y(
+                i, j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                d_variant=inputs.d_variant,
+            )
+        except ValueError as e:
+            raise EVMRevertError(error=str(e)) from e
         dy = xp[j] - y - 1
         fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
         return (dy - fee) * inputs.PRECISION // rates[j]
