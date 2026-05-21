@@ -32,3 +32,10 @@ Index(
     Erc20TokenTable.chain,
     unique=True,
 )
+
+# Supports queries filtering by chain without also filtering on address
+Index(
+    "ix_erc20_tokens_chain",
+    Erc20TokenTable.chain,
+    unique=False,
+)
