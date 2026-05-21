@@ -247,7 +247,7 @@ pool.external_update(update)  # Pure logic — no I/O
 | SushiSwap | V2, V3 | Ethereum, Base |
 | Curve | V1 | Ethereum |
 | Solidly | V2 | Ethereum, Base | *(utility functions only, no pool class)*
-| Balancer | V2 | Ethereum | Weighted pools, PowVersion detection |
+| Balancer | V2 | Ethereum | Weighted & stable pools, PowVersion detection, StableMath V1/V2 invariant |
 | Camelot | V2 | Arbitrum |
 | SwapBased | V2 | Base |
 
@@ -753,6 +753,73 @@ from degenbot.balancer.deployments import (
 # Filter out pools with disabled swaps
 # if pool_address not in BROKEN_BALANCER_V2_POOLS:
 #     pool = bot.build_pool(pool_address)
+```
+
+### Balancer V2 Stable Pools
+
+Balancer V2 stable pools (MetaStablePool and ComposableStablePool) use the StableSwap invariant with rate caching. The math libraries are ported from deployed contracts with exact integer-level matching against on-chain results.
+
+Key design points:
+- **MetaStablePool**: 2-token stable pool with rate providers. No BPT token. Uses V2 invariant (`round_up=True` for swaps). Near-static rates produce exact 0-wei matching without a rate provider.
+- **ComposableStablePool**: Multi-token stable pool including its own BPT token. Uses V1 invariant (always-roundDown). Time-varying rates (e.g., bb-a-* yield tokens) require a `BalancerRateProvider` for exact matching; without one, `StaleRateResult` is raised.
+- **Cache-aware rate resolution**: The `CacheAwareRateProvider` replicates the on-chain `_cacheTokenRateIfNecessary` flow exactly — reads `getTokenRateCache()`, checks cache expiry against block timestamp, and only calls `getRate()` when the cache has expired. This produces exact 0-wei matching against on-chain `querySwap` results.
+- **Invariant versions**: Deployed contracts use two different StableMath implementations. V1 (`INVARIANT_V1`) always rounds down with D_P accumulation — matches the monorepo `_calculate_invariant`. V2 (`INVARIANT_V2`) has a `roundUp` parameter with P_D accumulation — matches `_calculate_invariant_deployed`. Using the wrong version gives a systematic 1-wei error.
+- **BPT handling**: ComposableStablePools include their own BPT token in the token list. The `bpt_idx` parameter identifies the BPT position so it can be dropped from invariant and swap calculations. `bpt_idx=None` (MetaStable) vs `bpt_idx=int` (Composable).
+
+```python
+from degenbot.balancer.stable_pools import BalancerV2StablePool, INVARIANT_V1, INVARIANT_V2
+from degenbot.exceptions.pool import StaleRateResult
+
+# MetaStablePool (V2 invariant, no BPT, no rate provider needed)
+# pool = BalancerV2StablePool(
+#     address="0x32296969Ef14EB0c6d29669C550D4a0449130230",
+#     pool_id=bytes.fromhex("..." ),
+#     vault="0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+#     tokens=[wsteth, weth],
+#     balances=[100 * 10**18, 200 * 10**18],
+#     fee=Fraction(4, 10000),  # 0.04% swap fee
+#     amp=50000,
+#     scaling_factors=[1100000000000000000, 1000000000000000000],
+#     invariant_version=INVARIANT_V2,
+#     chain_id=1,
+# )
+#
+# # Exact 0-wei matching — no rate provider needed
+# amount_out = pool.calculate_tokens_out_from_tokens_in(
+#     token_in=wsteth,
+#     token_out=weth,
+#     token_in_quantity=10**18,
+# )
+
+# ComposableStablePool (V1 invariant, has BPT, needs rate provider for exact matching)
+# pool = BalancerV2StablePool(
+#     address="0x53BC3cBa3832ebeCBFa002c12023F8ab1AA3a3a0",
+#     pool_id=bytes.fromhex("..."),
+#     vault="0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+#     tokens=[tusd, bpt, usdc],
+#     balances=[100 * 10**18, 10000 * 10**18, 200 * 10**18],
+#     fee=Fraction(3, 10000),  # 0.03% swap fee
+#     amp=600000,
+#     scaling_factors=[1000000000000000000, 1000000000000000000, 1003865692207942068],
+#     bpt_idx=1,  # BPT is at index 1
+#     rate_provider=my_rate_provider,  # Optional: inject for exact matching
+#     invariant_version=INVARIANT_V1,
+#     chain_id=1,
+# )
+#
+# # Without rate provider: StaleRateResult raised for ComposableStablePools
+# try:
+#     amount_out = pool.calculate_tokens_out_from_tokens_in(
+#         token_in=tusd, token_out=usdc, token_in_quantity=10**18,
+#     )
+# except StaleRateResult as e:
+#     print(f"Approximate output: {e.amount_out}")  # Access approximate values
+#
+# # With rate provider and block_identifier: exact 0-wei matching
+# amount_out = pool.calculate_tokens_out_from_tokens_in(
+#     token_in=tusd, token_out=usdc, token_in_quantity=10**18,
+#     block_identifier=16754547,
+# )
 ```
 
 ### Uniswap Arbitrage
@@ -1417,7 +1484,7 @@ Each module has a `CONTEXT.md` defining domain terminology:
 - [Pool Types & Trackers](src/degenbot/types/CONTEXT.md) — Pool, Pool State, Reserves, Tick, Fee representations
 - [Uniswap](src/degenbot/uniswap/CONTEXT.md) — V2/V3/V4 pools, Pool Tracker, Managed Pool, Pool ID
 - [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — Metapools, lending pools, CurveDataProvider seam, DyCalculationInputs, DyCalculator, A coefficient
-- [Balancer V2](src/degenbot/balancer/CONTEXT.md) — Weighted pools, FixedPoint math, PowVersion detection, scaling helpers
+- [Balancer V2](src/degenbot/balancer/CONTEXT.md) — Weighted pools, FixedPoint math, PowVersion detection, scaling helpers, MetaStablePool, ComposableStablePool with BPT index, StableMath V1/V2 invariant versions, CacheAwareRateProvider, BalancerRateProvider protocol
 - [Aave](src/degenbot/aave/CONTEXT.md) — Market, Asset, Reserve, Enrichment, Liquidation
 - [Arbitrage](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Solver, Optimizer, Hop State
 - [Registries](src/degenbot/registry/CONTEXT.md) — Pool, Token, Managed Pool registries

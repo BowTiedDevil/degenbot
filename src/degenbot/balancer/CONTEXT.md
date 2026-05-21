@@ -139,9 +139,9 @@ balancer/
 
 ### Stable Pool Chain
 
-- **BalancerV2StablePool** delegates all math to **StableMath** functions via `_calc_out_given_in`, `_calc_in_given_out`, and `_calculate_invariant_deployed`
+- **BalancerV2StablePool** delegates all math to **StableMath** functions via `_calc_out_given_in`, `_calc_in_given_out`, and either `_calculate_invariant` (V1) or `_calculate_invariant_deployed` (V2), selected by `invariant_version`
 - **BalancerV2StablePool** handles BPT dropping internally — `bpt_idx=None` for MetaStablePool, `bpt_idx=int` for ComposableStablePool
-- **StableMath** (`stable_math.py`) provides both monorepo (`_calculate_invariant`, always roundDown) and deployed-contract (`_calculate_invariant_deployed`, with `round_up` param) versions
+- **StableMath** (`stable_math.py`) provides both monorepo (`_calculate_invariant`, always roundDown, D_P accumulation — used for V1) and deployed-contract (`_calculate_invariant_deployed`, with `round_up` param, P_D accumulation — used for V2) versions. The `_calc_out_given_in` function includes `.sub(1)` matching the deployed contract; `_calc_in_given_out` includes `.add(1)`
 - Scaling factor computation is the builder's responsibility: fresh rates from rate providers for ComposableStablePools, cached rates for MetaStablePools
 - Both pool classes share **BalancerV2PoolState** from `types.py`
 
@@ -165,8 +165,8 @@ Both use StableMath but differ in specialization and rate caching behavior. Comp
 
 ### Monorepo vs Deployed Invariant
 
-The monorepo's `_calculateInvariant` always rounds the last iteration down. The deployed contract uses a `round_up` parameter. For swaps, the deployed contract passes `roundUp=True`. Using `_calculate_invariant_deployed(round_up=True)` produces exact 0-wei matching for MetaStablePools and near-exact matching (<3000 wei) for ComposableStablePools. The monorepo version produces ~0.01% error for some pools due to the different rounding.
+The monorepo's `_calculateInvariant` always rounds the last iteration down. The deployed contract uses a `round_up` parameter. For MetaStablePools, the deployed contract calls `_calculateInvariant(amp, balances, true)` (V2 with roundUp), producing exact 0-wei matching via `_calculate_invariant_deployed(round_up=True)`. For most ComposableStablePools, the deployed contract calls `_calculateInvariant(amp, balances)` (V1, no roundUp param, always-roundDown), producing exact 0-wei matching via the monorepo `_calculate_invariant`. Using the wrong version gives a systematic ±1 wei error. The `invariant_version` parameter on `BalancerV2StablePool` controls which version is used.
 
-### ComposableStablePool Rate Tolerance
+### ComposableStablePool Rate Resolution
 
-ComposableStablePool on-chain tests use `_assert_close` with up to 3000 wei tolerance rather than exact integer matching. The residual comes from a timing difference: we read fresh rates from rate providers in a separate `eth_call`, while the on-chain `_beforeSwapJoinExit` refreshes the cache in the same call as the swap. The rates may differ by a few wei due to block-level state changes between the two calls.
+ComposableStablePool on-chain tests achieve **exact 0-wei matching** when constructed with a `CacheAwareRateProvider`. The former tolerance of ≤3000 wei was eliminated by (a) replicating `_cacheTokenRateIfNecessary` exactly (read `getTokenRateCache()`, check expiry, call `getRate()` only if expired), and (b) using the correct invariant version (`INVARIANT_V1` for most deployed ComposableStablePools, `INVARIANT_V2` for MetaStablePools). Without a rate provider, `StaleRateResult` is raised — the computed amounts are approximate and should not be used for on-chain operations.
