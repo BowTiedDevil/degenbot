@@ -6,6 +6,8 @@ defined once and used by both sync and async paths.
 
 Pure functions (no I/O):
 - pool_class_for_descriptor()
+- _build_descriptor_from_db_result()
+- _descriptor_from_probing_result()
 
 Sync functions (accept PoolIO):
 - fetch_factory_from_chain()
@@ -84,6 +86,66 @@ def pool_class_for_descriptor(
             raise DegenbotValueError(message=msg)
 
 
+def _build_descriptor_from_db_result(
+    pool_from_db: LiquidityPoolTable,
+) -> PoolTypeDescriptor | None:
+    """Map a DB row to a PoolTypeDescriptor.
+
+    Returns None if the kind can't be resolved from the registry.
+    Read-only dependency on pool_type_registry.
+    """
+    kind = pool_from_db.kind
+    descriptor = pool_type_registry.get_descriptor_by_kind(kind)
+    if descriptor is not None:
+        return PoolTypeDescriptor(
+            family=descriptor.family,
+            variant=descriptor.variant,
+            kind=descriptor.kind,
+            factory=get_checksum_address(pool_from_db.exchange.factory),
+        )
+    return None
+
+
+def _descriptor_from_probing_result(
+    *,
+    succeeded_method: str | None,
+    chain_id: ChainId,
+    factory: ChecksumAddress,
+) -> PoolTypeDescriptor:
+    """Map 'which method succeeded' to a PoolTypeDescriptor.
+
+    If the factory is registered in pool_type_registry, uses the registry
+    descriptor. Otherwise derives a default descriptor from the method name.
+    If succeeded_method is None (no method succeeded), returns STABLESWAP.
+    """
+    if succeeded_method is None:
+        return PoolTypeDescriptor(
+            family=PoolFamily.STABLESWAP,
+            variant=None,
+            kind=derive_kind(PoolFamily.STABLESWAP, None),
+            factory=factory,
+        )
+
+    registry_descriptor = pool_type_registry.get_descriptor(chain_id, factory)
+    if registry_descriptor is not None:
+        return registry_descriptor
+
+    match succeeded_method:
+        case "slot0":
+            family = PoolFamily.CONCENTRATED_LIQUIDITY
+        case "getReserves":
+            family = PoolFamily.CONSTANT_PRODUCT
+        case _:
+            family = PoolFamily.STABLESWAP
+
+    return PoolTypeDescriptor(
+        family=family,
+        variant=None,
+        kind=derive_kind(family, None),
+        factory=factory,
+    )
+
+
 def fetch_factory_from_chain(
     address: ChecksumAddress,
     *,
@@ -130,8 +192,8 @@ def resolve_pool_type_by_probing(
     """Determine pool type by probing the contract on-chain.
 
     Tries V3 methods first (slot0), then V2 methods (getReserves),
-    then Curve methods (coins). This is the fallback when neither
-    the DB nor the registry identifies the factory.
+    then falls back to STABLESWAP. Descriptor construction is
+    delegated to _descriptor_from_probing_result.
     """
     # Try V3: slot0() exists → CONCENTRATED_LIQUIDITY
     try:
@@ -142,14 +204,8 @@ def resolve_pool_type_by_probing(
     except Web3Exception:
         pass
     else:
-        registry_descriptor = pool_type_registry.get_descriptor(chain_id, factory)
-        if registry_descriptor is not None:
-            return registry_descriptor
-        return PoolTypeDescriptor(
-            family=PoolFamily.CONCENTRATED_LIQUIDITY,
-            variant=None,
-            kind=derive_kind(PoolFamily.CONCENTRATED_LIQUIDITY, None),
-            factory=factory,
+        return _descriptor_from_probing_result(
+            succeeded_method="slot0", chain_id=chain_id, factory=factory,
         )
 
     # Try V2: getReserves() exists → CONSTANT_PRODUCT
@@ -161,22 +217,13 @@ def resolve_pool_type_by_probing(
     except Web3Exception:
         pass
     else:
-        registry_descriptor = pool_type_registry.get_descriptor(chain_id, factory)
-        if registry_descriptor is not None:
-            return registry_descriptor
-        return PoolTypeDescriptor(
-            family=PoolFamily.CONSTANT_PRODUCT,
-            variant=None,
-            kind=derive_kind(PoolFamily.CONSTANT_PRODUCT, None),
-            factory=factory,
+        return _descriptor_from_probing_result(
+            succeeded_method="getReserves", chain_id=chain_id, factory=factory,
         )
 
     # Fall through to Curve — assume STABLESWAP if nothing else matched
-    return PoolTypeDescriptor(
-        family=PoolFamily.STABLESWAP,
-        variant=None,
-        kind=derive_kind(PoolFamily.STABLESWAP, None),
-        factory=factory,
+    return _descriptor_from_probing_result(
+        succeeded_method=None, chain_id=chain_id, factory=factory,
     )
 
 
@@ -197,14 +244,8 @@ async def resolve_pool_type_by_probing_async(
     except Web3Exception:
         pass
     else:
-        registry_descriptor = pool_type_registry.get_descriptor(chain_id, factory)
-        if registry_descriptor is not None:
-            return registry_descriptor
-        return PoolTypeDescriptor(
-            family=PoolFamily.CONCENTRATED_LIQUIDITY,
-            variant=None,
-            kind=derive_kind(PoolFamily.CONCENTRATED_LIQUIDITY, None),
-            factory=factory,
+        return _descriptor_from_probing_result(
+            succeeded_method="slot0", chain_id=chain_id, factory=factory,
         )
 
     # Try V2: getReserves() exists → CONSTANT_PRODUCT
@@ -216,22 +257,13 @@ async def resolve_pool_type_by_probing_async(
     except Web3Exception:
         pass
     else:
-        registry_descriptor = pool_type_registry.get_descriptor(chain_id, factory)
-        if registry_descriptor is not None:
-            return registry_descriptor
-        return PoolTypeDescriptor(
-            family=PoolFamily.CONSTANT_PRODUCT,
-            variant=None,
-            kind=derive_kind(PoolFamily.CONSTANT_PRODUCT, None),
-            factory=factory,
+        return _descriptor_from_probing_result(
+            succeeded_method="getReserves", chain_id=chain_id, factory=factory,
         )
 
     # Fall through to Curve — assume STABLESWAP
-    return PoolTypeDescriptor(
-        family=PoolFamily.STABLESWAP,
-        variant=None,
-        kind=derive_kind(PoolFamily.STABLESWAP, None),
-        factory=factory,
+    return _descriptor_from_probing_result(
+        succeeded_method=None, chain_id=chain_id, factory=factory,
     )
 
 
@@ -260,15 +292,9 @@ def resolve_pool_type(
             )
         )
         if pool_from_db is not None:
-            kind = pool_from_db.kind
-            descriptor = pool_type_registry.get_descriptor_by_kind(kind)
+            descriptor = _build_descriptor_from_db_result(pool_from_db)
             if descriptor is not None:
-                return PoolTypeDescriptor(
-                    family=descriptor.family,
-                    variant=descriptor.variant,
-                    kind=descriptor.kind,
-                    factory=get_checksum_address(pool_from_db.exchange.factory),
-                )
+                return descriptor
 
     # Step 2: Factory address lookup via PoolTypeRegistry
     factory = fetch_factory_from_chain(address, chain_id=chain_id, io=io)
@@ -309,15 +335,9 @@ async def resolve_pool_type_async(
             )
         )
         if pool_from_db is not None:
-            kind = pool_from_db.kind
-            descriptor = pool_type_registry.get_descriptor_by_kind(kind)
+            descriptor = _build_descriptor_from_db_result(pool_from_db)
             if descriptor is not None:
-                return PoolTypeDescriptor(
-                    family=descriptor.family,
-                    variant=descriptor.variant,
-                    kind=descriptor.kind,
-                    factory=get_checksum_address(pool_from_db.exchange.factory),
-                )
+                return descriptor
 
     # Step 2: Factory address lookup via PoolTypeRegistry
     factory = await fetch_factory_from_chain_async(address, chain_id=chain_id, io=io)

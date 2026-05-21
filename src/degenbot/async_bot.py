@@ -7,10 +7,7 @@ Returns the same I/O-free domain objects as Bot.
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING, Any, cast
-
-import eth_abi.abi
-from web3 import Web3
+from typing import TYPE_CHECKING, Any
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.builders.async_context import AsyncBuilderContext
@@ -333,32 +330,16 @@ class AsyncBot:
     ) -> int:
         """Retrieve the ERC-20 balance for the given address."""
         token_address = get_checksum_address(token_address)
-        holder_address = get_checksum_address(holder_address)
         chain_id = chain_id or self.connections.default_chain_id
-        provider = self.connections.get_provider(chain_id)
 
         token = self.tokens.get(token_address=token_address, chain_id=chain_id)
         if token is None:
             token = await self.build_erc20token(token_address, chain_id=chain_id)
 
-        block_number = await self._resolve_block_number(provider, block_identifier)
-
-        # Check cache
-        if (balance := token.get_cached_balance(holder_address, block_number)) is not None:
-            return balance
-
-        (balance,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=await provider.call(
-                to=token.address,
-                data=Web3.keccak(text="balanceOf(address)")[:4]
-                + eth_abi.abi.encode(types=["address"], args=[holder_address]),
-                block=block_number,
-            ),
+        io = AsyncPoolIO(self.connections.get_provider(chain_id))
+        return await self._erc20_builder.get_token_balance(
+            token, holder_address, block_identifier=block_identifier, io=io
         )
-
-        token.set_cached_balance(holder_address, block_number, cast("int", balance))
-        return cast("int", balance)
 
     async def get_token_approval(
         self,
@@ -371,33 +352,16 @@ class AsyncBot:
     ) -> int:
         """Retrieve the amount that can be spent by `spender` on behalf of `owner`."""
         token_address = get_checksum_address(token_address)
-        owner = get_checksum_address(owner)
-        spender = get_checksum_address(spender)
         chain_id = chain_id or self.connections.default_chain_id
-        provider = self.connections.get_provider(chain_id)
 
         token = self.tokens.get(token_address=token_address, chain_id=chain_id)
         if token is None:
             token = await self.build_erc20token(token_address, chain_id=chain_id)
 
-        block_number = await self._resolve_block_number(provider, block_identifier)
-
-        # Check cache
-        if (approval := token.get_cached_approval(block_number, owner, spender)) is not None:
-            return approval
-
-        (approval,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=await provider.call(
-                to=token.address,
-                data=Web3.keccak(text="allowance(address,address)")[:4]
-                + eth_abi.abi.encode(types=["address", "address"], args=[owner, spender]),
-                block=block_number,
-            ),
+        io = AsyncPoolIO(self.connections.get_provider(chain_id))
+        return await self._erc20_builder.get_token_approval(
+            token, owner, spender, block_identifier=block_identifier, io=io
         )
-
-        token.set_cached_approval(block_number, owner, spender, cast("int", approval))
-        return cast("int", approval)
 
     async def get_token_total_supply(
         self,
@@ -409,29 +373,15 @@ class AsyncBot:
         """Retrieve the total supply for this token."""
         token_address = get_checksum_address(token_address)
         chain_id = chain_id or self.connections.default_chain_id
-        provider = self.connections.get_provider(chain_id)
 
         token = self.tokens.get(token_address=token_address, chain_id=chain_id)
         if token is None:
             token = await self.build_erc20token(token_address, chain_id=chain_id)
 
-        block_number = await self._resolve_block_number(provider, block_identifier)
-
-        # Check cache
-        if (total_supply := token.get_cached_total_supply(block_number)) is not None:
-            return total_supply
-
-        (total_supply,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=await provider.call(
-                to=token.address,
-                data=Web3.keccak(text="totalSupply()")[:4],
-                block=block_number,
-            ),
+        io = AsyncPoolIO(self.connections.get_provider(chain_id))
+        return await self._erc20_builder.get_token_total_supply(
+            token, block_identifier=block_identifier, io=io
         )
-
-        token.set_cached_total_supply(block_number, cast("int", total_supply))
-        return cast("int", total_supply)
 
     async def get_ether_balance(
         self,
@@ -441,22 +391,11 @@ class AsyncBot:
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
         """Retrieve the native ETH balance for the given address."""
-        address = get_checksum_address(address)
         chain_id = chain_id or self.connections.default_chain_id
-        provider = self.connections.get_provider(chain_id)
-        block = block_identifier if isinstance(block_identifier, int) else None
-        return await provider.get_balance(address, block=block)
-
-    @staticmethod
-    async def _resolve_block_number(
-        provider: AsyncProviderAdapter, block_identifier: BlockIdentifier | None
-    ) -> int:
-        """Resolve a block identifier to a block number."""
-        if block_identifier is None:
-            return await provider.get_block_number()
-        if isinstance(block_identifier, int):
-            return block_identifier
-        return await provider.get_block_number()
+        io = AsyncPoolIO(self.connections.get_provider(chain_id))
+        return await self._erc20_builder.get_ether_balance(
+            chain_id, address, block_identifier=block_identifier, io=io
+        )
 
     def get_provider(self, *, chain_id: ChainId) -> AsyncProviderAdapter:
         return self.connections.get_provider(chain_id)
