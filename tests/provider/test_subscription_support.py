@@ -21,6 +21,7 @@ from degenbot.provider.interface import (
     _OfflineAdapter,
     _Web3Adapter,
 )
+from tests.fakes.web3 import FakeAsyncW3, FakeW3
 
 
 class TestSyncSubscriptionSupport:
@@ -106,8 +107,6 @@ class TestSyncAdapterSubscriptionStubs:
     """Tests that sync adapters raise SubscriptionNotSupported via the mixin."""
 
     def test_web3_adapter_subscribe_raises(self) -> None:
-        from tests.fakes.web3 import FakeW3
-
         adapter = _Web3Adapter(FakeW3())
         with pytest.raises(SubscriptionNotSupported) as exc_info:
             adapter.subscribe_blocks()
@@ -143,8 +142,6 @@ class TestAsyncAdapterSubscriptionStubs:
 
     @pytest.mark.asyncio
     async def test_async_web3_adapter_subscribe_raises(self) -> None:
-        from tests.fakes.web3 import FakeAsyncW3
-
         adapter = _AsyncWeb3Adapter(FakeAsyncW3())
         with pytest.raises(SubscriptionNotSupported) as exc_info:
             await adapter.subscribe_blocks()

@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import pytest
+from eth_abi import encode as abi_encode
+from hexbytes import HexBytes
 
 from degenbot.listener import LogListener
+from degenbot.uniswap.log_decoders import V2_SYNC_TOPIC, decode_v2_sync
+from tests.fakes.pools import FakeV2Pool
 
 
 def _noop(_log: dict) -> None:
@@ -226,12 +230,6 @@ class TestLogListenerWithPoolHandlers:
     """Test the full wiring pattern: pool.LOG_HANDLERS → LogListener."""
 
     def test_wire_v2_pool_handlers(self) -> None:
-        from degenbot.uniswap.log_decoders import (  # noqa: PLC0415
-            V2_SYNC_TOPIC,
-            decode_v2_sync,
-        )
-        from tests.fakes.pools import FakeV2Pool  # noqa: PLC0415
-
         listener = LogListener()
         pool = FakeV2Pool()
 
@@ -249,9 +247,6 @@ class TestLogListenerWithPoolHandlers:
             listener.register(addr, topic, make_handler(decoder, pool))
 
         # Simulate a V2 Sync log
-        from eth_abi import encode as abi_encode  # noqa: PLC0415
-        from hexbytes import HexBytes  # noqa: PLC0415
-
         data = abi_encode(["uint112", "uint112"], [1000, 2000])
         log = {
             "address": "0xabc",

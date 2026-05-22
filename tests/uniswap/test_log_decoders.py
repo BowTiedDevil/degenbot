@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from eth_abi import encode as abi_encode
 from hexbytes import HexBytes
+from web3 import Web3
 
 from degenbot.uniswap.log_decoders import (
     V2_SYNC_TOPIC,
@@ -22,6 +23,7 @@ from degenbot.uniswap.log_decoders import (
     get_block_number,
     get_log_data_bytes,
 )
+from tests.fakes.pools import FakeV2Pool, FakeV3Pool
 
 
 def _make_log(
@@ -82,8 +84,6 @@ class TestV2SyncDecoder:
         # We can't easily test this without a pool instance, but we can inspect
         # the closure's captured variables
         # Instead, use a fake pool
-        from tests.fakes.pools import FakeV2Pool  # noqa: PLC0415
-
         pool = FakeV2Pool()
         apply_fn(pool)
         assert pool.last_update is not None
@@ -113,8 +113,6 @@ class TestV3SwapDecoder:
         log = _make_log(V3_SWAP_TOPIC, data, block_number=200)
 
         apply_fn = decode_v3_swap(log)
-        from tests.fakes.pools import FakeV3Pool  # noqa: PLC0415
-
         pool = FakeV3Pool()
         apply_fn(pool)
         assert pool.last_update is not None
@@ -145,8 +143,6 @@ class TestV3MintDecoder:
         log = _make_log(V3_MINT_TOPIC, data, block_number=300)
 
         apply_fn = decode_v3_mint(log)
-        from tests.fakes.pools import FakeV3Pool  # noqa: PLC0415
-
         pool = FakeV3Pool()
         apply_fn(pool)
         assert pool.last_liquidity_update is not None
@@ -176,8 +172,6 @@ class TestV3BurnDecoder:
         log = _make_log(V3_BURN_TOPIC, data, block_number=400)
 
         apply_fn = decode_v3_burn(log)
-        from tests.fakes.pools import FakeV3Pool  # noqa: PLC0415
-
         pool = FakeV3Pool()
         apply_fn(pool)
         assert pool.last_liquidity_update is not None
@@ -215,13 +209,11 @@ class TestTopicConstants:
     """Verify topic constants match known keccak256 hashes."""
 
     def test_v2_sync_topic(self) -> None:
-        from web3 import Web3  # noqa: PLC0415
 
         expected = Web3.keccak(text="Sync(uint112,uint112)").hex()
         assert f"0x{expected}" == V2_SYNC_TOPIC
 
     def test_v3_swap_topic(self) -> None:
-        from web3 import Web3  # noqa: PLC0415
 
         expected = Web3.keccak(
             text="Swap(address,address,int256,int256,uint160,uint128,int24)"
@@ -229,7 +221,6 @@ class TestTopicConstants:
         assert f"0x{expected}" == V3_SWAP_TOPIC
 
     def test_v3_mint_topic(self) -> None:
-        from web3 import Web3  # noqa: PLC0415
 
         expected = Web3.keccak(
             text="Mint(address,address,int24,int24,uint128,uint256,uint256)"
@@ -237,13 +228,11 @@ class TestTopicConstants:
         assert f"0x{expected}" == V3_MINT_TOPIC
 
     def test_v3_burn_topic(self) -> None:
-        from web3 import Web3  # noqa: PLC0415
 
         expected = Web3.keccak(text="Burn(address,int24,int24,uint128,uint256,uint256)").hex()
         assert f"0x{expected}" == V3_BURN_TOPIC
 
     def test_v4_swap_topic(self) -> None:
-        from web3 import Web3  # noqa: PLC0415
 
         expected = Web3.keccak(
             text="Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)"
@@ -251,7 +240,6 @@ class TestTopicConstants:
         assert f"0x{expected}" == V4_SWAP_TOPIC
 
     def test_v4_modify_liquidity_topic(self) -> None:
-        from web3 import Web3  # noqa: PLC0415
 
         expected = Web3.keccak(
             text="ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)"

@@ -13,7 +13,6 @@ from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-
 from tests.constants import (
     UNISWAP_V2_FACTORY_ETH,
     UNISWAP_V2_WBTC_WETH_POOL,

@@ -2,9 +2,7 @@ from fractions import Fraction
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_types import UniswapV3PoolState
 from tests.fakes.tokens import FakeToken
 
 

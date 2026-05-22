@@ -1,24 +1,18 @@
 import pytest
 
-from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.types.pool_protocols import ArbitrageCapablePool
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from tests.fakes.tokens import FakeToken
 
 from .conftest import _make_aerodrome_pool, _make_v2_pool, _make_v3_pool
 
 
 @pytest.fixture
 def token0():
-    from tests.fakes.tokens import FakeToken
-
     return FakeToken("0xt0")
 
 
 @pytest.fixture
 def token1():
-    from tests.fakes.tokens import FakeToken
-
     return FakeToken("0xt1")
 
 

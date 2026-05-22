@@ -16,9 +16,6 @@ from eth_typing import ChecksumAddress
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.types import DVariant, YDVariant, YVariant
 
-# ── D-variant groups ──
-# Determine calc_d / calc_dp formula pair used in _get_d()
-
 _D_VARIANT_GROUP_0: frozenset[ChecksumAddress] = frozenset(
     get_checksum_address(addr)
     for addr in (
@@ -90,9 +87,6 @@ _D_VARIANT_GROUP_4: frozenset[ChecksumAddress] = frozenset(
 )
 
 
-# ── Y-variant groups ──
-# Determine amp and c/b formula variants in _get_y()
-
 _Y_VARIANT_GROUP_0: frozenset[ChecksumAddress] = frozenset(
     get_checksum_address(addr)
     for addr in (
@@ -120,9 +114,6 @@ _Y_VARIANT_GROUP_1: frozenset[ChecksumAddress] = frozenset(
     )
 )
 
-
-# ── Y_D-variant groups ──
-# Determine b/c formula variants in _get_y_d()
 
 _Y_D_VARIANT_GROUP_0: frozenset[ChecksumAddress] = frozenset(
     get_checksum_address(addr)

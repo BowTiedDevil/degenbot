@@ -13,18 +13,14 @@ Both systems must see the same profit landscape; any divergence indicates
 a real behavioral gap.
 """
 
-import math
 from fractions import Fraction
 
 import pytest
 
 from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
-from degenbot.arbitrage.optimizers.hop_types import SolveInput
-from degenbot.arbitrage.optimizers.solver import ArbSolver, BrentSolver, MobiusSolver
+from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.exceptions.arbitrage import OptimizationError, RateOfExchangeBelowMinimum
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.arbitrage.generator.pool_generator import PoolStateGenerator
 from tests.arbitrage.generator.types import V3PoolGenerationConfig

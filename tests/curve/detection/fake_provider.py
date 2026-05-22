@@ -6,14 +6,12 @@ provider.call_raw() based on the method selector in the calldata.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from hexbytes import HexBytes
 
+from degenbot.builders.pool_io import SyncPoolIO
 from degenbot.provider.interface import ProviderAdapter
-
-if TYPE_CHECKING:
-    from degenbot.builders.pool_io import SyncPoolIO
 
 
 class FakeCurveBackend:
@@ -121,6 +119,4 @@ def make_fake_pool_io(call_responses: dict[bytes, Any]) -> SyncPoolIO:
         })
         result = discover_coins(io, pool_address, block_identifier=18_000_000)
     """
-    from degenbot.builders.pool_io import SyncPoolIO
-
     return SyncPoolIO(make_fake_curve_provider(call_responses))

@@ -4,14 +4,15 @@ import dataclasses
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from degenbot.types.abstract import AbstractPoolState
+from degenbot.types.concrete import PoolStateMessage
+
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress, HexAddress
 
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
     from degenbot.types.aliases import BlockNumber
 
-from degenbot.types.abstract import AbstractPoolState
-from degenbot.types.concrete import PoolStateMessage
 
 # ── Variant Enums ──
 # These enums identify calculation variants for Curve StableSwap pools.
@@ -83,67 +84,6 @@ class SwapStyle(Enum):
     CYTOKEN = auto()  # dy = xp[j] - y - 1, then (dy-fee)*PRECISION//rates[j]
     RATE_ADJUSTED_NO_ONE = auto()  # dy = (xp[j]-y)*PRECISION//rates[j], fee on converted dy
 
-    def make_calculator(self) -> DyCalculator:
-        """Construct the appropriate DyCalculator for this swap style."""
-        # Lazy imports to avoid circular dependency: calculator modules
-        # import from this module at runtime.
-        from degenbot.curve.calculators.crypto import CryptoDyCalculator  # noqa: PLC0415
-        from degenbot.curve.calculators.live_admin import (  # noqa: PLC0415
-            LiveAdminDynamicDyCalculator,
-            PrecisionMode,
-        )
-        from degenbot.curve.calculators.standard import (  # noqa: PLC0415
-            BalanceSource,
-            ConversionStyle,
-            RateSource,
-            StandardDyCalculator,
-        )
-
-        match self:
-            case SwapStyle.STANDARD | SwapStyle.CYTOKEN:
-                return StandardDyCalculator(swap_style=self)
-            case SwapStyle.RATE_ADJUSTED:
-                return StandardDyCalculator(
-                    swap_style=self,
-                    conversion_style=ConversionStyle.RATE_THEN_FEE,
-                )
-            case SwapStyle.RATE_ADJUSTED_NO_ONE:
-                return StandardDyCalculator(
-                    swap_style=self,
-                    subtract_one=False,
-                    conversion_style=ConversionStyle.RATE_THEN_FEE,
-                )
-            case SwapStyle.RAW_BALANCE:
-                return StandardDyCalculator(
-                    swap_style=self,
-                    balance_source=BalanceSource.RAW_BALANCES,
-                    conversion_style=ConversionStyle.FEE_ONLY,
-                )
-            case SwapStyle.NO_ONE_FEE_RATE:
-                return StandardDyCalculator(
-                    swap_style=self,
-                    subtract_one=False,
-                )
-            case SwapStyle.LIVE_ADMIN:
-                return StandardDyCalculator(
-                    swap_style=self,
-                    rate_source=RateSource.RATE_MULTIPLIERS,
-                )
-            case SwapStyle.LIVE_ADMIN_ORACLE:
-                return StandardDyCalculator(swap_style=self)
-            case SwapStyle.LIVE_ADMIN_DYNAMIC:
-                return LiveAdminDynamicDyCalculator(
-                    swap_style=self,
-                    precision_mode=PrecisionMode.NONE,
-                )
-            case SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION:
-                return LiveAdminDynamicDyCalculator(
-                    swap_style=self,
-                    precision_mode=PrecisionMode.PRECISION_MULTIPLIERS,
-                )
-            case SwapStyle.CRYPTO:
-                return CryptoDyCalculator()
-
 
 class MetapoolRateStyle(Enum):
     """Which rates to use for the metapool branch in get_dy."""
@@ -152,12 +92,6 @@ class MetapoolRateStyle(Enum):
     PRECISION_VP = auto()  # (PRECISION, virtual_price)
     REDEMPTION_VP = auto()  # (redemption_price, virtual_price)
 
-    def make_calculator(self) -> DyCalculator:
-        """Construct the appropriate metapool DyCalculator for this rate style."""
-        from degenbot.curve.calculators.metapool import MetapoolDyCalculator  # noqa: PLC0415
-
-        return MetapoolDyCalculator(rate_style=self)
-
 
 class MetapoolUnderlyingStyle(Enum):
     """Which computation path to use in _get_dy_underlying."""
@@ -165,22 +99,6 @@ class MetapoolUnderlyingStyle(Enum):
     STANDARD = auto()  # rate_multipliers with VP for base pool LP token
     REDEMPTION = auto()  # redemption_price for first coin, VP for second
     PRECISION_VP = auto()  # (PRECISION, virtual_price) — no rate multiplier for first coin
-
-    def make_calculator(self) -> DyCalculator:
-        """Construct the appropriate metapool underlying DyCalculator."""
-        from degenbot.curve.calculators.metapool import (  # noqa: PLC0415
-            MetapoolUnderlyingPrecisionVpDyCalculator,
-            MetapoolUnderlyingRedemptionDyCalculator,
-            MetapoolUnderlyingStandardDyCalculator,
-        )
-
-        match self:
-            case MetapoolUnderlyingStyle.PRECISION_VP:
-                return MetapoolUnderlyingPrecisionVpDyCalculator()
-            case MetapoolUnderlyingStyle.REDEMPTION:
-                return MetapoolUnderlyingRedemptionDyCalculator()
-            case MetapoolUnderlyingStyle.STANDARD:
-                return MetapoolUnderlyingStandardDyCalculator()
 
 
 class LendingRateStyle(Enum):
@@ -258,76 +176,6 @@ class DyCalculationInputs:
     a_precision: int = 100
 
 
-class DyCalculator(Protocol):
-    """Calculates dy (output amount) for a Curve StableSwap swap.
-
-    Each SwapStyle variant maps to a frozen dataclass implementing this
-    protocol. The pool's get_dy() delegates to the injected calculator
-    via PoolStrategies.dy_calculator.
-
-    Calculators receive a DyCalculationInputs object carrying all
-    pre-resolved data (balances, rates, xp, variant enums for invariant
-    solving). All I/O and cache lookups happen before the calculator
-    is called — the calculator is pure math.
-    """
-
-    def calculate(
-        self,
-        i: int,
-        j: int,
-        dx: int,
-        *,
-        inputs: DyCalculationInputs,
-        override_state: CurveStableswapPoolState | None = None,
-    ) -> int: ...
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class PoolStrategies:
-    """Resolved calculation strategies for a Curve pool instance.
-
-    Set at construction time by the builder from the pool address.
-    The pool class is address-agnostic — it only reads these strategy values.
-
-    Calculator instances are auto-constructed from the enum values in
-    __post_init__ if not explicitly provided. Callers may pass explicit
-    calculator instances to override the default factory (e.g., in tests).
-    """
-
-    d_variant: DVariant = DVariant.STANDARD
-    y_variant: YVariant = YVariant.STANDARD
-    yd_variant: YDVariant = YDVariant.STANDARD
-    swap_style: SwapStyle = SwapStyle.STANDARD
-    metapool_rate_style: MetapoolRateStyle = MetapoolRateStyle.STANDARD
-    metapool_underlying_style: MetapoolUnderlyingStyle = MetapoolUnderlyingStyle.STANDARD
-    lending_rate_style: LendingRateStyle = LendingRateStyle.NONE
-
-    # Calculator instances — auto-constructed from enum values if not provided.
-    # Enum values remain for introspection (e.g., logging).
-    dy_calculator: DyCalculator | None = dataclasses.field(default=None)
-    metapool_dy_calculator: DyCalculator | None = dataclasses.field(default=None)
-    metapool_underlying_dy_calculator: DyCalculator | None = dataclasses.field(default=None)
-
-    def __post_init__(self) -> None:
-        # Auto-construct calculators from enum values when not explicitly set.
-        # Uses object.__setattr__ because the dataclass is frozen.
-        if self.dy_calculator is None:
-            object.__setattr__(self, "dy_calculator", self.swap_style.make_calculator())
-        if self.metapool_dy_calculator is None:
-            object.__setattr__(
-                self, "metapool_dy_calculator", self.metapool_rate_style.make_calculator()
-            )
-        if self.metapool_underlying_dy_calculator is None:
-            object.__setattr__(
-                self,
-                "metapool_underlying_dy_calculator",
-                self.metapool_underlying_style.make_calculator(),
-            )
-
-
-# ── Data Provider Protocol ──
-
-
 @runtime_checkable
 class CurveDataProvider(Protocol):
     """On-chain data access for a Curve StableSwap pool.
@@ -357,9 +205,6 @@ class CurveDataProvider(Protocol):
     def token_total_supply(self, token_address: str, block_number: int) -> int: ...
     def lending_rates(self, block_number: int) -> tuple[int, ...]: ...
     def redemption_price(self, block_number: int) -> int: ...
-
-
-# ── Provider & State Types ──
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)

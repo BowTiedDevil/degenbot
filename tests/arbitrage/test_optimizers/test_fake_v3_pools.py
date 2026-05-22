@@ -20,6 +20,7 @@ from degenbot.types.hop_types import V3TickRangeInfo
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.arbitrage.fake_pools import (
+    FakeTickInfo,
     TickRangeDefinition,
     build_v3_pool_with_ticks,
     create_two_range_v3_pool,
@@ -272,8 +273,6 @@ class TestFakeTickInfo:
 
     def test_to_liquidity_at_tick_conversion(self):
         """Test conversion to LiquidityAtTick."""
-        from tests.arbitrage.fake_pools import FakeTickInfo
-
         fake_tick = FakeTickInfo(liquidity_net=10_000_000, liquidity_gross=10_000_000)
 
         real_tick = fake_tick.to_liquidity_at_tick()
@@ -283,8 +282,6 @@ class TestFakeTickInfo:
 
     def test_immutability(self):
         """Test that FakeTickInfo is frozen (immutable)."""
-        from tests.arbitrage.fake_pools import FakeTickInfo
-
         fake_tick = FakeTickInfo(liquidity_net=10_000_000, liquidity_gross=10_000_000)
 
         with pytest.raises(dataclasses.FrozenInstanceError):

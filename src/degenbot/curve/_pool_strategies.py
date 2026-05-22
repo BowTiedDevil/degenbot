@@ -38,11 +38,11 @@ from eth_typing import ChecksumAddress
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve._variant_groups import resolve_d_variant, resolve_y_variant, resolve_yd_variant
+from degenbot.curve.strategies import PoolStrategies
 from degenbot.curve.types import (
     LendingRateStyle,
     MetapoolRateStyle,
     MetapoolUnderlyingStyle,
-    PoolStrategies,
     SwapStyle,
 )
 

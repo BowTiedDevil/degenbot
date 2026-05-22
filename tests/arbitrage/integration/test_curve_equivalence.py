@@ -23,8 +23,8 @@ from degenbot.erc20 import Erc20Token
 from degenbot.provider import ProviderAdapter
 from degenbot.types.hop_types import ConstantProductHop, CurveStableswapHop
 from degenbot.uniswap.v2_types import UniswapV2PoolState
-from tests.helpers.bot_factory import make_bot_with_provider
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
+from tests.helpers.bot_factory import make_bot_with_provider
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 DAI_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"

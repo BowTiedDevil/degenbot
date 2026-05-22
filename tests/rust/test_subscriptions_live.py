@@ -17,6 +17,8 @@ import pytest
 
 from degenbot.degenbot_rs import AlloyProvider
 from degenbot.exceptions import SubscriptionDisconnected, SubscriptionNotSupported
+from degenbot.listener import LogListener
+from degenbot.provider import AsyncProviderAdapter, ProviderAdapter
 from degenbot.provider.subscription import Subscription
 
 # Use a well-known public WS endpoint
@@ -73,8 +75,6 @@ class TestLiveWSHTTPRaises:
 
     def test_http_provider_subscribe_raises(self) -> None:
         """HTTP providers should raise SubscriptionNotSupported."""
-        from degenbot.provider import ProviderAdapter  # noqa: PLC0415
-
         provider = AlloyProvider("https://eth.llamarpc.com/")
         adapter = ProviderAdapter.from_alloy(provider)
 
@@ -116,8 +116,6 @@ class TestLiveWSAdapterAndLogListener:
     @pytest.mark.asyncio
     async def test_adapter_subscribe_blocks(self) -> None:
         """AsyncProviderAdapter.subscribe_blocks() yields headers via live WS."""
-        from degenbot.provider import AsyncProviderAdapter  # noqa: PLC0415
-
         provider = AlloyProvider(WS_URI)
         adapter = AsyncProviderAdapter.from_alloy(provider)
         sub = await adapter.subscribe_blocks()
@@ -135,9 +133,6 @@ class TestLiveWSAdapterAndLogListener:
     @pytest.mark.asyncio
     async def test_subscribe_logs_and_dispatch_via_listener(self) -> None:
         """Subscribe to unfiltered logs, dispatch via LogListener."""
-        from degenbot.listener import LogListener  # noqa: PLC0415
-        from degenbot.provider import AsyncProviderAdapter  # noqa: PLC0415
-
         provider = AlloyProvider(WS_URI)
         adapter = AsyncProviderAdapter.from_alloy(provider)
         sub = await adapter.subscribe_logs()

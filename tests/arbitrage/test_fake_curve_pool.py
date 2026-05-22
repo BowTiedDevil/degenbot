@@ -18,10 +18,10 @@ from degenbot.arbitrage.optimizers.solidly_stable import (
     _simulate_mixed_path_int,
 )
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from degenbot.curve.types import CurveStableswapPoolState
 from degenbot.erc20 import Erc20Token
-from degenbot.types.hop_types import CurveStableswapHop, PoolInvariant
+from degenbot.types.hop_types import PoolInvariant
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
-from tests.fakes.tokens import FakeToken
 
 # --- Token fixtures ---
 
@@ -225,8 +225,6 @@ class TestCurveStateOverride:
 
     def test_state_override_in_to_hop_state(self):
         """Should use overridden state when provided."""
-        from degenbot.curve.types import CurveStableswapPoolState
-
         pool = _make_curve_pool()
 
         # Create override with different balances

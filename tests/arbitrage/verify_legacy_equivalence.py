@@ -19,9 +19,9 @@ from degenbot.arbitrage.types import (
     UniswapV3PoolSwapAmounts,
 )
 from degenbot.exceptions.arbitrage import OptimizationError
+from degenbot.uniswap.v2_functions import constant_product_calc_exact_in
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
-from degenbot.uniswap.v2_functions import constant_product_calc_exact_in
 from tests.fakes.tokens import FakeToken
 
 # ---------------------------------------------------------------------------
