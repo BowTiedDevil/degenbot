@@ -162,7 +162,7 @@ Use `hasattr()` structural checks for class-level dispatch (not `issubclass()` �
 
 ### Calculations Module
 
-Standalone pure-math functions in `src/degenbot/calculations/`: `constant_product`, `solidly_stable`, `camelot`, `stableswap`, `concentrated_liquidity`. No `self`, no class references. V3/V4 libraries remain in `uniswap/v3_libraries/` and `v4_libraries/`.
+Standalone pure-math functions in `src/degenbot/calculations/`: `solidly_stable`, `camelot`, `stableswap`, `concentrated_liquidity`, `evm_math`. No `self`, no class references. V3/V4 libraries remain in `uniswap/v3_libraries/` and `v4_libraries/`. Constant-product swap math lives in `uniswap/v2_functions.py` (`constant_product_calc_exact_in`, `constant_product_calc_exact_out`); the former `calculations/constant_product.py` was deleted (Plan 073 — buggy intermediate truncation in fee deduction diverged from on-chain behavior for small inputs).
 
 ### Exception Module Structure
 
@@ -279,7 +279,7 @@ Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` f
 
 ## Architecture Plans
 
-Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–070 are all complete. The only active plans are 014 (Async REPL), 072 (Scoped Build Pool Request), and the arbitrage optimizer project. See `plans/README.md` for the full list.
+Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–073 are all complete. The only active plans are 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
 
 **New plans must follow [`plans/TEMPLATE.md`](plans/TEMPLATE.md).** The template requires: deletion test, specific friction table, vertical slices, design decisions, relationship to other plans, and status checklist.
 

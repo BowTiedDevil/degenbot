@@ -3,7 +3,7 @@
 from fractions import Fraction
 
 from degenbot.calculations.camelot import f_camelot, get_y_camelot, k_camelot
-from degenbot.calculations.constant_product import get_amount_out
+from degenbot.uniswap.v2_functions import constant_product_calc_exact_in
 from degenbot.calculations.solidly_stable import (
     calc_d,
     calc_exact_in_stable,
@@ -28,11 +28,11 @@ from degenbot.calculations.stableswap import (
 
 
 class TestGetAmountOut:
-    """Test the constant-product get_amount_out formula."""
+    """Test the constant-product constant_product_calc_exact_in formula."""
 
     def test_standard_fee(self):
         """Uniswap V2 0.3% fee: (amount_in * 997/1000 * reserves_out) / (reserves_in + amount_in_after_fee)."""
-        result = get_amount_out(
+        result = constant_product_calc_exact_in(
             amount_in=1_000_000,
             reserves_in=10_000_000_000,
             reserves_out=10_000_000_000,
@@ -41,7 +41,7 @@ class TestGetAmountOut:
         assert result > 0
 
     def test_zero_amount_in(self):
-        result = get_amount_out(
+        result = constant_product_calc_exact_in(
             amount_in=0,
             reserves_in=10_000_000_000,
             reserves_out=10_000_000_000,
@@ -57,12 +57,12 @@ class TestGetAmountOut:
         reserves_out = 1_000_000_000_000_000_000
         # amount_in_after_fee = 1e18 - 1e18 * 3 // 1000 = 997e15
         # result = (997e15 * 1e18) // (1e18 + 997e15) = 499248873309964947
-        result = get_amount_out(amount_in, reserves_in, reserves_out, fee)
+        result = constant_product_calc_exact_in(amount_in, reserves_in, reserves_out, fee)
         assert result == 499248873309964947
 
     def test_pancakeswap_fee(self):
         """PancakeSwap 0.25% fee."""
-        result = get_amount_out(
+        result = constant_product_calc_exact_in(
             amount_in=1_000_000,
             reserves_in=10_000_000_000,
             reserves_out=10_000_000_000,
@@ -142,12 +142,12 @@ class TestSolidlyCalcExactInVolatile:
         assert result > 0
 
     def test_matches_constant_product(self):
-        """Volatile calc should match constant_product.get_amount_out."""
+        """Volatile calc should match constant_product_calc_exact_in."""
         fee = Fraction(3, 1000)
         amount_in = 1_000_000
         r0 = 10_000_000_000
         r1 = 10_000_000_000
-        cp_result = get_amount_out(amount_in, r0, r1, fee)
+        cp_result = constant_product_calc_exact_in(amount_in, r0, r1, fee)
         solidly_result = calc_exact_in_volatile(amount_in, 0, r0, r1, fee)
         assert cp_result == solidly_result
 

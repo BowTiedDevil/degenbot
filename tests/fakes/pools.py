@@ -1,22 +1,16 @@
 """Consolidated fake pool implementations.
 
-Replaces the previous ad hoc pool fakes:
-- FakeUniswapV4Pool (from tests/test_registry.py, tests/test_registry_offline.py,
-  tests/test_managed_pool_registry.py) — triple duplicate
-- MockLiquidityPool(UniswapV2Pool) (from tests/test_cvxpy.py,
-  tests/arbitrage/integration/test_uniswap_lp_cycle.py) — duplicate
-- MockV3LiquidityPool(UniswapV3Pool) (from tests/arbitrage/integration/test_uniswap_lp_cycle.py)
+Minimal protocol-fakes for testing:
+- FakeV2Pool: captures external_update calls (test spy)
+- FakeV3Pool: captures external_update and update_liquidity_map calls (test spy)
+- FakeUniswapV4Pool: minimal V4 pool for registry tests
+
+These fake pools are test spies, not mock math engines. For pool math testing,
+use production pool classes (UniswapV2Pool, UniswapV3Pool, etc.) constructed
+with FakeToken arguments.
 """
 
-from weakref import WeakSet
-
-from degenbot.constants import ZERO_ADDRESS
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.types.state_cache import StateCache
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v2_types import UniswapV2PoolState
-from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_types import UniswapV3PoolState
 
 
 class FakeV2Pool:
@@ -71,48 +65,3 @@ class FakeUniswapV4Pool(AbstractLiquidityPool):
 
     def __hash__(self) -> int:
         return hash(self.address + self.pool_id)
-
-
-class MockLiquidityPool(UniswapV2Pool):
-    """Mock V2 pool with empty state for testing.
-
-    Bypasses the full UniswapV2Pool constructor by providing a minimal
-    initial state cache.
-    """
-
-    def __init__(self) -> None:
-        self._state_cache = StateCache(max_depth=8)
-        self._state_cache.append(
-            UniswapV2PoolState(
-                address=ZERO_ADDRESS,
-                reserves_token0=0,
-                reserves_token1=0,
-                block=0,
-            ),
-            block=0,
-        )
-        self._subscribers = WeakSet()
-
-
-class MockV3LiquidityPool(UniswapV3Pool):
-    """Mock V3 pool with empty state for testing.
-
-    Bypasses the full UniswapV3Pool constructor by providing a minimal
-    initial state cache.
-    """
-
-    def __init__(self) -> None:
-        self._state_cache = StateCache(max_depth=8)
-        self._state_cache.append(
-            UniswapV3PoolState(
-                address=ZERO_ADDRESS,
-                block=0,
-                liquidity=0,
-                sqrt_price_x96=0,
-                tick=0,
-                tick_bitmap={},
-                tick_data={},
-            ),
-            block=0,
-        )
-        self._subscribers = WeakSet()

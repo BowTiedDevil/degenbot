@@ -18,9 +18,13 @@ from degenbot.arbitrage.path.arbitrage_path import (
     _StateUpdatedNoProfit,
 )
 from degenbot.types.concrete import PoolStateMessage, TextMessage
+from degenbot.uniswap.v2_types import (
+    UniswapV2PoolExternalUpdate,
+    UniswapV2PoolState,
+)
 from tests.fakes.subscribers import FakeSubscriber
 
-from .conftest import FakeToken, FakeV2PoolState, _make_v2_pool
+from .conftest import FakeToken, _make_v2_pool
 
 FEE_03 = Fraction(3, 1000)
 
@@ -35,17 +39,13 @@ def token_b():
     return FakeToken("0xtokenB")
 
 
-def _make_v2_message(state: FakeV2PoolState) -> PoolStateMessage:
-    msg = PoolStateMessage()
-    msg.state = state
-    return msg
-
-
 def _make_cyclic_path(token_a, token_b):
-    pool0 = _make_v2_pool(token_a, token_b, reserve0=2_000_000, reserve1=1_000_000_000)
-    pool0.address = "0xpool0"
-    pool1 = _make_v2_pool(token_b, token_a, reserve0=1_500_000, reserve1=800_000_000)
-    pool1.address = "0xpool1"
+    pool0 = _make_v2_pool(
+        token_a, token_b, reserve0=2_000_000, reserve1=1_000_000_000, address="0x00000000000000000000000000000000000000b0"
+    )
+    pool1 = _make_v2_pool(
+        token_b, token_a, reserve0=1_500_000, reserve1=800_000_000, address="0x00000000000000000000000000000000000000b1"
+    )
     solver = MobiusSolver()
     path = ArbitragePath(
         pools=[pool0, pool1],
@@ -61,14 +61,13 @@ class TestEventDrivenAutoSolve:
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
-        new_state = FakeV2PoolState(
-            address=pool0.address,
-            block=None,
-            reserves_token0=3_000_000,
-            reserves_token1=900_000_000,
+        pool0.external_update(
+            UniswapV2PoolExternalUpdate(
+                block_number=2,
+                reserves_token0=3_000_000,
+                reserves_token1=900_000_000,
+            )
         )
-        message = _make_v2_message(new_state)
-        path.notify(publisher=pool0, message=message)
 
         assert path.last_result is not None
 
@@ -77,14 +76,13 @@ class TestEventDrivenAutoSolve:
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
-        new_state = FakeV2PoolState(
-            address=pool0.address,
-            block=None,
-            reserves_token0=3_000_000,
-            reserves_token1=900_000_000,
+        pool0.external_update(
+            UniswapV2PoolExternalUpdate(
+                block_number=2,
+                reserves_token0=3_000_000,
+                reserves_token1=900_000_000,
+            )
         )
-        message = _make_v2_message(new_state)
-        path.notify(publisher=pool0, message=message)
 
         assert len(subscriber.notifications) >= 1
         _, msg = subscriber.notifications[0]
@@ -95,17 +93,12 @@ class TestEventDrivenAutoSolve:
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
-        symmetric_state = FakeV2PoolState(
-            address=pool0.address,
-            block=None,
-            reserves_token0=1_000_000,
-            reserves_token1=1_000_000,
-        )
-        pool0._state = symmetric_state
-
-        path.notify(
-            publisher=pool0,
-            message=_make_v2_message(symmetric_state),
+        pool0.external_update(
+            UniswapV2PoolExternalUpdate(
+                block_number=2,
+                reserves_token0=1_000_000,
+                reserves_token1=1_000_000,
+            )
         )
 
         last_notification = subscriber.notifications[-1]
@@ -117,7 +110,7 @@ class TestEventDrivenAutoSolve:
 
         original_hop_0 = path.hop_states[0]
 
-        override_state = FakeV2PoolState(
+        override_state = UniswapV2PoolState(
             address=pool0.address,
             block=None,
             reserves_token0=5_000_000,
@@ -132,21 +125,21 @@ class TestEventDrivenAutoSolve:
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
-        new_state_0 = FakeV2PoolState(
-            address=pool0.address,
-            block=None,
-            reserves_token0=3_000_000,
-            reserves_token1=900_000_000,
+        pool0.external_update(
+            UniswapV2PoolExternalUpdate(
+                block_number=2,
+                reserves_token0=3_000_000,
+                reserves_token1=900_000_000,
+            )
         )
-        path.notify(publisher=pool0, message=_make_v2_message(new_state_0))
 
-        new_state_1 = FakeV2PoolState(
-            address=pool1.address,
-            block=None,
-            reserves_token0=1_200_000,
-            reserves_token1=600_000_000,
+        pool1.external_update(
+            UniswapV2PoolExternalUpdate(
+                block_number=2,
+                reserves_token0=1_200_000,
+                reserves_token1=600_000_000,
+            )
         )
-        path.notify(publisher=pool1, message=_make_v2_message(new_state_1))
 
         assert len(subscriber.notifications) >= 2
 
@@ -155,17 +148,18 @@ class TestEventDrivenAutoSolve:
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
-        unknown_pool = _make_v2_pool(t0, t1)
-        unknown_pool.address = "0xunknown"
-        new_state = FakeV2PoolState(
-            address="0xunknown",
+        unknown_pool = _make_v2_pool(t0, t1, address="0x00000000000000000000000000000000000000ff")
+        new_state = UniswapV2PoolState(
+            address="0x00000000000000000000000000000000000000ff",
             block=None,
             reserves_token0=3_000_000,
             reserves_token1=900_000_000,
         )
+        msg = PoolStateMessage()
+        msg.state = new_state
         path.notify(
             publisher=unknown_pool,
-            message=_make_v2_message(new_state),
+            message=msg,
         )
 
         assert len(subscriber.notifications) == 0
@@ -185,17 +179,12 @@ class TestEventDrivenAutoSolve:
         subscriber = FakeSubscriber()
         path.subscribe(subscriber)
 
-        profitable_state = FakeV2PoolState(
-            address=pool0.address,
-            block=None,
-            reserves_token0=3_000_000,
-            reserves_token1=1_500_000_000,
-        )
-        pool0._state = profitable_state
-
-        path.notify(
-            publisher=pool0,
-            message=_make_v2_message(profitable_state),
+        pool0.external_update(
+            UniswapV2PoolExternalUpdate(
+                block_number=2,
+                reserves_token0=3_000_000,
+                reserves_token1=1_500_000_000,
+            )
         )
 
         assert path.last_result is not None

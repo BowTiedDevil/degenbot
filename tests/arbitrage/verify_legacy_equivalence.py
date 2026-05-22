@@ -19,7 +19,10 @@ from degenbot.arbitrage.types import (
     UniswapV3PoolSwapAmounts,
 )
 from degenbot.exceptions.arbitrage import OptimizationError
-from tests.arbitrage.test_path.conftest import FakeToken, FakeUniswapV2Pool, FakeV2PoolState
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v2_types import UniswapV2PoolState
+from degenbot.uniswap.v2_functions import constant_product_calc_exact_in
+from tests.fakes.tokens import FakeToken
 
 # ---------------------------------------------------------------------------
 # Helpers: manual calculation that mirrors what legacy UniswapLpCycle does
@@ -33,13 +36,17 @@ def _v2_exact_out(
     fee: Fraction,
 ) -> int:
     """Exact replica of constant_product_calc_exact_in (legacy V2 math)."""
-    amount_in_with_fee = amount_in * (fee.denominator - fee.numerator) // fee.denominator
-    return reserve_out * amount_in_with_fee // (reserve_in + amount_in_with_fee)
+    return constant_product_calc_exact_in(
+        amount_in=amount_in,
+        reserves_in=reserve_in,
+        reserves_out=reserve_out,
+        fee=fee,
+    )
 
 
 def _simulate_v2_path(
     amount_in: int,
-    pools: Sequence[FakeUniswapV2Pool],
+    pools: Sequence[UniswapV2Pool],
     vectors: Sequence[SwapVector],
 ) -> int:
     """Simulate a swap through a sequence of V2 pools (legacy behavior)."""
@@ -58,51 +65,25 @@ def _simulate_v2_path(
 
 def _legacy_arb_profit(
     amount_in: int,
-    pools: Sequence[FakeUniswapV2Pool],
+    pools: Sequence[UniswapV2Pool],
     vectors: Sequence[SwapVector],
 ) -> int:
     """Compute profit the way UniswapLpCycle._arb_profit does."""
     return _simulate_v2_path(amount_in, pools, vectors) - amount_in
 
 
-def _calculate_tokens_out_via_simulate(
-    pool: Any,
+def _calculate_tokens_out_via_pool(
+    pool: UniswapV2Pool,
     token_in: FakeToken,
     token_in_quantity: int,
-    state_override: Any = None,
+    state_override: UniswapV2PoolState | None = None,
 ) -> int:
-    """Get token output using the pool's simulation or direct math.
-
-    For V2 fake pools, use the exact legacy formula to avoid rounding
-    discrepancies with the fake pool's simulate_swap implementation.
-    """
-    if isinstance(pool, FakeUniswapV2Pool):
-        state = state_override if isinstance(state_override, FakeV2PoolState) else pool.state
-        zero_for_one = token_in == pool.token0
-        if zero_for_one:
-            r_in, r_out = state.reserves_token0, state.reserves_token1
-            fee = pool.fee_token0
-        else:
-            r_in, r_out = state.reserves_token1, state.reserves_token0
-            fee = pool.fee_token1
-        return _v2_exact_out(token_in_quantity, r_in, r_out, fee)
-
-    # CL pools and others: fall back to simulate_swap
-    if token_in == pool.token0:
-        token_out = pool.token1
-    elif token_in == pool.token1:
-        token_out = pool.token0
-    else:
-        msg = f"Token {token_in} not in pool {pool}"
-        raise ValueError(msg)
-
-    result = pool.simulate_swap(
-        token_in=token_in.address,
-        amount_in=token_in_quantity,
-        token_out=token_out.address,
-        state_override=state_override,
+    """Get token output using the pool's calculate_tokens_out_from_tokens_in."""
+    return pool.calculate_tokens_out_from_tokens_in(
+        token_in=token_in,  # type: ignore[arg-type]
+        token_in_quantity=token_in_quantity,
+        override_state=state_override,
     )
-    return result.amount_out
 
 
 def _legacy_build_swap_amounts(
@@ -114,7 +95,7 @@ def _legacy_build_swap_amounts(
     token_in_qty = amount_in
     swap_amounts: list[Any] = []
     for pool, sv in zip(pools, vectors, strict=True):
-        token_out_qty = _calculate_tokens_out_via_simulate(pool, sv.token_in, token_in_qty)
+        token_out_qty = _calculate_tokens_out_via_pool(pool, sv.token_in, token_in_qty)
         swap_amounts.append(pool.build_swap_amount(sv.zero_for_one, token_in_qty, token_out_qty))
         token_in_qty = token_out_qty
     return ArbitrageCalculationResult(
@@ -144,12 +125,11 @@ def _new_arbitrage_path(
     )
     solve_result = path.calculate()
 
-    # Fake pools don't have calculate_tokens_out_from_tokens_in, so we
-    # manually construct swap amounts using simulate_swap.
+    # Production pools have calculate_tokens_out_from_tokens_in
     token_in_quantity = solve_result.optimal_input
     swap_amounts: list[Any] = []
     for pool, sv in zip(pools, path.swap_vectors, strict=True):
-        token_out_quantity = _calculate_tokens_out_via_simulate(
+        token_out_quantity = _calculate_tokens_out_via_pool(
             pool, sv.token_in, token_in_quantity
         )
         swap_amounts.append(
@@ -183,67 +163,82 @@ def _new_arbitrage_path(
 # Fixtures
 # ---------------------------------------------------------------------------
 
+FEE_03 = Fraction(3, 1000)
+
+ADDR_POOL0 = "0x00000000000000000000000000000000000000a0"
+ADDR_POOL1 = "0x00000000000000000000000000000000000000a1"
+ADDR_POOL2 = "0x00000000000000000000000000000000000000a2"
+
 
 @pytest.fixture
 def t0() -> FakeToken:
-    return FakeToken("0xt0", decimals=18)
+    return FakeToken("0x0000000000000000000000000000000000000T0", decimals=18)
 
 
 @pytest.fixture
 def t1() -> FakeToken:
-    return FakeToken("0xt1", decimals=18)
+    return FakeToken("0x0000000000000000000000000000000000000T1", decimals=18)
 
 
 @pytest.fixture
 def t2() -> FakeToken:
-    return FakeToken("0xt2", decimals=18)
+    return FakeToken("0x0000000000000000000000000000000000000T2", decimals=18)
 
 
 @pytest.fixture
-def v2_pool_0(t0: FakeToken, t1: FakeToken) -> FakeUniswapV2Pool:
+def v2_pool_0(t0: FakeToken, t1: FakeToken) -> UniswapV2Pool:
     """Pool 0: t0 -> t1."""
-    return FakeUniswapV2Pool(
-        token0=t0,
-        token1=t1,
-        reserve0=100 * 10**18,
-        reserve1=200 * 10**18,
-        fee=Fraction(3, 1000),
-        address="0xpool0",
+    return UniswapV2Pool(
+        address=ADDR_POOL0,  # type: ignore[arg-type]
+        token0=t0,  # type: ignore[arg-type]
+        token1=t1,  # type: ignore[arg-type]
+        factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+        fee_token0=FEE_03,
+        fee_token1=FEE_03,
+        reserves_token0=100 * 10**18,
+        reserves_token1=200 * 10**18,
+        state_block=1,
     )
 
 
 @pytest.fixture
-def v2_pool_1(t1: FakeToken, t2: FakeToken) -> FakeUniswapV2Pool:
+def v2_pool_1(t1: FakeToken, t2: FakeToken) -> UniswapV2Pool:
     """Pool 1: t1 -> t2."""
-    return FakeUniswapV2Pool(
-        token0=t1,
-        token1=t2,
-        reserve0=150 * 10**18,
-        reserve1=300 * 10**18,
-        fee=Fraction(3, 1000),
-        address="0xpool1",
+    return UniswapV2Pool(
+        address=ADDR_POOL1,  # type: ignore[arg-type]
+        token0=t1,  # type: ignore[arg-type]
+        token1=t2,  # type: ignore[arg-type]
+        factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+        fee_token0=FEE_03,
+        fee_token1=FEE_03,
+        reserves_token0=150 * 10**18,
+        reserves_token1=300 * 10**18,
+        state_block=1,
     )
 
 
 @pytest.fixture
-def v2_pool_2(t2: FakeToken, t0: FakeToken) -> FakeUniswapV2Pool:
+def v2_pool_2(t2: FakeToken, t0: FakeToken) -> UniswapV2Pool:
     """Pool 2: t2 -> t0 (closes the cycle)."""
-    return FakeUniswapV2Pool(
-        token0=t2,
-        token1=t0,
-        reserve0=250 * 10**18,
-        reserve1=500 * 10**18,
-        fee=Fraction(3, 1000),
-        address="0xpool2",
+    return UniswapV2Pool(
+        address=ADDR_POOL2,  # type: ignore[arg-type]
+        token0=t2,  # type: ignore[arg-type]
+        token1=t0,  # type: ignore[arg-type]
+        factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+        fee_token0=FEE_03,
+        fee_token1=FEE_03,
+        reserves_token0=250 * 10**18,
+        reserves_token1=500 * 10**18,
+        state_block=1,
     )
 
 
 @pytest.fixture
 def v2_v2_v2_pools(
-    v2_pool_0: FakeUniswapV2Pool,
-    v2_pool_1: FakeUniswapV2Pool,
-    v2_pool_2: FakeUniswapV2Pool,
-) -> tuple[FakeUniswapV2Pool, FakeUniswapV2Pool, FakeUniswapV2Pool]:
+    v2_pool_0: UniswapV2Pool,
+    v2_pool_1: UniswapV2Pool,
+    v2_pool_2: UniswapV2Pool,
+) -> tuple[UniswapV2Pool, UniswapV2Pool, UniswapV2Pool]:
     """3-hop V2 cycle: t0 -> t1 -> t2 -> t0."""
     return (v2_pool_0, v2_pool_1, v2_pool_2)
 
@@ -357,21 +352,27 @@ class TestV2OnlyEquivalence:
         New: raises OptimizationError (from Solver)
         """
         # Symmetric pools with identical prices — no arb opportunity
-        pool_0 = FakeUniswapV2Pool(
-            token0=t0,
-            token1=t1,
-            reserve0=100 * 10**18,
-            reserve1=100 * 10**18,
-            fee=Fraction(3, 1000),
-            address="0xunprof0",
+        pool_0 = UniswapV2Pool(
+            address="0x00000000000000000000000000000000000000c0",  # type: ignore[arg-type]
+            token0=t0,  # type: ignore[arg-type]
+            token1=t1,  # type: ignore[arg-type]
+            factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+            fee_token0=FEE_03,
+            fee_token1=FEE_03,
+            reserves_token0=100 * 10**18,
+            reserves_token1=100 * 10**18,
+            state_block=1,
         )
-        pool_1 = FakeUniswapV2Pool(
-            token0=t1,
-            token1=t0,
-            reserve0=100 * 10**18,
-            reserve1=100 * 10**18,
-            fee=Fraction(3, 1000),
-            address="0xunprof1",
+        pool_1 = UniswapV2Pool(
+            address="0x00000000000000000000000000000000000000c1",  # type: ignore[arg-type]
+            token0=t1,  # type: ignore[arg-type]
+            token1=t0,  # type: ignore[arg-type]
+            factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+            fee_token0=FEE_03,
+            fee_token1=FEE_03,
+            reserves_token0=100 * 10**18,
+            reserves_token1=100 * 10**18,
+            state_block=1,
         )
 
         path = ArbitragePath(
@@ -443,7 +444,7 @@ class TestStateOverrideEquivalence:
         baseline = path.calculate()
 
         # Override only pool 0 with different reserves
-        new_state = FakeV2PoolState(
+        new_state = UniswapV2PoolState(
             address=pools[0].address,
             block=None,
             reserves_token0=200 * 10**18,
@@ -462,26 +463,32 @@ class TestStateOverrideEquivalence:
 
 
 class TestTwoHopEquivalence:
-    def test_mobius_and_newton_agree_on_2hop_v2(self, t0, t1, t2):
+    def test_mobius_and_newton_agree_on_2hop_v2(self, t0, t1):
         """
         For a 2-hop V2 path, MobiusSolver (closed-form) and NewtonSolver
         (iterative) should converge to the same optimal integer input.
         """
-        pool_0 = FakeUniswapV2Pool(
-            token0=t0,
-            token1=t1,
-            reserve0=100 * 10**18,
-            reserve1=200 * 10**18,
-            fee=Fraction(3, 1000),
-            address="0xhop0",
+        pool_0 = UniswapV2Pool(
+            address="0x00000000000000000000000000000000000000d0",  # type: ignore[arg-type]
+            token0=t0,  # type: ignore[arg-type]
+            token1=t1,  # type: ignore[arg-type]
+            factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+            fee_token0=FEE_03,
+            fee_token1=FEE_03,
+            reserves_token0=100 * 10**18,
+            reserves_token1=200 * 10**18,
+            state_block=1,
         )
-        pool_1 = FakeUniswapV2Pool(
-            token0=t1,
-            token1=t0,
-            reserve0=150 * 10**18,
-            reserve1=300 * 10**18,
-            fee=Fraction(3, 1000),
-            address="0xhop1",
+        pool_1 = UniswapV2Pool(
+            address="0x00000000000000000000000000000000000000d1",  # type: ignore[arg-type]
+            token0=t1,  # type: ignore[arg-type]
+            token1=t0,  # type: ignore[arg-type]
+            factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+            fee_token0=FEE_03,
+            fee_token1=FEE_03,
+            reserves_token0=150 * 10**18,
+            reserves_token1=300 * 10**18,
+            state_block=1,
         )
 
         path_mobius = ArbitragePath(

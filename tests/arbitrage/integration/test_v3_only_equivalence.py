@@ -1,7 +1,7 @@
 """
 V3-only equivalence: ArbitragePath + Solver on synthetic single-range V3 pools.
 
-Uses FakeConcentratedLiquidityPool (exact virtual-reserve math via
+Uses production UniswapV3Pool (exact virtual-reserve math via
 v3_virtual_reserves) and verifies both MobiusSolver and BrentSolver
 find positive profit for a profitable V3-V3 cycle. No forking required.
 
@@ -26,23 +26,24 @@ from degenbot.arbitrage.optimizers.hop_types import SolverMethod
 from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.exceptions import OptimizationError
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
-from tests.arbitrage.test_path.conftest import FakeConcentratedLiquidityPool, FakeToken
+from tests.fakes.tokens import FakeToken
 
 
 @pytest.fixture
 def t0():
-    return FakeToken("0xt0", decimals=18)
+    return FakeToken("0x0000000000000000000000000000000000000T0", decimals=18)
 
 
 @pytest.fixture
 def t1():
-    return FakeToken("0xt1", decimals=18)
+    return FakeToken("0x0000000000000000000000000000000000000T1", decimals=18)
 
 
 @pytest.fixture
 def t2():
-    return FakeToken("0xt2", decimals=18)
+    return FakeToken("0x0000000000000000000000000000000000000T2", decimals=18)
 
 
 @pytest.fixture
@@ -58,7 +59,7 @@ def _make_profitable_v3_v3_cycle(
     price_b: float = 2000.0,
     liquidity: int = 10**18,
     fee: int = 500,
-) -> tuple[FakeConcentratedLiquidityPool, FakeConcentratedLiquidityPool]:
+) -> tuple[UniswapV3Pool, UniswapV3Pool]:
     """
     Create two V3 pools for the same token pair at different prices.
 
@@ -74,23 +75,29 @@ def _make_profitable_v3_v3_cycle(
     sqrt_a = get_sqrt_ratio_at_tick(tick_a)
     sqrt_b = get_sqrt_ratio_at_tick(tick_b)
 
-    pool_a = FakeConcentratedLiquidityPool(
-        token0=t0,
-        token1=t1,
-        liquidity=liquidity,
+    pool_a = UniswapV3Pool(
+        address="0x00000000000000000000000000000000000000a0",  # type: ignore[arg-type]
+        token0=t0,  # type: ignore[arg-type]
+        token1=t1,  # type: ignore[arg-type]
+        factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+        fee=fee,
+        tick_spacing=10,
         sqrt_price_x96=sqrt_a,
         tick=tick_a,
-        fee=fee,
-        address="0xv3_a",
-    )
-    pool_b = FakeConcentratedLiquidityPool(
-        token0=t0,
-        token1=t1,
         liquidity=liquidity,
+        state_block=1,
+    )
+    pool_b = UniswapV3Pool(
+        address="0x00000000000000000000000000000000000000a1",  # type: ignore[arg-type]
+        token0=t0,  # type: ignore[arg-type]
+        token1=t1,  # type: ignore[arg-type]
+        factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+        fee=fee,
+        tick_spacing=10,
         sqrt_price_x96=sqrt_b,
         tick=tick_b,
-        fee=fee,
-        address="0xv3_b",
+        liquidity=liquidity,
+        state_block=1,
     )
 
     return pool_a, pool_b
@@ -218,10 +225,10 @@ class TestV3OnlyEquivalance:
         Pool 1: t1->t2 at price 3.0
         Pool 2: t2->t0 at price 1/5.0
 
-        For the FakeConcentratedLiquidityPool, the swap variant calculation in
-        to_hop_state uses v3_virtual_reserves to ensure the invariant is a
-        constant-product share. If the directions and prices are asymmetric,
-        the path can be profitable even with 0.05% fees.
+        For production V3 pools without tick data, to_hop_state uses
+        v3_virtual_reserves to produce BoundedProductHop with constant-product
+        share. If the directions and prices are asymmetric, the path can be
+        profitable even with 0.05% fees.
         """
 
         # Ticks for prices: 2200, 3.0, and 1/5.0 (which is -tick of 5.0)
@@ -233,32 +240,41 @@ class TestV3OnlyEquivalance:
         sqrt_3 = get_sqrt_ratio_at_tick(tick_3)
         sqrt_inv5 = get_sqrt_ratio_at_tick(tick_inv5)
 
-        pool_0 = FakeConcentratedLiquidityPool(
-            token0=t0,
-            token1=t1,
-            liquidity=10**18,
+        pool_0 = UniswapV3Pool(
+            address="0x00000000000000000000000000000000000000a0",  # type: ignore[arg-type]
+            token0=t0,  # type: ignore[arg-type]
+            token1=t1,  # type: ignore[arg-type]
+            factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+            fee=500,
+            tick_spacing=10,
             sqrt_price_x96=sqrt_2200,
             tick=tick_2200,
-            fee=500,
-            address="0xv3_0",
-        )
-        pool_1 = FakeConcentratedLiquidityPool(
-            token0=t1,
-            token1=t2,
             liquidity=10**18,
+            state_block=1,
+        )
+        pool_1 = UniswapV3Pool(
+            address="0x00000000000000000000000000000000000000a1",  # type: ignore[arg-type]
+            token0=t1,  # type: ignore[arg-type]
+            token1=t2,  # type: ignore[arg-type]
+            factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+            fee=500,
+            tick_spacing=10,
             sqrt_price_x96=sqrt_3,
             tick=tick_3,
-            fee=500,
-            address="0xv3_1",
-        )
-        pool_2 = FakeConcentratedLiquidityPool(
-            token0=t2,
-            token1=t0,
             liquidity=10**18,
+            state_block=1,
+        )
+        pool_2 = UniswapV3Pool(
+            address="0x00000000000000000000000000000000000000a2",  # type: ignore[arg-type]
+            token0=t2,  # type: ignore[arg-type]
+            token1=t0,  # type: ignore[arg-type]
+            factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+            fee=500,
+            tick_spacing=10,
             sqrt_price_x96=sqrt_inv5,
             tick=tick_inv5,
-            fee=500,
-            address="0xv3_2",
+            liquidity=10**18,
+            state_block=1,
         )
 
         path = ArbitragePath(

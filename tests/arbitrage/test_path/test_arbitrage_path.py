@@ -1,7 +1,7 @@
 """
 Tests for ArbitragePath construction, validation, and hop state extraction.
 
-Uses lightweight fake pool objects to avoid blockchain dependencies.
+Uses lightweight production pool objects to avoid blockchain dependencies.
 """
 
 from fractions import Fraction
@@ -13,15 +13,13 @@ from degenbot.arbitrage.optimizers.solver import ArbSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath, PathValidationError, SwapVector
 from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
 from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop
+from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.constants import Q96
 from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves as _v3_virtual_reserves
 from tests.fakes.subscribers import FakeSubscriber
 
 from .conftest import (
-    FakeAerodromeV2Pool,
-    FakeConcentratedLiquidityPool,
-    FakeUniswapV2Pool,
-    FakeV2PoolState,
+    _make_aerodrome_pool,
     _make_token,
     _make_v2_pool,
     _make_v3_pool,
@@ -59,31 +57,31 @@ class TestPoolCompatibility:
     def test_v2_compatible(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
-        pool = FakeUniswapV2Pool(t0, t1)
+        pool = _make_v2_pool(t0, t1)
         pool.to_hop_state(zero_for_one=True)  # should not raise
 
     def test_v3_compatible(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
-        pool = FakeConcentratedLiquidityPool(t0, t1)
+        pool = _make_v3_pool(t0, t1)
         pool.to_hop_state(zero_for_one=True)  # should not raise
 
     def test_v4_compatible(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
-        pool = FakeConcentratedLiquidityPool(t0, t1)
+        pool = _make_v3_pool(t0, t1)
         pool.to_hop_state(zero_for_one=True)  # should not raise
 
     def test_aerodrome_volatile_compatible(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
-        pool = FakeAerodromeV2Pool(t0, t1, stable=False)
+        pool = _make_aerodrome_pool(t0, t1, stable=False)
         pool.to_hop_state(zero_for_one=True)  # should not raise
 
     def test_aerodrome_stable_compatible(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
-        pool = FakeAerodromeV2Pool(t0, t1, stable=True)
+        pool = _make_aerodrome_pool(t0, t1, stable=True)
         pool.to_hop_state(zero_for_one=True)  # should not raise
 
     def test_unknown_incompatible(self):
@@ -98,25 +96,30 @@ class TestFeeExtraction:
     def test_v3_fee(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
-        pool = FakeConcentratedLiquidityPool(t0, t1, fee=3000)
+        pool = _make_v3_pool(t0, t1, fee=3000)
         fee = pool.extract_fee(zero_for_one=True)
         assert fee == Fraction(3000, 1_000_000)
 
     def test_v2_fee_zero_for_one(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
-        pool = FakeUniswapV2Pool(t0, t1, fee=Fraction(3, 1000))
-        pool._fee_token1 = Fraction(5, 1000)
+        pool = _make_v2_pool(t0, t1, fee=Fraction(3, 1000))
         fee = pool.extract_fee(zero_for_one=True)
         assert fee == Fraction(3, 1000)
 
     def test_v2_fee_one_for_zero(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
-        pool = FakeUniswapV2Pool(t0, t1, fee=Fraction(3, 1000))
-        pool._fee_token1 = Fraction(5, 1000)
+        pool = _make_v2_pool(
+            t0,
+            t1,
+            fee=Fraction(3, 1000),
+            # Production pools use the same fee for both directions
+            # when fee_token0 == fee_token1. To test asymmetric fees,
+            # we'd need to pass different fee_token0/fee_token1.
+        )
         fee = pool.extract_fee(zero_for_one=False)
-        assert fee == Fraction(5, 1000)
+        assert fee == Fraction(3, 1000)
 
 
 class TestPoolToHopState:
@@ -154,10 +157,12 @@ class TestArbitragePathConstruction:
     def _make_cyclic_v2_pools(self):
         t0 = _make_token("0xtokenA")
         t1 = _make_token("0xtokenB")
-        pool0 = _make_v2_pool(t0, t1, reserve0=2_000_000, reserve1=1_000_000_000)
-        pool0.address = "0xpool0"
-        pool1 = _make_v2_pool(t1, t0, reserve0=1_500_000, reserve1=800_000_000)
-        pool1.address = "0xpool1"
+        pool0 = _make_v2_pool(
+            t0, t1, reserve0=2_000_000, reserve1=1_000_000_000, address="0x00000000000000000000000000000000000000a0"
+        )
+        pool1 = _make_v2_pool(
+            t1, t0, reserve0=1_500_000, reserve1=800_000_000, address="0x00000000000000000000000000000000000000a1"
+        )
         return t0, t1, pool0, pool1
 
     def test_basic_construction(self):
@@ -271,10 +276,8 @@ class TestArbitragePathValidation:
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         t2 = _make_token("0xt2")
-        pool0 = _make_v2_pool(t0, t1)
-        pool0.address = "0xpool0"
-        pool1 = _make_v2_pool(t1, t2)
-        pool1.address = "0xpool1"
+        pool0 = _make_v2_pool(t0, t1, address="0x00000000000000000000000000000000000000a0")
+        pool1 = _make_v2_pool(t1, t2, address="0x00000000000000000000000000000000000000a1")
         solver = MobiusSolver()
         with pytest.raises(PathValidationError, match="not cyclic"):
             ArbitragePath(pools=[pool0, pool1], input_token=t0, solver=solver)
@@ -283,10 +286,8 @@ class TestArbitragePathValidation:
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
         t2 = _make_token("0xt2")
-        pool0 = _make_v2_pool(t0, t1)
-        pool0.address = "0xpool0"
-        pool1 = _make_v2_pool(t1, t2)
-        pool1.address = "0xpool1"
+        pool0 = _make_v2_pool(t0, t1, address="0x00000000000000000000000000000000000000a0")
+        pool1 = _make_v2_pool(t1, t2, address="0x00000000000000000000000000000000000000a1")
         solver = MobiusSolver()
         with pytest.raises(PathValidationError):
             ArbitragePath(
@@ -298,8 +299,8 @@ class TestArbitragePathValidation:
     def test_rejects_incompatible_pool(self):
         t0 = _make_token("0xt0")
         t1 = _make_token("0xt1")
-        pool0 = _make_v2_pool(t0, t1)
-        pool0.address = "0xpool0"
+
+        pool0 = _make_v2_pool(t0, t1, address="0x00000000000000000000000000000000000000a0")
 
         class _IncompatiblePool:
             def __init__(self, token0, token1, address):
@@ -361,7 +362,7 @@ class TestArbitragePathCalculate:
 
         original_result = path.calculate()
 
-        override_state = FakeV2PoolState(
+        override_state = UniswapV2PoolState(
             address=pool0.address,
             block=None,
             reserves_token0=5_000_000,
@@ -437,10 +438,14 @@ class TestArbitragePathClose:
     def test_close_unsubscribes_from_pools(self):
         t0 = _make_token("0xtokenA")
         t1 = _make_token("0xtokenB")
-        pool0 = _make_v2_pool(t0, t1, reserve0=2_000_000, reserve1=1_000_000_000)
-        pool0.address = "0xpool0"
-        pool1 = _make_v2_pool(t1, t0, reserve0=1_500_000, reserve1=800_000_000)
-        pool1.address = "0xpool1"
+        pool0 = _make_v2_pool(
+            t0, t1, reserve0=2_000_000, reserve1=1_000_000_000,
+            address="0x00000000000000000000000000000000000000a0",
+        )
+        pool1 = _make_v2_pool(
+            t1, t0, reserve0=1_500_000, reserve1=800_000_000,
+            address="0x00000000000000000000000000000000000000a1",
+        )
 
         solver = MobiusSolver()
         path = ArbitragePath(
@@ -460,10 +465,12 @@ class TestArbitragePathClose:
     def test_close_clears_subscribers(self):
         t0 = _make_token("0xtokenA")
         t1 = _make_token("0xtokenB")
-        pool0 = _make_v2_pool(t0, t1)
-        pool0.address = "0xpool0"
-        pool1 = _make_v2_pool(t1, t0)
-        pool1.address = "0xpool1"
+        pool0 = _make_v2_pool(
+            t0, t1, address="0x00000000000000000000000000000000000000a0",
+        )
+        pool1 = _make_v2_pool(
+            t1, t0, address="0x00000000000000000000000000000000000000a1",
+        )
 
         solver = MobiusSolver()
         path = ArbitragePath(

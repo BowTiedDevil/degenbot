@@ -1,5 +1,7 @@
 """
 Compare SciPy minimize_scalar methods using the simple_v2_arb_profitable fixture.
+
+Uses production UniswapV2Pool for swap calculations instead of MockV2Pool.
 """
 
 import time
@@ -10,9 +12,10 @@ import pytest
 from eth_typing import ChecksumAddress
 from scipy.optimize import minimize_scalar
 
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from tests.arbitrage.generator import FixtureFactory
-from tests.arbitrage.mock_pools import FakeToken, MockV2Pool
+from tests.fakes.tokens import FakeToken
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -26,11 +29,11 @@ USDC_ADDRESS: ChecksumAddress = ChecksumAddress("0xA0b86991c6218b36c1d19D4a2e9Eb
 WETH_ADDRESS: ChecksumAddress = ChecksumAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
 
-def build_mock_pools_from_fixture(
+def build_pools_from_fixture(
     fixture,
-) -> tuple[MockV2Pool, MockV2Pool, FakeToken]:
+) -> tuple[UniswapV2Pool, UniswapV2Pool, FakeToken]:
     """
-    Build MockV2Pool objects from a V2 arbitrage fixture.
+    Build UniswapV2Pool objects from a V2 arbitrage fixture.
 
     Uses the proper fee from the fixture generation.
     """
@@ -40,24 +43,32 @@ def build_mock_pools_from_fixture(
     assert len(pool_states) == 2
     assert all(isinstance(s, UniswapV2PoolState) for s in pool_states)
 
-    # Create mock tokens
-    usdc = FakeToken(USDC_ADDRESS, "USDC", 6)
-    weth = FakeToken(WETH_ADDRESS, "WETH", 18)
+    # Create tokens
+    usdc = FakeToken(USDC_ADDRESS, symbol="USDC", decimals=6)
+    weth = FakeToken(WETH_ADDRESS, symbol="WETH", decimals=18)
 
-    # Create mock pools with the proper fee
-    pool_a = MockV2Pool(
+    # Create production V2 pools
+    pool_a = UniswapV2Pool(
         address=addresses[0],
-        token0=usdc,
-        token1=weth,
-        initial_state=pool_states[0],
-        fee=V2_FEE,
+        token0=usdc,  # type: ignore[arg-type]
+        token1=weth,  # type: ignore[arg-type]
+        factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+        fee_token0=V2_FEE,
+        fee_token1=V2_FEE,
+        reserves_token0=pool_states[0].reserves_token0,
+        reserves_token1=pool_states[0].reserves_token1,
+        state_block=pool_states[0].block,
     )
-    pool_b = MockV2Pool(
+    pool_b = UniswapV2Pool(
         address=addresses[1],
-        token0=usdc,
-        token1=weth,
-        initial_state=pool_states[1],
-        fee=V2_FEE,
+        token0=usdc,  # type: ignore[arg-type]
+        token1=weth,  # type: ignore[arg-type]
+        factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+        fee_token0=V2_FEE,
+        fee_token1=V2_FEE,
+        reserves_token0=pool_states[1].reserves_token0,
+        reserves_token1=pool_states[1].reserves_token1,
+        state_block=pool_states[1].block,
     )
 
     return pool_a, pool_b, usdc
@@ -80,14 +91,14 @@ class TestOptimizerMethodComparison:
         return factory.simple_v2_arb_profitable()
 
     @pytest.fixture
-    def mock_pools(self, v2_fixture) -> tuple[MockV2Pool, MockV2Pool, FakeToken]:
-        """Build mock pools from the fixture."""
-        return build_mock_pools_from_fixture(v2_fixture)
+    def mock_pools(self, v2_fixture) -> tuple[UniswapV2Pool, UniswapV2Pool, FakeToken]:
+        """Build production V2 pools from the fixture."""
+        return build_pools_from_fixture(v2_fixture)
 
     @pytest.fixture
     def profit_function(self, mock_pools) -> "Callable[[float], float]":
         """
-        Create a profit function using MockV2Pool.calculate_tokens_out_from_tokens_in().
+        Create a profit function using UniswapV2Pool.calculate_tokens_out_from_tokens_in().
 
         Returns negative profit (since minimize_scalar finds minima).
         """
@@ -103,18 +114,26 @@ class TestOptimizerMethodComparison:
                 return 0.0
 
             input_amount_int = int(input_amount)
+            if input_amount_int <= 0:
+                return 0.0
 
-            # Pool A: Buy token1 (WETH) with token0 (USDC)
-            token1_received = pool_a.calculate_tokens_out_from_tokens_in(
-                token_in=usdc,
-                token_in_quantity=input_amount_int,
-            )
+            try:
+                # Pool A: Buy token1 (WETH) with token0 (USDC)
+                token1_received = pool_a.calculate_tokens_out_from_tokens_in(
+                    token_in=usdc,
+                    token_in_quantity=input_amount_int,
+                )
 
-            # Pool B: Sell token1 (WETH) for token0 (USDC)
-            token0_received = pool_b.calculate_tokens_out_from_tokens_in(
-                token_in=pool_b.token1,  # WETH
-                token_in_quantity=token1_received,
-            )
+                if token1_received <= 0:
+                    return 0.0
+
+                # Pool B: Sell token1 (WETH) for token0 (USDC)
+                token0_received = pool_b.calculate_tokens_out_from_tokens_in(
+                    token_in=pool_b.token1,  # WETH
+                    token_in_quantity=token1_received,
+                )
+            except Exception:
+                return 0.0
 
             # token0 profit (USDC)
             profit = float(token0_received - input_amount_int)
@@ -333,7 +352,7 @@ class TestOptimizerMethodComparison:
     def test_optimal_input_is_profitable(self, mock_pools) -> None:
         """
         Verify that the optimal input found produces positive arbitrage profit.
-        Uses MockV2Pool.calculate_tokens_out_from_tokens_in() for swap calculations.
+        Uses UniswapV2Pool.calculate_tokens_out_from_tokens_in() for swap calculations.
         """
 
         pool_a, pool_b, usdc = mock_pools
@@ -342,18 +361,26 @@ class TestOptimizerMethodComparison:
             if x <= 0:
                 return 0.0
             input_amount = int(x)
+            if input_amount <= 0:
+                return 0.0
 
-            # Pool A: Buy token1 with token0
-            token1_received = pool_a.calculate_tokens_out_from_tokens_in(
-                token_in=usdc,
-                token_in_quantity=input_amount,
-            )
+            try:
+                # Pool A: Buy token1 with token0
+                token1_received = pool_a.calculate_tokens_out_from_tokens_in(
+                    token_in=usdc,
+                    token_in_quantity=input_amount,
+                )
 
-            # Pool B: Sell token1 for token0
-            token0_received = pool_b.calculate_tokens_out_from_tokens_in(
-                token_in=pool_b.token1,
-                token_in_quantity=token1_received,
-            )
+                if token1_received <= 0:
+                    return 0.0
+
+                # Pool B: Sell token1 for token0
+                token0_received = pool_b.calculate_tokens_out_from_tokens_in(
+                    token_in=pool_b.token1,
+                    token_in_quantity=token1_received,
+                )
+            except Exception:
+                return 0.0
 
             return -(float(token0_received - input_amount))
 
