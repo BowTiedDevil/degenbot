@@ -6,9 +6,11 @@ import pytest
 
 from degenbot.curve._pool_strategies import resolve_pool_strategies
 from degenbot.curve.calculators.crypto import CryptoDyCalculator
+from degenbot.curve.calculators.live_admin import LiveAdminDynamicDyCalculator
 from degenbot.curve.calculators.standard import (
     BalanceSource,
     ConversionStyle,
+    RateSource,
     StandardDyCalculator,
 )
 from degenbot.curve.types import (
@@ -182,6 +184,7 @@ class TestPoolStrategiesDataclass:
         assert isinstance(default, StandardDyCalculator)
         assert default.swap_style == SwapStyle.STANDARD
         assert default.balance_source == BalanceSource.RATE_ADJUSTED_XP
+        assert default.rate_source == RateSource.RESOLVED_RATES
         assert default.subtract_one is True
         assert default.conversion_style == ConversionStyle.FEE_THEN_RATE
 
@@ -206,6 +209,26 @@ class TestPoolStrategiesDataclass:
         assert cytoken.balance_source == BalanceSource.RATE_ADJUSTED_XP
         assert cytoken.subtract_one is True
         assert cytoken.conversion_style == ConversionStyle.FEE_THEN_RATE
+
+        live_admin = PoolStrategies(swap_style=SwapStyle.LIVE_ADMIN).dy_calculator
+        assert isinstance(live_admin, StandardDyCalculator)
+        assert live_admin.swap_style == SwapStyle.LIVE_ADMIN
+        assert live_admin.rate_source == RateSource.RATE_MULTIPLIERS
+
+        live_oracle = PoolStrategies(swap_style=SwapStyle.LIVE_ADMIN_ORACLE).dy_calculator
+        assert isinstance(live_oracle, StandardDyCalculator)
+        assert live_oracle.swap_style == SwapStyle.LIVE_ADMIN_ORACLE
+        assert live_oracle.rate_source == RateSource.RESOLVED_RATES
+
+        live_dyn = PoolStrategies(swap_style=SwapStyle.LIVE_ADMIN_DYNAMIC).dy_calculator
+        assert isinstance(live_dyn, LiveAdminDynamicDyCalculator)
+        assert live_dyn.swap_style == SwapStyle.LIVE_ADMIN_DYNAMIC
+
+        live_dyn_prec = PoolStrategies(
+            swap_style=SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION
+        ).dy_calculator
+        assert isinstance(live_dyn_prec, LiveAdminDynamicDyCalculator)
+        assert live_dyn_prec.swap_style == SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION
 
     def test_explicit_calculator_overrides_auto(self):
         """Explicit calculator arg is preserved, not overwritten by __post_init__."""
