@@ -53,8 +53,7 @@ if TYPE_CHECKING:
 class ProviderBackend(Protocol):
     """Protocol for sync provider backends.
 
-    Replaces the former EthereumProvider (public) and _SyncProviderBackend (private)
-    with a single merged protocol. The EthereumProvider alias was removed by Plan 061.
+    Merged public protocol for any sync Ethereum RPC backend.
     """
 
     @property
@@ -810,7 +809,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
 class AsyncProviderBackend(Protocol):
     """Protocol for async provider backends.
 
-    Replaces the former _AsyncProviderBackend with a public, runtime-checkable protocol.
+    Public, runtime-checkable protocol for async Ethereum RPC backends.
     """
 
     async def get_block_number(self) -> int: ...

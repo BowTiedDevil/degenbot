@@ -72,9 +72,7 @@ class BalancerRateProvider(Protocol):
 class _StaticRateProvider:
     """A rate provider that always returns construction-time rates.
 
-    Used when no I/O-capable provider is injected. Returns the same rates
-    on every call, which matches on-chain behavior only at the block where
-    the rates were originally fetched.
+    Used when no I/O-capable provider is injected.
     """
 
     def __init__(self, rates: tuple[int, ...]) -> None:

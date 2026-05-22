@@ -4,15 +4,11 @@ Metapool get_dy has two dispatch axes:
 1. MetapoolRateStyle — used in get_dy() when base_pool is not None
 2. MetapoolUnderlyingStyle — used in _get_dy_underlying()
 
-Both axes are now served by parameterized single dataclasses whose
+Both axes are served by parameterized dataclasses whose
 ``calculate`` methods dispatch on their style enum — the same pattern
 used by ``StandardDyCalculator`` for the non-metapool swap styles.
 
-The former three separate underlying-style dataclasses
-(``MetapoolUnderlyingRedemptionDyCalculator``,
-``MetapoolUnderlyingPrecisionVpDyCalculator``,
-``MetapoolUnderlyingStandardDyCalculator``) have been collapsed into
-``MetapoolUnderlyingDyCalculator`` parameterized by
+``MetapoolUnderlyingDyCalculator`` is parameterized by
 ``MetapoolUnderlyingStyle``. The variants share a common skeleton
 (rates → xp → index mapping → x computation → invariant solve →
 dy + fee → rate conversion), differing only in how rates are

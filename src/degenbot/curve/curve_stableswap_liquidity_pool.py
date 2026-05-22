@@ -206,8 +206,7 @@ class CurveStableswapPool(
         self._state_cache[state_block] = self._state
         self._state_lock = Lock()
 
-        # Per-block on-chain caches (formerly CurveOnChainCache, Plan 068)
-        # Note: _rates from CurveOnChainCache is dead code (never accessed) — not migrated
+        # Per-block on-chain caches
         self._cache_scaled_redemption_price: BoundedCache[BlockNumber, int] = BoundedCache(
             max_items=state_cache_depth
         )
@@ -356,7 +355,7 @@ class CurveStableswapPool(
             "Use Bot.update() or pass an explicit block number.",
         )
 
-    # ── Per-block cached accessors (formerly CurveOnChainCache, Plan 068) ──
+    # ── Per-block cached accessors ──
 
     def _get_cached_block_timestamp(self, block_number: BlockNumber) -> int:
         """Fetch or retrieve cached block timestamp."""

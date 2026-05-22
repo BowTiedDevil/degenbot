@@ -1,8 +1,7 @@
 """Parameterized DyCalculator for standard Curve swap paths.
 
-A single ``StandardDyCalculator`` dataclass replaces eight former
-class-per-variant dataclasses (six standard + two live-admin).
-Four independent axes encode every observed combination:
+``StandardDyCalculator`` is parameterized by four independent axes
+that encode every observed combination:
 
 - **balance_source** — whether XP uses rate-adjusted or raw balances
 - **rate_source** — which rate tuple to use for conversion
@@ -14,9 +13,8 @@ The ``SwapStyle`` enum maps each variant to the right axis values via
 label (the pool contracts *are* different) but maps to the same axis
 configuration as ``STANDARD`` because the arithmetic is identical.
 
-``LIVE_ADMIN`` and ``LIVE_ADMIN_ORACLE`` were previously separate
-classes in ``live_admin.py`` but are computationally identical to the
-standard ``FEE_THEN_RATE`` path — they differ only in rate source.
+``LIVE_ADMIN`` and ``LIVE_ADMIN_ORACLE`` map to the same
+``FEE_THEN_RATE`` conversion path — they differ only in rate source.
 """
 
 from __future__ import annotations
@@ -58,8 +56,7 @@ class ConversionStyle(Enum):
 class StandardDyCalculator:
     """Parameterized dy calculator for standard and live-admin Curve swap paths.
 
-    Encodes four independent variation axes that previously required
-    eight separate dataclasses:
+    Encodes four independent variation axes:
 
     - balance_source: xp-based (rate-adjusted) or raw balances
     - rate_source: which rate tuple to use for conversion
