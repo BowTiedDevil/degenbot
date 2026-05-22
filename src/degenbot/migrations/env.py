@@ -12,7 +12,6 @@ from degenbot.database.operations import _get_sqlite_db_string
 config = context.config
 
 # Database path: requires explicit DEGENBOT_DATABASE_PATH env var
-# (the global config singleton has been removed)
 database_path = os.environ.get("DEGENBOT_DATABASE_PATH")
 if database_path:
     config.set_main_option(

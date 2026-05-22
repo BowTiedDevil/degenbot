@@ -3,12 +3,8 @@
 Maps pool addresses to their D-variant, Y-variant, and Y_D-variant group,
 determining which calculation formula to use in _get_d(), _get_y(), and _get_y_d().
 
-This module externalizes the address-based conditional logic that previously
-lived as class-level frozensets on CurveStableswapPool. The builder resolves
-variant group membership at construction time and passes the result as strategy
-enums to the pool constructor.
-
-Plan 029: Externalize variant group addresses from pool class to configuration.
+The builder resolves variant group membership at construction time and passes
+the result as strategy enums to the pool constructor.
 """
 
 from eth_typing import ChecksumAddress

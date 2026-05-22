@@ -2,11 +2,10 @@
 
 Two parameterized calculators cover the four live-admin swap styles:
 
-- ``LiveAdminDyCalculator`` — absorbs the former LIVE_ADMIN and
-  LIVE_ADMIN_ORACLE variants (now merged into ``StandardDyCalculator``
-  with different ``rate_source`` values).  This class is preserved as a
-  thin re-export so that ``isinstance`` checks and direct imports
-  continue to work.
+- ``LiveAdminDyCalculator`` — LIVE_ADMIN and LIVE_ADMIN_ORACLE
+  variants. These are identical to ``StandardDyCalculator`` with
+  different ``rate_source`` values. Kept as a thin re-export for
+  ``isinstance`` checks and direct import compatibility.
 
 - ``LiveAdminDynamicDyCalculator`` — handles the two dynamic-fee
   variants (LIVE_ADMIN_DYNAMIC and LIVE_ADMIN_DYNAMIC_PRECISION),

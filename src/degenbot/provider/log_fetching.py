@@ -40,9 +40,6 @@ def _build_topics_list(
 class _ChunkedLogFetcher:
     """
     Internal: shared chunking and span-management logic for log fetching.
-
-    Consolidates the formerly duplicated code in ``fetch_logs_retrying``
-    and ``fetch_logs_retrying_async``.
     """
 
     _DEFAULT_MAX_BLOCKS = 5_000

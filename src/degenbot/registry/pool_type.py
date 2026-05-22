@@ -1,9 +1,6 @@
 """
 Unified pool type registry.
 
-Replaces PoolClassRegistry, FACTORY_DEPLOYMENTS lookups, _KIND_TO_DESCRIPTOR,
-and _variant_from_class with a single registration mechanism.
-
 Identity (family, variant, kind) is auto-derived from the class hierarchy
 and class attributes. Deployment data (chain_id, factory, deployer, init_hash)
 is carried by the registration call.
@@ -38,9 +35,8 @@ def _derive_family(pool_class: type[AbstractLiquidityPool]) -> PoolFamily:
     """Derive the pool family from the class's structural shape.
 
     Uses duck-typing checks on the class's annotation/attribute signatures
-    instead of ABC inheritance. This matches the protocol-based approach
-    (ConstantProductPool, ConcentratedLiquidityPool, StableswapPool)
-    but works with issubclass() which protocols-with-properties don't support.
+    rather than ABC inheritance. This works with issubclass() which
+    runtime-checkable protocols with @property don't support.
 
     Checking strategy:
     - ConcentratedLiquidityPool shape: has sqrt_price_x96, tick, tick_spacing, liquidity

@@ -3,10 +3,10 @@
 Define structural interfaces for pool behavior. Pools satisfy these
 protocols by implementing the required methods — no inheritance needed.
 
-Three pool-shape protocols replace the former ABCs:
-- ConstantProductPool: replaces AbstractUniswapV2Pool + AbstractAerodromeV2Pool
-- ConcentratedLiquidityPool: replaces AbstractConcentratedLiquidityPool
-- StableswapPool: replaces direct CurveStableswapPool references
+Three pool-shape protocols:
+- ConstantProductPool — V2-family pools
+- ConcentratedLiquidityPool — V3/V4-family pools
+- StableswapPool — Curve-family pools
 """
 
 from __future__ import annotations

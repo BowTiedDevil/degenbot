@@ -6,15 +6,12 @@ and their variant forms.
 Two levels of function:
 
 1. **Step functions** (``calc_d``, ``calc_dp``, etc.) — compute a single Newton step.
-   These were originally nested closures inside ``CurveStableswapPool._get_d()``.
-   Plan 029 (Variant Group Externalization) made the variant selection explicit via
-   DVariant/YVariant/YDVariant enums.
+   Variant selection is explicit via DVariant/YVariant/YDVariant enums.
 
 2. **Iterative solvers** (``stableswap_get_d``, ``stableswap_get_y``, etc.) — run
    the Newton iteration to convergence, selecting the step function based on the
-   variant enum. These were originally pool methods on ``CurveStableswapPool``.
-   Plan 039 (DyCalculator Seam) extracts them as standalone pure functions so that
-   calculators can call them without depending on the pool object.
+   variant enum. Standalone pure functions so calculators can call them
+   without depending on the pool object.
 
 All functions are pure: numeric inputs → numeric outputs, no self, no class references.
 """
