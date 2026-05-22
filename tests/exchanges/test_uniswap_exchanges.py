@@ -82,3 +82,7 @@ def test_custom_exchange_registration() -> None:
             factory_address=custom_factory,
             pool_init_hash="0x0420",
         )
+
+    # Clean up so the singleton is not polluted for other tests
+    pool_type_registry.unregister(chain_id=custom_chain, factory_address=custom_factory)
+    assert not pool_type_registry.has_registration(custom_chain, custom_factory)
