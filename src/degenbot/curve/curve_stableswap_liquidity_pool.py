@@ -24,6 +24,7 @@ from degenbot.calculations.stableswap import (
 )
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.stableswap_pool_state import StableswapPoolState
+from degenbot.curve.strategies import PoolStrategies
 from degenbot.curve.types import (
     CurveDataProvider,
     CurveStableswapPoolExternalUpdate,
@@ -31,7 +32,6 @@ from degenbot.curve.types import (
     CurveStableSwapPoolStateUpdated,
     DyCalculationInputs,
     LendingRateStyle,
-    PoolStrategies,
     SwapStyle,
     YVariant,
 )

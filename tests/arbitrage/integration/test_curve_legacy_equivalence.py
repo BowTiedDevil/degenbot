@@ -18,7 +18,6 @@ from degenbot.arbitrage.optimizers.solidly_stable import (
 )
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20 import Erc20Token
-from degenbot.types.hop_types import PoolInvariant
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.fakes.tokens import FakeToken

@@ -20,8 +20,8 @@ from degenbot.arbitrage.path import ArbitragePath
 from degenbot.exceptions.arbitrage import OptimizationError
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
-from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.fakes.tokens import FakeToken
 
 # ---------------------------------------------------------------------------

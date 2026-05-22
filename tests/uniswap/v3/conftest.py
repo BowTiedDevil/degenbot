@@ -14,7 +14,6 @@ from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-
 from tests.constants import (
     UNISWAP_V3_FACTORY_ETH,
     UNISWAP_V3_WBTC_WETH_POOL,

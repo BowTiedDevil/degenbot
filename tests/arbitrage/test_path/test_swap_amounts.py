@@ -13,6 +13,7 @@ from degenbot.arbitrage.optimizers.hop_types import SolveResult, SolverMethod
 from degenbot.arbitrage.optimizers.solver import MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath, PathValidationError
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
+from degenbot.checksum_cache import get_checksum_address
 
 from .conftest import FakeToken, _make_v2_pool
 
@@ -128,8 +129,6 @@ class TestBuildSwapAmountsV2V2:
         path = self._make_path(token_a, token_b)
         result = path.calculate()
         arb_result = path.build_swap_amounts(result)
-
-        from degenbot.checksum_cache import get_checksum_address
 
         assert arb_result.swap_amounts[0].pool == get_checksum_address(ADDR_POOL0)
         assert arb_result.swap_amounts[1].pool == get_checksum_address(ADDR_POOL1)

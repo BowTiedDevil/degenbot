@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-    from degenbot.curve.types import PoolStrategies
+    from degenbot.curve.strategies import PoolStrategies
     from degenbot.erc20 import Erc20Token
 
 

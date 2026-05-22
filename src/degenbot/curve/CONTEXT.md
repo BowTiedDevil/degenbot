@@ -45,18 +45,18 @@
 
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|
-| **SwapStyle** | An enum identifying which computation path `get_dy()` uses for dy calculation. Has a `make_calculator()` factory method returning the matching `DyCalculator` instance. `CYTOKEN` is preserved as a label (the pool contracts differ) but maps to the same `StandardDyCalculator` configuration as `STANDARD` because the arithmetic is identical | Fee style, swap type |
-| **MetapoolRateStyle** | An enum identifying how a metapool constructs its rate tuple. Has a `make_calculator()` factory method returning the matching metapool `DyCalculator` instance. | Metapool rate |
-| **MetapoolUnderlyingStyle** | An enum identifying how a metapool computes `get_dy_underlying()`. Has a `make_calculator()` factory method returning the matching metapool underlying `DyCalculator` instance. | Underlying style |
+| **SwapStyle** | An enum identifying which computation path `get_dy()` uses for dy calculation. `CYTOKEN` is preserved as a label (the pool contracts differ) but maps to the same `StandardDyCalculator` configuration as `STANDARD` because the arithmetic is identical | Fee style, swap type |
+| **MetapoolRateStyle** | An enum identifying how a metapool constructs its rate tuple | Metapool rate |
+| **MetapoolUnderlyingStyle** | An enum identifying how a metapool computes `get_dy_underlying()` | Underlying style |
 | **LendingRateStyle** | An enum identifying which rate source provides lending rates | Rate source, rate style |
-| **PoolStrategies** | A frozen dataclass combining all strategy enums and DyCalculator instances into a single value object. Auto-constructs calculators from enum values in `__post_init__` via each enum's `make_calculator()` method. Explicitly-passed calculator arguments are preserved. | Strategies, pool config |
+| **PoolStrategies** | A frozen dataclass combining all strategy enums and DyCalculator instances into a single value object. Defined in `strategies.py` (not `types.py`) to break the circular dependency between types and calculator modules. Auto-constructs calculators from enum values in `__post_init__` via factory functions (`make_swap_style_calculator`, `make_metapool_calculator`, `make_metapool_underlying_calculator`). Explicitly-passed calculator arguments are preserved. | Strategies, pool config |
 
 ## DyCalculator Protocol
 
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|
 | **DyCalculationInputs** | A frozen dataclass constructed by `CurveStableswapPool.get_dy()` carrying all pre-resolved data for a single dy calculation (balances, rates, xp, block data, variant enums `d_variant`/`y_variant`/`yd_variant`, `a_precision`, and optional I/O results for crypto/live-admin/metapool). All I/O and cache lookups happen before this object is created — calculators read only from it and call pure `stableswap_get_y`/`stableswap_newton_y` functions directly. No callable fields. | Calculation inputs, inputs object |
-| **DyCalculator** | A runtime-checkable protocol defining `calculate(i, j, dx, *, inputs: DyCalculationInputs, override_state) -> int` | Dy strategy, dy solver |
+| **DyCalculator** | A runtime-checkable protocol defining `calculate(i, j, dx, *, inputs: DyCalculationInputs, override_state) -> int`. Defined in `strategies.py` alongside `PoolStrategies` to break the circular dependency between `types.py` and calculator modules. | Dy strategy, dy solver |
 | **StandardDyCalculator** | Parameterized dy calculator for standard and live-admin swap paths. Four axes (`balance_source`, `rate_source`, `subtract_one`, `conversion_style`) replace eight former class-per-variant dataclasses (six standard + two live-admin). `LIVE_ADMIN` and `LIVE_ADMIN_ORACLE` differ only in `rate_source` | Parameterized calculator |
 | **BalanceSource** | Enum: `RATE_ADJUSTED_XP` (inputs.xp + rates from rate_source) or `RAW_BALANCES` (inputs.balances, no rate adjustment) | Balance source |
 | **RateSource** | Enum: `RESOLVED_RATES` (inputs.resolved_rates) or `RATE_MULTIPLIERS` (inputs.rate_multipliers) | Rate source |
@@ -64,7 +64,7 @@
 | **CryptoDyCalculator** | Computes dy using CryptoSwap invariant (Newton's method, dynamic fee, price_scale) | Crypto calculator |
 | **LiveAdminDynamicDyCalculator** | Parameterized dy calculator for live-admin dynamic-fee paths. `PrecisionMode` axis: `NONE` (raw effective_balances) or `PRECISION_MULTIPLIERS` (effective_balances × precision_multipliers) | Dynamic admin calculator |
 | **MetapoolDyCalculator** | Parameterized dy calculator for metapool `get_dy`. `rate_style` axis determines the rates tuple: `STANDARD` / `PRECISION_VP` / `REDEMPTION_VP` | Metapool rate calculator |
-| **MetapoolUnderlying*DyCalculator** | A family of calculators (Redemption, PrecisionVp, Standard) for `get_dy_underlying` — kept separate due to structural divergence in input/output conversion paths | Metapool underlying calculator |
+| **MetapoolUnderlyingDyCalculator** | Parameterized dy calculator for metapool `_get_dy_underlying`. `underlying_style` axis determines rate construction, input conversion, and output denomination: `REDEMPTION` / `PRECISION_VP` / `STANDARD` | Metapool underlying calculator |
 
 ## Pool Tracker
 

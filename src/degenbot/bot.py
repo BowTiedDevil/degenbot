@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
 
+from degenbot.provider import AsyncAlloyProvider
 from degenbot.provider.interface import AsyncProviderAdapter, ProviderAdapter
 from degenbot.provider.subscription import Subscription  # noqa: TC001
 from degenbot.types.aliases import ChainId  # noqa: TC001
@@ -466,8 +467,6 @@ class Bot:
             raise DegenbotValueError(message=msg)
 
         # Create async alloy provider from WS URI
-        from degenbot.provider import AsyncAlloyProvider  # noqa: PLC0415
-
         alloy = await AsyncAlloyProvider.create(str(ws_uri))
         adapter = AsyncProviderAdapter.from_alloy(alloy)
 
