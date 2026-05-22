@@ -86,19 +86,19 @@ def _compute_mobius_coefficients(hops: tuple[HopType, ...]) -> _MobiusCoefficien
         return _MobiusCoefficients(K=0.0, M=1.0, N=0.0, is_profitable=False)
 
     r0, s0, g0 = _hop_to_float_state(hops[0])
-    K = g0 * s0
-    M = r0
-    N = g0
+    k = g0 * s0
+    m = r0
+    n = g0
 
     for hop in hops[1:]:
         r_i, s_i, g_i = _hop_to_float_state(hop)
-        old_K = K
-        K = old_K * g_i * s_i
-        M *= r_i
-        N = N * r_i + old_K * g_i
+        old_k = k
+        k = old_k * g_i * s_i
+        m *= r_i
+        n = n * r_i + old_k * g_i
 
-    is_profitable = K > M
-    return _MobiusCoefficients(K=K, M=M, N=N, is_profitable=is_profitable)
+    is_profitable = k > m
+    return _MobiusCoefficients(K=k, M=m, N=n, is_profitable=is_profitable)
 
 
 def _simulate_path(x: float, hops: tuple[HopType, ...]) -> float:
