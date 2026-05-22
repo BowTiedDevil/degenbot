@@ -43,9 +43,7 @@ class PoolIO(Protocol):
 
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes: ...
 
-    def call_raw(
-        self, tx: TxParams, block: BlockIdentifier | None = None
-    ) -> HexBytes: ...
+    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes: ...
 
 
 @runtime_checkable
@@ -93,9 +91,7 @@ class SyncPoolIO:
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
         return self._provider.call(to=to, data=data, block=block)
 
-    def call_raw(
-        self, tx: TxParams, block: BlockIdentifier | None = None
-    ) -> HexBytes:
+    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
         return self._provider.call_raw(tx, block=block)  # ty: ignore
 
 

@@ -368,7 +368,7 @@ class CurveStableswapPool(
         self._cache_block_timestamps[block_number] = result
         return result
 
-    def _get_cached_contract_D(self, block_number: BlockNumber) -> int:  # noqa: N802
+    def _get_cached_contract_D(self, block_number: BlockNumber) -> int:
         """Fetch or retrieve cached contract D value (crypto pools)."""
         with contextlib.suppress(KeyError):
             return self._cache_contract_D[block_number]

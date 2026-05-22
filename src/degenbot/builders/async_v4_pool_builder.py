@@ -24,7 +24,6 @@ from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.uniswap.v4_types import UniswapV4PoolExternalUpdate
 
 if TYPE_CHECKING:
-
     from web3.types import BlockIdentifier
 
     from degenbot.builders.async_context import AsyncBuilderContext
@@ -73,9 +72,7 @@ class AsyncV4PoolBuilder:
         assert io is not None
 
         state_block = (
-            request.state_block
-            if request.state_block is not None
-            else await io.get_block_number()
+            request.state_block if request.state_block is not None else await io.get_block_number()
         )
 
         # Try DB first

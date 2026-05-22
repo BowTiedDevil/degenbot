@@ -89,9 +89,7 @@ class V3PoolBuilder(V3BuilderBase):
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
 
         state_block = (
-            request.state_block
-            if request.state_block is not None
-            else io.get_block_number()
+            request.state_block if request.state_block is not None else io.get_block_number()
         )
 
         # Try DB first

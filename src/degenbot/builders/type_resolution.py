@@ -70,14 +70,12 @@ def pool_class_for_descriptor(
         case PoolFamily.CONSTANT_PRODUCT:
             return cast(
                 "type[AbstractLiquidityPool]",
-                pool_type_registry.get_v2_class(chain_id, pool_type.factory or "")
-                or UniswapV2Pool,
+                pool_type_registry.get_v2_class(chain_id, pool_type.factory or "") or UniswapV2Pool,
             )
         case PoolFamily.CONCENTRATED_LIQUIDITY:
             return cast(
                 "type[AbstractLiquidityPool]",
-                pool_type_registry.get_v3_class(chain_id, pool_type.factory or "")
-                or UniswapV3Pool,
+                pool_type_registry.get_v3_class(chain_id, pool_type.factory or "") or UniswapV3Pool,
             )
         case PoolFamily.STABLESWAP:
             # Variant-aware: reject Balancer stable pools without factory registration
@@ -222,7 +220,9 @@ def resolve_pool_type_by_probing(
         pass
     else:
         return _descriptor_from_probing_result(
-            succeeded_method="slot0", chain_id=chain_id, factory=factory,
+            succeeded_method="slot0",
+            chain_id=chain_id,
+            factory=factory,
         )
 
     # Try V2: getReserves() exists → CONSTANT_PRODUCT
@@ -235,7 +235,9 @@ def resolve_pool_type_by_probing(
         pass
     else:
         return _descriptor_from_probing_result(
-            succeeded_method="getReserves", chain_id=chain_id, factory=factory,
+            succeeded_method="getReserves",
+            chain_id=chain_id,
+            factory=factory,
         )
 
     # Try Balancer: getPoolId() exists → Balancer pool
@@ -268,7 +270,9 @@ def resolve_pool_type_by_probing(
 
     # Fall through to Curve — assume STABLESWAP if nothing else matched
     return _descriptor_from_probing_result(
-        succeeded_method=None, chain_id=chain_id, factory=factory,
+        succeeded_method=None,
+        chain_id=chain_id,
+        factory=factory,
     )
 
 
@@ -290,7 +294,9 @@ async def resolve_pool_type_by_probing_async(
         pass
     else:
         return _descriptor_from_probing_result(
-            succeeded_method="slot0", chain_id=chain_id, factory=factory,
+            succeeded_method="slot0",
+            chain_id=chain_id,
+            factory=factory,
         )
 
     # Try V2: getReserves() exists → CONSTANT_PRODUCT
@@ -303,7 +309,9 @@ async def resolve_pool_type_by_probing_async(
         pass
     else:
         return _descriptor_from_probing_result(
-            succeeded_method="getReserves", chain_id=chain_id, factory=factory,
+            succeeded_method="getReserves",
+            chain_id=chain_id,
+            factory=factory,
         )
 
     # Try Balancer: getPoolId() exists → Balancer pool
@@ -336,7 +344,9 @@ async def resolve_pool_type_by_probing_async(
 
     # Fall through — assume STABLESWAP
     return _descriptor_from_probing_result(
-        succeeded_method=None, chain_id=chain_id, factory=factory,
+        succeeded_method=None,
+        chain_id=chain_id,
+        factory=factory,
     )
 
 

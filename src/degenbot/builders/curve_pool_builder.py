@@ -64,9 +64,7 @@ class CurvePoolBuilder:
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
         state_block = (
-            request.state_block
-            if request.state_block is not None
-            else io.get_block_number()
+            request.state_block if request.state_block is not None else io.get_block_number()
         )
 
         # 1. Discover coins and balances

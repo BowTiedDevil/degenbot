@@ -101,11 +101,11 @@ class AsyncErc20Builder:
             assert io is not None
 
             try:
-                fetched_name, fetched_symbol, fetched_decimals = (
-                    await self._fetch_name_symbol_decimals_batched(
-                        address=address, io=io
-                    )
-                )
+                (
+                    fetched_name,
+                    fetched_symbol,
+                    fetched_decimals,
+                ) = await self._fetch_name_symbol_decimals_batched(address=address, io=io)
             except (Web3Exception, DecodingError):
                 # Fallback: try individual calls with alternate prototypes
                 fetched_name = await self._fetch_with_fallback(
@@ -325,9 +325,7 @@ class AsyncErc20Builder:
         return await io.get_balance(address, block=block_number)
 
 
-async def _resolve_block_number(
-    io: AsyncPoolIO, block_identifier: BlockIdentifier | None
-) -> int:
+async def _resolve_block_number(io: AsyncPoolIO, block_identifier: BlockIdentifier | None) -> int:
     """Resolve a block identifier to a block number."""
     if block_identifier is None:
         return await io.get_block_number()

@@ -164,7 +164,7 @@ class CurveDataProviderImpl:
                 break
         return tuple(balances)
 
-    def D(self, block_number: int) -> int:  # noqa: N802
+    def D(self, block_number: int) -> int:
         return cast(
             "int",
             self._wrap_revert(

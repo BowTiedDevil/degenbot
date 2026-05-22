@@ -30,7 +30,7 @@ class BuildPoolRequest:
     tick_data: dict[int, Any] | None = None
 
     # Balancer options (flat fields matching existing pattern)
-    bpt_idx: int | None = None        # Override BPT index detection
+    bpt_idx: int | None = None  # Override BPT index detection
     invariant_version: int | None = None  # Override: INVARIANT_V1 or INVARIANT_V2
 
 

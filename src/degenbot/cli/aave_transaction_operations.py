@@ -434,13 +434,17 @@ class TransactionOperationsParser:
         # AaveGhoToken is a tiny table (1 row per chain). Query it directly
         # with eager-loaded relationships, then filter in Python to avoid
         # the expensive JOIN through Erc20TokenTable (572K+ rows).
-        gho_assets = self.session.scalars(
-            select(AaveGhoToken)
-            .options(
-                joinedload(AaveGhoToken.token),
-                joinedload(AaveGhoToken.v_token),
+        gho_assets = (
+            self.session
+            .scalars(
+                select(AaveGhoToken).options(
+                    joinedload(AaveGhoToken.token),
+                    joinedload(AaveGhoToken.v_token),
+                )
             )
-        ).unique().all()
+            .unique()
+            .all()
+        )
 
         for gho in gho_assets:
             if gho.token.chain == self.market.chain_id:

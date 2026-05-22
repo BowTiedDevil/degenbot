@@ -49,15 +49,20 @@ def _get_all_scaled_token_addresses(
 
     # Query from AaveV3Asset (small table, ~7 rows) instead of Erc20TokenTable
     # (572K+ rows) to avoid expensive full table scans.
-    assets = session.scalars(
-        select(AaveV3Asset)
-        .join(AaveV3Market, AaveV3Asset.market_id == AaveV3Market.id)
-        .where(AaveV3Market.chain_id == chain_id)
-        .options(
-            joinedload(AaveV3Asset.a_token),
-            joinedload(AaveV3Asset.v_token),
+    assets = (
+        session
+        .scalars(
+            select(AaveV3Asset)
+            .join(AaveV3Market, AaveV3Asset.market_id == AaveV3Market.id)
+            .where(AaveV3Market.chain_id == chain_id)
+            .options(
+                joinedload(AaveV3Asset.a_token),
+                joinedload(AaveV3Asset.v_token),
+            )
         )
-    ).unique().all()
+        .unique()
+        .all()
+    )
 
     addresses: list[ChecksumAddress] = []
     for asset in assets:

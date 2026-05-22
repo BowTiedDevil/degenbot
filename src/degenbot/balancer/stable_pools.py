@@ -114,7 +114,7 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
       MetaStablePools have no rate cache — they call ``getRate()`` directly.
     """
 
-    variant: ClassVar[str | None] = "balancer_stable"""
+    variant: ClassVar[str | None] = "balancer_stable"
 
     type PoolState = BalancerV2PoolState
     FEE_DENOMINATOR = 1 * 10**18
@@ -248,9 +248,7 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         MetaStablePools and for pools with only a static rate provider.
         """
         # ComposableStablePools always need fresh rates for exact matching
-        return self.bpt_idx is not None and not isinstance(
-            self._rate_provider, _StaticRateProvider
-        )
+        return self.bpt_idx is not None and not isinstance(self._rate_provider, _StaticRateProvider)
 
     @staticmethod
     def _upscale(amount: int, scaling_factor: int) -> int:
@@ -294,19 +292,13 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
 
         rates = self._rate_provider.get_rates(block_identifier)
         return tuple(
-            bsf * rate // ONE
-            for bsf, rate in zip(self._base_scaling_factors, rates, strict=True)
+            bsf * rate // ONE for bsf, rate in zip(self._base_scaling_factors, rates, strict=True)
         )
 
     @staticmethod
-    def _upscale_balances(
-        balances: Sequence[int], scaling_factors: Sequence[int]
-    ) -> list[int]:
+    def _upscale_balances(balances: Sequence[int], scaling_factors: Sequence[int]) -> list[int]:
         """Upscale all balances using the given scaling factors."""
-        return [
-            b * sf // ONE
-            for b, sf in zip(balances, scaling_factors, strict=False)
-        ]
+        return [b * sf // ONE for b, sf in zip(balances, scaling_factors, strict=False)]
 
     def _compute_invariant(self, upscaled_balances: list[int]) -> int:
         """Compute invariant using the pool's deployed StableMath version.
