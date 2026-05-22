@@ -55,8 +55,7 @@ _ERC20_TRANSFER_MAP: dict[ScaledTokenEventType, ScaledTokenEventType] = {
 
 
 class EnrichmentContext:
-    """
-    Shared context providing services for enrichment handlers.
+    """Shared context providing services for enrichment handlers.
 
     Encapsulates:
     - Token revision lookup (with caching)
@@ -81,7 +80,12 @@ class EnrichmentContext:
         self._calculator_cache: dict[tuple[int, int], ScaledAmountCalculator] = {}
 
     def get_token_revision(self, token_address: ChecksumAddress) -> int:
-        """Get token revision from cache or database."""
+        """Get token revision from cache or database.
+
+        Returns:
+            The computed value.
+
+        """
         revision = self.token_revisions.get(token_address)
         if revision is None:
             revision = self._fetch_token_revision_from_db(token_address)
@@ -89,7 +93,16 @@ class EnrichmentContext:
         return revision
 
     def _fetch_token_revision_from_db(self, token_address: ChecksumAddress) -> int:
-        """Fetch token revision from database."""
+        """Fetch token revision from database.
+
+        Returns:
+            The computed value.
+        .
+
+        Raises:
+            EnrichmentError: If the operation fails.
+
+        """
         # Query for a_token match
         a_token_asset = (
             self.session
@@ -118,7 +131,16 @@ class EnrichmentContext:
         raise EnrichmentError(msg)
 
     def get_underlying_asset(self, token_address: ChecksumAddress) -> ChecksumAddress:
-        """Get underlying asset address for a token."""
+        """Get underlying asset address for a token.
+
+        Returns:
+            The computed value.
+        .
+
+        Raises:
+            EnrichmentError: If the operation fails.
+
+        """
         asset = (
             self.session
             .query(AaveV3Asset)
@@ -147,7 +169,12 @@ class EnrichmentContext:
         pool_revision: int,
         token_revision: int,
     ) -> ScaledAmountCalculator:
-        """Get or create a calculator for the given revisions."""
+        """Get or create a calculator for the given revisions.
+
+        Returns:
+            The computed value.
+
+        """
         key = (pool_revision, token_revision)
         if key not in self._calculator_cache:
             self._calculator_cache[key] = ScaledAmountCalculator(
@@ -162,10 +189,13 @@ class EnrichmentContext:
         event_type: ScaledTokenEventType | None = None,
         operation_type: OperationType | None = None,
     ) -> int:
-        """
-        Extract raw amount from a Pool event.
+        """Extract raw amount from a Pool event.
 
         Special handling for liquidations: use different extractors for debt vs collateral.
+
+        Returns:
+            The computed value.
+
         """
         if (
             operation_type in {OperationType.LIQUIDATION, OperationType.GHO_LIQUIDATION}
@@ -199,7 +229,12 @@ class EnrichmentContext:
         index: int,
         token_revision: int,
     ) -> int:
-        """Calculate scaled amount using TokenMath."""
+        """Calculate scaled amount using TokenMath.
+
+        Returns:
+            The computed value.
+
+        """
         calculator = self.get_calculator(self.pool_revision, token_revision)
         return calculator.calculate(
             event_type=event_type,
@@ -214,7 +249,16 @@ class EnrichmentContext:
         raw_amount: int,
         scaled_amount: int | None,
     ) -> EnrichedScaledTokenEvent:
-        """Create an enriched event using the unified model."""
+        """Create an enriched event using the unified model.
+
+        Returns:
+            The computed value.
+        .
+
+        Raises:
+            EnrichmentError: If the operation fails.
+
+        """
         token_address = ChecksumAddress(event.event["address"])
         token_revision = self.get_token_revision(token_address)
         underlying_asset = self.get_underlying_asset(token_address)

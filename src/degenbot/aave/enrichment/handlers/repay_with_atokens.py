@@ -1,5 +1,4 @@
-"""
-REPAY_WITH_ATOKENS operation handler.
+"""REPAY_WITH_ATOKENS operation handler.
 
 REPAY_WITH_ATOKENS is a composite operation that burns both aTokens (collateral)
 and vTokens (debt). It has two special cases:
@@ -39,11 +38,17 @@ class RepayWithAtokensHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich a REPAY_WITH_ATOKENS event.
+        """Enrich a REPAY_WITH_ATOKENS event.
 
         Handles both collateral and debt events with their respective
         special cases for interest exceeding repayment.
+
+        Returns:
+            The computed value.
+
+        Raises:
+                     EnrichmentError: If the operation fails.
+
         """
         if operation.pool_event is None:
             msg = "REPAY_WITH_ATOKENS operation has no pool event"
@@ -78,7 +83,12 @@ class RepayWithAtokensHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """Handle collateral (aToken) side of REPAY_WITH_ATOKENS."""
+        """Handle collateral (aToken) side of REPAY_WITH_ATOKENS.
+
+        Returns:
+            The computed value.
+
+        """
         assert operation.pool_event is not None
         assert event.index is not None
         event_type = event.event_type
@@ -150,7 +160,12 @@ class RepayWithAtokensHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """Handle debt (vToken) side of REPAY_WITH_ATOKENS."""
+        """Handle debt (vToken) side of REPAY_WITH_ATOKENS.
+
+        Returns:
+            The computed value.
+
+        """
         assert operation.pool_event is not None
         assert event.index is not None
         event_type = event.event_type

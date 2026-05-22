@@ -1,5 +1,4 @@
-"""
-WITHDRAW operation handler.
+"""WITHDRAW operation handler.
 
 WITHDRAW operations emit a COLLATERAL_BURN event from the aToken contract.
 The Pool event contains the raw amount withdrawn by the user.
@@ -42,10 +41,16 @@ class WithdrawHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich a WITHDRAW event.
+        """Enrich a WITHDRAW event.
 
         Handles both standard burns and the interest>withdrawal Mint case.
+
+        Returns:
+            The computed value.
+
+        Raises:
+                     EnrichmentError: If the operation fails.
+
         """
         if operation.pool_event is None:
             msg = "WITHDRAW operation has no pool event"
@@ -82,12 +87,15 @@ class WithdrawHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Handle the case where interest exceeds withdrawal amount.
+        """Handle the case where interest exceeds withdrawal amount.
 
         The Mint event's amount represents the net interest (interest - withdrawal),
         not the actual withdrawal. Extract the actual withdrawal amount from the
         Pool event and use COLLATERAL_BURN calculation (ceil rounding).
+
+        Returns:
+            The computed value.
+
         """
         assert operation.pool_event is not None
         assert event.index is not None
@@ -134,7 +142,12 @@ class WithdrawHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """Handle standard WITHDRAW burn event."""
+        """Handle standard WITHDRAW burn event.
+
+        Returns:
+            The computed value.
+
+        """
         assert operation.pool_event is not None
         assert event.index is not None
         # Extract raw amount from Pool event

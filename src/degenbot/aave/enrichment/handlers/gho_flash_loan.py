@@ -1,5 +1,4 @@
-"""
-GHO_FLASH_LOAN operation handler.
+"""GHO_FLASH_LOAN operation handler.
 
 GHO flash loan deficit coverage. When a GHO flash loan creates a deficit,
 the Pool emits a DEFICIT_CREATED event which triggers a GHO_DEBT_BURN.
@@ -32,11 +31,17 @@ class GhoFlashLoanHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich a GHO_FLASH_LOAN event.
+        """Enrich a GHO_FLASH_LOAN event.
 
         GHO flash loan deficits emit GHO_DEBT_BURN events.
         Standard burn calculation using floor rounding.
+
+        Returns:
+            The computed value.
+
+        Raises:
+                     EnrichmentError: If the operation fails.
+
         """
         if operation.pool_event is None:
             msg = "GHO_FLASH_LOAN operation has no pool event"

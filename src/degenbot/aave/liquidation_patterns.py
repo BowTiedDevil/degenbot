@@ -1,5 +1,4 @@
-"""
-Liquidation pattern detection for multi-liquidation scenarios.
+"""Liquidation pattern detection for multi-liquidation scenarios.
 
 This module centralizes the logic for handling complex liquidation patterns:
 - SINGLE: 1 liquidation with 1 burn event (standard)
@@ -25,8 +24,7 @@ def detect_liquidation_patterns(
     scaled_token_events: list[ScaledTokenEvent],
     get_v_token_for_underlying: Callable[[ChecksumAddress], ChecksumAddress | None],
 ) -> LiquidationPatternContext:
-    """
-    Analyze all liquidations in a transaction and detect patterns.
+    """Analyze all liquidations in a transaction and detect patterns.
 
     This is the main entry point called during preprocessing.
 

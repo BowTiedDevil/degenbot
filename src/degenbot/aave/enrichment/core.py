@@ -15,8 +15,7 @@ if TYPE_CHECKING:
 
 
 class ScaledEventEnricher:
-    """
-    Enriches ScaledTokenEvent with calculated scaled amounts.
+    """Enriches ScaledTokenEvent with calculated scaled amounts.
 
     This is the main entry point for event enrichment. It dispatches
     to appropriate handlers based on operation type.
@@ -44,8 +43,7 @@ class ScaledEventEnricher:
         scaled_event: "ScaledTokenEvent",
         operation: "Operation",
     ) -> EnrichedScaledTokenEvent:
-        """
-        Enrich a single ScaledTokenEvent.
+        """Enrich a single ScaledTokenEvent.
 
         Args:
             scaled_event: The raw ScaledTokenEvent to enrich
@@ -53,9 +51,6 @@ class ScaledEventEnricher:
 
         Returns:
             EnrichedScaledTokenEvent with validated scaled amounts
-
-        Raises:
-            EnrichmentError: If extraction or calculation fails
 
         """
         handler = HANDLER_REGISTRY.get(operation.operation_type)

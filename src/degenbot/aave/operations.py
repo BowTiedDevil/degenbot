@@ -1,5 +1,4 @@
-"""
-Domain types for Aave V3 transaction operations.
+"""Domain types for Aave V3 transaction operations.
 
 Contains data classes and validation containers used to represent decoded on-chain
 event data and parsed operations. These are pure domain types with no DB/Session/Provider
@@ -114,11 +113,21 @@ class Operation:
     validation_errors: list[str] = field(default_factory=list)
 
     def is_valid(self) -> bool:
-        """Check if operation passed validation."""
+        """Check if operation passed validation.
+
+        Returns:
+            The computed value.
+
+        """
         return len(self.validation_errors) == 0
 
     def get_all_events(self) -> list[LogReceipt]:
-        """Get all events involved in this operation."""
+        """Get all events involved in this operation.
+
+        Returns:
+            The computed value.
+
+        """
         events = []
         seen_log_indices: set[int] = set()
 
@@ -147,13 +156,17 @@ class Operation:
         return events
 
     def get_event_log_indices(self) -> list[int]:
-        """Get all log indices involved in this operation."""
+        """Get all log indices involved in this operation.
+
+        Returns:
+            The computed value.
+
+        """
         return [e["logIndex"] for e in self.get_all_events()]
 
 
 class TransactionValidationError(Exception):  # pragma: no cover
-    """
-    Raised when transaction validation fails.
+    """Raised when transaction validation fails.
 
     Provides comprehensive plain-text dump of all events and operations
     for debugging.
@@ -177,7 +190,12 @@ class TransactionValidationError(Exception):  # pragma: no cover
         super().__init__(dump)
 
     def _build_error_dump(self) -> str:
-        """Build human-readable error report."""
+        """Build human-readable error report.
+
+        Returns:
+            The computed value.
+
+        """
         lines = [
             "=" * 80,
             "TRANSACTION VALIDATION FAILED",
@@ -217,7 +235,12 @@ class TransactionValidationError(Exception):  # pragma: no cover
         return "\n".join(lines)
 
     def _format_event(self, event: LogReceipt) -> list[str]:
-        """Format a single event for display."""
+        """Format a single event for display.
+
+        Returns:
+            The computed value.
+
+        """
         topic = event["topics"][0]
         topic_name = self._get_event_name(topic)
 
@@ -246,7 +269,12 @@ class TransactionValidationError(Exception):  # pragma: no cover
 
     @staticmethod
     def _format_operation(op: Operation) -> list[str]:
-        """Format a single operation for display."""
+        """Format a single operation for display.
+
+        Returns:
+            The computed value.
+
+        """
         lines = [
             f"Operation {op.operation_id}: {op.operation_type.name}",
         ]
@@ -276,7 +304,12 @@ class TransactionValidationError(Exception):  # pragma: no cover
 
     @staticmethod
     def _get_event_name(topic: HexBytes) -> str:
-        """Get human-readable event name from topic."""
+        """Get human-readable event name from topic.
+
+        Returns:
+            The computed value.
+
+        """
         for pool_event in AaveV3PoolEvent:
             if pool_event.value == topic:
                 return pool_event.name
@@ -289,10 +322,13 @@ class TransactionValidationError(Exception):  # pragma: no cover
 
     @staticmethod
     def _try_decode_address(topic: HexBytes | str) -> ChecksumAddress | None:
-        """
-        Try to decode topic as address.
+        """Try to decode topic as address.
 
         Handles both HexBytes objects (with .hex() method) and strings.
+
+        Returns:
+            The computed value.
+
         """
         try:
             hex_str = topic[-40:] if isinstance(topic, str) else topic.hex()[-40:]
@@ -318,7 +354,12 @@ class TransactionOperations:
         self.unassigned_events = unassigned_events
 
     def validate(self, all_events: list[LogReceipt]) -> None:
-        """Strict validation - fails on any unmet expectation."""
+        """Strict validation - fails on any unmet expectation.
+
+        Raises:
+            TransactionValidationError: If the operation fails.
+
+        """
         all_errors = []
 
         # Check all operations are valid
@@ -369,7 +410,12 @@ class TransactionOperations:
 
     @staticmethod
     def _is_required_pool_event(event: LogReceipt) -> bool:
-        """Check if an event must be part of an operation."""
+        """Check if an event must be part of an operation.
+
+        Returns:
+            The computed value.
+
+        """
         pool_topics = {
             AaveV3PoolEvent.SUPPLY.value,
             AaveV3PoolEvent.WITHDRAW.value,

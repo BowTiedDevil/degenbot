@@ -1,5 +1,4 @@
-"""
-Orchestrator that assembles data and delegates to core functions.
+"""Orchestrator that assembles data and delegates to core functions.
 
 This is where I/O lives: database queries and oracle price fetching.
 The orchestrator converts ORM objects to flat records before passing
@@ -39,8 +38,7 @@ ORACLE_CONTRACT_NAME = "PRICE_ORACLE"
 
 
 class DatabasePositionQuery:
-    """
-    PositionQuery implementation backed by SQLAlchemy.
+    """PositionQuery implementation backed by SQLAlchemy.
 
     Converts ORM objects to flat records at the query boundary.
     Core never sees ORM objects.
@@ -51,7 +49,12 @@ class DatabasePositionQuery:
         self._session = session
 
     def get_users_with_debt(self, market_id: int, limit: int | None = None) -> Sequence[UserRecord]:
-        """Get all users with debt positions in a market, as flat records."""
+        """Get all users with debt positions in a market, as flat records.
+
+        Returns:
+            The computed value.
+
+        """
         users_orm = (
             self._session
             .scalars(
@@ -74,7 +77,12 @@ class DatabasePositionQuery:
         return [_convert_user(u) for u in users_with_debt]
 
     def get_collateral_positions(self, user_id: int) -> Sequence[CollateralPositionRecord]:
-        """Get collateral positions for a user, as flat records."""
+        """Get collateral positions for a user, as flat records.
+
+        Returns:
+            The computed value.
+
+        """
         positions = self._session.scalars(
             select(AaveV3CollateralPosition)
             .where(AaveV3CollateralPosition.user_id == user_id)
@@ -88,7 +96,12 @@ class DatabasePositionQuery:
         return [_convert_collateral_position(p) for p in positions]
 
     def get_debt_positions(self, user_id: int) -> Sequence[DebtPositionRecord]:
-        """Get debt positions for a user, as flat records."""
+        """Get debt positions for a user, as flat records.
+
+        Returns:
+            The computed value.
+
+        """
         positions = self._session.scalars(
             select(AaveV3DebtPosition)
             .where(AaveV3DebtPosition.user_id == user_id)
@@ -101,14 +114,24 @@ class DatabasePositionQuery:
         return [_convert_debt_position(p) for p in positions]
 
     def get_collateral_config_map(self, user_id: int) -> dict[int, bool]:
-        """Get map of asset_id -> enabled status for a user."""
+        """Get map of asset_id -> enabled status for a user.
+
+        Returns:
+            The computed value.
+
+        """
         configs = self._session.scalars(
             select(AaveV3UserCollateralConfig).where(AaveV3UserCollateralConfig.user_id == user_id)
         ).all()
         return {cfg.asset_id: cfg.enabled for cfg in configs}
 
     def get_oracle_address(self, market_id: int) -> ChecksumAddress | None:
-        """Get the price oracle address for a market."""
+        """Get the price oracle address for a market.
+
+        Returns:
+            The computed value.
+
+        """
         contract = self._session.scalar(
             select(AaveV3Contract).where(
                 AaveV3Contract.market_id == market_id,
@@ -118,7 +141,12 @@ class DatabasePositionQuery:
         return contract.address if contract else None
 
     def get_asset_addresses(self, market_id: int) -> set[ChecksumAddress]:
-        """Get all unique underlying asset addresses for a market."""
+        """Get all unique underlying asset addresses for a market.
+
+        Returns:
+            The computed value.
+
+        """
         assets = (
             self._session
             .scalars(
@@ -141,7 +169,12 @@ class DatabasePositionQuery:
 
 
 def _convert_user(user: AaveV3User) -> UserRecord:
-    """Convert ORM AaveV3User to flat UserRecord."""
+    """Convert ORM AaveV3User to flat UserRecord.
+
+    Returns:
+        The computed value.
+
+    """
     isolation_debt_ceiling = None
     if user.is_isolation_mode and user.isolation_collateral_asset is not None:
         asset_config = user.isolation_collateral_asset.asset_config
@@ -160,7 +193,12 @@ def _convert_user(user: AaveV3User) -> UserRecord:
 
 
 def _convert_collateral_position(pos: AaveV3CollateralPosition) -> CollateralPositionRecord:
-    """Convert ORM AaveV3CollateralPosition to flat CollateralPositionRecord."""
+    """Convert ORM AaveV3CollateralPosition to flat CollateralPositionRecord.
+
+    Returns:
+        The computed value.
+
+    """
     asset = pos.asset
     emode_cat_id = asset.e_mode_category_id or None
 
@@ -195,7 +233,12 @@ def _convert_collateral_position(pos: AaveV3CollateralPosition) -> CollateralPos
 
 
 def _convert_debt_position(pos: AaveV3DebtPosition) -> DebtPositionRecord:
-    """Convert ORM AaveV3DebtPosition to flat DebtPositionRecord."""
+    """Convert ORM AaveV3DebtPosition to flat DebtPositionRecord.
+
+    Returns:
+        The computed value.
+
+    """
     asset = pos.asset
     emode_cat_id = asset.e_mode_category_id or None
 
@@ -222,7 +265,12 @@ class OraclePriceFetcher:
         self._oracle_address = oracle_address
 
     def fetch(self, asset_addresses: set[ChecksumAddress]) -> dict[ChecksumAddress, int]:
-        """Fetch prices for all assets from the Aave oracle."""
+        """Fetch prices for all assets from the Aave oracle.
+
+        Returns:
+            The computed value.
+
+        """
         prices: dict[ChecksumAddress, int] = {}
 
         for asset_address in asset_addresses:
@@ -246,8 +294,7 @@ class OraclePriceFetcher:
 
 
 class PositionAnalysisService:
-    """
-    Service that coordinates position analysis with I/O.
+    """Service that coordinates position analysis with I/O.
 
     Created by Bot or CLI. Injects fetchers for testing.
     Orchestrator converts ORM → flat records, then delegates to core.
@@ -268,7 +315,12 @@ class PositionAnalysisService:
         health_factor_threshold: float = 1.1,
         limit: int | None = None,
     ) -> PositionAnalysisResult:
-        """Entry point: call I/O, then delegate to core."""
+        """Entry point: call I/O, then delegate to core.
+
+        Returns:
+            The computed value.
+
+        """
         result = PositionAnalysisResult()
 
         # Query users with debt
@@ -317,11 +369,14 @@ def analyze_positions_for_market(
     limit: int | None = None,
     provider: ProviderAdapter | None = None,
 ) -> PositionAnalysisResult:
-    """
-    Backward-compatible entry point.
+    """Backward-compatible entry point.
 
     Creates a PositionAnalysisService from session + optional provider,
     then delegates to analyze_market().
+
+    Returns:
+        The computed value.
+
     """
     position_query = DatabasePositionQuery(session)
 

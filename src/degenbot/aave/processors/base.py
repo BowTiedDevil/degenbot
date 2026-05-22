@@ -18,8 +18,7 @@ class GhoUserOperation(Enum):
 
 @dataclass(frozen=True)
 class MathLibraries:
-    """
-    Strategy-based container for math library functions.
+    """Strategy-based container for math library functions.
 
     Each private field is a callable bound from the corresponding library
     module. Public methods delegate to them so callers can use keyword
@@ -35,27 +34,57 @@ class MathLibraries:
     _percent_mul: Callable[[int, int], int]
 
     def ray_div(self, a: int, b: int) -> int:
-        """Return ray div."""
+        """Return ray div.
+
+        Returns:
+            The computed value.
+
+        """
         return self._ray_div(a, b)
 
     def ray_div_ceil(self, a: int, b: int) -> int:
-        """Return ray div ceil."""
+        """Return ray div ceil.
+
+        Returns:
+            The computed value.
+
+        """
         return self._ray_div_ceil(a, b)
 
     def ray_div_floor(self, a: int, b: int) -> int:
-        """Return ray div floor."""
+        """Return ray div floor.
+
+        Returns:
+            The computed value.
+
+        """
         return self._ray_div_floor(a, b)
 
     def ray_mul(self, a: int, b: int) -> int:
-        """Return ray mul."""
+        """Return ray mul.
+
+        Returns:
+            The computed value.
+
+        """
         return self._ray_mul(a, b)
 
     def percent_div(self, value: int, percentage: int) -> int:
-        """Return percent div."""
+        """Return percent div.
+
+        Returns:
+            The computed value.
+
+        """
         return self._percent_div(value, percentage)
 
     def percent_mul(self, value: int, percentage: int) -> int:
-        """Return percent mul."""
+        """Return percent mul.
+
+        Returns:
+            The computed value.
+
+        """
         return self._percent_mul(value, percentage)
 
 
@@ -184,8 +213,7 @@ class TokenProcessor(Protocol):
 
 
 class CollateralTokenProcessor(TokenProcessor, Protocol):
-    """
-    Protocol for collateral (aToken) processors.
+    """Protocol for collateral (aToken) processors.
 
     Processors are stateless - they calculate deltas and return results
     without modifying position state. Callers must apply the results.
@@ -198,8 +226,7 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
         previous_index: int,
         scaled_delta: int | None = None,
     ) -> ScaledTokenMintResult:
-        """
-        Process a collateral mint event.
+        """Process a collateral mint event.
 
         Args:
             event_data: The mint event data
@@ -219,8 +246,7 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
         previous_index: int,
         scaled_delta: int | None = None,
     ) -> ScaledTokenBurnResult:
-        """
-        Process a collateral burn event.
+        """Process a collateral burn event.
 
         Args:
             event_data: The burn event data
@@ -236,8 +262,7 @@ class CollateralTokenProcessor(TokenProcessor, Protocol):
 
 
 class DebtTokenProcessor(TokenProcessor, Protocol):
-    """
-    Protocol for standard debt (vToken) processors.
+    """Protocol for standard debt (vToken) processors.
 
     This protocol is for non-GHO variable debt tokens.
     GHO tokens have special discount handling and use GhoDebtTokenProcessor instead.
@@ -253,8 +278,7 @@ class DebtTokenProcessor(TokenProcessor, Protocol):
         previous_index: int,
         scaled_delta: int | None = None,
     ) -> ScaledTokenMintResult:
-        """
-        Process a debt mint event.
+        """Process a debt mint event.
 
         Args:
             event_data: The mint event data
@@ -274,8 +298,7 @@ class DebtTokenProcessor(TokenProcessor, Protocol):
         previous_index: int,
         scaled_delta: int | None = None,
     ) -> ScaledTokenBurnResult:
-        """
-        Process a debt burn event.
+        """Process a debt burn event.
 
         Args:
             event_data: The burn event data
@@ -290,8 +313,7 @@ class DebtTokenProcessor(TokenProcessor, Protocol):
 
 
 class GhoDebtTokenProcessor(TokenProcessor, Protocol):
-    """
-    Protocol for GHO variable debt token processors.
+    """Protocol for GHO variable debt token processors.
 
     GHO debt tokens have special discount handling that requires additional
     parameters and return values compared to standard vTokens.
@@ -311,8 +333,7 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
         previous_discount: int,
         actual_repay_amount: int | None = None,
     ) -> GhoScaledTokenMintResult:
-        """
-        Process a GHO debt mint event.
+        """Process a GHO debt mint event.
 
         Args:
             event_data: The mint event data
@@ -336,8 +357,7 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
         previous_index: int,
         previous_discount: int,
     ) -> GhoScaledTokenBurnResult:
-        """
-        Process a GHO debt burn event.
+        """Process a GHO debt burn event.
 
         Args:
             event_data: The burn event data
@@ -358,8 +378,7 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
         current_index: int,
         discount_percent: int,
     ) -> int:
-        """
-        Calculate discounted balance for burn operations.
+        """Calculate discounted balance for burn operations.
 
         Args:
             scaled_balance: The scaled balance
@@ -379,8 +398,7 @@ class GhoDebtTokenProcessor(TokenProcessor, Protocol):
         discount_percent: int,
         current_index: int,
     ) -> int:
-        """
-        Calculate debt accrual with discount.
+        """Calculate debt accrual with discount.
 
         Simulates the _accrueDebtOnAction function from the contract.
         This is a stateless calculation - it returns the discount_scaled

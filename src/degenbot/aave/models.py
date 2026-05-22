@@ -1,5 +1,4 @@
-"""
-Unified enriched Aave token event model.
+"""Unified enriched Aave token event model.
 
 Replaces the 18 specific Pydantic event classes with a single
 EnrichedScaledTokenEvent class. The event_type field (ScaledTokenEventType
@@ -71,7 +70,16 @@ class ScaledAmountValidationError(Exception):
 
 
 def _get_token_math_method(event_type: ScaledTokenEventType) -> str:
-    """Map event type to TokenMath method name."""
+    """Map event type to TokenMath method name.
+
+    Returns:
+        The computed value.
+    .
+
+    Raises:
+        EnrichmentError: If the operation fails.
+
+    """
     mapping = {
         ScaledTokenEventType.COLLATERAL_MINT: "get_collateral_mint_scaled_amount",
         ScaledTokenEventType.COLLATERAL_BURN: "get_collateral_burn_scaled_amount",
@@ -155,8 +163,7 @@ _INDEX_SCALED_TYPES: set[ScaledTokenEventType] = _MINT_TYPES | _BURN_TYPES | _IN
 
 
 class EnrichedScaledTokenEvent(BaseModel):
-    """
-    Unified enriched scaled token event.
+    """Unified enriched scaled token event.
 
     Replaces the previous 18 specific event classes. The event_type
     field (ScaledTokenEventType enum) fully describes each event's
@@ -270,7 +277,16 @@ class EnrichedScaledTokenEvent(BaseModel):
     @field_validator("discount_percent")
     @classmethod
     def validate_discount_percent(cls, v: int | None) -> int | None:
-        """Validate discount percent."""
+        """Validate discount percent.
+
+        Returns:
+            The computed value.
+        .
+
+        Raises:
+            ValueError: If the operation fails.
+
+        """
         if v is not None and not 0 <= v <= 10000:  # noqa:PLR2004
             msg = f"discount_percent must be 0-10000, got {v}"
             raise ValueError(msg)
@@ -278,7 +294,16 @@ class EnrichedScaledTokenEvent(BaseModel):
 
     @model_validator(mode="after")
     def validate_scaled_amount(self) -> "EnrichedScaledTokenEvent":
-        """Validate scaled amount using TokenMath for index-scaled events."""
+        """Validate scaled amount using TokenMath for index-scaled events.
+
+        Returns:
+            The computed value.
+        .
+
+        Raises:
+            ScaledAmountValidationError: If the operation fails.
+
+        """
         # Interest accrual events: no TokenMath validation
         if self.event_type in _INTEREST_TYPES:
             return self

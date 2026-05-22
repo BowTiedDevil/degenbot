@@ -1,5 +1,4 @@
-"""
-REPAY/GHO_REPAY operation handler.
+"""REPAY/GHO_REPAY operation handler.
 
 REPAY operations emit a DEBT_BURN event from the VariableDebtToken contract.
 GHO_REPAY operations emit a GHO_DEBT_BURN event.
@@ -49,10 +48,16 @@ class RepayHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich a REPAY or GHO_REPAY event.
+        """Enrich a REPAY or GHO_REPAY event.
 
         Handles both standard burns and the interest>repayment Mint case.
+
+        Returns:
+            The computed value.
+
+        Raises:
+                     EnrichmentError: If the operation fails.
+
         """
         if operation.pool_event is None:
             msg = "REPAY operation has no pool event"
@@ -92,8 +97,7 @@ class RepayHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Handle the case where interest exceeds repayment amount.
+        """Handle the case where interest exceeds repayment amount.
 
         The Mint event's amount represents the net debt increase (interest - repayment).
         Extract the actual repayment amount from the Pool event and use
@@ -101,6 +105,10 @@ class RepayHandler:
 
         NOTE: Do NOT set scaled_amount=None. The processing layer uses
         the enriched scaled_amount directly.
+
+        Returns:
+            The computed value.
+
         """
         assert operation.pool_event is not None
         assert event.index is not None
@@ -147,7 +155,12 @@ class RepayHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """Handle standard REPAY/GHO_REPAY burn event."""
+        """Handle standard REPAY/GHO_REPAY burn event.
+
+        Returns:
+            The computed value.
+
+        """
         assert operation.pool_event is not None
         assert event.index is not None
         # Extract raw amount from Pool event

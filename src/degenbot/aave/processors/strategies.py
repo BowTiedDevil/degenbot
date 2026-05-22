@@ -14,8 +14,7 @@ class RoundingMode(Enum):
 
 @dataclass(frozen=True, slots=True)
 class RoundingStrategy:
-    """
-    Determines ray_div rounding for each operation type.
+    """Determines ray_div rounding for each operation type.
 
     The rounding mode applies to the ray_div operation that converts
     raw amounts to scaled amounts.
@@ -27,8 +26,7 @@ class RoundingStrategy:
 
 @dataclass(frozen=True, slots=True)
 class DiscountStrategy:
-    """
-    GHO-specific discount behavior.
+    """GHO-specific discount behavior.
 
     Discount is a mechanism where GHO borrowers with staked AAVE
     receive a discount on their interest rate.

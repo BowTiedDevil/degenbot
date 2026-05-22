@@ -8,14 +8,32 @@ HALF_PERCENTAGE_FACTOR = 5 * 10**3
 
 
 def percent_mul(value: int, percentage: int) -> int:
-    """Return percent mul."""
+    """Return percent mul.
+
+    Returns:
+        The computed value.
+    .
+
+    Raises:
+        EVMRevertError: If the operation fails.
+
+    """
     if percentage != 0 and value > (MAX_UINT256 - HALF_PERCENTAGE_FACTOR) // percentage:
         raise EVMRevertError
     return (value * percentage + HALF_PERCENTAGE_FACTOR) // PERCENTAGE_FACTOR
 
 
 def percent_div(value: int, percentage: int) -> int:
-    """Return percent div."""
+    """Return percent div.
+
+    Returns:
+        The computed value.
+    .
+
+    Raises:
+        EVMRevertError: If the operation fails.
+
+    """
     if percentage == 0:
         raise EVMRevertError
     if value > (MAX_UINT256 - (percentage // 2)) // PERCENTAGE_FACTOR:
@@ -24,14 +42,32 @@ def percent_div(value: int, percentage: int) -> int:
 
 
 def percent_mul_floor(value: int, percentage: int) -> int:
-    """Return percent mul floor."""
+    """Return percent mul floor.
+
+    Returns:
+        The computed value.
+    .
+
+    Raises:
+        EVMRevertError: If the operation fails.
+
+    """
     if percentage != 0 and value > MAX_UINT256 // percentage:
         raise EVMRevertError
     return (value * percentage) // PERCENTAGE_FACTOR
 
 
 def percent_mul_ceil(value: int, percentage: int) -> int:
-    """Return percent mul ceil."""
+    """Return percent mul ceil.
+
+    Returns:
+        The computed value.
+    .
+
+    Raises:
+        EVMRevertError: If the operation fails.
+
+    """
     if percentage != 0 and value > MAX_UINT256 // percentage:
         raise EVMRevertError
     product = value * percentage
@@ -39,7 +75,16 @@ def percent_mul_ceil(value: int, percentage: int) -> int:
 
 
 def percent_div_ceil(value: int, percentage: int) -> int:
-    """Return percent div ceil."""
+    """Return percent div ceil.
+
+    Returns:
+        The computed value.
+    .
+
+    Raises:
+        EVMRevertError: If the operation fails.
+
+    """
     if percentage == 0:
         raise EVMRevertError
     if value > MAX_UINT256 // PERCENTAGE_FACTOR:
