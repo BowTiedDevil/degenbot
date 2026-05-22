@@ -306,8 +306,8 @@ class AsyncV3PoolBuilder:
 
         return pool
 
+    @staticmethod
     async def update(
-        self,
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,

@@ -303,8 +303,8 @@ class AsyncV4PoolBuilder:
 
         return pool
 
+    @staticmethod
     async def update(
-        self,
         pool: AbstractLiquidityPool,
         *,
         io: AsyncPoolIO | None = None,

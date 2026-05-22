@@ -129,7 +129,7 @@ Degenbot pools follow an **I/O-free architecture** where on-chain data is fetche
 - **Reliability**: No async complexity in pool logic
 - **State Management**: Pools can be snapshotted, pickled, and restored
 
-**Current status:** All pool types (Curve, V2, V3, V4, Aerodrome, Camelot) are fully I/O-free — no pool class imports `ProviderAdapter` or carries provider-dependent methods. Construction and updates flow through builders, and all state changes enter pools via `external_update()`. Curve calculators receive a `DyCalculationInputs` frozen dataclass carrying pre-resolved data, eliminating all private member access (no `pool._xxx` patterns).
+**Current status:** All pool types (Curve, V2, V3, V4, Aerodrome, Camelot) are fully I/O-free — no pool class imports `ProviderAdapter` or carries provider-dependent methods. Construction and updates flow through builders, and all state changes enter pools via `external_update()`. Builder `update()` methods are `@staticmethod` — all I/O flows through the `io` parameter, enforced by the `PoolBuilder`/`AsyncPoolBuilder` protocol type signatures. Curve calculators receive a `DyCalculationInputs` frozen dataclass carrying pre-resolved data, eliminating all private member access (no `pool._xxx` patterns).
 
 ### The Bot Class
 
@@ -1490,7 +1490,7 @@ Each module has a `CONTEXT.md` defining domain terminology:
 - [Registries](src/degenbot/registry/CONTEXT.md) — Pool, Token, Managed Pool registries
 - [Connection](src/degenbot/connection/CONTEXT.md) — Provider management, RPC routing
 - [Chainlink](src/degenbot/chainlink/CONTEXT.md) — price feeds, aggregators, round data
-- [Builders](src/degenbot/builders/CONTEXT.md) — pool builders, PoolIO seam, BuilderContext, PoolBuilder/AsyncPoolBuilder protocols
+- [Builders](src/degenbot/builders/CONTEXT.md) — pool builders, PoolIO seam, BuilderContext, `@staticmethod` `update()` on PoolBuilder/AsyncPoolBuilder protocols (type-enforced I/O separation)
 - [Context Map](CONTEXT-MAP.md) — Cross-module relationships and ambiguity rulings
 
 ## Contributing

@@ -332,8 +332,8 @@ class V4PoolBuilder(V4BuilderBase):
 
         return pool
 
-    def update(  # noqa: PLR6301
-        self,
+    @staticmethod
+    def update(
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,

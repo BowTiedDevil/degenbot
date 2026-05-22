@@ -198,8 +198,8 @@ class AsyncV2PoolBuilder:
 
         return pool
 
-    async def update(  # noqa: PLR6301
-        self,
+    @staticmethod
+    async def update(
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
