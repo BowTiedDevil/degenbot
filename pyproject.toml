@@ -187,8 +187,10 @@ dev = [
     "coverage",
     "hypothesis",
     "maturin",
+    "pre-commit",
     "pytest-asyncio",
     "pytest-cov",
+    "pytest-order",
     "pytest-randomly",
     "pytest-xdist",
     "pytest",
@@ -196,7 +198,6 @@ dev = [
     "ruff",
     "sybil",
     "ty",
-    "pre-commit>=4.6.0",
 ]
 
 [tool.ty.environment]
