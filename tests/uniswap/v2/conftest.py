@@ -9,24 +9,24 @@ from pathlib import Path
 
 import pytest
 
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
+from tests.constants import (
+    UNISWAP_V2_FACTORY_ETH,
+    UNISWAP_V2_WBTC_WETH_POOL,
+    WBTC_ETH,
+    WETH_ETH,
+)
+
 # Path to recorded chain data
 CHAIN_DATA_PATH = Path(__file__).parent.parent.parent / "fixtures" / "chain_data"
 
-UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
-UNISWAP_V2_FACTORY_ADDRESS = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
 UNISWAP_V2_FACTORY_POOL_INIT_HASH = (
     "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
 )
-
-# Token addresses
-WBTC_CONTRACT_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
-WETH_CONTRACT_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
 V2_BLOCK_NUMBER = 24945920
 
@@ -62,14 +62,14 @@ def offline_wbtc_weth_v2_pool(offline_adapter: ProviderAdapter) -> UniswapV2Pool
     """Provide WBTC-WETH V2 pool using offline provider."""
     # Construct I/O-free tokens
     wbtc = Erc20Token(
-        WBTC_CONTRACT_ADDRESS,
+        WBTC_ETH,
         name="Wrapped BTC",
         symbol="WBTC",
         decimals=8,
         chain_id=1,
     )
     weth = Erc20Token(
-        WETH_CONTRACT_ADDRESS,
+        WETH_ETH,
         name="Wrapped Ether",
         symbol="WETH",
         decimals=18,
@@ -95,7 +95,7 @@ def offline_wbtc_weth_v2_pool(offline_adapter: ProviderAdapter) -> UniswapV2Pool
         init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
         token0=wbtc,
         token1=weth,
-        factory=UNISWAP_V2_FACTORY_ADDRESS,
+        factory=UNISWAP_V2_FACTORY_ETH,
         fee_token0=UniswapV2Pool.FEE,
         fee_token1=UniswapV2Pool.FEE,
         reserves_token0=reserves0,

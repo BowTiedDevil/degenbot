@@ -9,27 +9,25 @@ from pathlib import Path
 
 import pytest
 
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
+from tests.constants import (
+    UNISWAP_V3_FACTORY_ETH,
+    UNISWAP_V3_WBTC_WETH_POOL,
+    WBTC_ETH,
+    WETH_ETH,
+)
+
 # Path to recorded chain data
 CHAIN_DATA_PATH = Path(__file__).parent.parent.parent / "fixtures" / "chain_data"
 
 # WBTC-WETH V3 pool (block 24947230 has complete tick data recorded)
-UNISWAP_V3_WBTC_WETH_POOL = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 UNISWAP_V3_WBTC_WETH_TICK_SPACING = 60
 UNISWAP_V3_WBTC_WETH_BLOCK = 24947230
-
-# Token addresses
-WBTC_CONTRACT_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
-WETH_CONTRACT_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
-
-# Factory address for Uniswap V3 on Ethereum mainnet
-UNISWAP_V3_FACTORY = get_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea31F984")
 
 
 def load_v3_liquidity_data(data_file: Path, pool_address: str) -> dict | None:
@@ -110,14 +108,14 @@ def offline_wbtc_weth_v3_pool(offline_adapter: ProviderAdapter) -> UniswapV3Pool
 
     # Construct I/O-free tokens
     wbtc = Erc20Token(
-        WBTC_CONTRACT_ADDRESS,
+        WBTC_ETH,
         name="Wrapped BTC",
         symbol="WBTC",
         decimals=8,
         chain_id=1,
     )
     weth = Erc20Token(
-        WETH_CONTRACT_ADDRESS,
+        WETH_ETH,
         name="Wrapped Ether",
         symbol="WETH",
         decimals=18,
@@ -154,7 +152,7 @@ def offline_wbtc_weth_v3_pool(offline_adapter: ProviderAdapter) -> UniswapV3Pool
         state_block=UNISWAP_V3_WBTC_WETH_BLOCK,
         token0=wbtc,
         token1=weth,
-        factory=UNISWAP_V3_FACTORY,
+        factory=UNISWAP_V3_FACTORY_ETH,
         fee=3000,
         tick_spacing=UNISWAP_V3_WBTC_WETH_TICK_SPACING,
         sqrt_price_x96=sqrt_price_x96,

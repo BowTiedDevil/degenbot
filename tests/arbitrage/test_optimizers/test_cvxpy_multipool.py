@@ -10,15 +10,13 @@ import hypothesis
 import hypothesis.strategies as st
 
 from degenbot.arbitrage._legacy import _UniswapMultiPoolCycleTesting
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
-from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.arbitrage.generator.fixtures import FixtureFactory
 from tests.arbitrage.generator.hypothesis_strategies import (
     liquidity_depth_strategy,
     seed_strategy,
 )
-from tests.fakes.pools import MockLiquidityPool
 
 # ==============================================================================
 # Test Fixtures
@@ -120,54 +118,42 @@ class TestMultiPoolConvergence:
         wbtc = make_fake_token("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", "WBTC", 8)
 
         # Pool 1: LINK-WETH with skewed price (LINK is cheap)
-        lp_1 = MockLiquidityPool()
-        lp_1.name = "LINK-WETH"
-        lp_1.address = get_checksum_address("0x0000000000000000000000000000000000000001")
-        lp_1.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
-        lp_1._fee_token0 = Fraction(3, 1000)
-        lp_1._fee_token1 = Fraction(3, 1000)
-        lp_1._token0 = link
-        lp_1._token1 = weth
-        lp_1.external_update(
-            UniswapV2PoolExternalUpdate(
-                block_number=1,
-                reserves_token0=250 * 10**18,  # 250 LINK
-                reserves_token1=1 * 10**18,  # 1 WETH (LINK cheap)
-            )
+        lp_1 = UniswapV2Pool(
+            address="0x0000000000000000000000000000000000000001",
+            token0=link,
+            token1=weth,
+            factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+            fee_token0=Fraction(3, 1000),
+            fee_token1=Fraction(3, 1000),
+            reserves_token0=250 * 10**18,  # 250 LINK
+            reserves_token1=1 * 10**18,  # 1 WETH (LINK cheap)
+            state_block=1,
         )
 
         # Pool 2: WBTC-LINK with normal price
-        lp_2 = MockLiquidityPool()
-        lp_2.name = "WBTC-LINK"
-        lp_2.address = get_checksum_address("0x0000000000000000000000000000000000000002")
-        lp_2.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
-        lp_2._fee_token0 = Fraction(3, 1000)
-        lp_2._fee_token1 = Fraction(3, 1000)
-        lp_2._token0 = wbtc
-        lp_2._token1 = link
-        lp_2.external_update(
-            UniswapV2PoolExternalUpdate(
-                block_number=1,
-                reserves_token0=1 * 10**8,  # 1 WBTC
-                reserves_token1=4000 * 10**18,  # 4000 LINK
-            )
+        lp_2 = UniswapV2Pool(
+            address="0x0000000000000000000000000000000000000002",
+            token0=wbtc,
+            token1=link,
+            factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+            fee_token0=Fraction(3, 1000),
+            fee_token1=Fraction(3, 1000),
+            reserves_token0=1 * 10**8,  # 1 WBTC
+            reserves_token1=4000 * 10**18,  # 4000 LINK
+            state_block=1,
         )
 
         # Pool 3: WBTC-WETH with skewed price (WBTC expensive)
-        lp_3 = MockLiquidityPool()
-        lp_3.name = "WBTC-WETH"
-        lp_3.address = get_checksum_address("0x0000000000000000000000000000000000000003")
-        lp_3.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
-        lp_3._fee_token0 = Fraction(3, 1000)
-        lp_3._fee_token1 = Fraction(3, 1000)
-        lp_3._token0 = wbtc
-        lp_3._token1 = weth
-        lp_3.external_update(
-            UniswapV2PoolExternalUpdate(
-                block_number=1,
-                reserves_token0=1 * 10**8,  # 1 WBTC
-                reserves_token1=25 * 10**18,  # 25 WETH (WBTC expensive)
-            )
+        lp_3 = UniswapV2Pool(
+            address="0x0000000000000000000000000000000000000003",
+            token0=wbtc,
+            token1=weth,
+            factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+            fee_token0=Fraction(3, 1000),
+            fee_token1=Fraction(3, 1000),
+            reserves_token0=1 * 10**8,  # 1 WBTC
+            reserves_token1=25 * 10**18,  # 25 WETH (WBTC expensive)
+            state_block=1,
         )
 
         arb = _UniswapMultiPoolCycleTesting(
@@ -195,71 +181,55 @@ class TestMultiPoolConvergence:
         fee = Fraction(0)
 
         # Pool 1: WETH-LINK (skewed)
-        lp_1 = MockLiquidityPool()
-        lp_1.name = "WETH-LINK"
-        lp_1.address = get_checksum_address("0x0000000000000000000000000000000000000001")
-        lp_1.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
-        lp_1._fee_token0 = fee
-        lp_1._fee_token1 = fee
-        lp_1._token0 = weth
-        lp_1._token1 = link
-        lp_1.external_update(
-            UniswapV2PoolExternalUpdate(
-                block_number=1,
-                reserves_token0=1 * 10**18,  # 1 WETH
-                reserves_token1=250 * 10**18,  # 250 LINK (skewed)
-            )
+        lp_1 = UniswapV2Pool(
+            address="0x0000000000000000000000000000000000000001",
+            token0=weth,
+            token1=link,
+            factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+            fee_token0=fee,
+            fee_token1=fee,
+            reserves_token0=1 * 10**18,  # 1 WETH
+            reserves_token1=250 * 10**18,  # 250 LINK (skewed)
+            state_block=1,
         )
 
         # Pool 2: LINK-USDC (normal)
-        lp_2 = MockLiquidityPool()
-        lp_2.name = "LINK-USDC"
-        lp_2.address = get_checksum_address("0x0000000000000000000000000000000000000002")
-        lp_2.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
-        lp_2._fee_token0 = fee
-        lp_2._fee_token1 = fee
-        lp_2._token0 = usdc
-        lp_2._token1 = link
-        lp_2.external_update(
-            UniswapV2PoolExternalUpdate(
-                block_number=1,
-                reserves_token0=25 * 10**6,  # 25 USDC
-                reserves_token1=1 * 10**18,  # 1 LINK
-            )
+        lp_2 = UniswapV2Pool(
+            address="0x0000000000000000000000000000000000000002",
+            token0=usdc,
+            token1=link,
+            factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+            fee_token0=fee,
+            fee_token1=fee,
+            reserves_token0=25 * 10**6,  # 25 USDC
+            reserves_token1=1 * 10**18,  # 1 LINK
+            state_block=1,
         )
 
         # Pool 3: USDC-WBTC (normal)
-        lp_3 = MockLiquidityPool()
-        lp_3.name = "USDC-WBTC"
-        lp_3.address = get_checksum_address("0x0000000000000000000000000000000000000003")
-        lp_3.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
-        lp_3._fee_token0 = fee
-        lp_3._fee_token1 = fee
-        lp_3._token0 = usdc
-        lp_3._token1 = wbtc
-        lp_3.external_update(
-            UniswapV2PoolExternalUpdate(
-                block_number=1,
-                reserves_token0=100_000 * 10**6,  # 100K USDC
-                reserves_token1=1 * 10**8,  # 1 WBTC
-            )
+        lp_3 = UniswapV2Pool(
+            address="0x0000000000000000000000000000000000000003",
+            token0=usdc,
+            token1=wbtc,
+            factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+            fee_token0=fee,
+            fee_token1=fee,
+            reserves_token0=100_000 * 10**6,  # 100K USDC
+            reserves_token1=1 * 10**8,  # 1 WBTC
+            state_block=1,
         )
 
         # Pool 4: WBTC-WETH (skewed for profit)
-        lp_4 = MockLiquidityPool()
-        lp_4.name = "WBTC-WETH"
-        lp_4.address = get_checksum_address("0x0000000000000000000000000000000000000004")
-        lp_4.factory = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
-        lp_4._fee_token0 = fee
-        lp_4._fee_token1 = fee
-        lp_4._token0 = weth
-        lp_4._token1 = wbtc
-        lp_4.external_update(
-            UniswapV2PoolExternalUpdate(
-                block_number=1,
-                reserves_token0=20 * 10**18,  # 20 WETH
-                reserves_token1=1 * 10**8,  # 1 WBTC
-            )
+        lp_4 = UniswapV2Pool(
+            address="0x0000000000000000000000000000000000000004",
+            token0=weth,
+            token1=wbtc,
+            factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+            fee_token0=fee,
+            fee_token1=fee,
+            reserves_token0=20 * 10**18,  # 20 WETH
+            reserves_token1=1 * 10**8,  # 1 WBTC
+            state_block=1,
         )
 
         arb = _UniswapMultiPoolCycleTesting(

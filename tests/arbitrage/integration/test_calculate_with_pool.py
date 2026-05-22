@@ -18,86 +18,106 @@ import pytest
 from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.exceptions.arbitrage import OptimizationError
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v2_types import UniswapV2PoolState
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
-from tests.arbitrage.test_path.conftest import (
-    FakeConcentratedLiquidityPool,
-    FakeToken,
-    FakeUniswapV2Pool,
-    FakeV2PoolState,
-)
+from tests.fakes.tokens import FakeToken
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+# Valid hex addresses for production pool construction
+ADDR_USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+ADDR_WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+ADDR_DAI = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
+ADDR_POOL0 = "0x00000000000000000000000000000000000000a0"
+ADDR_POOL1 = "0x00000000000000000000000000000000000000a1"
+ADDR_POOL2 = "0x00000000000000000000000000000000000000a2"
+ADDR_V3A = "0x00000000000000000000000000000000000000b0"
+ADDR_V3B = "0x00000000000000000000000000000000000000b1"
+ADDR_UNPROF_A = "0x00000000000000000000000000000000000000c0"
+ADDR_UNPROF_B = "0x00000000000000000000000000000000000000c1"
+
 
 @pytest.fixture
 def usdc() -> FakeToken:
-    return FakeToken("0xUSDC", decimals=6)
+    return FakeToken(ADDR_USDC, decimals=6)
 
 
 @pytest.fixture
 def weth() -> FakeToken:
-    return FakeToken("0xWETH", decimals=18)
+    return FakeToken(ADDR_WETH, decimals=18)
 
 
 @pytest.fixture
 def dai() -> FakeToken:
-    return FakeToken("0xDAI", decimals=18)
+    return FakeToken(ADDR_DAI, decimals=18)
 
 
 @pytest.fixture
 def t0() -> FakeToken:
-    return FakeToken("0xt0", decimals=18)
+    return FakeToken("0x0000000000000000000000000000000000000T0", decimals=18)
 
 
 @pytest.fixture
 def t1() -> FakeToken:
-    return FakeToken("0xt1", decimals=18)
+    return FakeToken("0x0000000000000000000000000000000000000T1", decimals=18)
 
 
 @pytest.fixture
 def t2() -> FakeToken:
-    return FakeToken("0xt2", decimals=18)
+    return FakeToken("0x0000000000000000000000000000000000000T2", decimals=18)
 
 
 @pytest.fixture
 def v2_v2_v2_pools(
     t0: FakeToken, t1: FakeToken, t2: FakeToken
-) -> tuple[FakeUniswapV2Pool, FakeUniswapV2Pool, FakeUniswapV2Pool]:
+) -> tuple[UniswapV2Pool, UniswapV2Pool, UniswapV2Pool]:
     """3-hop V2 cycle: t0 -> t1 -> t2 -> t0.
 
     Same reserve ratios as verify_legacy_equivalence.py, known profitable.
     """
-    pool_0 = FakeUniswapV2Pool(
-        token0=t0,
-        token1=t1,
-        reserve0=100 * 10**18,
-        reserve1=200 * 10**18,
-        fee=Fraction(3, 1000),
-        address="0xpool0",
+    fee = Fraction(3, 1000)
+    pool_0 = UniswapV2Pool(
+        address=ADDR_POOL0,  # type: ignore[arg-type]
+        token0=t0,  # type: ignore[arg-type]
+        token1=t1,  # type: ignore[arg-type]
+        factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+        fee_token0=fee,
+        fee_token1=fee,
+        reserves_token0=100 * 10**18,
+        reserves_token1=200 * 10**18,
+        state_block=1,
     )
-    pool_1 = FakeUniswapV2Pool(
-        token0=t1,
-        token1=t2,
-        reserve0=150 * 10**18,
-        reserve1=300 * 10**18,
-        fee=Fraction(3, 1000),
-        address="0xpool1",
+    pool_1 = UniswapV2Pool(
+        address=ADDR_POOL1,  # type: ignore[arg-type]
+        token0=t1,  # type: ignore[arg-type]
+        token1=t2,  # type: ignore[arg-type]
+        factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+        fee_token0=fee,
+        fee_token1=fee,
+        reserves_token0=150 * 10**18,
+        reserves_token1=300 * 10**18,
+        state_block=1,
     )
-    pool_2 = FakeUniswapV2Pool(
-        token0=t2,
-        token1=t0,
-        reserve0=250 * 10**18,
-        reserve1=500 * 10**18,
-        fee=Fraction(3, 1000),
-        address="0xpool2",
+    pool_2 = UniswapV2Pool(
+        address=ADDR_POOL2,  # type: ignore[arg-type]
+        token0=t2,  # type: ignore[arg-type]
+        token1=t0,  # type: ignore[arg-type]
+        factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+        fee_token0=fee,
+        fee_token1=fee,
+        reserves_token0=250 * 10**18,
+        reserves_token1=500 * 10**18,
+        state_block=1,
     )
     return (pool_0, pool_1, pool_2)
 
 
 @pytest.fixture
-def v3_profitable_pair(usdc: FakeToken, weth: FakeToken) -> list[FakeConcentratedLiquidityPool]:
+def v3_profitable_pair(usdc: FakeToken, weth: FakeToken) -> list[UniswapV3Pool]:
     """A 2-hop single-range V3 cycle with 10% price spread."""
 
     tick_2200 = round(math.log(2200.0) / math.log(1.0001))
@@ -105,23 +125,29 @@ def v3_profitable_pair(usdc: FakeToken, weth: FakeToken) -> list[FakeConcentrate
     sqrt_2200 = get_sqrt_ratio_at_tick(tick_2200)
     sqrt_2000 = get_sqrt_ratio_at_tick(tick_2000)
 
-    pool_a = FakeConcentratedLiquidityPool(
-        token0=usdc,
-        token1=weth,
-        liquidity=10**18,
+    pool_a = UniswapV3Pool(
+        address=ADDR_V3A,  # type: ignore[arg-type]
+        token0=usdc,  # type: ignore[arg-type]
+        token1=weth,  # type: ignore[arg-type]
+        factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+        fee=500,
+        tick_spacing=10,
         sqrt_price_x96=sqrt_2200,
         tick=tick_2200,
-        fee=500,
-        address="0xv3_a",
-    )
-    pool_b = FakeConcentratedLiquidityPool(
-        token0=usdc,
-        token1=weth,
         liquidity=10**18,
+        state_block=1,
+    )
+    pool_b = UniswapV3Pool(
+        address=ADDR_V3B,  # type: ignore[arg-type]
+        token0=usdc,  # type: ignore[arg-type]
+        token1=weth,  # type: ignore[arg-type]
+        factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+        fee=500,
+        tick_spacing=10,
         sqrt_price_x96=sqrt_2000,
         tick=tick_2000,
-        fee=500,
-        address="0xv3_b",
+        liquidity=10**18,
+        state_block=1,
     )
     return [pool_a, pool_b]
 
@@ -214,8 +240,7 @@ class TestCalculateWithPool:
             solver=BrentSolver(),
             max_input=1_000_000,
         )
-        # Mark a pool as sparse to simulate the legacy failure mode
-        v3_profitable_pair[0]._sparse_liquidity_map = True
+        # Sparse liquidity map is already True for pools without tick data
 
         sync_result = path.calculate()
 
@@ -240,7 +265,7 @@ class TestCalculateWithPool:
         )
         baseline = path.calculate()
 
-        new_state = FakeV2PoolState(
+        new_state = UniswapV2PoolState(
             address=v2_v2_v2_pools[0].address,
             block=None,
             reserves_token0=200 * 10**18,
@@ -264,21 +289,28 @@ class TestCalculateWithPool:
         """Unprofitable cycle raises OptimizationError in executor too."""
 
         # Symmetric pools — no arb
-        pool_a = FakeUniswapV2Pool(
-            token0=usdc,
-            token1=dai,
-            reserve0=1_000_000 * 10**6,
-            reserve1=1_000_000 * 10**18,
-            fee=Fraction(3, 1000),
-            address="0xunprof_a",
+        fee = Fraction(3, 1000)
+        pool_a = UniswapV2Pool(
+            address=ADDR_UNPROF_A,  # type: ignore[arg-type]
+            token0=usdc,  # type: ignore[arg-type]
+            token1=dai,  # type: ignore[arg-type]
+            factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+            fee_token0=fee,
+            fee_token1=fee,
+            reserves_token0=1_000_000 * 10**6,
+            reserves_token1=1_000_000 * 10**18,
+            state_block=1,
         )
-        pool_b = FakeUniswapV2Pool(
-            token0=usdc,
-            token1=dai,
-            reserve0=1_000_000 * 10**6,
-            reserve1=1_000_000 * 10**18,
-            fee=Fraction(3, 1000),
-            address="0xunprof_b",
+        pool_b = UniswapV2Pool(
+            address=ADDR_UNPROF_B,  # type: ignore[arg-type]
+            token0=usdc,  # type: ignore[arg-type]
+            token1=dai,  # type: ignore[arg-type]
+            factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+            fee_token0=fee,
+            fee_token1=fee,
+            reserves_token0=1_000_000 * 10**6,
+            reserves_token1=1_000_000 * 10**18,
+            state_block=1,
         )
 
         path = ArbitragePath(

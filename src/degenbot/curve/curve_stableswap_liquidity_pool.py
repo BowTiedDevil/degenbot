@@ -1139,15 +1139,15 @@ class CurveStableswapPool(
                 i = self.tokens.index(token_in)
             except ValueError:
                 msg = f"token_in ({token_in}) is not a top-level pool token"
-                raise DegenbotValueError(msg) from None
+                raise DegenbotValueError(message=msg) from None
             try:
                 j = self.tokens.index(token_out)
             except ValueError:
                 msg = f"token_out ({token_out}) is not a top-level pool token"
-                raise DegenbotValueError(msg) from None
+                raise DegenbotValueError(message=msg) from None
         elif token_in is not None or token_out is not None:
             msg = "token_in and token_out must both be provided, or both omitted"
-            raise DegenbotValueError(msg)
+            raise DegenbotValueError(message=msg)
         elif zero_for_one:
             i, j = 0, 1
         else:

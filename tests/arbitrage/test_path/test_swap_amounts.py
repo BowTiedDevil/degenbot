@@ -14,9 +14,16 @@ from degenbot.arbitrage.optimizers.solver import MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath, PathValidationError
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
 
-from .conftest import FakeToken, FakeUniswapV2Pool, _make_v2_pool
+from .conftest import FakeToken, _make_v2_pool
 
 FEE_03 = Fraction(3, 1000)
+
+# Valid hex addresses for production pool construction
+ADDR_POOL0 = "0x00000000000000000000000000000000000000a0"
+ADDR_POOL1 = "0x00000000000000000000000000000000000000a1"
+ADDR_P0 = "0x00000000000000000000000000000000000000b0"
+ADDR_P1 = "0x00000000000000000000000000000000000000b1"
+ADDR_P2 = "0x00000000000000000000000000000000000000b2"
 
 
 @pytest.fixture
@@ -34,44 +41,25 @@ def token_c():
     return FakeToken("0xtokenC")
 
 
-def _constant_product_swap(
-    reserve_in: int,
-    reserve_out: int,
-    amount_in: int,
-    fee: Fraction,
-) -> int:
-    amount_in_with_fee = amount_in * (fee.denominator - fee.numerator)
-    denominator = reserve_in * fee.denominator + amount_in_with_fee
-    return reserve_out * amount_in_with_fee // denominator
-
-
 def _make_pool_with_swap(
     token0,
     token1,
     reserve0: int,
     reserve1: int,
     fee: Fraction = FEE_03,
-    address: str = "0xpool",
-) -> FakeUniswapV2Pool:
-    pool = _make_v2_pool(token0, token1, reserve0=reserve0, reserve1=reserve1, fee=fee)
-    pool.address = address
-
-    def _swap(token_in, token_in_quantity, override_state=None):
-        if token_in == pool.token0:
-            return _constant_product_swap(reserve0, reserve1, token_in_quantity, fee)
-        return _constant_product_swap(reserve1, reserve0, token_in_quantity, fee)
-
-    pool.calculate_tokens_out_from_tokens_in = _swap
+    address: str = ADDR_POOL0,
+):
+    pool = _make_v2_pool(token0, token1, reserve0=reserve0, reserve1=reserve1, fee=fee, address=address)
     return pool
 
 
 class TestBuildSwapAmountsV2V2:
     def _make_path(self, token_a, token_b):
         pool0 = _make_pool_with_swap(
-            token_a, token_b, reserve0=2_000_000, reserve1=1_000_000_000, address="0xpool0"
+            token_a, token_b, reserve0=2_000_000, reserve1=1_000_000_000, address=ADDR_POOL0
         )
         pool1 = _make_pool_with_swap(
-            token_b, token_a, reserve0=1_500_000, reserve1=800_000_000, address="0xpool1"
+            token_b, token_a, reserve0=1_500_000, reserve1=800_000_000, address=ADDR_POOL1
         )
         solver = MobiusSolver()
         return ArbitragePath(
@@ -141,8 +129,10 @@ class TestBuildSwapAmountsV2V2:
         result = path.calculate()
         arb_result = path.build_swap_amounts(result)
 
-        assert arb_result.swap_amounts[0].pool == "0xpool0"
-        assert arb_result.swap_amounts[1].pool == "0xpool1"
+        from degenbot.checksum_cache import get_checksum_address
+
+        assert arb_result.swap_amounts[0].pool == get_checksum_address(ADDR_POOL0)
+        assert arb_result.swap_amounts[1].pool == get_checksum_address(ADDR_POOL1)
 
 
 class TestBuildSwapAmountsThreeHop:
@@ -152,13 +142,13 @@ class TestBuildSwapAmountsThreeHop:
         # pool1: tokenB -> tokenC (cheap to buy tokenC)
         # pool2: tokenC -> tokenA (expensive to sell tokenC)
         pool0 = _make_pool_with_swap(
-            token_a, token_b, reserve0=10_000_000, reserve1=20_000_000, address="0xp0"
+            token_a, token_b, reserve0=10_000_000, reserve1=20_000_000, address=ADDR_P0
         )
         pool1 = _make_pool_with_swap(
-            token_b, token_c, reserve0=20_000_000, reserve1=30_000_000, address="0xp1"
+            token_b, token_c, reserve0=20_000_000, reserve1=30_000_000, address=ADDR_P1
         )
         pool2 = _make_pool_with_swap(
-            token_c, token_a, reserve0=30_000_000, reserve1=40_000_000, address="0xp2"
+            token_c, token_a, reserve0=30_000_000, reserve1=40_000_000, address=ADDR_P2
         )
 
         solver = MobiusSolver()

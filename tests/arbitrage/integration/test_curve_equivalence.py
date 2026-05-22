@@ -1,8 +1,8 @@
 """Test CurveStableswapPool integration with ArbitragePath vs legacy comparison.
 
 This test verifies that the new ArbitragePath + Solver correctly handles
-Curve-stableswap hops compared to the legacy approach. It uses mock pools
-to avoid external dependencies.
+Curve-stableswap hops. Uses production CurveStableswapPool with
+FakeCurveDataProvider for I/O-free operation.
 """
 
 from fractions import Fraction
@@ -18,10 +18,13 @@ from degenbot.arbitrage.optimizers.solidly_stable import (
     _simulate_mixed_path_int,
 )
 from degenbot.arbitrage.optimizers.solver import BrentSolver
+from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from degenbot.erc20 import Erc20Token
 from degenbot.provider import ProviderAdapter
 from degenbot.types.hop_types import ConstantProductHop, CurveStableswapHop
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from tests.helpers.bot_factory import make_bot_with_provider
+from tests.fakes.curve_data_provider import FakeCurveDataProvider
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 DAI_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
@@ -30,98 +33,40 @@ UNISWAP_V2_WETH_DAI_ADDRESS = "0xA478c2975Ab1Ea89e8196811F51A7B7Ade33eB11"
 UNISWAP_V2_WETH_USDC_ADDRESS = "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"
 CURVE_TRIPOOL_ADDRESS = "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7"
 
+STATE_BLOCK = 18_000_000
 
-class MockCurveSwapper:
-    """Mock Curve-style swap calculation for testing.
+# Production tokens for Curve pool construction
+DAI = Erc20Token(address=DAI_ADDRESS, name="DAI", symbol="DAI", decimals=18)
+USDC = Erc20Token(address=USDC_ADDRESS, name="USD Coin", symbol="USDC", decimals=6)
 
-    Uses a simplified AMM formula similar to Curve's stableswap.
-    """
 
-    def __init__(self, a: int, n: int, balances: tuple[int, ...], fee: int):
-        self.a = a
-        self.n = n
-        self.balances = list(balances)
-        self.fee = fee
-
-    def _get_d(self, xp: list[int], amp: int) -> int:
-        """Calculate Curve invariant D."""
-        n = self.n
-        s = sum(xp)
-        if s == 0:
-            return 0
-        d_prev = 0
-        d = s
-        ann = amp * n
-        for _ in range(255):
-            d_p = d
-            for x in xp:
-                d_p = d_p * d // (x * n) if x > 0 else d_p
-            d_prev = d
-            d = (ann * s + d_p * n) * d // ((ann - 1) * d + (n + 1) * d_p)
-            if abs(d - d_prev) <= 1:
-                break
-        return d
-
-    def _get_y(self, i: int, j: int, x: int, xp: list[int]) -> int:
-        """Calculate output for a swap from i to j with input x."""
-        n = self.n
-        d = self._get_d(xp, self.a)
-        c = d
-        s = 0
-        ann = self.a * n
-
-        for k in range(n):
-            if k == j:
-                continue
-            _x = x if k == i else xp[k]
-            s += _x
-            c = c * d // (_x * n)
-
-        c = c * d // (ann * n)
-        b = s + d // ann
-
-        y_prev = 0
-        y = d
-        for _ in range(255):
-            y_prev = y
-            y = (y * y + c) // (2 * y + b - d)
-            if abs(y - y_prev) <= 1:
-                break
-        return y
-
-    def get_dy(self, i: int, j: int, dx: int) -> int:
-        """Get output amount for input dx."""
-        xp = list(self.balances)
-        x = xp[i] + dx
-        y = self._get_y(i, j, x, xp)
-        dy = xp[j] - y
-        fee = dy * self.fee // 10**10
-        return dy - fee
+def _make_curve_pool(
+    balances: tuple[int, ...] = (1_000_000_000_000, 1_000_000_000_000),
+    a_coefficient: int = 1000,
+    fee: int = 3_000_000,
+    address: str = "0x00000000000000000000000000000000000000d0",
+) -> CurveStableswapPool:
+    """Build a production CurveStableswapPool with FakeCurveDataProvider."""
+    provider = FakeCurveDataProvider(block_timestamp=1_700_000_000)
+    return CurveStableswapPool(
+        address=address,  # type: ignore[arg-type]
+        tokens=(DAI, USDC),
+        a_coefficient=a_coefficient,
+        fee=fee,
+        admin_fee=5_000_000_000,
+        balances=balances,
+        state_block=STATE_BLOCK,
+        data_provider=provider,
+    )
 
 
 def test_curve_simulation_functions():
     """Test that all simulation functions handle Curve swap_fn."""
 
-    # Create a mock Curve pool
-    curve_swapper = MockCurveSwapper(
-        a=1000,
-        n=2,
-        balances=(1_000_000_000_000, 1_000_000_000_000),
-        fee=3000000,  # 0.03% in Curve's precision
-    )
+    # Create a production Curve pool
+    curve_pool = _make_curve_pool()
 
-    curve_hop = CurveStableswapHop(
-        reserve_in=curve_swapper.balances[0],
-        reserve_out=curve_swapper.balances[1],
-        fee=Fraction(3, 10000),  # 0.03%
-        curve_a=curve_swapper.a,
-        curve_n_coins=curve_swapper.n,
-        curve_d=curve_swapper._get_d(curve_swapper.balances, curve_swapper.a),
-        token_index_in=0,
-        token_index_out=1,
-        precisions=(10**18, 10**18),
-        swap_fn=lambda dx: curve_swapper.get_dy(0, 1, dx),
-    )
+    curve_hop = curve_pool.to_hop_state(zero_for_one=True)
 
     # Test all three simulation functions
     input_amount = 100_000
@@ -131,7 +76,7 @@ def test_curve_simulation_functions():
     result_mixed_int = _simulate_mixed_path_int(input_amount, (curve_hop,))
 
     # All should produce the same result (within float precision)
-    expected = float(curve_swapper.get_dy(0, 1, input_amount))
+    expected = float(curve_pool.get_dy(0, 1, input_amount, block_identifier=STATE_BLOCK))
 
     assert pytest.approx(result_path, rel=1e-6) == expected
     assert pytest.approx(result_mixed, rel=1e-6) == expected
@@ -144,25 +89,8 @@ def test_curve_v2_mixed_path():
     """Test mixed path of Curve -> V2 hops."""
 
     # Curve pool
-    curve_swapper = MockCurveSwapper(
-        a=1000,
-        n=2,
-        balances=(1_000_000_000_000, 1_000_000_000_000),
-        fee=3000000,
-    )
-
-    curve_hop = CurveStableswapHop(
-        reserve_in=curve_swapper.balances[0],
-        reserve_out=curve_swapper.balances[1],
-        fee=Fraction(3, 10000),
-        curve_a=curve_swapper.a,
-        curve_n_coins=curve_swapper.n,
-        curve_d=curve_swapper._get_d(curve_swapper.balances, curve_swapper.a),
-        token_index_in=0,
-        token_index_out=1,
-        precisions=(10**18, 10**18),
-        swap_fn=lambda dx: curve_swapper.get_dy(0, 1, dx),
-    )
+    curve_pool = _make_curve_pool()
+    curve_hop = curve_pool.to_hop_state(zero_for_one=True)
 
     # V2 pool (simple constant product)
     v2_hop = ConstantProductHop(
@@ -177,7 +105,7 @@ def test_curve_v2_mixed_path():
     result = _simulate_path(input_amount, (curve_hop, v2_hop))
 
     # Manual calculation
-    after_curve = curve_swapper.get_dy(0, 1, input_amount)
+    after_curve = curve_pool.get_dy(0, 1, input_amount, block_identifier=STATE_BLOCK)
     # V2 formula: y = (gamma * s * x) / (r + gamma * x)
     gamma = 1 - 0.0003
     expected_v2 = (gamma * v2_hop.reserve_out * after_curve) / (
@@ -221,11 +149,8 @@ def test_brent_solver_with_curve():
     solver = BrentSolver()
 
     # Curve pool: slightly imbalanced (Curve's A=1000 makes it resistant to price changes)
-    curve_swapper = MockCurveSwapper(
-        a=1000,
-        n=2,
+    curve_pool = _make_curve_pool(
         balances=(10_000_000_000_000, 9_500_000_000_000),  # Imbalanced
-        fee=3000000,
     )
 
     # Create hops: V2 -> Curve -> V2 (arbitrage triangle)
@@ -239,18 +164,7 @@ def test_brent_solver_with_curve():
     )
 
     # Curve hop in the middle
-    curve_hop = CurveStableswapHop(
-        reserve_in=curve_swapper.balances[0],
-        reserve_out=curve_swapper.balances[1],
-        fee=Fraction(3, 10000),
-        curve_a=1000,
-        curve_n_coins=2,
-        curve_d=curve_swapper._get_d(curve_swapper.balances, curve_swapper.a),
-        token_index_in=0,
-        token_index_out=1,
-        precisions=(10**18, 10**18),
-        swap_fn=lambda dx: curve_swapper.get_dy(0, 1, dx),
-    )
+    curve_hop = curve_pool.to_hop_state(zero_for_one=True)
 
     # V2 out: reserves favor token1 (higher price for token1 -> token0)
     v2_out = ConstantProductHop(
@@ -268,7 +182,6 @@ def test_brent_solver_with_curve():
         assert result.profit >= 0
     except Exception:
         # Even if not profitable, the solver should run without crashing
-        # (it will raise OptimizationError for unprofitable paths)
         pass
 
 

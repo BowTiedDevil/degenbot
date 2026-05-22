@@ -12,54 +12,64 @@ from fractions import Fraction
 
 import pytest
 
+from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.types.hop_types import PoolInvariant
-from tests.arbitrage.fake_curve_pool import FakeCurveStableswapPool
+from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.fakes.tokens import FakeToken
 
+# --- Production token instances ---
 
-def _make_2coin_pool() -> FakeCurveStableswapPool:
+USDC = Erc20Token(
+    address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    name="USD Coin",
+    symbol="USDC",
+    decimals=6,
+)
+USDT = Erc20Token(
+    address="0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    name="Tether USD",
+    symbol="USDT",
+    decimals=6,
+)
+DAI = Erc20Token(
+    address="0x6B175474E89094C44Da98b954EedeAC495271d0F",
+    name="DAI",
+    symbol="DAI",
+    decimals=18,
+)
+
+STATE_BLOCK = 18_000_000
+
+
+def _make_2coin_pool() -> CurveStableswapPool:
     """2-coin pool: USDC/USDT (both 6 decimals)."""
-    usdc = FakeToken(
-        address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-        decimals=6,
-        symbol="USDC",
-    )
-    usdt = FakeToken(
-        address="0xdAC17F958D2ee523a2206206994597C13D831ec7",
-        decimals=6,
-        symbol="USDT",
-    )
-    return FakeCurveStableswapPool(
-        tokens=(usdc, usdt),
+    provider = FakeCurveDataProvider(block_timestamp=1_700_000_000)
+    return CurveStableswapPool(
+        address="0x00000000000000000000000000000000000000c1",  # type: ignore[arg-type]
+        tokens=(USDC, USDT),
+        a_coefficient=1000,
+        fee=4_000_000,
+        admin_fee=5_000_000_000,
         balances=(10_000_000 * 10**6, 10_000_000 * 10**6),
-        a_coefficient=1000,
-        fee=4_000_000,
+        state_block=STATE_BLOCK,
+        data_provider=provider,
     )
 
 
-def _make_3coin_pool() -> FakeCurveStableswapPool:
+def _make_3coin_pool() -> CurveStableswapPool:
     """3-coin pool: DAI/USDC/USDT."""
-    dai = FakeToken(
-        address="0x6B175474E89094C44Da98b954EedeAC495271d0F",
-        decimals=18,
-        symbol="DAI",
-    )
-    usdc = FakeToken(
-        address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-        decimals=6,
-        symbol="USDC",
-    )
-    usdt = FakeToken(
-        address="0xdAC17F958D2ee523a2206206994597C13D831ec7",
-        decimals=6,
-        symbol="USDT",
-    )
-    return FakeCurveStableswapPool(
-        tokens=(dai, usdc, usdt),
-        balances=(5_000_000 * 10**18, 5_000_000 * 10**6, 5_000_000 * 10**6),
+    provider = FakeCurveDataProvider(block_timestamp=1_700_000_000)
+    return CurveStableswapPool(
+        address="0x00000000000000000000000000000000000000c2",  # type: ignore[arg-type]
+        tokens=(DAI, USDC, USDT),
         a_coefficient=1000,
         fee=4_000_000,
+        admin_fee=5_000_000_000,
+        balances=(5_000_000 * 10**18, 5_000_000 * 10**6, 5_000_000 * 10**6),
+        state_block=STATE_BLOCK,
+        data_provider=provider,
     )
 
 
@@ -139,7 +149,7 @@ def test_to_hop_state_non_top_level_token_in():
     with pytest.raises(DegenbotValueError, match="not a top-level pool token"):
         pool.to_hop_state(
             zero_for_one=True,
-            token_in=other_token,
+            token_in=other_token,  # type: ignore[arg-type]
             token_out=pool.tokens[1],
         )
 
@@ -155,7 +165,7 @@ def test_to_hop_state_non_top_level_token_out():
         pool.to_hop_state(
             zero_for_one=True,
             token_in=pool.tokens[0],
-            token_out=other_token,
+            token_out=other_token,  # type: ignore[arg-type]
         )
 
 
@@ -167,9 +177,9 @@ def test_to_hop_state_swap_fn_uses_correct_indices():
         token_in=pool.tokens[0],
         token_out=pool.tokens[2],
     )
-    # swap_fn should call _get_dy(i=0, j=2, ...)
+    # swap_fn should call get_dy(i=0, j=2, ...)
     dx = 10**18
-    expected = pool._get_dy(0, 2, dx)
+    expected = pool.get_dy(0, 2, dx, block_identifier=STATE_BLOCK)
     assert hop.swap_fn(dx) == expected
 
 
