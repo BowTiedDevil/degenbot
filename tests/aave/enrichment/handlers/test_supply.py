@@ -18,7 +18,7 @@ from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
 
 if TYPE_CHECKING:
-    from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
+    from degenbot.aave.operations import Operation, ScaledTokenEvent
 
 
 class TestSupplyHandler:

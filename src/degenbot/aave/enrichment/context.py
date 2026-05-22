@@ -18,7 +18,7 @@ from degenbot.database.models.aave import AaveV3Asset
 from degenbot.database.models.erc20 import Erc20TokenTable
 
 if TYPE_CHECKING:
-    from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
+    from degenbot.aave.operations import Operation, ScaledTokenEvent
 
 # Event types that use index-based scaling (mint/burn/interest)
 _INDEX_SCALED_TYPES: set[ScaledTokenEventType] = {

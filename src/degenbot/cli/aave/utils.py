@@ -15,8 +15,8 @@ from web3.types import LogReceipt
 
 from degenbot.aave.events import ERC20Event
 from degenbot.cli.aave.types import TransactionContext
-from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.contract.decoding import decode_address
 from degenbot.database.models.aave import AaveGhoToken, AaveV3Asset, AaveV3Contract, AaveV3Market
 from degenbot.logging import logger
 from degenbot.provider.interface import ProviderAdapter

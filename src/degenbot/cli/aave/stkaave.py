@@ -6,8 +6,8 @@ from web3.types import LogReceipt
 
 from degenbot.cli.aave.db_users import get_or_create_user
 from degenbot.cli.aave.types import TransactionContext
-from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.contract.decoding import decode_address
 from degenbot.database.models.aave import AaveV3User
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call

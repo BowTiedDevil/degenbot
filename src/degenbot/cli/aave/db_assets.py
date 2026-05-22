@@ -8,8 +8,8 @@ from eth_typing import ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
+from degenbot.aave.types import TokenType
 from degenbot.cli.aave.erc20_utils import _fetch_erc20_token_metadata
-from degenbot.cli.aave.types import TokenType
 from degenbot.database.models.aave import AaveGhoToken, AaveV3Asset, AaveV3Contract, AaveV3Market
 from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.logging import logger

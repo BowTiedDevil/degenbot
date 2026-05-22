@@ -17,6 +17,7 @@ from degenbot.aave.libraries.pool_math import PoolMath
 from degenbot.aave.libraries.token_math import TokenMathFactory
 from degenbot.aave.models import EnrichedScaledTokenEvent
 from degenbot.aave.operation_types import OperationType
+from degenbot.aave.operations import Operation, ScaledTokenEvent
 from degenbot.aave.pattern_types import LiquidationPattern
 from degenbot.aave.processors.base import (
     CollateralBurnEvent,
@@ -26,6 +27,7 @@ from degenbot.aave.processors.base import (
     MathLibraries,
 )
 from degenbot.aave.processors.factory import TokenProcessorFactory
+from degenbot.aave.types import TokenType
 from degenbot.cli.aave.constants import UserOperation
 from degenbot.cli.aave.db_assets import get_asset_by_token_type, get_asset_identifier
 from degenbot.cli.aave.db_positions import (
@@ -35,10 +37,9 @@ from degenbot.cli.aave.db_positions import (
 from degenbot.cli.aave.db_users import get_or_create_user
 from degenbot.cli.aave.stkaave import get_or_init_stk_aave_balance
 from degenbot.cli.aave.transfers import _process_collateral_transfer
-from degenbot.cli.aave.types import TokenType, TransactionContext
-from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
-from degenbot.cli.aave_utils import decode_address
+from degenbot.cli.aave.types import TransactionContext
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.contract.decoding import decode_address
 from degenbot.database.models.aave import AaveV3CollateralPosition, AaveV3DebtPosition, AaveV3User
 from degenbot.logging import logger
 

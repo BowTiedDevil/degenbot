@@ -31,6 +31,27 @@
 - A **Liquidation** occurs when a **Health Factor** drops below 1.0
 - **GHO** debt uses a discount mechanism not present in standard **Debt**
 
+## Module layout
+
+- `aave/operations.py` — Domain data types (`ScaledTokenEvent`, `Operation`, `TransactionOperations`, `TransactionValidationError`, `TOKEN_AMOUNT_MATCH_TOLERANCE`, `SCALED_AMOUNT_POOL_REVISION`). No DB/Session/Provider dependencies.
+- `aave/types.py` — `TokenType` enum (`A_TOKEN`, `V_TOKEN`, `GHO_DISCOUNT`). Domain classification, not CLI state.
+- `aave/events.py` — Event enum definitions (`AaveV3PoolEvent`, `AaveV3ScaledTokenEvent`, etc.)
+- `aave/operation_types.py` — `OperationType` enum
+- `aave/models.py` — `EnrichedScaledTokenEvent` unified model
+- `aave/pattern_types.py` — Liquidation pattern types
+- `aave/calculator.py` — `ScaledAmountCalculator`
+- `aave/extraction.py` — Raw amount extraction from Pool events
+- `aave/liquidation_patterns.py` — Multi-liquidation pattern detection
+- `aave/enrichment/` — Event enrichment pipeline
+- `aave/processors/` — Versioned balance-change processors
+- `aave/analysis/` — Position analysis (I/O-free core + orchestrator seam)
+- `aave/libraries/` — Pure math (WadRayMath, TokenMath, GhoMath, PoolMath)
+- `aave/deployments.py` — Market deployment addresses
+
+### Boundary invariant
+
+`degenbot.aave` must never import from `degenbot.cli`. The dependency arrow points only downward: `cli/` → `aave/`.
+
 ## Cross-module rulings
 
 - **Pool vs Market vs Pool Contract** — "Market" is the canonical term for an Aave lending system; "Pool" is reserved for DEX contracts. See [CONTEXT-MAP.md](../../../CONTEXT-MAP.md) for the full ruling with examples.

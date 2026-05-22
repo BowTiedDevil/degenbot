@@ -11,7 +11,7 @@ from degenbot.aave.models import EnrichedScaledTokenEvent
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
+    from degenbot.aave.operations import Operation, ScaledTokenEvent
 
 
 class ScaledEventEnricher:

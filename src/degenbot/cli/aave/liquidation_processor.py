@@ -12,7 +12,7 @@ from degenbot.cli.aave.types import TransactionContext
 from degenbot.cli.aave.utils import _get_v_token_for_underlying
 
 if TYPE_CHECKING:
-    from degenbot.cli.aave_transaction_operations import Operation
+    from degenbot.aave.operations import Operation
 
 
 def _preprocess_liquidation_aggregates(
