@@ -6,7 +6,11 @@ import pytest
 
 from degenbot.curve._pool_strategies import resolve_pool_strategies
 from degenbot.curve.calculators.crypto import CryptoDyCalculator
-from degenbot.curve.calculators.standard import RateAdjustedDyCalculator, StandardDyCalculator
+from degenbot.curve.calculators.standard import (
+    BalanceSource,
+    ConversionStyle,
+    StandardDyCalculator,
+)
 from degenbot.curve.types import (
     DVariant,
     LendingRateStyle,
@@ -172,20 +176,40 @@ class TestPoolStrategiesDataclass:
         assert s.metapool_underlying_dy_calculator is not None
 
     def test_calculators_match_swap_style(self):
-        """Calculator type matches the swap_style enum value."""
+        """Calculator parameterization matches the swap_style enum value."""
 
-        assert isinstance(PoolStrategies().dy_calculator, StandardDyCalculator)
-        assert isinstance(
-            PoolStrategies(swap_style=SwapStyle.CRYPTO).dy_calculator, CryptoDyCalculator
-        )
-        assert isinstance(
-            PoolStrategies(swap_style=SwapStyle.RATE_ADJUSTED).dy_calculator,
-            RateAdjustedDyCalculator,
-        )
+        default = PoolStrategies().dy_calculator
+        assert isinstance(default, StandardDyCalculator)
+        assert default.swap_style == SwapStyle.STANDARD
+        assert default.balance_source == BalanceSource.RATE_ADJUSTED_XP
+        assert default.subtract_one is True
+        assert default.conversion_style == ConversionStyle.FEE_THEN_RATE
+
+        crypto = PoolStrategies(swap_style=SwapStyle.CRYPTO).dy_calculator
+        assert isinstance(crypto, CryptoDyCalculator)
+
+        rate_adj = PoolStrategies(swap_style=SwapStyle.RATE_ADJUSTED).dy_calculator
+        assert isinstance(rate_adj, StandardDyCalculator)
+        assert rate_adj.swap_style == SwapStyle.RATE_ADJUSTED
+        assert rate_adj.conversion_style == ConversionStyle.RATE_THEN_FEE
+
+        raw_bal = PoolStrategies(swap_style=SwapStyle.RAW_BALANCE).dy_calculator
+        assert raw_bal.balance_source == BalanceSource.RAW_BALANCES
+        assert raw_bal.conversion_style == ConversionStyle.FEE_ONLY
+
+        no_one = PoolStrategies(swap_style=SwapStyle.NO_ONE_FEE_RATE).dy_calculator
+        assert no_one.subtract_one is False
+        assert no_one.conversion_style == ConversionStyle.FEE_THEN_RATE
+
+        cytoken = PoolStrategies(swap_style=SwapStyle.CYTOKEN).dy_calculator
+        assert cytoken.swap_style == SwapStyle.CYTOKEN
+        assert cytoken.balance_source == BalanceSource.RATE_ADJUSTED_XP
+        assert cytoken.subtract_one is True
+        assert cytoken.conversion_style == ConversionStyle.FEE_THEN_RATE
 
     def test_explicit_calculator_overrides_auto(self):
         """Explicit calculator arg is preserved, not overwritten by __post_init__."""
 
-        explicit = StandardDyCalculator()
+        explicit = StandardDyCalculator(swap_style=SwapStyle.STANDARD)
         s = PoolStrategies(swap_style=SwapStyle.CRYPTO, dy_calculator=explicit)
         assert s.dy_calculator is explicit
