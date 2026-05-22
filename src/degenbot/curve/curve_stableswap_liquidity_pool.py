@@ -711,9 +711,7 @@ class CurveStableswapPool(
             # For LIVE_ADMIN_ORACLE, re-resolve rates using effective balances
             if swap_style == SwapStyle.LIVE_ADMIN_ORACLE:
                 oracle_rates = self._resolve_rates(
-                    rates=self.rate_multipliers,
-                    block_number=block_number,
-                    pool_balances=effective_balances,
+                    rates=self.rate_multipliers, block_number=block_number
                 )
                 oracle_xp = tuple(
                     rate * balance // self.PRECISION
@@ -897,7 +895,6 @@ class CurveStableswapPool(
         *,
         rates: tuple[int, ...],
         block_number: int,
-        pool_balances: tuple[int, ...],
     ) -> tuple[int, ...]:
         """Select rates based on the pool's lending rate style.
 
@@ -1110,7 +1107,11 @@ class CurveStableswapPool(
             final_state=initial_state,
         )
 
-    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
+    def extract_fee(
+        self,
+        *,
+        zero_for_one: bool,  # ruff: ignore[ARG002]
+    ) -> Fraction:
         return Fraction(self.fee, self.FEE_DENOMINATOR)
 
     def to_hop_state(

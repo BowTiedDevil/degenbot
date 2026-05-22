@@ -148,7 +148,7 @@ class PiecewiseMobiusSolver(Solver):
 
         if v3_result is None:
             # No multi-range V3 found - try single-range fallback
-            return self._try_single_range_fallback(solve_input, start_ns)
+            return self._try_single_range_fallback(solve_input)
 
         v3_hop_index, v3_hop = v3_result
 
@@ -163,7 +163,7 @@ class PiecewiseMobiusSolver(Solver):
         # Fall back to Python implementation
         return self._solve_multi_range(solve_input, start_ns)
 
-    def _try_single_range_fallback(self, solve_input: SolveInput, start_ns: int) -> SolveResult:
+    def _try_single_range_fallback(self, solve_input: SolveInput) -> SolveResult:
         """Try MobiusSolver for single-range V3."""
         if self._mobius_solver is None:
             self._mobius_solver = MobiusSolver()
@@ -230,13 +230,20 @@ class PiecewiseMobiusSolver(Solver):
         if len(plausible_candidates) > 1:
             # Parallel evaluation for multiple candidates
             results = self._evaluate_candidates_parallel(
-                solve_input, v3_hop_index, v3_hop, current_idx, plausible_candidates
+                solve_input=solve_input,
+                v3_hop_index=v3_hop_index,
+                v3_hop=v3_hop,
+                current_idx=current_idx,
+                candidates=plausible_candidates,
             )
         else:
             # Sequential for single candidate (avoids thread overhead)
             results = [
                 self._try_candidate_range(
-                    solve_input, v3_hop_index, v3_hop, current_idx, plausible_candidates[0]
+                    solve_input=solve_input,
+                    v3_hop_index=v3_hop_index,
+                    v3_hop=v3_hop,
+                    end_idx=plausible_candidates[0],
                 )
             ]
 
@@ -285,7 +292,10 @@ class PiecewiseMobiusSolver(Solver):
             for end_idx in candidates:
                 try:
                     result = self._try_candidate_range(
-                        solve_input, v3_hop_index, v3_hop, current_idx, end_idx
+                        solve_input=solve_input,
+                        v3_hop_index=v3_hop_index,
+                        v3_hop=v3_hop,
+                        end_idx=end_idx,
                     )
                     results.append(result)
                 except (OptimizationError, ArithmeticError, ValueError):
@@ -297,11 +307,10 @@ class PiecewiseMobiusSolver(Solver):
             future_to_idx = {
                 executor.submit(
                     self._try_candidate_range,
-                    solve_input,
-                    v3_hop_index,
-                    v3_hop,
-                    current_idx,
-                    end_idx,
+                    solve_input=solve_input,
+                    v3_hop_index=v3_hop_index,
+                    v3_hop=v3_hop,
+                    end_idx=end_idx,
                 ): end_idx
                 for end_idx in candidates
             }
@@ -398,7 +407,6 @@ class PiecewiseMobiusSolver(Solver):
         solve_input: SolveInput,
         v3_hop_index: int,
         v3_hop: BoundedProductHop,
-        start_idx: int,
         end_idx: int,
     ) -> SolveResult:
         """

@@ -196,7 +196,11 @@ class AerodromeV2PoolCalc:
             else Fraction(10**self._token0.decimals, 10**self._token1.decimals)
         )
 
-    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
+    def extract_fee(
+        self,
+        *,
+        zero_for_one: bool,  # ruff: ignore[ARG002]
+    ) -> Fraction:
         return self._fee
 
     # ── Private: calculation strategy methods ──

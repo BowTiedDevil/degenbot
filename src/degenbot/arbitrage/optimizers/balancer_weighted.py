@@ -351,89 +351,75 @@ def refine_to_integer(
 # ---------------------------------------------------------------------------
 
 
-class BalancerWeightedPoolSolver:
-    """
-    Closed-form solver for N-token Balancer weighted pool arbitrage.
+def solve_balancer_weighted(
+    pool: BalancerMultiTokenState,
+    market_prices: tuple[float, ...],
+    max_input: float | None = None,
+) -> MultiTokenArbitrageResult:
+    """Find optimal multi-token arbitrage trade for a Balancer weighted pool.
 
     Uses Equation 9 from Willetts & Harrington (2024) with correct
     d_i = I_{s_i=1} indicator (1 for deposit, 0 for withdraw).
     """
+    n = pool.n_tokens
 
-    def __init__(
-        self,
-        *,
-        use_heuristic_pruning: bool = False,
-        max_signatures: int = 500,
-    ) -> None:
-        self.use_heuristic_pruning = use_heuristic_pruning
-        self.max_signatures = max_signatures
+    if n != len(market_prices):
+        return MultiTokenArbitrageResult(
+            trades=tuple(0.0 for _ in range(n)),
+            profit=0.0,
+            success=False,
+            signature=tuple(0 for _ in range(n)),
+            iterations=0,
+        )
 
-    def solve(
-        self,
-        pool: BalancerMultiTokenState,
-        market_prices: tuple[float, ...],
-        max_input: float | None = None,
-    ) -> MultiTokenArbitrageResult:
-        """Find optimal multi-token arbitrage trade."""
-        n = pool.n_tokens
+    signatures = generate_trade_signatures(n)
 
-        if n != len(market_prices):
-            return MultiTokenArbitrageResult(
-                trades=tuple(0.0 for _ in range(n)),
-                profit=0.0,
-                success=False,
-                signature=tuple(0 for _ in range(n)),
-                iterations=0,
-            )
+    best_result: MultiTokenArbitrageResult | None = None
+    best_profit = 0.0
 
-        signatures = generate_trade_signatures(n)
+    for signature in signatures:
+        trades = compute_optimal_trade(pool, market_prices, signature)
 
-        best_result: MultiTokenArbitrageResult | None = None
-        best_profit = 0.0
+        if not validate_trade(trades, signature, pool):
+            continue
 
-        for signature in signatures:
-            trades = compute_optimal_trade(pool, market_prices, signature)
+        profit = compute_profit_token_units(trades, market_prices)
 
-            if not validate_trade(trades, signature, pool):
+        if max_input is not None:
+            total_input = sum(market_prices[i] * max(0.0, trades[i] / 1e18) for i in range(n))
+            if total_input > max_input:
                 continue
 
-            profit = compute_profit_token_units(trades, market_prices)
-
-            if max_input is not None:
-                total_input = sum(market_prices[i] * max(0.0, trades[i] / 1e18) for i in range(n))
-                if total_input > max_input:
-                    continue
-
-            if profit > best_profit:
-                best_profit = profit
-                int_trades = refine_to_integer(trades, signature, pool, market_prices)
-                # Profit in numéraire: convert native int trades to token units
-                int_profit = -sum(
-                    market_prices[i] * (int_trades[i] / 10 ** pool.decimals[i])
-                    if pool.decimals
-                    else market_prices[i] * int_trades[i]
-                    for i in range(n)
-                )
-
-                if int_profit > 0:
-                    best_result = MultiTokenArbitrageResult(
-                        trades=tuple(float(t) for t in int_trades),
-                        profit=int_profit,
-                        success=True,
-                        signature=signature,
-                        iterations=len(signatures),
-                    )
-
-        if best_result is None:
-            return MultiTokenArbitrageResult(
-                trades=tuple(0.0 for _ in range(n)),
-                profit=0.0,
-                success=False,
-                signature=tuple(0 for _ in range(n)),
-                iterations=len(signatures),
+        if profit > best_profit:
+            best_profit = profit
+            int_trades = refine_to_integer(trades, signature, pool, market_prices)
+            # Profit in numéraire: convert native int trades to token units
+            int_profit = -sum(
+                market_prices[i] * (int_trades[i] / 10 ** pool.decimals[i])
+                if pool.decimals
+                else market_prices[i] * int_trades[i]
+                for i in range(n)
             )
 
-        return best_result
+            if int_profit > 0:
+                best_result = MultiTokenArbitrageResult(
+                    trades=tuple(float(t) for t in int_trades),
+                    profit=int_profit,
+                    success=True,
+                    signature=signature,
+                    iterations=len(signatures),
+                )
+
+    if best_result is None:
+        return MultiTokenArbitrageResult(
+            trades=tuple(0.0 for _ in range(n)),
+            profit=0.0,
+            success=False,
+            signature=tuple(0 for _ in range(n)),
+            iterations=len(signatures),
+        )
+
+    return best_result
 
 
 def balancer_pool_to_state(pool: BalancerV2Pool) -> BalancerMultiTokenState:

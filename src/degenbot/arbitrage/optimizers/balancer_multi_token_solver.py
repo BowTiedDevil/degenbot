@@ -5,7 +5,7 @@ from typing import override
 
 from degenbot.arbitrage.optimizers.balancer_weighted import (
     BalancerMultiTokenState,
-    BalancerWeightedPoolSolver,
+    solve_balancer_weighted,
 )
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult, SolverMethod
 from degenbot.exceptions import OptimizationError
@@ -44,28 +44,6 @@ class BalancerMultiTokenSolver(Solver):
     >>> solver = BalancerMultiTokenSolver()
     >>> result = solver.solve(SolveInput(hops=(hop,)))
     """
-
-    def __init__(
-        self,
-        *,
-        use_heuristic_pruning: bool = False,
-        max_signatures: int = 500,
-    ) -> None:
-        """
-        Initialize the solver.
-
-        Parameters
-        ----------
-        use_heuristic_pruning
-            If True, use price-ratio heuristic to prune signatures.
-            Recommended for N >= 6.
-        max_signatures
-            Maximum signatures to evaluate before forcing pruning.
-        """
-        self._solver = BalancerWeightedPoolSolver(
-            use_heuristic_pruning=use_heuristic_pruning,
-            max_signatures=max_signatures,
-        )
 
     @override
     def supports(self, solve_input: SolveInput) -> bool:
@@ -107,7 +85,7 @@ class BalancerMultiTokenSolver(Solver):
         if solve_input.max_input is not None:
             max_input = float(solve_input.max_input)
 
-        result = self._solver.solve(pool, hop.market_prices, max_input=max_input)
+        result = solve_balancer_weighted(pool, hop.market_prices, max_input=max_input)
 
         elapsed_ns = time.perf_counter_ns() - start_ns
 

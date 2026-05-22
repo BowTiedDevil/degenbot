@@ -69,9 +69,7 @@ class AsyncV3PoolBuilder:
         assert io is not None
 
         state_block = (
-            request.state_block
-            if request.state_block is not None
-            else await io.get_block_number()
+            request.state_block if request.state_block is not None else await io.get_block_number()
         )
 
         # Try DB first
