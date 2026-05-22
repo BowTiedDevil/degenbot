@@ -197,6 +197,7 @@ dev = [
     "ruff",
     "sybil",
     "ty",
+    "pre-commit>=4.6.0",
 ]
 
 [tool.ty.environment]

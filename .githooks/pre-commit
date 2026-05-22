@@ -23,4 +23,10 @@ if [ $exit_code -ne 0 ]; then
   echo "💡 Fix with: npx markdownlint-cli2 --fix <file>, or commit with --no-verify to bypass."
 fi
 
-exit $exit_code
+if [ $exit_code -ne 0 ]; then
+  exit $exit_code
+fi
+
+# Run pre-commit hooks (e.g. forbid-noqa checks)
+uv run pre-commit run
+exit $?
