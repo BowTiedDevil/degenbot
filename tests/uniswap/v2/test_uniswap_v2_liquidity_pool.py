@@ -389,7 +389,6 @@ def test_calculate_tokens_in_from_tokens_out(
     """
     Reserve values for this test are taken at block height 17,600,000
     """
-
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.calculate_tokens_in_from_tokens_out(
             token_out_quantity=8000000000,

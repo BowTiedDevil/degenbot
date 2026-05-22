@@ -1,3 +1,5 @@
+"""Exception classes for degenbot."""
+
 from degenbot.exceptions.arbitrage import (
     ArbCalculationError,
     IncompatiblePoolInvariant,

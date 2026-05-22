@@ -1,3 +1,4 @@
+"""Token registry: address-keyed store of built ERC-20 instances."""
 from typing import TYPE_CHECKING
 
 from degenbot.registry.base import AddressRegistry
@@ -11,6 +12,7 @@ class TokenRegistry(AddressRegistry["Erc20Token"]):
     """Registry for ERC-20 tokens keyed by (chain_id, token_address)."""
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         super().__init__(name="Token")
 
     def get(

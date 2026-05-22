@@ -52,6 +52,7 @@ class PoolStateGenerator:
     ...     reserves_token0=1000000000000000000,  # 1 ETH
     ...     reserves_token1=2000000000,  # 2000 USDC
     ... )
+
     """
 
     def generate_v2_pool_state(
@@ -79,6 +80,7 @@ class PoolStateGenerator:
         -------
         UniswapV2PoolState
             The generated pool state.
+
         """
         return UniswapV2PoolState(
             address=address,
@@ -128,6 +130,7 @@ class PoolStateGenerator:
         -------
         UniswapV3PoolState
             The generated pool state.
+
         """
         if tick_bitmap is None or tick_data is None:
             tick_bitmap, tick_data = self._generate_minimal_tick_structures(
@@ -190,6 +193,7 @@ class PoolStateGenerator:
         -------
         UniswapV4PoolState
             The generated pool state.
+
         """
         if tick_bitmap is None or tick_data is None:
             tick_bitmap_v3, tick_data_v3 = self._generate_minimal_tick_structures(
@@ -247,6 +251,7 @@ class PoolStateGenerator:
         -------
         tuple[InitializedTickMap, LiquidityMap]
             The tick bitmap and tick data.
+
         """
         # Find nearest initialized ticks on either side of current tick
         tick_lower = (tick // tick_spacing) * tick_spacing
@@ -321,6 +326,7 @@ class PoolStateGenerator:
         -------
         UniswapV2PoolState
             The generated pool state.
+
         """
         # For V2: price = reserve1 / reserve0
         # reserve0 * reserve1 = k (liquidity)
@@ -364,6 +370,7 @@ class PoolStateGenerator:
         -------
         UniswapV3PoolState
             The generated pool state.
+
         """
         decimal_adjustment = 10 ** (config.token1_decimals - config.token0_decimals)
         adjusted_price = price_token1_per_token0 * decimal_adjustment
@@ -409,6 +416,7 @@ class PoolStateGenerator:
         -------
         UniswapV2PoolState
             State for pool B with the price discrepancy applied.
+
         """
         # Calculate effective price in pool A
         price_a = pool_a_state.reserves_token1 / pool_a_state.reserves_token0
@@ -469,6 +477,7 @@ class PoolStateGenerator:
         -------
         tuple[UniswapV2PoolState, UniswapV2PoolState]
             States for pool A and pool B.
+
         """
         _ = fee_a  # Reserved for future fee-aware calculations
         _ = fee_b  # Reserved for future fee-aware calculations
@@ -524,6 +533,7 @@ class PoolStateGenerator:
         -------
         tuple[UniswapV3PoolState, UniswapV3PoolState]
             States for pool A and pool B.
+
         """
         config = V3PoolGenerationConfig(
             fee=Fraction(3, 1000),
@@ -586,6 +596,7 @@ class PoolStateGenerator:
         -------
         tuple[UniswapV4PoolState, UniswapV4PoolState]
             States for pool A and pool B.
+
         """
         config = V3PoolGenerationConfig(
             fee=Fraction(3, 1000),
@@ -664,6 +675,7 @@ class PoolStateGenerator:
         -------
         tuple[UniswapV2PoolState, UniswapV3PoolState]
             States for V2 pool and V3 pool.
+
         """
         v2_config = PoolGenerationConfig(fee=v2_fee)
         v3_config = V3PoolGenerationConfig(
@@ -720,6 +732,7 @@ class PoolStateGenerator:
         -------
         bool
             True if arbitrage opportunity exists and is profitable.
+
         """
         if isinstance(pool_a_state, UniswapV2PoolState) and isinstance(
             pool_b_state, UniswapV2PoolState

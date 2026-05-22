@@ -65,10 +65,13 @@ class DyCalculator(Protocol):
         *,
         inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
-    ) -> int: ...
+    ) -> int:
+        """Calculate."""
+        ...
 
 
 def make_swap_style_calculator(swap_style: SwapStyle) -> DyCalculator:
+    """Calculate."""
     """Construct the appropriate DyCalculator for a SwapStyle value."""
     match swap_style:
         case SwapStyle.STANDARD | SwapStyle.CYTOKEN:
@@ -155,6 +158,7 @@ class PoolStrategies:
     metapool_underlying_dy_calculator: DyCalculator | None = dataclasses.field(default=None)
 
     def __post_init__(self) -> None:
+        """Post-initialization hook."""
         # Auto-construct calculators from enum values when not explicitly set.
         # Uses object.__setattr__ because the dataclass is frozen.
         if self.dy_calculator is None:

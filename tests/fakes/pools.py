@@ -1,4 +1,5 @@
-"""Consolidated fake pool implementations.
+"""
+Consolidated fake pool implementations.
 
 Minimal protocol-fakes for testing:
 - FakeV2Pool: captures external_update calls (test spy)

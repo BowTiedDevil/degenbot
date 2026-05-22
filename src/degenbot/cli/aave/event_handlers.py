@@ -44,8 +44,7 @@ def _process_collateral_configuration_changed_event(
     event: LogReceipt,
     market: AaveV3Market,
 ) -> AaveV3AssetConfig | None:
-    """
-    Process a CollateralConfigurationChanged event to update asset configuration.
+    """Process a CollateralConfigurationChanged event to update asset configuration.
 
     Fetches full configuration from the Pool contract via getConfiguration()
     and decodes the bitmap to populate all config fields.
@@ -60,7 +59,6 @@ def _process_collateral_configuration_changed_event(
     );
     ```
     """
-
     asset_address = decode_address(event["topics"][1])
 
     # Find the asset in the database
@@ -212,8 +210,7 @@ def _process_e_mode_category_added_event(
     event: LogReceipt,
     market_id: int,
 ) -> AaveV3EModeCategory | None:
-    """
-    Process an EModeCategoryAdded event to update eMode category configuration.
+    """Process an EModeCategoryAdded event to update eMode category configuration.
 
     Reference:
     ```
@@ -227,7 +224,6 @@ def _process_e_mode_category_added_event(
     );
     ```
     """
-
     category_id = int.from_bytes(event["topics"][1], "big")
 
     # Decode non-indexed parameters
@@ -273,8 +269,7 @@ def _process_emode_asset_category_changed_event(
     event: LogReceipt,
     market_id: int,
 ) -> AaveV3AssetConfig | None:
-    """
-    Process an EModeAssetCategoryChanged event (older Aave versions).
+    """Process an EModeAssetCategoryChanged event (older Aave versions).
 
     Updates the asset's eMode category assignment.
 
@@ -340,8 +335,7 @@ def _process_asset_collateral_in_emode_changed_event(
     event: LogReceipt,
     market_id: int,
 ) -> AaveV3AssetConfig | None:
-    """
-    Process an AssetCollateralInEModeChanged event (newer Aave versions v3.4+).
+    """Process an AssetCollateralInEModeChanged event (newer Aave versions v3.4+).
 
     This event is emitted when an asset is added or removed as collateral
     in an eMode category. The category_id in the event is the asset's primary
@@ -410,8 +404,7 @@ def _process_reserve_used_as_collateral_enabled_event(
     event: LogReceipt,
     market_id: int,
 ) -> AaveV3UserCollateralConfig | None:
-    """
-    Process a ReserveUsedAsCollateralEnabled event.
+    """Process a ReserveUsedAsCollateralEnabled event.
 
     Reference:
     ```
@@ -421,7 +414,6 @@ def _process_reserve_used_as_collateral_enabled_event(
     );
     ```
     """
-
     asset_address = decode_address(event["topics"][1])
     user_address = decode_address(event["topics"][2])
 
@@ -471,8 +463,7 @@ def _process_reserve_used_as_collateral_disabled_event(
     event: LogReceipt,
     market_id: int,
 ) -> AaveV3UserCollateralConfig | None:
-    """
-    Process a ReserveUsedAsCollateralDisabled event.
+    """Process a ReserveUsedAsCollateralDisabled event.
 
     Reference:
     ```
@@ -482,7 +473,6 @@ def _process_reserve_used_as_collateral_disabled_event(
     );
     ```
     """
-
     asset_address = decode_address(event["topics"][1])
     user_address = decode_address(event["topics"][2])
 
@@ -533,8 +523,7 @@ def _process_asset_initialization_event(
     market: AaveV3Market,
     session: Session,
 ) -> None:
-    """
-    Process a ReserveInitialized event to add a new Aave asset to the database.
+    """Process a ReserveInitialized event to add a new Aave asset to the database.
 
     Reference:
     ```
@@ -547,7 +536,6 @@ def _process_asset_initialization_event(
     );
     ```
     """
-
     logger.debug(f"Processing asset initialization event at block {event['blockNumber']}")
 
     asset_address = decode_address(event["topics"][1])
@@ -672,8 +660,7 @@ def _process_user_e_mode_set_event(
     event: LogReceipt,
     tx_context: TransactionContext,
 ) -> None:
-    """
-    Process a UserEModeSet event to update a user's E-Mode category.
+    """Process a UserEModeSet event to update a user's E-Mode category.
 
     Reference:
     ```
@@ -683,7 +670,6 @@ def _process_user_e_mode_set_event(
     );
     ```
     """
-
     logger.debug(f"Processing user E-mode set event for user at block {event['blockNumber']}")
 
     user_address = decode_address(event["topics"][1])
@@ -703,8 +689,7 @@ def _process_discount_token_updated_event(
     event: LogReceipt,
     gho_asset: AaveGhoToken,
 ) -> None:
-    """
-    Process a DiscountTokenUpdated event to set the GHO vToken discount token.
+    """Process a DiscountTokenUpdated event to set the GHO vToken discount token.
 
     Reference:
     ```
@@ -714,7 +699,6 @@ def _process_discount_token_updated_event(
     );
     ```
     """
-
     # Ignore the event if it didn't come from the GHO VariableDebtToken contract
     if gho_asset.v_token is None or gho_asset.v_token.address != event["address"]:
         logger.debug(
@@ -739,8 +723,7 @@ def _process_discount_rate_strategy_updated_event(
     event: LogReceipt,
     gho_asset: AaveGhoToken,
 ) -> None:
-    """
-    Process a DiscountRateStrategyUpdated event to set the GHO vToken attribute
+    """Process a DiscountRateStrategyUpdated event to set the GHO vToken attribute.
 
     Reference:
     ```
@@ -750,7 +733,6 @@ def _process_discount_rate_strategy_updated_event(
     );
     ```
     """
-
     # Ignore the event if it didn't come from the GHO VariableDebtToken contract
     if gho_asset.v_token is None or gho_asset.v_token.address != event["address"]:
         logger.debug(
@@ -778,8 +760,7 @@ def _process_reserve_data_update_event(
     event: LogReceipt,
     market: AaveV3Market,
 ) -> None:
-    """
-    Process a ReserveDataUpdated event to update asset rates and indices.
+    """Process a ReserveDataUpdated event to update asset rates and indices.
 
     Reference:
     ```
@@ -793,7 +774,6 @@ def _process_reserve_data_update_event(
     );
     ```
     """
-
     logger.debug(f"Processing reserve data update event at block {event['blockNumber']}")
 
     reserve_asset_address = decode_address(event["topics"][1])
@@ -839,8 +819,7 @@ def _process_scaled_token_upgrade_event(
     event: LogReceipt,
     tx_context: TransactionContext,
 ) -> None:
-    """
-    Process an Upgraded event to update the aToken or vToken revision.
+    """Process an Upgraded event to update the aToken or vToken revision.
 
     Reference:
     ```
@@ -849,7 +828,6 @@ def _process_scaled_token_upgrade_event(
     );
     ```
     """
-
     logger.debug(f"Processing scaled token upgrade event at block {event['blockNumber']}")
 
     new_implementation_address = decode_address(event["topics"][1])
@@ -937,10 +915,7 @@ def _update_contract_revision(
     new_address: ChecksumAddress,
     revision_function_prototype: str,
 ) -> None:
-    """
-    Update contract revision in database.
-    """
-
+    """Update contract revision in database."""
     revision: int
     (revision,) = raw_call(
         provider=provider,
@@ -973,10 +948,7 @@ def _process_proxy_creation_event(
     proxy_id: bytes,
     revision_function_prototype: str,
 ) -> None:
-    """
-    Process a proxy creation event (POOL or POOL_CONFIGURATOR).
-    """
-
+    """Process a proxy creation event (POOL or POOL_CONFIGURATOR)."""
     logger.debug(f"Processing _process_proxy_creation_event at block {event['blockNumber']}")
 
     (decoded_proxy_id,) = eth_abi.abi.decode(types=["bytes32"], data=event["topics"][1])
@@ -1013,8 +985,7 @@ def _process_pool_data_provider_updated_event(
     market: AaveV3Market,
     event: LogReceipt,
 ) -> None:
-    """
-    Process a PoolDataProviderUpdated event chronologically.
+    """Process a PoolDataProviderUpdated event chronologically.
 
     Event structure:
     - topics[1]: oldAddress (address indexed)
@@ -1045,15 +1016,13 @@ def _process_address_set_event(
     market: AaveV3Market,
     event: LogReceipt,
 ) -> None:
-    """
-    Process an AddressSet event chronologically.
+    """Process an AddressSet event chronologically.
 
     Event structure:
     - topics[1]: id (bytes32 indexed) - contract identifier
     - topics[2]: oldAddress (address indexed)
     - topics[3]: newAddress (address indexed)
     """
-
     # Decode the contract id from bytes32
     contract_id_bytes: bytes
     (contract_id_bytes,) = eth_abi.abi.decode(types=["bytes32"], data=event["topics"][1])
@@ -1079,8 +1048,7 @@ def _process_price_oracle_updated_event(
     market: AaveV3Market,
     event: LogReceipt,
 ) -> None:
-    """
-    Process a PriceOracleUpdated event from the PoolAddressesProvider.
+    """Process a PriceOracleUpdated event from the PoolAddressesProvider.
 
     Event structure:
     - topics[1]: oldAddress (address indexed)
@@ -1095,7 +1063,6 @@ def _process_price_oracle_updated_event(
             address indexed newAddress
         );
     """
-
     old_address = decode_address(event["topics"][1])
     new_address = decode_address(event["topics"][2])
 
@@ -1129,8 +1096,7 @@ def _process_asset_source_updated_event(
     market: AaveV3Market,
     event: LogReceipt,
 ) -> None:
-    """
-    Process an AssetSourceUpdated event from the AaveOracle.
+    """Process an AssetSourceUpdated event from the AaveOracle.
 
     Event structure:
     - topics[1]: asset (address indexed)
@@ -1144,7 +1110,6 @@ def _process_asset_source_updated_event(
             address indexed source
         );
     """
-
     asset_address = decode_address(event["topics"][1])
     source_address = decode_address(event["topics"][2])
 
@@ -1169,8 +1134,7 @@ def _process_discount_percent_updated_event(
     event: LogReceipt,
     tx_context: TransactionContext,
 ) -> None:
-    """
-    Process a GHO discount percent update event.
+    """Process a GHO discount percent update event.
 
     With transaction-level processing, this is called BEFORE Mint/Burn
     events in the same transaction, so the discount rate is already updated.
@@ -1184,7 +1148,6 @@ def _process_discount_percent_updated_event(
     );
     ```
     """
-
     logger.debug(
         f"Processing _process_discount_percent_updated_event at block {event['blockNumber']}"
     )

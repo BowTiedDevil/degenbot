@@ -1,4 +1,5 @@
-"""Centralized mainnet addresses and constants shared across test files.
+"""
+Centralized mainnet addresses and constants shared across test files.
 
 Replaces the duplicated address strings previously declared in individual
 conftest.py files and test modules.

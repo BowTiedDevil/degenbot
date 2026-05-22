@@ -1,3 +1,5 @@
+"""Uniswap V2/V3/V4 pool type registration and exports."""
+
 from degenbot.registry.pool_type import pool_type_registry
 
 from . import (

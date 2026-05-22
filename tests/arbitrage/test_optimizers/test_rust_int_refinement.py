@@ -33,8 +33,10 @@ from .conftest import (
 
 
 class TestRustMobiusRefineInt:
-    """Tests for the Rust mobius_refine_int function that does integer
-    refinement around a float optimum using EVM-exact U256 arithmetic."""
+    """
+    Tests for the Rust mobius_refine_int function that does integer
+    refinement around a float optimum using EVM-exact U256 arithmetic.
+    """
 
     def test_profitable_2hop(self):
         """Standard 2-hop V2-V2: refine around float optimum gives EVM-exact result."""
@@ -167,8 +169,10 @@ class TestRustMobiusRefineInt:
 
 
 class TestArbSolverRustIntRefinement:
-    """Tests that ArbSolver uses Rust integer refinement and produces
-    EVM-exact results, especially for large reserves."""
+    """
+    Tests that ArbSolver uses Rust integer refinement and produces
+    EVM-exact results, especially for large reserves.
+    """
 
     def test_v2_2hop_evm_exact(self):
         """ArbSolver V2-V2 result must be EVM-exact: profit = simulate(x) - x."""

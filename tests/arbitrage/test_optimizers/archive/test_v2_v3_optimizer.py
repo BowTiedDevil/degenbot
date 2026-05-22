@@ -19,12 +19,12 @@ from degenbot.arbitrage.optimizers.v2_v3_optimizer import (
     solve_v2_v3_single_range,
     sort_ranges_by_equilibrium_distance,
 )
-
 from degenbot.arbitrage.optimizers.v3_tick_predictor import (
     TickRange,
     tick_range_to_bounded_product,
     tick_to_sqrt_price,
 )
+
 from tests.fakes.tokens import FakeToken
 
 # =============================================================================
@@ -244,7 +244,7 @@ class TestEquilibriumEstimation:
         assert p_eq < max(v2_price, v3_price)
 
     def test_estimate_equilibrium_sqrt_price(self, v2_state, v3_state):
-        """sqrt price is sqrt of equilibrium price."""
+        """Sqrt price is sqrt of equilibrium price."""
         p_eq = estimate_equilibrium_price(v2_state, v3_state)
         sqrt_p_eq = estimate_equilibrium_sqrt_price(v2_state, v3_state)
 

@@ -1,3 +1,4 @@
+"""Uniswap V2/V3 deployment addresses and chain configuration."""
 from dataclasses import dataclass
 
 import eth_typing
@@ -9,6 +10,8 @@ from degenbot.types.abstract import AbstractExchangeDeployment
 
 @dataclass(slots=True, frozen=True)
 class UniswapFactoryDeployment:
+    """UniswapFactoryDeployment class."""
+
     address: ChecksumAddress
     deployer: ChecksumAddress | None
     pool_init_hash: str
@@ -16,26 +19,36 @@ class UniswapFactoryDeployment:
 
 @dataclass(slots=True, frozen=True)
 class UniswapPoolManagerDeployment:
+    """UniswapPoolManagerDeployment class."""
+
     address: ChecksumAddress
 
 
 @dataclass(slots=True, frozen=True)
 class UniswapStateViewDeployment:
+    """UniswapStateViewDeployment class."""
+
     address: ChecksumAddress
 
 
 @dataclass(slots=True, frozen=True)
 class UniswapV2ExchangeDeployment(AbstractExchangeDeployment):
+    """UniswapV2ExchangeDeployment class."""
+
     factory: UniswapFactoryDeployment
 
 
 @dataclass(slots=True, frozen=True)
 class UniswapV3ExchangeDeployment(AbstractExchangeDeployment):
+    """UniswapV3ExchangeDeployment class."""
+
     factory: UniswapFactoryDeployment
 
 
 @dataclass(slots=True, frozen=True)
 class UniswapV4ExchangeDeployment(AbstractExchangeDeployment):
+    """UniswapV4ExchangeDeployment class."""
+
     pool_manager: UniswapPoolManagerDeployment
     state_view: UniswapStateViewDeployment
 

@@ -43,18 +43,22 @@ class V2PoolState:
 
     @property
     def token0(self) -> Erc20Token:
+        """Token0."""
         return self._token0
 
     @property
     def token1(self) -> Erc20Token:
+        """Token1."""
         return self._token1
 
     @property
     def fee_token0(self) -> Fraction:
+        """Fee token0."""
         return self._fee_token0
 
     @property
     def fee_token1(self) -> Fraction:
+        """Fee token1."""
         return self._fee_token1
 
     @property
@@ -64,4 +68,5 @@ class V2PoolState:
 
     @property
     def tokens(self) -> tuple[Erc20Token, Erc20Token]:
+        """Tokens."""
         return self._token0, self._token1

@@ -67,82 +67,102 @@ class StableswapPoolState:
 
     @property
     def tokens(self) -> tuple[Erc20Token, ...]:
+        """Tokens."""
         return self._tokens
 
     @property
     def a_coefficient(self) -> int:
+        """Return a coefficient."""
         return self._a_coefficient
 
     @property
     def fee(self) -> int:
+        """Return fee."""
         return self._fee
 
     @property
     def admin_fee(self) -> int:
+        """Return admin fee."""
         return self._admin_fee
 
     @property
     def rate_multipliers(self) -> tuple[int, ...]:
+        """Rate multipliers."""
         return self._rate_multipliers
 
     @property
     def precision_multipliers(self) -> tuple[int, ...]:
+        """Precision multipliers."""
         return self._precision_multipliers
 
     @property
     def base_pool(self) -> CurveStableswapPool | None:
+        """Base pool."""
         return self._base_pool
 
     @property
     def tokens_underlying(self) -> tuple[Erc20Token, ...] | None:
+        """Tokens underlying."""
         return self._tokens_underlying
 
     @property
     def lp_token(self) -> Erc20Token:
+        """Lp token."""
         return self._lp_token
 
     @property
     def use_lending(self) -> tuple[bool, ...]:
+        """Use lending."""
         return self._use_lending
 
     @property
     def initial_a_coefficient(self) -> int | None:
+        """Return initial a coefficient."""
         return self._initial_a_coefficient
 
     @property
     def future_a_coefficient(self) -> int | None:
+        """Return future a coefficient."""
         return self._future_a_coefficient
 
     @property
     def initial_a_coefficient_time(self) -> int | None:
+        """Return initial a coefficient time."""
         return self._initial_a_coefficient_time
 
     @property
     def future_a_coefficient_time(self) -> int | None:
+        """Return future a coefficient time."""
         return self._future_a_coefficient_time
 
     @property
     def fee_gamma(self) -> int:
+        """Return fee gamma."""
         return self._fee_gamma
 
     @property
     def mid_fee(self) -> int:
+        """Return mid fee."""
         return self._mid_fee
 
     @property
     def out_fee(self) -> int:
+        """Return out fee."""
         return self._out_fee
 
     @property
     def gamma(self) -> int:
+        """Return gamma."""
         return self._gamma
 
     @property
     def offpeg_fee_multiplier(self) -> int:
+        """Return offpeg fee multiplier."""
         return self._offpeg_fee_multiplier
 
     @property
     def name(self) -> str:
+        """Return name."""
         return self._name
 
     # ── Mutable properties (state accessed through the mixin) ──

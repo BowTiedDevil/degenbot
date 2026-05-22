@@ -1,3 +1,5 @@
+"""Anvil fork management utilities for local test chains."""
+
 import contextlib
 import pathlib
 import shutil
@@ -23,7 +25,10 @@ from degenbot.validation.evm_values import ValidatedUint256
 
 
 class AnvilNotFound(Exception):
+    """AnvilNotFound class."""
+
     def __init__(self) -> None:  # pragma: no cover
+        """Initialize the instance."""
         super().__init__("Anvil path could not be located.")
 
 
@@ -31,6 +36,10 @@ type AnvilOptions = list[str]
 
 
 class AnvilFork:
+    """Initialize the instance."""
+
+    """Initialize the instance."""
+
     """
     Launch an Anvil fork as a separate process and expose methods for commonly-used RPC calls.
 
@@ -65,6 +74,8 @@ class AnvilFork:
         ipc_provider_kwargs: dict[str, Any] | None = None,
         anvil_opts: list[str] | None = None,  # Additional options passed to the Anvil command
     ) -> None:
+        """Initialize the instance."""
+
         def _parse_base_fee_arg(command: AnvilOptions) -> None:
             if base_fee:
                 command.append(f"--base-fee={base_fee}")
@@ -173,26 +184,32 @@ class AnvilFork:
 
     @property
     def fork_url(self) -> str | None:
+        """Return fork url."""
         return self._fork_url
 
     @property
     def http_url(self) -> str:
+        """Return http url."""
         return f"http://{self.localhost}:{self.port}"
 
     @property
     def ipc_filename(self) -> pathlib.Path:
+        """Ipc filename."""
         return self.ipc_path / f"anvil-{self.port}.ipc"
 
     @property
     def stderr_capture_filename(self) -> pathlib.Path:
+        """Stderr capture filename."""
         return self.capture_path / f"anvil-{self.port}.stderr"
 
     @property
     def stdout_capture_filename(self) -> pathlib.Path:
+        """Stdout capture filename."""
         return self.capture_path / f"anvil-{self.port}.stdout"
 
     @property
     def ws_url(self) -> str:
+        """Return ws url."""
         return f"ws://{self.localhost}:{self.port}"
 
     @staticmethod
@@ -218,9 +235,7 @@ class AnvilFork:
         self.w3 = w3
 
     def _setup_process(self, anvil_command: AnvilOptions, timeout: int = 10) -> None:
-        """
-        Launch an Anvil subprocess, waiting for the IPC socket to be created.
-        """
+        """Launch an Anvil subprocess, waiting for the IPC socket to be created."""
         # Log the command being executed for debugging
         logger.debug(f"Launching Anvil with command: {' '.join(anvil_command)}")
 
@@ -250,9 +265,11 @@ class AnvilFork:
             self._process = process
 
     def __del__(self) -> None:
+        """Implement __del__."""
         self.close()
 
     def close(self, timeout: int = 10) -> None:
+        """Perform close."""
         if getattr(self, "_process", None):
             self._process.terminate()
             self._process.wait(timeout)
@@ -264,6 +281,7 @@ class AnvilFork:
             self.stdout_capture_filename.unlink(missing_ok=True)
 
     def mine(self) -> None:
+        """Perform mine."""
         method = "evm_mine"
         resp = self.w3.provider.make_request(
             method=RPCEndpoint(method),
@@ -273,6 +291,7 @@ class AnvilFork:
             raise AnvilError(method=method, error=str(resp["error"]))
 
     async def mine_async(self) -> None:
+        """Mine a single block asynchronously."""
         async with self.async_w3() as async_w3:
             await async_w3.provider.make_request(
                 method=RPCEndpoint("evm_mine"),
@@ -281,6 +300,7 @@ class AnvilFork:
 
     @contextlib.asynccontextmanager
     async def async_w3(self) -> AsyncIterator[AsyncWeb3[AsyncBaseProvider]]:
+        """Yield an async Web3 instance connected via IPC."""
         async with AsyncWeb3(AsyncIPCProvider(self.ipc_filename)) as async_w3:
             if TYPE_CHECKING:
                 assert isinstance(async_w3, AsyncWeb3)
@@ -290,10 +310,7 @@ class AnvilFork:
         self,
         block_number: BlockNumber,
     ) -> None:
-        """
-        Reset to a new block number.
-        """
-
+        """Reset to a new block number."""
         method = "anvil_reset"
         async with self.async_w3() as async_w3:
             resp = await async_w3.provider.make_request(
@@ -309,14 +326,12 @@ class AnvilFork:
         block_number: BlockNumber | None = None,
         transaction_hash: str | None = None,
     ) -> None:
-        """
-        Fork from a new endpoint, block number, or transaction hash.
+        """Fork from a new endpoint, block number, or transaction hash.
 
         Resetting to a new block number only can be done in-place without relaunching the Anvil
         process or recreating the Web3 object. Resetting to a new endpoint or from a transaction
         hash will create a new Anvil process, which is slower.
         """
-
         if fork_url is not None or transaction_hash is not None:
             self.close()
 
@@ -368,6 +383,7 @@ class AnvilFork:
             raise DegenbotValueError(message="No options provided.")
 
     def return_to_snapshot(self, snapshot_id: int) -> None:
+        """Perform return to snapshot."""
         if snapshot_id < 0:
             raise DegenbotValueError(message="ID cannot be negative")
 
@@ -392,24 +408,28 @@ class AnvilFork:
         address: str,
         balance: ValidatedUint256,
     ) -> None:
+        """Set balance."""
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setBalance"),
             params=[address, hex(balance)],
         )
 
     def set_code(self, address: str, bytecode: bytes) -> None:
+        """Set code."""
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setCode"),
             params=[address, bytecode],
         )
 
     def set_coinbase(self, address: str) -> None:
+        """Set coinbase."""
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setCoinbase"),
             params=[address],
         )
 
     def set_block_timestamp_interval(self, interval: int) -> None:
+        """Set block timestamp interval."""
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setBlockTimestampInterval"),
             params=[interval],
@@ -420,6 +440,7 @@ class AnvilFork:
         self,
         fee: ValidatedUint256,
     ) -> None:
+        """Set the next block base fee asynchronously."""
         method = "anvil_setNextBlockBaseFeePerGas"
         async with self.async_w3() as async_w3:
             resp = await async_w3.provider.make_request(
@@ -434,6 +455,7 @@ class AnvilFork:
         self,
         fee: ValidatedUint256,
     ) -> None:
+        """Set next base fee."""
         method = "anvil_setNextBlockBaseFeePerGas"
         resp = self.w3.provider.make_request(
             method=RPCEndpoint(method),
@@ -447,6 +469,7 @@ class AnvilFork:
         self,
         timestamp: ValidatedUint256,
     ) -> None:
+        """Set the next block timestamp asynchronously."""
         method = "evm_setNextBlockTimestamp"
         async with self.async_w3() as async_w3:
             resp = await async_w3.provider.make_request(
@@ -461,6 +484,7 @@ class AnvilFork:
         self,
         timestamp: ValidatedUint256,
     ) -> None:
+        """Set next block timestamp."""
         method = "evm_setNextBlockTimestamp"
         resp = self.w3.provider.make_request(
             method=RPCEndpoint(method),
@@ -470,6 +494,7 @@ class AnvilFork:
             raise AnvilError(method=method, error=str(resp["error"]))
 
     def set_nonce(self, address: str, nonce: int) -> None:
+        """Set nonce."""
         method = "anvil_setNonce"
         resp = self.w3.provider.make_request(
             method=RPCEndpoint(method),
@@ -479,6 +504,7 @@ class AnvilFork:
             raise AnvilError(method=method, error=str(resp["error"]))
 
     def set_snapshot(self) -> int:
+        """Set snapshot."""
         return int(
             self.w3.provider.make_request(
                 method=RPCEndpoint("evm_snapshot"),
@@ -493,6 +519,7 @@ class AnvilFork:
         position: int,
         value: HexStr | bytes | int,
     ) -> None:
+        """Set storage."""
         self.w3.provider.make_request(
             method=RPCEndpoint("anvil_setStorageAt"),
             params=[

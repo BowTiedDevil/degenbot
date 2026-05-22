@@ -30,8 +30,7 @@ class MintToTreasuryHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich a MINT_TO_TREASURY event.
+        """Enrich a MINT_TO_TREASURY event.
 
         MINT_TO_TREASURY events don't have a corresponding Pool event, and
         the scaled amount cannot be calculated without position context.

@@ -234,8 +234,10 @@ class TestOutGivenIn:
         assert result > 0
 
     def test_rounding_direction(self):
-        """outGivenIn rounds down (favoring the pool). The result should be <= the mathematically
-        exact value."""
+        """
+        OutGivenIn rounds down (favoring the pool). The result should be <= the mathematically
+        exact value.
+        """
         balance_in = 100 * 10**18
         weight_in = 50 * 10**18
         balance_out = 100 * 10**18
@@ -300,9 +302,11 @@ class TestInGivenOut:
             )
 
     def test_zero_amount_out(self):
-        """With amount_out=0, base=div_up(bO,bO)=ONE, power=pow_up(ONE,ONE)=ONE+max_error,
+        """
+        With amount_out=0, base=div_up(bO,bO)=ONE, power=pow_up(ONE,ONE)=ONE+max_error,
         ratio=max_error. The on-chain contract does NOT have a y==1 fast path, so this produces
-        a small non-zero result rather than exactly 0."""
+        a small non-zero result rather than exactly 0.
+        """
         result = weighted_math._calc_in_given_out(
             balance_in=100 * 10**18,
             weight_in=int(0.5 * 10**18),
@@ -316,8 +320,10 @@ class TestInGivenOut:
         assert result < 10**7  # But very small relative to balances
 
     def test_rounding_direction(self):
-        """inGivenOut rounds up (favoring the pool). The result should be >= the mathematically
-        exact value."""
+        """
+        InGivenOut rounds up (favoring the pool). The result should be >= the mathematically
+        exact value.
+        """
         balance_in = 100 * 10**18
         weight_in = 50 * 10**18
         balance_out = 100 * 10**18
@@ -477,7 +483,7 @@ class TestAddSwapFeeAmount:
         assert result == 1000
 
     def test_one_percent_fee(self):
-        """amount / (1 - 0.01) = amount / 0.99."""
+        """Amount / (1 - 0.01) = amount / 0.99."""
         fee_percentage = int(0.01 * 10**18)
         amount = 990
         result = weighted_math._add_swap_fee_amount(amount, fee_percentage)
@@ -485,7 +491,7 @@ class TestAddSwapFeeAmount:
         assert result == 1000
 
     def test_ten_percent_fee(self):
-        """amount / (1 - 0.1) = amount / 0.9."""
+        """Amount / (1 - 0.1) = amount / 0.9."""
         fee_percentage = int(0.1 * 10**18)
         amount = 900
         result = weighted_math._add_swap_fee_amount(amount, fee_percentage)

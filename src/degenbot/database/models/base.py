@@ -1,3 +1,4 @@
+"""SQLAlchemy base model classes and column types."""
 from typing import Annotated, ClassVar
 
 from eth_typing import ChecksumAddress
@@ -9,8 +10,8 @@ from .types import PrimaryKeyInt
 
 
 class IntMappedToString(TypeDecorator[int]):
-    """
-    EVM integers can be up to 32 bytes, which exceeds the usual 8 byte limit for most SQL backends.
+    """EVM integers can be up to 32 bytes, which exceeds the usual 8 byte limit for most SQL backends.
+
     Map these values to a 78 character VARCHAR which can hold a string representation of all
     possible values.
     """
@@ -23,10 +24,7 @@ class IntMappedToString(TypeDecorator[int]):
         value: int | None,
         dialect: Dialect,  # ruff: ignore[ARG002]
     ) -> str | None:
-        """
-        Perform the Python type -> DB type conversion.
-        """
-
+        """Perform the Python type -> DB type conversion."""
         return None if value is None else str(value)
 
     def process_result_value(  # ruff: ignore[PLR6301] # required to be a method per SQLAlchemy
@@ -34,10 +32,7 @@ class IntMappedToString(TypeDecorator[int]):
         value: str | None,
         dialect: Dialect,  # ruff: ignore[ARG002]
     ) -> int | None:
-        """
-        Perform the DB type -> Python type conversion.
-        """
-
+        """Perform the DB type -> Python type conversion."""
         return None if value is None else int(value)
 
 
@@ -46,6 +41,8 @@ BigInteger = Annotated[int, IntMappedToString]
 
 
 class Base(DeclarativeBase):
+    """Base class."""
+
     type_annotation_map: ClassVar = {
         # keys must be Python types (native or Annotated)
         # values must be SQLAlchemy types
@@ -55,6 +52,8 @@ class Base(DeclarativeBase):
 
 
 class ExchangeTable(Base):
+    """ExchangeTable class."""
+
     __tablename__ = "exchanges"
 
     id: Mapped[PrimaryKeyInt]

@@ -1,3 +1,4 @@
+"""BalancerPairView: N-token pool adapter for two-token arbitrage paths."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -43,6 +44,7 @@ class BalancerPairView:
         token_a: Erc20Token,
         token_b: Erc20Token,
     ) -> None:
+        """Initialize the instance."""
         self._pool = pool
         self._token0 = token_a
         self._token1 = token_b
@@ -52,18 +54,22 @@ class BalancerPairView:
 
     @property
     def address(self) -> str:
+        """Return address."""
         return self._pool.address
 
     @property
     def token0(self) -> Erc20Token:
+        """Token0."""
         return self._token0
 
     @property
     def token1(self) -> Erc20Token:
+        """Token1."""
         return self._token1
 
     @property
     def fee(self) -> Fraction:
+        """Fee."""
         return self._pool.fee
 
     def calculate_tokens_out_from_tokens_in(
@@ -72,6 +78,7 @@ class BalancerPairView:
         token_in_quantity: int,
         override_state: AbstractPoolState | None = None,
     ) -> int:
+        """Calculate tokens out from tokens in."""
         if token_in == self._token0:
             token_out = self._token1
         elif token_in == self._token1:
@@ -93,6 +100,7 @@ class BalancerPairView:
         token_out: ChecksumAddress,
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
+        """Simulate swap."""
         return self._pool.simulate_swap(
             token_in=token_in,
             amount_in=amount_in,
@@ -108,6 +116,7 @@ class BalancerPairView:
         token_in: Erc20Token | None = None,
         token_out: Erc20Token | None = None,
     ) -> HopType:
+        """Convert to hop state."""
         # Delegate to the pool's to_hop_state with explicit pair selection.
         # When token_in/token_out are provided by the caller, pass them through.
         # Otherwise, derive from the pair's token0/token1.
@@ -122,6 +131,7 @@ class BalancerPairView:
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
+        """Return the pool fee regardless of direction."""
         return self._pool.fee
 
     def build_swap_amount(
@@ -130,6 +140,9 @@ class BalancerPairView:
         amount_in: int,
         amount_out: int,
     ) -> BalancerV2SwapAmounts:
+        """Extract fee."""
+        """Extract fee."""
+        """Build swap amount."""
         if zero_for_one:
             token_in = self._token0
             token_out = self._token1
@@ -156,6 +169,7 @@ class BalancerPairView:
         self._subscribers.add(subscriber)
 
     def unsubscribe(self, subscriber: Subscriber) -> None:
+        """Perform unsubscribe."""
         self._subscribers.discard(subscriber)
 
     def notify(self, publisher: Publisher, message: AbstractPublisherMessage) -> None:  # noqa: ARG002

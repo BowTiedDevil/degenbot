@@ -1,3 +1,4 @@
+"""Curve StableSwap pool builder (sync)."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
@@ -36,14 +37,14 @@ _REGISTRY_ADDRESSES = (CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS)
 
 
 class CurvePoolBuilder:
-    """
-    Builds and updates Curve StableSwap pools.
+    """Builds and updates Curve StableSwap pools.
 
     Owns the full I/O choreography: DB lookup → RPC fetch → decode →
     construct pool → register.
     """
 
     def __init__(self, ctx: BuilderContext) -> None:
+        """Initialize the instance."""
         self._default_chain_id = ctx.default_chain_id
         self._db = ctx.db
         self._pools = ctx.pools
@@ -59,7 +60,6 @@ class CurvePoolBuilder:
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from RPC and construct an I/O-free CurveStableswapPool."""
-
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"

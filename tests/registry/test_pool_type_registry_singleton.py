@@ -228,7 +228,8 @@ class TestSingletonKindReverseLookup:
 
 
 class TestDeploymentDataIntegrity:
-    """Validate registry deployment data directly.
+    """
+    Validate registry deployment data directly.
 
     pool_type_registry is the sole source of truth — there is no longer
     a separate FACTORY_DEPLOYMENTS dict to cross-check against.
@@ -253,7 +254,7 @@ class TestDeploymentDataIntegrity:
         ids=[f"{c}-{f[:10]}…" for (c, f) in SINGLETON_REGISTRATIONS],
     )
     def test_deployer_is_set(self, chain_id: int, factory: str) -> None:
-        """deployer in registry is always set (may equal factory)."""
+        """Deployer in registry is always set (may equal factory)."""
         deployment = pool_type_registry.get_deployment(chain_id, factory)
         assert deployment is not None
         assert deployment.deployer is not None

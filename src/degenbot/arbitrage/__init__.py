@@ -1,3 +1,5 @@
+"""Arbitrage path construction, swap encoding, and solver integration."""
+
 import importlib
 import warnings
 

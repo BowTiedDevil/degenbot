@@ -1,3 +1,4 @@
+"""Database session helpers and Alembic configuration."""
 import pathlib
 import sqlite3
 
@@ -18,6 +19,7 @@ def backup_sqlite_database(
     suffix: str | None = None,
     skip_confirmation: bool = False,
 ) -> None:
+    """Backup sqlite database."""
     session_engine = session.bind
     assert isinstance(session_engine, Engine)
     assert session_engine.url.database is not None
@@ -57,6 +59,7 @@ def _get_sqlite_db_string(db_path: pathlib.Path) -> str:
 
 
 def create_new_sqlite_database(db_path: pathlib.Path) -> None:
+    """Create new sqlite database."""
     engine = create_engine(
         f"sqlite:///{_get_sqlite_db_string(db_path)}",
     )
@@ -81,6 +84,7 @@ def create_new_sqlite_database(db_path: pathlib.Path) -> None:
 
 
 def compact_sqlite_database(db_path: pathlib.Path) -> None:
+    """Perform compact sqlite database."""
     # Skip compacting in-memory databases
     if db_path.name == ":memory:":
         return
@@ -95,11 +99,13 @@ def compact_sqlite_database(db_path: pathlib.Path) -> None:
 
 
 def upgrade_existing_sqlite_database(database_path: pathlib.Path) -> None:
+    """Perform upgrade existing sqlite database."""
     command.upgrade(get_alembic_config(database_path=database_path), "head")
     logger.info("Updated existing SQLite database.")
 
 
 def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Session]:
+    """Return scoped sqlite session."""
     return scoped_session(
         session_factory=sessionmaker(
             bind=create_engine(
@@ -113,6 +119,7 @@ def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Ses
 
 
 def get_alembic_config(database_path: pathlib.Path | None = None) -> Config:
+    """Return alembic config."""
     cfg = Config()
     if database_path is None:
         msg = "database_path is required. Pass it explicitly or use Bot.config.database.path"

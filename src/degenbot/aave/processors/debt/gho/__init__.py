@@ -1,0 +1,1 @@
+"""Aave GHO debt processor."""

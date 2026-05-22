@@ -84,6 +84,7 @@ class StandardDyCalculator:
         inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
+        """Calculate."""
         # ── Balance source ──
         if self.balance_source is BalanceSource.RAW_BALANCES:
             xp = inputs.balances

@@ -139,7 +139,6 @@ def _create_mock_scaled_event(
 
 def _create_mock_pool_event(amount: int) -> LogReceipt:
     """Create a mock Pool event."""
-
     data = eth_abi.abi.encode(
         ["uint256"],
         [amount],
@@ -173,7 +172,6 @@ def _create_mock_operation(
 
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for transfer events."""
-
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
@@ -210,7 +208,6 @@ def _create_mock_context() -> MagicMock:
 
 def _create_mock_context_for_burn() -> MagicMock:
     """Create a mock EnrichmentContext for burn events."""
-
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
@@ -228,7 +225,6 @@ def _create_mock_context_for_burn() -> MagicMock:
         operation_type: OperationType | None = None,
     ) -> int:
         """Extract amount from the mock pool event."""
-
         (amount,) = eth_abi.abi.decode(["uint256"], pool_event["data"])
         return amount
 

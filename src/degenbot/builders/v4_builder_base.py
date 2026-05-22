@@ -64,7 +64,6 @@ class V4BuilderBase:
         uint24 lpFee]. The protocol fee uint24 packs two uint12 values:
         bits 12-23 = fee_one_to_zero, bits 0-11 = fee_zero_to_one.
         """
-
         price, tick, protocol_fee, lp_fee = eth_abi.abi.decode(
             types=["uint160", "int24", "uint24", "uint24"],
             data=slot0_result,
@@ -80,7 +79,6 @@ class V4BuilderBase:
     @staticmethod
     def extract_db_values(pool_from_db: UniswapV4PoolTableBase) -> V4DbValues:
         """Extract currency addresses, hook, tick spacing, fee, state_view from a V4 DB row."""
-
         return V4DbValues(
             currency0_address=get_checksum_address(pool_from_db.currency0.address),
             currency1_address=get_checksum_address(pool_from_db.currency1.address),
@@ -103,7 +101,6 @@ class V4BuilderBase:
         Returns (working_tick_bitmap, working_tick_data, db_snapshot_loaded).
         If the snapshot cannot be loaded, returns ({}, {}, False).
         """
-
         init_maps = pool_with_data.initialization_maps
         liq_positions = pool_with_data.liquidity_positions
 
@@ -140,7 +137,6 @@ class V4BuilderBase:
         V4 passes tick data when any tick data was populated.
         Otherwise passes None (sparse mode).
         """
-
         if working_tick_data:
             return working_tick_bitmap, working_tick_data
         return None, None

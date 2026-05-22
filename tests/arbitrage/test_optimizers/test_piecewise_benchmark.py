@@ -26,7 +26,8 @@ def _make_profitable_v3_v2_path(
     sqrt_price_x96: int,
     v2_rate_multiplier: float = 2.0,
 ) -> tuple[BoundedProductHop, ConstantProductHop]:
-    """Build a profitable V3→V2 arbitrage path with consistent reserves.
+    """
+    Build a profitable V3→V2 arbitrage path with consistent reserves.
 
     V3 reserves are computed from L/sqrt_price via _v3_virtual_reserves
     so they match the pool's actual swap function. V2 reserves are set to
@@ -41,6 +42,7 @@ def _make_profitable_v3_v2_path(
     v2_rate_multiplier
         V2 marginal rate as a multiple of V3 inverse rate. Values > 1
         produce profitable arbitrage (token0→V3→token1→V2→token0).
+
     """
     ri, ro = _v3_virtual_reserves(
         liquidity=liquidity,

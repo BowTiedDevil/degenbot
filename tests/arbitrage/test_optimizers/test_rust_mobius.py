@@ -92,7 +92,6 @@ class TestRustMobiusSolve:
 
     def test_matches_python(self):
         """Rust solver should produce identical results to Python solver."""
-
         hops_data = [
             (1_000_000.0, 5_000_000.0, 0.003),
             (1_500_000.0, 3_000_000.0, 0.003),

@@ -105,7 +105,6 @@ def test_wad_to_ray_fuzzing(a: int) -> None:
     Python integers cannot overflow, so the check has been replaced by a direct check against the
     uint256 upper boundary.
     """
-
     if a * WAD_RAY_RATIO > MAX_UINT256:
         with pytest.raises(EVMRevertError):
             wad_to_ray(a)
@@ -119,5 +118,4 @@ def test_ray_to_wad_fuzzing(a: int) -> None:
     Check that `ray_to_wad` does not round the result up if remainder is less than half the wad to
     ray ratio.
     """
-
     assert ray_to_wad(a) == a // WAD_RAY_RATIO + ((a % WAD_RAY_RATIO) >= (WAD_RAY_RATIO // 2))

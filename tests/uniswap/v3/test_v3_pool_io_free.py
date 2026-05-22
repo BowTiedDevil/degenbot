@@ -166,7 +166,6 @@ class TestV3PoolIOFreeConstructor:
 
     def test_io_free_pool_pickle(self) -> None:
         """I/O-free pools can be pickled and unpickled."""
-
         weth = _make_weth()
         usdc = _make_usdc()
 
@@ -198,7 +197,6 @@ class TestBotBuildV3Pool:
 
     def test_build_pool_with_mock_provider(self, tmp_path: pathlib.Path) -> None:
         """build_pool fetches immutable + mutable values and constructs an I/O-free pool."""
-
         weth_addr = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
         usdc_addr = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         factory_addr = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
@@ -289,7 +287,6 @@ class TestV3PoolTrackerWithBot:
 
     def test_tracker_uses_bot_pools_registry(self, tmp_path: pathlib.Path) -> None:
         """When a manager has a bot, get_pool checks bot.pools first."""
-
         config = _make_test_config(tmp_path)
         bot = Bot(config)
 

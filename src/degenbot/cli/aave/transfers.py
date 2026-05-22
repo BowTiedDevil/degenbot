@@ -1,5 +1,4 @@
-"""
-Transfer processing functions for Aave V3.
+"""Transfer processing functions for Aave V3.
 
 This module handles the movement of scaled balances when tokens are transferred
 between users, including:
@@ -27,8 +26,7 @@ def _should_skip_collateral_transfer(
     scaled_event: ScaledTokenEvent,
     operation: Operation | None,
 ) -> bool:
-    """
-    Determine if this collateral transfer event should be skipped.
+    """Determine if this collateral transfer event should be skipped.
 
     Returns True if:
     1. This is a paired BalanceTransfer handled by its paired ERC20 Transfer
@@ -70,8 +68,7 @@ def _match_paired_balance_transfer(
     operation: Operation | None,
     token_address: ChecksumAddress,
 ) -> tuple[LogReceipt | None, int | None, int | None]:
-    """
-    Find a paired BalanceTransfer event for this ERC20 Transfer.
+    """Find a paired BalanceTransfer event for this ERC20 Transfer.
 
     BalanceTransfer events contain the actual scaled balance being moved,
     while ERC20 Transfer events show aToken amounts (scaled * index / RAY).
@@ -83,8 +80,8 @@ def _match_paired_balance_transfer(
 
     Returns:
         Tuple of (matched_event, scaled_amount, index) or (None, None, None)
-    """
 
+    """
     if operation is None:
         return None, None, None
     # For liquidation operations, don't match ERC20 Transfers with BalanceTransfers
@@ -121,8 +118,7 @@ def _process_collateral_transfer(
     operation: Operation,
     scaled_event: ScaledTokenEvent,
 ) -> None:
-    """
-    Process collateral (aToken) transfer between users.
+    """Process collateral (aToken) transfer between users.
 
     This function handles the movement of scaled balances when aTokens are transferred
     between users. It accounts for:
@@ -130,7 +126,6 @@ def _process_collateral_transfer(
     - Standalone BalanceTransfer events (liquidations)
     - Protocol mints and burns
     """
-
     assert scaled_event.from_address is not None
     assert scaled_event.target_address is not None
 

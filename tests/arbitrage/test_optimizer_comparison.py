@@ -150,7 +150,6 @@ class TestOptimizerMethodComparison:
         """
         Test that both Brent (with bracket) and Bounded methods find same optimum.
         """
-
         # Brent: use bracket (initial search interval: a, b, c where f(b) < f(a), f(c))
         result_brent = minimize_scalar(
             profit_function,
@@ -187,7 +186,6 @@ class TestOptimizerMethodComparison:
         """
         Test that both Golden (with bracket) and Bounded methods find same optimum.
         """
-
         # Golden: use bracket (like Brent but simpler algorithm)
         result_golden = minimize_scalar(
             profit_function,
@@ -229,7 +227,6 @@ class TestOptimizerMethodComparison:
         Benchmark test: Brent should typically be faster than Golden.
         Both use bracket method.
         """
-
         bracket = (1.0, 1_000_000.0, 100_000_000_000.0)
         iterations = 100
 
@@ -279,7 +276,6 @@ class TestOptimizerMethodComparison:
         """
         Test that Brent uses fewer function evaluations than Golden.
         """
-
         bracket = (1.0, 1_000_000.0, 100_000_000_000.0)
 
         result_brent = minimize_scalar(
@@ -306,7 +302,6 @@ class TestOptimizerMethodComparison:
         """
         Test that Brent, Golden, and Bounded achieve similar profit accuracy.
         """
-
         bracket = (1.0, 1_000_000.0, 100_000_000_000.0)
         bounds = (1.0, 1_000_000_000_000.0)
 
@@ -354,7 +349,6 @@ class TestOptimizerMethodComparison:
         Verify that the optimal input found produces positive arbitrage profit.
         Uses UniswapV2Pool.calculate_tokens_out_from_tokens_in() for swap calculations.
         """
-
         pool_a, pool_b, usdc = mock_pools
 
         def neg_profit(x: float) -> float:

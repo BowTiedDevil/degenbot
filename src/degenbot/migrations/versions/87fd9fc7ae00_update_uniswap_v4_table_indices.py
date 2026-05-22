@@ -1,4 +1,4 @@
-"""Update Uniswap V4 table indices
+"""Update Uniswap V4 table indices.
 
 Revision ID: 87fd9fc7ae00
 Revises: 756fba1f75f4

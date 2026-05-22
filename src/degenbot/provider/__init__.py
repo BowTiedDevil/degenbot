@@ -1,5 +1,4 @@
-"""
-High-performance Ethereum RPC provider using Alloy.
+"""High-performance Ethereum RPC provider using Alloy.
 
 This module provides a Rust-based provider for fast log fetching and RPC calls.
 It replaces web3.py's provider functionality with optimized Rust implementations.
@@ -27,6 +26,7 @@ Example:
     ...     to_block=18_010_000,
     ...     addresses=["0x..."],
     ... )
+
 """
 
 from dataclasses import dataclass, field
@@ -54,8 +54,7 @@ from degenbot.types.rpc_types import BlockData, LogData, TransactionData, Transa
 
 @dataclass(frozen=True, slots=True)
 class LogFilter:
-    """
-    Filter criteria for log fetching.
+    """Filter criteria for log fetching.
 
     Args:
         from_block: Starting block number (inclusive)
@@ -70,6 +69,7 @@ class LogFilter:
         ...     addresses=["0xContractAddress..."],
         ...     topics=[["0xTransfer..."]],  # Match first topic
         ... )
+
     """
 
     from_block: BlockNumber
@@ -78,14 +78,14 @@ class LogFilter:
     topics: list[list[str]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        """Post-initialization hook."""
         if self.to_block < self.from_block:
             msg = "to_block must be >= from_block"
             raise ValueError(msg)
 
 
 class AlloyProvider:
-    """
-    High-performance Ethereum RPC provider using Alloy.
+    """High-performance Ethereum RPC provider using Alloy.
 
     Replaces web3.py provider for log fetching and basic RPC calls.
     Uses Rust-based HTTP client with connection pooling for optimal performance.
@@ -107,6 +107,7 @@ class AlloyProvider:
         >>> logs = provider.get_logs(from_block=18_000_000, to_block=18_010_000)
         >>> code = provider.get_code("0x...")
         >>> result = provider.call("0x...", calldata)
+
     """
 
     def __init__(
@@ -115,6 +116,7 @@ class AlloyProvider:
         max_retries: int = 10,
         max_blocks_per_request: int = 5000,
     ) -> None:
+        """Initialize the instance."""
         self._rpc_url = rpc_url
         self._max_retries = max_retries
         self._max_blocks_per_request = max_blocks_per_request
@@ -166,6 +168,7 @@ class AlloyProvider:
 
         Returns:
             Block data as dictionary with HexBytes for hash fields, or None if not found.
+
         """
         return self._provider.get_block(block_number)
 
@@ -178,6 +181,7 @@ class AlloyProvider:
 
         Returns:
             Contract bytecode as HexBytes
+
         """
         return self._provider.get_code(address, block_number)
 
@@ -187,8 +191,7 @@ class AlloyProvider:
         data: bytes,
         block_number: int | None = None,
     ) -> HexBytes:
-        """
-        Execute an eth_call to a contract.
+        """Execute an eth_call to a contract.
 
         Args:
             to: Contract address to call
@@ -205,6 +208,7 @@ class AlloyProvider:
             >>> calldata = selector + address
             >>> result = provider.call("0xTokenAddress", calldata)
             >>> balance = int.from_bytes(result, "big")
+
         """
         return self._provider.call(to, data, block_number)
 
@@ -217,8 +221,7 @@ class AlloyProvider:
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
     ) -> list[LogData]:
-        """
-        Fetch event logs with automatic retry and dynamic block sizing.
+        """Fetch event logs with automatic retry and dynamic block sizing.
 
         Flexible API that accepts either a LogFilter object or individual
         filter parameters as keyword arguments. Returns logs in web3.py
@@ -256,6 +259,7 @@ class AlloyProvider:
             ...     addresses=["0xContract..."],
             ...     topics=[["0xEventSignature..."]],
             ... )
+
         """
         # Determine filter parameters
         if filter_param is not None:
@@ -297,6 +301,7 @@ class AlloyProvider:
         Returns:
             Transaction data as dictionary with HexBytes for hash fields,
             or None if not found.
+
         """
         return self._provider.get_transaction(tx_hash)
 
@@ -309,6 +314,7 @@ class AlloyProvider:
         Returns:
             Receipt data as dictionary with HexBytes for hash fields,
             or None if not found.
+
         """
         return self._provider.get_transaction_receipt(tx_hash)
 
@@ -331,6 +337,7 @@ class AlloyProvider:
 
         Returns:
             Estimated gas as int
+
         """
         return self._provider.estimate_gas(to, data, from_, value, block_number)
 
@@ -349,6 +356,7 @@ class AlloyProvider:
 
         Returns:
             Storage value at the position as HexBytes (32 bytes)
+
         """
         return self._provider.get_storage_at(address, position, block_number)
 
@@ -376,6 +384,7 @@ class AlloyProvider:
 
         Returns:
             Balance in wei as int
+
         """
         return self._provider.get_balance(address, block_number)
 
@@ -392,6 +401,7 @@ class AlloyProvider:
 
         Returns:
             Transaction count as int
+
         """
         return self._provider.get_transaction_count(address, block_number)
 
@@ -417,6 +427,7 @@ class AlloyProvider:
             >>> result = provider.make_request(
             ...     "debug_traceTransaction", ["0x...", {"tracer": "callTracer"}]
             ... )
+
         """
         return self._provider.make_request(method, params)
 

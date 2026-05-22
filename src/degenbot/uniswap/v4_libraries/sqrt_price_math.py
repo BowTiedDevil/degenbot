@@ -1,3 +1,4 @@
+"""Uniswap V4 SqrtPriceMath: price movement with liquidity constraints."""
 import functools
 
 from degenbot.constants import MAX_UINT160, MAX_UINT256
@@ -17,10 +18,7 @@ def get_amount0_delta(
     liquidity: int,
     round_up: bool | None = None,
 ) -> int:
-    """
-    Gets the amount0 delta between two prices
-    """
-
+    """Get the amount0 delta between two prices."""
     if round_up is None:
         return (
             get_amount0_delta(
@@ -64,10 +62,7 @@ def get_amount1_delta(
     liquidity: int,
     round_up: bool | None = None,
 ) -> int:
-    """
-    Gets the amount1 delta between two prices
-    """
-
+    """Get the amount1 delta between two prices."""
     if round_up is None:
         return (
             get_amount1_delta(
@@ -105,10 +100,7 @@ def get_next_sqrt_price_from_amount0_rounding_up(
     amount: int,
     add: bool,
 ) -> int:
-    """
-    Gets the next sqrt price given a delta of currency0
-    """
-
+    """Get the next sqrt price given a delta of currency0."""
     # Short circuit amount == 0 because the result is otherwise not guaranteed to equal the input
     # price
     if amount == 0:
@@ -162,10 +154,7 @@ def get_next_sqrt_price_from_amount1_rounding_down(
     amount: int,
     add: bool,
 ) -> int:
-    """
-    Gets the next sqrt price given a delta of currency1
-    """
-
+    """Get the next sqrt price given a delta of currency1."""
     # if we're adding (subtracting), rounding down requires rounding the quotient down (up)
     # in both cases, avoid a mulDiv for most inputs
     if add:
@@ -201,11 +190,10 @@ def get_next_sqrt_price_from_input(
     amount_in: int,
     zero_for_one: bool,
 ) -> int:
-    """
-    Gets the next sqrt price given an input amount of currency0 or currency1, rounding to ensure
+    """Get the next sqrt price given an input amount of currency0 or currency1, rounding to ensure.
+
     that the target price is not passed.
     """
-
     if sqrt_price_x96 == 0 or liquidity == 0:
         msg = "InvalidPriceOrLiquidity"
         raise EVMRevertError(msg)
@@ -235,11 +223,10 @@ def get_next_sqrt_price_from_output(
     amount_out: int,
     zero_for_one: bool,
 ) -> int:
-    """
-    Gets the next sqrt price given an output amount of currency0 or currency1, rounding to ensure
+    """Get the next sqrt price given an output amount of currency0 or currency1, rounding to ensure.
+
     that the target price is not passed.
     """
-
     if sqrt_price_x96 == 0 or liquidity == 0:
         msg = "InvalidPriceOrLiquidity"
         raise EVMRevertError(msg)

@@ -31,19 +31,33 @@ class PoolIO(Protocol):
     AsyncProviderAdapter).
     """
 
-    def get_block_number(self) -> int: ...
+    def get_block_number(self) -> int:
+        """Return the current block number."""
+        ...
 
-    def get_block(self, block_identifier: int | str) -> BlockData | None: ...
+    def get_block(self, block_identifier: int | str) -> BlockData | None:
+        """Return block data for the given identifier."""
+        ...
 
-    def get_block_timestamp(self, block: int | None = None) -> int: ...
+    def get_block_timestamp(self, block: int | None = None) -> int:
+        """Return the timestamp for the given block."""
+        ...
 
-    def get_code(self, address: str, block: int | None = None) -> HexBytes: ...
+    def get_code(self, address: str, block: int | None = None) -> HexBytes:
+        """Return the code at the given address."""
+        ...
 
-    def get_balance(self, address: str, block: int | None = None) -> int: ...
+    def get_balance(self, address: str, block: int | None = None) -> int:
+        """Return the ETH balance at the given address."""
+        ...
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes: ...
+    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        """Perform an eth_call and return the result."""
+        ...
 
-    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes: ...
+    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
+        """Perform a raw eth_call and return the result."""
+        ...
 
 
 @runtime_checkable
@@ -54,44 +68,64 @@ class AsyncPoolIOProtocol(Protocol):
     async builders.
     """
 
-    async def get_block_number(self) -> int: ...
+    async def get_block_number(self) -> int:
+        """Return the current block number."""
+        ...
 
-    async def get_block(self, block_identifier: int | str) -> BlockData | None: ...
+    async def get_block(self, block_identifier: int | str) -> BlockData | None:
+        """Return block data for the given identifier."""
+        ...
 
-    async def get_block_timestamp(self, block: int | None = None) -> int: ...
+    async def get_block_timestamp(self, block: int | None = None) -> int:
+        """Return the timestamp for the given block."""
+        ...
 
-    async def get_code(self, address: str, block: int | None = None) -> HexBytes: ...
+    async def get_code(self, address: str, block: int | None = None) -> HexBytes:
+        """Return the code at the given address."""
+        ...
 
-    async def get_balance(self, address: str, block: int | None = None) -> int: ...
+    async def get_balance(self, address: str, block: int | None = None) -> int:
+        """Return the ETH balance at the given address."""
+        ...
 
-    async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes: ...
+    async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        """Perform an eth_call and return the result."""
+        ...
 
 
 class SyncPoolIO:
     """PoolIO adapter wrapping a sync ProviderAdapter."""
 
     def __init__(self, provider: ProviderAdapter) -> None:
+        """Initialize the instance."""
         self._provider = provider
 
     def get_block_number(self) -> int:
+        """Return the current block number."""
         return self._provider.get_block_number()
 
     def get_block(self, block_identifier: int | str) -> BlockData | None:
+        """Return block data for the given identifier."""
         return self._provider.get_block(block_identifier)
 
     def get_block_timestamp(self, block: int | None = None) -> int:
+        """Return the timestamp for the given block."""
         return self._provider.get_block_timestamp(block=block)
 
     def get_code(self, address: str, block: int | None = None) -> HexBytes:
+        """Return the code at the given address."""
         return self._provider.get_code(address, block=block)
 
     def get_balance(self, address: str, block: int | None = None) -> int:
+        """Return the ETH balance at the given address."""
         return self._provider.get_balance(address, block=block)
 
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        """Perform an eth_call and return the result."""
         return self._provider.call(to=to, data=data, block=block)
 
     def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
+        """Perform a raw eth_call and return the result."""
         return self._provider.call_raw(tx, block=block)  # ty: ignore
 
 
@@ -103,15 +137,19 @@ class AsyncPoolIO:
     """
 
     def __init__(self, provider: AsyncProviderAdapter) -> None:
+        """Initialize the instance."""
         self._provider = provider
 
     async def get_block_number(self) -> int:
+        """Return the current block number."""
         return await self._provider.get_block_number()
 
     async def get_block(self, block_identifier: int | str) -> BlockData | None:
+        """Return block data for the given identifier."""
         return await self._provider.get_block(block_identifier)
 
     async def get_block_timestamp(self, block: int | None = None) -> int:
+        """Return the timestamp for the given block."""
         block_data = await self._provider.get_block(block if block is not None else "latest")
         if block_data is None:
             msg = f"Block {block} not found"
@@ -119,10 +157,13 @@ class AsyncPoolIO:
         return block_data["timestamp"]
 
     async def get_code(self, address: str, block: int | None = None) -> HexBytes:
+        """Return the code at the given address."""
         return await self._provider.get_code(address, block=block)
 
     async def get_balance(self, address: str, block: int | None = None) -> int:
+        """Return the ETH balance at the given address."""
         return await self._provider.get_balance(address, block=block)
 
     async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        """Perform an eth_call and return the result."""
         return await self._provider.call(to=to, data=data, block=block)

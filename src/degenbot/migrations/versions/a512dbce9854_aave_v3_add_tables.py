@@ -1,4 +1,4 @@
-"""Aave V3: add tables
+"""Aave V3: add tables.
 
 Revision ID: a512dbce9854
 Revises: eb4080485a56
@@ -22,7 +22,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     op.create_table(
         "aave_v3_markets",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),

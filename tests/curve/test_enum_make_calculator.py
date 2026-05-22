@@ -117,8 +117,10 @@ class TestMetapoolRateStyleMakeCalculator:
 
 
 class TestMetapoolUnderlyingStyleMakeCalculator:
-    """make_metapool_underlying_calculator() returns
-    parameterized MetapoolUnderlyingDyCalculator."""
+    """
+    make_metapool_underlying_calculator() returns
+    parameterized MetapoolUnderlyingDyCalculator.
+    """
 
     def test_standard(self):
         calc = make_metapool_underlying_calculator(MetapoolUnderlyingStyle.STANDARD)

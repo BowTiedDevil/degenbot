@@ -1,3 +1,4 @@
+"""Uniswap V3 pool builder (sync)."""
 from __future__ import annotations
 
 import contextlib
@@ -36,14 +37,14 @@ if TYPE_CHECKING:
 
 
 class V3PoolBuilder(V3BuilderBase):
-    """
-    Builds and updates V3-style concentrated-liquidity pools.
+    """Builds and updates V3-style concentrated-liquidity pools.
 
     Owns the full I/O choreography: DB lookup → RPC fetch → decode →
     construct pool → register.
     """
 
     def __init__(self, ctx: BuilderContext) -> None:
+        """Initialize the instance."""
         assert ctx.managed_pools is not None, (
             "V3PoolBuilder requires managed_pools in BuilderContext"
         )
@@ -83,7 +84,6 @@ class V3PoolBuilder(V3BuilderBase):
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free V3-style pool."""
-
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
@@ -337,7 +337,6 @@ class V3PoolBuilder(V3BuilderBase):
         io: PoolIO | None = None,
     ) -> bool:
         """Fetch current state from chain and push update to the pool."""
-
         if isinstance(pool, UniswapV4Pool):
             msg = f"V3PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)

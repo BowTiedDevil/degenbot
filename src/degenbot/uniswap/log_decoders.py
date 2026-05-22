@@ -83,7 +83,6 @@ def decode_v2_sync(log: dict) -> Callable[[UniswapV2Pool], None]:
 
     Sync(uint112,uint112) — data is tightly packed reserve0, reserve1.
     """
-
     reserve0, reserve1 = abi_decode(
         ["uint112", "uint112"],
         get_log_data_bytes(log),
@@ -111,7 +110,6 @@ def decode_v3_swap(log: dict) -> Callable[[UniswapV3Pool], None]:
     Swap(address,address,int256,int256,uint160,uint128,int24)
     Data: amount0, amount1, sqrtPriceX96, liquidity, tick.
     """
-
     _amount0, _amount1, sqrt_price_x96, liquidity, tick = abi_decode(
         ["int256", "int256", "uint160", "uint128", "int24"],
         get_log_data_bytes(log),
@@ -137,7 +135,6 @@ def decode_v3_mint(log: dict) -> Callable[[UniswapV3Pool], None]:
     Mint(address,address,int24,int24,uint128,uint256,uint256)
     Data: tickLower, tickUpper, amount, amount0, amount1.
     """
-
     tick_lower, tick_upper, amount, _amount0, _amount1 = abi_decode(
         ["int24", "int24", "uint128", "uint256", "uint256"],
         get_log_data_bytes(log),
@@ -163,7 +160,6 @@ def decode_v3_burn(log: dict) -> Callable[[UniswapV3Pool], None]:
     Burn(address,int24,int24,uint128,uint256,uint256)
     Data: tickLower, tickUpper, amount, amount0, amount1.
     """
-
     tick_lower, tick_upper, amount, _amount0, _amount1 = abi_decode(
         ["int24", "int24", "uint128", "uint256", "uint256"],
         get_log_data_bytes(log),
@@ -197,7 +193,6 @@ def decode_v4_swap(log: dict) -> Callable[[UniswapV4Pool], None]:
     Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)
     Data: amount0, amount1, sqrtPriceX96, liquidity, tick, fee.
     """
-
     _amount0, _amount1, sqrt_price_x96, liquidity, tick, _fee = abi_decode(
         ["int128", "int128", "uint160", "uint128", "int24", "uint24"],
         get_log_data_bytes(log),
@@ -223,7 +218,6 @@ def decode_v4_modify_liquidity(log: dict) -> Callable[[UniswapV4Pool], None]:
     ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)
     Data: tickLower, tickUpper, liquidityDelta, salt.
     """
-
     tick_lower, tick_upper, liquidity_delta, _salt = abi_decode(
         ["int24", "int24", "int256", "bytes32"],
         get_log_data_bytes(log),

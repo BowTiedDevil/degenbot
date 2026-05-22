@@ -1,4 +1,5 @@
-"""Tests for V3 buy-pool validation in solver fast-path.
+"""
+Tests for V3 buy-pool validation in solver fast-path.
 
 Validates that when V3 is the buy pool (first hop), the solver fast-path
 uses actual V3 pool calculations instead of constant-product approximation.
@@ -24,7 +25,6 @@ class TestV3BuyPoolFastPath:
 
     def test_v3_buypool_detected_as_bounded_product(self):
         """V3 buy pool should be detected as BoundedProductHop."""
-
         L = 1_000_000_000_000_000_000
         sqrt_price_x96 = 2**96
         r_in, r_out = _v3_virtual_reserves(
@@ -47,7 +47,6 @@ class TestV3BuyPoolFastPath:
 
     def test_v3_buypool_with_v2_sell_path_completes(self, solver):
         """V3 buy + V2 sell path should complete without error."""
-
         L = 1_000_000_000_000_000_000
         sqrt_price_x96 = 2**96
         v3_r_in, v3_r_out = _v3_virtual_reserves(
@@ -80,7 +79,6 @@ class TestV3BuyPoolFastPath:
 
     def test_v3_buypool_solver_selects_mobius_or_piecewise(self, solver):
         """For V3+V2 paths, solver should use Mobius or PiecewiseMobius."""
-
         L = 2_000_000_000_000_000_000
         sqrt_price_x96 = int(1.5 * (2**96))  # price = 2.25
         v3_r_in, v3_r_out = _v3_virtual_reserves(
@@ -113,7 +111,6 @@ class TestV3BuyPoolFastPath:
 
     def test_v3_buypool_approximation_matches_v3_math(self):
         """Constant-product approximation should be close to actual V3 output."""
-
         # For a single V3 tick range, the constant-product formula using
         # virtual reserves should match the actual V3 swap math exactly.
         L = 1_000_000_000_000_000_000
@@ -162,7 +159,6 @@ class TestV3SellPool:
 
     def test_v2_buypool_v3_sellpool_path(self, solver):
         """V2 buy + V3 sell should complete."""
-
         L = 2_000_000_000_000_000_000
         sqrt_price_x96 = int(2.0 * (2**96))
         v3_r_in, v3_r_out = _v3_virtual_reserves(

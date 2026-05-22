@@ -8,7 +8,8 @@ from degenbot.provider import ProviderAdapter
 
 
 def make_bot_for_fork(chain_id: int, database_path: str = ":memory:") -> Bot:
-    """Create a Bot with a minimal config suitable for fork tests.
+    """
+    Create a Bot with a minimal config suitable for fork tests.
 
     Does NOT register any provider — the caller must do that afterwards.
     """
@@ -20,7 +21,8 @@ def make_bot_for_fork(chain_id: int, database_path: str = ":memory:") -> Bot:
 
 
 def make_bot_with_provider(provider: ProviderAdapter, chain_id: int | None = None) -> Bot:
-    """Create a Bot, register the given provider, and return it.
+    """
+    Create a Bot, register the given provider, and return it.
 
     If chain_id is not given, it will be read from provider.chain_id after registration.
     """

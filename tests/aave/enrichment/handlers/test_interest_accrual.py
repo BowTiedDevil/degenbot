@@ -168,7 +168,6 @@ def _create_mock_context() -> MagicMock:
 
     The mock delegates build_enriched_event to the real implementation.
     """
-
     mock_session = MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1

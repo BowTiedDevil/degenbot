@@ -1,4 +1,5 @@
-"""Tests for FakeToken interoperability with Erc20Token and production pool constructors.
+"""
+Tests for FakeToken interoperability with Erc20Token and production pool constructors.
 
 These tests validate:
 1. FakeToken ↔ Erc20Token equality/hash/dict-key compatibility (AddressComparable semantics)

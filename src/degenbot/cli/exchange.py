@@ -1,3 +1,4 @@
+"""CLI commands for exchange/pool lookups."""
 import click
 import eth_typing
 from sqlalchemy import select
@@ -29,23 +30,21 @@ from degenbot.uniswap.deployments import (
 
 @cli.group()
 def exchange() -> None:
-    """
-    Exchange commands
-    """
+    """Exchange commands."""
 
 
 @exchange.group
 def activate() -> None:
-    """
-    Activate the exchange. Liquidity pools for all activated exchanges are included when running
+    """Activate the exchange. Liquidity pools for all activated exchanges are included when running.
+
     "pool update".
     """
 
 
 @exchange.group
 def deactivate() -> None:
-    """
-    Deactivate the exchange. Liquidity pools for all deactivated exchanges are not included when
+    """Deactivate the exchange. Liquidity pools for all deactivated exchanges are not included when.
+
     running "pool update".
     """
 
@@ -57,10 +56,7 @@ def activate_base_aerodrome_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "aerodrome_v2",
 ) -> None:
-    """
-    Activate Aerodrome V2 on Base mainnet.
-    """
-
+    """Activate Aerodrome V2 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -96,10 +92,7 @@ def activate_base_aerodrome_v3(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "aerodrome_v3",
 ) -> None:
-    """
-    Activate Aerodrome V3 on Base mainnet.
-    """
-
+    """Activate Aerodrome V3 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -135,10 +128,7 @@ def activate_base_pancakeswap_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "pancakeswap_v2",
 ) -> None:
-    """
-    Activate Pancakeswap V2 on Base mainnet.
-    """
-
+    """Activate Pancakeswap V2 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -174,10 +164,7 @@ def activate_base_pancakeswap_v3(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "pancakeswap_v3",
 ) -> None:
-    """
-    Activate Pancakeswap V3 on Base mainnet.
-    """
-
+    """Activate Pancakeswap V3 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -214,10 +201,7 @@ def activate_base_swapbased_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "swapbased_v2",
 ) -> None:
-    """
-    Activate SwapBased V2 on Base mainnet.
-    """
-
+    """Activate SwapBased V2 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -253,10 +237,7 @@ def activate_base_sushiswap_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "sushiswap_v2",
 ) -> None:
-    """
-    Activate Sushiswap V2 on Base mainnet.
-    """
-
+    """Activate Sushiswap V2 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -292,10 +273,7 @@ def activate_base_sushiswap_v3(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "sushiswap_v3",
 ) -> None:
-    """
-    Activate Sushiswap V3 on Base mainnet.
-    """
-
+    """Activate Sushiswap V3 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -331,10 +309,7 @@ def activate_base_uniswap_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "uniswap_v2",
 ) -> None:
-    """
-    Activate Uniswap V2 on Base mainnet.
-    """
-
+    """Activate Uniswap V2 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -370,10 +345,7 @@ def activate_base_uniswap_v3(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "uniswap_v3",
 ) -> None:
-    """
-    Activate Uniswap V3 on Base mainnet.
-    """
-
+    """Activate Uniswap V3 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -409,10 +381,7 @@ def activate_base_uniswap_v4(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "uniswap_v4",
 ) -> None:
-    """
-    Activate Uniswap V4 on Base mainnet.
-    """
-
+    """Activate Uniswap V4 on Base mainnet."""
     exchange_kind = "uniswap_v4"
 
     with bot.db() as session:
@@ -468,10 +437,7 @@ def activate_ethereum_pancakeswap_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "pancakeswap_v2",
 ) -> None:
-    """
-    Activate Pancakeswap V2 on Ethereum mainnet.
-    """
-
+    """Activate Pancakeswap V2 on Ethereum mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -507,10 +473,7 @@ def activate_ethereum_pancakeswap_v3(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "pancakeswap_v3",
 ) -> None:
-    """
-    Activate Pancakeswap V3 on Ethereum mainnet.
-    """
-
+    """Activate Pancakeswap V3 on Ethereum mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -547,10 +510,7 @@ def activate_ethereum_sushiswap_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "sushiswap_v2",
 ) -> None:
-    """
-    Activate Sushiswap V2 on Ethereum mainnet.
-    """
-
+    """Activate Sushiswap V2 on Ethereum mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -586,10 +546,7 @@ def activate_ethereum_sushiswap_v3(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "sushiswap_v3",
 ) -> None:
-    """
-    Activate Sushiswap V3 on Ethereum mainnet.
-    """
-
+    """Activate Sushiswap V3 on Ethereum mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -625,10 +582,7 @@ def activate_ethereum_uniswap_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "uniswap_v2",
 ) -> None:
-    """
-    Activate Uniswap V2 on Ethereum mainnet.
-    """
-
+    """Activate Uniswap V2 on Ethereum mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -664,10 +618,7 @@ def activate_ethereum_uniswap_v3(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "uniswap_v3",
 ) -> None:
-    """
-    Activate Uniswap V3 on Ethereum mainnet.
-    """
-
+    """Activate Uniswap V3 on Ethereum mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -703,10 +654,7 @@ def activate_ethereum_uniswap_v4(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "uniswap_v4",
 ) -> None:
-    """
-    Activate Uniswap V4 on Ethereum mainnet.
-    """
-
+    """Activate Uniswap V4 on Ethereum mainnet."""
     exchange_kind = "uniswap_v4"
 
     with bot.db() as session:
@@ -762,10 +710,7 @@ def deactivate_base_aerodrome_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "aerodrome_v2",
 ) -> None:
-    """
-    Deactivate Aerodrome V2 on Base mainnet.
-    """
-
+    """Deactivate Aerodrome V2 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -794,10 +739,7 @@ def deactivate_base_aerodrome_v3(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "aerodrome_v3",
 ) -> None:
-    """
-    Deactivate Aerodrome V3 on Base mainnet.
-    """
-
+    """Deactivate Aerodrome V3 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -826,10 +768,7 @@ def deactivate_base_pancakeswap_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "pancakeswap_v2",
 ) -> None:
-    """
-    Deactivate Pancakeswap V2 on Base mainnet.
-    """
-
+    """Deactivate Pancakeswap V2 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -860,10 +799,7 @@ def deactivate_base_pancakeswap_v3(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "pancakeswap_v3",
 ) -> None:
-    """
-    Deactivate Pancakeswap V3 on Base mainnet.
-    """
-
+    """Deactivate Pancakeswap V3 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -894,10 +830,7 @@ def deactivate_base_sushiswap_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "sushiswap_v2",
 ) -> None:
-    """
-    Deactivate Sushiswap V2 on Base mainnet.
-    """
-
+    """Deactivate Sushiswap V2 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -926,10 +859,7 @@ def deactivate_base_sushiswap_v3(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "sushiswap_v3",
 ) -> None:
-    """
-    Deactivate Sushiswap V3 on Base mainnet.
-    """
-
+    """Deactivate Sushiswap V3 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -958,10 +888,7 @@ def deactivate_base_swapbased_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "swapbased_v2",
 ) -> None:
-    """
-    Deactivate SwapBased V2 on Base mainnet.
-    """
-
+    """Deactivate SwapBased V2 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -990,10 +917,7 @@ def deactivate_base_uniswap_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "uniswap_v2",
 ) -> None:
-    """
-    Deactivate Uniswap V2 on Base mainnet.
-    """
-
+    """Deactivate Uniswap V2 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -1022,10 +946,7 @@ def deactivate_base_uniswap_v3(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "uniswap_v3",
 ) -> None:
-    """
-    Deactivate Uniswap V3 on Base mainnet.
-    """
-
+    """Deactivate Uniswap V3 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -1054,10 +975,7 @@ def deactivate_base_uniswap_v4(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
     exchange_name: str = "uniswap_v4",
 ) -> None:
-    """
-    Deactivate Uniswap V4 on Base mainnet.
-    """
-
+    """Deactivate Uniswap V4 on Base mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -1086,10 +1004,7 @@ def deactivate_ethereum_pancakeswap_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "pancakeswap_v2",
 ) -> None:
-    """
-    Deactivate Pancakeswap V2 on Ethereum mainnet.
-    """
-
+    """Deactivate Pancakeswap V2 on Ethereum mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -1120,10 +1035,7 @@ def deactivate_ethereum_pancakeswap_v3(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "pancakeswap_v3",
 ) -> None:
-    """
-    Deactivate Pancakeswap V3 on Ethereum mainnet.
-    """
-
+    """Deactivate Pancakeswap V3 on Ethereum mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -1154,10 +1066,7 @@ def deactivate_ethereum_sushiswap_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "sushiswap_v2",
 ) -> None:
-    """
-    Deactivate Sushiswap V2 on Ethereum mainnet.
-    """
-
+    """Deactivate Sushiswap V2 on Ethereum mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -1188,10 +1097,7 @@ def deactivate_ethereum_sushiswap_v3(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "sushiswap_v3",
 ) -> None:
-    """
-    Deactivate Sushiswap V3 on Ethereum mainnet.
-    """
-
+    """Deactivate Sushiswap V3 on Ethereum mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -1220,10 +1126,7 @@ def deactivate_ethereum_uniswap_v2(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "uniswap_v2",
 ) -> None:
-    """
-    Deactivate Uniswap V2 on Ethereum mainnet.
-    """
-
+    """Deactivate Uniswap V2 on Ethereum mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -1254,10 +1157,7 @@ def deactivate_ethereum_uniswap_v3(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "uniswap_v3",
 ) -> None:
-    """
-    Deactivate Uniswap V3 on Ethereum mainnet.
-    """
-
+    """Deactivate Uniswap V3 on Ethereum mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(
@@ -1288,10 +1188,7 @@ def deactivate_ethereum_uniswap_v4(
     chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
     exchange_name: str = "uniswap_v4",
 ) -> None:
-    """
-    Deactivate Uniswap V4 on Ethereum mainnet.
-    """
-
+    """Deactivate Uniswap V4 on Ethereum mainnet."""
     with bot.db() as session:
         exchange = session.scalar(
             select(ExchangeTable).where(

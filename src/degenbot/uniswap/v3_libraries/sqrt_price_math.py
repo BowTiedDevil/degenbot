@@ -1,3 +1,4 @@
+"""Uniswap V3 SqrtPriceMath: price movement with liquidity constraints."""
 import functools
 from typing import overload
 
@@ -48,6 +49,7 @@ def get_amount0_delta(
     liquidity: int,
     round_up: bool | None = None,
 ) -> int:
+    """Return amount0 delta."""
     # The Solidity function is overloaded with respect to `roundUp`.
     # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/sqrt_price_math.sol
 
@@ -119,6 +121,7 @@ def get_amount1_delta(
     liquidity: int,
     round_up: bool | None = None,
 ) -> int:
+    """Return amount1 delta."""
     # The Solidity function is overloaded with respect to `roundUp`. Both modes are encapsulated
     # here by the optional `round_up` argument.
 
@@ -164,6 +167,7 @@ def get_next_sqrt_price_from_amount0_rounding_up(
     amount: int,
     add: bool,
 ) -> int:
+    """Return next sqrt price from amount0 rounding up."""
     if amount == 0:
         return sqrt_price_x96
 
@@ -205,6 +209,7 @@ def get_next_sqrt_price_from_amount1_rounding_down(
     amount: int,
     add: bool,
 ) -> int:
+    """Return next sqrt price from amount1 rounding down."""
     if add:
         quotient = (
             (amount << Q96_RESOLUTION) // liquidity
@@ -234,6 +239,7 @@ def get_next_sqrt_price_from_input(
     amount_in: int,
     zero_for_one: bool,
 ) -> int:
+    """Return next sqrt price from input."""
     if not (sqrt_price_x96 > 0):
         raise EVMRevertError(error="required: sqrt_price_x96 > 0")
 
@@ -266,6 +272,7 @@ def get_next_sqrt_price_from_output(
     amount_out: int,
     zero_for_one: bool,
 ) -> int:
+    """Return next sqrt price from output."""
     if not (sqrt_price_x96 > 0):
         raise EVMRevertError(error="required: sqrt_price_x96 > 0")
 

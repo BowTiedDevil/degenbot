@@ -22,10 +22,7 @@ def fetch_pool_events(
     start_block: int,
     end_block: int,
 ) -> list[LogReceipt]:
-    """
-    Fetch Pool contract events for assertions and config updates.
-    """
-
+    """Fetch Pool contract events for assertions and config updates."""
     return fetch_logs_retrying(
         provider=provider,
         start_block=start_block,
@@ -55,10 +52,7 @@ def fetch_reserve_initialization_events(
     start_block: int,
     end_block: int,
 ) -> list[LogReceipt]:
-    """
-    Fetch Pool Configurator events for reserve initialization and configuration changes.
-    """
-
+    """Fetch Pool Configurator events for reserve initialization and configuration changes."""
     return fetch_logs_retrying(
         provider=provider,
         start_block=start_block,
@@ -82,10 +76,7 @@ def fetch_scaled_token_events(
     start_block: int,
     end_block: int,
 ) -> list[LogReceipt]:
-    """
-    Fetch events from all scaled tokens (aTokens, vTokens).
-    """
-
+    """Fetch events from all scaled tokens (aTokens, vTokens)."""
     if not token_addresses:
         return []
 
@@ -114,10 +105,7 @@ def fetch_stk_aave_events(
     start_block: int,
     end_block: int,
 ) -> list[LogReceipt]:
-    """
-    Fetch stkAAVE events including STAKED and REDEEM for classification.
-    """
-
+    """Fetch stkAAVE events including STAKED and REDEEM for classification."""
     if not discount_token:
         return []
     return fetch_logs_retrying(
@@ -141,10 +129,7 @@ def fetch_address_provider_events(
     start_block: int,
     end_block: int,
 ) -> list[LogReceipt]:
-    """
-    Fetch Pool Address Provider events for contract updates.
-    """
-
+    """Fetch Pool Address Provider events for contract updates."""
     return fetch_logs_retrying(
         provider=provider,
         start_block=start_block,
@@ -168,10 +153,7 @@ def fetch_discount_config_events(
     start_block: int,
     end_block: int,
 ) -> list[LogReceipt]:
-    """
-    Fetch discount-related events from any contract (not address-specific).
-    """
-
+    """Fetch discount-related events from any contract (not address-specific)."""
     return fetch_logs_retrying(
         provider=provider,
         start_block=start_block,
@@ -191,12 +173,10 @@ def fetch_oracle_events(
     start_block: int,
     end_block: int,
 ) -> list[LogReceipt]:
-    """
-    Fetch AaveOracle events for oracle configuration changes.
+    """Fetch AaveOracle events for oracle configuration changes.
 
     If oracle_address is None, fetches events from all contracts (discovery mode).
     """
-
     return fetch_logs_retrying(
         provider=provider,
         start_block=start_block,

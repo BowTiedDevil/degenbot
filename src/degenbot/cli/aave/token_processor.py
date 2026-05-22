@@ -1,5 +1,4 @@
-"""
-Token processing functions for Aave V3.
+"""Token processing functions for Aave V3.
 
 This module contains functions for processing token mint/burn events and
 updating user positions. It delegates to revision-specific processors for
@@ -52,8 +51,8 @@ def _process_scaled_token_operation(
     scaled_token_revision: int,
     position: "AaveV3CollateralPosition | AaveV3DebtPosition",
 ) -> UserOperation:
-    """
-    Determine the user operation for scaled token events and apply the appropriate delta to the
+    """Determine the user operation for scaled token events and apply the appropriate delta to the.
+
     position balance.
 
     This function delegates to revision-specific processors for handling token events.
@@ -62,8 +61,8 @@ def _process_scaled_token_operation(
         event: The scaled token event data
         scaled_token_revision: The token contract revision
         position: The user's position to update
-    """
 
+    """
     # Determine token type for logging
     token_type = (
         "aToken" if isinstance(event, (CollateralMintEvent, CollateralBurnEvent)) else "vToken"
@@ -159,8 +158,7 @@ def calculate_gho_discount_rate(
     debt_balance: int,
     discount_token_balance: int,
 ) -> int:
-    """
-    Calculate the GHO discount rate locally.
+    """Calculate the GHO discount rate locally.
 
     Delegates to GhoMath.calculate_discount_rate which mirrors the logic from
     the GhoDiscountRateStrategy contract at mainnet address
@@ -182,14 +180,12 @@ def _refresh_discount_rate(
     debt_index: int,
     math_libs: MathLibraries,
 ) -> None:
-    """
-    Calculate and update the user's GHO discount rate.
+    """Calculate and update the user's GHO discount rate.
 
     Calculates the debt token balance from scaled balance and index, then
     computes the discount rate locally using the same logic as the GhoDiscountRateStrategy
     contract.
     """
-
     debt_token_balance = math_libs.ray_mul(
         a=scaled_debt_balance,
         b=debt_index,
@@ -215,6 +211,7 @@ def _calculate_mint_to_treasury_scaled_amount(
 
     Returns:
         The calculated scaled amount to add to the treasury position
+
     """
     assert scaled_event.balance_increase is not None
     assert scaled_event.index is not None
@@ -237,8 +234,7 @@ def _process_deficit_coverage_operation(
     operation: Operation,
     tx_context: TransactionContext,
 ) -> None:
-    """
-    Process DEFICIT_COVERAGE operations atomically.
+    """Process DEFICIT_COVERAGE operations atomically.
 
     DEFICIT_COVERAGE operations contain paired Transfer + Burn events that occur
     during Umbrella protocol's deficit coverage operations. These must be processed
@@ -284,14 +280,12 @@ def _process_deficit_coverage_burn(
     tx_context: TransactionContext,
     scaled_event: ScaledTokenEvent,
 ) -> None:
-    """
-    Process a burn event within a DEFICIT_COVERAGE operation.
+    """Process a burn event within a DEFICIT_COVERAGE operation.
 
     Unlike regular burns, deficit coverage burns don't need enrichment validation
     because the amount includes interest that was accrued between the transfer
     and the burn within the same transaction.
     """
-
     # Get collateral asset
     token_address = scaled_event.event["address"]
     collateral_asset = get_asset_by_token_type(
@@ -350,10 +344,7 @@ def _process_collateral_mint_with_match(
     scaled_event: ScaledTokenEvent,
     enriched_event: EnrichedScaledTokenEvent,
 ) -> None:
-    """
-    Process collateral (aToken) mint with operation match.
-    """
-
+    """Process collateral (aToken) mint with operation match."""
     token_address = scaled_event.event["address"]
     collateral_asset = get_asset_by_token_type(
         session=tx_context.session,
@@ -418,10 +409,7 @@ def _process_collateral_burn_with_match(
     scaled_event: ScaledTokenEvent,
     enriched_event: EnrichedScaledTokenEvent,
 ) -> None:
-    """
-    Process collateral (aToken) burn with operation match.
-    """
-
+    """Process collateral (aToken) burn with operation match."""
     # Get collateral asset first for logging
     token_address = scaled_event.event["address"]
     collateral_asset = get_asset_by_token_type(
@@ -495,8 +483,7 @@ def _process_debt_mint_with_match(
     scaled_event: ScaledTokenEvent,
     enriched_event: EnrichedScaledTokenEvent,
 ) -> None:
-    """
-    Process debt (vToken) mint with operation match.
+    """Process debt (vToken) mint with operation match.
 
     Note: In REPAY operations, a Mint event is emitted when interest > repayment.
     In this case, the Mint event represents the net effect of:
@@ -504,7 +491,6 @@ def _process_debt_mint_with_match(
     2. Debt repayment (burning scaled tokens)
     The actual scaled burn amount = balance_increase - amount.
     """
-
     # Get debt asset first for logging
     token_address = scaled_event.event["address"]
     debt_asset = get_asset_by_token_type(
@@ -714,8 +700,7 @@ def _process_debt_mint_with_match(
 
 
 def _is_bad_debt_liquidation(user: "AaveV3User", tx_context: TransactionContext) -> bool:
-    """
-    Check if this transaction contains a bad debt liquidation for the user.
+    """Check if this transaction contains a bad debt liquidation for the user.
 
     Bad debt liquidations emit a DEFICIT_CREATED event for the user, indicating
     the protocol is writing off debt that cannot be covered by collateral.
@@ -727,7 +712,6 @@ def _is_bad_debt_liquidation(user: "AaveV3User", tx_context: TransactionContext)
             uint256 amountCreated
         );
     """
-
     for evt in tx_context.events:
         if evt["topics"][0] == AaveV3PoolEvent.DEFICIT_CREATED.value:
             deficit_user = decode_address(evt["topics"][1])
@@ -745,10 +729,7 @@ def _process_debt_burn_with_match(
     scaled_event: ScaledTokenEvent,
     enriched_event: EnrichedScaledTokenEvent,
 ) -> None:
-    """
-    Process debt (vToken) burn with operation match.
-    """
-
+    """Process debt (vToken) burn with operation match."""
     # Get debt asset first for logging
     token_address = scaled_event.event["address"]
     debt_asset = get_asset_by_token_type(

@@ -1,4 +1,4 @@
-"""V3 pools: convert token0/token1 to foreign keys
+"""V3 pools: convert token0/token1 to foreign keys.
 
 Revision ID: 50b39bafa0be
 Revises: b8e0b921299a
@@ -31,7 +31,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     connection = op.get_bind()
     session = Session(bind=connection)
 

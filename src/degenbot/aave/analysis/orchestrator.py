@@ -45,6 +45,7 @@ class DatabasePositionQuery:
     """
 
     def __init__(self, session: Session) -> None:
+        """Initialize the instance."""
         self._session = session
 
     def get_users_with_debt(self, market_id: int, limit: int | None = None) -> Sequence[UserRecord]:
@@ -214,6 +215,7 @@ class OraclePriceFetcher:
     """PriceFetcher implementation using the Aave oracle contract."""
 
     def __init__(self, provider: ProviderAdapter, oracle_address: ChecksumAddress) -> None:
+        """Initialize the instance."""
         self._provider = provider
         self._oracle_address = oracle_address
 
@@ -242,8 +244,7 @@ class OraclePriceFetcher:
 
 
 class PositionAnalysisService:
-    """
-    Service that coordinates position analysis with I/O.
+    """Service that coordinates position analysis with I/O.
 
     Created by Bot or CLI. Injects fetchers for testing.
     Orchestrator converts ORM → flat records, then delegates to core.
@@ -254,6 +255,7 @@ class PositionAnalysisService:
         position_query: PositionQuery,
         price_fetcher: PriceFetcher | None = None,
     ) -> None:
+        """Initialize the instance."""
         self.position_query = position_query
         self.price_fetcher = price_fetcher
 
@@ -263,7 +265,7 @@ class PositionAnalysisService:
         health_factor_threshold: float = 1.1,
         limit: int | None = None,
     ) -> PositionAnalysisResult:
-        """Main entry point — calls I/O, then delegates to core."""
+        """Entry point: call I/O, then delegate to core."""
         result = PositionAnalysisResult()
 
         # Query users with debt

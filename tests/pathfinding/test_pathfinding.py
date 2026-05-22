@@ -27,7 +27,6 @@ def path_step_identifiers(path: list[PathStep]) -> tuple[str, ...]:
 @pytest.fixture
 def db():
     """Provide the module-level database session manager."""
-
     cfg = _init_config()
     return DatabaseSessionManager(get_scoped_sqlite_session(database_path=cfg.database.path))
 

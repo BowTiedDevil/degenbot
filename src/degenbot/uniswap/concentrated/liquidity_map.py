@@ -1,5 +1,4 @@
-"""
-Immutable snapshot of a concentrated-liquidity pool's tick data.
+"""Immutable snapshot of a concentrated-liquidity pool's tick data.
 
 The simulator consumes a *snapshot* so that:
 - It is deterministic: same snapshot → same result.
@@ -58,8 +57,7 @@ class _HasLiquidityNet(Protocol):  # noqa: PYI046
 
 
 class MissingLiquidityData(LiquidityMapWordMissing):
-    """
-    Raised when the simulator needs a tick bitmap word that is not in the snapshot.
+    """Raised when the simulator needs a tick bitmap word that is not in the snapshot.
 
     The caller (pool or state manager) must fetch the missing data and retry.
     """
@@ -67,8 +65,7 @@ class MissingLiquidityData(LiquidityMapWordMissing):
 
 @dataclass(frozen=True, slots=True)
 class LiquidityMapSnapshot:
-    """
-    Frozen view of tick bitmap + tick data + spacing.
+    """Frozen view of tick bitmap + tick data + spacing.
 
     Supports both V3-style and V4-style inner types through duck-typing.
     The simulator never mutates these dicts.

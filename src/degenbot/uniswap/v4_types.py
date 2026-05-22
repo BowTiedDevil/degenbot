@@ -1,3 +1,4 @@
+"""Uniswap V4-specific data types and state definitions."""
 import dataclasses
 
 from eth_typing import ChecksumAddress
@@ -21,6 +22,8 @@ type SwapFee = int
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
 class UniswapV4PoolState(AbstractPoolState):
+    """UniswapV4PoolState class."""
+
     liquidity: Liquidity
     sqrt_price_x96: SqrtPriceX96
     tick: Tick
@@ -32,6 +35,8 @@ class UniswapV4PoolState(AbstractPoolState):
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV4PoolKey:
+    """UniswapV4PoolKey class."""
+
     currency0: ChecksumAddress
     currency1: ChecksumAddress
     fee: Pip
@@ -41,6 +46,8 @@ class UniswapV4PoolKey:
 
 @dataclasses.dataclass(slots=True)
 class UniswapV4LiquidityEvent:
+    """UniswapV4LiquidityEvent class."""
+
     block_number: BlockNumber
     liquidity: Liquidity
     tick_lower: Tick
@@ -51,6 +58,8 @@ class UniswapV4LiquidityEvent:
 
 @dataclasses.dataclass(slots=True, frozen=True, eq=False)
 class UniswapV4PoolExternalUpdate:
+    """UniswapV4PoolExternalUpdate class."""
+
     block_number: BlockNumber
     liquidity: Liquidity
     sqrt_price_x96: SqrtPriceX96
@@ -59,6 +68,8 @@ class UniswapV4PoolExternalUpdate:
 
 @dataclasses.dataclass(slots=True, frozen=True, eq=False)
 class UniswapV4PoolLiquidityMappingUpdate:
+    """UniswapV4PoolLiquidityMappingUpdate class."""
+
     block_number: BlockNumber
     liquidity: Liquidity
     tick_lower: Tick
@@ -67,6 +78,8 @@ class UniswapV4PoolLiquidityMappingUpdate:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class UniswapV4PoolStateUpdated(PoolStateMessage):
+    """UniswapV4PoolStateUpdated class."""
+
     state: UniswapV4PoolState
 
 

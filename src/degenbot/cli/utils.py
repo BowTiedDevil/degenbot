@@ -1,3 +1,4 @@
+"""CLI utility helpers (formatting, output)."""
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -29,9 +30,11 @@ def get_provider_from_config(
         chain_id: The chain ID to get a provider for
         optimize: Whether to optimize Web3 (removes middleware, uses fast JSON decoding)
         use_alloy: Force use of AlloyProvider (default: from env var DEGENBOT_USE_ALLOY_PROVIDER)
+        config: Optional config override; loaded from disk if not provided
 
     Returns:
         A ProviderAdapter wrapping either Web3 or AlloyProvider
+
     """
     if use_alloy is None:
         use_alloy = _get_use_alloy_from_env()

@@ -1,3 +1,4 @@
+"""Wrapped Ether placeholder for native ETH in pool reserves."""
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20 import Erc20Token
@@ -5,8 +6,8 @@ from degenbot.types.aliases import ChainId
 
 
 class EtherPlaceholder(Erc20Token):
-    """
-    An Erc20Token-like adapter for pools using the 'all Es' or zero address placeholder to represent
+    """An Erc20Token-like adapter for pools using the 'all Es' or zero address placeholder to represent.
+
     native Ether.
     """
 
@@ -25,6 +26,7 @@ class EtherPlaceholder(Erc20Token):
         chain_id: ChainId | None = None,
         state_cache_depth: int = 8,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             address,
             chain_id=chain_id,

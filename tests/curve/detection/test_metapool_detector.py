@@ -70,7 +70,6 @@ class TestDetectMetapool:
 
     def testMetapoolDetectedFromRegistry(self):
         """Metapool detected via is_meta() on the first registry."""
-
         base_pool_addr = TRIPOOL_ADDR
         underlying_coins = [DAI, USDC, USDT]
 
@@ -105,7 +104,6 @@ class TestDetectMetapool:
 
     def testMetapoolFallbackToGetBasePool(self):
         """If base_pool() reverts, falls back to get_base_pool() on the registry."""
-
         base_pool_addr = TRIPOOL_ADDR
         underlying_coins = [DAI, USDC, USDT]
 
@@ -142,7 +140,6 @@ class TestDetectMetapool:
 
     def testMetapoolFallbackTo3CrvHardcode(self):
         """If base_pool() and get_base_pool() both revert but second token is 3Crv LP."""
-
         underlying_coins = [DAI, USDC, USDT]
 
         def handle_call(to: str, data: bytes, block: int) -> bytes:
@@ -178,7 +175,6 @@ class TestDetectMetapool:
 
     def testBothRegistriesTried(self):
         """If first registry reverts on is_meta(), second registry is tried."""
-
         first_registry_tried = {"value": False}
 
         def handle_call(to: str, data: bytes, block: int) -> bytes:

@@ -44,6 +44,7 @@ class LogSubscriptionFilter:
     Args:
         addresses: Contract addresses to filter.
         topics: Event topic filters (nested: [[topic0], [topic1], ...]).
+
     """
 
     addresses: list[str] = field(default_factory=list)
@@ -66,12 +67,15 @@ class Subscription:
     Raises:
         StopAsyncIteration: Clean unsubscribe or stream end.
         SubscriptionDisconnected: WS/IPC connection dropped.
+
     """
 
     def __init__(self, _inner: AlloySubscription) -> None:
+        """Initialize the instance."""
         self._inner = _inner
 
     def __aiter__(self) -> Subscription:
+        """Implement __aiter__."""
         return self
 
     async def __anext__(self) -> Any:  # noqa: ANN401
@@ -101,6 +105,7 @@ class Subscription:
         Raises:
             StopAsyncIteration: Subscription has ended.
             SubscriptionDisconnected: Connection dropped.
+
         """
         try:
             return self._inner.drain()
@@ -129,4 +134,5 @@ class Subscription:
         self._inner.unsubscribe()
 
     def __repr__(self) -> str:
+        """Return a string representation."""
         return f"Subscription({self._inner!r})"

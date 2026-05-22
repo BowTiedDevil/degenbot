@@ -141,7 +141,6 @@ def _create_mock_pool_event(
     amount: int,
 ) -> LogReceipt:
     """Create a mock Pool BORROW event."""
-
     # BORROW event: (address, uint256 amount, uint8, uint256)
     data = eth_abi.abi.encode(
         ["address", "uint256", "uint8", "uint256"],
@@ -176,7 +175,6 @@ def _create_mock_operation(
 
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for BORROW."""
-
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
@@ -194,7 +192,6 @@ def _create_mock_context() -> MagicMock:
         operation_type: OperationType | None = None,
     ) -> int:
         """Extract amount from the mock pool event."""
-
         (_, amount, _, _) = eth_abi.abi.decode(
             ["address", "uint256", "uint8", "uint256"],
             pool_event["data"],

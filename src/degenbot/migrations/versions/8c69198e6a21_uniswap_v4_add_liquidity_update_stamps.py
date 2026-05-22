@@ -1,4 +1,4 @@
-"""Uniswap V4: add liquidity update stamps
+"""Uniswap V4: add liquidity update stamps.
 
 Revision ID: 8c69198e6a21
 Revises: 39e331854eb2

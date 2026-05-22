@@ -268,7 +268,6 @@ class TestBotBuildV4Pool:
 
     def test_build_pool_with_mock_provider(self, tmp_path: pathlib.Path) -> None:
         """build_pool fetches immutable + mutable values and constructs an I/O-free pool."""
-
         config = _make_test_config(tmp_path)
         bot = Bot(config)
 

@@ -1,3 +1,4 @@
+"""Application configuration loaded from TOML files."""
 import tomllib
 from pathlib import Path
 from typing import Annotated
@@ -16,6 +17,8 @@ DB_PATH = CONFIG_DIR / "degenbot.db"
 
 
 class DatabaseSettings(BaseModel):
+    """DatabaseSettings class."""
+
     # Serialize the path as a string representation of the absolute path
     path: Annotated[
         Path,
@@ -24,6 +27,8 @@ class DatabaseSettings(BaseModel):
 
 
 class DegenbotConfig(BaseSettings):
+    """DegenbotConfig class."""
+
     model_config = SettingsConfigDict()
 
     database: DatabaseSettings
@@ -41,12 +46,10 @@ class DegenbotConfig(BaseSettings):
         cls,  # noqa: N805
         rpc_dict: dict[ChainId, HttpUrl | WebsocketUrl | Path],
     ) -> dict[ChainId, HttpUrl | WebsocketUrl | Path]:
-        """
-        Validate the endpoints.
+        """Validate the endpoints.
 
         This will convert all file paths to an absolute reference, leaving HTTP and WS URLs as-is.
         """
-
         return {
             chain_id: endpoint.expanduser().absolute() if isinstance(endpoint, Path) else endpoint
             for chain_id, endpoint in rpc_dict.items()
@@ -54,6 +57,7 @@ class DegenbotConfig(BaseSettings):
 
 
 def load_config_from_file(config_path: Path) -> DegenbotConfig:
+    """Load config from file."""
     return DegenbotConfig.model_validate(
         tomllib.loads(
             config_path.read_text(encoding="utf-8"),
@@ -62,6 +66,7 @@ def load_config_from_file(config_path: Path) -> DegenbotConfig:
 
 
 def save_config_to_file(config: DegenbotConfig) -> None:
+    """Save config to file."""
     CONFIG_FILE.write_text(
         tomlkit.dumps(
             config.model_dump(),

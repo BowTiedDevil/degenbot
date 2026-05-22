@@ -1,4 +1,5 @@
-"""Test that provider methods release the GIL for parallel execution.
+"""
+Test that provider methods release the GIL for parallel execution.
 
 This test verifies that the Rust provider's use of Python::detach()
 allows multiple threads to execute RPC calls concurrently, rather than
@@ -26,7 +27,8 @@ def provider():
 
 
 def test_parallel_block_number_calls(provider):
-    """Test that multiple get_block_number calls execute in parallel.
+    """
+    Test that multiple get_block_number calls execute in parallel.
 
     Uses a concurrent thread counter to detect GIL release:
     - If GIL is held: only 1 thread can be inside the call at a time

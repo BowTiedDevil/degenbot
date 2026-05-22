@@ -39,11 +39,16 @@ class CacheableState(Protocol):
     """
 
     @property
-    def block(self) -> int | None: ...
+    def block(self) -> int | None:
+        """Return block."""
+        ...
 
 
 class StateCache[T: CacheableState]:
-    """Generic temporal state cache for pool state snapshots.
+    """Return block."""
+
+    """
+    Generic temporal state cache for pool state snapshots.
 
     Owns the deque, the lock, and the temporal navigation methods.
     Pool classes compose with a ``StateCache[TheirPoolState]`` instead
@@ -57,9 +62,11 @@ class StateCache[T: CacheableState]:
 
     Args:
         max_depth: Maximum number of historical states to retain.
+
     """
 
     def __init__(self, max_depth: int = 8) -> None:
+        """Initialize the instance."""
         self._cache: deque[T] = deque(maxlen=max(1, max_depth))
         self._lock = Lock()
 
@@ -75,16 +82,19 @@ class StateCache[T: CacheableState]:
             yield
 
     def __getstate__(self) -> dict[str, object]:
+        """Return the pickled state."""
         # Lock is not picklable; drop it and reconstruct on load
         state = self.__dict__.copy()
         state.pop("_lock", None)
         return state
 
     def __setstate__(self, state: dict[str, object]) -> None:
+        """Restore from pickled state."""
         self.__dict__.update(state)
         self._lock = Lock()
 
     def __len__(self) -> int:
+        """Return the length."""
         return len(self._cache)
 
     def __iter__(self) -> Iterator[T]:
@@ -102,6 +112,7 @@ class StateCache[T: CacheableState]:
 
         Raises:
             ValueError: If the current state's block is ``None``.
+
         """
         block = self._cache[-1].block
         if block is None:
@@ -130,6 +141,7 @@ class StateCache[T: CacheableState]:
         Returns:
             ``True`` if the state was appended (new or same-block replacement).
             ``False`` if the state is older than the current state.
+
         """
         current_block = self._cache[-1].block if self._cache else None
         if current_block is not None and block is not None and block < current_block:
@@ -148,6 +160,7 @@ class StateCache[T: CacheableState]:
 
         Raises:
             ValueError: If all cached states are before the target block.
+
         """
         if (earliest_block := self._cache[0].block) and earliest_block >= block:
             return
@@ -172,6 +185,7 @@ class StateCache[T: CacheableState]:
 
         Raises:
             ValueError: If no state exists before the target block.
+
         """
         newest_block = self._cache[-1].block
         if newest_block is not None and newest_block < block:

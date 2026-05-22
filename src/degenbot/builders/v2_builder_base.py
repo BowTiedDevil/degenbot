@@ -52,8 +52,7 @@ class V2CommonData:
 
 
 class V2BuilderBase:
-    """
-    Base class for V2-style pool builders.
+    """Base class for V2-style pool builders.
 
     Provides shared I/O orchestration (DB lookup, chain fetch,
     token construction, reserve fetch, registry lookup).
@@ -61,6 +60,7 @@ class V2BuilderBase:
     """
 
     def __init__(self, ctx: BuilderContext) -> None:
+        """Initialize the instance."""
         self._default_chain_id = ctx.default_chain_id
         self._db = ctx.db
         self._pools = ctx.pools
@@ -74,7 +74,6 @@ class V2BuilderBase:
         token1_result: HexBytes,
     ) -> tuple[ChecksumAddress, ChecksumAddress, ChecksumAddress]:
         """Decode raw call results into typed addresses."""
-
         (factory_raw,) = eth_abi.abi.decode(types=["address"], data=factory_result)
         (token0_raw,) = eth_abi.abi.decode(types=["address"], data=token0_result)
         (token1_raw,) = eth_abi.abi.decode(types=["address"], data=token1_result)
@@ -132,7 +131,6 @@ class V2BuilderBase:
         Returns a frozen dataclass with all values needed
         for variant-specific construction.
         """
-
         pool_address = get_checksum_address(pool_address)
 
         # Try DB first
@@ -242,7 +240,6 @@ class V2BuilderBase:
         block_identifier: int,
     ) -> tuple[int, int]:
         """Fetch current reserves from chain via PoolIO."""
-
         pool_address = get_checksum_address(pool_address)
 
         reserves_result = io.call(

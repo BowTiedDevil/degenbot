@@ -1,3 +1,4 @@
+"""PancakeSwap contract ABI definitions and decoders."""
 import pydantic_core
 
 PANCAKESWAP_V2_POOL_ABI = pydantic_core.from_json(

@@ -1,3 +1,4 @@
+"""PoolFamily and kind enums for pool type resolution."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -23,8 +24,7 @@ class PoolFamily(Enum):
 
 @dataclass(frozen=True)
 class PoolTypeDescriptor:
-    """
-    Describes the resolved type of a pool.
+    """Describes the resolved type of a pool.
 
     Produced by the type resolver, consumed by the dispatch in build_pool.
     """
@@ -44,6 +44,7 @@ def derive_kind(family: PoolFamily, variant: str | None) -> str:
         CONCENTRATED_LIQUIDITY + "sushiswap" → "sushiswap_v3"
         CONSTANT_PRODUCT + "camelot" → "camelot_v2"
         STABLESWAP + None → "stableswap"
+
     """
     if family == PoolFamily.STABLESWAP:
         return variant if variant is not None else "stableswap"

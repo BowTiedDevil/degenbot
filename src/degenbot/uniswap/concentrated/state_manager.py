@@ -68,6 +68,7 @@ class ConcentratedLiquidityStateManager[StateT: _StateLike]:
         initial_state: StateT,
         state_cache_depth: int = 8,
     ) -> None:
+        """Initialize the instance."""
         self._state_cache = StateCache(max_depth=state_cache_depth)
         block = initial_state.block
         self._state_cache.append(initial_state, block=block)
@@ -77,34 +78,42 @@ class ConcentratedLiquidityStateManager[StateT: _StateLike]:
 
     @property
     def state(self) -> StateT:
+        """State."""
         return self._state_cache.current
 
     @property
     def liquidity(self) -> int:
+        """Return liquidity."""
         return self.state.liquidity
 
     @property
     def sqrt_price_x96(self) -> int:
+        """Return sqrt price x96."""
         return self.state.sqrt_price_x96
 
     @property
     def tick(self) -> int:
+        """Return tick."""
         return self.state.tick
 
     @property
     def tick_bitmap(self) -> dict[int, object]:
+        """Tick bitmap."""
         return dict(self.state.tick_bitmap)
 
     @property
     def tick_data(self) -> dict[int, object]:
+        """Tick data."""
         return dict(self.state.tick_data)
 
     @property
     def update_block(self) -> int | None:
+        """Update block."""
         return self.state.block
 
     @property
     def state_cache(self) -> StateCache[StateT]:
+        """State cache."""
         return self._state_cache
 
     @state_cache.setter
@@ -144,6 +153,7 @@ class ConcentratedLiquidityStateManager[StateT: _StateLike]:
         zero_for_one: bool,
         sparse_liquidity_map: bool,
     ) -> bool:
+        """Swap is viable."""
         if sparse_liquidity_map:
             return True
 

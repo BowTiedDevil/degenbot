@@ -29,7 +29,8 @@ from .conftest import make_rust_v3_hop as make_v3_hop
 
 
 def _solve_v3_v3(seq1, seq2, max_input=None, max_candidates=10):
-    """Solve a V3-V3 path using RustArbSolver.
+    """
+    Solve a V3-V3 path using RustArbSolver.
 
     Constructs the hops from the sequences' first ranges, since RustArbSolver
     requires base_hops alongside v3_sequences.

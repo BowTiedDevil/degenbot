@@ -1,4 +1,5 @@
-"""Tests for AsyncErc20Builder I/O methods (Plan 065).
+"""
+Tests for AsyncErc20Builder I/O methods (Plan 065).
 
 These verify that AsyncErc20Builder's I/O methods mirror Erc20Builder's
 behavior: resolve block → check cache → call via AsyncPoolIO → decode →
@@ -7,19 +8,19 @@ update cache.
 
 from __future__ import annotations
 
+import pathlib
+
 import eth_abi.abi
 import pytest
 from hexbytes import HexBytes
 
 from degenbot.builders.async_erc20_builder import AsyncErc20Builder
 from degenbot.builders.pool_io import AsyncPoolIO
+from degenbot.database.operations import get_scoped_sqlite_session
+from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry import TokenRegistry
-from degenbot.database.session_manager import DatabaseSessionManager
-import pathlib
-
-from degenbot.database.operations import get_scoped_sqlite_session
 
 
 def _make_weth() -> Erc20Token:

@@ -69,6 +69,7 @@ def generate_fixture_by_name(name: str) -> ArbitrageCycleFixture:
     ------
     ValueError
         If the fixture name is not recognized.
+
     """
     factory = _get_factory()
 
@@ -133,6 +134,7 @@ def generate_all_fixtures(
     -------
     dict[str, Path]
         Mapping of fixture names to their file paths.
+
     """
     if fixtures is None:
         fixtures = ALL_FIXTURES
@@ -162,6 +164,7 @@ def generate_simple_fixtures(output_dir: Path) -> dict[str, Path]:
     -------
     dict[str, Path]
         Mapping of fixture names to their file paths.
+
     """
     return generate_all_fixtures(output_dir, SIMPLE_FIXTURES)
 
@@ -184,6 +187,7 @@ def generate_stress_fixtures(
     -------
     dict[str, Path]
         Mapping of fixture names to their file paths.
+
     """
     if pool_types is None:
         pool_types = ["v2", "v3", "v4", "multi"]
@@ -222,6 +226,7 @@ def load_fixture_by_name(
     -------
     ArbitrageCycleFixture
         The loaded or generated fixture.
+
     """
     if fixture_dir is not None:
         path = fixture_dir / f"{name}.json"
@@ -245,6 +250,7 @@ def get_fixture_names_by_type(fixture_type: str) -> list[str]:
     -------
     list[str]
         List of fixture names.
+
     """
     if fixture_type == "simple":
         return SIMPLE_FIXTURES.copy()
@@ -284,6 +290,7 @@ class FixtureSuite:
             Fixture names in the suite.
         fixture_dir : Path | None
             Directory containing fixture JSON files.
+
         """
         self.names = names
         self.fixture_dir = fixture_dir

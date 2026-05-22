@@ -1,5 +1,4 @@
-"""
-Standalone swap amount construction.
+"""Standalone swap amount construction.
 
 Delegates to pool.build_swap_amount() for protocol-based dispatch.
 Kept for backward compatibility; prefer calling pool.build_swap_amount() directly.
@@ -16,4 +15,5 @@ def build_swap_amount(
     amount_in: int,
     amount_out: int,
 ) -> AbstractSwapAmounts:
+    """Build swap amount."""
     return pool.build_swap_amount(swap_vector.zero_for_one, amount_in, amount_out)

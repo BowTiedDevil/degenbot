@@ -1,3 +1,4 @@
+"""Balancer-specific data types and enums (pool state, rate provider)."""
 import dataclasses
 
 from degenbot.types.abstract import AbstractPoolState
@@ -7,6 +8,8 @@ from degenbot.types.concrete import PoolStateMessage
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
 class BalancerV2PoolState(AbstractPoolState):
+    """BalancerV2PoolState class."""
+
     balances: tuple[int, ...]
 
 

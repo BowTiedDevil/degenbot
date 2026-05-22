@@ -1,5 +1,4 @@
-"""
-Transaction processing orchestration for Aave V3.
+"""Transaction processing orchestration for Aave V3.
 
 This module contains the main transaction processing orchestrator that handles:
 - Pre-processing discount updates
@@ -72,10 +71,7 @@ if TYPE_CHECKING:
 
 
 def _process_transaction(tx_context: TransactionContext) -> None:
-    """
-    Process transaction using operation-based parsing.
-    """
-
+    """Process transaction using operation-based parsing."""
     # Cache GHO vToken address for reuse
     gho_vtoken_address = tx_context.gho_vtoken_address
 
@@ -437,10 +433,7 @@ def _process_operation(
     operation: Operation,
     tx_context: TransactionContext,
 ) -> None:
-    """
-    Process a single operation.
-    """
-
+    """Process a single operation."""
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing operation {operation.operation_id}: "
         f"{operation.operation_type.name}"

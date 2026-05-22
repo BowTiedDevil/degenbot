@@ -145,7 +145,6 @@ def _build_pool_from_chain(
     pool_id_hex: str,
 ) -> BalancerV2Pool:
     """Build a BalancerV2Pool by fetching on-chain data from an anvil fork."""
-
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
 
     pool_contract = fork.w3.eth.contract(
@@ -194,8 +193,10 @@ def _run_given_in_swaps(
     *,
     swap_directions: list[tuple[int, int]] | None = None,
 ):
-    """Run GIVEN_IN swap calculations against the on-chain BalancerQueries contract
-    and assert exact integer match at each amount."""
+    """
+    Run GIVEN_IN swap calculations against the on-chain BalancerQueries contract
+    and assert exact integer match at each amount.
+    """
     if swap_directions is None:
         swap_directions = []
         for i in range(len(lp.tokens)):
@@ -278,8 +279,10 @@ def _run_given_out_swaps(
     *,
     swap_directions: list[tuple[int, int]] | None = None,
 ):
-    """Run GIVEN_OUT swap calculations against the on-chain BalancerQueries contract
-    and assert exact integer match at each amount."""
+    """
+    Run GIVEN_OUT swap calculations against the on-chain BalancerQueries contract
+    and assert exact integer match at each amount.
+    """
     if swap_directions is None:
         swap_directions = []
         for i in range(len(lp.tokens)):
@@ -444,7 +447,6 @@ def test_two_token_pool_construction(
     pool_key: str,
 ):
     """Verify that pool construction produces correct weights, fees, and token ordering."""
-
     pool_address, pool_id_hex, _description = TWO_TOKEN_POOLS[pool_key]
     lp = _build_pool_from_chain(fork_mainnet_full, pool_address, pool_id_hex)
 

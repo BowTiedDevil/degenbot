@@ -1,4 +1,4 @@
-"""drop factory column
+"""drop factory column.
 
 Revision ID: 04f858f979a9
 Revises: 8b29ed99a2ac
@@ -19,7 +19,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     op.drop_table("metadata")
     with op.batch_alter_table("aerodrome_v2_pools", schema=None) as batch_op:
         batch_op.drop_column("factory")

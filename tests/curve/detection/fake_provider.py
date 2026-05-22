@@ -1,4 +1,5 @@
-"""Fake ProviderAdapter for Curve pool detection tests.
+"""
+Fake ProviderAdapter for Curve pool detection tests.
 
 Provides a configurable fake that returns pre-programmed responses to
 provider.call_raw() based on the method selector in the calldata.
@@ -15,7 +16,8 @@ from degenbot.provider.interface import ProviderAdapter
 
 
 class FakeCurveBackend:
-    """Fake _SyncProviderBackend that dispatches call_raw by selector.
+    """
+    Fake _SyncProviderBackend that dispatches call_raw by selector.
 
     Responses are configured via the ``call_responses`` dict. The key is the
     4-byte selector; the value is either:
@@ -87,7 +89,8 @@ from web3.exceptions import Web3Exception
 
 
 def make_fake_curve_provider(call_responses: dict[bytes, Any]) -> ProviderAdapter:
-    """Create a ProviderAdapter backed by a FakeCurveBackend.
+    """
+    Create a ProviderAdapter backed by a FakeCurveBackend.
 
     Usage:
         provider = make_fake_curve_provider({
@@ -106,7 +109,8 @@ def make_fake_curve_provider(call_responses: dict[bytes, Any]) -> ProviderAdapte
 
 
 def make_fake_pool_io(call_responses: dict[bytes, Any]) -> SyncPoolIO:
-    """Create a SyncPoolIO backed by a FakeCurveBackend.
+    """
+    Create a SyncPoolIO backed by a FakeCurveBackend.
 
     Thin wrapper around make_fake_curve_provider that returns a SyncPoolIO
     instead of a bare ProviderAdapter. Preferred for detection module tests

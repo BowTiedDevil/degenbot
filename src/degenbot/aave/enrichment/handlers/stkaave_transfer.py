@@ -25,8 +25,7 @@ class StkAaveTransferHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich a STKAAVE_TRANSFER event.
+        """Enrich a STKAAVE_TRANSFER event.
 
         stkAAVE is an ERC20 token, so transfers bypass index-based scaling.
         raw_amount = scaled_amount.

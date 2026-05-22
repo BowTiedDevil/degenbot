@@ -1,3 +1,5 @@
+"""CLI commands for degenbot operations."""
+
 import click
 
 from degenbot.bot import Bot
@@ -7,6 +9,7 @@ from degenbot.bot import Bot
 @click.version_option()
 @click.pass_context
 def cli(ctx: click.Context) -> None:
+    """Perform cli."""
     ctx.obj = Bot.from_config_file()
 
 

@@ -201,6 +201,7 @@ class AerodromeV2PoolCalc:
         *,
         zero_for_one: bool,  # ruff: ignore[ARG002]
     ) -> Fraction:
+        """Extract fee."""
         return self._fee
 
     # ── Private: calculation strategy methods ──

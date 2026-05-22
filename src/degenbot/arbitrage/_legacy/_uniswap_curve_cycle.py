@@ -196,11 +196,10 @@ class _UniswapCurveCycle(PublisherMixin):
         state_overrides: Mapping[ChecksumAddress, CurveOrUniswapPoolState],
         block_number: BlockNumber | None = None,
     ) -> tuple[CurveOrUniswapSwapAmount, ...]:
-        """
-        Generate inputs for all swaps along the arbitrage path, starting with the specified amount
+        """Generate inputs for all swaps along the arbitrage path, starting with the specified amount.
+
         of the input token defined in the constructor.
         """
-
         working_token_out_quantity = 0
         swap_amounts: list[CurveOrUniswapSwapAmount] = []
         for i, (pool, swap_vector) in enumerate(
@@ -331,11 +330,10 @@ class _UniswapCurveCycle(PublisherMixin):
         self,
         state_overrides: Mapping[ChecksumAddress, CurveOrUniswapPoolState],
     ) -> None:
-        """
-        Perform liquidity and minimum rate of exchange checks and raise an exception if further
+        """Perform liquidity and minimum rate of exchange checks and raise an exception if further.
+
         optimization should be avoided.
         """
-
         # A scalar value representing the net amount of 1 input token across
         # the complete path (including fees).
         # profit_factor > 1.0 indicates a profitable trade.
@@ -426,10 +424,7 @@ class _UniswapCurveCycle(PublisherMixin):
     ) -> ArbitrageCalculationResult[
         CurveStableSwapPoolSwapAmounts | UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
     ]:
-        """
-        Calculate the optimal arbitrage profit using the maximum input as an upper bound.
-        """
-
+        """Calculate the optimal arbitrage profit using the maximum input as an upper bound."""
         # bound the amount to be swapped
         bounds = (
             1.0,
@@ -540,11 +535,10 @@ class _UniswapCurveCycle(PublisherMixin):
     ) -> ArbitrageCalculationResult[
         CurveStableSwapPoolSwapAmounts | UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
     ]:
-        """
-        Calculate the results of the arbitrage at the current pool states, or at one or more
+        """Calculate the results of the arbitrage at the current pool states, or at one or more.
+
         overridden pool states if provided.
         """
-
         if state_overrides is None:
             state_overrides = {}
 
@@ -557,11 +551,11 @@ class _UniswapCurveCycle(PublisherMixin):
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
         state_overrides: Mapping[ChecksumAddress, CurveOrUniswapPoolState] | None = None,
     ) -> Awaitable[Any]:
-        """
-        Wrap the arbitrage calculation into an asyncio future using the
+        """Wrap the arbitrage calculation into an asyncio future using the.
+
         specified executor.
 
-        Arguments
+        Arguments:
         ---------
         executor : Executor
             An executor (from `concurrent.futures`) to process the calculation
@@ -570,16 +564,16 @@ class _UniswapCurveCycle(PublisherMixin):
         state_overrides : Mapping[ChecksumAddress, StateOverrideTypes], optional
             A mapping (dict or dict-like) of pool states, keyed by the pool address.
 
-        Returns
+        Returns:
         -------
         A future which returns a `ArbitrageCalculationResult` (or exception)
         when awaited.
 
-        Notes
+        Notes:
         -----
         This is an async function that must be called with the `await` keyword.
-        """
 
+        """
         if state_overrides is None:
             state_overrides = {}
 
@@ -629,13 +623,12 @@ class _UniswapCurveCycle(PublisherMixin):
         pool_swap_amounts: Sequence[CurveOrUniswapSwapAmount],
         infinite_approval: bool = False,
     ) -> list[tuple[ChecksumAddress, bytes, int]]:
-        """
-        Generate a list of tuple-formatted payloads for each step in the swap path.
+        """Generate a list of tuple-formatted payloads for each step in the swap path.
 
         Calldata is built using the eth_abi.encode method and the ABI for the
         swap functions at each pool. Curve V1 and Uniswap V2/V3 pools are supported.
 
-        Arguments
+        Arguments:
         ---------
         from_address: str
             The address that will execute the calldata. Must be a smart contract implementing the
@@ -651,7 +644,7 @@ class _UniswapCurveCycle(PublisherMixin):
             Whether the infinite approval should be requested for the Curve pool. If False, only
             the minimum required amount will be approved.
 
-        Returns
+        Returns:
         -------
         ``list[(str, bytes, int)]``
             A list of payload tuples. Each payload tuple has form
@@ -660,8 +653,8 @@ class _UniswapCurveCycle(PublisherMixin):
                 calldata: bytes,
                 value: int
             ).
-        """
 
+        """
         from_address = get_checksum_address(from_address)
 
         msg_value = 0  # This arbitrage does not require a `msg.value` payment

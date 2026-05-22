@@ -1,5 +1,5 @@
-"""
-TypedDict definitions for Ethereum RPC response data returned by the
+"""TypedDict definitions for Ethereum RPC response data returned by the.
+
 Rust extension provider.
 
 Field types correspond to the Rust converters in
@@ -78,8 +78,7 @@ TransactionData = TypedDict(
 
 
 class BlockData(TypedDict, total=False):
-    """
-    Full block data returned by ``get_block()``.
+    """Full block data returned by ``get_block()``.
 
     All fields are optional at the type level because the set of
     present fields varies by network and hardfork. In practice,
@@ -147,8 +146,7 @@ TransactionReceiptData = TypedDict(
 
 
 class LogData(TypedDict, total=False):
-    """
-    Log entry data returned by ``get_logs()`` and embedded in receipts.
+    """Log entry data returned by ``get_logs()`` and embedded in receipts.
 
     Uses camelCase keys matching the web3.py convention.
     """

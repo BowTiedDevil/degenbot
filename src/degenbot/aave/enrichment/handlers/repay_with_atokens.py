@@ -38,8 +38,7 @@ class RepayWithAtokensHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich a REPAY_WITH_ATOKENS event.
+        """Enrich a REPAY_WITH_ATOKENS event.
 
         Handles both collateral and debt events with their respective
         special cases for interest exceeding repayment.

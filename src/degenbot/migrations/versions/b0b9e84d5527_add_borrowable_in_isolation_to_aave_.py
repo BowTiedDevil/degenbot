@@ -1,4 +1,4 @@
-"""add_borrowable_in_isolation_to_aave_asset_config
+"""add_borrowable_in_isolation_to_aave_asset_config.
 
 Revision ID: b0b9e84d5527
 Revises: 9c411aeeb15e

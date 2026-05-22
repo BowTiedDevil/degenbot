@@ -79,7 +79,8 @@ def make_2hop_v2_input(
     reserve_out_sell=USDC_2M,
     fee=FEE_0_3_PCT,
 ) -> SolveInput:
-    """Create a standard 2-hop V2-V2 arbitrage input.
+    """
+    Create a standard 2-hop V2-V2 arbitrage input.
 
     Pool 1 (buy): buy WETH where it's cheap (lower USDC/WETH price)
     Pool 2 (sell): sell WETH where it's expensive (higher USDC/WETH price)

@@ -128,7 +128,6 @@ class TestSolidlyStableSolverSupports:
 
     def test_supports_pure_solidly_path(self):
         """Solver should support a path with only Solidly stable hops."""
-
         solver = SolidlyStableSolver()
         solve_input = SolveInput(
             hops=(STABLE_HOP_USDC_WETH, STABLE_HOP_USDC_USDT),
@@ -137,7 +136,6 @@ class TestSolidlyStableSolverSupports:
 
     def test_supports_mixed_solidly_v2_path(self):
         """Solver should support a path with mixed Solidly + V2 hops."""
-
         solver = SolidlyStableSolver()
         solve_input = SolveInput(
             hops=(V2_HOP_WETH_USDC, STABLE_HOP_USDC_WETH),
@@ -146,7 +144,6 @@ class TestSolidlyStableSolverSupports:
 
     def test_does_not_support_pure_v2_path(self):
         """Solver should NOT support a pure V2 path (that's MobiusSolver)."""
-
         solver = SolidlyStableSolver()
         solve_input = SolveInput(
             hops=(
@@ -166,7 +163,6 @@ class TestSolidlyStableSolverSupports:
 
     def test_does_not_support_single_hop(self):
         """Solver requires 2+ hops."""
-
         solver = SolidlyStableSolver()
         solve_input = SolveInput(hops=(STABLE_HOP_USDC_WETH,))
         assert not solver.supports(solve_input)
@@ -180,7 +176,6 @@ class TestSolidlyStableSolverSolve:
         2-hop path with price discrepancy: stable pool has cheaper WETH
         than V2 pool, so there's arbitrage opportunity.
         """
-
         solver = SolidlyStableSolver()
 
         # Stable pool: 10M USDC → 5K WETH (rate: 2000 USDC/WETH — cheap WETH)
@@ -220,7 +215,6 @@ class TestSolidlyStableSolverSolve:
 
     def test_not_profitable_equal_rates(self):
         """When stable pool and V2 pool have same rate, no profit."""
-
         solver = SolidlyStableSolver()
 
         # Both pools at same rate: 2500 USDC/WETH
@@ -254,7 +248,6 @@ class TestSolidlyStableSolverSolve:
 
     def test_mixed_path_v2_then_solidly(self):
         """V2 hop followed by Solidly stable hop."""
-
         solver = SolidlyStableSolver()
 
         # V2: expensive WETH → USDC (4000 USDC/WETH rate)
@@ -296,7 +289,6 @@ class TestSolidlyStableSolverSolve:
         Since BrentSolver uses _simulate_path (V2 formula) for all hops,
         it won't match exactly — we compare against a manual search instead.
         """
-
         solver = SolidlyStableSolver()
 
         reserves_usdc = 10_000_000 * 10**6
@@ -439,7 +431,6 @@ class TestAsymmetricFees:
         Mixed path: Solidly stable + Camelot volatile (asymmetric fees).
         The V2 hop uses fee (input direction gamma).
         """
-
         solver = SolidlyStableSolver()
 
         reserves_usdc = 10_000_000 * 10**6
@@ -497,7 +488,6 @@ class TestSolidlyStableSixDecimalPairs:
         USDC/USDT stable pair with small price discrepancy.
         These should produce small profits due to the flat curve.
         """
-
         solver = SolidlyStableSolver()
 
         # Pool 1: USDC → USDT at 1:1.002 (slight premium for USDT)
@@ -562,7 +552,6 @@ class TestMixedMobiusNewtonPattern:
         V2 hops should be Möbius-composed for initial guess,
         Solidly hop is opaque.
         """
-
         solver = SolidlyStableSolver()
 
         # V2: WETH → TOKEN_A
@@ -606,7 +595,6 @@ class TestMixedMobiusNewtonPattern:
         3-hop path: Solidly → V2 → V2.
         Solidly hop first, then V2 hops Möbius-composed for initial guess.
         """
-
         solver = SolidlyStableSolver()
 
         # Solidly: cheap USDC → WETH (2000 USDC/WETH rate)
@@ -647,7 +635,6 @@ class TestMixedMobiusNewtonPattern:
 
     def test_solidly_iterations_reasonable(self):
         """SolidlyStableSolver should converge in ≤ 30 iterations."""
-
         solver = SolidlyStableSolver()
 
         reserves_usdc = 10_000_000 * 10**6
@@ -680,7 +667,6 @@ class TestMixedMobiusNewtonPattern:
 
     def test_golden_section_exact_match_brute_force(self):
         """Golden section search should find the same optimum as brute force."""
-
         solver = SolidlyStableSolver()
 
         reserves_usdc = 10_000_000 * 10**6
@@ -728,7 +714,6 @@ class TestMixedMobiusNewtonPattern:
         SolidlyStableHop without swap_fn should fall back to
         Newton's method with float simulation.
         """
-
         solver = SolidlyStableSolver()
 
         # Same-reserve pool (6/6 decimals) where float is more accurate

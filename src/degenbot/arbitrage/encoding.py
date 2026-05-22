@@ -39,21 +39,30 @@ class ApprovalStrategy(Protocol):
         self,
         swap_amounts: tuple[AbstractSwapAmounts, ...],
         calls: list[EncodedCall],
-    ) -> list[EncodedCall]: ...
+    ) -> list[EncodedCall]:
+        """Approvals for."""
+        ...
 
 
 @runtime_checkable
 class PayloadComposer(Protocol):
-    """Pluggable call composition.
+    """Approvals for."""
+
+    """
+    Pluggable call composition.
 
     Given the list of encoded calls, compose them into the
     format a target contract expects.
     """
 
-    def compose(self, calls: list[EncodedCall]) -> list[EncodedCall]: ...
+    def compose(self, calls: list[EncodedCall]) -> list[EncodedCall]:
+        """Compose."""
+        ...
 
 
 class NoApprovals:
+    """Compose."""
+
     """Approval strategy that adds no approval calls."""
 
     def approvals_for(  # noqa: PLR6301
@@ -61,6 +70,7 @@ class NoApprovals:
         swap_amounts: tuple[AbstractSwapAmounts, ...],  # noqa: ARG002
         calls: list[EncodedCall],  # noqa: ARG002
     ) -> list[EncodedCall]:
+        """Approvals for."""
         return []
 
 
@@ -68,6 +78,7 @@ class FlatComposer:
     """Composer that returns calls as-is (no wrapping)."""
 
     def compose(self, calls: list[EncodedCall]) -> list[EncodedCall]:  # noqa: PLR6301
+        """Return calls as-is without wrapping."""
         return calls
 
 
@@ -78,7 +89,10 @@ def generate_payloads(
     approval_strategy: ApprovalStrategy | None = None,
     composer: PayloadComposer | None = None,
 ) -> list[EncodedCall]:
-    """Generate encoded swap payloads for an arbitrage path.
+    """Compose."""
+    """Compose."""
+    """
+    Generate encoded swap payloads for an arbitrage path.
 
     Pipeline:
     1. Encode each swap via its SwapAmounts.encode() method
@@ -90,6 +104,7 @@ def generate_payloads(
         recipient: Address that receives swap output.
         approval_strategy: Injects approval calls. Default: NoApprovals.
         composer: Composes final call list. Default: FlatComposer.
+
     """
     if approval_strategy is None:
         approval_strategy = NoApprovals()

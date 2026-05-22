@@ -3,7 +3,6 @@
 from fractions import Fraction
 
 from degenbot.calculations.camelot import f_camelot, get_y_camelot, k_camelot
-from degenbot.uniswap.v2_functions import constant_product_calc_exact_in
 from degenbot.calculations.solidly_stable import (
     calc_d,
     calc_exact_in_stable,
@@ -23,6 +22,7 @@ from degenbot.calculations.stableswap import (
     calc_dp_variant_beta,
     calc_dp_variant_gamma,
 )
+from degenbot.uniswap.v2_functions import constant_product_calc_exact_in
 
 # ── constant_product tests ──
 
@@ -196,7 +196,6 @@ class TestCamelot:
 
     def test_k_camelot_matches_solidly_k(self):
         """Camelot's k should give the same result as Solidly's calc_k for same inputs."""
-
         b0 = 1_000_000_000_000_000_000
         b1 = 2_000_000_000_000_000_000
         d0 = d1 = 10**18

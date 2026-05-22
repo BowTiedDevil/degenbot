@@ -179,7 +179,6 @@ class TestPoolStrategiesDataclass:
 
     def test_calculators_match_swap_style(self):
         """Calculator parameterization matches the swap_style enum value."""
-
         default = PoolStrategies().dy_calculator
         assert isinstance(default, StandardDyCalculator)
         assert default.swap_style == SwapStyle.STANDARD
@@ -232,7 +231,6 @@ class TestPoolStrategiesDataclass:
 
     def test_explicit_calculator_overrides_auto(self):
         """Explicit calculator arg is preserved, not overwritten by __post_init__."""
-
         explicit = StandardDyCalculator(swap_style=SwapStyle.STANDARD)
         s = PoolStrategies(swap_style=SwapStyle.CRYPTO, dy_calculator=explicit)
         assert s.dy_calculator is explicit

@@ -42,7 +42,6 @@ class TestRawMathParity:
         """
         Python ray_mul matches Solidity rayMul for all revisions.
         """
-
         wrapper: Contract = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -82,7 +81,6 @@ class TestRawMathParity:
         """
         Python ray_div matches Solidity rayDiv for all revisions.
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -118,7 +116,6 @@ class TestRawMathParity:
         """
         Python ray_mul_floor matches Solidity rayMulFloor (Rev 4/9 only).
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -154,7 +151,6 @@ class TestRawMathParity:
         """
         Python ray_mul_ceil matches Solidity rayMulCeil (Rev 4/9 only).
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -190,7 +186,6 @@ class TestRawMathParity:
         """
         Python ray_div_floor matches Solidity rayDivFloor (Rev 4/9 only).
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -226,7 +221,6 @@ class TestRawMathParity:
         """
         Python ray_div_ceil matches Solidity rayDivCeil (Rev 4/9 only).
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -262,7 +256,6 @@ class TestRawMathParity:
         """
         Python wad_mul matches Solidity wadMul for all revisions.
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -298,7 +291,6 @@ class TestRawMathParity:
         """
         Python wad_div matches Solidity wadDiv for all revisions.
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -340,7 +332,6 @@ class TestTokenMathParity:
         """
         Python get_collateral_mint_scaled_amount matches Solidity.
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -378,7 +369,6 @@ class TestTokenMathParity:
         """
         Python get_collateral_burn_scaled_amount matches Solidity.
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -416,7 +406,6 @@ class TestTokenMathParity:
         """
         Python get_collateral_transfer_scaled_amount matches Solidity.
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -456,7 +445,6 @@ class TestTokenMathParity:
         """
         Python get_collateral_balance matches Solidity getCollateralBalance.
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -494,7 +482,6 @@ class TestTokenMathParity:
         """
         Python get_debt_mint_scaled_amount matches Solidity getDebtMintScaledAmount.
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -532,7 +519,6 @@ class TestTokenMathParity:
         """
         Python get_debt_burn_scaled_amount matches Solidity getDebtBurnScaledAmount.
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -570,7 +556,6 @@ class TestTokenMathParity:
         """
         Python get_debt_balance matches Solidity getDebtBalance.
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -610,9 +595,8 @@ class TestRoundingHierarchy:
         self, request: pytest.FixtureRequest, a: int, b: int, revision: int
     ) -> None:
         """
-        floor <= half-up <= ceil for ray_div variants (when not exact division).
+        Floor <= half-up <= ceil for ray_div variants (when not exact division).
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -634,9 +618,8 @@ class TestRoundingHierarchy:
         self, request: pytest.FixtureRequest, a: int, b: int, revision: int
     ) -> None:
         """
-        floor <= half-up <= ceil for ray_mul variants (when not exact multiplication).
+        Floor <= half-up <= ceil for ray_mul variants (when not exact multiplication).
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         try:
@@ -664,7 +647,6 @@ class TestKnownValues:
         Index: 1,051,094,981,887,882,471,312,148,250
         Expected scaled: 72,416,565,904,061,875,431 (using ray_div_ceil)
         """
-
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
 
         amount = 76116689027312564277
@@ -681,7 +663,8 @@ class TestKnownValues:
         )
 
     def test_issue_0036_rev8_half_up_rounding(self, token_math_wrapper_rev1) -> None:
-        """Issue 0036: Pool Rev 8 MINT_TO_TREASURY half-up rounding verification.
+        """
+        Issue 0036: Pool Rev 8 MINT_TO_TREASURY half-up rounding verification.
 
         MintedToTreasury.amount: 312,922,037,040,136,887
         Index: 1,001,340,845,020,106,656,953,816,530

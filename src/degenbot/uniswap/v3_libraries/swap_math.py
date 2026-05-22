@@ -1,3 +1,4 @@
+"""Uniswap V3 SwapMath: swap step amounts and fees."""
 from degenbot.uniswap.v3_libraries import full_math, sqrt_price_math
 from degenbot.uniswap.v3_types import SqrtPriceX96
 
@@ -13,6 +14,7 @@ def compute_swap_step(
     amount_remaining: int,
     fee_pips: int,
 ) -> tuple[SqrtPriceX96, AmountIn, AmountOut, FeeTaken]:
+    """Compute swap step."""
     zero_for_one = sqrt_ratio_x96_current >= sqrt_ratio_x96_target
     exact_in = amount_remaining >= 0
 

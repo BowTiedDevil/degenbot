@@ -24,7 +24,6 @@ def next_initialized_tick_within_one_word_reference(
     less_than_or_equal: bool,
 ) -> tuple[int, bool]:
     """Reference implementation validated against Solidity TickBitmap.sol."""
-
     # Python rounds down to negative infinity, so use it directly instead of the abs and modulo
     # implementation of the Solidity contract
     compressed = tick // tick_spacing
@@ -84,7 +83,6 @@ def empty_full_bitmap(spacing: int = 1) -> dict[int, BitmapAtWord]:
     """
     Generate a empty tick bitmap, maximum size, with the given tick spacing
     """
-
     tick_bitmap: dict[int, BitmapAtWord] = {}
 
     empty_bitmap_at_word = BitmapAtWord(bitmap=0)

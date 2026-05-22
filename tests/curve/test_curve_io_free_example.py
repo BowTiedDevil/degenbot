@@ -1,4 +1,5 @@
-"""Example: Testing Curve pool calculations with I/O-free architecture.
+"""
+Example: Testing Curve pool calculations with I/O-free architecture.
 
 This demonstrates how the I/O-free pattern eliminates the need for mocks
 when testing pool logic. All on-chain data is injected via a CurveDataProvider.

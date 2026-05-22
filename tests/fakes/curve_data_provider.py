@@ -1,4 +1,5 @@
-"""Reusable test double for CurveDataProvider.
+"""
+Reusable test double for CurveDataProvider.
 
 Provides a configurable CurveDataProvider that returns pre-programmed values
 for on-chain data access, enabling I/O-free CurveStableswapPool testing.

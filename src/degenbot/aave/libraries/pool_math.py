@@ -56,6 +56,7 @@ class PoolMath:
             - Rev 9+: PoolLogic.executeMintToTreasury uses getATokenBalance
               which calls rayMulFloor
               (see contract_reference/aave/Pool/rev_9.sol)
+
         """
         if pool_revision >= 9:  # noqa: PLR2004
             # TokenMath library: floor rounding
@@ -96,6 +97,7 @@ class PoolMath:
         Contract References:
             - Rev 1-8: Reverse of ray_mul (half-up) = ray_div (half-up)
             - Rev 9+: Reverse of getATokenBalance (ray_mul_floor) = ray_div_ceil
+
         """
         if pool_revision >= 9:  # noqa: PLR2004
             # Reverse of ray_mul_floor = ray_div_ceil
@@ -135,6 +137,7 @@ class PoolMath:
             Debt uses inverse rounding compared to collateral:
             - get_debt_balance uses ray_mul_ceil (prevent under-accounting)
             - So reverse uses ray_div_floor (prevent over-scaling)
+
         """
         if pool_revision >= 9:  # noqa: PLR2004
             # Reverse of ray_mul_ceil = ray_div_floor

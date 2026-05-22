@@ -1,3 +1,4 @@
+"""Pool registry: address-keyed store of built pool instances."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, overload
@@ -19,6 +20,7 @@ class ManagedPoolRegistry(MultiKeyAddressRegistry["ConcentratedLiquidityPool"]):
     """Registry for V4 pools keyed by (chain_id, pool_manager_address, pool_id)."""
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         super().__init__(
             address_fields=("pool_manager_address", "pool_id"),
             name="ManagedPool",
@@ -73,6 +75,7 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
         self,
         managed_pool_registry: ManagedPoolRegistry | None = None,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(name="Pool")
         self._managed_pool_registry = managed_pool_registry or ManagedPoolRegistry()
 

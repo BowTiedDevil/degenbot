@@ -1,4 +1,5 @@
-"""Tests for 2-pool CVXPY DPP compliance and re-solve behavior.
+"""
+Tests for 2-pool CVXPY DPP compliance and re-solve behavior.
 
 Validates that _build_convex_problem produces a DPP-compliant problem
 before the warm-up solve, and that re-solving with enforce_dpp=True
@@ -17,7 +18,8 @@ class TestTwoPoolDPPCompliance:
     """Validate DPP compliance of the pre-built 2-pool CVXPY problem."""
 
     def test_problem_is_dcp_dpp_before_solve(self):
-        """The 2-pool problem should be DPP-compliant before any solve call.
+        """
+        The 2-pool problem should be DPP-compliant before any solve call.
 
         This catches non-DPP construction at import time, before the warm-up
         solve populates internal state and the Problem is pickled into worker
@@ -30,7 +32,8 @@ class TestTwoPoolDPPCompliance:
         )
 
     def test_reuse_with_updated_parameters(self):
-        """Re-solving with updated parameters and enforce_dpp=True should produce
+        """
+        Re-solving with updated parameters and enforce_dpp=True should produce
         a positive result for a known-profitable pool pair.
 
         This verifies the full lifecycle: pre-build → pickle → update → re-solve.
@@ -92,7 +95,8 @@ class TestTwoPoolDPPCompliance:
         )
 
     def test_reuse_no_profit_identical_pools(self):
-        """Re-solving with identical pools should yield no profit after fees.
+        """
+        Re-solving with identical pools should yield no profit after fees.
 
         This validates the re-solve path produces correct results for the
         unprofitable case too.

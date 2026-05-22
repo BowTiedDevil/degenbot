@@ -1,5 +1,4 @@
-"""
-Unified pool type registry.
+"""Unified pool type registry.
 
 Identity (family, variant, kind) is auto-derived from the class hierarchy
 and class attributes. Deployment data (chain_id, factory, deployer, init_hash)
@@ -70,8 +69,7 @@ def _derive_family(pool_class: type[AbstractLiquidityPool]) -> PoolFamily:
 
 
 class PoolTypeRegistry:
-    """
-    Unified registry mapping (chain_id, factory_address) → pool type identity.
+    """Unified registry mapping (chain_id, factory_address) → pool type identity.
 
     Each DEX module registers its pool subclass at import time via register().
     Builders consult this registry to select the concrete class and its
@@ -125,6 +123,7 @@ class PoolTypeRegistry:
     """
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         self._entries: dict[tuple[int, str], _RegistryEntry] = {}
         self._kind_index: dict[str, PoolTypeDescriptor] = {}
         self._default_v2_class: type[ConstantProductPool] | None = None
@@ -142,8 +141,7 @@ class PoolTypeRegistry:
         deployer: str | None = None,
         family: PoolFamily | None = None,
     ) -> None:
-        """
-        Register a pool class for a specific (chain_id, factory) deployment.
+        """Register a pool class for a specific (chain_id, factory) deployment.
 
         Identity (family, variant, kind) is auto-derived from the class.
         Deployment data (chain_id, factory, deployer, init_hash) is stored
@@ -159,6 +157,7 @@ class PoolTypeRegistry:
                 shape misleads ``_derive_family`` (e.g. BalancerV2Pool has
                 ``tokens`` but not ``fee_token0``, so it would derive as
                 STABLESWAP instead of WEIGHTED).
+
         """
         checksummed_factory = get_checksum_address(factory_address)
 

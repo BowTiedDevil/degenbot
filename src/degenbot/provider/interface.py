@@ -1,5 +1,4 @@
-"""
-Provider interface for abstracting Web3 and AlloyProvider.
+"""Provider interface for abstracting Web3 and AlloyProvider.
 
 This module defines a Protocol for Ethereum RPC providers and an adapter
 that can delegate to either web3.py's Web3 or degenbot's AlloyProvider.
@@ -20,6 +19,7 @@ Example:
     >>> chain_id = provider.chain_id
     >>> block = provider.get_block(18_000_000)
     >>> result = provider.call(to="0x...", data=calldata)
+
 """
 
 from __future__ import annotations
@@ -57,14 +57,22 @@ class ProviderBackend(Protocol):
     """
 
     @property
-    def chain_id(self) -> int: ...
+    def chain_id(self) -> int:
+        """Return chain id."""
+        ...
 
     @property
-    def block_number(self) -> int: ...
+    def block_number(self) -> int:
+        """Return block number."""
+        ...
 
-    def get_block_number(self) -> int: ...
+    def get_block_number(self) -> int:
+        """Return block number."""
+        ...
 
-    def get_block(self, block_identifier: int | str) -> BlockData | None: ...
+    def get_block(self, block_identifier: int | str) -> BlockData | None:
+        """Return block."""
+        ...
 
     def get_logs(
         self,
@@ -72,37 +80,69 @@ class ProviderBackend(Protocol):
         to_block: int,
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
-    ) -> list[LogReceipt]: ...
+    ) -> list[LogReceipt]:
+        """Return logs."""
+        ...
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes: ...
+    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        """Call."""
+        ...
 
-    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes: ...
+    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
+        """Call raw."""
+        ...
 
-    def get_code(self, address: str, block: int | None = None) -> HexBytes: ...
+    def get_code(self, address: str, block: int | None = None) -> HexBytes:
+        """Return code."""
+        ...
 
-    def get_balance(self, address: str, block: int | None = None) -> int: ...
+    def get_balance(self, address: str, block: int | None = None) -> int:
+        """Return balance."""
+        ...
 
     def get_storage_at(
         self,
         address: str,
         position: int,
         block: int | None = None,
-    ) -> HexBytes: ...
+    ) -> HexBytes:
+        """Return storage at."""
+        ...
 
     def get_transaction_count(
         self,
         address: str,
         block: int | None = None,
-    ) -> int: ...
+    ) -> int:
+        """Return transaction count."""
+        ...
 
-    def is_connected(self) -> bool: ...
+    def is_connected(self) -> bool:
+        """Check whether connected."""
+        ...
 
-    def close(self) -> None: ...
+    def close(self) -> None:
+        """Perform close."""
+        ...
 
     # --- Subscription stubs (sync providers do not support subscriptions) ---
 
     def subscribe_blocks(self) -> None:
-        """Not available on sync providers.
+        """Return chain id."""
+        """Return block number."""
+        """Return block number."""
+        """Return block."""
+        """Return logs."""
+        """Call."""
+        """Call raw."""
+        """Return code."""
+        """Return balance."""
+        """Return storage at."""
+        """Return transaction count."""
+        """Check if connected."""
+        """Perform close."""
+        """
+        Not available on sync providers.
 
         Use AsyncProviderAdapter.subscribe_blocks() instead.
         """
@@ -206,7 +246,8 @@ class SyncSubscriptionSupport:
 
 
 class AsyncSubscriptionSupport:
-    """Mixin providing default subscription stubs for async backends
+    """Mixin providing default subscription stubs for async backends.
+
     that don't support WS/IPC subscriptions (e.g. AsyncWeb3 over HTTP).
 
     Subclasses must define ``_subscription_transport`` and ``_subscription_rpc_url``
@@ -489,8 +530,7 @@ class _OfflineAdapter(SyncSubscriptionSupport):
 
 
 class ProviderAdapter(SyncSubscriptionSupport):
-    """
-    Adapter that wraps Web3, AlloyProvider, or OfflineProvider.
+    """Adapter that wraps Web3, AlloyProvider, or OfflineProvider.
 
     Provides a uniform interface for Ethereum RPC operations,
     allowing existing code to work with any backend.
@@ -514,6 +554,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
             backend: A provider backend satisfying ProviderBackend
             provider_type: The type label for the backend (used by repr and pickling)
             raw_provider: The original unwrapped provider (exposed by underlying / provider)
+
         """
         self._backend = backend
         self._provider_type = provider_type
@@ -666,6 +707,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
 
         Returns:
             The block timestamp as an integer (Unix seconds).
+
         """
         block_data = self._backend.get_block(block if block is not None else "latest")
         if block_data is None:
@@ -688,6 +730,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
 
         Raises:
             AttributeError: If the underlying provider doesn't support make_request
+
         """
         raw = self._raw_provider
         if raw is not None and hasattr(raw, "make_request"):
@@ -707,6 +750,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
 
         Returns:
             Block data dict or None if block not found.
+
         """
         return self._backend.get_block(block_identifier)
 
@@ -727,6 +771,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
 
         Returns:
             List of log receipts matching the filter.
+
         """
         return self._backend.get_logs(from_block, to_block, addresses, topics)
 
@@ -739,6 +784,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
 
         Returns:
             Contract bytecode as HexBytes.
+
         """
         return self._backend.get_code(address, block)
 
@@ -751,6 +797,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
 
         Returns:
             Balance in wei as integer.
+
         """
         return self._backend.get_balance(address, block)
 
@@ -769,6 +816,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
 
         Returns:
             32-byte storage value as HexBytes.
+
         """
         return self._backend.get_storage_at(address, position, block)
 
@@ -781,6 +829,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
 
         Returns:
             Transaction count as integer.
+
         """
         return self._backend.get_transaction_count(address, block)
 
@@ -789,6 +838,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
 
         Returns:
             True if connected, False otherwise.
+
         """
         return self._backend.is_connected()
 
@@ -797,6 +847,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
         self._backend.close()
 
     def __repr__(self) -> str:
+        """Return a string representation."""
         return f"ProviderAdapter(type={self._provider_type})"
 
 
@@ -812,11 +863,17 @@ class AsyncProviderBackend(Protocol):
     Public, runtime-checkable protocol for async Ethereum RPC backends.
     """
 
-    async def get_block_number(self) -> int: ...
+    async def get_block_number(self) -> int:
+        """Return the current block number."""
+        ...
 
-    async def get_chain_id(self) -> int: ...
+    async def get_chain_id(self) -> int:
+        """Return the chain ID."""
+        ...
 
-    async def get_block(self, block_identifier: int | str) -> BlockData | None: ...
+    async def get_block(self, block_identifier: int | str) -> BlockData | None:
+        """Return block data for the given identifier."""
+        ...
 
     async def get_logs(
         self,
@@ -824,28 +881,47 @@ class AsyncProviderBackend(Protocol):
         to_block: int,
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
-    ) -> list[LogReceipt]: ...
+    ) -> list[LogReceipt]:
+        """Return logs matching the filter."""
+        ...
 
-    async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes: ...
+    async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        """Perform an eth_call and return the result."""
+        ...
 
-    async def get_code(self, address: str, block: int | None = None) -> HexBytes: ...
+    async def get_code(self, address: str, block: int | None = None) -> HexBytes:
+        """Return the code at the given address."""
+        ...
 
-    async def get_balance(self, address: str, block: int | None = None) -> int: ...
+    async def get_balance(self, address: str, block: int | None = None) -> int:
+        """Return the ETH balance at the given address."""
+        ...
 
     async def get_storage_at(
         self, address: str, position: int, block: int | None = None
-    ) -> HexBytes: ...
+    ) -> HexBytes:
+        """Return the storage value at the given position."""
+        ...
 
-    async def get_transaction_count(self, address: str, block: int | None = None) -> int: ...
+    async def get_transaction_count(self, address: str, block: int | None = None) -> int:
+        """Return the transaction count for the given address."""
+        ...
 
-    def is_connected(self) -> bool: ...
+    def is_connected(self) -> bool:
+        """Check whether connected."""
+        ...
 
-    def close(self) -> None: ...
+    def close(self) -> None:
+        """Perform close."""
+        ...
 
     # --- Subscription methods (optional — override in backend) ---
 
     async def subscribe_blocks(self) -> Subscription:
-        """Subscribe to new block headers.
+        """Check if connected."""
+        """Perform close."""
+        """
+        Subscribe to new block headers.
 
         Raises SubscriptionNotSupported if transport doesn't support it.
         """
@@ -1040,7 +1116,6 @@ class _AsyncAlloyAdapter:
         topics: list[list[str]] | None = None,
     ) -> Subscription:
         """Subscribe to filtered log events via Alloy WS/IPC connection."""
-
         raw_sub = self._alloy.subscribe_logs(addresses=addresses or [], topics=topics or [])
         return Subscription(_inner=raw_sub)
 
@@ -1051,8 +1126,7 @@ class _AsyncAlloyAdapter:
 
 
 class AsyncProviderAdapter:
-    """
-    Async adapter that wraps either AsyncWeb3 or AsyncAlloyProvider.
+    """Async adapter that wraps either AsyncWeb3 or AsyncAlloyProvider.
 
     Provides a uniform async interface for Ethereum RPC operations,
     allowing existing code to work with either backend.
@@ -1071,6 +1145,7 @@ class AsyncProviderAdapter:
             AsyncWeb3[Any] | AlloyProvider | AsyncAlloyProvider | OfflineProvider | None
         ) = None,
     ) -> None:
+        """Initialize the instance."""
         self._backend = backend
         self._provider_type = provider_type
         self._raw_provider = raw_provider
@@ -1144,6 +1219,7 @@ class AsyncProviderAdapter:
 
         Returns:
             The chain ID as integer.
+
         """
         return await self._backend.get_chain_id()
 
@@ -1152,6 +1228,7 @@ class AsyncProviderAdapter:
 
         Returns:
             The current block number as integer.
+
         """
         return await self._backend.get_block_number()
 
@@ -1163,6 +1240,7 @@ class AsyncProviderAdapter:
 
         Returns:
             Block data dict or None if block not found.
+
         """
         return await self._backend.get_block(block_identifier)
 
@@ -1183,6 +1261,7 @@ class AsyncProviderAdapter:
 
         Returns:
             List of log receipts matching the filter.
+
         """
         return await self._backend.get_logs(from_block, to_block, addresses, topics)
 
@@ -1196,6 +1275,7 @@ class AsyncProviderAdapter:
 
         Returns:
             Call result as HexBytes.
+
         """
         return await self._backend.call(to, data, block)
 
@@ -1208,6 +1288,7 @@ class AsyncProviderAdapter:
 
         Returns:
             Contract bytecode as HexBytes.
+
         """
         return await self._backend.get_code(address, block)
 
@@ -1220,6 +1301,7 @@ class AsyncProviderAdapter:
 
         Returns:
             Balance in wei as integer.
+
         """
         return await self._backend.get_balance(address, block)
 
@@ -1238,6 +1320,7 @@ class AsyncProviderAdapter:
 
         Returns:
             32-byte storage value as HexBytes.
+
         """
         return await self._backend.get_storage_at(address, position, block)
 
@@ -1250,6 +1333,7 @@ class AsyncProviderAdapter:
 
         Returns:
             Transaction count as integer.
+
         """
         return await self._backend.get_transaction_count(address, block)
 
@@ -1258,6 +1342,7 @@ class AsyncProviderAdapter:
 
         Returns:
             True if connected, False otherwise.
+
         """
         return self._backend.is_connected()
 
@@ -1266,6 +1351,7 @@ class AsyncProviderAdapter:
         self._backend.close()
 
     def __repr__(self) -> str:
+        """Return a string representation."""
         return f"AsyncProviderAdapter(type={self._provider_type})"
 
     # -------------------------------------------------------------------------
@@ -1332,6 +1418,7 @@ class AsyncProviderAdapter:
 
         Requires a WS or IPC transport. Raises SubscriptionNotSupported
         if the underlying provider doesn't support eth_subscribe.
+
         """
         return await self._backend.subscribe_logs(addresses=addresses, topics=topics)
 

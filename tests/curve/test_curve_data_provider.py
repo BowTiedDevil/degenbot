@@ -371,7 +371,7 @@ class TestLendingRatesCToken:
     """Test cToken lending rate dispatch."""
 
     def test_ctoken_rate_with_supply_accrual(self) -> None:
-        """cToken rates use exchangeRateStored + supplyRatePerBlock accrual."""
+        """CToken rates use exchangeRateStored + supplyRatePerBlock accrual."""
         token0_addr = "0x0000000000000000000000000000000000000010"
         token1_addr = "0x0000000000000000000000000000000000000011"
         exchange_rate = 2 * 10**18  # 2.0
@@ -402,7 +402,7 @@ class TestLendingRatesYToken:
     """Test yToken lending rate dispatch."""
 
     def test_ytoken_rate_gets_price_per_full_share(self) -> None:
-        """yToken rates use getPricePerFullShare()."""
+        """YToken rates use getPricePerFullShare()."""
         token0_addr = "0x0000000000000000000000000000000000000010"
         token1_addr = "0x0000000000000000000000000000000000000011"
         pps = 105 * 10**16  # 1.05

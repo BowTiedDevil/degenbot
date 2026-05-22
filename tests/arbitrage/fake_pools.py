@@ -110,6 +110,7 @@ def build_v3_pool_with_ticks(
     -------
     UniswapV3Pool
         Production V3 pool with tick data populated
+
     """
     if current_tick % tick_spacing != 0:
         msg = f"current_tick ({current_tick}) must be multiple of tick_spacing ({tick_spacing})"
@@ -214,6 +215,7 @@ def create_two_range_v3_pool(
     -------
     UniswapV3Pool
         Production V3 pool with two adjacent liquidity ranges
+
     """
     range_width = 3 * tick_spacing
     tick_lower = -range_width

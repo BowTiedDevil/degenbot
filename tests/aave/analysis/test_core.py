@@ -1,4 +1,5 @@
-"""Tests for the analysis core module (Plan 009).
+"""
+Tests for the analysis core module (Plan 009).
 
 Core tests use Fake data — no database, no RPC, no ORM objects.
 All inputs are plain dataclasses or primitives.

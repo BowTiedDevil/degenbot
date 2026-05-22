@@ -56,6 +56,7 @@ class LogListener:
     """
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         # Ordered list for dispatch, set for O(1) duplicate checks
         self._handlers: dict[tuple[str, str], list[Callable[[dict], None]]] = {}
         self._handler_sets: dict[tuple[str, str], set[Callable[[dict], None]]] = {}
@@ -77,6 +78,7 @@ class LogListener:
 
         Raises:
             TypeError: If the handler is not callable.
+
         """
         if not callable(handler):
             msg = f"Handler must be callable, got {type(handler).__name__}"
@@ -152,4 +154,5 @@ class LogListener:
         return len(self._handlers)
 
     def __repr__(self) -> str:
+        """Return a string representation."""
         return f"LogListener(keys={self.key_count()}, handlers={self.handler_count()})"

@@ -1,4 +1,5 @@
-"""Tests for snapshot explicit-dependency injection.
+"""
+Tests for snapshot explicit-dependency injection.
 
 Verifies that DatabaseSnapshot accepts explicit dependencies
 instead of importing module-level singletons.
@@ -39,7 +40,6 @@ class TestV3DatabaseSnapshotExplicitDeps:
 
     def test_get_newest_block_uses_self_session(self, tmp_path: pathlib.Path) -> None:
         """get_newest_block uses self.session() instead of module-level db_session."""
-
         engine = create_engine("sqlite:///:memory:")
 
         Base.metadata.create_all(engine)

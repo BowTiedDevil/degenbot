@@ -100,8 +100,8 @@ class V2Payload:
 
 
 def _build_convex_problem(num_pools: int) -> Problem:
-    """
-    Construct a DPP-compliant cvxpy problem with parameterized values for pool reserves. This
+    """Construct a DPP-compliant cvxpy problem with parameterized values for pool reserves. This.
+
     allows the problem to be defined once at the class level, and rapidly re-solved at the instance
     level by updating the parameters for the specific pools and tokens being evaluated.
 
@@ -109,7 +109,6 @@ def _build_convex_problem(num_pools: int) -> Problem:
 
     ref: https://www.cvxpy.org/tutorial/dpp/index.html
     """
-
     # Indices are arbitrary but must be consistent so token position matches across reserve arrays
     pool_hi_index, pool_lo_index = 0, 1
 
@@ -247,8 +246,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
         state_overrides: Mapping[Pool, PoolState] | None = None,
         max_input: int | None = None,
     ) -> int | None:
-        """
-        Try the ArbSolver fast-path for an arbitrage cycle of arbitrary length.
+        """Try the ArbSolver fast-path for an arbitrage cycle of arbitrary length.
 
         Builds Hops from pool objects (V2, V3, V4, Aerodrome) using
         `pool_state_to_hop`, runs the ArbSolver (Mobius→Newton→Brent),
@@ -340,10 +338,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
     ) -> ArbitrageCalculationResult[
         UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
     ]:
-        """
-        Calculate the optimal arbitrage profit using the maximum input as an upper bound.
-        """
-
+        """Calculate the optimal arbitrage profit using the maximum input as an upper bound."""
         # TODO: check strategy comments for all arbs
 
         def _arb_profit_high_roe_v4_low_roe_v3(
@@ -355,11 +350,10 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             v4_pool_state_override: UniswapV4PoolState | None = None,
             v3_pool_state_override: UniswapV3PoolState | None = None,
         ) -> float:
-            """
-            Transfer forward token from V3 -> V4, profit is difference of WETH_out from V4 and
-            WETH_in to V3
-            """
+            """Transfer forward token from V3 -> V4, profit is difference of WETH_out from V4 and.
 
+            WETH_in to V3.
+            """
             forward_token_quantity = int(forward_token_amount)  # round the input down
 
             calc_start = time.perf_counter()
@@ -404,11 +398,10 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             v4_pool_state_override: UniswapV4PoolState | None = None,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
         ) -> float:
-            """
-            Calculate the expected profit for a V4 ROE > V2 ROE arbitrage that buys forward token X
+            """Calculate the expected profit for a V4 ROE > V2 ROE arbitrage that buys forward token X.
+
             from the V2 pool and sells it to the V4 pool.
             """
-
             forward_token_quantity = int(forward_token_amount)  # round the input down
 
             calc_start = time.perf_counter()
@@ -467,11 +460,10 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             v4_pool_state_override: UniswapV4PoolState | None = None,
             v3_pool_state_override: UniswapV3PoolState | None = None,
         ) -> float:
-            """
-            Calculate the expected profit for a V3 ROE > V4 ROE arbitrage that buys forward token X
+            """Calculate the expected profit for a V3 ROE > V4 ROE arbitrage that buys forward token X.
+
             from the V4 pool and sells it to the V3 pool.
             """
-
             forward_token_quantity = int(forward_token_amount)  # round the input down
 
             calc_start = time.perf_counter()
@@ -516,11 +508,10 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             v3_pool_state_override: UniswapV3PoolState | None = None,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
         ) -> float:
-            """
-            Calculate the expected profit for a V3 ROE > V2 ROE arbitrage that buys forward token X
+            """Calculate the expected profit for a V3 ROE > V2 ROE arbitrage that buys forward token X.
+
             from the V2 pool and sells it to the V3 pool.
             """
-
             forward_token_quantity = int(forward_token_amount)  # round the input down
 
             calc_start = time.perf_counter()
@@ -578,11 +569,10 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             v4_pool_state_override: UniswapV4PoolState | None = None,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
         ) -> float:
-            """
-            Calculate the expected profit for a V2 ROE > V4 ROE arbitrage that buys forward token X
+            """Calculate the expected profit for a V2 ROE > V4 ROE arbitrage that buys forward token X.
+
             from the V4 pool and sells it to the V2 pool.
             """
-
             forward_token_quantity = int(forward_token_amount)  # round the input down
 
             calc_out_start = time.perf_counter()
@@ -640,11 +630,10 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             v3_pool_state_override: UniswapV3PoolState | None = None,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
         ) -> float:
-            """
-            Calculate the expected profit for a V2 ROE > V3 ROE arbitrage that buys forward token X
+            """Calculate the expected profit for a V2 ROE > V3 ROE arbitrage that buys forward token X.
+
             from the V3 pool and sells it to the V2 pool.
             """
-
             forward_token_quantity = int(forward_token_amount)  # round the input down
 
             calc_out_start = time.perf_counter()
@@ -702,11 +691,10 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             pool_hi_state_override: UniswapV4PoolState | None = None,
             pool_lo_state_override: UniswapV4PoolState | None = None,
         ) -> float:
-            """
-            Calculate the expected profit for a V4/V4 arbitrage that buys forward token X from the
+            """Calculate the expected profit for a V4/V4 arbitrage that buys forward token X from the.
+
             low ROE pool and sells it to the high ROE pool.
             """
-
             forward_token_quantity = int(forward_token_amount)  # round the input down
 
             calc_start = time.perf_counter()
@@ -767,11 +755,10 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             pool_hi_state_override: UniswapV3PoolState | None = None,
             pool_lo_state_override: UniswapV3PoolState | None = None,
         ) -> float:
-            """
-            Calculate the expected profit for a V3/V3 arbitrage that buys forward token X from the
+            """Calculate the expected profit for a V3/V3 arbitrage that buys forward token X from the.
+
             low ROE pool and sells it to the high ROE pool.
             """
-
             forward_token_quantity = int(forward_token_amount)  # round the input down
 
             calc_start = time.perf_counter()

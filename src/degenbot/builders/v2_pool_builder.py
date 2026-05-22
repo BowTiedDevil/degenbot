@@ -32,6 +32,7 @@ class V2PoolBuilder(V2BuilderBase):
     """
 
     def __init__(self, ctx: BuilderContext) -> None:
+        """Initialize the instance."""
         super().__init__(ctx)
 
     def build(
@@ -43,7 +44,6 @@ class V2PoolBuilder(V2BuilderBase):
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free V2-style pool."""
-
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"

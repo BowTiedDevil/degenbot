@@ -52,10 +52,14 @@ if TYPE_CHECKING:
 class AddressFunction(Protocol):
     """Protocol for address checksumming functions."""
 
-    def __call__(self, address: str | bytes) -> ChecksumAddress: ...
+    def __call__(self, address: str | bytes) -> ChecksumAddress:
+        """Call  ."""
+        ...
 
 
 class AbstractAddressRegistry[T](AbstractRegistry, ABC):
+    """call  ."""
+
     """
     Abstract base for address-based registries.
 
@@ -81,8 +85,7 @@ class AbstractAddressRegistry[T](AbstractRegistry, ABC):
         on_duplicate: str = "error",
         name: str = "AbstractAddressRegistry",
     ) -> None:
-        """
-        Initialize the registry.
+        """Initialize the registry.
 
         Args:
             checksum_fn: Function to convert addresses to checksummed form.
@@ -91,6 +94,7 @@ class AbstractAddressRegistry[T](AbstractRegistry, ABC):
                 - "ignore": Silently skip the duplicate (no-op)
                 - "replace": Overwrite the existing item with the new one
             name: Registry name for debugging/error messages.
+
         """
         if on_duplicate not in {"error", "ignore", "replace"}:
             msg = (
@@ -113,15 +117,14 @@ class AbstractAddressRegistry[T](AbstractRegistry, ABC):
 
     @abstractmethod
     def _storage(self) -> dict[Any, T]:
-        """The backing storage for this registry."""
+        """Backing storage for this registry."""
 
     def _get(
         self,
         chain_id: int,
         **address_args: str | bytes,
     ) -> T | None:
-        """
-        Retrieve an item by chain and addresses.
+        """Retrieve an item by chain and addresses.
 
         Args:
             chain_id: Chain ID
@@ -130,6 +133,7 @@ class AbstractAddressRegistry[T](AbstractRegistry, ABC):
 
         Returns:
             The registered item or None if not found.
+
         """
         key = self._build_key(chain_id, **address_args)
         return self._storage().get(key)
@@ -140,8 +144,7 @@ class AbstractAddressRegistry[T](AbstractRegistry, ABC):
         chain_id: int,
         **address_args: str | bytes,
     ) -> None:
-        """
-        Register an item.
+        """Register an item.
 
         Args:
             item: The item to register
@@ -150,6 +153,7 @@ class AbstractAddressRegistry[T](AbstractRegistry, ABC):
 
         Raises:
             DegenbotValueError: If item already exists and on_duplicate="error"
+
         """
         key = self._build_key(chain_id, **address_args)
 
@@ -167,12 +171,12 @@ class AbstractAddressRegistry[T](AbstractRegistry, ABC):
         chain_id: int,
         **address_args: str | bytes,
     ) -> None:
-        """
-        Remove an item from the registry.
+        """Remove an item from the registry.
 
         Args:
             chain_id: Chain ID
             **address_args: Address fields for key construction
+
         """
         key = self._build_key(chain_id, **address_args)
         self._storage().pop(key, None)
@@ -191,8 +195,7 @@ class AbstractAddressRegistry[T](AbstractRegistry, ABC):
 
 
 class AddressRegistry[T](AbstractAddressRegistry[T]):
-    """
-    Simple address-based registry with a single primary address field.
+    """Simple address-based registry with a single primary address field.
 
     Key structure: (chain_id, checksummed_address)
 
@@ -212,6 +215,7 @@ class AddressRegistry[T](AbstractAddressRegistry[T]):
 
             def add(self, token: Erc20Token, chain_id: int) -> None:
                 self._add(item=token, chain_id=chain_id, address=token.address)
+
     """
 
     def __init__(
@@ -221,13 +225,13 @@ class AddressRegistry[T](AbstractAddressRegistry[T]):
         checksum_fn: AddressFunction = get_checksum_address,
         on_duplicate: str = "error",
     ) -> None:
-        """
-        Initialize the registry.
+        """Initialize the registry.
 
         Args:
             name: Registry name for debugging/error messages
             checksum_fn: Function to convert addresses to checksummed form
             on_duplicate: Behavior on duplicate add operation
+
         """
         super().__init__(checksum_fn=checksum_fn, on_duplicate=on_duplicate, name=name)
         self._items: dict[tuple[int, ChecksumAddress], T] = {}
@@ -246,13 +250,12 @@ class AddressRegistry[T](AbstractAddressRegistry[T]):
         return (chain_id, self._checksum_fn(first_address))
 
     def _storage(self) -> dict[tuple[int, ChecksumAddress], T]:
-        """The backing storage for this registry."""
+        """Backing storage for this registry."""
         return self._items
 
 
 class MultiKeyAddressRegistry[T](AbstractAddressRegistry[T]):
-    """
-    Address-based registry with multiple address fields in the key.
+    """Address-based registry with multiple address fields in the key.
 
     Key structure: (chain_id, checksummed_address_1, checksummed_address_2, ...)
 
@@ -287,8 +290,7 @@ class MultiKeyAddressRegistry[T](AbstractAddressRegistry[T]):
         checksum_fn: AddressFunction = get_checksum_address,
         on_duplicate: str = "error",
     ) -> None:
-        """
-        Initialize the registry.
+        """Initialize the registry.
 
         Args:
             address_fields: List of address field names in key order
@@ -296,6 +298,7 @@ class MultiKeyAddressRegistry[T](AbstractAddressRegistry[T]):
             name: Registry name for debugging
             checksum_fn: Function to convert addresses to checksummed form
             on_duplicate: Behavior on duplicate add operation
+
         """
         super().__init__(checksum_fn=checksum_fn, on_duplicate=on_duplicate, name=name)
         self._address_fields = address_fields
@@ -323,5 +326,5 @@ class MultiKeyAddressRegistry[T](AbstractAddressRegistry[T]):
         return tuple(key_parts)
 
     def _storage(self) -> dict[tuple[Any, ...], T]:
-        """The backing storage for this registry."""
+        """Backing storage for this registry."""
         return self._items

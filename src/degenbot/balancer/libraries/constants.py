@@ -1,3 +1,4 @@
+"""Balancer V2 math constants (ONE, MIN_TOKEN_BALANCES, PowVersion)."""
 import enum
 
 ONE = 1 * 10**18

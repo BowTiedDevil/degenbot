@@ -38,7 +38,9 @@ class PoolBuilder(Protocol):
         chain_id: int | None = None,
         io: PoolIO,
         request: BuildRequest,
-    ) -> AbstractLiquidityPool: ...
+    ) -> AbstractLiquidityPool:
+        """Build a pool from on-chain data."""
+        ...
 
     @staticmethod
     def update(
@@ -46,7 +48,9 @@ class PoolBuilder(Protocol):
         *,
         io: PoolIO | None = None,
         block_number: int | None = None,
-    ) -> bool: ...
+    ) -> bool:
+        """Update the pool state from on-chain data."""
+        ...
 
 
 class AsyncPoolBuilder(Protocol):
@@ -63,7 +67,9 @@ class AsyncPoolBuilder(Protocol):
         chain_id: int | None = None,
         io: AsyncPoolIO,
         request: BuildRequest,
-    ) -> AbstractLiquidityPool: ...
+    ) -> AbstractLiquidityPool:
+        """Build a pool from on-chain data."""
+        ...
 
     @staticmethod
     async def update(
@@ -71,4 +77,6 @@ class AsyncPoolBuilder(Protocol):
         *,
         io: AsyncPoolIO | None = None,
         block_number: int | None = None,
-    ) -> bool: ...
+    ) -> bool:
+        """Update the pool state from on-chain data."""
+        ...

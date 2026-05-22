@@ -66,6 +66,7 @@ class GhoMath:
         Contract Reference:
             GhoDiscountRateStrategy.calculateDiscountRate
             See: contract_reference/aave/GhoDiscountRateStrategy/contract.sol:40-54
+
         """
         if (
             discount_token_balance < GhoMath.MIN_DISCOUNT_TOKEN_BALANCE
@@ -124,6 +125,7 @@ class GhoMath:
             ...     discount_token_balance=100 * 10**18,
             ... )
             5000 * 10**18  # All debt is discounted
+
         """
         if (
             discount_token_balance < GhoMath.MIN_DISCOUNT_TOKEN_BALANCE
@@ -167,6 +169,7 @@ class GhoMath:
             ...     discount_token_balance=100 * 10**18,
             ... )
             7000 * 10**18  # 30% discount on all 10000 GHO
+
         """
         discounted_balance = GhoMath.calculate_discounted_balance(
             debt_balance,

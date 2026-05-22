@@ -1,3 +1,4 @@
+"""Curve pool and registry trackers for event-driven updates."""
 from __future__ import annotations
 
 import contextlib
@@ -20,8 +21,7 @@ class CurveStableswapPoolTracker(
     AbstractPoolTracker["CurveStableswapPool"],
     pool_factory=None,
 ):
-    """
-    Manages Curve StableSwap pool instances.
+    """Manages Curve StableSwap pool instances.
 
     Tracks Curve pools by address, delegates construction to Bot.build_pool(),
     and supports registry-based discovery.
@@ -33,6 +33,7 @@ class CurveStableswapPoolTracker(
         bot: Bot,
         chain_id: ChainId | None = None,
     ) -> None:
+        """Initialize the instance."""
         self._bot = bot
         self._chain_id = chain_id or bot.connections.default_chain_id
         self._tracked_pools: dict[ChecksumAddress, CurveStableswapPool] = {}
@@ -45,14 +46,12 @@ class CurveStableswapPoolTracker(
         *,
         silent: bool = False,
     ) -> CurveStableswapPool:
-        """
-        Get a Curve pool from its address.
+        """Get a Curve pool from its address.
 
         If the pool is already tracked, that instance is returned.
         If the pool is in the bot's pool registry, it is tracked and returned.
         Otherwise, a new pool is built via Bot.build_pool().
         """
-
         pool_address = get_checksum_address(pool_address)
 
         with contextlib.suppress(KeyError):
@@ -105,8 +104,12 @@ class CurveStableswapPoolTracker(
         ]
 
     def __repr__(self) -> str:  # pragma: no cover
+        """Return the canonical string representation."""
         return (
             f"{self.__class__.__name__}("
             f"chain_id={self._chain_id}, "
             f"pools={len(self._tracked_pools)})"
         )
+
+        """Return a string representation."""
+        return None

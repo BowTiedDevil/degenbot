@@ -123,7 +123,8 @@ class TestConstruction:
         weth: FakeToken,
         wbtc: FakeToken,
     ):
-        """UniswapLpCycle accepts either token as input.
+        """
+        UniswapLpCycle accepts either token as input.
 
         Mirrors test_create_with_either_token_input.
         """
@@ -151,7 +152,8 @@ class TestConstruction:
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth: FakeToken,
     ):
-        """Two-pool cycle accepts pools in either order.
+        """
+        Two-pool cycle accepts pools in either order.
 
         Mirrors test_create_arb_with_either_token_input_or_pools_in_any_order.
         """

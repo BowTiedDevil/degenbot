@@ -42,7 +42,6 @@ class TestUnknownHandler:
         When an operation cannot be classified, enrichment should fail
         rather than produce incorrect results.
         """
-
         scaled_event = _create_mock_scaled_event(
             event_type=ScaledTokenEventType.COLLATERAL_MINT,
             amount=1000,

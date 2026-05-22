@@ -1,4 +1,5 @@
-"""Tests for builder update() method — structural conformance and behavioral integration.
+"""
+Tests for builder update() method — structural conformance and behavioral integration.
 
 Plan 074: Verifies that all builder update() methods are @staticmethod
 and dispatch correctly through both class and instance call patterns.
@@ -17,29 +18,23 @@ import pytest
 from hexbytes import HexBytes
 from web3 import Web3
 
-from degenbot.builders.pool_io import AsyncPoolIO, SyncPoolIO
-from degenbot.builders.request import BuildPoolRequest
-from degenbot.builders.v2_builder_base import V2BuilderBase
-from degenbot.builders.v2_pool_builder import V2PoolBuilder
 from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
-from degenbot.builders.camelot_builder import CamelotBuilder
-from degenbot.builders.v3_pool_builder import V3PoolBuilder
-from degenbot.builders.v4_pool_builder import V4PoolBuilder
-from degenbot.builders.curve_pool_builder import CurvePoolBuilder
-from degenbot.builders.balancer_builder import BalancerBuilder
+from degenbot.builders.async_context import AsyncBuilderContext
 from degenbot.builders.async_v2_pool_builder import AsyncV2PoolBuilder
 from degenbot.builders.async_v3_pool_builder import AsyncV3PoolBuilder
 from degenbot.builders.async_v4_pool_builder import AsyncV4PoolBuilder
+from degenbot.builders.balancer_builder import BalancerBuilder
+from degenbot.builders.camelot_builder import CamelotBuilder
 from degenbot.builders.context import BuilderContext
-from degenbot.builders.async_context import AsyncBuilderContext
+from degenbot.builders.curve_pool_builder import CurvePoolBuilder
+from degenbot.builders.pool_io import AsyncPoolIO, SyncPoolIO
+from degenbot.builders.v2_pool_builder import V2PoolBuilder
+from degenbot.builders.v3_pool_builder import V3PoolBuilder
+from degenbot.builders.v4_pool_builder import V4PoolBuilder
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.registry import PoolRegistry, TokenRegistry
-
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-
 
 # --- Helpers ---
 
@@ -120,7 +115,8 @@ class TestUpdateIsStaticMethod:
 
 
 class TestUpdateClassVsInstanceCall:
-    """update() is callable both as a class method and on an instance,
+    """
+    update() is callable both as a class method and on an instance,
     matching the Bot.update() dispatch pattern.
     """
 

@@ -1,4 +1,4 @@
-"""Aave V3: fix GHO table
+"""Aave V3: fix GHO table.
 
 Revision ID: 5d2dfe7292b3
 Revises: a512dbce9854
@@ -20,7 +20,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     with op.batch_alter_table("aave_gho_tokens", schema=None) as batch_op:
         batch_op.add_column(sa.Column("v_token_id", sa.Integer(), nullable=True))
         batch_op.create_index(

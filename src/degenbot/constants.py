@@ -1,3 +1,4 @@
+"""EVM and Uniswap constants (MAX_UINT256, fee tiers, etc.)."""
 import typing
 
 from eth_typing import ChainId, ChecksumAddress

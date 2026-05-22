@@ -1,4 +1,4 @@
-"""Uniswap V4: Backfill state view addresses
+"""Uniswap V4: Backfill state view addresses.
 
 Revision ID: 06a3739885a0
 Revises: 6f376d34618b
@@ -25,7 +25,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     connection = op.get_bind()
     session = Session(bind=connection)
 

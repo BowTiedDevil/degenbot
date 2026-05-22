@@ -1,3 +1,5 @@
+"""PancakeSwap V2/V3 pool type registration."""
+
 from degenbot.registry.pool_type import pool_type_registry
 
 from . import (

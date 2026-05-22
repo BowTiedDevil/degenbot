@@ -120,7 +120,6 @@ def _create_mock_operation(operation_type: OperationType) -> "Operation":
 
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for MINT_TO_TREASURY."""
-
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1

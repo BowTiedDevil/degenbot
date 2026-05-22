@@ -33,7 +33,8 @@ class _MockProviderError(Exception):
 
 
 class FakeProvider:
-    """A fake provider that returns pre-programmed ABI-encoded responses.
+    """
+    A fake provider that returns pre-programmed ABI-encoded responses.
 
     Also supports get_block_number() for state_block resolution.
     """

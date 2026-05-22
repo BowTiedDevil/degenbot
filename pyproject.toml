@@ -78,8 +78,7 @@ docstring-code-format = true
 
 [tool.ruff.lint]
 select = [
-#    "DOC",      # pydoclint
-    "D",        # pydocstyle
+
     "ERA",      # eradicate
     "ANN",      # flake8-annotations
     "ASYNC",    # flake8-async
@@ -116,6 +115,8 @@ select = [
     "N",        # pep8-naming
     "PERF",     # perflint
     "E", "W",   # pycodestyle
+    "DOC",      # pydoclint
+    "D",        # pydocstyle    
     "F",        # pyflakes
     "PL",       # pylint
     "UP",       # pyupgrade
@@ -124,9 +125,9 @@ select = [
     "TRY",      # tryceratops
 ]
 ignore = [
-    "D203",
-    "D212",
     "COM812",   # trailing commas are handled by the formatter
+    "D203",     # incorrect-blank-line-before-class
+    "D212",     # multi-line-summary-first-line
     "N818",     # error-suffix-on-exception-name
     "PLR0904",  # too-many-public-methods
     "PLR0911",  # too-many-return-statements

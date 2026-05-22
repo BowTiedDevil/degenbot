@@ -22,6 +22,7 @@ class PoolGenerationConfig:
         Decimals for token1 (default: 18).
     seed : int | None
         Random seed for deterministic generation.
+
     """
 
     fee: Fraction
@@ -47,6 +48,7 @@ class V3PoolGenerationConfig(PoolGenerationConfig):
     tick_range : tuple[int, int] | None
         (tick_lower, tick_upper) range for liquidity distribution.
         If None, liquidity is concentrated at current tick.
+
     """
 
     tick_spacing: int = 60
@@ -79,6 +81,7 @@ class V4PoolGenerationConfig(V3PoolGenerationConfig):
     ----------
     hooks_address : str
         The hooks contract address (default: zero address for no hooks).
+
     """
 
     hooks_address: str = "0x0000000000000000000000000000000000000000"
@@ -102,6 +105,7 @@ class PriceDiscrepancyConfig:
         Which direction the price ratio applies.
     min_profit_wei : int
         Minimum profit threshold to ensure (default: 0).
+
     """
 
     price_ratio: float
@@ -139,6 +143,7 @@ class ArbitrageFixtureConfig:
         - deep: ~10000+ ETH equivalent
     seed : int
         Random seed for deterministic generation.
+
     """
 
     cycle_type: Literal["v2_v2", "v2_v3", "v3_v3", "v2_v4", "v3_v4", "v4_v4"]

@@ -23,7 +23,6 @@ def _encode_uint256(val: int) -> bytes:
 class TestDetectARamping:
     def testNoRampingParameters(self):
         """Pool that doesn't support A ramping functions returns has_ramping=False."""
-
         io = make_fake_pool_io({})  # All calls revert
 
         result = detect_a_ramping(io, POOL_ADDR, block_identifier=18_000_000)
@@ -35,7 +34,6 @@ class TestDetectARamping:
 
     def testActiveRamping(self):
         """Pool with all four A ramping parameters returns has_ramping=True."""
-
         io = make_fake_pool_io({
             INITIAL_A: _encode_uint256(1000),
             INITIAL_A_TIME: _encode_uint256(1700000000),
@@ -52,7 +50,6 @@ class TestDetectARamping:
 
     def testPartialRampingReturnsNoRamping(self):
         """If any of the four ramping calls reverts, has_ramping is False."""
-
         # Only provide 3 of 4 ramping selectors
         io = make_fake_pool_io({
             INITIAL_A: _encode_uint256(1000),

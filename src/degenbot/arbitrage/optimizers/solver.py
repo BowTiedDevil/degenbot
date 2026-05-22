@@ -1,5 +1,4 @@
-"""
-Unified solver interface for arbitrage optimization.
+"""Unified solver interface for arbitrage optimization.
 
 All optimizers accept the same ``SolveInput`` (a sequence of ``HopType`` objects)
 and return the same ``SolveResult``.  The ``ArbSolver`` dispatcher automatically
@@ -47,8 +46,7 @@ __all__ = [
 
 
 class ArbSolver(Solver):
-    """
-    Top-level solver that dispatches to the best method.
+    """Top-level solver that dispatches to the best method.
 
     Each sub-solver tries Rust first and falls back to Python internally.
     ArbSolver is a pure dispatcher.
@@ -88,6 +86,7 @@ class ArbSolver(Solver):
     }
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         self._pool_cache = _RustPoolCache()
         self._next_pool_id: int = 1
         self._pool_id_map: dict[int, int] = {}
@@ -186,6 +185,7 @@ class ArbSolver(Solver):
         Returns
         -------
         SolveResult
+
         """
         start_ns = time.perf_counter_ns()
         cache = self.get_pool_cache()
@@ -247,8 +247,7 @@ class ArbSolver(Solver):
 
     @override
     def solve(self, solve_input: SolveInput) -> SolveResult:
-        """
-        Solve with automatic method selection.
+        """Solve with automatic method selection.
 
         Dispatches to sub-solvers in order. Each sub-solver tries
         Rust first, then falls back to Python internally.

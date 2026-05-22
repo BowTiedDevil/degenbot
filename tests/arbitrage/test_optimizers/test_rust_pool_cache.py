@@ -40,7 +40,8 @@ from .conftest import (
 
 
 def fee_to_gamma(fee: Fraction) -> tuple[int, int]:
-    """Convert a Fraction fee to (gamma_numer, fee_denom).
+    """
+    Convert a Fraction fee to (gamma_numer, fee_denom).
 
     gamma = 1 - fee, so gamma_numer = fee.denominator - fee.numerator.
     """

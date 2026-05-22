@@ -20,9 +20,7 @@ HEALTH_FACTOR_LIQUIDATABLE_THRESHOLD = 1.0
 
 @dataclass(frozen=True)
 class CollateralPositionData:
-    """
-    Collateral position with calculated values for risk analysis.
-    """
+    """Collateral position with calculated values for risk analysis."""
 
     asset_address: ChecksumAddress
     asset_symbol: str | None
@@ -57,9 +55,7 @@ class CollateralPositionData:
 
 @dataclass(frozen=True)
 class DebtPositionData:
-    """
-    Debt position with calculated values for risk analysis.
-    """
+    """Debt position with calculated values for risk analysis."""
 
     asset_address: ChecksumAddress
     asset_symbol: str | None
@@ -84,8 +80,7 @@ class DebtPositionData:
 
 @dataclass(frozen=True)
 class UserRecord:
-    """
-    Flat record for a user, extracted from ORM at the query boundary.
+    """Flat record for a user, extracted from ORM at the query boundary.
 
     Contains all fields needed by core analysis — no lazy-loaded
     relationships, no ORM references.
@@ -102,8 +97,7 @@ class UserRecord:
 
 @dataclass(frozen=True)
 class CollateralPositionRecord:
-    """
-    Flat record for a collateral position, extracted from ORM.
+    """Flat record for a collateral position, extracted from ORM.
 
     All fields that core needs are flattened — no relationship navigation.
     """
@@ -122,8 +116,7 @@ class CollateralPositionRecord:
 
 @dataclass(frozen=True)
 class DebtPositionRecord:
-    """
-    Flat record for a debt position, extracted from ORM.
+    """Flat record for a debt position, extracted from ORM.
 
     All fields that core needs are flattened — no relationship navigation.
     """
@@ -138,9 +131,7 @@ class DebtPositionRecord:
 
 @dataclass(frozen=True)
 class UserPositionSummary:
-    """
-    Summary of a user's Aave V3 position for liquidation risk assessment.
-    """
+    """Summary of a user's Aave V3 position for liquidation risk assessment."""
 
     user_address: ChecksumAddress
     market_id: int
@@ -182,9 +173,7 @@ class UserPositionSummary:
 
 @dataclass
 class PositionAnalysisResult:
-    """
-    Result of analyzing positions for liquidation risk.
-    """
+    """Result of analyzing positions for liquidation risk."""
 
     safe_users: list[UserPositionSummary] = field(default_factory=list)
     at_risk_users: list[UserPositionSummary] = field(default_factory=list)
@@ -192,14 +181,17 @@ class PositionAnalysisResult:
 
     @property
     def total_users(self) -> int:
+        """Return total users."""
         return len(self.safe_users) + len(self.at_risk_users) + len(self.liquidatable_users)
 
     @property
     def at_risk_count(self) -> int:
+        """Return at risk count."""
         return len(self.at_risk_users)
 
     @property
     def liquidatable_count(self) -> int:
+        """Return liquidatable count."""
         return len(self.liquidatable_users)
 
     def categorize(

@@ -1,3 +1,5 @@
+"""Aave V3 lending market models and operations."""
+
 from degenbot.aave.operations import (
     Operation,
     ScaledTokenEvent,

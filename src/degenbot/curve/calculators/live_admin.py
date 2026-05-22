@@ -68,6 +68,7 @@ class LiveAdminDynamicDyCalculator:
         inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
+        """Calculate."""
         assert inputs.effective_balances is not None
 
         if self.precision_mode is PrecisionMode.PRECISION_MULTIPLIERS:

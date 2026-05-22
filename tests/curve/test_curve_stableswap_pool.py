@@ -284,7 +284,8 @@ def test_tricrypto_pool(fork_mainnet_full: AnvilFork):
 
 
 def test_metapool_with_valid_base_cache():
-    """Regression test: virtual_price must use _base_virtual_price_value when the
+    """
+    Regression test: virtual_price must use _base_virtual_price_value when the
     base cache has not expired.
 
     At block 25144000 the RAI/3Crv metapool's base_cache_updated is only ~180s old

@@ -45,28 +45,44 @@ class ConstantProductPool(Protocol):
     """
 
     @property
-    def address(self) -> ChecksumAddress: ...
+    def address(self) -> ChecksumAddress:
+        """Pool contract address."""
+        ...
 
     @property
-    def name(self) -> str: ...
+    def name(self) -> str:
+        """Human-readable pool name."""
+        ...
 
     @property
-    def token0(self) -> Erc20Token: ...
+    def token0(self) -> Erc20Token:
+        """The lower-addressed token in the pair."""
+        ...
 
     @property
-    def token1(self) -> Erc20Token: ...
+    def token1(self) -> Erc20Token:
+        """The higher-addressed token in the pair."""
+        ...
 
     @property
-    def fee_token0(self) -> Fraction: ...
+    def fee_token0(self) -> Fraction:
+        """Fee ratio for token0 swaps."""
+        ...
 
     @property
-    def fee_token1(self) -> Fraction: ...
+    def fee_token1(self) -> Fraction:
+        """Fee ratio for token1 swaps."""
+        ...
 
     @property
-    def reserves_token0(self) -> int: ...
+    def reserves_token0(self) -> int:
+        """Raw reserve amount for token0."""
+        ...
 
     @property
-    def reserves_token1(self) -> int: ...
+    def reserves_token1(self) -> int:
+        """Raw reserve amount for token1."""
+        ...
 
 
 @runtime_checkable
@@ -77,31 +93,49 @@ class ConcentratedLiquidityPool(Protocol):
     """
 
     @property
-    def address(self) -> ChecksumAddress: ...
+    def address(self) -> ChecksumAddress:
+        """Pool contract address."""
+        ...
 
     @property
-    def name(self) -> str: ...
+    def name(self) -> str:
+        """Human-readable pool name."""
+        ...
 
     @property
-    def token0(self) -> Erc20Token: ...
+    def token0(self) -> Erc20Token:
+        """The lower-addressed token in the pair."""
+        ...
 
     @property
-    def token1(self) -> Erc20Token: ...
+    def token1(self) -> Erc20Token:
+        """The higher-addressed token in the pair."""
+        ...
 
     @property
-    def fee(self) -> int: ...
+    def fee(self) -> int:
+        """Pool fee in hundredths of a bip."""
+        ...
 
     @property
-    def liquidity(self) -> int: ...
+    def liquidity(self) -> int:
+        """Active liquidity in the current tick range."""
+        ...
 
     @property
-    def sqrt_price_x96(self) -> int: ...
+    def sqrt_price_x96(self) -> int:
+        """Current sqrt price as a Q64.96 value."""
+        ...
 
     @property
-    def tick(self) -> int: ...
+    def tick(self) -> int:
+        """Current tick."""
+        ...
 
     @property
-    def tick_spacing(self) -> int: ...
+    def tick_spacing(self) -> int:
+        """Minimum spacing between initialized ticks."""
+        ...
 
 
 @runtime_checkable
@@ -114,13 +148,14 @@ class StableswapPool(Protocol):
     """
 
     @property
-    def tokens(self) -> tuple[Erc20Token, ...]: ...
+    def tokens(self) -> tuple[Erc20Token, ...]:
+        """Tuple of all pool tokens."""
+        ...
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class SimulationResult:
-    """
-    Pool-agnostic simulation output.
+    """Pool-agnostic simulation output.
 
     Returned by PoolSimulation.simulate_swap for all pool types.
     """
@@ -133,14 +168,15 @@ class SimulationResult:
 
 @runtime_checkable
 class PoolSimulation(Protocol):
-    """
-    Required interface for all pools.
+    """Required interface for all pools.
 
     Supports exact-input swap simulation and pub/sub for state updates.
     """
 
     @property
-    def address(self) -> ChecksumAddress: ...
+    def address(self) -> ChecksumAddress:
+        """Pool contract address."""
+        ...
 
     def simulate_swap(
         self,
@@ -148,17 +184,22 @@ class PoolSimulation(Protocol):
         amount_in: int,
         token_out: ChecksumAddress,
         state_override: AbstractPoolState | None = None,
-    ) -> SimulationResult: ...
+    ) -> SimulationResult:
+        """Simulate an exact-input swap and return the result."""
+        ...
 
-    def subscribe(self, subscriber: Subscriber) -> None: ...
+    def subscribe(self, subscriber: Subscriber) -> None:
+        """Subscribe a callback to pool state updates."""
+        ...
 
-    def unsubscribe(self, subscriber: Subscriber) -> None: ...
+    def unsubscribe(self, subscriber: Subscriber) -> None:
+        """Remove a subscriber from pool state updates."""
+        ...
 
 
 @runtime_checkable
 class ReverseSimulatablePool(Protocol):
-    """
-    Optional interface for pools that support exact-output simulation.
+    """Optional interface for pools that support exact-output simulation.
 
     Not all pool types can compute input from desired output.
     """
@@ -169,50 +210,55 @@ class ReverseSimulatablePool(Protocol):
         token_out: ChecksumAddress,
         amount_out: int,
         state_override: AbstractPoolState | None = None,
-    ) -> SimulationResult: ...
+    ) -> SimulationResult:
+        """Simulate an exact-output swap and return the result."""
+        ...
 
 
 @runtime_checkable
 class StateManageablePool(Protocol):
-    """
-    Optional interface for pools with on-chain state management.
+    """Optional interface for pools with on-chain state management.
 
     Curve and Balancer pools typically don't implement this.
     """
 
-    def external_update(self, update: object) -> None: ...
+    def external_update(self, update: object) -> None:
+        """Apply an external state update to the pool."""
+        ...
 
-    def discard_states_before_block(self, block: int) -> None: ...
+    def discard_states_before_block(self, block: int) -> None:
+        """Remove cached states before the given block."""
+        ...
 
-    def restore_state_before_block(self, block: int) -> None: ...
+    def restore_state_before_block(self, block: int) -> None:
+        """Restore the most recent state before the given block."""
+        ...
 
 
 @runtime_checkable
 class CacheablePool(Protocol):
-    """
-    A pool whose reserves and fee can be registered in the Rust solver cache.
+    """A pool whose reserves and fee can be registered in the Rust solver cache.
 
     Used by ArbPoolCacheAdapter. Replaces getattr-based introspection
     with explicit methods.
     """
 
-    def reserves_for_cache(self) -> tuple[int, int]: ...
+    def reserves_for_cache(self) -> tuple[int, int]:
+        """Return (reserve_token0, reserve_token1) for the Rust cache."""
+        ...
 
-    """Return (reserve_token0, reserve_token1) for the Rust cache."""
+    def fee_for_cache(self) -> Fraction:
+        """Return the pool fee as a Fraction for the Rust cache."""
+        ...
 
-    def fee_for_cache(self) -> Fraction: ...
-
-    """Return the pool fee as a Fraction (e.g. Fraction(3, 1000))."""
-
-    def subscribe(self, subscriber: Subscriber) -> None: ...
-
-    """Subscribe to pool state updates (provided by PublisherMixin)."""
+    def subscribe(self, subscriber: Subscriber) -> None:
+        """Subscribe to pool state updates (provided by PublisherMixin)."""
+        ...
 
 
 @runtime_checkable
 class ArbitrageCapablePool(PoolSimulation, Protocol):
-    """
-    Interface for pools participating in arbitrage paths.
+    """Interface for pools participating in arbitrage paths.
 
     Extends PoolSimulation with hop state conversion and fee extraction,
     absorbing the old PoolAdapter protocol.
@@ -225,15 +271,18 @@ class ArbitrageCapablePool(PoolSimulation, Protocol):
         *,
         token_in: Erc20Token | None = None,
         token_out: Erc20Token | None = None,
-    ) -> HopType: ...
+    ) -> HopType:
+        """Convert pool state to a solver-compatible HopType."""
+        ...
 
-    def extract_fee(self, zero_for_one: bool) -> Fraction: ...  # noqa: FBT001
+    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
+        """Extract the directional fee as a Fraction."""
+        ...
 
 
 @runtime_checkable
 class TwoTokenSwapCalculation(Protocol):
-    """
-    A 2-token pool that can calculate output from input.
+    """A 2-token pool that can calculate output from input.
 
     token_out is implied by token_in since there are exactly two tokens.
     """
@@ -243,13 +292,14 @@ class TwoTokenSwapCalculation(Protocol):
         token_in: Erc20Token,
         token_in_quantity: int,
         override_state: AbstractPoolState | None = None,
-    ) -> int: ...
+    ) -> int:
+        """Calculate output token amount for a given input."""
+        ...
 
 
 @runtime_checkable
 class MultiTokenSwapCalculation(Protocol):
-    """
-    An N-token pool requiring explicit token_out for swap calculation.
+    """An N-token pool requiring explicit token_out for swap calculation.
 
     Curve and Balancer pools need token_out specified because they have
     more than two tokens.
@@ -261,13 +311,14 @@ class MultiTokenSwapCalculation(Protocol):
         token_out: Erc20Token,
         token_in_quantity: int,
         override_state: AbstractPoolState | None = None,
-    ) -> int: ...
+    ) -> int:
+        """Calculate output token amount for a given input with explicit token_out."""
+        ...
 
 
 @runtime_checkable
 class ArbitragePathPool(PoolSimulation, Protocol):
-    """
-    A pool that can participate in a cyclic arbitrage path.
+    """A pool that can participate in a cyclic arbitrage path.
 
     Extends PoolSimulation with directional token access, swap calculation,
     hop state conversion, and fee extraction. Intentionally excludes
@@ -276,17 +327,23 @@ class ArbitragePathPool(PoolSimulation, Protocol):
     """
 
     @property
-    def token0(self) -> Erc20Token: ...
+    def token0(self) -> Erc20Token:
+        """The lower-addressed token in the pair."""
+        ...
 
     @property
-    def token1(self) -> Erc20Token: ...
+    def token1(self) -> Erc20Token:
+        """The higher-addressed token in the pair."""
+        ...
 
     def calculate_tokens_out_from_tokens_in(
         self,
         token_in: Erc20Token,
         token_in_quantity: int,
         override_state: AbstractPoolState | None = None,
-    ) -> int: ...
+    ) -> int:
+        """Calculate output token amount for a given input."""
+        ...
 
     def to_hop_state(
         self,
@@ -295,13 +352,19 @@ class ArbitragePathPool(PoolSimulation, Protocol):
         *,
         token_in: Erc20Token | None = None,
         token_out: Erc20Token | None = None,
-    ) -> HopType: ...
+    ) -> HopType:
+        """Convert pool state to a solver-compatible HopType."""
+        ...
 
-    def extract_fee(self, zero_for_one: bool) -> Fraction: ...  # noqa: FBT001
+    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
+        """Extract the directional fee as a Fraction."""
+        ...
 
     def build_swap_amount(
         self,
         zero_for_one: bool,  # noqa: FBT001
         amount_in: int,
         amount_out: int,
-    ) -> AbstractSwapAmounts: ...
+    ) -> AbstractSwapAmounts:
+        """Build a typed SwapAmounts object for encoding."""
+        ...

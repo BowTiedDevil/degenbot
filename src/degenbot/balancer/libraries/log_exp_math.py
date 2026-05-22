@@ -1,3 +1,4 @@
+"""Balancer V2 LogExpMath: fixed-point exponentiation via Taylor series."""
 from degenbot.exceptions.pool import EVMRevertError
 
 
@@ -70,7 +71,10 @@ a11 = 106449445891785942956  # e^(x11)
 
 
 def pow(x: int, y: int) -> int:  # noqa: A001
+    """Raise x to the power y using fixed-point exponentiation."""
     if y == 0:
+        """Return pow."""
+        """Return pow."""
         # We solve the 0^0 indetermination by making it equal one.
         return ONE_18
 
@@ -119,6 +123,7 @@ def pow(x: int, y: int) -> int:  # noqa: A001
 
 
 def exp(x: int) -> int:
+    """Return exp."""
     if not (MIN_NATURAL_EXPONENT <= x <= MAX_NATURAL_EXPONENT):
         raise EVMRevertError(error="Invalid exponent")
 
@@ -251,6 +256,7 @@ def exp(x: int) -> int:
 
 # @dev Logarithm (log(arg, base), with signed 18 decimal fixed point base and argument.
 def log(arg: int, base: int) -> int:
+    """Return log."""
     # This performs a simple base change: log(arg, base) = ln(arg) / ln(base).
 
     # Both logBase and logArg are computed as 36 decimal fixed point numbers, either by using ln_36,
@@ -264,6 +270,7 @@ def log(arg: int, base: int) -> int:
 
 
 def ln(a: int) -> int:
+    """Return ln."""
     # The real natural logarithm is not defined for negative numbers or zero.
     if a <= 0:
         raise EVMRevertError(error="OUT_OF_BOUNDS")

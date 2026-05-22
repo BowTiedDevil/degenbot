@@ -1,3 +1,4 @@
+"""Erc20Token: on-chain token with metadata, balance, and approval tracking."""
 from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
@@ -26,6 +27,7 @@ def get_token_from_database(
     chain_id: int,
     session: Session | scoped_session[Session],
 ) -> Erc20TokenTable | None:
+    """Return token from database."""
     return session.scalar(
         select(Erc20TokenTable).where(
             Erc20TokenTable.address == token,
@@ -40,8 +42,7 @@ UNKNOWN_DECIMALS = 18
 
 
 class Erc20Token(AbstractErc20Token):
-    """
-    An ERC-20 token contract.
+    """An ERC-20 token contract.
 
     Constructed from pre-fetched data only. Use ``Bot.build_erc20token()`` to fetch from chain.
     Balance, approval, and total supply queries go through ``Bot.get_token_balance()`` etc.
@@ -58,6 +59,7 @@ class Erc20Token(AbstractErc20Token):
         oracle_address: str | None = None,
         state_cache_depth: int = 8,
     ) -> None:
+        """Initialize the instance."""
         self.address = get_checksum_address(address)
 
         self._state_cache_depth = state_cache_depth
@@ -80,10 +82,12 @@ class Erc20Token(AbstractErc20Token):
     # -- Cache accessors (dictionary operations, no I/O) --
 
     def get_cached_balance(self, address: ChecksumAddress, block_number: int) -> int | None:
+        """Return cached balance."""
         cache = self._cached_balance.get(address, BoundedCache(max_items=self._state_cache_depth))
         return cache.get(block_number)
 
     def set_cached_balance(self, address: ChecksumAddress, block_number: int, balance: int) -> None:
+        """Set cached balance."""
         if address not in self._cached_balance:
             self._cached_balance[address] = BoundedCache(max_items=self._state_cache_depth)
         self._cached_balance[address][block_number] = balance
@@ -91,17 +95,21 @@ class Erc20Token(AbstractErc20Token):
     def get_cached_approval(
         self, block_number: int, owner: ChecksumAddress, spender: ChecksumAddress
     ) -> int | None:
+        """Return cached approval."""
         return self._cached_approval.get((block_number, owner, spender))
 
     def set_cached_approval(
         self, block_number: int, owner: ChecksumAddress, spender: ChecksumAddress, amount: int
     ) -> None:
+        """Set cached approval."""
         self._cached_approval[block_number, owner, spender] = amount
 
     def get_cached_total_supply(self, block_number: int) -> int | None:
+        """Return cached total supply."""
         return self._cached_total_supply.get(block_number)
 
     def set_cached_total_supply(self, block_number: int, total_supply: int) -> None:
+        """Set cached total supply."""
         self._cached_total_supply[block_number] = total_supply
 
     # -- RPC static methods (used by Bot.build_erc20token) --
@@ -214,10 +222,12 @@ class Erc20Token(AbstractErc20Token):
 
     @property
     def price(self) -> float:
+        """Price."""
         if self._price_oracle is None:
             raise NoPriceOracle
         return self._price_oracle.price
 
     @property
     def chain_id(self) -> int | None:
+        """Return chain id."""
         return self._chain_id

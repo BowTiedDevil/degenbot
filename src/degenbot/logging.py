@@ -1,3 +1,4 @@
+"""Lazy logger that defers ``getLogger`` until first use."""
 import functools
 import inspect
 import logging
@@ -29,10 +30,7 @@ _FUNCTION_CALL_LOGGING_ENABLED = os.environ.get("DEGENBOT_DEBUG_FUNCTION_CALLS",
 
 
 def log_function_call[**P, R](func: Callable[P, R]) -> Callable[P, R]:
-    """
-    Log function calls when DEGENBOT_DEBUG_FUNCTION_CALLS is enabled.
-    """
-
+    """Log function calls when DEGENBOT_DEBUG_FUNCTION_CALLS is enabled."""
     if not _FUNCTION_CALL_LOGGING_ENABLED:
         return func
 

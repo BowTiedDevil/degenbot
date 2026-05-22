@@ -1,3 +1,4 @@
+"""PancakeSwap V2/V3 pool implementations."""
 from fractions import Fraction
 from typing import ClassVar
 
@@ -6,6 +7,8 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 
 class PancakeswapV2Pool(UniswapV2Pool):
+    """PancakeswapV2Pool class."""
+
     variant: ClassVar[str | None] = "pancakeswap"
 
     FEE = Fraction(25, 10000)
@@ -13,6 +16,8 @@ class PancakeswapV2Pool(UniswapV2Pool):
 
 
 class PancakeswapV3Pool(UniswapV3Pool):
+    """PancakeswapV3Pool class."""
+
     variant: ClassVar[str | None] = "pancakeswap"
 
     SLOT0_STRUCT_TYPES = (

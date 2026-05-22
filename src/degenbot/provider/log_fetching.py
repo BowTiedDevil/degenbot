@@ -38,9 +38,7 @@ def _build_topics_list(
 
 
 class _ChunkedLogFetcher:
-    """
-    Internal: shared chunking and span-management logic for log fetching.
-    """
+    """Internal: shared chunking and span-management logic for log fetching."""
 
     _DEFAULT_MAX_BLOCKS = 5_000
     _SPAN_REDUCTION_PCT = 25
@@ -99,8 +97,8 @@ def fetch_logs_retrying(
     address: list[ChecksumAddress] | None = None,
     topic_signature: Sequence[Sequence[HexBytes] | HexBytes] | None = None,
 ) -> list[LogReceipt]:
-    """
-    Fetch all event logs for the given topic signature (or all logs, if omitted), inclusive for the
+    """Fetch all event logs for the given topic signature (or all logs, if omitted), inclusive for the.
+
     given block range.
 
     Max blocks per request is set to 5,000 if not specified.
@@ -116,8 +114,8 @@ def fetch_logs_retrying(
         max_blocks_per_request: Maximum blocks per request
         address: Contract addresses to filter
         topic_signature: Event topic signatures
-    """
 
+    """
     if end_block < start_block:
         msg = "End block cannot be earlier than start block."
         raise ValueError(msg)
@@ -207,9 +205,7 @@ async def fetch_logs_retrying_async(
     address: ChecksumAddress | None = None,
     topic_signature: Sequence[Sequence[HexBytes] | HexBytes] | None = None,
 ) -> list[LogReceipt]:
-    """
-    Async version of fetch_logs_retrying.
-    """
+    """Async version of fetch_logs_retrying."""
     if topic_signature is None:
         topic_signature = []
 

@@ -1,3 +1,4 @@
+"""Uniswap V4 FullMath: 512-bit multiplication with Q96 rounding."""
 from degenbot.constants import MAX_UINT256
 from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.v4_libraries.functions import mulmod
@@ -8,8 +9,8 @@ def muldiv(
     b: int,
     denominator: int,
 ) -> int:
-    """
-    Calculates floor(a*b/denominator) with full precision. Throws if result overflows a uint256 or
+    """Calculate floor(a*b/denominator) with full precision. Throws if result overflows a uint256 or.
+
     denominator == 0.
 
     ref: https://github.com/Uniswap/v4-core/blob/main/src/libraries/FullMath.sol
@@ -17,7 +18,6 @@ def muldiv(
     Python integers do not overflow and have no bit depth limitation, so this function simply
     checks for an invalid result.
     """
-
     if denominator <= 0:
         msg = "required: denominator > 0"
         raise EVMRevertError(msg)
@@ -36,13 +36,12 @@ def muldiv_rounding_up(
     b: int,
     denominator: int,
 ) -> int:
-    """
-    Calculates ceil(a*b//denominator) with full precision. Throws if result overflows a uint256 or
+    """Calculate ceil(a*b//denominator) with full precision. Throws if result overflows a uint256 or.
+
     denominator == 0.
 
     ref: https://github.com/Uniswap/v4-core/blob/main/src/libraries/FullMath.sol
     """
-
     if denominator <= 0:
         msg = "required: denominator > 0"
         raise EVMRevertError(msg)

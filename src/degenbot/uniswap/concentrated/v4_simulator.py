@@ -66,6 +66,7 @@ def calculate_swap(
     Raises:
         EVMRevertError: If swap fee is >= max or price limits are violated.
         MissingLiquidityData: If a required bitmap word is absent in a sparse map.
+
     """
     assert liquidity_start >= 0
 

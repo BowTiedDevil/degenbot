@@ -58,6 +58,8 @@ class CurveStableswapPool(
     StableswapPoolState,
     AbstractLiquidityPool,
 ):
+    """CurveStableswapPool class."""
+
     type PoolState = CurveStableswapPoolState
     _state_cache: BoundedCache[BlockNumber, PoolState]
 
@@ -118,8 +120,7 @@ class CurveStableswapPool(
         # Strategy enums (resolved by builder from pool address)
         strategies: PoolStrategies | None = None,
     ) -> None:
-        """
-        A Curve V1 (StableSwap) pool.
+        """Curve V1 (StableSwap) pool.
 
         Constructed from pre-fetched data only. Use Bot.build_pool() to fetch from chain.
 
@@ -136,7 +137,6 @@ class CurveStableswapPool(
             constructed without a data_provider can only perform calculations
             that don't require on-chain data.
         """
-
         self.address = get_checksum_address(address)
         self._chain_id = chain_id if chain_id is not None else tokens[0].chain_id
         state_block = state_block if state_block is not None else 0
@@ -256,23 +256,30 @@ class CurveStableswapPool(
         # I/O is done via data_provider injected by Bot.build_pool()
 
     def __repr__(self) -> str:  # pragma: no cover
+        """Return the canonical string representation."""
         token_string = "-".join([token.symbol for token in self._tokens])
         return f"{self.__class__.__name__}(address={self.address}, tokens={token_string}, fee={100 * self.fee / self.FEE_DENOMINATOR:.2f}%, A={self.a_coefficient})"  # noqa:E501
 
     @property
     def balances(self) -> tuple[int, ...]:
+        """Return the canonical string representation."""
+        """Return a string representation."""
+        """Balances."""
         return self.state.balances
 
     @property
     def chain_id(self) -> int | None:
+        """Return chain id."""
         return self._chain_id
 
     @property
     def state(self) -> CurveStableswapPoolState:
+        """State."""
         return self._state
 
     @property
     def update_block(self) -> BlockNumber:
+        """Update block."""
         if TYPE_CHECKING:
             assert self.state.block is not None
         return self.state.block
@@ -491,10 +498,7 @@ class CurveStableswapPool(
         return base_virtual_price
 
     def _a(self, timestamp: int | None = None) -> int:
-        """
-        Handle ramping A up or down
-        """
-
+        """Handle ramping A up or down."""
         if any([
             self.future_a_coefficient is None,
             self.initial_a_coefficient is None,
@@ -539,13 +543,12 @@ class CurveStableswapPool(
         block_identifier: BlockIdentifier | None = None,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        """
-        Simplified method to calculate addition or reduction in token supply at
+        """Simplified method to calculate addition or reduction in token supply at.
+
         deposit or withdrawal without taking fees into account (but looking at
         slippage).
         Needed to prevent front-running, not for precise calculations!
         """
-
         n_coins = len(self._tokens)
 
         pool_balances = (
@@ -578,6 +581,7 @@ class CurveStableswapPool(
     def calc_withdraw_one_coin(
         self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
     ) -> tuple[int, ...]:
+        """Calc withdraw one coin."""
         block_number = self._resolve_block_number(block_identifier)
 
         block_timestamp = self._get_cached_block_timestamp(block_number)
@@ -744,17 +748,16 @@ class CurveStableswapPool(
         block_identifier: BlockIdentifier | None = None,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        """
-        @notice Calculate the current output dy given input dx
+        """@notice Calculate the current output dy given input dx.
+
         @dev Index values can be found via the `coins` public getter method
         @param i Index value for the coin to send
         @param j Index value of the coin to recieve
         @param dx Amount of `i` being exchanged
-        @return Amount of `j` predicted
+        @return Amount of `j` predicted.
 
         Reference: https://github.com/curveresearch/notes/blob/main/stableswap.pdf
         """
-
         block_number = self._resolve_block_number(block_identifier)
 
         if self.base_pool is not None:
@@ -955,10 +958,7 @@ class CurveStableswapPool(
         override_state: CurveStableswapPoolState | None = None,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
-        """
-        Calculates the expected token OUTPUT for a target INPUT at current pool reserves.
-        """
-
+        """Calculate the expected token OUTPUT for a target INPUT at current pool reserves."""
         block_number = self._resolve_block_number(block_identifier)
 
         if token_in_quantity <= 0:
@@ -1067,6 +1067,7 @@ class CurveStableswapPool(
         token_out: ChecksumAddress,
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
+        """Simulate swap."""
         curve_state: CurveStableswapPoolState | None = None
         if state_override is not None:
             if not isinstance(state_override, CurveStableswapPoolState):
@@ -1112,6 +1113,7 @@ class CurveStableswapPool(
         *,
         zero_for_one: bool,  # ruff: ignore[ARG002]
     ) -> Fraction:
+        """Extract fee."""
         return Fraction(self.fee, self.FEE_DENOMINATOR)
 
     def to_hop_state(

@@ -23,7 +23,6 @@ def _load_contract_artifact(artifact_path: pathlib.Path) -> dict:
     """
     Load a compiled contract artifact (ABI + bytecode).
     """
-
     with pathlib.Path(artifact_path).open(encoding="utf-8") as f:
         return json.load(f)
 
@@ -43,8 +42,8 @@ def _deploy_contract(
 
     Returns:
         Deployed contract instance
-    """
 
+    """
     bytecode = artifact["bytecode"]["object"]
 
     # Build and send deployment transaction
@@ -115,6 +114,7 @@ def token_math_wrappers(
         ...         1000, 1000000000000000000000000000
         ...     ).call()
         ...     assert result == expected_value
+
     """
     w3 = standalone_anvil.w3
 
@@ -145,7 +145,6 @@ def token_math_wrapper_rev1(token_math_wrappers) -> "Contract":
     """
     Get the Rev 1 wrapper contract (half-up rounding).
     """
-
     return token_math_wrappers[1]
 
 
@@ -154,7 +153,6 @@ def token_math_wrapper_rev4(token_math_wrappers) -> "Contract":
     """
     Get the Rev 4 wrapper contract (floor/ceil rounding).
     """
-
     return token_math_wrappers[4]
 
 
@@ -163,5 +161,4 @@ def token_math_wrapper_rev9(token_math_wrappers) -> "Contract":
     """
     Get the Rev 9 wrapper contract (floor/ceil rounding, same as Rev4).
     """
-
     return token_math_wrappers[9]

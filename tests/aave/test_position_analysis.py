@@ -146,6 +146,7 @@ class TestCalculateHealthFactor:
         - Collateral: 1000, LT: 80% -> weighted = 1000 * 8000 = 8,000,000
         - Debt: 500
         - HF = 8,000,000 / (500 * 10,000) = 1.6
+
         """
         collateral = CollateralPositionData(
             asset_address=ZERO_ADDRESS,

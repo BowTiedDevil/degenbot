@@ -1,4 +1,5 @@
 # ruff: noqa: E501
+"""Curve contract ABI definitions and decoders."""
 
 from typing import Any
 

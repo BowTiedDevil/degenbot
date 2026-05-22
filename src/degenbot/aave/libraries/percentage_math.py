@@ -1,3 +1,4 @@
+"""Aave PercentageMath library ported from Solidity."""
 from degenbot.constants import MAX_UINT256
 from degenbot.exceptions.pool import EVMRevertError
 
@@ -7,12 +8,14 @@ HALF_PERCENTAGE_FACTOR = 5 * 10**3
 
 
 def percent_mul(value: int, percentage: int) -> int:
+    """Return percent mul."""
     if percentage != 0 and value > (MAX_UINT256 - HALF_PERCENTAGE_FACTOR) // percentage:
         raise EVMRevertError
     return (value * percentage + HALF_PERCENTAGE_FACTOR) // PERCENTAGE_FACTOR
 
 
 def percent_div(value: int, percentage: int) -> int:
+    """Return percent div."""
     if percentage == 0:
         raise EVMRevertError
     if value > (MAX_UINT256 - (percentage // 2)) // PERCENTAGE_FACTOR:
@@ -21,12 +24,14 @@ def percent_div(value: int, percentage: int) -> int:
 
 
 def percent_mul_floor(value: int, percentage: int) -> int:
+    """Return percent mul floor."""
     if percentage != 0 and value > MAX_UINT256 // percentage:
         raise EVMRevertError
     return (value * percentage) // PERCENTAGE_FACTOR
 
 
 def percent_mul_ceil(value: int, percentage: int) -> int:
+    """Return percent mul ceil."""
     if percentage != 0 and value > MAX_UINT256 // percentage:
         raise EVMRevertError
     product = value * percentage
@@ -34,6 +39,7 @@ def percent_mul_ceil(value: int, percentage: int) -> int:
 
 
 def percent_div_ceil(value: int, percentage: int) -> int:
+    """Return percent div ceil."""
     if percentage == 0:
         raise EVMRevertError
     if value > MAX_UINT256 // PERCENTAGE_FACTOR:

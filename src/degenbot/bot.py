@@ -1,3 +1,5 @@
+"""Bot: central session manager for pool/token construction and registries."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -60,8 +62,7 @@ from degenbot.types.aliases import ChainId  # noqa: TC001
 
 
 class Bot:
-    """
-    Explicit session object that owns the runtime state for a degenbot run.
+    """Explicit session object that owns the runtime state for a degenbot run.
 
     Replaces the four module-level singletons (`config`, `db_session`,
     `connection_manager`, `pool_registry`/`token_registry`/`managed_pool_registry`)
@@ -75,6 +76,7 @@ class Bot:
     """
 
     def __init__(self, config: DegenbotConfig) -> None:
+        """Initialize the instance."""
         self.config = config
         self.connections = ConnectionManager()
         self.db = DatabaseSessionManager(
@@ -131,7 +133,6 @@ class Bot:
 
     def _check_database_version(self) -> None:
         """Warn if the database schema is out of date."""
-
         try:
             with self.db():
                 current_version = MigrationContext.configure(
@@ -155,6 +156,7 @@ class Bot:
 
     @classmethod
     def from_config_file(cls) -> Bot:
+        """From config file."""
         return cls(config=_init_config())
 
     def add_tracker[M: AbstractPoolTracker[Any]](
@@ -199,6 +201,7 @@ class Bot:
             pool_class: The concrete pool class (e.g. UniswapV2Pool, AerodromeV2Pool).
             builder: The builder instance that handles construction and updates
                 for this pool type.
+
         """
         self._builders[pool_class] = builder
 
@@ -229,8 +232,7 @@ class Bot:
         tick_data: dict[int, Any] | None = None,
         state_cache_depth: int = 8,
     ) -> AbstractLiquidityPool:
-        """
-        Build a pool from an address, automatically resolving its type.
+        """Build a pool from an address, automatically resolving its type.
 
         V4 managed pools should use ``build_managed_pool()`` instead.
         """
@@ -320,8 +322,7 @@ class Bot:
         tick_bitmap: dict[int, Any] | None = None,
         tick_data: dict[int, Any] | None = None,
     ) -> UniswapV4Pool:
-        """
-        Build a V4 managed pool from a PoolManager address and pool ID.
+        """Build a V4 managed pool from a PoolManager address and pool ID.
 
         ``address`` is the PoolManager contract. ``pool_id`` identifies the
         pool within the manager.
@@ -421,6 +422,7 @@ class Bot:
         )
 
     def get_provider(self, *, chain_id: ChainId) -> ProviderAdapter:
+        """Return provider."""
         return self.connections.get_provider(chain_id)
 
     async def start_listening(
@@ -446,6 +448,7 @@ class Bot:
         Raises:
             DegenbotValueError: If no WS URI is configured for the chain.
             SubscriptionNotSupported: If the provider doesn't support WS.
+
         """
         chain_id = chain_id or self.connections.default_chain_id
 
@@ -478,8 +481,8 @@ class Bot:
         *,
         block_number: BlockIdentifier | None = None,
     ) -> bool:
-        """
-        Fetch the current state of a pool from the chain and apply it via
+        """Fetch the current state of a pool from the chain and apply it via.
+
         ``pool.external_update()``.
 
         Returns True if the state changed, False if unchanged.

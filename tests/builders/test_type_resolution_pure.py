@@ -1,4 +1,5 @@
-"""Tests for the pure functions extracted from type_resolution.py.
+"""
+Tests for the pure functions extracted from type_resolution.py.
 
 Plan 066, Slice 1: _build_descriptor_from_db_result and
 _descriptor_from_probing_result are the first pure-logic extractions.
@@ -7,14 +8,11 @@ These tests verify behavior through the public interface of each function.
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from degenbot.builders.type_resolution import (
     _build_descriptor_from_db_result,
     _descriptor_from_probing_result,
 )
 from degenbot.types.pool_type import PoolFamily
-
 
 CHAIN_ID = 1
 UNKNOWN_FACTORY = "0x0000000000000000000000000000000000000001"

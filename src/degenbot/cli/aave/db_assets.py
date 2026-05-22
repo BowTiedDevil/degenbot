@@ -1,5 +1,4 @@
-"""
-Asset and token database operations for Aave V3.
+"""Asset and token database operations for Aave V3.
 
 Functions for managing ERC20 tokens, Aave assets, contracts, and related lookups.
 """
@@ -22,13 +21,11 @@ def get_or_create_erc20_token(
     chain_id: int,
     token_address: ChecksumAddress,
 ) -> Erc20TokenTable:
-    """
-    Get existing ERC20 token or create new one.
+    """Get existing ERC20 token or create new one.
 
     When creating a new token, attempts to fetch name, symbol, and decimals
     from the blockchain and populate the database record.
     """
-
     if (
         token := session.scalar(
             select(Erc20TokenTable).where(
@@ -68,10 +65,7 @@ def get_gho_asset(
     session: Session,
     market: AaveV3Market,
 ) -> AaveGhoToken:
-    """
-    Get GHO token asset for a given market.
-    """
-
+    """Get GHO token asset for a given market."""
     # AaveGhoToken is a tiny table. Query it directly with eager-loaded
     # relationships, then filter in Python to avoid the expensive JOIN
     # through Erc20TokenTable (572K+ rows).
@@ -100,10 +94,7 @@ def get_contract(
     market: AaveV3Market,
     contract_name: str,
 ) -> AaveV3Contract | None:
-    """
-    Get contract by name for a given market.
-    """
-
+    """Get contract by name for a given market."""
     return session.scalar(
         select(AaveV3Contract).where(
             AaveV3Contract.market_id == market.id,
@@ -118,10 +109,7 @@ def get_asset_by_token_type(
     token_address: ChecksumAddress,
     token_type: TokenType,
 ) -> AaveV3Asset | None:
-    """
-    Get AaveV3 asset by aToken (collateral) or vToken (debt) address.
-    """
-
+    """Get AaveV3 asset by aToken (collateral) or vToken (debt) address."""
     match token_type:
         case TokenType.A_TOKEN:
             return session.scalar(
@@ -149,10 +137,8 @@ def get_asset_by_token_type(
 
 
 def get_asset_identifier(asset: AaveV3Asset) -> str:
-    """
-    Get a human-readable identifier for an asset.
+    """Get a human-readable identifier for an asset.
 
     This provides consistent asset identification in debug logs and error messages.
     """
-
     return asset.underlying_token.symbol or asset.underlying_token.address

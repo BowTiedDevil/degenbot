@@ -1,4 +1,5 @@
-"""Fake Web3 instances for Curve pool detection tests.
+"""
+Fake Web3 instances for Curve pool detection tests.
 
 Provides a configurable fake that returns pre-programmed responses to
 w3.eth.call() based on the method selector in the calldata.
@@ -12,30 +13,27 @@ from hexbytes import HexBytes
 
 def _encode_address(addr: str) -> bytes:
     """ABI-encode an address for use as a call return value."""
-
     return eth_abi.abi.encode(["address"], [addr])
 
 
 def _encode_uint256(value: int) -> bytes:
     """ABI-encode a uint256 for use as a call return value."""
-
     return eth_abi.abi.encode(["uint256"], [value])
 
 
 def _encode_uint8(value: int) -> bytes:
     """ABI-encode a uint8 for use as a call return value."""
-
     return eth_abi.abi.encode(["uint8"], [value])
 
 
 def _encode_bool(value: bool) -> bytes:
     """ABI-encode a bool for use as a call return value."""
-
     return eth_abi.abi.encode(["bool"], [value])
 
 
 class FakeCurveW3Eth:
-    """Fake web3.eth namespace that dispatches eth.call() by selector.
+    """
+    Fake web3.eth namespace that dispatches eth.call() by selector.
 
     Responses are configured via the ``call_responses`` dict passed to
     FakeCurveW3. The key is the 4-byte selector; the value is either:
@@ -63,7 +61,8 @@ class FakeCurveW3Eth:
 
 
 class FakeCurveW3:
-    """Fake Web3 instance for Curve detection tests.
+    """
+    Fake Web3 instance for Curve detection tests.
 
     Usage:
         w3 = FakeCurveW3({

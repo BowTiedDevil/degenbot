@@ -1,6 +1,8 @@
+"""Base exception classes for degenbot."""
+
+
 class DegenbotError(Exception):
-    """
-    Base exception used as the parent class for all exceptions raised by this package.
+    """Base exception used as the parent class for all exceptions raised by this package.
 
     Calling code should catch `DegenbotError` and derived classes separately before general
     exceptions, e.g.:
@@ -23,22 +25,34 @@ class DegenbotError(Exception):
     message: str | None = None
 
     def __init__(self, *, message: str | None = None) -> None:
+        """Initialize the instance."""
         if message:
             self.message = message
             super().__init__(message)
 
 
-class DegenbotValueError(DegenbotError): ...
+class DegenbotValueError(DegenbotError):
+    """DegenbotValueError error."""
+
+    ...
 
 
-class DegenbotTypeError(DegenbotError): ...
+"""DegenbotValueError class."""
+
+
+class DegenbotTypeError(DegenbotError):
+    """DegenbotTypeError error."""
+
+    ...
+
+
+"""DegenbotTypeError class."""
 
 
 class ExternalServiceError(DegenbotError):
-    """
-    Raised on errors resulting to some call to an external service.
-    """
+    """Raised on errors resulting to some call to an external service."""
 
     def __init__(self, error: str) -> None:
+        """Initialize the instance."""
         self.error = error
         super().__init__(message=f"External service error: {error}")
