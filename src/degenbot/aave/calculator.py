@@ -8,8 +8,7 @@ from degenbot.aave.models import EnrichmentError
 
 
 class ScaledAmountCalculator:
-    """
-    Calculates scaled amounts using TokenMath.
+    """Calculates scaled amounts using TokenMath.
 
     Mirrors the Pool contract's calculation exactly. Uses the same
     TokenMath methods and rounding behaviors.
@@ -27,8 +26,7 @@ class ScaledAmountCalculator:
         raw_amount: int,
         index: int,
     ) -> int:
-        """
-        Calculate scaled amount for the given event type.
+        """Calculate scaled amount for the given event type.
 
         Args:
             event_type: Type of scaled token event
@@ -38,9 +36,6 @@ class ScaledAmountCalculator:
         Returns:
             Scaled amount calculated using TokenMath
 
-        Raises:
-            EnrichmentError: If event type is not supported
-
         """
         method = self._get_calculation_method(event_type)
         return method(raw_amount, index)
@@ -48,7 +43,16 @@ class ScaledAmountCalculator:
     def _get_calculation_method(
         self, event_type: ScaledTokenEventType
     ) -> Callable[[int, int], int]:
-        """Get the appropriate TokenMath method for this event type."""
+        """Get the appropriate TokenMath method for this event type.
+
+        Returns:
+            The computed value.
+        .
+
+        Raises:
+            EnrichmentError: If the operation fails.
+
+        """
         method_map: dict[ScaledTokenEventType, Callable[[int, int], int]] = {
             ScaledTokenEventType.COLLATERAL_MINT: self.token_math.get_collateral_mint_scaled_amount,
             ScaledTokenEventType.COLLATERAL_BURN: self.token_math.get_collateral_burn_scaled_amount,
@@ -68,6 +72,11 @@ class ScaledAmountCalculator:
         return method
 
     def get_method_name(self, event_type: ScaledTokenEventType) -> str:
-        """Get the TokenMath method name for debugging."""
+        """Get the TokenMath method name for debugging.
+
+        Returns:
+            The computed value.
+
+        """
         method = self._get_calculation_method(event_type)
         return method.__name__  # ty:ignore[unresolved-attribute]

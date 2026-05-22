@@ -1,5 +1,4 @@
-"""
-GHO-specific math calculations.
+"""GHO-specific math calculations.
 
 GHO has unique discount mechanics that are separate from standard Aave V3 math.
 These calculations mirror the logic in the GhoDiscountRateStrategy contract.
@@ -14,8 +13,7 @@ from degenbot.logging import logger
 
 
 class GhoMath:
-    """
-    GHO-specific calculations for discount rate and balance computations.
+    """GHO-specific calculations for discount rate and balance computations.
 
     GHO uses a discount mechanism where stkAAVE holders can receive a discount
     on their GHO borrowing interest. The discount rate is calculated based on:
@@ -45,8 +43,7 @@ class GhoMath:
         discount_token_balance: int,
         gho_discounted_per_discount_token: int = GHO_DISCOUNTED_PER_DISCOUNT_TOKEN,
     ) -> int:
-        """
-        Calculate GHO discount rate in basis points.
+        """Calculate GHO discount rate in basis points.
 
         Mirrors the logic in GhoDiscountRateStrategy.calculateDiscountRate.
 
@@ -109,8 +106,7 @@ class GhoMath:
         discount_token_balance: int,
         gho_discounted_per_discount_token: int = GHO_DISCOUNTED_PER_DISCOUNT_TOKEN,
     ) -> int:
-        """
-        Calculate the discounted portion of debt balance.
+        """Calculate the discounted portion of debt balance.
 
         This is the amount of debt that qualifies for the discount rate.
         The discounted balance is capped at the total debt balance.
@@ -151,8 +147,7 @@ class GhoMath:
         discount_token_balance: int,
         gho_discounted_per_discount_token: int = GHO_DISCOUNTED_PER_DISCOUNT_TOKEN,
     ) -> int:
-        """
-        Calculate the effective debt balance after discount.
+        """Calculate the effective debt balance after discount.
 
         The effective balance is what the debt balance would be after
         applying the discount rate to the discounted portion.

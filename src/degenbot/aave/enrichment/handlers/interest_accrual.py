@@ -1,5 +1,4 @@
-"""
-INTEREST_ACCRUAL operation handler.
+"""INTEREST_ACCRUAL operation handler.
 
 Interest accrual happens when index changes affect existing balances.
 Formula: interest = scaled_balance * (new_index - old_index) / RAY
@@ -32,11 +31,14 @@ class InterestAccrualHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich an interest accrual event.
+        """Enrich an interest accrual event.
 
         Interest accrual does not change scaled balance, so scaled_amount = 0.
         The raw_amount is the interest amount in underlying units.
+
+        Returns:
+            The computed value.
+
         """
         # Interest accrual events don't have pool events
         # The Mint/Burn event amount is the interest accrued

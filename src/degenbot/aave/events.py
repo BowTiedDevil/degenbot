@@ -130,8 +130,7 @@ class AaveV3RewardsControllerEvent(Enum):
 
 
 class AaveV3OracleEvent(Enum):
-    """
-    Aave V3 Oracle contract events.
+    """Aave V3 Oracle contract events.
 
     These events are emitted by the AaveOracle contract when its
     configuration changes.

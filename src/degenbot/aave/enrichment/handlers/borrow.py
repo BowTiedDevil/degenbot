@@ -1,5 +1,4 @@
-"""
-BORROW operation handler.
+"""BORROW operation handler.
 
 BORROW operations emit a DEBT_MINT event from the VariableDebtToken contract.
 GHO_BORROW operations emit a GHO_DEBT_MINT event.
@@ -31,12 +30,18 @@ class BorrowHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich a BORROW or GHO_BORROW event.
+        """Enrich a BORROW or GHO_BORROW event.
 
         For BORROW operations:
         1. Extract raw amount from the Pool BORROW event
         2. Calculate scaled amount using debt mint (ceil) rounding
+
+        Returns:
+            The computed value.
+
+        Raises:
+                     EnrichmentError: If the operation fails.
+
         """
         if operation.pool_event is None:
             msg = "BORROW operation has no pool event"

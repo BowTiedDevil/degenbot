@@ -12,8 +12,7 @@ EVENT_EXTRACTORS: dict[AaveV3PoolEvent, Callable[[LogReceipt], int]] = {}
 
 
 class RawAmountExtractor:
-    """
-    Extracts raw amounts from Pool events.
+    """Extracts raw amounts from Pool events.
 
     Each Pool event type has specific data encoding. This class provides
     type-safe extraction of the raw amount (the input to TokenMath).
@@ -26,12 +25,26 @@ class RawAmountExtractor:
         self._event_type: AaveV3PoolEvent = self._get_event_type()
 
     def extract(self) -> int:
-        """Extract raw amount from the Pool event."""
+        """Extract raw amount from the Pool event.
+
+        Returns:
+            The computed value.
+
+        """
         extractor = self._get_extractor()
         return extractor(self.pool_event)
 
     def _get_event_type(self) -> AaveV3PoolEvent:
-        """Determine Pool event type from topics."""
+        """Determine Pool event type from topics.
+
+        Returns:
+            The computed value.
+        .
+
+        Raises:
+            EnrichmentError: If the operation fails.
+
+        """
         topic0 = self.pool_event["topics"][0]
         # Map topic to event type
         for event in AaveV3PoolEvent:
@@ -41,7 +54,16 @@ class RawAmountExtractor:
         raise EnrichmentError(msg)
 
     def _get_extractor(self) -> Callable[[LogReceipt], int]:
-        """Get extraction function for this event type."""
+        """Get extraction function for this event type.
+
+        Returns:
+            The computed value.
+        .
+
+        Raises:
+            EnrichmentError: If the operation fails.
+
+        """
         extractor = EVENT_EXTRACTORS.get(self._event_type)
         if extractor is None:
             msg = f"No extractor for Pool event type: {self._event_type.name}"
@@ -50,8 +72,7 @@ class RawAmountExtractor:
 
     @staticmethod
     def extract_supply(event: LogReceipt) -> int:
-        """
-        Extract amount from Supply event.
+        """Extract amount from Supply event.
 
         Event definition:
             event Supply(
@@ -61,6 +82,10 @@ class RawAmountExtractor:
                 uint256 amount,
                 uint16 indexed referralCode
             );
+
+        Returns:
+            The computed value.
+
         """
         supply_amount: int
         (_, supply_amount) = eth_abi.abi.decode(
@@ -71,8 +96,7 @@ class RawAmountExtractor:
 
     @staticmethod
     def extract_borrow(event: LogReceipt) -> int:
-        """
-        Extract amount from Borrow event.
+        """Extract amount from Borrow event.
 
         Event definition:
             event Borrow(
@@ -84,6 +108,10 @@ class RawAmountExtractor:
                 uint256 borrowRate,
                 uint16 indexed referralCode
             );
+
+        Returns:
+            The computed value.
+
         """
         borrow_amount: int
         (_, borrow_amount, _, _) = eth_abi.abi.decode(
@@ -94,8 +122,7 @@ class RawAmountExtractor:
 
     @staticmethod
     def extract_repay(event: LogReceipt) -> int:
-        """
-        Extract amount from Repay event.
+        """Extract amount from Repay event.
 
         Event definition:
             event Repay(
@@ -105,6 +132,10 @@ class RawAmountExtractor:
                 uint256 amount,
                 bool useATokens
             );
+
+        Returns:
+            The computed value.
+
         """
         repay_amount: int
         repay_amount, _ = eth_abi.abi.decode(
@@ -115,8 +146,7 @@ class RawAmountExtractor:
 
     @staticmethod
     def extract_withdraw(event: LogReceipt) -> int:
-        """
-        Extract amount from Withdraw event.
+        """Extract amount from Withdraw event.
 
         Event definition:
             event Withdraw(
@@ -125,6 +155,10 @@ class RawAmountExtractor:
                 address indexed to,
                 uint256 amount
             );
+
+        Returns:
+            The computed value.
+
         """
         withdraw_amount: int
         (withdraw_amount,) = eth_abi.abi.decode(
@@ -135,8 +169,7 @@ class RawAmountExtractor:
 
     @staticmethod
     def extract_liquidation_debt(event: LogReceipt) -> int:
-        """
-        Extract debt amount from LiquidationCall event.
+        """Extract debt amount from LiquidationCall event.
 
         Event definition:
             event LiquidationCall(
@@ -148,6 +181,10 @@ class RawAmountExtractor:
                 address liquidator,
                 bool receiveAToken
             );
+
+        Returns:
+            The computed value.
+
         """
         debt_to_cover: int
         debt_to_cover, _, _, _ = eth_abi.abi.decode(
@@ -158,8 +195,7 @@ class RawAmountExtractor:
 
     @staticmethod
     def extract_liquidation_collateral(event: LogReceipt) -> int:
-        """
-        Extract collateral amount from LiquidationCall event.
+        """Extract collateral amount from LiquidationCall event.
 
         Event definition:
             event LiquidationCall(
@@ -171,6 +207,10 @@ class RawAmountExtractor:
                 address liquidator,
                 bool receiveAToken
             );
+
+        Returns:
+            The computed value.
+
         """
         liquidated_collateral: int
         _, liquidated_collateral, _, _ = eth_abi.abi.decode(

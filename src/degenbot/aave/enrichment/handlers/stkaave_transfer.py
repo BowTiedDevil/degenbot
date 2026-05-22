@@ -1,5 +1,4 @@
-"""
-STKAAVE_TRANSFER operation handler.
+"""STKAAVE_TRANSFER operation handler.
 
 stkAAVE is the GHO discount token. It's a standard ERC20 token, so transfers
 don't use index-based scaling. raw_amount = scaled_amount.
@@ -26,11 +25,14 @@ class StkAaveTransferHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich a STKAAVE_TRANSFER event.
+        """Enrich a STKAAVE_TRANSFER event.
 
         stkAAVE is an ERC20 token, so transfers bypass index-based scaling.
         raw_amount = scaled_amount.
+
+        Returns:
+            The computed value.
+
         """
         # stkAAVE transfers have no pool event and use amount directly
         raw_amount = event.amount

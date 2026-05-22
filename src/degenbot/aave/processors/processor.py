@@ -24,8 +24,7 @@ from degenbot.aave.processors.strategies import (
 
 
 class UnifiedCollateralProcessor:
-    """
-    Unified processor for collateral (aToken) operations.
+    """Unified processor for collateral (aToken) operations.
 
     Implements CollateralTokenProcessor protocol with strategy-based rounding.
     """
@@ -50,11 +49,21 @@ class UnifiedCollateralProcessor:
         )
 
     def get_math_libraries(self) -> MathLibraries:
-        """Get the math libraries for this revision."""
+        """Get the math libraries for this revision.
+
+        Returns:
+            The computed value.
+
+        """
         return self._math_libs
 
     def _ray_div(self, a: int, b: int, mode: RoundingMode) -> int:
-        """Perform ray division with specified rounding mode."""
+        """Perform ray division with specified rounding mode.
+
+        Returns:
+            The computed value.
+
+        """
         match mode:
             case RoundingMode.HALF_UP:
                 return self._math_libs.ray_div(a, b)
@@ -70,13 +79,16 @@ class UnifiedCollateralProcessor:
         previous_index: int,  # noqa: ARG002
         scaled_delta: int | None = None,  # noqa: ARG002
     ) -> ScaledTokenMintResult:
-        """
-        Process a collateral mint event.
+        """Process a collateral mint event.
 
         Mint events can be triggered by:
         - SUPPLY: value > balance_increase
         - WITHDRAW: balance_increase > value (interest accrual)
         - Interest accrual: value == balance_increase
+
+        Returns:
+            The computed value.
+
         """
         if event_data.balance_increase > event_data.value:
             # Interest accrual exceeds deposit amount - emitted during withdraw
@@ -123,10 +135,13 @@ class UnifiedCollateralProcessor:
         previous_index: int,  # noqa: ARG002
         scaled_delta: int | None = None,
     ) -> ScaledTokenBurnResult:
-        """
-        Process a collateral burn event.
+        """Process a collateral burn event.
 
         Burn events are triggered by WITHDRAW operations.
+
+        Returns:
+            The computed value.
+
         """
         if scaled_delta is not None:
             # Use pre-calculated scaled amount from withdraw amount
@@ -161,8 +176,7 @@ class UnifiedCollateralProcessor:
 
 
 class UnifiedDebtProcessor:
-    """
-    Unified processor for debt (vToken) operations.
+    """Unified processor for debt (vToken) operations.
 
     Implements DebtTokenProcessor protocol with strategy-based rounding.
     """
@@ -187,11 +201,21 @@ class UnifiedDebtProcessor:
         )
 
     def get_math_libraries(self) -> MathLibraries:
-        """Get the math libraries for this revision."""
+        """Get the math libraries for this revision.
+
+        Returns:
+            The computed value.
+
+        """
         return self._math_libs
 
     def _ray_div(self, a: int, b: int, mode: RoundingMode) -> int:
-        """Perform ray division with specified rounding mode."""
+        """Perform ray division with specified rounding mode.
+
+        Returns:
+            The computed value.
+
+        """
         match mode:
             case RoundingMode.HALF_UP:
                 return self._math_libs.ray_div(a, b)
@@ -207,12 +231,15 @@ class UnifiedDebtProcessor:
         previous_index: int,  # noqa: ARG002
         scaled_delta: int | None = None,  # noqa: ARG002
     ) -> ScaledTokenMintResult:
-        """
-        Process a debt mint event.
+        """Process a debt mint event.
 
         Mint events can be triggered by:
         - BORROW: value > balance_increase
         - REPAY: balance_increase > value (interest accrual)
+
+        Returns:
+            The computed value.
+
         """
         if event_data.value >= event_data.balance_increase:
             # BORROW path: emitted in _mintScaled
@@ -255,10 +282,13 @@ class UnifiedDebtProcessor:
         previous_index: int,  # noqa: ARG002
         scaled_delta: int | None = None,
     ) -> ScaledTokenBurnResult:
-        """
-        Process a debt burn event.
+        """Process a debt burn event.
 
         Burn events are triggered by REPAY operations.
+
+        Returns:
+            The computed value.
+
         """
         if scaled_delta is not None:
             # Use pre-calculated scaled amount from paybackAmount
@@ -286,8 +316,7 @@ class UnifiedDebtProcessor:
 
 
 class UnifiedGhoProcessor:
-    """
-    Unified processor for GHO debt operations.
+    """Unified processor for GHO debt operations.
 
     Implements GhoDebtTokenProcessor protocol with strategy-based rounding
     and optional discount support.
@@ -315,11 +344,21 @@ class UnifiedGhoProcessor:
         )
 
     def get_math_libraries(self) -> MathLibraries:
-        """Get the math libraries for this revision."""
+        """Get the math libraries for this revision.
+
+        Returns:
+            The computed value.
+
+        """
         return self._math_libs
 
     def _ray_div(self, a: int, b: int, mode: RoundingMode) -> int:
-        """Perform ray division with specified rounding mode."""
+        """Perform ray division with specified rounding mode.
+
+        Returns:
+            The computed value.
+
+        """
         match mode:
             case RoundingMode.HALF_UP:
                 return self._math_libs.ray_div(a, b)
@@ -329,7 +368,12 @@ class UnifiedGhoProcessor:
                 return self._math_libs.ray_div_ceil(a, b)
 
     def supports_discount(self) -> bool:
-        """Check if this revision supports the discount mechanism."""
+        """Check if this revision supports the discount mechanism.
+
+        Returns:
+            The computed value.
+
+        """
         return self._discount.supports_discount
 
     def process_mint_event(
@@ -340,7 +384,12 @@ class UnifiedGhoProcessor:
         previous_discount: int,
         actual_repay_amount: int | None = None,
     ) -> GhoScaledTokenMintResult:
-        """Process a GHO debt mint event."""
+        """Process a GHO debt mint event.
+
+        Returns:
+            The computed value.
+
+        """
         # Accrue debt with discount (stateless - doesn't mutate position)
         discount_scaled = self.accrue_debt_on_action(
             previous_scaled_balance=previous_balance,
@@ -472,7 +521,12 @@ class UnifiedGhoProcessor:
         previous_index: int,
         previous_discount: int,
     ) -> GhoScaledTokenBurnResult:
-        """Process a GHO debt burn event."""
+        """Process a GHO debt burn event.
+
+        Returns:
+            The computed value.
+
+        """
         # For all GHO revisions, always calculate from event data.
         # The scaled_amount field is not used for GHO because GHO has its own
         # calculation logic that differs from standard debt tokens.
@@ -562,7 +616,12 @@ class UnifiedGhoProcessor:
         discount_percent: int,
         current_index: int,
     ) -> int:
-        """Simulate _accrueDebtOnAction function (stateless version)."""
+        """Simulate _accrueDebtOnAction function (stateless version).
+
+        Returns:
+            The computed value.
+
+        """
         if not self._discount.supports_discount:
             return 0
 
@@ -592,7 +651,12 @@ class UnifiedGhoProcessor:
         current_index: int,
         discount_percent: int,
     ) -> int:
-        """Calculate discounted balance for burn operations."""
+        """Calculate discounted balance for burn operations.
+
+        Returns:
+            The computed value.
+
+        """
         if scaled_balance == 0:
             return 0
 

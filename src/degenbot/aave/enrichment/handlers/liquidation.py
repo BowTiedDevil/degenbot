@@ -1,5 +1,4 @@
-"""
-LIQUIDATION/GHO_LIQUIDATION operation handler.
+"""LIQUIDATION/GHO_LIQUIDATION operation handler.
 
 LIQUIDATION operations emit both DEBT_BURN and COLLATERAL_BURN events.
 GHO_LIQUIDATION emits GHO_DEBT_BURN and COLLATERAL_BURN events.
@@ -71,10 +70,16 @@ class LiquidationHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich a LIQUIDATION or GHO_LIQUIDATION event.
+        """Enrich a LIQUIDATION or GHO_LIQUIDATION event.
 
         Handles debt burns, collateral burns, and special cases.
+
+        Returns:
+            The computed value.
+
+        Raises:
+                     EnrichmentError: If the operation fails.
+
         """
         if operation.pool_event is None:
             msg = "LIQUIDATION operation has no pool event"
@@ -144,11 +149,14 @@ class LiquidationHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Handle ERC20 transfer events within a liquidation operation.
+        """Handle ERC20 transfer events within a liquidation operation.
 
         Standard ERC20 Transfer events don't carry an Aave index.
         The amount is already in scaled units, so raw_amount = scaled_amount.
+
+        Returns:
+            The computed value.
+
         """
         return context.build_enriched_event(
             event=event,
@@ -158,7 +166,12 @@ class LiquidationHandler:
         )
 
     def _is_liquidation_call_event(self, pool_event: LogReceipt) -> bool:  # noqa: PLR6301
-        """Check if the pool event is a LiquidationCall."""
+        """Check if the pool event is a LiquidationCall.
+
+        Returns:
+            The computed value.
+
+        """
         return pool_event["topics"][0] == AaveV3PoolEvent.LIQUIDATION_CALL.value
 
     def _extract_liquidation_amount(
@@ -166,7 +179,12 @@ class LiquidationHandler:
         pool_event: LogReceipt,
         event_type: ScaledTokenEventType,
     ) -> int:
-        """Extract the appropriate amount from a LiquidationCall event."""
+        """Extract the appropriate amount from a LiquidationCall event.
+
+        Returns:
+            The computed value.
+
+        """
         if event_type in self.DEBT_EVENT_TYPES:
             return RawAmountExtractor.extract_liquidation_debt(pool_event)
         if event_type in self.COLLATERAL_EVENT_TYPES:
@@ -178,7 +196,12 @@ class LiquidationHandler:
     def _get_calculation_event_type(  # noqa: PLR6301
         self, event_type: ScaledTokenEventType
     ) -> ScaledTokenEventType:
-        """Get the event type to use for calculation."""
+        """Get the event type to use for calculation.
+
+        Returns:
+            The computed value.
+
+        """
         # Most events use their own type for calculation
         return event_type
 
@@ -188,11 +211,17 @@ class LiquidationHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Handle Pool Revision 9+ debt burns with pre-scaled amounts.
+        """Handle Pool Revision 9+ debt burns with pre-scaled amounts.
 
         Pool rev 9+ calculates scaledAmount = debtToCover.rayDivFloor(index)
         and passes it to vToken.burn(). We must calculate this ourselves.
+
+        Returns:
+            The computed value.
+
+        Raises:
+                     EnrichmentError: If the operation fails.
+
         """
         assert operation.pool_event is not None
         if event.index is None:
@@ -233,12 +262,18 @@ class LiquidationHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Handle the net debt increase case during liquidation.
+        """Handle the net debt increase case during liquidation.
 
         When balance_increase > amount on DEBT_MINT, it means the debt repayment
         was less than the accrued interest. This is a net debt increase.
         Use DEBT_BURN calculation with raw_amount = balance_increase - amount.
+
+        Returns:
+            The computed value.
+
+        Raises:
+                     EnrichmentError: If the operation fails.
+
         """
         if event.index is None:
             msg = "LIQUIDATION event has no index"

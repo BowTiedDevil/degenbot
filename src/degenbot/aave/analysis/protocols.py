@@ -1,5 +1,4 @@
-"""
-Protocols for position analysis I/O boundaries.
+"""Protocols for position analysis I/O boundaries.
 
 PriceFetcher and PositionQuery define the I/O seams that separate
 pure calculation (core) from database and RPC access (orchestrator).
