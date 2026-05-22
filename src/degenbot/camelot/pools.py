@@ -64,11 +64,11 @@ class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
 
     def to_hop_state(
         self,
-        zero_for_one: bool,  # noqa: FBT001
-        state_override: UniswapV2PoolState | None = None,
         *,
-        token_in: Erc20Token | None = None,
-        token_out: Erc20Token | None = None,  # noqa: ARG002
+        zero_for_one: bool,
+        state_override: UniswapV2PoolState | None = None,
+        token_in: Erc20Token | None = None,  # ruff: ignore[ARG002]
+        token_out: Erc20Token | None = None,  # ruff: ignore[ARG002]
     ) -> HopType:
         # token_in/token_out unused — 2-token pools determine pair from zero_for_one.
         # Callers should ensure these match pool.token0/pool.token1 if provided.
@@ -87,21 +87,16 @@ class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
             decimals_out = self.token0.decimals
 
         if self.stable_swap:
-            reserves0 = state.reserves_token0
-            reserves1 = state.reserves_token1
-            decimals0 = 10**self.token0.decimals
-            decimals1 = 10**self.token1.decimals
-            _token_in_idx = 0 if zero_for_one else 1
 
             def _camelot_stable_swap_fn(
                 amount_in: int,
                 /,
-                _reserves0: int = reserves0,
-                _reserves1: int = reserves1,
-                _decimals0: int = decimals0,
-                _decimals1: int = decimals1,
+                _reserves0: int = state.reserves_token0,
+                _reserves1: int = state.reserves_token1,
+                _decimals0: int = 10**self.token0.decimals,
+                _decimals1: int = 10**self.token1.decimals,
                 _fee: Fraction = fee_in,
-                _token_in: int = _token_in_idx,
+                _token_in: int = 0 if zero_for_one else 1,
             ) -> int:
                 return calc_exact_in_stable(
                     amount_in=amount_in,

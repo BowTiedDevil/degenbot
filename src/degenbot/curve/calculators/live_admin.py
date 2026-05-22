@@ -19,12 +19,11 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
+from degenbot.calculations.stableswap import stableswap_get_y
+from degenbot.exceptions.pool import EVMRevertError
+
 if TYPE_CHECKING:
     from degenbot.curve.types import CurveStableswapPoolState, DyCalculationInputs, SwapStyle
-
-from degenbot.calculations.stableswap import stableswap_get_y
-from degenbot.curve.types import DyCalculationInputs
-from degenbot.exceptions.pool import EVMRevertError
 
 
 def _dynamic_fee(xpi: int, xpj: int, _fee: int, _feemul: int, fee_denominator: int) -> int:

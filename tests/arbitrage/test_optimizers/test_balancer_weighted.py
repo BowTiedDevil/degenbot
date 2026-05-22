@@ -16,13 +16,13 @@ import pytest
 
 from degenbot.arbitrage.optimizers.balancer_weighted import (
     BalancerMultiTokenState,
-    BalancerWeightedPoolSolver,
     MultiTokenArbitrageResult,
     TradeSignature,
     compute_optimal_trade,
     compute_profit_token_units,
     generate_trade_signatures,
     refine_to_integer,
+    solve_balancer_weighted,
     validate_trade,
 )
 
@@ -338,27 +338,24 @@ class TestProfitCalculation:
 # ---------------------------------------------------------------------------
 
 
-class TestBalancerWeightedPoolSolver:
+class TestBalancerWeightedSolver:
     def test_equilibrium_no_profit(self):
         """At equilibrium, solver should find no profitable trade."""
-        solver = BalancerWeightedPoolSolver()
-        result = solver.solve(EQUILIBRIUM_POOL_3TOKEN, EQUILIBRIUM_PRICES)
+        result = solve_balancer_weighted(EQUILIBRIUM_POOL_3TOKEN, EQUILIBRIUM_PRICES)
 
         # At equilibrium with fees, no profitable trade should exist
         assert not result.success or result.profit < 1.0
 
     def test_mispricing_finds_profit(self):
         """When ETH is cheap on market, should find profitable trade."""
-        solver = BalancerWeightedPoolSolver()
         prices = (1900.0, 1.0, 1.0)  # ETH 5% cheaper than pool
-        result = solver.solve(EQUILIBRIUM_POOL_3TOKEN, prices)
+        result = solve_balancer_weighted(EQUILIBRIUM_POOL_3TOKEN, prices)
 
         assert result.profit > 0
 
     def test_solver_returns_result(self):
         """Solver should return a result object."""
-        solver = BalancerWeightedPoolSolver()
-        result = solver.solve(EQUILIBRIUM_POOL_3TOKEN, EQUILIBRIUM_PRICES)
+        result = solve_balancer_weighted(EQUILIBRIUM_POOL_3TOKEN, EQUILIBRIUM_PRICES)
 
         assert isinstance(result, MultiTokenArbitrageResult)
         assert len(result.trades) == 3
@@ -366,26 +363,23 @@ class TestBalancerWeightedPoolSolver:
 
     def test_solver_n4(self):
         """Solver should handle 4-token pools."""
-        solver = BalancerWeightedPoolSolver()
         prices = (2000.0, 1.0, 1.0, 1.0)
-        result = solver.solve(POOL_4TOKEN, prices)
+        result = solve_balancer_weighted(POOL_4TOKEN, prices)
 
         assert len(result.trades) == 4
 
     def test_profit_in_dollar_units(self):
         """Profit should be in reasonable dollar units, not wei."""
-        solver = BalancerWeightedPoolSolver()
         prices = (1900.0, 1.0, 1.0)  # ETH 5% cheaper
-        result = solver.solve(EQUILIBRIUM_POOL_3TOKEN, prices)
+        result = solve_balancer_weighted(EQUILIBRIUM_POOL_3TOKEN, prices)
 
         # Profit should be in thousands of dollars, not 10^20
         assert 1.0 < result.profit < 1_000_000.0
 
     def test_multi_token_mispricing(self):
         """When multiple tokens are mispriced, should find profitable trade."""
-        solver = BalancerWeightedPoolSolver()
         prices = (2100.0, 0.95, 0.90)  # ETH expensive, stables cheap
-        result = solver.solve(EQUILIBRIUM_POOL_3TOKEN, prices)
+        result = solve_balancer_weighted(EQUILIBRIUM_POOL_3TOKEN, prices)
 
         assert result.profit > 0
 
@@ -398,13 +392,11 @@ class TestBalancerWeightedPoolSolver:
 class TestEdgeCases:
     def test_price_mismatch_length(self):
         """Prices with wrong length should return failure."""
-        solver = BalancerWeightedPoolSolver()
-        result = solver.solve(EQUILIBRIUM_POOL_3TOKEN, (2000.0, 1.0))
+        result = solve_balancer_weighted(EQUILIBRIUM_POOL_3TOKEN, (2000.0, 1.0))
         assert not result.success
 
     def test_no_decimals_pool(self):
         """Pool without decimals should still work (all 18-decimal assumed)."""
-        solver = BalancerWeightedPoolSolver()
-        result = solver.solve(POOL_NO_DECIMALS, (2000.0, 1.0, 1.0))
+        result = solve_balancer_weighted(POOL_NO_DECIMALS, (2000.0, 1.0, 1.0))
 
         assert isinstance(result, MultiTokenArbitrageResult)

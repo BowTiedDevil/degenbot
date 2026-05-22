@@ -427,9 +427,9 @@ class UniswapV2Pool(
 
     def to_hop_state(
         self,
-        zero_for_one: bool,  # noqa: FBT001
-        state_override: UniswapV2PoolState | None = None,
         *,
+        zero_for_one: bool,
+        state_override: UniswapV2PoolState | None = None,
         token_in: Erc20Token | None = None,  # noqa: ARG002
         token_out: Erc20Token | None = None,  # noqa: ARG002
     ) -> HopType:

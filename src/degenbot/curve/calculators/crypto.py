@@ -25,7 +25,7 @@ class CryptoDyCalculator:
 
     swap_style: SwapStyle = SwapStyle.CRYPTO
 
-    def calculate(
+    def calculate(  # noqa: PLR6301
         self,
         i: int,
         j: int,
@@ -67,8 +67,13 @@ class CryptoDyCalculator:
         amp = inputs.amp
         try:
             y = stableswap_newton_y(
-                amp, gamma_val, xp=xp_, d=d, token_index=j,
-                n_coins=n_coins, a_multiplier=inputs.a_precision,
+                amp,
+                gamma_val,
+                xp=xp_,
+                d=d,
+                token_index=j,
+                n_coins=n_coins,
+                a_multiplier=inputs.a_precision,
             )
         except ValueError as e:
             raise EVMRevertError(error=str(e)) from e
