@@ -180,7 +180,7 @@ Each module has a `CONTEXT.md` defining domain terms, aliases to avoid, and reso
 
 ### The Bot Session Pattern
 
-All pool and token creation flows through the `Bot` class. `Bot` owns registries (`pools`, `tokens`, `managed_pools`) and connection managers. Pool updates use a **Builder Registry** (`dict[type, PoolBuilder]`) keyed by concrete pool class — no isinstance chains. The `PoolBuilder` protocol (`src/degenbot/builders/protocol.py`) replaces the former 4-way union type, and `_dispatch_build()` forwards a typed `BuildRequest` object (`BuildPoolRequest | BuildManagedPoolRequest`) instead of `**kwargs` dict forwarding.
+All pool and token creation flows through the `Bot` class. `Bot` owns registries (`pools`, `tokens`, `managed_pools`) and connection managers. Pool updates use a **Builder Registry** (`dict[type, PoolBuilder]`) keyed by concrete pool class — no isinstance chains. The `PoolBuilder` and `AsyncPoolBuilder` protocols define `build()` as an instance method and `update()` as a `@staticmethod` — this enforces at the type level that `update()` receives all I/O through its `io` parameter, never through `self`. `_dispatch_build()` forwards a typed `BuildRequest` object (`BuildPoolRequest | BuildManagedPoolRequest`) instead of `**kwargs` dict forwarding.
 
 ```python
 # Correct: Bot handles I/O and injects data into I/O-free pools
@@ -219,7 +219,7 @@ Sync pool builders for each pool family inherit a base class with shared `@stati
 - **`V2BuilderBase`** — helpers: `decode_immutable_data`, `extract_db_values`, `resolve_deployer_and_init_hash` (`V2PoolBuilder`, `AerodromeV2Builder`, `CamelotBuilder` inherit)
 - **`V3BuilderBase`** — helpers: `decode_immutable_data`, `decode_slot0`, `extract_db_values`, `load_tick_snapshot`, `resolve_tick_data_args`; frozen dataclasses `V3ImmutableData`, `V3Slot0Data`, `V3DbValues` (`V3PoolBuilder` inherits; `AsyncV3PoolBuilder` calls static methods)
 - **`V4BuilderBase`** — helpers: `decode_slot0`, `extract_db_values`, `load_tick_snapshot`, `resolve_tick_data_args`; frozen dataclasses `V4Slot0Data`, `V4DbValues` (`V4PoolBuilder` inherits; `AsyncV4PoolBuilder` calls static methods)
-- **`BalancerBuilderBase`** — helpers: `decode_pool_id`, `decode_vault_tokens`, `detect_bpt_index`, `resolve_invariant_version`; frozen dataclasses `DecodedPoolId`, `VaultTokensResult`, `_BalancerPoolType` enum (`BalancerBuilder` inherits; future `AsyncBalancerBuilder` calls static methods)
+- **`BalancerBuilderBase`** — helpers: `decode_pool_id`, `decode_vault_tokens`, `detect_bpt_index`, `resolve_invariant_version`, `_fetch_pool_id`, `_fetch_vault_tokens`, `_fetch_swap_fee`, `_fetch_weights`, `_fetch_amp`, `_fetch_rate_providers`, `_fetch_rates`, `_detect_pool_type`; frozen dataclasses `DecodedPoolId`, `VaultTokensResult`, `_BalancerPoolType` enum (`BalancerBuilder` inherits; future `AsyncBalancerBuilder` calls static methods)
 
 ### Fetcher Protocols
 

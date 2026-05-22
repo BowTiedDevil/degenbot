@@ -10,10 +10,10 @@ _Avoid_: PoolIO adapter, sync IO adapter.
 
 **AsyncPoolIO**: Concrete adapter implementing `AsyncPoolIOProtocol` by delegating to an `AsyncProviderAdapter`. Created by `AsyncBot` as `AsyncPoolIO(provider)`.
 
-**PoolBuilder**: Protocol for sync pool builders. Defines `build(io: PoolIO)` and `update(io: PoolIO | None = None)`.
+**PoolBuilder**: Protocol for sync pool builders. Defines `build(io: PoolIO)` as an instance method and `update(io: PoolIO | None = None)` as a `@staticmethod`. The `@staticmethod` on `update` is a type-enforced invariant: mypy `--strict` rejects any concrete `update()` that uses `self`, ensuring all I/O flows through `io`.
 _Avoid_: Builder interface, sync builder protocol.
 
-**AsyncPoolBuilder**: Protocol for async pool builders. Defines `build(io: AsyncPoolIO)` and `update(io: AsyncPoolIO | None = None)`.
+**AsyncPoolBuilder**: Protocol for async pool builders. Defines `build(io: AsyncPoolIO)` as an async instance method and `update(io: AsyncPoolIO | None = None)` as a `@staticmethod async def`. Same I/O-separation invariant as `PoolBuilder`.
 
 **BuilderContext**: Frozen dataclass passed to sync builders at construction. Carries shared dependencies: `db_session`, `erc20_builder`, `default_chain_id`, `managed_pools`.
 _Avoid_: Builder config, builder deps.
@@ -41,7 +41,7 @@ _Avoid_: request union — use **BuildRequest** or the specific type name.
 
 **V4BuilderBase**: Base class for V4 sync builder. Owns shared pure-logic `@staticmethod` helpers: `decode_slot0()`, `extract_db_values()`, `load_tick_snapshot()`, `resolve_tick_data_args()`. Frozen dataclasses `V4Slot0Data`, `V4DbValues` carry decoded values. `AsyncV4PoolBuilder` calls these static methods independently (no inheritance). V4's `decode_slot0()` differs from V3's — it unpacks packed protocol fees from the V4 `slot0` format.
 
-**BalancerBuilderBase**: Base class for Balancer sync builder. Owns shared pure-logic `@staticmethod` helpers: `decode_pool_id()`, `decode_vault_tokens()`, `detect_bpt_index()`, `resolve_invariant_version()`. Frozen dataclasses `DecodedPoolId`, `VaultTokensResult` carry decoded values. Internal `_BalancerPoolType` enum replaces string literals for pool type detection. Future `AsyncBalancerBuilder` calls these static methods independently (no inheritance).
+**BalancerBuilderBase**: Base class for Balancer sync builder. Owns shared `@staticmethod` helpers: pure-logic decode helpers (`decode_pool_id()`, `decode_vault_tokens()`, `detect_bpt_index()`, `resolve_invariant_version()`) and I/O helpers (`_fetch_pool_id()`, `_fetch_vault_tokens()`, `_fetch_swap_fee()`, `_fetch_weights()`, `_fetch_amp()`, `_fetch_rate_providers()`, `_fetch_rates()`, `_detect_pool_type()`). Frozen dataclasses `DecodedPoolId`, `VaultTokensResult` carry decoded values. Internal `_BalancerPoolType` enum replaces string literals for pool type detection. Future `AsyncBalancerBuilder` calls these static methods independently (no inheritance).
 
 **Tick Data Fetcher**: A sync callable `Callable[[int, int], None]` created by `make_tick_data_fetcher()` that fetches tick/bitmap data for V3/V4 pools. Accepts `io: PoolIO` for I/O. Stored on pool instances for lazy tick population. Async-built pools currently pass `tick_data_fetcher=None` — an async counterpart is not viable because pool objects are synchronous and call the fetcher synchronously during `external_update()`.
 
@@ -52,6 +52,7 @@ _Avoid_: request union — use **BuildRequest** or the specific type name.
 - **Bot** creates a `SyncPoolIO(provider)` and passes `io=io` to all builder `build()`/`update()` calls
 - **AsyncBot** creates an `AsyncPoolIO(provider)` and passes `io=io` to all async builder calls
 - **All builders** are fully PoolIO-driven — they use `io.call()` / `io.call_raw()` instead of `self._connections.get_provider()`
+- **All builders' `update()` methods** are `@staticmethod` — no `self` parameter. All I/O flows through `io`, not through instance state. The `@staticmethod` on the protocols (`PoolBuilder`, `AsyncPoolBuilder`) enforces this at the type level
 - **All builders** accept `request: BuildRequest` (the union of `BuildPoolRequest | BuildManagedPoolRequest`) as the optional-parameters input; `build()` signatures are `(address, *, chain_id, io, request: BuildRequest)` — no `**kwargs` forwarding. V4 builders assert `isinstance(request, BuildManagedPoolRequest)` to narrow the type
 - **Bot** constructs a `BuildPoolRequest` from `build_pool()`'s 6 optional kwargs and dispatches through `_dispatch_build()`; `build_managed_pool()` constructs a `BuildManagedPoolRequest` with required `pool_id` and dispatches the same way
 - **AsyncBot** mirrors both paths with `build_managed_pool()` for V4 pools

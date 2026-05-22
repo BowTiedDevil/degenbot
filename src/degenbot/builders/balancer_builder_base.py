@@ -4,10 +4,21 @@ from __future__ import annotations
 
 import dataclasses
 from enum import IntEnum
+from fractions import Fraction
+from typing import TYPE_CHECKING
 
 import eth_abi.abi
+from eth_abi.exceptions import DecodingError
+from web3.exceptions import Web3Exception
 
+from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS
+from degenbot.balancer.libraries.constants import ONE
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.exceptions import DegenbotValueError
+from degenbot.provider.call_helpers import encode_function_calldata
+
+if TYPE_CHECKING:
+    from degenbot.builders.pool_io import PoolIO
 
 
 class _BalancerPoolType(IntEnum):
@@ -40,12 +51,11 @@ class VaultTokensResult:
 
 
 class BalancerBuilderBase:
-    """Shared pure-logic helpers for Balancer pool builders.
+    """Shared helpers for Balancer pool builders.
 
     Sync and async builders call these @staticmethod helpers
-    without duplicating decode/extract logic. No I/O — all
-    chain access is mediated by the PoolIO parameter at
-    the builder level, not here.
+    without duplicating decode/extract logic. I/O helpers take
+    a PoolIO parameter — callers pass the io they receive.
     """
 
     INVARIANT_V1 = 1
@@ -112,3 +122,127 @@ class BalancerBuilderBase:
         if specialization == 1:
             return BalancerBuilderBase.INVARIANT_V2
         return BalancerBuilderBase.INVARIANT_V1
+
+    # --- I/O helpers ---
+
+    @staticmethod
+    def _fetch_pool_id(io: PoolIO, address: str, block: int) -> bytes:
+        data = encode_function_calldata("getPoolId()", None)
+        result = io.call(to=address, data=data, block=block)
+        decoded = eth_abi.abi.decode(["bytes32"], result)
+        return decoded[0]
+
+    @staticmethod
+    def _fetch_vault_tokens(
+        io: PoolIO,
+        pool_id: bytes,
+        block: int | None,
+    ) -> tuple[list[str], list[int]]:
+        data = encode_function_calldata(
+            "getPoolTokens(bytes32)",
+            [pool_id],
+        )
+        result = io.call(
+            to=BALANCER_V2_VAULT_ADDRESS,
+            data=data,
+            block=block,
+        )
+        decoded = eth_abi.abi.decode(["address[]", "uint256[]", "uint256"], result)
+        return decoded[0], decoded[1]
+
+    @staticmethod
+    def _fetch_swap_fee(io: PoolIO, address: str, block: int) -> Fraction:
+        data = encode_function_calldata("getSwapFeePercentage()", None)
+        result = io.call(to=address, data=data, block=block)
+        decoded = eth_abi.abi.decode(["uint256"], result)
+        return Fraction(decoded[0], 10**18)
+
+    @staticmethod
+    def _fetch_weights(io: PoolIO, address: str, block: int) -> list[int]:
+        data = encode_function_calldata("getNormalizedWeights()", None)
+        result = io.call(to=address, data=data, block=block)
+        decoded = eth_abi.abi.decode(["uint256[]"], result)
+        return list(decoded[0])
+
+    @staticmethod
+    def _fetch_amp(io: PoolIO, address: str, block: int) -> int:
+        data = encode_function_calldata("getAmplificationParameter()", None)
+        result = io.call(to=address, data=data, block=block)
+        decoded = eth_abi.abi.decode(["uint256", "bool"], result)
+        return decoded[0]
+
+    @staticmethod
+    def _fetch_rate_providers(
+        io: PoolIO,
+        address: str,
+        block: int,
+    ) -> list[str]:
+        try:
+            data = encode_function_calldata("getRateProviders()", None)
+            result = io.call(to=address, data=data, block=block)
+            decoded = eth_abi.abi.decode(["address[]"], result)
+            return list(decoded[0])
+        except (Web3Exception, DecodingError):
+            # WeightedPool2Tokens and MetaStablePools may not have getRateProviders
+            return []
+
+    @staticmethod
+    def _fetch_rates(
+        io: PoolIO,
+        rate_providers: list[str],
+        block: int,
+    ) -> list[int]:
+        rates: list[int] = []
+        for provider in rate_providers:
+            if provider == "0x0000000000000000000000000000000000000000":
+                rates.append(ONE)
+                continue
+            data = encode_function_calldata("getRate()", None)
+            result = io.call(to=provider, data=data, block=block)
+            decoded = eth_abi.abi.decode(["uint256"], result)
+            rates.append(decoded[0])
+        return rates
+
+    @staticmethod
+    def _detect_pool_type(
+        io: PoolIO,
+        address: str,
+        block: int,
+    ) -> _BalancerPoolType:
+        """Determine weighted vs stable by probing contract methods.
+
+        Probes in order:
+        1. getNormalizedWeights() → WEIGHTED
+        2. getAmplificationParameter() → STABLE
+        3. Neither → raise (don't default to stable)
+        """
+        try:
+            data = encode_function_calldata("getNormalizedWeights()", None)
+        except (Web3Exception, DecodingError):
+            pass
+        else:
+            try:
+                io.call(to=address, data=data, block=block)
+            except Web3Exception:
+                pass
+            else:
+                return _BalancerPoolType.WEIGHTED
+
+        try:
+            data = encode_function_calldata("getAmplificationParameter()", None)
+        except (Web3Exception, DecodingError):
+            pass
+        else:
+            try:
+                io.call(to=address, data=data, block=block)
+            except Web3Exception:
+                pass
+            else:
+                return _BalancerPoolType.STABLE
+
+        msg = (
+            f"Cannot determine Balancer pool type for {address}. "
+            f"Neither getNormalizedWeights() nor getAmplificationParameter() responded. "
+            f"Linear pools are not yet supported."
+        )
+        raise DegenbotValueError(message=msg)

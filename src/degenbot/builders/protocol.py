@@ -40,8 +40,8 @@ class PoolBuilder(Protocol):
         request: BuildRequest,
     ) -> AbstractLiquidityPool: ...
 
+    @staticmethod
     def update(
-        self,
         pool: AbstractLiquidityPool,
         *,
         io: PoolIO | None = None,
@@ -65,8 +65,8 @@ class AsyncPoolBuilder(Protocol):
         request: BuildRequest,
     ) -> AbstractLiquidityPool: ...
 
+    @staticmethod
     async def update(
-        self,
         pool: AbstractLiquidityPool,
         *,
         io: AsyncPoolIO | None = None,

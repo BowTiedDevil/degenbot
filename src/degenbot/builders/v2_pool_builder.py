@@ -100,8 +100,8 @@ class V2PoolBuilder(V2BuilderBase):
 
         return pool
 
+    @staticmethod
     def update(
-        self,
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
@@ -116,7 +116,7 @@ class V2PoolBuilder(V2BuilderBase):
         assert io is not None, "io must be provided for update()"
         block_number_ = block_number if block_number is not None else io.get_block_number()
         block_number_ = int(block_number_) if not isinstance(block_number_, int) else block_number_
-        reserves0, reserves1 = self._fetch_reserves(
+        reserves0, reserves1 = V2BuilderBase._fetch_reserves(  # noqa: SLF001
             pool.address, io, block_identifier=block_number_
         )
 

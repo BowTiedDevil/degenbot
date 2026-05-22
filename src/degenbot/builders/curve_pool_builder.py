@@ -242,8 +242,8 @@ class CurvePoolBuilder:
 
         return base_pool, tokens_underlying
 
-    def update(  # noqa: PLR6301
-        self,
+    @staticmethod
+    def update(
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
