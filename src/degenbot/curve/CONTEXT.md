@@ -57,16 +57,14 @@
 |------|------------|------------------|
 | **DyCalculationInputs** | A frozen dataclass constructed by `CurveStableswapPool.get_dy()` carrying all pre-resolved data for a single dy calculation (balances, rates, xp, block data, variant enums `d_variant`/`y_variant`/`yd_variant`, `a_precision`, and optional I/O results for crypto/live-admin/metapool). All I/O and cache lookups happen before this object is created — calculators read only from it and call pure `stableswap_get_y`/`stableswap_newton_y` functions directly. No callable fields. | Calculation inputs, inputs object |
 | **DyCalculator** | A runtime-checkable protocol defining `calculate(i, j, dx, *, inputs: DyCalculationInputs, override_state) -> int` | Dy strategy, dy solver |
-| **StandardDyCalculator** | Parameterized dy calculator for all non-crypto/live-admin swap paths. Three axes (`balance_source`, `subtract_one`, `conversion_style`) replace six former class-per-variant dataclasses | Parameterized calculator |
-| **BalanceSource** | Enum: `RATE_ADJUSTED_XP` (inputs.xp + resolved_rates) or `RAW_BALANCES` (inputs.balances, no rate adjustment) | Balance source |
+| **StandardDyCalculator** | Parameterized dy calculator for standard and live-admin swap paths. Four axes (`balance_source`, `rate_source`, `subtract_one`, `conversion_style`) replace eight former class-per-variant dataclasses (six standard + two live-admin). `LIVE_ADMIN` and `LIVE_ADMIN_ORACLE` differ only in `rate_source` | Parameterized calculator |
+| **BalanceSource** | Enum: `RATE_ADJUSTED_XP` (inputs.xp + rates from rate_source) or `RAW_BALANCES` (inputs.balances, no rate adjustment) | Balance source |
+| **RateSource** | Enum: `RESOLVED_RATES` (inputs.resolved_rates) or `RATE_MULTIPLIERS` (inputs.rate_multipliers) | Rate source |
 | **ConversionStyle** | Enum: `FEE_THEN_RATE` (fee on raw dy, then rate convert), `RATE_THEN_FEE` (rate convert first, then fee), `FEE_ONLY` (fee only, no rate conversion) | Conversion style |
 | **CryptoDyCalculator** | Computes dy using CryptoSwap invariant (Newton's method, dynamic fee, price_scale) | Crypto calculator |
-| **LiveAdminDyCalculator** | Computes dy with admin balance subtraction (live A amplification) | Admin calculator |
-| **LiveAdminDynamicDyCalculator** | Computes dy with admin balances and dynamic fee | Dynamic admin calculator |
-| **LiveAdminDynamicPrecisionDyCalculator** | Computes dy with admin balances, dynamic fee, and precision adjustment | Precision admin calculator |
-| **LiveAdminOracleDyCalculator** | Computes dy with admin balances and oracle price | Oracle calculator |
-| **Metapool*DyCalculator** | A family of calculators (PrecisionVp, RedemptionVp, Standard) for metapool `get_dy` | Metapool rate calculator |
-| **MetapoolUnderlying*DyCalculator** | A family of calculators (Redemption, PrecisionVp, Standard) for `get_dy_underlying` | Metapool underlying calculator |
+| **LiveAdminDynamicDyCalculator** | Parameterized dy calculator for live-admin dynamic-fee paths. `PrecisionMode` axis: `NONE` (raw effective_balances) or `PRECISION_MULTIPLIERS` (effective_balances × precision_multipliers) | Dynamic admin calculator |
+| **MetapoolDyCalculator** | Parameterized dy calculator for metapool `get_dy`. `rate_style` axis determines the rates tuple: `STANDARD` / `PRECISION_VP` / `REDEMPTION_VP` | Metapool rate calculator |
+| **MetapoolUnderlying*DyCalculator** | A family of calculators (Redemption, PrecisionVp, Standard) for `get_dy_underlying` — kept separate due to structural divergence in input/output conversion paths | Metapool underlying calculator |
 
 ## Pool Tracker
 

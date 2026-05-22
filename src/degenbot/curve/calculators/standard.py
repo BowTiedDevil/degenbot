@@ -1,10 +1,11 @@
 """Parameterized DyCalculator for standard Curve swap paths.
 
-A single ``StandardDyCalculator`` dataclass replaces six former
-class-per-variant dataclasses.  Three independent axes encode every
-observed combination:
+A single ``StandardDyCalculator`` dataclass replaces eight former
+class-per-variant dataclasses (six standard + two live-admin).
+Four independent axes encode every observed combination:
 
 - **balance_source** — whether XP uses rate-adjusted or raw balances
+- **rate_source** — which rate tuple to use for conversion
 - **subtract_one** — whether ``dy = xp[j] - y - 1`` or ``xp[j] - y``
 - **conversion_style** — the order of fee and rate-conversion steps
 
@@ -12,6 +13,10 @@ The ``SwapStyle`` enum maps each variant to the right axis values via
 ``make_calculator()``.  ``CYTOKEN`` is preserved as a ``SwapStyle``
 label (the pool contracts *are* different) but maps to the same axis
 configuration as ``STANDARD`` because the arithmetic is identical.
+
+``LIVE_ADMIN`` and ``LIVE_ADMIN_ORACLE`` were previously separate
+classes in ``live_admin.py`` but are computationally identical to the
+standard ``FEE_THEN_RATE`` path — they differ only in rate source.
 """
 
 from __future__ import annotations
@@ -30,8 +35,15 @@ from degenbot.exceptions.pool import EVMRevertError
 class BalanceSource(Enum):
     """Which balance source the calculator uses for XP construction."""
 
-    RATE_ADJUSTED_XP = auto()  # inputs.xp + inputs.resolved_rates
+    RATE_ADJUSTED_XP = auto()  # inputs.xp + rates from rate_source
     RAW_BALANCES = auto()  # inputs.balances, no rate adjustment
+
+
+class RateSource(Enum):
+    """Which rate tuple to use for fee and rate-conversion steps."""
+
+    RESOLVED_RATES = auto()  # inputs.resolved_rates
+    RATE_MULTIPLIERS = auto()  # inputs.rate_multipliers
 
 
 class ConversionStyle(Enum):
@@ -44,21 +56,25 @@ class ConversionStyle(Enum):
 
 @dataclass(frozen=True, slots=True)
 class StandardDyCalculator:
-    """Parameterized dy calculator for standard Curve swap paths.
+    """Parameterized dy calculator for standard and live-admin Curve swap paths.
 
-    Encodes three independent variation axes that previously required
-    six separate dataclasses:
+    Encodes four independent variation axes that previously required
+    eight separate dataclasses:
 
     - balance_source: xp-based (rate-adjusted) or raw balances
+    - rate_source: which rate tuple to use for conversion
     - subtract_one: whether dy = xp[j] - y - 1 or xp[j] - y
     - conversion_style: fee→rate, rate→fee, or fee-only ordering
 
     STANDARD and CYTOKEN produce identical arithmetic (the only
     difference is the ``swap_style`` label carried for logging).
+    LIVE_ADMIN and LIVE_ADMIN_ORACLE are likewise identical in
+    computation — they differ only in ``rate_source``.
     """
 
     swap_style: SwapStyle
     balance_source: BalanceSource = BalanceSource.RATE_ADJUSTED_XP
+    rate_source: RateSource = RateSource.RESOLVED_RATES
     subtract_one: bool = True
     conversion_style: ConversionStyle = ConversionStyle.FEE_THEN_RATE
 
@@ -78,7 +94,11 @@ class StandardDyCalculator:
             rates = (inputs.PRECISION,) * inputs.n_coins  # identity rates
         else:
             xp = inputs.xp
-            rates = inputs.resolved_rates
+            rates = (
+                inputs.rate_multipliers
+                if self.rate_source is RateSource.RATE_MULTIPLIERS
+                else inputs.resolved_rates
+            )
             x = xp[i] + (dx * rates[i] // inputs.PRECISION)
 
         # ── Solve invariant ──

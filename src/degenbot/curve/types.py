@@ -89,14 +89,13 @@ class SwapStyle(Enum):
         # import from this module at runtime.
         from degenbot.curve.calculators.crypto import CryptoDyCalculator  # noqa: PLC0415
         from degenbot.curve.calculators.live_admin import (  # noqa: PLC0415
-            LiveAdminDyCalculator,
             LiveAdminDynamicDyCalculator,
-            LiveAdminDynamicPrecisionDyCalculator,
-            LiveAdminOracleDyCalculator,
+            PrecisionMode,
         )
         from degenbot.curve.calculators.standard import (  # noqa: PLC0415
             BalanceSource,
             ConversionStyle,
+            RateSource,
             StandardDyCalculator,
         )
 
@@ -125,16 +124,25 @@ class SwapStyle(Enum):
                     swap_style=self,
                     subtract_one=False,
                 )
+            case SwapStyle.LIVE_ADMIN:
+                return StandardDyCalculator(
+                    swap_style=self,
+                    rate_source=RateSource.RATE_MULTIPLIERS,
+                )
+            case SwapStyle.LIVE_ADMIN_ORACLE:
+                return StandardDyCalculator(swap_style=self)
+            case SwapStyle.LIVE_ADMIN_DYNAMIC:
+                return LiveAdminDynamicDyCalculator(
+                    swap_style=self,
+                    precision_mode=PrecisionMode.NONE,
+                )
+            case SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION:
+                return LiveAdminDynamicDyCalculator(
+                    swap_style=self,
+                    precision_mode=PrecisionMode.PRECISION_MULTIPLIERS,
+                )
             case SwapStyle.CRYPTO:
                 return CryptoDyCalculator()
-            case SwapStyle.LIVE_ADMIN:
-                return LiveAdminDyCalculator()
-            case SwapStyle.LIVE_ADMIN_DYNAMIC:
-                return LiveAdminDynamicDyCalculator()
-            case SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION:
-                return LiveAdminDynamicPrecisionDyCalculator()
-            case SwapStyle.LIVE_ADMIN_ORACLE:
-                return LiveAdminOracleDyCalculator()
 
 
 class MetapoolRateStyle(Enum):
@@ -146,19 +154,9 @@ class MetapoolRateStyle(Enum):
 
     def make_calculator(self) -> DyCalculator:
         """Construct the appropriate metapool DyCalculator for this rate style."""
-        from degenbot.curve.calculators.metapool import (  # noqa: PLC0415
-            MetapoolPrecisionVpDyCalculator,
-            MetapoolRedemptionVpDyCalculator,
-            MetapoolStandardDyCalculator,
-        )
+        from degenbot.curve.calculators.metapool import MetapoolDyCalculator  # noqa: PLC0415
 
-        match self:
-            case MetapoolRateStyle.PRECISION_VP:
-                return MetapoolPrecisionVpDyCalculator()
-            case MetapoolRateStyle.REDEMPTION_VP:
-                return MetapoolRedemptionVpDyCalculator()
-            case MetapoolRateStyle.STANDARD:
-                return MetapoolStandardDyCalculator()
+        return MetapoolDyCalculator(rate_style=self)
 
 
 class MetapoolUnderlyingStyle(Enum):

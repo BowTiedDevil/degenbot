@@ -1,21 +1,30 @@
 """Live-admin DyCalculator variants.
 
-LIVE_ADMIN: live balances minus admin, fee, rate convert
-LIVE_ADMIN_DYNAMIC: live balances minus admin, offpeg dynamic fee
-LIVE_ADMIN_DYNAMIC_PRECISION: precision multipliers for xp, dynamic offpeg fee
-LIVE_ADMIN_ORACLE: live balances minus admin, oracle rates, fee, rate convert
+Two parameterized calculators cover the four live-admin swap styles:
+
+- ``LiveAdminDyCalculator`` — absorbs the former LIVE_ADMIN and
+  LIVE_ADMIN_ORACLE variants (now merged into ``StandardDyCalculator``
+  with different ``rate_source`` values).  This class is preserved as a
+  thin re-export so that ``isinstance`` checks and direct imports
+  continue to work.
+
+- ``LiveAdminDynamicDyCalculator`` — handles the two dynamic-fee
+  variants (LIVE_ADMIN_DYNAMIC and LIVE_ADMIN_DYNAMIC_PRECISION),
+  differing only in whether precision multipliers are applied to the
+  effective balances.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from degenbot.curve.types import CurveStableswapPoolState
+    from degenbot.curve.types import CurveStableswapPoolState, DyCalculationInputs, SwapStyle
 
 from degenbot.calculations.stableswap import stableswap_get_y
-from degenbot.curve.types import DyCalculationInputs, SwapStyle
+from degenbot.curve.types import DyCalculationInputs
 from degenbot.exceptions.pool import EVMRevertError
 
 
@@ -29,83 +38,28 @@ def _dynamic_fee(xpi: int, xpj: int, _fee: int, _feemul: int, fee_denominator: i
     )
 
 
-@dataclass(frozen=True, slots=True)
-class LiveAdminDyCalculator:
-    """LIVE_ADMIN: live balances minus admin, dy = xp[j] - y - 1, fee, rate convert."""
+class PrecisionMode(Enum):
+    """Whether precision multipliers are applied to effective balances."""
 
-    swap_style: SwapStyle = SwapStyle.LIVE_ADMIN
-
-    def calculate(
-        self,
-        i: int,
-        j: int,
-        dx: int,
-        *,
-        inputs: DyCalculationInputs,
-        override_state: CurveStableswapPoolState | None = None,
-    ) -> int:
-        rates = inputs.rate_multipliers
-        xp = inputs.xp
-        x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        try:
-            y = stableswap_get_y(
-                i, j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
-                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
-                d_variant=inputs.d_variant,
-            )
-        except ValueError as e:
-            raise EVMRevertError(error=str(e)) from e
-        dy = xp[j] - y - 1
-        fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
-        return (dy - fee) * inputs.PRECISION // rates[j]
+    NONE = auto()  # raw effective_balances as xp
+    PRECISION_MULTIPLIERS = auto()  # effective_balances * precision_multipliers
 
 
 @dataclass(frozen=True, slots=True)
 class LiveAdminDynamicDyCalculator:
-    """LIVE_ADMIN_DYNAMIC: live balances minus admin, dynamic offpeg fee."""
+    """Live-admin dynamic-fee dy calculator.
 
-    swap_style: SwapStyle = SwapStyle.LIVE_ADMIN_DYNAMIC
+    Parameterized by ``precision_mode``:
 
-    def calculate(
-        self,
-        i: int,
-        j: int,
-        dx: int,
-        *,
-        inputs: DyCalculationInputs,
-        override_state: CurveStableswapPoolState | None = None,
-    ) -> int:
-        assert inputs.effective_balances is not None
-        xp_ = list(inputs.effective_balances)
-        x = xp_[i] + dx
-        try:
-            y = stableswap_get_y(
-                i, j, x=x, xp=xp_, amp=inputs.amp, n_coins=inputs.n_coins,
-                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
-                d_variant=inputs.d_variant,
-            )
-        except ValueError as e:
-            raise EVMRevertError(error=str(e)) from e
-        dy = xp_[j] - y
-        fee_ = (
-            _dynamic_fee(
-                xpi=(xp_[i] + x) // 2,
-                xpj=(xp_[j] + y) // 2,
-                _fee=inputs.fee,
-                _feemul=inputs.offpeg_fee_multiplier,
-                fee_denominator=inputs.FEE_DENOMINATOR,
-            )
-            * dy
-            // inputs.FEE_DENOMINATOR
-        )
-        return dy - fee_
+    - ``NONE``: xp = effective_balances, dy = xp[j] - y (no -1)
+    - ``PRECISION_MULTIPLIERS``: xp = effective_balances * precision_multipliers,
+      dy = (xp[j] - y) // precision_multipliers[j]
 
+    Both compute a dynamic offpeg fee via ``_dynamic_fee``.
+    """
 
-@dataclass(frozen=True, slots=True)
-class LiveAdminDynamicPrecisionDyCalculator:
-    """LIVE_ADMIN_DYNAMIC_PRECISION: precision multipliers for xp, dynamic offpeg fee."""
-
-    swap_style: SwapStyle = SwapStyle.LIVE_ADMIN_DYNAMIC_PRECISION
+    swap_style: SwapStyle
+    precision_mode: PrecisionMode = PrecisionMode.NONE
 
     def calculate(
         self,
@@ -117,22 +71,38 @@ class LiveAdminDynamicPrecisionDyCalculator:
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
         assert inputs.effective_balances is not None
-        balances = inputs.effective_balances
-        xp_ = [
-            balance * rate
-            for balance, rate in zip(balances, inputs.precision_multipliers, strict=True)
-        ]
 
-        x = xp_[i] + dx * inputs.precision_multipliers[i]
+        if self.precision_mode is PrecisionMode.PRECISION_MULTIPLIERS:
+            xp_ = [
+                balance * rate
+                for balance, rate in zip(
+                    inputs.effective_balances, inputs.precision_multipliers, strict=True
+                )
+            ]
+            x = xp_[i] + dx * inputs.precision_multipliers[i]
+        else:
+            xp_ = list(inputs.effective_balances)
+            x = xp_[i] + dx
+
         try:
             y = stableswap_get_y(
-                i, j, x=x, xp=xp_, amp=inputs.amp, n_coins=inputs.n_coins,
-                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                i,
+                j,
+                x=x,
+                xp=xp_,
+                amp=inputs.amp,
+                n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision,
+                y_variant=inputs.y_variant,
                 d_variant=inputs.d_variant,
             )
         except ValueError as e:
             raise EVMRevertError(error=str(e)) from e
-        dy = (xp_[j] - y) // inputs.precision_multipliers[j]
+
+        if self.precision_mode is PrecisionMode.PRECISION_MULTIPLIERS:
+            dy = (xp_[j] - y) // inputs.precision_multipliers[j]
+        else:
+            dy = xp_[j] - y
 
         fee_ = (
             _dynamic_fee(
@@ -146,34 +116,3 @@ class LiveAdminDynamicPrecisionDyCalculator:
             // inputs.FEE_DENOMINATOR
         )
         return dy - fee_
-
-
-@dataclass(frozen=True, slots=True)
-class LiveAdminOracleDyCalculator:
-    """LIVE_ADMIN_ORACLE: live balances minus admin, oracle rates, fee, rate convert."""
-
-    swap_style: SwapStyle = SwapStyle.LIVE_ADMIN_ORACLE
-
-    def calculate(
-        self,
-        i: int,
-        j: int,
-        dx: int,
-        *,
-        inputs: DyCalculationInputs,
-        override_state: CurveStableswapPoolState | None = None,
-    ) -> int:
-        rates = inputs.resolved_rates
-        xp = inputs.xp
-        x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        try:
-            y = stableswap_get_y(
-                i, j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
-                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
-                d_variant=inputs.d_variant,
-            )
-        except ValueError as e:
-            raise EVMRevertError(error=str(e)) from e
-        dy = xp[j] - y - 1
-        fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
-        return (dy - fee) * inputs.PRECISION // rates[j]

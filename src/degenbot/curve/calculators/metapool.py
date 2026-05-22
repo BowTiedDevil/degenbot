@@ -4,7 +4,16 @@ Metapool get_dy has two dispatch axes:
 1. MetapoolRateStyle — used in get_dy() when base_pool is not None
 2. MetapoolUnderlyingStyle — used in _get_dy_underlying()
 
-Each style gets its own calculator dataclass.
+The three rate-style calculators that previously each had their own
+frozen dataclass are now a single ``MetapoolDyCalculator`` parameterized
+by ``MetapoolRateStyle``, since they differ only in how the rates tuple
+is constructed.
+
+The three underlying-style calculators remain separate dataclasses
+because they diverge structurally in their input/output conversion
+paths (precision_multipliers vs rates[0]//10^18 vs
+scaled_redemption_price inversion) and forcing them into one method
+would obscure more than it saves.
 """
 
 from __future__ import annotations
@@ -12,98 +21,29 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from degenbot.curve.types import CurveStableswapPoolState
-
 from degenbot.calculations.stableswap import stableswap_get_y
 from degenbot.curve.types import DyCalculationInputs, MetapoolRateStyle, MetapoolUnderlyingStyle
 from degenbot.exceptions.pool import EVMRevertError
 
-# ── Metapool rate-style calculators (for get_dy metapool fast-path) ──
+if TYPE_CHECKING:
+    from degenbot.curve.types import CurveStableswapPoolState
+
+# ── Metapool rate-style calculator ──
 
 
 @dataclass(frozen=True, slots=True)
-class MetapoolPrecisionVpDyCalculator:
-    """PRECISION_VP: rates = (PRECISION, virtual_price)."""
+class MetapoolDyCalculator:
+    """Metapool dy calculator for get_dy() metapool fast-path.
 
-    rate_style: MetapoolRateStyle = MetapoolRateStyle.PRECISION_VP
+    Parameterized by ``rate_style`` which determines how the rates tuple
+    is constructed:
 
-    def calculate(
-        self,
-        i: int,
-        j: int,
-        dx: int,
-        *,
-        inputs: DyCalculationInputs,
-        override_state: CurveStableswapPoolState | None = None,
-    ) -> int:
-        pool_balances = override_state.balances if override_state is not None else inputs.balances
-        assert inputs.virtual_price is not None
-        rates = (
-            inputs.PRECISION,
-            inputs.virtual_price,
-        )
-        xp = tuple(
-            rate * balance // inputs.PRECISION
-            for rate, balance in zip(rates, pool_balances, strict=True)
-        )
-        x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        try:
-            y = stableswap_get_y(
-                i, j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
-                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
-                d_variant=inputs.d_variant,
-            )
-        except ValueError as e:
-            raise EVMRevertError(error=str(e)) from e
-        dy = xp[j] - y - 1
-        fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
-        return (dy - fee) * inputs.PRECISION // rates[j]
+    - ``STANDARD``: rates = (rate_multipliers[0], virtual_price)
+    - ``PRECISION_VP``: rates = (PRECISION, virtual_price)
+    - ``REDEMPTION_VP``: rates = (scaled_redemption_price, virtual_price)
 
-
-@dataclass(frozen=True, slots=True)
-class MetapoolRedemptionVpDyCalculator:
-    """REDEMPTION_VP: rates = (redemption_price, virtual_price)."""
-
-    rate_style: MetapoolRateStyle = MetapoolRateStyle.REDEMPTION_VP
-
-    def calculate(
-        self,
-        i: int,
-        j: int,
-        dx: int,
-        *,
-        inputs: DyCalculationInputs,
-        override_state: CurveStableswapPoolState | None = None,
-    ) -> int:
-        pool_balances = override_state.balances if override_state is not None else inputs.balances
-        assert inputs.scaled_redemption_price is not None
-        assert inputs.virtual_price is not None
-        rates = (
-            inputs.scaled_redemption_price,
-            inputs.virtual_price,
-        )
-        xp = tuple(
-            rate * balance // inputs.PRECISION
-            for rate, balance in zip(rates, pool_balances, strict=True)
-        )
-        x = xp[i] + (dx * rates[i] // inputs.PRECISION)
-        try:
-            y = stableswap_get_y(
-                i, j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
-                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
-                d_variant=inputs.d_variant,
-            )
-        except ValueError as e:
-            raise EVMRevertError(error=str(e)) from e
-        dy = xp[j] - y - 1
-        fee = inputs.fee * dy // inputs.FEE_DENOMINATOR
-        return (dy - fee) * inputs.PRECISION // rates[j]
-
-
-@dataclass(frozen=True, slots=True)
-class MetapoolStandardDyCalculator:
-    """STANDARD metapool: rates = (rate_multipliers[0], virtual_price)."""
+    All three share the same computation after rate construction.
+    """
 
     rate_style: MetapoolRateStyle = MetapoolRateStyle.STANDARD
 
@@ -117,11 +57,19 @@ class MetapoolStandardDyCalculator:
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
         pool_balances = override_state.balances if override_state is not None else inputs.balances
-        assert inputs.virtual_price is not None
-        rates = (
-            inputs.rate_multipliers[0],
-            inputs.virtual_price,
-        )
+
+        match self.rate_style:
+            case MetapoolRateStyle.STANDARD:
+                assert inputs.virtual_price is not None
+                rates = (inputs.rate_multipliers[0], inputs.virtual_price)
+            case MetapoolRateStyle.PRECISION_VP:
+                assert inputs.virtual_price is not None
+                rates = (inputs.PRECISION, inputs.virtual_price)
+            case MetapoolRateStyle.REDEMPTION_VP:
+                assert inputs.scaled_redemption_price is not None
+                assert inputs.virtual_price is not None
+                rates = (inputs.scaled_redemption_price, inputs.virtual_price)
+
         xp = tuple(
             rate * balance // inputs.PRECISION
             for rate, balance in zip(rates, pool_balances, strict=True)
@@ -129,8 +77,14 @@ class MetapoolStandardDyCalculator:
         x = xp[i] + (dx * rates[i] // inputs.PRECISION)
         try:
             y = stableswap_get_y(
-                i, j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
-                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                i,
+                j,
+                x=x,
+                xp=xp,
+                amp=inputs.amp,
+                n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision,
+                y_variant=inputs.y_variant,
                 d_variant=inputs.d_variant,
             )
         except ValueError as e:
@@ -140,7 +94,7 @@ class MetapoolStandardDyCalculator:
         return (dy - fee) * inputs.PRECISION // rates[j]
 
 
-# ── Metapool underlying-style calculators (for _get_dy_underlying) ──
+# ── Metapool underlying-style calculators ──
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,8 +167,14 @@ class MetapoolUnderlyingRedemptionDyCalculator:
 
         try:
             y = stableswap_get_y(
-                meta_i, meta_j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
-                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                meta_i,
+                meta_j,
+                x=x,
+                xp=xp,
+                amp=inputs.amp,
+                n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision,
+                y_variant=inputs.y_variant,
                 d_variant=inputs.d_variant,
             )
         except ValueError as e:
@@ -302,8 +262,14 @@ class MetapoolUnderlyingPrecisionVpDyCalculator:
 
         try:
             y = stableswap_get_y(
-                meta_i, meta_j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
-                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                meta_i,
+                meta_j,
+                x=x,
+                xp=xp,
+                amp=inputs.amp,
+                n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision,
+                y_variant=inputs.y_variant,
                 d_variant=inputs.d_variant,
             )
         except ValueError as e:
@@ -392,8 +358,14 @@ class MetapoolUnderlyingStandardDyCalculator:
 
         try:
             y = stableswap_get_y(
-                meta_i, meta_j, x=x, xp=xp, amp=inputs.amp, n_coins=inputs.n_coins,
-                a_precision=inputs.a_precision, y_variant=inputs.y_variant,
+                meta_i,
+                meta_j,
+                x=x,
+                xp=xp,
+                amp=inputs.amp,
+                n_coins=inputs.n_coins,
+                a_precision=inputs.a_precision,
+                y_variant=inputs.y_variant,
                 d_variant=inputs.d_variant,
             )
         except ValueError as e:
