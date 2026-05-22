@@ -79,7 +79,7 @@ docstring-code-format = true
 [tool.ruff.lint]
 select = [
 #    "DOC",      # pydoclint
-#    "D",        # pydocstyle
+    "D",        # pydocstyle
     "ERA",      # eradicate
     "ANN",      # flake8-annotations
     "ASYNC",    # flake8-async
@@ -124,6 +124,8 @@ select = [
     "TRY",      # tryceratops
 ]
 ignore = [
+    "D203",
+    "D212",
     "COM812",   # trailing commas are handled by the formatter
     "N818",     # error-suffix-on-exception-name
     "PLR0904",  # too-many-public-methods
