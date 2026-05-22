@@ -1,5 +1,4 @@
-"""
-State manager for concentrated-liquidity pools.
+"""State manager for concentrated-liquidity pools.
 
 Delegates temporal state navigation (deque, lock, discard/restore) to
 a :class:`~degenbot.types.state_cache.StateCache` and adds CL-specific
@@ -53,8 +52,7 @@ class _StateLike(Protocol):
 
 
 class ConcentratedLiquidityStateManager[StateT: _StateLike]:
-    """
-    Unlocked data structure for a bounded history of pool states.
+    """Unlocked data structure for a bounded history of pool states.
 
     Delegates the deque and temporal navigation to a
     :class:`~degenbot.types.state_cache.StateCache`. Adds CL-specific
@@ -110,7 +108,12 @@ class ConcentratedLiquidityStateManager[StateT: _StateLike]:
 
     @property
     def update_block(self) -> int | None:
-        """Update block."""
+        """Update block.
+
+        Returns:
+            The block number of the current state, or None.
+
+        """
         return self.state.block
 
     @property
@@ -129,18 +132,29 @@ class ConcentratedLiquidityStateManager[StateT: _StateLike]:
         self._state_cache.append(new_state, block=new_state.block)
 
     def discard_states_before_block(self, block: BlockNumber) -> None:
-        """Drop states strictly older than *block*."""
+        """Drop states strictly older than *block*.
+
+        Raises:
+            NoPoolStateAvailable: If no state exists for the given block.
+
+        """
         try:
             self._state_cache.discard_before_block(block)
         except ValueError as e:
             raise NoPoolStateAvailable(block=block) from e
 
     def restore_state_before_block(self, block: BlockNumber) -> StateT:
-        """
-        Rewind to the most recent state prior to *block*.
+        """Rewind to the most recent state prior to *block*.
 
         Returns the restored state so the caller can emit an event or
         subscribe notification.
+
+        Returns:
+            The restored state prior to the given block.
+
+        Raises:
+            NoPoolStateAvailable: If no state exists for the given block.
+
         """
         try:
             return self._state_cache.restore_before_block(block)
@@ -156,7 +170,12 @@ class ConcentratedLiquidityStateManager[StateT: _StateLike]:
         zero_for_one: bool,
         sparse_liquidity_map: bool,
     ) -> bool:
-        """Swap is viable."""
+        """Check whether a swap is viable given the current state.
+
+        Returns:
+            True if a swap can proceed, False otherwise.
+
+        """
         if sparse_liquidity_map:
             return True
 

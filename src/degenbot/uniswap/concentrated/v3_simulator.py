@@ -1,5 +1,4 @@
-"""
-Pure V3-style swap simulator.
+"""Pure V3-style swap simulator.
 
 Ported from ``UniswapV3Pool._calculate_swap``. Operates on a frozen
 ``LiquidityMapSnapshot`` and returns ``SwapResult`` with no side effects.
@@ -33,7 +32,12 @@ def _get_sqrt_price_target(
     sqrt_price_next_x96: int,
     sqrt_price_limit_x96: int,
 ) -> int:
-    """Mirror of ``_calculate_swap``'s price-target ternary."""
+    """Mirror of ``_calculate_swap``'s price-target ternary.
+
+    Returns:
+        The target sqrt price for the next swap step.
+
+    """
     if (zero_for_one and sqrt_price_next_x96 < sqrt_price_limit_x96) or (
         not zero_for_one and sqrt_price_next_x96 > sqrt_price_limit_x96
     ):
@@ -72,17 +76,15 @@ def calculate_swap(
     sqrt_price_x96_start: SqrtPriceX96,
     tick_start: Tick,
 ) -> SwapResult:
-    """
-    Pure V3 swap calculation.
+    """Pure V3 swap calculation.
 
-    Returns ``SwapResult`` containing the final amounts, price, liquidity and tick.
+    Returns:
+        SwapResult containing the final amounts, price, liquidity and tick.
 
     Raises:
         EVMRevertError: If the swap amount is zero or price limits are violated.
-        MissingLiquidityData: (via ``snapshot.next_initialized_tick``) if a
-            required bitmap word is absent in a sparse mapping.
-
-    """
+        MissingLiquidityData: If a required bitmap word is absent in a sparse mapping.
+    """""
     assert liquidity_start >= 0
 
     if amount_specified == 0:

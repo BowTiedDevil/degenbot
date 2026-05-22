@@ -1,5 +1,4 @@
-"""
-Calculation mixin for Uniswap V3 concentrated-liquidity pools.
+"""Calculation mixin for Uniswap V3 concentrated-liquidity pools.
 
 Provides calculation methods that operate on state held by V3PoolState.
 All methods are read-only with respect to pool state — they compute
@@ -30,8 +29,7 @@ if TYPE_CHECKING:
 
 
 class UniswapV3PoolCalc:
-    """
-    Calculation methods matching the Uniswap V3 contract.
+    """Calculation methods matching the Uniswap V3 contract.
 
     All methods operate on state held by the concrete class via V3PoolState.
 
@@ -49,13 +47,23 @@ class UniswapV3PoolCalc:
     @property
     @abstractmethod
     def tokens(self) -> tuple[Erc20Token, Erc20Token]:
-        """Tokens."""
+        """Tokens.
+
+        Returns:
+            The token pair held by this pool.
+
+        """
         ...
 
     @property
     @abstractmethod
     def state(self) -> UniswapV3PoolState:
-        """State."""
+        """State.
+
+        Returns:
+            The current pool state.
+
+        """
         ...
 
     @abstractmethod
@@ -76,9 +84,17 @@ class UniswapV3PoolCalc:
         token_in_quantity: int,
         override_state: UniswapV3PoolState | None = None,
     ) -> int:
-        """Tokens."""
-        """State."""
-        """Calculate expected token OUTPUT for a given INPUT at current pool state."""
+        """Calculate expected token OUTPUT for a given INPUT at current pool state.
+
+        Returns:
+            The expected output token amount.
+
+        Raises:
+            DegenbotValueError: If token_in is not held by this pool.
+            IncompleteSwap: If the swap cannot fulfill the full input amount.
+            LiquidityPoolError: If the simulated execution reverts.
+
+        """
         if token_in not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_in not found!")
 
@@ -107,7 +123,17 @@ class UniswapV3PoolCalc:
         token_out_quantity: int,
         override_state: UniswapV3PoolState | None = None,
     ) -> int:
-        """Calculate required token INPUT for a target OUTPUT at current pool state."""
+        """Calculate required token INPUT for a target OUTPUT at current pool state.
+
+        Returns:
+            The required input token amount.
+
+        Raises:
+            DegenbotValueError: If token_out is not held by this pool.
+            IncompleteSwap: If the swap cannot fulfill the full output amount.
+            LiquidityPoolError: If the simulated execution reverts.
+
+        """
         if token_out not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_out not found!")
 
@@ -137,7 +163,12 @@ class UniswapV3PoolCalc:
         token: Erc20Token,
         override_state: UniswapV3PoolState | None = None,
     ) -> Fraction:
-        """Get the absolute price for the given token, expressed in units of the other."""
+        """Get the absolute price for the given token, expressed in units of the other.
+
+        Returns:
+            The absolute price as a Fraction.
+
+        """
         return 1 / self.get_absolute_exchange_rate(token, override_state=override_state)
 
     def get_absolute_exchange_rate(
@@ -145,11 +176,17 @@ class UniswapV3PoolCalc:
         token: Erc20Token,
         override_state: UniswapV3PoolState | None = None,
     ) -> Fraction:
-        """
-        Get the absolute exchange rate for the given token.
+        """Get the absolute exchange rate for the given token.
 
         A V3 pool encodes the token1/token0 exchange rate in sqrt_price_x96,
         so it can be directly obtained.
+
+        Returns:
+            The absolute exchange rate as a Fraction.
+
+        Raises:
+            DegenbotValueError: If the token is not held by this pool.
+
         """
         if token not in self.tokens:
             raise DegenbotValueError(message=f"Unknown token {token}")
@@ -167,7 +204,12 @@ class UniswapV3PoolCalc:
         token: Erc20Token,
         override_state: UniswapV3PoolState | None = None,
     ) -> Fraction:
-        """Get the nominal price, corrected for decimals."""
+        """Get the nominal price, corrected for decimals.
+
+        Returns:
+            The nominal price as a Fraction.
+
+        """
         return 1 / self.get_nominal_rate(token, override_state=override_state)
 
     def get_nominal_rate(
@@ -175,7 +217,12 @@ class UniswapV3PoolCalc:
         token: Erc20Token,
         override_state: UniswapV3PoolState | None = None,
     ) -> Fraction:
-        """Get the nominal rate of exchange, corrected for decimal place values."""
+        """Get the nominal rate of exchange, corrected for decimal place values.
+
+        Returns:
+            The nominal exchange rate as a Fraction.
+
+        """
         return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
             Fraction(10**self._token1.decimals, 10**self._token0.decimals)
             if token == self._token0
@@ -183,8 +230,10 @@ class UniswapV3PoolCalc:
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
-        """Extract fee."""
-        return Fraction(self._fee, self.FEE_DENOMINATOR)
+        """Extract fee.
 
-        """Extract fee."""
-        return None
+        Returns:
+            The fee as a Fraction.
+
+        """
+        return Fraction(self._fee, self.FEE_DENOMINATOR)

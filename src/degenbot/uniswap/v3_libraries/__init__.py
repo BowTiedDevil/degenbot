@@ -1,5 +1,4 @@
-"""
-Uniswap V3 library functions.
+"""Uniswap V3 library functions.
 
 Provides Rust-accelerated tick math functions. Python implementations
 are available directly from ``tick_math`` for testing.

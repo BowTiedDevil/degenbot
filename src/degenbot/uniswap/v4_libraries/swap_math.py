@@ -10,13 +10,16 @@ def get_sqrt_price_target(
     sqrt_price_next_x96: int,
     sqrt_price_limit_x96: int,
 ) -> int:
-    """
-    Compute the price target for the next swap step.
+    """Compute the price target for the next swap step.
+
+    Returns:
+        The target sqrt price for the next swap step.
 
     @dev This simplified implementation replicates the gas optimized Yul used by the Solidity
     contract.
 
     ref: https://github.com/Uniswap/v4-core/blob/main/src/libraries/SwapMath.sol
+
     """
     return (
         max(sqrt_price_next_x96, sqrt_price_limit_x96)
@@ -33,7 +36,14 @@ def compute_swap_step(
     amount_remaining: int,
     fee_pips: int,
 ) -> tuple[int, int, int, int]:
-    """Compute the result of swapping some amount in, or amount out, given the parameters of the swap."""
+    """Compute the result of swapping some amount in, or amount out.
+
+    Given the parameters of the swap, returns the next sqrt price and amounts.
+
+    Returns:
+        A tuple of (sqrt_price_next_x96, amount_in, amount_out, fee_amount).
+
+    """
     zero_for_one = sqrt_ratio_x96_current >= sqrt_ratio_x96_target
     exact_in = amount_remaining < 0
 

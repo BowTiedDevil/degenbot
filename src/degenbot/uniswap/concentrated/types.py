@@ -11,8 +11,7 @@ from degenbot.validation.evm_values import ValidatedInt128, ValidatedUint128, Va
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class SwapResult:
-    """
-    Core mutable state produced by a concentrated-liquidity swap simulation.
+    """Core mutable state produced by a concentrated-liquidity swap simulation.
 
     This is algorithmically identical for V3 and V4. Variant-specific wrappers
     (e.g. V3 five-tuple or V4 SwapDelta) are assembled from these fields.
@@ -33,7 +32,12 @@ class SwapResult:
         liquidity: int | None = None,
         tick: int | None = None,
     ) -> Self:
-        """With replaced."""
+        """Return a copy with selected fields replaced.
+
+        Returns:
+            A new SwapResult with the specified fields replaced.
+
+        """
         return self.__class__(
             amount0=amount0 if amount0 is not None else self.amount0,
             amount1=amount1 if amount1 is not None else self.amount1,

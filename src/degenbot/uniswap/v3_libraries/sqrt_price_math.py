@@ -49,7 +49,15 @@ def get_amount0_delta(
     liquidity: int,
     round_up: bool | None = None,
 ) -> int:
-    """Return amount0 delta."""
+    """Return amount0 delta.
+
+    Returns:
+        The amount of token0 for the given liquidity and price range.
+
+    Raises:
+        EVMRevertError: If sqrt_ratio_a_x96 is not positive when round_up is set.
+
+    """
     # The Solidity function is overloaded with respect to `roundUp`.
     # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/sqrt_price_math.sol
 
@@ -121,7 +129,15 @@ def get_amount1_delta(
     liquidity: int,
     round_up: bool | None = None,
 ) -> int:
-    """Return amount1 delta."""
+    """Return amount1 delta.
+
+    Returns:
+        The amount of token1 for the given liquidity and price range.
+
+    Raises:
+        EVMRevertError: If liquidity is negative.
+
+    """
     # The Solidity function is overloaded with respect to `roundUp`. Both modes are encapsulated
     # here by the optional `round_up` argument.
 
@@ -167,7 +183,15 @@ def get_next_sqrt_price_from_amount0_rounding_up(
     amount: int,
     add: bool,
 ) -> int:
-    """Return next sqrt price from amount0 rounding up."""
+    """Return next sqrt price from amount0 rounding up.
+
+    Returns:
+        The next sqrt price as a Q64.96 fixed-point number.
+
+    Raises:
+        EVMRevertError: If the denominator calculation overflows.
+
+    """
     if amount == 0:
         return sqrt_price_x96
 
@@ -209,7 +233,15 @@ def get_next_sqrt_price_from_amount1_rounding_down(
     amount: int,
     add: bool,
 ) -> int:
-    """Return next sqrt price from amount1 rounding down."""
+    """Return next sqrt price from amount1 rounding down.
+
+    Returns:
+        The next sqrt price as a Q64.96 fixed-point number.
+
+    Raises:
+        EVMRevertError: If there is insufficient liquidity for the output.
+
+    """
     if add:
         quotient = (
             (amount << Q96_RESOLUTION) // liquidity
@@ -239,7 +271,15 @@ def get_next_sqrt_price_from_input(
     amount_in: int,
     zero_for_one: bool,
 ) -> int:
-    """Return next sqrt price from input."""
+    """Return next sqrt price from input.
+
+    Returns:
+        The next sqrt price as a Q64.96 fixed-point number.
+
+    Raises:
+        EVMRevertError: If sqrt_price_x96 or liquidity is not positive.
+
+    """
     if not (sqrt_price_x96 > 0):
         raise EVMRevertError(error="required: sqrt_price_x96 > 0")
 
@@ -272,7 +312,15 @@ def get_next_sqrt_price_from_output(
     amount_out: int,
     zero_for_one: bool,
 ) -> int:
-    """Return next sqrt price from output."""
+    """Return next sqrt price from output.
+
+    Returns:
+        The next sqrt price as a Q64.96 fixed-point number.
+
+    Raises:
+        EVMRevertError: If sqrt_price_x96 or liquidity is not positive.
+
+    """
     if not (sqrt_price_x96 > 0):
         raise EVMRevertError(error="required: sqrt_price_x96 > 0")
 

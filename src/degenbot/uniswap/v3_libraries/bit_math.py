@@ -7,11 +7,17 @@ from degenbot.exceptions.pool import EVMRevertError
 
 
 def least_significant_bit(number: int) -> int:
-    """
-    Find the least significant bit for the given number.
+    """Find the least significant bit for the given number.
 
     This function is rewritten to use simple string manipulation instead of the binary search
     implemented by the official Solidity contract.
+
+    Returns:
+        The position of the least significant bit.
+
+    Raises:
+        EVMRevertError: If number is out of uint256 range.
+
     """
     if number <= MIN_UINT256:
         raise EVMRevertError(error="required: number > 0")
@@ -31,11 +37,17 @@ def least_significant_bit(number: int) -> int:
 
 
 def most_significant_bit(number: int) -> int:
-    """
-    Find the most significant bit for the given number.
+    """Find the most significant bit for the given number.
 
     This function is rewritten to use simple string manipulation instead of the binary search
     implemented by the official Solidity contract.
+
+    Returns:
+        The position of the most significant bit.
+
+    Raises:
+        EVMRevertError: If number is out of uint256 range.
+
     """
     if number <= MIN_UINT256:
         raise EVMRevertError(error="required: number >= 0 ")
