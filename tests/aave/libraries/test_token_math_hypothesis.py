@@ -660,10 +660,9 @@ class TestKnownValues:
         """
         Issue 0034: Pool Rev 9 MINT_TO_TREASURY ceil rounding verification.
 
-        From debug/aave/0034:
-            - MintedToTreasury.amount: 76,116,689,027,312,564,277
-            - Index: 1,051,094,981,887,882,471,312,148,250
-            - Expected scaled: 72,416,565,904,061,875,431 (using ray_div_ceil)
+        MintedToTreasury.amount: 76,116,689,027,312,564,277
+        Index: 1,051,094,981,887,882,471,312,148,250
+        Expected scaled: 72,416,565,904,061,875,431 (using ray_div_ceil)
         """
 
         wrapper = request.getfixturevalue(f"token_math_wrapper_rev{revision}")
@@ -684,10 +683,9 @@ class TestKnownValues:
     def test_issue_0036_rev8_half_up_rounding(self, token_math_wrapper_rev1) -> None:
         """Issue 0036: Pool Rev 8 MINT_TO_TREASURY half-up rounding verification.
 
-        From debug/aave/0036:
-        - MintedToTreasury.amount: 312,922,037,040,136,887
-        - Index: 1,001,340,845,020,106,656,953,816,530
-        - Expected scaled: 312,503,018,923,445,089 (using ray_div, half-up)
+        MintedToTreasury.amount: 312,922,037,040,136,887
+        Index: 1,001,340,845,020,106,656,953,816,530
+        Expected scaled: 312,503,018,923,445,089 (using ray_div, half-up)
 
         Note: Rev 1 wrapper uses half-up rounding like Rev 8.
         """

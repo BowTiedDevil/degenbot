@@ -73,8 +73,6 @@ class TestWithdrawHandler:
         1. Extract the actual withdrawal amount from Pool event
         2. Use COLLATERAL_BURN calculation (ceil rounding)
         3. Set scaled_amount=None to skip validation
-
-        See debug/aave/0031 for details.
         """
         index = 2_000_000_000_000_000_000_000_000_000
         interest_amount = 2000  # balance_increase (interest)

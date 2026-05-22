@@ -96,10 +96,6 @@ class PoolMath:
         Contract References:
             - Rev 1-8: Reverse of ray_mul (half-up) = ray_div (half-up)
             - Rev 9+: Reverse of getATokenBalance (ray_mul_floor) = ray_div_ceil
-
-        See Also:
-            debug/aave/0034: Pool Rev 9 MINT_TO_TREASURY rounding
-            debug/aave/0036: Pool Rev 8 MINT_TO_TREASURY rounding
         """
         if pool_revision >= 9:  # noqa: PLR2004
             # Reverse of ray_mul_floor = ray_div_ceil

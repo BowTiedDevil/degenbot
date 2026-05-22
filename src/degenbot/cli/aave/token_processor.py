@@ -554,7 +554,6 @@ def _process_debt_mint_with_match(
         # For GHO_REPAY operations, extract the actual repay amount from the Repay event
         # to avoid 1 wei rounding errors from deriving from Mint event fields.
         # The processor will handle the full logic including discount calculations.
-        # See debug/aave/0037 and 0038 for details.
         actual_repay_amount: int | None = None
         if operation.operation_type == OperationType.GHO_REPAY:
             assert operation.pool_event is not None

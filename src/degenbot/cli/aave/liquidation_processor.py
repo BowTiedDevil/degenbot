@@ -24,8 +24,6 @@ def _preprocess_liquidation_aggregates(
 
     Detects whether multiple liquidations share the same debt asset and
     determines if they use combined or separate burn events.
-
-    See debug/aave/0056 and debug/aave/0065 for pattern details.
     """
 
     tx_context.liquidation_patterns = detect_liquidation_patterns(

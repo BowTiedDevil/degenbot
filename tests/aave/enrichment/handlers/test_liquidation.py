@@ -144,7 +144,6 @@ class TestLiquidationHandler:
 
         The Pool calculates scaledAmount = debtToCover.rayDivFloor(index)
         and passes it to vToken.burn(). We must calculate this ourselves.
-        See debug/aave/0044 for details.
         """
         index = 2_000_000_000_000_000_000_000_000_000
         debt_to_cover = 1_000_000_000_000_000_000

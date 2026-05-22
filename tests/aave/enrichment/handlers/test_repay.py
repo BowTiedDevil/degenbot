@@ -71,7 +71,6 @@ class TestRepayHandler:
 
         NOTE: Do NOT set scaled_amount=None for REPAY with DEBT_MINT.
         The processing layer uses the enriched scaled_amount directly.
-        See debug/aave/0037 for details.
         """
         index = 2_000_000_000_000_000_000_000_000_000
         interest_amount = 2000  # balance_increase (interest)
