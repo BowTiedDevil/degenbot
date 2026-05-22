@@ -47,7 +47,6 @@ class TestMintToTreasuryHandler:
         to correctly calculate accruedToTreasury. The enrichment layer doesn't
         have access to position data, so leave scaled_amount as None.
         The correct calculation is performed in aave.py with position context.
-        See debug/aave/0014 - MINT_TO_TREASURY AccruedToTreasury Calculation Error.md
         """
         scaled_event = _create_mock_scaled_event(
             event_type=ScaledTokenEventType.COLLATERAL_MINT,

@@ -312,8 +312,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
         )
 
     # Build a map of assigned log indices and liquidation operations for deferred processing
-    # This handles cases where debt burn events are emitted BEFORE LiquidationCall events
-    # See debug/aave/0060 for details on out-of-order event emission
+    # debt burn events emitted BEFORE LiquidationCall events
     assigned_log_indices: set[int] = set()
     liquidation_operations: list[Operation] = []
     for op in tx_operations.operations:

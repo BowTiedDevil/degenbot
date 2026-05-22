@@ -308,7 +308,6 @@ class EnrichedScaledTokenEvent(BaseModel):
 
         # Withdraw with interest exceeding withdrawal amount
         # The Pool uses burn rounding (ceil) but emits a Mint event.
-        # See debug/aave/0031 for details.
         if (
             self.event_type == ScaledTokenEventType.COLLATERAL_MINT
             and self.balance_increase is not None
@@ -322,7 +321,6 @@ class EnrichedScaledTokenEvent(BaseModel):
 
         # REPAY with interest exceeding repayment amount
         # The Pool uses burn rounding (floor) but emits a Mint event.
-        # See debug/aave/0037 for details.
         if (
             self.event_type in {ScaledTokenEventType.DEBT_MINT, ScaledTokenEventType.GHO_DEBT_MINT}
             and self.balance_increase is not None

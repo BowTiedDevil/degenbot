@@ -13,8 +13,6 @@ In this case:
 1. Extract the actual withdrawal amount from the Pool WITHDRAW event
 2. Use COLLATERAL_BURN calculation (ceil rounding) instead of COLLATERAL_MINT
 3. Set scaled_amount=None to skip validation
-
-See debug/aave/0031 for details.
 """
 
 from typing import TYPE_CHECKING, ClassVar

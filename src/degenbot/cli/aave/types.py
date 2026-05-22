@@ -77,7 +77,6 @@ class TransactionContext:
 
     # Pattern-aware liquidation context for multi-liquidation scenarios
     # Replaces liquidation_aggregates, liquidation_counts, and processed_liquidations
-    # See debug/aave/0056 and debug/aave/0065 for pattern details.
     liquidation_patterns: LiquidationPatternContext = field(
         default_factory=LiquidationPatternContext
     )

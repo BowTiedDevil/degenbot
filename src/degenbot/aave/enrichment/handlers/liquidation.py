@@ -11,8 +11,6 @@ Special cases:
 1. Debt vs collateral extraction: Use different extractors based on event type
 2. Pool Revision 9+: Pre-scaled amounts passed to token contracts
 3. Net debt increase: When balance_increase > amount on DEBT_MINT
-
-See debug/aave/0044 for Pool rev 9+ details.
 """
 
 from typing import TYPE_CHECKING, ClassVar
@@ -194,7 +192,6 @@ class LiquidationHandler:
 
         Pool rev 9+ calculates scaledAmount = debtToCover.rayDivFloor(index)
         and passes it to vToken.burn(). We must calculate this ourselves.
-        See debug/aave/0044 for details.
         """
         assert operation.pool_event is not None
         if event.index is None:

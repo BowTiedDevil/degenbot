@@ -1386,8 +1386,6 @@ class TransactionOperationsParser:
         Returns a mapping of (user, debt_v_token_address) -> liquidation_count.
         This allows proper disambiguation when the same user is liquidated
         multiple times with the same debt asset in one transaction.
-
-        See debug/aave/0051 for architectural details.
         """
         liquidation_counts: Counter[tuple[ChecksumAddress, ChecksumAddress]] = Counter()
 
@@ -1418,8 +1416,6 @@ class TransactionOperationsParser:
 
         When a user has multiple liquidations, use asset-specific matching to
         disambiguate which burns belong to which liquidation.
-
-        See debug/aave/0055 for user-level liquidation count approach.
         """
         counts: dict[ChecksumAddress, int] = {}
         for ev in all_events:
@@ -1449,10 +1445,6 @@ class TransactionOperationsParser:
         - Multiple liquidations per user: Use asset filter + sequential matching
           to disambiguate which burns belong to which liquidation.
 
-        See debug/aave/0054 for sequential matching approach.
-        See debug/aave/0051 for original refactoring.
-        See debug/aave/0052 for removal of is_gho-based filtering.
-        See debug/aave/0055 for user-level liquidation count approach.
         """
         burns: list[ScaledTokenEvent] = []
 
@@ -1643,19 +1635,16 @@ class TransactionOperationsParser:
 
         # Pre-analyze liquidations to detect multi-liquidation scenarios
         # This allows proper disambiguation without the primary/secondary split
-        # See debug/aave/0051 for architectural details
         liquidation_analysis = self._analyze_liquidation_scenarios(all_events)
 
         # Count total liquidations per user to determine collection strategy
         # Single liquidation = collect ALL debt burns (handles bad debt multi-asset)
         # Multiple liquidations = use asset filter + sequential matching
-        # See debug/aave/0055 for user-level liquidation count approach
         user_liquidation_analysis = self._analyze_user_liquidation_count(all_events)
         user_liquidation_count = user_liquidation_analysis.get(user, 1)
 
         # Calculate this liquidation's position among all liquidations for this (user, debt_asset)
         # Sequential matching: burn[i] belongs to liquidation[i]
-        # See debug/aave/0054 for detailed explanation
         liquidation_position = 0
         for ev in all_events:
             if ev["topics"][0] != AaveV3PoolEvent.LIQUIDATION_CALL.value:
@@ -1670,8 +1659,6 @@ class TransactionOperationsParser:
         # Collect debt burns for the liquidated user
         # Single liquidation: collect ALL debt burns (handles bad debt multi-asset)
         # Multiple liquidations: use asset filter + sequential matching
-        # See debug/aave/0054 for sequential matching approach
-        # See debug/aave/0055 for user-level liquidation count approach
         debt_burns = self._collect_debt_burns(
             user=user,
             debt_v_token_address=debt_v_token_address,

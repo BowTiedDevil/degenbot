@@ -7,8 +7,6 @@ Special case: MINT_TO_TREASURY requires position data (current balance and
 last_index) to correctly calculate accruedToTreasury. The enrichment layer
 doesn't have access to position data, so leave scaled_amount as None.
 The correct calculation is performed in aave.py with position context.
-
-See debug/aave/0014 - MINT_TO_TREASURY AccruedToTreasury Calculation Error.md
 """
 
 from typing import TYPE_CHECKING, ClassVar

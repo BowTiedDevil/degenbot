@@ -17,7 +17,6 @@ In this case:
 NOTE: Do NOT set scaled_amount=None for REPAY/GHO_REPAY with DEBT_MINT/GHO_DEBT_MINT.
 The processing layer uses the enriched scaled_amount directly to avoid
 1 wei rounding errors from deriving the amount from Mint event fields.
-See debug/aave/0037 for details.
 """
 
 from typing import TYPE_CHECKING, ClassVar
@@ -101,7 +100,6 @@ class RepayHandler:
 
         NOTE: Do NOT set scaled_amount=None. The processing layer uses
         the enriched scaled_amount directly.
-        See debug/aave/0037 for details.
         """
         assert operation.pool_event is not None
         assert event.index is not None

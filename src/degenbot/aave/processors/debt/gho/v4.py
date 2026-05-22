@@ -120,7 +120,6 @@ class GhoV4Processor(GhoDebtTokenProcessor):
             # The net balance change is just burning the scaled repayment amount.
             # Use actual_repay_amount from Repay event if provided to avoid
             # 1 wei rounding errors from deriving from Mint event fields.
-            # See debug/aave/0037 and 0038 for details.
             if actual_repay_amount is not None:
                 amount_repaid = actual_repay_amount
             else:
