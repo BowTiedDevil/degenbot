@@ -15,7 +15,12 @@ def compress(
     tick: Tick,
     tick_spacing: int,
 ) -> int:
-    """Compress the given tick by the spacing, rounding down towards negative infinity."""
+    """Compress the given tick by the spacing, rounding down towards negative infinity.
+
+    Returns:
+        The compressed tick value.
+
+    """
     # Use Python floor division directly, which matches rounding specified by the function
     return tick // tick_spacing
 
@@ -28,7 +33,13 @@ def flip_tick(
     tick_spacing: int,
     update_block: BlockNumber,
 ) -> None:
-    """Flips the initialized state for a given tick from false to true, or vice versa."""
+    """Flip the initialized state for a given tick from false to true, or vice versa.
+
+    Raises:
+        ValueError: If tick is not a multiple of tick_spacing.
+        LiquidityMapWordMissing: If sparse and the word position is not in the bitmap.
+
+    """
     if tick % tick_spacing != 0:
         msg = "Invalid tick or spacing"
         raise ValueError(msg)
@@ -57,11 +68,14 @@ def gen_ticks(
     tick_spacing: int,
     less_than_or_equal: bool,
 ) -> Generator[tuple[Tick, bool], None, None]:
-    """
-    Yield ticks from the set of all possible ticks at 32 byte (256 bit) word boundaries and.
+    """Yield ticks at word boundaries and initialized ticks in the liquidity mapping.
 
-    initialized ticks found in the liquidity mapping. The ticks are yielded in descending order when
-    `less_than_or_equal` is True, else ascending.
+    The ticks are yielded in descending order when `less_than_or_equal` is True,
+    else ascending.
+
+    Yields:
+        Tuples of (tick, is_initialized) for each tick along the path.
+
     """
     # Python rounds down to negative infinity, so use it directly instead of the abs and modulo
     # implementation of the Solidity contract
@@ -140,10 +154,17 @@ def next_initialized_tick_within_one_word(
     tick_spacing: int,
     less_than_or_equal: bool,
 ) -> tuple[Tick, bool]:
-    """
-    Return the next initialized tick contained in the same word (or adjacent word) as the tick that.
+    """Return the next initialized tick in the same word (or adjacent word).
 
-    is either to the left (less than or equal to) or right (greater than) of the given tick.
+    The tick is either to the left (less than or equal to) or right
+    (greater than) of the given tick.
+
+    Returns:
+        A tuple of (next_tick, is_initialized).
+
+    Raises:
+        LiquidityMapWordMissing: If the word position is not in the bitmap.
+
     """
     # Python rounds down to negative infinity, so use it directly instead of the abs and modulo
     # implementation of the Solidity contract
@@ -190,7 +211,12 @@ def next_initialized_tick_within_one_word(
 def position(
     tick: Tick,
 ) -> tuple[int, int]:
-    """Compute the position in the mapping where the initialized bit for a tick is placed."""
+    """Compute the position in the mapping where the initialized bit for a tick is placed.
+
+    Returns:
+        A tuple of (word_pos, bit_pos).
+
+    """
     return (
         tick >> 8,  # word_pos
         tick % 256,  # bit_pos

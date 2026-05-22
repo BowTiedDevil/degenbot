@@ -24,7 +24,15 @@ MAX_ERROR = 3402992956809132418596140100660247210
 
 @functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
 def get_sqrt_ratio_at_tick(tick: int) -> int:
-    """Find the square root ratio in Q128.96 form for the given tick."""
+    """Find the square root ratio in Q128.96 form for the given tick.
+
+    Returns:
+        The sqrt price as a Q128.96 fixed-point number.
+
+    Raises:
+        EVMRevertError: If abs(tick) > MAX_TICK.
+
+    """
     abs_tick = abs(tick)
     if not (abs_tick <= MAX_TICK):
         raise EVMRevertError(error="required: abs_tick <= MAX_TICK")
@@ -68,7 +76,15 @@ def get_sqrt_ratio_at_tick(tick: int) -> int:
 def get_tick_at_sqrt_ratio(
     sqrt_price_x96: int,
 ) -> Tick:
-    """Compute the greatest tick value such that ``get_tick_at_sqrt_ratio(tick) <= ratio``."""
+    """Compute the greatest tick value such that ``get_tick_at_sqrt_ratio(tick) <= ratio``.
+
+    Returns:
+        The greatest tick for which the sqrt price does not exceed the given ratio.
+
+    Raises:
+        EVMRevertError: If sqrt_price_x96 is outside the valid range.
+
+    """
     if not (sqrt_price_x96 >= MIN_SQRT_RATIO and sqrt_price_x96 < MAX_SQRT_RATIO):
         msg = "R"
         raise EVMRevertError(msg)

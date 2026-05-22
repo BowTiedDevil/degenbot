@@ -45,10 +45,10 @@ class LiquidityMap(TypedDict):
 
 
 class UniswapV3LiquiditySnapshotSource(Protocol):
-    """
-    A minimal protocol allowing the UniswapV3LiquiditySnapshot class to retrieve pool data from a.
+    """A minimal protocol for retrieving pool data from a generic source.
 
-    generic source.
+    Any class implementing the protocol must implement these methods,
+    transforming data as necessary to return the specified types.
     """
 
     storage_kind: str
@@ -57,25 +57,35 @@ class UniswapV3LiquiditySnapshotSource(Protocol):
     # Any class implementing the protocol must implement these methods, transforming data as
     # necessary to return the specified types.
     def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
-        """Return liquidity map."""
+        """Return liquidity map.
+
+        Returns:
+            The liquidity map for the pool, or None if not found.
+
+        """
         ...
 
     def get_newest_block(self) -> BlockNumber | None:
-        """Return newest block."""
+        """Return newest block.
+
+        Returns:
+            The newest block number, or None if unavailable.
+
+        """
         ...
 
     def get_pools(self) -> set[ChecksumAddress]:
-        """Return pools."""
+        """Return pools.
+
+        Returns:
+            The set of pool addresses.
+
+        """
         ...
 
 
 class MonolithicJsonFileSnapshot:
-    """Return liquidity map."""
-
-    """Return newest block."""
-    """Return pools."""
-    """
-    A pool liquidity source backed by a single JSON file with this structure.
+    """A pool liquidity source backed by a single JSON file.
 
     {
         "snapshot_block": int,
@@ -112,7 +122,12 @@ class MonolithicJsonFileSnapshot:
         self.chain_id: int = self._file_snapshot["chain_id"]
 
     def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
-        """Return liquidity map."""
+        """Return liquidity map.
+
+        Returns:
+            The liquidity map for the pool, or None if not found.
+
+        """
         if pool_address not in self._file_snapshot:
             return None
 
@@ -128,14 +143,24 @@ class MonolithicJsonFileSnapshot:
         )
 
     def get_newest_block(self) -> BlockNumber | None:
-        """Return newest block."""
+        """Return newest block.
+
+        Returns:
+            The snapshot block number, or None if unavailable.
+
+        """
         newest_block = self._file_snapshot.get("snapshot_block")
         if newest_block is None:
             return None
         return int(newest_block)
 
     def get_pools(self) -> set[ChecksumAddress]:
-        """Return pools."""
+        """Return pools.
+
+        Returns:
+            The set of pool addresses from the snapshot.
+
+        """
         # all top-level keys except metadata entries
         return {
             get_checksum_address(key)
@@ -145,8 +170,7 @@ class MonolithicJsonFileSnapshot:
 
 
 class IndividualJsonFileSnapshot:
-    """
-    Snapshot source backed by a directory of JSON files with this tree structure.
+    """Snapshot source backed by a directory of JSON files with this tree structure.
 
         /path/to/snapshots/
         ├── _metadata.json              -> { "block": int, "chain_id": int }
@@ -171,18 +195,33 @@ class IndividualJsonFileSnapshot:
         self.chain_id: int = self._metadata["chain_id"]
 
     def get_newest_block(self) -> BlockNumber | None:
-        """Return newest block."""
+        """Return newest block.
+
+        Returns:
+            The block number from metadata, or None if unavailable.
+
+        """
         newest_block = self._metadata.get("block")
         if newest_block is None:
             return None
         return int(newest_block)
 
     def get_pools(self) -> set[ChecksumAddress]:
-        """Return pools."""
+        """Return pools.
+
+        Returns:
+            The set of pool addresses from file stems.
+
+        """
         return {get_checksum_address(pool_file.stem) for pool_file in self._dir.glob("0x*.json")}
 
     def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
-        """Return liquidity map."""
+        """Return liquidity map.
+
+        Returns:
+            The liquidity map for the pool, or None if not found.
+
+        """
         pool_path = self._dir / f"{pool_address}.json"
         if not pool_path.exists():
             return None
@@ -200,10 +239,9 @@ class IndividualJsonFileSnapshot:
 
 
 class DatabaseSnapshot:
-    """
-    Snapshot source backed by built-in SQLite database using the ORM abstractions defined.
+    """Snapshot source backed by built-in SQLite database.
 
-    in `degenbot.database`.
+    Uses the ORM abstractions defined in `degenbot.database`.
     """
 
     storage_kind = "db"
@@ -216,7 +254,12 @@ class DatabaseSnapshot:
         db: DatabaseSessionManager | None = None,
         database_path: pathlib.Path | None = None,
     ) -> None:
-        """Initialize the instance."""
+        """Initialize the instance.
+
+        Raises:
+            ValueError: If neither db nor database_path is provided.
+
+        """
         if db is not None:
             self.session = db
             self.database_path = database_path or pathlib.Path()
@@ -230,7 +273,12 @@ class DatabaseSnapshot:
         self.chain_id = chain_id
 
     def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
-        """Return liquidity map."""
+        """Return liquidity map.
+
+        Returns:
+            The liquidity map for the pool, or None if not found.
+
+        """
         pool_in_db = self.session.scalar(
             select(LiquidityPoolTable).where(LiquidityPoolTable.address == pool_address)
         )
@@ -255,7 +303,12 @@ class DatabaseSnapshot:
         )
 
     def get_newest_block(self) -> BlockNumber | None:
-        """Return newest block."""
+        """Return newest block.
+
+        Returns:
+            The newest block number across all V3 exchanges, or None if unavailable.
+
+        """
         with self.session() as session:
             last_update_blocks: Sequence[int | None] = session.scalars(
                 select(ExchangeTable.last_update_block).where(
@@ -274,7 +327,12 @@ class DatabaseSnapshot:
         )
 
     def get_pools(self) -> set[ChecksumAddress]:
-        """Return pools."""
+        """Return pools.
+
+        Returns:
+            The set of V3 pool addresses from the database.
+
+        """
         return {
             get_checksum_address(pool)
             for pool in self.session.scalars(select(UniswapV3PoolTableBase.address)).all()
@@ -292,7 +350,12 @@ class UniswapV3LiquiditySnapshot:
     )
 
     def __init__(self, source: UniswapV3LiquiditySnapshotSource) -> None:
-        """Initialize the instance."""
+        """Initialize the instance.
+
+        Raises:
+            ValueError: If the provided source is uninitialized.
+
+        """
         self._source = source
         self._chain_id = source.chain_id
 
@@ -324,10 +387,13 @@ class UniswapV3LiquiditySnapshot:
         self,
         log: LogReceipt,
     ) -> tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
-        """
-        Decode an event log and convert to an address and a `UniswapV3LiquidityEvent` for.
+        """Decode an event log and convert to an address and a `UniswapV3LiquidityEvent`.
 
-        processing with `UniswapV3Pool.update_liquidity_map`.
+        For processing with `UniswapV3Pool.update_liquidity_map`.
+
+        Returns:
+            Tuple of (pool address, liquidity event).
+
         """
         # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/interfaces/pool/IUniswapV3PoolEvents.sol
         #
@@ -384,8 +450,7 @@ class UniswapV3LiquiditySnapshot:
         provider: ProviderAdapter,
         blocks_per_request: int | None = None,
     ) -> None:
-        """
-        Fetch liquidity events from the block following the last-known event to the target block.
+        """Fetch liquidity events from the block following the last-known event to the target block.
 
         using `eth_getLogs`. Blocks per request will be capped at `blocks_per_request`.
         """
@@ -425,8 +490,7 @@ class UniswapV3LiquiditySnapshot:
         provider: AsyncProviderAdapter,
         blocks_per_request: int | None = None,
     ) -> None:
-        """
-        Async version of fetch_new_events.
+        """Async version of fetch_new_events.
 
         Fetch liquidity events from the block following the last-known event to the target block
         using `eth_getLogs` via the async provider. Blocks per request will be capped at
@@ -467,7 +531,12 @@ class UniswapV3LiquiditySnapshot:
         self,
         pool_address: HexAddress,
     ) -> tuple[UniswapV3PoolLiquidityMappingUpdate, ...]:
-        """Consume pending liquidity updates for the pool."""
+        """Consume pending liquidity updates for the pool.
+
+        Returns:
+            A tuple of liquidity mapping updates for the pool.
+
+        """
         pool_key = get_checksum_address(pool_address)
 
         try:
@@ -484,7 +553,12 @@ class UniswapV3LiquiditySnapshot:
             self._liquidity_events[pool_key].clear()
 
     def tick_bitmap(self, pool_address: str | bytes) -> dict[int, BitmapAtWord] | None:
-        """Consume the tick initialization bitmaps for the pool."""
+        """Consume the tick initialization bitmaps for the pool.
+
+        Returns:
+            The tick bitmap dict, or None if no snapshot exists.
+
+        """
         pool_address = get_checksum_address(pool_address)
 
         pool_snapshot = self._liquidity_snapshot[pool_address]
@@ -496,7 +570,12 @@ class UniswapV3LiquiditySnapshot:
         return tick_bitmap
 
     def tick_data(self, pool_address: str | bytes) -> dict[int, LiquidityAtTick] | None:
-        """Consume the liquidity mapping for the pool."""
+        """Consume the liquidity mapping for the pool.
+
+        Returns:
+            The tick data dict, or None if no snapshot exists.
+
+        """
         pool_address = get_checksum_address(pool_address)
 
         pool_snapshot = self._liquidity_snapshot[pool_address]
@@ -513,7 +592,12 @@ class UniswapV3LiquiditySnapshot:
         tick_data: dict[int, LiquidityAtTick],
         tick_bitmap: dict[int, BitmapAtWord],
     ) -> None:
-        """Update the liquidity mapping for the pool."""
+        """Update the liquidity mapping for the pool.
+
+        Raises:
+            UnknownPool: If the pool has no snapshot.
+
+        """
         pool_key = get_checksum_address(pool)
 
         pool_snapshot = self._liquidity_snapshot[pool_key]

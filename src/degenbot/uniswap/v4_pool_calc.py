@@ -1,5 +1,4 @@
-"""
-Calculation mixin for Uniswap V4 concentrated-liquidity pools.
+"""Calculation mixin for Uniswap V4 concentrated-liquidity pools.
 
 Provides pricing and fee calculation methods that operate on state held
 by V4PoolState. The swap calculation methods (calculate_tokens_in/out)
@@ -21,8 +20,7 @@ if TYPE_CHECKING:
 
 
 class UniswapV4PoolCalc:
-    """
-    Pricing and fee methods for Uniswap V4 pools.
+    """Pricing and fee methods for Uniswap V4 pools.
 
     Class variables that V4 subclasses may override:
     - FEE_DENOMINATOR
@@ -45,7 +43,12 @@ class UniswapV4PoolCalc:
         token: Erc20Token,
         override_state: UniswapV4PoolState | None = None,
     ) -> Fraction:
-        """Get the absolute price for the given token, expressed in units of the other."""
+        """Get the absolute price for the given token, expressed in units of the other.
+
+        Returns:
+            The absolute price as a Fraction.
+
+        """
         return 1 / self.get_absolute_exchange_rate(token, override_state=override_state)
 
     def get_absolute_exchange_rate(
@@ -53,7 +56,15 @@ class UniswapV4PoolCalc:
         token: Erc20Token,
         override_state: UniswapV4PoolState | None = None,
     ) -> Fraction:
-        """Get the absolute exchange rate for the given token."""
+        """Get the absolute exchange rate for the given token.
+
+        Returns:
+            The absolute exchange rate as a Fraction.
+
+        Raises:
+            DegenbotValueError: If the token is not held by this pool.
+
+        """
         if token not in self.tokens:
             raise DegenbotValueError(message=f"Unknown token {token}")
 
@@ -70,7 +81,12 @@ class UniswapV4PoolCalc:
         token: Erc20Token,
         override_state: UniswapV4PoolState | None = None,
     ) -> Fraction:
-        """Get the nominal price, corrected for decimals."""
+        """Get the nominal price, corrected for decimals.
+
+        Returns:
+            The nominal price as a Fraction.
+
+        """
         return 1 / self.get_nominal_exchange_rate(token, override_state=override_state)
 
     def get_nominal_exchange_rate(
@@ -78,7 +94,12 @@ class UniswapV4PoolCalc:
         token: Erc20Token,
         override_state: UniswapV4PoolState | None = None,
     ) -> Fraction:
-        """Get the nominal rate, corrected for decimal place values."""
+        """Get the nominal rate, corrected for decimal place values.
+
+        Returns:
+            The nominal exchange rate as a Fraction.
+
+        """
         return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
             Fraction(10**self._token1.decimals, 10**self._token0.decimals)
             if token == self._token0
@@ -86,8 +107,10 @@ class UniswapV4PoolCalc:
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
-        """Extract fee."""
-        return Fraction(self.fee, self.FEE_DENOMINATOR)
+        """Extract fee.
 
-        """Extract fee."""
-        return None
+        Returns:
+            The fee as a Fraction.
+
+        """
+        return Fraction(self.fee, self.FEE_DENOMINATOR)

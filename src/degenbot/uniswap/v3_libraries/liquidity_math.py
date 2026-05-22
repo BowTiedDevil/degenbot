@@ -4,11 +4,17 @@ from degenbot.exceptions.pool import EVMRevertError
 
 
 def add_delta(x: int, y: int) -> int:
-    """
-    Check that the result fits in a uint128.
+    """Check that the result fits in a uint128.
 
     Instead of checking via < or >= tricks via Solidity's built-in casting as implemented at
     https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/LiquidityMath.sol.
+
+    Returns:
+        The sum x + y, guaranteed to fit in a uint128.
+
+    Raises:
+        EVMRevertError: If the result overflows or underflows uint128 bounds.
+
     """
     if not (MIN_UINT128 <= x <= MAX_UINT128):
         raise EVMRevertError(error="x not a valid uint128")

@@ -14,7 +14,12 @@ def compute_swap_step(
     amount_remaining: int,
     fee_pips: int,
 ) -> tuple[SqrtPriceX96, AmountIn, AmountOut, FeeTaken]:
-    """Compute swap step."""
+    """Compute swap step.
+
+    Returns:
+        A tuple of (sqrt_ratio_x96_next, amount_in, amount_out, fee_taken).
+
+    """
     zero_for_one = sqrt_ratio_x96_current >= sqrt_ratio_x96_target
     exact_in = amount_remaining >= 0
 

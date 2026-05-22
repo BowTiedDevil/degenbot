@@ -1,4 +1,5 @@
 """UniswapV4Pool: concentrated liquidity AMM with hook support."""
+
 import dataclasses
 from collections.abc import Callable
 from enum import Enum
@@ -196,7 +197,12 @@ class UniswapV4Pool(
         state_cache_depth: int = 8,
         tick_data_fetcher: Callable[[int, int], None] | None = None,
     ) -> None:
-        """Initialize the instance."""
+        """Initialize the instance.
+
+        Raises:
+            DegenbotValueError: If tick_bitmap and tick_data are not both provided or both omitted.
+
+        """
         self._pool_manager_address = get_checksum_address(pool_manager_address)
         self._pool_id: Final[HexBytes] = HexBytes(pool_id)
 
@@ -302,23 +308,41 @@ class UniswapV4Pool(
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
     def __eq__(self, other: object) -> bool:
-        """Check equality with another object."""
+        """Check equality with another object.
+
+        Returns:
+            True if the other object is the same pool, False otherwise.
+
+        """
         if isinstance(other, type(self)):
             return self.address == other.address and self.pool_id == other.pool_id
         return super().__eq__(other)
 
     def __hash__(self) -> int:
-        """Return the hash value."""
+        """Return the hash value.
+
+        Returns:
+            The hash value combining address and pool ID.
+
+        """
         return hash(HexBytes(self.address) + self.pool_id)
 
     def __repr__(self) -> str:  # pragma: no cover
-        """Return the canonical string representation."""
+        """Return the canonical string representation.
+
+        Returns:
+            The string representation of the pool.
+
+        """
         return f"{self.__class__.__name__}(pool_id={self.pool_id.to_0x_hex()},  token0={self._token0}, token1={self._token1}, fee={self.fee}, tick spacing={self.tick_spacing})"  # noqa:E501
 
     def __str__(self) -> str:
-        """Return the canonical string representation."""
-        """Return a string representation."""
-        """Return a string representation."""
+        """Return the canonical string representation.
+
+        Returns:
+            The pool name string.
+
+        """
         return self.name
 
     @staticmethod
@@ -339,10 +363,18 @@ class UniswapV4Pool(
         sqrt_price_x96_limit: int,
         override_state: UniswapV4PoolState | None = None,
     ) -> tuple[SwapDelta, FeeToProtocol, SwapFee, SwapResult]:
-        """
-        Port from ``UniswapV4Pool._calculate_swap``. Operates on a frozen.
+        """Port from ``UniswapV4Pool._calculate_swap``.
 
-        ``LiquidityMapSnapshot`` and returns ``SwapResult`` with no side effects.
+        Operates on a frozen ``LiquidityMapSnapshot`` and returns ``SwapResult``
+        with no side effects.
+
+        Returns:
+            Tuple of (swap delta, protocol fee, swap fee, swap result).
+
+        Raises:
+            LiquidityPoolError: If tick data fetcher fails to resolve a word.
+            MissingLiquidityData: If a sparse liquidity map is missing a required word.
+
         """
         if override_state is not None:
             snapshot = LiquidityMapSnapshot.from_state(
@@ -440,7 +472,18 @@ class UniswapV4Pool(
         token_out_quantity: int,
         override_state: UniswapV4PoolState | None = None,
     ) -> int:
-        """Calculate tokens in from tokens out."""
+        """Calculate tokens in from tokens out.
+
+        Returns:
+            The required input token amount.
+
+        Raises:
+            DegenbotValueError: If token_out is not held by this pool.
+            HookedPoolResult: If the pool has active hooks that affect the swap.
+            IncompleteSwap: If the swap cannot fulfill the full output amount.
+            LiquidityPoolError: If the simulated execution reverts.
+
+        """
         if token_out not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_out not found!")
 
@@ -487,7 +530,18 @@ class UniswapV4Pool(
         token_in_quantity: int,
         override_state: UniswapV4PoolState | None = None,
     ) -> int:
-        """Calculate tokens out from tokens in."""
+        """Calculate tokens out from tokens in.
+
+        Returns:
+            The expected output token amount.
+
+        Raises:
+            DegenbotValueError: If token_in is not held by this pool.
+            HookedPoolResult: If the pool has active hooks that affect the swap.
+            IncompleteSwap: If the swap cannot fulfill the full input amount.
+            LiquidityPoolError: If the simulated execution reverts.
+
+        """
         if token_in not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_in not found!")
 
@@ -530,12 +584,22 @@ class UniswapV4Pool(
 
     @property
     def address(self) -> ChecksumAddress:
-        """Address."""
+        """Address.
+
+        Returns:
+            The pool manager address.
+
+        """
         return self._pool_manager_address
 
     @property
     def chain_id(self) -> int | None:
-        """Return chain id."""
+        """Return chain id.
+
+        Returns:
+            The chain ID, or None if not set.
+
+        """
         return self._chain_id
 
     @property
@@ -552,32 +616,62 @@ class UniswapV4Pool(
 
     @property
     def liquidity(self) -> int:
-        """Return liquidity."""
+        """Return liquidity.
+
+        Returns:
+            The current active liquidity.
+
+        """
         return self._state_mgr.liquidity
 
     @property
     def pool_id(self) -> HexBytes:
-        """Pool id."""
+        """Pool id.
+
+        Returns:
+            The pool ID bytes.
+
+        """
         return self._pool_id
 
     @property
     def pool_key(self) -> UniswapV4PoolKey:
-        """Pool key."""
+        """Pool key.
+
+        Returns:
+            The V4 pool key struct.
+
+        """
         return self._pool_key
 
     @property
     def sqrt_price_x96(self) -> int:
-        """Return sqrt price x96."""
+        """Return sqrt price x96.
+
+        Returns:
+            The current sqrt price as a Q64.96 value.
+
+        """
         return self._state_mgr.sqrt_price_x96
 
     @property
     def state(self) -> UniswapV4PoolState:
-        """State."""
+        """State.
+
+        Returns:
+            The current pool state.
+
+        """
         return self._state_mgr.state
 
     @property
     def tick(self) -> int:
-        """Return tick."""
+        """Return tick.
+
+        Returns:
+            The current tick.
+
+        """
         return self._state_mgr.tick
 
     @property
@@ -592,17 +686,35 @@ class UniswapV4Pool(
 
     @property
     def tick_spacing(self) -> int:
-        """Return tick spacing."""
+        """Return tick spacing.
+
+        Returns:
+            The tick spacing for the pool.
+
+        """
         return self.pool_key.tick_spacing
 
     @property
     def fee(self) -> int:
-        """Return fee."""
+        """Return fee.
+
+        Returns:
+            The fee in pips.
+
+        """
         return self.pool_key.fee
 
     @property
     def update_block(self) -> BlockNumber:
-        """Update block."""
+        """Update block.
+
+        Returns:
+            The block number of the most recent state update.
+
+        Raises:
+            DegenbotValueError: If the state does not have a block number.
+
+        """
         block = self._state_mgr.update_block
         if block is None:
             raise DegenbotValueError(message="State does not have a block number.")
@@ -613,7 +725,12 @@ class UniswapV4Pool(
         state: UniswapV4PoolState,
         vector: UniswapPoolSwapVector,
     ) -> bool:
-        """Swap is viable."""
+        """Swap is viable.
+
+        Returns:
+            True if a swap can proceed with the given state, False otherwise.
+
+        """
         return self._state_mgr.swap_is_viable(
             state=state,
             zero_for_one=vector.zero_for_one,
@@ -626,8 +743,7 @@ class UniswapV4Pool(
         tick_data: dict[int, Any],
         block: int,
     ) -> None:
-        """
-        Apply updated tick bitmap and data from the tick data fetcher.
+        """Apply updated tick bitmap and data from the tick data fetcher.
 
         Replaces the tick_bitmap and tick_data on the current state and
         pushes the new state through the state manager.
@@ -644,21 +760,27 @@ class UniswapV4Pool(
         self,
         update: UniswapV4PoolExternalUpdate,
     ) -> bool:
-        """
-        Process a `UniswapV4PoolExternalUpdate` with one or more of the following update types.
+        """Process a `UniswapV4PoolExternalUpdate`.
 
-            - `block_number`: int
-            - `tick`: int
-            - `liquidity`: int
-            - `sqrt_price_x96`: int.
+        Accepts one or more of the following update types:
 
-        `block_number` is validated against the most recently recorded block prior to recording any
-        changes.
+        - `block_number`: int
+        - `tick`: int
+        - `liquidity`: int
+        - `sqrt_price_x96`: int
 
-        Returns a bool indicating whether any updated state value was recorded.
+        `block_number` is validated against the most recently recorded block prior
+        to recording any changes.
+
+        Returns:
+            True if any updated state value was recorded, False otherwise.
+
+        Raises:
+            ExternalUpdateError: If the update is for a past block.
 
         @dev This method uses a lock to guard state-modifying methods that might cause race
         conditions when used with threads.
+
         """
         if update.block_number < self.update_block:
             raise ExternalUpdateError(
@@ -695,11 +817,14 @@ class UniswapV4Pool(
         self,
         update: UniswapV4PoolLiquidityMappingUpdate,
     ) -> None:
-        """
-        Apply an update to the liquidity map.
+        """Apply an update to the liquidity map.
+
+        Raises:
+            MissingLiquidityData: If a sparse map is missing a required word and no fetcher is set.
 
         @dev This method uses a lock to guard state-modifying methods that might cause race
         conditions when used with threads.
+
         """
         if update.liquidity == 0:
             return
@@ -832,7 +957,15 @@ class UniswapV4Pool(
         token_out: ChecksumAddress,  # noqa: ARG002
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
-        """Simulate swap."""
+        """Simulate swap.
+
+        Returns:
+            The simulation result with amounts and state transitions.
+
+        Raises:
+            DegenbotValueError: If tokens are unknown or state type is mismatched.
+
+        """
         v4_state: UniswapV4PoolState | None = None
         if state_override is not None:
             if not isinstance(state_override, UniswapV4PoolState):
@@ -868,7 +1001,12 @@ class UniswapV4Pool(
         token_in: Erc20Token | None = None,  # noqa: ARG002
         token_out: Erc20Token | None = None,  # noqa: ARG002
     ) -> HopType:
-        """Convert to hop state."""
+        """Convert to hop state.
+
+        Returns:
+            A BoundedProductHop for the solver.
+
+        """
         # token_in/token_out unused — 2-token pools determine pair from zero_for_one.
         # Callers should ensure these match pool.token0/pool.token1 if provided.
         state = state_override or self.state
@@ -990,7 +1128,12 @@ class UniswapV4Pool(
         amount_in: int,
         amount_out: int,
     ) -> UniswapV4PoolSwapAmounts:
-        """Build swap amount."""
+        """Build swap amount.
+
+        Returns:
+            The swap amounts object for encoding.
+
+        """
         limit = MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1
         return UniswapV4PoolSwapAmounts(
             address=self.address,

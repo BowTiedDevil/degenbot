@@ -1,4 +1,5 @@
 """Uniswap V3 FullMath: 512-bit multiplication with Q96 rounding."""
+
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.v3_libraries.functions import mulmod
@@ -9,15 +10,24 @@ def muldiv(
     b: int,
     denominator: int,
 ) -> int:
-    """
-    Compute a * b / d with full 512-bit precision, matching the Solidity implementation designed to.
+    """Compute a * b / d with full 512-bit precision.
 
+    Matches the Solidity implementation designed to avoid overflow in
     the intermediate result.
 
     Python integers do not overflow and have no bit depth limitation, so this function simply
     checks for an invalid result.
 
     ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/FullMath.sol
+
+    Returns:
+        The floor of (a * b) / denominator as an integer.
+
+    Raises:
+        EVMRevertError: If inputs are out of uint256 range, denominator is zero,
+            or result overflows.
+
+
     """
     # Assert values are valid for Solidity contract
     if a < MIN_UINT256 or a > MAX_UINT256:
@@ -39,7 +49,15 @@ def muldiv(
 
 
 def muldiv_rounding_up(a: int, b: int, denominator: int) -> int:
-    """Return muldiv rounding up."""
+    """Return muldiv rounding up.
+
+    Returns:
+        The ceiling of (a * b) / denominator as an integer.
+
+    Raises:
+        EVMRevertError: If the result would overflow uint256.
+
+    """
     result = muldiv(a, b, denominator)
     if mulmod(a, b, denominator) > 0:
         # must be less than max uint256 since we're rounding up

@@ -1,5 +1,4 @@
-"""
-Pure V4-style swap simulator.
+"""Pure V4-style swap simulator.
 
 Ported from ``UniswapV4Pool._calculate_swap``. Operates on a frozen
 ``LiquidityMapSnapshot`` and returns ``SwapResult`` with no side effects.
@@ -58,16 +57,17 @@ def calculate_swap(
     sqrt_price_x96_start: SqrtPriceX96,
     tick_start: Tick,
 ) -> SwapResult:
-    """
-    Pure V4 swap calculation.
+    """Pure V4 swap calculation.
 
     V4 sign convention:
     - amount_specified < 0 : exact input (deposit this amount)
     - amount_specified > 0 : exact output (withdraw this amount)
 
+    Returns:
+        SwapResult containing the final amounts, price, liquidity and tick.
+
     Raises:
         EVMRevertError: If swap fee is >= max or price limits are violated.
-        MissingLiquidityData: If a required bitmap word is absent in a sparse map.
 
     """
     assert liquidity_start >= 0
@@ -205,10 +205,13 @@ def calculate_swap(
 
 
 def _calculate_swap_fee(protocol_fee: int, lp_fee: int) -> int:
-    """
-    Compute total swap fee from protocol + LP fee portions (V4).
+    """Compute total swap fee from protocol + LP fee portions (V4).
 
     Matches V4Pool._calculate_swap_fee exactly.
+
+    Returns:
+        The total swap fee.
+
     """
     lp_fee &= 0xFFFFFF
     return (protocol_fee + lp_fee) - (protocol_fee * lp_fee // _FEE_DENOMINATOR)

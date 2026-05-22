@@ -130,19 +130,6 @@ class ProviderBackend(Protocol):
     # --- Subscription stubs (sync providers do not support subscriptions) ---
 
     def subscribe_blocks(self) -> None:
-        """Return chain id."""
-        """Return block number."""
-        """Return block number."""
-        """Return block."""
-        """Return logs."""
-        """Call."""
-        """Call raw."""
-        """Return code."""
-        """Return balance."""
-        """Return storage at."""
-        """Return transaction count."""
-        """Check if connected."""
-        """Perform close."""
         """
         Not available on sync providers.
 
@@ -256,7 +243,7 @@ class AsyncSubscriptionSupport:
     """
     Mixin providing default subscription stubs for async backends.
 
-    that don't support WS/IPC subscriptions (e.g. AsyncWeb3 over HTTP).
+    For providers that don't support WS/IPC subscriptions (e.g. AsyncWeb3 over HTTP).
 
     Subclasses must define ``_subscription_transport`` and ``_subscription_rpc_url``
     so error messages include the transport type and endpoint.
@@ -941,8 +928,6 @@ class AsyncProviderBackend(Protocol):
     # --- Subscription methods (optional — override in backend) ---
 
     async def subscribe_blocks(self) -> Subscription:
-        """Check if connected."""
-        """Perform close."""
         """
         Subscribe to new block headers.
 

@@ -126,8 +126,6 @@ select = [
 ]
 ignore = [
     "COM812",   # trailing commas are handled by the formatter
-    "D203",     # incorrect-blank-line-before-class
-    "D212",     # multi-line-summary-first-line
     "N818",     # error-suffix-on-exception-name
     "PLR0904",  # too-many-public-methods
     "PLR0911",  # too-many-return-statements

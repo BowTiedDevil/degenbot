@@ -9,15 +9,21 @@ def muldiv(
     b: int,
     denominator: int,
 ) -> int:
-    """
-    Calculate floor(a*b/denominator) with full precision. Throws if result overflows a uint256 or.
+    """Calculate floor(a*b/denominator) with full precision.
 
-    denominator == 0.
+    Throws if result overflows a uint256 or denominator == 0.
+
+    Returns:
+        The floor of (a*b)/denominator as an integer.
+
+    Raises:
+        EVMRevertError: If the result overflows uint256 or denominator is zero.
 
     ref: https://github.com/Uniswap/v4-core/blob/main/src/libraries/FullMath.sol
 
     Python integers do not overflow and have no bit depth limitation, so this function simply
     checks for an invalid result.
+
     """
     if denominator <= 0:
         msg = "required: denominator > 0"
@@ -37,12 +43,18 @@ def muldiv_rounding_up(
     b: int,
     denominator: int,
 ) -> int:
-    """
-    Calculate ceil(a*b//denominator) with full precision. Throws if result overflows a uint256 or.
+    """Calculate ceil(a*b//denominator) with full precision.
 
-    denominator == 0.
+    Throws if result overflows a uint256 or denominator == 0.
+
+    Returns:
+        The ceiling of (a*b)/denominator as an integer.
+
+    Raises:
+        EVMRevertError: If the result overflows uint256 or denominator is zero.
 
     ref: https://github.com/Uniswap/v4-core/blob/main/src/libraries/FullMath.sol
+
     """
     if denominator <= 0:
         msg = "required: denominator > 0"

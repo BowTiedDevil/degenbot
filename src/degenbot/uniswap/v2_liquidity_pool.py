@@ -1,4 +1,5 @@
 """UniswapV2Pool: constant-product AMM with reserve tracking."""
+
 import dataclasses
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -77,8 +78,7 @@ class UniswapV2Pool(
         reserves_token0: int,
         reserves_token1: int,
     ) -> None:
-        """
-        I/O-free representation of an x*y=k invariant automatic matchmaker, based on Uniswap V2.
+        """I/O-free representation of an x*y=k invariant automatic matchmaker, based on Uniswap V2.
 
         Construct via Bot.build_pool() or manager.get_pool() to fetch data from the chain.
         """
@@ -121,16 +121,30 @@ class UniswapV2Pool(
 
     @property
     def chain_id(self) -> int | None:
-        """Return chain id."""
+        """Return chain id.
+
+        Returns:
+            The chain ID, or None if not set.
+
+        """
         return self._chain_id
 
     def __repr__(self) -> str:  # pragma: no cover
-        """Return the canonical string representation."""
+        """Return the canonical string representation.
+
+        Returns:
+            The string representation of the pool.
+
+        """
         return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1})"  # noqa:E501
 
     def _verified_address(self) -> ChecksumAddress:
-        """Return the canonical string representation."""
-        """Return a string representation."""
+        """Compute the deterministic pool address via CREATE2.
+
+        Returns:
+            The checksummed address that should match this pool's address.
+
+        """
         return generate_v2_pool_address(
             deployer_address=self.deployer,
             token_addresses=(self._token0.address, self._token1.address),
@@ -139,24 +153,44 @@ class UniswapV2Pool(
 
     @property
     def update_block(self) -> BlockNumber:
-        """Update block."""
+        """Update block.
+
+        Returns:
+            The block number of the most recent state update.
+
+        """
         if TYPE_CHECKING:
             assert self.state.block is not None
         return self.state.block
 
     @property
     def reserves_token0(self) -> int:
-        """Return reserves token0."""
+        """Return reserves token0.
+
+        Returns:
+            The reserve amount for token0.
+
+        """
         return self.state.reserves_token0
 
     @property
     def reserves_token1(self) -> int:
-        """Return reserves token1."""
+        """Return reserves token1.
+
+        Returns:
+            The reserve amount for token1.
+
+        """
         return self.state.reserves_token1
 
     @property
     def state(self) -> PoolState:
-        """State."""
+        """State.
+
+        Returns:
+            The current pool state from the state cache.
+
+        """
         return self._state_cache.current
 
     @staticmethod
@@ -164,7 +198,12 @@ class UniswapV2Pool(
         state: PoolState,
         vector: UniswapPoolSwapVector,
     ) -> bool:
-        """Swap is viable."""
+        """Swap is viable.
+
+        Returns:
+            True if a swap can proceed with the given state, False otherwise.
+
+        """
         if state.reserves_token0 == 0 or state.reserves_token1 == 0:
             return False
         return state.reserves_token1 > 1 if vector.zero_for_one else state.reserves_token0 > 1
@@ -173,7 +212,12 @@ class UniswapV2Pool(
         self,
         update: UniswapV2PoolExternalUpdate,
     ) -> None:
-        """External update."""
+        """External update.
+
+        Raises:
+            ExternalUpdateError: If the update is for a past block.
+
+        """
         if update.block_number < self.update_block:
             raise ExternalUpdateError(
                 message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"  # noqa:E501
@@ -205,7 +249,12 @@ class UniswapV2Pool(
         self,
         block: BlockNumber,
     ) -> None:
-        """Discard cached states earlier than the given block."""
+        """Discard cached states earlier than the given block.
+
+        Raises:
+            NoPoolStateAvailable: If no state exists for the given block.
+
+        """
         try:
             with self._state_cache.lock():
                 self._state_cache.discard_before_block(block)
@@ -216,7 +265,12 @@ class UniswapV2Pool(
         self,
         block: BlockNumber,
     ) -> None:
-        """Restore the last pool state recorded prior to a target block."""
+        """Restore the last pool state recorded prior to a target block.
+
+        Raises:
+            NoPoolStateAvailable: If no state exists for the given block.
+
+        """
         try:
             with self._state_cache.lock():
                 self._state_cache.restore_before_block(block)
@@ -230,7 +284,12 @@ class UniswapV2Pool(
         added_reserves_token1: int,
         override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
-        """Simulate adding liquidity."""
+        """Simulate adding liquidity.
+
+        Returns:
+            The simulation result with delta amounts and state transitions.
+
+        """
         with self._state_cache.lock():
             reserves_token0 = (
                 override_state.reserves_token0 if override_state else self.reserves_token0
@@ -257,7 +316,12 @@ class UniswapV2Pool(
         removed_reserves_token1: int,
         override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
-        """Simulate removing liquidity."""
+        """Simulate removing liquidity.
+
+        Returns:
+            The simulation result with delta amounts and state transitions.
+
+        """
         with self._state_cache.lock():
             reserves_token0 = (
                 override_state.reserves_token0 if override_state else self.reserves_token0
@@ -284,7 +348,15 @@ class UniswapV2Pool(
         token_in_quantity: int,
         override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
-        """Simulate an exact input swap."""
+        """Simulate an exact input swap.
+
+        Returns:
+            The simulation result with delta amounts and state transitions.
+
+        Raises:
+            DegenbotValueError: If token_in is unknown.
+
+        """
         if token_in not in self.tokens:
             raise DegenbotValueError(message="token_in is unknown.")
 
@@ -315,7 +387,15 @@ class UniswapV2Pool(
         token_out_quantity: int,
         override_state: PoolState | None = None,
     ) -> UniswapV2PoolSimulationResult:
-        """Simulate exact output swap."""
+        """Simulate exact output swap.
+
+        Returns:
+            The simulation result with delta amounts and state transitions.
+
+        Raises:
+            DegenbotValueError: If token_out is unknown.
+
+        """
         if token_out not in self.tokens:
             raise DegenbotValueError(message="token_out is unknown.")
 
@@ -348,7 +428,15 @@ class UniswapV2Pool(
         token_out: ChecksumAddress,
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
-        """Simulate swap."""
+        """Simulate swap.
+
+        Returns:
+            The simulation result with amounts and state transitions.
+
+        Raises:
+            DegenbotValueError: If tokens are unknown or mismatched.
+
+        """
         v2_state: UniswapV2PoolState | None = None
         if state_override is not None:
             if not isinstance(state_override, UniswapV2PoolState):
@@ -390,7 +478,15 @@ class UniswapV2Pool(
         amount_out: int,
         state_override: UniswapV2PoolState | None = None,
     ) -> SimulationResult:
-        """Simulate swap for output."""
+        """Simulate swap for output.
+
+        Returns:
+            The simulation result with amounts and state transitions.
+
+        Raises:
+            DegenbotValueError: If tokens are unknown or mismatched.
+
+        """
         if token_out == self._token0.address:
             token_out_obj = self._token0
             expected_token_in = self._token1.address
@@ -419,11 +515,21 @@ class UniswapV2Pool(
         )
 
     def reserves_for_cache(self) -> tuple[int, int]:
-        """Return (reserve_token0, reserve_token1) for the Rust solver cache."""
+        """Return (reserve_token0, reserve_token1) for the Rust solver cache.
+
+        Returns:
+            A tuple of reserve amounts for the Rust solver cache.
+
+        """
         return (self.state.reserves_token0, self.state.reserves_token1)
 
     def fee_for_cache(self) -> Fraction:
-        """Return the forward-direction fee for the Rust solver cache."""
+        """Return the forward-direction fee for the Rust solver cache.
+
+        Returns:
+            The fee as a Fraction.
+
+        """
         return self._fee_token0
 
     def to_hop_state(
@@ -434,7 +540,12 @@ class UniswapV2Pool(
         token_in: Erc20Token | None = None,  # noqa: ARG002
         token_out: Erc20Token | None = None,  # noqa: ARG002
     ) -> HopType:
-        """Convert to hop state."""
+        """Convert to hop state.
+
+        Returns:
+            A ConstantProductHop for the solver.
+
+        """
         # token_in/token_out unused — 2-token pools determine pair from zero_for_one.
         # Callers should ensure these match pool.token0/pool.token1 if provided.
         state = state_override or self.state
@@ -457,7 +568,12 @@ class UniswapV2Pool(
         amount_in: int,
         amount_out: int,
     ) -> UniswapV2PoolSwapAmounts:
-        """Build swap amount."""
+        """Build swap amount.
+
+        Returns:
+            The swap amounts object for encoding.
+
+        """
         return UniswapV2PoolSwapAmounts(
             pool=self.address,
             amounts_in=(amount_in, 0) if zero_for_one else (0, amount_in),
