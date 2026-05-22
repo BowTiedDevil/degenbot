@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
 
-from degenbot.builders.request import BuildPoolRequest
+from degenbot.builders.request import BuildPoolRequest, BuildRequest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve._pool_strategies import resolve_pool_strategies
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
@@ -56,7 +56,7 @@ class CurvePoolBuilder:
         *,
         chain_id: ChainId | None = None,
         io: PoolIO,
-        request: BuildPoolRequest,
+        request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from RPC and construct an I/O-free CurveStableswapPool."""
 
@@ -210,7 +210,7 @@ class CurvePoolBuilder:
         chain_id: ChainId,
         state_block: int,
         *,
-        request: BuildPoolRequest,
+        request: BuildRequest,
         io: PoolIO,
     ) -> tuple[CurveStableswapPool | None, tuple[Erc20Token, ...] | None]:
         """Build base pool and underlying tokens for a metapool."""

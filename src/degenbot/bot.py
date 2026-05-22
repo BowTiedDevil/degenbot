@@ -343,6 +343,8 @@ class Bot:
             pool_id=pool_id_bytes,
         )
         if existing is not None:
+            if TYPE_CHECKING:
+                assert isinstance(existing, UniswapV4Pool)
             return existing
 
         provider = self.connections.get_provider(chain_id)
@@ -362,7 +364,7 @@ class Bot:
             tick_data=tick_data,
         )
 
-        return self._dispatch_build(  # type: ignore[return-value]
+        return self._dispatch_build(  # ty: ignore[invalid-return-type]
             builder=self._v4_builder,
             address=address,
             chain_id=chain_id,

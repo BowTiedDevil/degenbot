@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.pool_io import PoolIO
-    from degenbot.builders.request import BuildPoolRequest
+    from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
@@ -35,7 +35,7 @@ class CamelotBuilder(V2BuilderBase):
         *,
         chain_id: ChainId | None = None,
         io: PoolIO,
-        request: BuildPoolRequest,
+        request: BuildRequest,
     ) -> AbstractLiquidityPool:
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id

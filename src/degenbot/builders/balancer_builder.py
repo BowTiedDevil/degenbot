@@ -41,7 +41,7 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.pool_io import PoolIO
-    from degenbot.builders.request import BuildPoolRequest
+    from degenbot.builders.request import BuildPoolRequest, BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
@@ -79,7 +79,7 @@ class BalancerBuilder(BalancerBuilderBase):
         *,
         chain_id: ChainId | None = None,
         io: PoolIO,
-        request: BuildPoolRequest,
+        request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from RPC and construct an I/O-free Balancer pool."""
         pool_address = get_checksum_address(address)
@@ -135,7 +135,7 @@ class BalancerBuilder(BalancerBuilderBase):
         self,
         io: PoolIO,
         ctx: _BuildContext,
-        request: BuildPoolRequest,
+        request: BuildRequest,
     ) -> BalancerV2Pool:
         # Build tokens
         tokens = [
@@ -170,9 +170,10 @@ class BalancerBuilder(BalancerBuilderBase):
         self,
         io: PoolIO,
         ctx: _BuildContext,
-        request: BuildPoolRequest,
+        request: BuildRequest,
         specialization: int,
     ) -> BalancerV2StablePool:
+        assert isinstance(request, BuildPoolRequest)  # Balancer never receives BuildManagedPoolRequest
         # Build tokens
         tokens = [
             self._erc20_builder.build(addr, chain_id=ctx.chain_id, silent=request.silent, io=io)

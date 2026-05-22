@@ -91,7 +91,7 @@ class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
             reserves1 = state.reserves_token1
             decimals0 = 10**self.token0.decimals
             decimals1 = 10**self.token1.decimals
-            token_in = 0 if zero_for_one else 1
+            _token_in_idx = 0 if zero_for_one else 1
 
             def _camelot_stable_swap_fn(
                 amount_in: int,
@@ -101,7 +101,7 @@ class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
                 _decimals0: int = decimals0,
                 _decimals1: int = decimals1,
                 _fee: Fraction = fee_in,
-                _token_in: int = token_in,
+                _token_in: int = _token_in_idx,
             ) -> int:
                 return calc_exact_in_stable(
                     amount_in=amount_in,
