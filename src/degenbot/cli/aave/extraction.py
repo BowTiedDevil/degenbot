@@ -19,8 +19,8 @@ from degenbot.aave.events import (
     ERC20Event,
 )
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.contract.decoding import decode_address
 
 
 def extract_user_addresses_from_transaction(events: list[LogReceipt]) -> set[ChecksumAddress]:

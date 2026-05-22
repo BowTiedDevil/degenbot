@@ -214,7 +214,7 @@ user_index = result.new_index
    - Categorizes events (Pool events, ScaledToken events, ERC20 transfers)
    - Groups by transaction
 
-2. **Operation Parsing** (`aave_transaction_operations.py`)
+2. **Operation Parsing** (`aave/operations_parser.py`)
    - Parses events into logical operations
    - Matches scaled token events to pool events
    - Determines operation types (SUPPLY, WITHDRAW, BORROW, REPAY, etc.)
@@ -238,10 +238,8 @@ user_index = result.new_index
 ### Key Files and Their Roles
 
 **CLI Layer** (`src/degenbot/cli/`):
-- `aave_transaction_operations.py` - Event parsing and operation classification
-- `aave_event_filtering.py` - Event filtering and transaction context building
-- `aave_types.py` - Type definitions for CLI operations
-- `aave_utils.py` - Utility functions for CLI operations
+- `aave/operations_parser.py` - Event parsing and operation classification
+- `aave/event_fetchers.py` - Event filtering and transaction context building
 - `database.py` - CLI database operations
 - `exchange.py` - Exchange-related CLI commands
 - `pool.py` - Pool-related CLI commands

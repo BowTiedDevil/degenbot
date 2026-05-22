@@ -14,12 +14,9 @@ from eth_typing import ChecksumAddress
 
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.operation_types import OperationType
-from degenbot.aave.pattern_types import (
-    LiquidationGroup,
-    LiquidationPatternContext,
-)
-from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
-from degenbot.cli.aave_utils import decode_address
+from degenbot.aave.operations import Operation, ScaledTokenEvent
+from degenbot.aave.pattern_types import LiquidationGroup, LiquidationPatternContext
+from degenbot.contract.decoding import decode_address
 from degenbot.logging import logger
 
 

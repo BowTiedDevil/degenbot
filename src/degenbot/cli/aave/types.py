@@ -1,7 +1,6 @@
 """Type definitions for Aave V3 CLI processing."""
 
 from dataclasses import dataclass, field
-from enum import Enum, auto
 from typing import Any
 
 from eth_typing import ChecksumAddress
@@ -17,14 +16,6 @@ from degenbot.database.models.aave import (
     AaveV3Market,
 )
 from degenbot.provider.interface import ProviderAdapter
-
-
-class TokenType(Enum):
-    """Token types in Aave V3."""
-
-    A_TOKEN = auto()
-    V_TOKEN = auto()
-    GHO_DISCOUNT = auto()
 
 
 @dataclass

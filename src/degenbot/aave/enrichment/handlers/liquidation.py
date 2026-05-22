@@ -29,7 +29,7 @@ from degenbot.logging import logger
 if TYPE_CHECKING:
     from degenbot.aave.enrichment.context import EnrichmentContext
     from degenbot.aave.models import EnrichedScaledTokenEvent
-    from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
+    from degenbot.aave.operations import Operation, ScaledTokenEvent
 
 
 # Pool revision where pre-scaled amounts were introduced

@@ -13,13 +13,14 @@ from eth_typing import ChecksumAddress
 from web3.types import LogReceipt
 
 from degenbot.aave.operation_types import OperationType
+from degenbot.aave.operations import Operation, ScaledTokenEvent
+from degenbot.aave.types import TokenType
 from degenbot.cli.aave.db_assets import get_asset_by_token_type
 from degenbot.cli.aave.db_positions import get_or_create_collateral_position
 from degenbot.cli.aave.db_users import get_or_create_user
-from degenbot.cli.aave.types import TokenType, TransactionContext
-from degenbot.cli.aave_transaction_operations import Operation, ScaledTokenEvent
-from degenbot.cli.aave_utils import decode_address
+from degenbot.cli.aave.types import TransactionContext
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.contract.decoding import decode_address
 
 
 def _should_skip_collateral_transfer(

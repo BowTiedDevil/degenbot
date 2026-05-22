@@ -19,11 +19,6 @@ from typing import TYPE_CHECKING
 import eth_abi.abi
 from sqlalchemy import select
 
-if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
-
-    from degenbot.cli.aave.types import TransactionContext
-
 from degenbot.aave.enrichment import ScaledEventEnricher
 from degenbot.aave.events import (
     AaveV3GhoDebtTokenEvent,
@@ -54,6 +49,7 @@ from degenbot.cli.aave.event_handlers import (
     _update_contract_revision,
 )
 from degenbot.cli.aave.liquidation_processor import _preprocess_liquidation_aggregates
+from degenbot.cli.aave.operations_parser import TransactionOperationsParser
 from degenbot.cli.aave.stkaave import process_stk_aave_transfer_event
 from degenbot.cli.aave.token_processor import (
     _process_collateral_burn_with_match,
@@ -63,11 +59,16 @@ from degenbot.cli.aave.token_processor import (
     _process_deficit_coverage_operation,
 )
 from degenbot.cli.aave.transfers import _process_collateral_transfer
-from degenbot.cli.aave_transaction_operations import Operation, TransactionOperationsParser
-from degenbot.cli.aave_utils import decode_address
+from degenbot.contract.decoding import decode_address
 from degenbot.database.models.aave import AaveV3User
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
+
+if TYPE_CHECKING:
+    from eth_typing import ChecksumAddress
+
+    from degenbot.aave.operations import Operation
+    from degenbot.cli.aave.types import TransactionContext
 
 
 def _process_transaction(tx_context: TransactionContext) -> None:
