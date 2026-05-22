@@ -326,7 +326,8 @@ class AnvilFork:
         block_number: BlockNumber | None = None,
         transaction_hash: str | None = None,
     ) -> None:
-        """Fork from a new endpoint, block number, or transaction hash.
+        """
+        Fork from a new endpoint, block number, or transaction hash.
 
         Resetting to a new block number only can be done in-place without relaunching the Anvil
         process or recreating the Web3 object. Resetting to a new endpoint or from a transaction

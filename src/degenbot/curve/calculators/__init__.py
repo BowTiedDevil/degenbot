@@ -1,4 +1,5 @@
-"""DyCalculator objects for Curve StableSwap pool swap computation.
+"""
+DyCalculator objects for Curve StableSwap pool swap computation.
 
 Each calculator encapsulates the formula for one SwapStyle or MetapoolStyle variant.
 The pool's get_dy() method delegates to the calculator injected via

@@ -1,4 +1,5 @@
-"""Pure V3-style swap simulator.
+"""
+Pure V3-style swap simulator.
 
 Ported from ``UniswapV3Pool._calculate_swap``. Operates on a frozen
 ``LiquidityMapSnapshot`` and returns ``SwapResult`` with no side effects.
@@ -71,7 +72,8 @@ def calculate_swap(
     sqrt_price_x96_start: SqrtPriceX96,
     tick_start: Tick,
 ) -> SwapResult:
-    """Pure V3 swap calculation.
+    """
+    Pure V3 swap calculation.
 
     Returns ``SwapResult`` containing the final amounts, price, liquidity and tick.
 

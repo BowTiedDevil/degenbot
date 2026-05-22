@@ -32,7 +32,8 @@ if TYPE_CHECKING:
 
 
 class AsyncErc20Builder:
-    """Async counterpart of Erc20Builder.
+    """
+    Async counterpart of Erc20Builder.
 
     Builds Erc20Token instances using AsyncPoolIO for I/O.
     Shares pure decode/register logic with Erc20Builder.

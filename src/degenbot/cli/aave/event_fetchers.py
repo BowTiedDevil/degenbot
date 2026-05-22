@@ -173,7 +173,8 @@ def fetch_oracle_events(
     start_block: int,
     end_block: int,
 ) -> list[LogReceipt]:
-    """Fetch AaveOracle events for oracle configuration changes.
+    """
+    Fetch AaveOracle events for oracle configuration changes.
 
     If oracle_address is None, fetches events from all contracts (discovery mode).
     """

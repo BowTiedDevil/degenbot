@@ -1,4 +1,5 @@
-"""Balancer V2 pool builder.
+"""
+Balancer V2 pool builder.
 
 Owns the full I/O choreography: RPC fetch → decode → construct → register.
 Pool type is determined via _detect_pool_type() which probes the contract
@@ -51,7 +52,8 @@ class _BuildContext:
 
 
 class BalancerBuilder(BalancerBuilderBase):
-    """Builds and updates Balancer V2 pools (weighted, stable, composable).
+    """
+    Builds and updates Balancer V2 pools (weighted, stable, composable).
 
     Owns the full I/O choreography: RPC fetch → decode → construct →
     register.

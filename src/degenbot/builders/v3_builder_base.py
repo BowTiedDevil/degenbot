@@ -19,7 +19,8 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class V3ImmutableData:
-    """Decoded immutable V3 pool data from RPC calls.
+    """
+    Decoded immutable V3 pool data from RPC calls.
 
     Produced by V3BuilderBase.decode_immutable_data().
     Consumed by V3 builder build() methods.
@@ -34,7 +35,8 @@ class V3ImmutableData:
 
 @dataclass(frozen=True)
 class V3Slot0Data:
-    """Decoded V3 slot0 data.
+    """
+    Decoded V3 slot0 data.
 
     Produced by V3BuilderBase.decode_slot0().
     Shared by both build() and update().
@@ -46,7 +48,8 @@ class V3Slot0Data:
 
 @dataclass(frozen=True)
 class V3DbValues:
-    """Immutable values extracted from a V3 DB row.
+    """
+    Immutable values extracted from a V3 DB row.
 
     Produced by V3BuilderBase.extract_db_values().
     """
@@ -60,7 +63,8 @@ class V3DbValues:
 
 
 class V3BuilderBase:
-    """Shared pure-logic helpers for V3 pool builders.
+    """
+    Shared pure-logic helpers for V3 pool builders.
 
     Both V3PoolBuilder (sync) and AsyncV3PoolBuilder (async) delegate
     decode/extract/snapshot steps to these helpers. Only the I/O
@@ -93,7 +97,8 @@ class V3BuilderBase:
 
     @staticmethod
     def decode_slot0(slot0_result: HexBytes) -> V3Slot0Data:
-        """Decode sqrt_price_x96 and tick from a V3 slot0() call result.
+        """
+        Decode sqrt_price_x96 and tick from a V3 slot0() call result.
 
         V3 slot0() returns [uint160 sqrtPriceX96, int24 tick, uint16, uint16,
         uint16, uint8, bool]. Only the first two fields are needed.
@@ -125,7 +130,8 @@ class V3BuilderBase:
     def load_tick_snapshot(
         pool_with_data: UniswapV3PoolTableBase,
     ) -> tuple[dict[int, BitmapAtWord], dict[int, LiquidityAtTick], bool]:
-        """Load tick bitmap and tick data from a re-queried DB row with active relationships.
+        """
+        Load tick bitmap and tick data from a re-queried DB row with active relationships.
 
         The caller is responsible for re-querying the pool row within an
         active SQLAlchemy session so that lazy-loaded relationships
@@ -166,7 +172,8 @@ class V3BuilderBase:
         working_tick_bitmap: dict[int, BitmapAtWord],
         working_tick_data: dict[int, LiquidityAtTick],
     ) -> tuple[dict[int, BitmapAtWord] | None, dict[int, LiquidityAtTick] | None]:
-        """Decide whether to pass tick data to the pool constructor.
+        """
+        Decide whether to pass tick data to the pool constructor.
 
         Returns (tick_bitmap_arg, tick_data_arg). Only passes data when
         we have a complete DB snapshot with actual tick data.

@@ -1,4 +1,5 @@
-"""Shared type resolution for pool construction.
+"""
+Shared type resolution for pool construction.
 
 Functions extracted from Bot and AsyncBot so that pool type resolution
 logic (DB lookup, factory fetch, on-chain probing, class dispatch) is
@@ -54,7 +55,8 @@ def pool_class_for_descriptor(
     *,
     chain_id: ChainId,
 ) -> type[AbstractLiquidityPool]:
-    """Resolve a PoolTypeDescriptor to a concrete pool class.
+    """
+    Resolve a PoolTypeDescriptor to a concrete pool class.
 
     Consults the pool_type_registry to find the registered class
     for this factory on this chain. Falls back to a default class
@@ -104,7 +106,8 @@ def pool_class_for_descriptor(
 def _build_descriptor_from_db_result(
     pool_from_db: LiquidityPoolTable,
 ) -> PoolTypeDescriptor | None:
-    """Map a DB row to a PoolTypeDescriptor.
+    """
+    Map a DB row to a PoolTypeDescriptor.
 
     Returns None if the kind can't be resolved from the registry.
     Read-only dependency on pool_type_registry.
@@ -127,7 +130,8 @@ def _descriptor_from_probing_result(
     chain_id: ChainId,
     factory: ChecksumAddress,
 ) -> PoolTypeDescriptor:
-    """Map 'which method succeeded' to a PoolTypeDescriptor.
+    """
+    Map 'which method succeeded' to a PoolTypeDescriptor.
 
     If the factory is registered in pool_type_registry, uses the registry
     descriptor. Otherwise derives a default descriptor from the method name.
@@ -204,7 +208,8 @@ def resolve_pool_type_by_probing(
     factory: ChecksumAddress,
     io: PoolIO,
 ) -> PoolTypeDescriptor:
-    """Determine pool type by probing the contract on-chain.
+    """
+    Determine pool type by probing the contract on-chain.
 
     Tries V3 methods first (slot0), then V2 methods (getReserves),
     then falls back to STABLESWAP. Descriptor construction is
@@ -357,7 +362,8 @@ def resolve_pool_type(
     io: PoolIO,
     db: DatabaseSessionManager,
 ) -> PoolTypeDescriptor:
-    """Resolve the pool type for the given address.
+    """
+    Resolve the pool type for the given address.
 
     Consults these sources in order:
     1. Database `kind` column (exact polymorphic type)
@@ -405,7 +411,8 @@ async def resolve_pool_type_async(
     io: AsyncPoolIOProtocol,
     db: DatabaseSessionManager,
 ) -> PoolTypeDescriptor:
-    """Resolve the pool type for the given address (async).
+    """
+    Resolve the pool type for the given address (async).
 
     Same logic as resolve_pool_type but uses await for I/O calls.
     """

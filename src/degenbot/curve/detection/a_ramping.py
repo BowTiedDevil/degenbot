@@ -1,4 +1,5 @@
-"""A ramping parameter detection for Curve pools.
+"""
+A ramping parameter detection for Curve pools.
 
 Detects whether a Curve pool has active A coefficient ramping by
 probing initial_A(), initial_A_time(), future_A(), and future_A_time().
@@ -27,7 +28,8 @@ def detect_a_ramping(
     *,
     block_identifier: int,
 ) -> ARampingResult:
-    """Detect A coefficient ramping parameters.
+    """
+    Detect A coefficient ramping parameters.
 
     Not all pools support initial_A()/future_A() — they're optional.
     If any call reverts, returns has_ramping=False.

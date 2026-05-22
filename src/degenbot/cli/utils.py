@@ -24,7 +24,8 @@ def get_provider_from_config(
     use_alloy: bool | None = None,
     config: DegenbotConfig | None = None,
 ) -> ProviderAdapter:
-    """Get a ProviderAdapter for the given chain ID.
+    """
+    Get a ProviderAdapter for the given chain ID.
 
     Args:
         chain_id: The chain ID to get a provider for

@@ -1,4 +1,5 @@
-"""State mixin for Uniswap V3 concentrated-liquidity pools.
+"""
+State mixin for Uniswap V3 concentrated-liquidity pools.
 
 Holds all data attributes (immutable and mutable) and read-only properties
 that access them. No calculation logic — calculations live in
@@ -19,7 +20,8 @@ if TYPE_CHECKING:
 
 
 class V3PoolState:
-    """State for V3-style concentrated-liquidity pools.
+    """
+    State for V3-style concentrated-liquidity pools.
 
     Immutable data set at construction:
     - _token0, _token1: the paired ERC-20 tokens

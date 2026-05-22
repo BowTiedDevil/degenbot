@@ -1,4 +1,5 @@
-"""High-performance Ethereum RPC provider using Alloy.
+"""
+High-performance Ethereum RPC provider using Alloy.
 
 This module provides a Rust-based provider for fast log fetching and RPC calls.
 It replaces web3.py's provider functionality with optimized Rust implementations.
@@ -54,7 +55,8 @@ from degenbot.types.rpc_types import BlockData, LogData, TransactionData, Transa
 
 @dataclass(frozen=True, slots=True)
 class LogFilter:
-    """Filter criteria for log fetching.
+    """
+    Filter criteria for log fetching.
 
     Args:
         from_block: Starting block number (inclusive)
@@ -85,7 +87,8 @@ class LogFilter:
 
 
 class AlloyProvider:
-    """High-performance Ethereum RPC provider using Alloy.
+    """
+    High-performance Ethereum RPC provider using Alloy.
 
     Replaces web3.py provider for log fetching and basic RPC calls.
     Uses Rust-based HTTP client with connection pooling for optimal performance.
@@ -164,7 +167,8 @@ class AlloyProvider:
         return self._provider.get_gas_price()
 
     def get_block(self, block_number: int) -> BlockData | None:
-        """Get a block by number.
+        """
+        Get a block by number.
 
         Returns:
             Block data as dictionary with HexBytes for hash fields, or None if not found.
@@ -173,7 +177,8 @@ class AlloyProvider:
         return self._provider.get_block(block_number)
 
     def get_code(self, address: str, block_number: int | None = None) -> HexBytes:
-        """Get contract code at an address.
+        """
+        Get contract code at an address.
 
         Args:
             address: Contract address
@@ -191,7 +196,8 @@ class AlloyProvider:
         data: bytes,
         block_number: int | None = None,
     ) -> HexBytes:
-        """Execute an eth_call to a contract.
+        """
+        Execute an eth_call to a contract.
 
         Args:
             to: Contract address to call
@@ -221,7 +227,8 @@ class AlloyProvider:
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
     ) -> list[LogData]:
-        """Fetch event logs with automatic retry and dynamic block sizing.
+        """
+        Fetch event logs with automatic retry and dynamic block sizing.
 
         Flexible API that accepts either a LogFilter object or individual
         filter parameters as keyword arguments. Returns logs in web3.py
@@ -293,7 +300,8 @@ class AlloyProvider:
         )
 
     def get_transaction(self, tx_hash: str) -> TransactionData | None:
-        """Get a transaction by hash.
+        """
+        Get a transaction by hash.
 
         Args:
             tx_hash: Transaction hash as hex string
@@ -306,7 +314,8 @@ class AlloyProvider:
         return self._provider.get_transaction(tx_hash)
 
     def get_transaction_receipt(self, tx_hash: str) -> TransactionReceiptData | None:
-        """Get a transaction receipt by hash.
+        """
+        Get a transaction receipt by hash.
 
         Args:
             tx_hash: Transaction hash as hex string
@@ -326,7 +335,8 @@ class AlloyProvider:
         value: int | None = None,
         block_number: int | None = None,
     ) -> int:
-        """Estimate gas for a transaction.
+        """
+        Estimate gas for a transaction.
 
         Args:
             to: Target address
@@ -347,7 +357,8 @@ class AlloyProvider:
         position: int,
         block_number: int | None = None,
     ) -> HexBytes:
-        """Get storage at a given position.
+        """
+        Get storage at a given position.
 
         Args:
             address: Contract address
@@ -365,7 +376,8 @@ class AlloyProvider:
         self._provider.close()
 
     def is_connected(self) -> bool:  # noqa: PLR6301
-        """Check if the provider is connected.
+        """
+        Check if the provider is connected.
 
         For AlloyProvider, we assume connection is valid if the provider was created.
         """
@@ -376,7 +388,8 @@ class AlloyProvider:
         address: str,
         block_number: int | None = None,
     ) -> int:
-        """Get the balance of an address in wei.
+        """
+        Get the balance of an address in wei.
 
         Args:
             address: Account address
@@ -393,7 +406,8 @@ class AlloyProvider:
         address: str,
         block_number: int | None = None,
     ) -> int:
-        """Get the transaction count (nonce) for an address.
+        """
+        Get the transaction count (nonce) for an address.
 
         Args:
             address: Account address
@@ -410,7 +424,8 @@ class AlloyProvider:
         method: str,
         params: list[Any],
     ) -> Any:  # noqa: ANN401
-        """Make a raw JSON-RPC request.
+        """
+        Make a raw JSON-RPC request.
 
         This allows calling arbitrary RPC methods that don't have typed wrappers,
         such as debug methods, trace methods, or node-specific APIs.

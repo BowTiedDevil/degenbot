@@ -197,7 +197,8 @@ class _UniswapLpCycle(PublisherMixin):
         token_in_quantity: int,
         state_overrides: Mapping[Pool, PoolState] | None = None,
     ) -> tuple[SwapAmount, ...]:
-        """Generate inputs for all swaps along the arbitrage path, starting with the specified amount.
+        """
+        Generate inputs for all swaps along the arbitrage path, starting with the specified amount.
 
         of the input token defined in the constructor.
         """
@@ -324,7 +325,8 @@ class _UniswapLpCycle(PublisherMixin):
                 )
 
     def _check_pool_viability(self, state_overrides: Mapping[Pool, PoolState]) -> None:
-        """Evaluate each pool in the swap path for viability. Raise `ArbitrageError` on the first.
+        """
+        Evaluate each pool in the swap path for viability. Raise `ArbitrageError` on the first.
 
         non-viable pool found.
         """
@@ -342,7 +344,8 @@ class _UniswapLpCycle(PublisherMixin):
         min_rate_of_exchange: Fraction = Fraction(1, 1),
         state_overrides: Mapping[Pool, PoolState] | None = None,
     ) -> None:
-        """Perform pool viability and minimum rate of exchange checks. Raises an exception if a.
+        """
+        Perform pool viability and minimum rate of exchange checks. Raises an exception if a.
 
         non-viable pool is found, or if the instantaneous rate of exchange is below the specified
         minimum.
@@ -405,7 +408,8 @@ class _UniswapLpCycle(PublisherMixin):
     ) -> ArbitrageCalculationResult[
         UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
     ]:
-        """Calculate the optimal arbitrage profit using ArbSolver.
+        """
+        Calculate the optimal arbitrage profit using ArbSolver.
 
         Delegates to ArbSolver.solve() which selects the best solver
         (MobiusSolver, PiecewiseMobiusSolver, BrentSolver, etc.)
@@ -482,7 +486,8 @@ class _UniswapLpCycle(PublisherMixin):
     ) -> ArbitrageCalculationResult[
         UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
     ]:
-        """Calculate the results of the arbitrage at the current pool states, or at one or more.
+        """
+        Calculate the results of the arbitrage at the current pool states, or at one or more.
 
         overridden pool states if provided.
         """
@@ -499,7 +504,8 @@ class _UniswapLpCycle(PublisherMixin):
         state_overrides: Mapping[Pool, PoolState] | None = None,
         min_rate_of_exchange: Fraction = Fraction(1, 1),
     ) -> asyncio.Future[ArbitrageCalculationResult[SwapAmount]]:
-        """Wrap the arbitrage calculation into an asyncio future using the specified executor.
+        """
+        Wrap the arbitrage calculation into an asyncio future using the specified executor.
 
         Arguments:
         ---------
@@ -547,7 +553,8 @@ class _UniswapLpCycle(PublisherMixin):
         swap_amount: int,
         pool_swap_amounts: Sequence[SwapAmount],
     ) -> Sequence[Any]:
-        """Generate a list of ABI-encoded calldata for each step in the swap path.
+        """
+        Generate a list of ABI-encoded calldata for each step in the swap path.
 
         Calldata is built using the `eth_abi.encode` method and the ABI for the
         `swap` function at the Uniswap pool. Uniswap V2, V3, and V4 pools (and compatible child

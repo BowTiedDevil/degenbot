@@ -12,13 +12,15 @@ MAX_3BYTE_INT = 0xFFFFFF
 
 
 def flz_compress(uncompressed_data: str | bytes) -> HexBytes:
-    """Compress data using Solady's FastLZ algorithm.
+    """
+    Compress data using Solady's FastLZ algorithm.
 
     ref: https://github.com/Vectorized/solady/blob/main/js/solady.js
     """
 
     def get_3_byte_int(pos: int) -> int:
-        """Get a 24-bit (3 byte) unsigned integer from the input buffer at position `pos`.
+        """
+        Get a 24-bit (3 byte) unsigned integer from the input buffer at position `pos`.
 
         The number is constructed from a little-endian memory arrangement (the least significant
         digit appears first).
@@ -30,7 +32,8 @@ def flz_compress(uncompressed_data: str | bytes) -> HexBytes:
         return ((2654435769 * x) >> 19) & (MAX_MATCH_OFFSET)
 
     def add_literals(run_length: int, input_buffer_start_offset: int) -> None:
-        """Extend the output buffer with a continuous run of 1-byte literals copied from the input.
+        """
+        Extend the output buffer with a continuous run of 1-byte literals copied from the input.
 
         buffer.
         """
@@ -157,7 +160,8 @@ def flz_compress(uncompressed_data: str | bytes) -> HexBytes:
 
 
 def flz_decompress(compressed_data: bytes | bytearray | HexStr) -> HexBytes:
-    """Decompress data using Solady's FastLZ algorithm.
+    """
+    Decompress data using Solady's FastLZ algorithm.
 
     ref: https://github.com/Vectorized/solady/blob/main/js/solady.js
     """

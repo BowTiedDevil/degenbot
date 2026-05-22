@@ -1,4 +1,5 @@
-"""SUPPLY operation handler.
+"""
+SUPPLY operation handler.
 
 SUPPLY operations emit a COLLATERAL_MINT event from the aToken contract.
 The Pool event contains the raw amount supplied by the user.
@@ -29,7 +30,8 @@ class SupplyHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """Enrich a SUPPLY event.
+        """
+        Enrich a SUPPLY event.
 
         For SUPPLY operations:
         1. Extract raw amount from the Pool SUPPLY event

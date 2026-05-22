@@ -1,4 +1,5 @@
-"""Pure position analysis functions.
+"""
+Pure position analysis functions.
 
 No database, no RPC, no ORM. All inputs are plain dataclasses
 or primitives. All outputs are plain dataclasses.
@@ -35,7 +36,8 @@ class CollateralPositionData:
 
     @property
     def effective_liquidation_threshold(self) -> int:
-        """Liquidation threshold used for health factor calculation.
+        """
+        Liquidation threshold used for health factor calculation.
 
         Returns 0 if collateral is disabled by user preference.
         """
@@ -43,7 +45,8 @@ class CollateralPositionData:
 
     @property
     def price_adjusted_balance(self) -> int:
-        """Balance adjusted by price, in oracle base currency units.
+        """
+        Balance adjusted by price, in oracle base currency units.
 
         Returns actual_balance * price. If price is None, returns
         actual_balance (assumes price = 1).
@@ -68,7 +71,8 @@ class DebtPositionData:
 
     @property
     def price_adjusted_balance(self) -> int:
-        """Balance adjusted by price, in oracle base currency units.
+        """
+        Balance adjusted by price, in oracle base currency units.
 
         Returns actual_balance * price. If price is None, returns
         actual_balance (assumes price = 1).
@@ -80,7 +84,8 @@ class DebtPositionData:
 
 @dataclass(frozen=True)
 class UserRecord:
-    """Flat record for a user, extracted from ORM at the query boundary.
+    """
+    Flat record for a user, extracted from ORM at the query boundary.
 
     Contains all fields needed by core analysis — no lazy-loaded
     relationships, no ORM references.
@@ -97,7 +102,8 @@ class UserRecord:
 
 @dataclass(frozen=True)
 class CollateralPositionRecord:
-    """Flat record for a collateral position, extracted from ORM.
+    """
+    Flat record for a collateral position, extracted from ORM.
 
     All fields that core needs are flattened — no relationship navigation.
     """
@@ -116,7 +122,8 @@ class CollateralPositionRecord:
 
 @dataclass(frozen=True)
 class DebtPositionRecord:
-    """Flat record for a debt position, extracted from ORM.
+    """
+    Flat record for a debt position, extracted from ORM.
 
     All fields that core needs are flattened — no relationship navigation.
     """
@@ -217,7 +224,8 @@ def calculate_actual_collateral_balance(
     scaled_balance: int,
     liquidity_index: int,
 ) -> int:
-    """Calculate actual collateral balance from scaled balance.
+    """
+    Calculate actual collateral balance from scaled balance.
 
     Uses floor rounding (ray_mul_floor) to match Aave V3 behavior.
     Collateral balance should not be over-accounted.
@@ -229,7 +237,8 @@ def calculate_actual_debt_balance(
     scaled_balance: int,
     borrow_index: int,
 ) -> int:
-    """Calculate actual debt balance from scaled balance.
+    """
+    Calculate actual debt balance from scaled balance.
 
     Uses ceil rounding (ray_mul_ceil) to match Aave V3 behavior.
     Debt should not be under-accounted.
@@ -244,7 +253,8 @@ def get_liquidation_threshold(
     user_emode: int,
     asset_emode_category_id: int | None,
 ) -> int:
-    """Get the effective liquidation threshold for a collateral position.
+    """
+    Get the effective liquidation threshold for a collateral position.
 
     If the user is in eMode and the asset is in the same eMode category,
     use the eMode liquidation threshold. Otherwise use the standard threshold.
@@ -261,7 +271,8 @@ def get_ltv(
     user_emode: int,
     asset_emode_category_id: int | None,
 ) -> int:
-    """Get the effective LTV for a collateral position.
+    """
+    Get the effective LTV for a collateral position.
 
     If the user is in eMode and the asset is in the same eMode category,
     use the eMode LTV. Otherwise use the standard LTV.
@@ -278,7 +289,8 @@ def build_collateral_position_data(
     collateral_enabled: bool,
     price: int | None = None,
 ) -> CollateralPositionData:
-    """Build CollateralPositionData from a flat record.
+    """
+    Build CollateralPositionData from a flat record.
 
     Pure function — no ORM, no DB, no RPC.
     """
@@ -322,7 +334,8 @@ def build_debt_position_data(
     *,
     price: int | None = None,
 ) -> DebtPositionData:
-    """Build DebtPositionData from a flat record.
+    """
+    Build DebtPositionData from a flat record.
 
     Pure function — no ORM, no DB, no RPC.
     """
@@ -350,7 +363,8 @@ def calculate_health_factor(
     isolation_mode_debt: int = 0,
     isolation_debt_ceiling: int | None = None,
 ) -> float | None:
-    """Calculate health factor for a user position.
+    """
+    Calculate health factor for a user position.
 
     Health Factor = Sum(collateral * price * liquidation_threshold) / Sum(debt * price)
 
@@ -393,7 +407,8 @@ def analyze_user_position(
     collateral_config_map: dict[int, bool],
     price_map: dict[ChecksumAddress, int] | None = None,
 ) -> UserPositionSummary:
-    """Analyze a single user's position for liquidation risk.
+    """
+    Analyze a single user's position for liquidation risk.
 
     Pure function — no ORM, no DB, no RPC.
     """

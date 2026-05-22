@@ -15,5 +15,3 @@ class SwapVector:
 
 class PathValidationError(Exception):
     """Raise when an arbitrage path fails validation."""
-
-    ...

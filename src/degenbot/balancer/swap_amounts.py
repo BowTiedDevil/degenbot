@@ -21,7 +21,8 @@ _MAX_UINT256 = 2**256 - 1
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class BalancerV2SwapAmounts:
-    """Swap amounts for a Balancer V2 Vault swap.
+    """
+    Swap amounts for a Balancer V2 Vault swap.
 
     Encodes a call to Vault.swap() with:
     - SingleSwap: (poolId, kind, assetIn, assetOut, amount, userData)
@@ -53,7 +54,8 @@ class BalancerV2SwapAmounts:
         return self.amount_out
 
     def encode(self, *, recipient: ChecksumAddress | None = None) -> EncodedCall:
-        """Encode Vault.swap() call.
+        """
+        Encode Vault.swap() call.
 
         FundManagement defaults:
         - sender: ZERO_ADDRESS (filled by executor at runtime)

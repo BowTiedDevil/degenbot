@@ -31,7 +31,8 @@ class TokenProcessorFactory:
 
     @classmethod
     def get_collateral_processor(cls, revision: int) -> CollateralTokenProcessor:
-        """Get processor for collateral (aToken) by revision.
+        """
+        Get processor for collateral (aToken) by revision.
 
         Args:
             revision: The aToken revision number
@@ -57,7 +58,8 @@ class TokenProcessorFactory:
 
     @classmethod
     def get_debt_processor(cls, revision: int) -> DebtTokenProcessor:
-        """Get processor for standard debt (vToken) by revision.
+        """
+        Get processor for standard debt (vToken) by revision.
 
         This returns processors for non-GHO variable debt tokens.
         For GHO tokens, use get_gho_debt_processor() instead.
@@ -86,7 +88,8 @@ class TokenProcessorFactory:
 
     @classmethod
     def get_gho_debt_processor(cls, revision: int) -> GhoDebtTokenProcessor:
-        """Get processor for GHO variable debt token by revision.
+        """
+        Get processor for GHO variable debt token by revision.
 
         GHO tokens have special discount handling that requires
         a separate processor type from standard vTokens.

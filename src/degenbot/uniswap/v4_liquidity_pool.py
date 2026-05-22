@@ -339,7 +339,8 @@ class UniswapV4Pool(
         sqrt_price_x96_limit: int,
         override_state: UniswapV4PoolState | None = None,
     ) -> tuple[SwapDelta, FeeToProtocol, SwapFee, SwapResult]:
-        """Port from ``UniswapV4Pool._calculate_swap``. Operates on a frozen.
+        """
+        Port from ``UniswapV4Pool._calculate_swap``. Operates on a frozen.
 
         ``LiquidityMapSnapshot`` and returns ``SwapResult`` with no side effects.
         """
@@ -625,7 +626,8 @@ class UniswapV4Pool(
         tick_data: dict[int, Any],
         block: int,
     ) -> None:
-        """Apply updated tick bitmap and data from the tick data fetcher.
+        """
+        Apply updated tick bitmap and data from the tick data fetcher.
 
         Replaces the tick_bitmap and tick_data on the current state and
         pushes the new state through the state manager.
@@ -642,7 +644,8 @@ class UniswapV4Pool(
         self,
         update: UniswapV4PoolExternalUpdate,
     ) -> bool:
-        """Process a `UniswapV4PoolExternalUpdate` with one or more of the following update types.
+        """
+        Process a `UniswapV4PoolExternalUpdate` with one or more of the following update types.
 
             - `block_number`: int
             - `tick`: int
@@ -692,7 +695,8 @@ class UniswapV4Pool(
         self,
         update: UniswapV4PoolLiquidityMappingUpdate,
     ) -> None:
-        """Apply an update to the liquidity map.
+        """
+        Apply an update to the liquidity map.
 
         @dev This method uses a lock to guard state-modifying methods that might cause race
         conditions when used with threads.

@@ -10,7 +10,8 @@ def get_sqrt_price_target(
     sqrt_price_next_x96: int,
     sqrt_price_limit_x96: int,
 ) -> int:
-    """Compute the price target for the next swap step.
+    """
+    Compute the price target for the next swap step.
 
     @dev This simplified implementation replicates the gas optimized Yul used by the Solidity
     contract.

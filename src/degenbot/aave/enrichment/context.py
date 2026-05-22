@@ -55,7 +55,8 @@ _ERC20_TRANSFER_MAP: dict[ScaledTokenEventType, ScaledTokenEventType] = {
 
 
 class EnrichmentContext:
-    """Shared context providing services for enrichment handlers.
+    """
+    Shared context providing services for enrichment handlers.
 
     Encapsulates:
     - Token revision lookup (with caching)
@@ -161,7 +162,8 @@ class EnrichmentContext:
         event_type: ScaledTokenEventType | None = None,
         operation_type: OperationType | None = None,
     ) -> int:
-        """Extract raw amount from a Pool event.
+        """
+        Extract raw amount from a Pool event.
 
         Special handling for liquidations: use different extractors for debt vs collateral.
         """

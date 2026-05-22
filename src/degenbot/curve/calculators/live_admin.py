@@ -1,4 +1,5 @@
-"""Live-admin DyCalculator variants.
+"""
+Live-admin DyCalculator variants.
 
 Two parameterized calculators cover the four live-admin swap styles:
 
@@ -45,7 +46,8 @@ class PrecisionMode(Enum):
 
 @dataclass(frozen=True, slots=True)
 class LiveAdminDynamicDyCalculator:
-    """Live-admin dynamic-fee dy calculator.
+    """
+    Live-admin dynamic-fee dy calculator.
 
     Parameterized by ``precision_mode``:
 

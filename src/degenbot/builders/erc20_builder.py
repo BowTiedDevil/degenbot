@@ -34,7 +34,8 @@ if TYPE_CHECKING:
 
 
 class Erc20Builder:
-    """Builds Erc20Token instances from DB lookups and RPC calls.
+    """
+    Builds Erc20Token instances from DB lookups and RPC calls.
 
     Owns the full I/O choreography: check registry → check DB → fetch
     from chain → construct token → register.

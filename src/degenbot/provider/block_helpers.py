@@ -14,7 +14,8 @@ def get_number_for_block_identifier(
     identifier: BlockIdentifier | None,
     provider: ProviderAdapter,
 ) -> BlockNumber:
-    """Convert a block identifier to a block number.
+    """
+    Convert a block identifier to a block number.
 
     Args:
         identifier: Block identifier (None, int, or string tag like 'latest')

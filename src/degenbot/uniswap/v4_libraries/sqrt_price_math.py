@@ -190,7 +190,8 @@ def get_next_sqrt_price_from_input(
     amount_in: int,
     zero_for_one: bool,
 ) -> int:
-    """Get the next sqrt price given an input amount of currency0 or currency1, rounding to ensure.
+    """
+    Get the next sqrt price given an input amount of currency0 or currency1, rounding to ensure.
 
     that the target price is not passed.
     """
@@ -223,7 +224,8 @@ def get_next_sqrt_price_from_output(
     amount_out: int,
     zero_for_one: bool,
 ) -> int:
-    """Get the next sqrt price given an output amount of currency0 or currency1, rounding to ensure.
+    """
+    Get the next sqrt price given an output amount of currency0 or currency1, rounding to ensure.
 
     that the target price is not passed.
     """

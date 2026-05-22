@@ -46,7 +46,8 @@ _V2_TWO_HEX = "1bc16d674ec80000"
 
 
 def detect_pow_version(bytecode: str) -> PowVersion:
-    """Detect which FixedPoint library version a pool contract uses from its bytecode.
+    """
+    Detect which FixedPoint library version a pool contract uses from its bytecode.
 
     V2 (WeightedPool) contracts include fast paths for y == ONE, TWO, FOUR in
     powDown/powUp. These reference the TWO and FOUR constants, which are absent
@@ -302,7 +303,8 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         token_in: Erc20Token | None = None,
         token_out: Erc20Token | None = None,
     ) -> HopType:
-        """Create a hop state for this pool.
+        """
+        Create a hop state for this pool.
 
         For 2-token pools, zero_for_one maps to token[0] -> token[1] direction.
         For N-token pools, pass token_in/token_out to select the pair.
@@ -356,7 +358,8 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         token_in: Erc20Token | None = None,
         token_out: Erc20Token | None = None,
     ) -> BalancerV2SwapAmounts:
-        """Build a BalancerV2SwapAmounts for this pool's swap.
+        """
+        Build a BalancerV2SwapAmounts for this pool's swap.
 
         For N > 2 token pools, token_in and token_out must be provided.
         Use BalancerPairView for ArbitragePathPool conformance.

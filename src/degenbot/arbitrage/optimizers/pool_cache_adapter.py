@@ -1,4 +1,5 @@
-"""Auto-registration adapter that syncs pool state to the Rust solver cache.
+"""
+Auto-registration adapter that syncs pool state to the Rust solver cache.
 
 When a pool's state changes, the adapter receives the notification and
 updates the solver's Rust pool cache, eliminating the need for manual
@@ -19,7 +20,8 @@ if TYPE_CHECKING:
 
 
 class ArbPoolCacheAdapter(Subscriber):
-    """Subscribes to pool state updates and auto-registers them in the.
+    """
+    Subscribes to pool state updates and auto-registers them in the.
 
     ArbSolver's Rust pool cache.
 
@@ -38,7 +40,8 @@ class ArbPoolCacheAdapter(Subscriber):
         self._pool_to_ids: dict[int, tuple[int, int]] = {}  # id(pool) → (forward_id, reverse_id)
 
     def register(self, pool: AbstractLiquidityPool) -> int:
-        """Register a pool for auto-updates.
+        """
+        Register a pool for auto-updates.
 
         Subscribes to the pool's state notifications and registers both
         reserve orientations in the solver's cache.
@@ -81,7 +84,8 @@ class ArbPoolCacheAdapter(Subscriber):
         publisher: Publisher,
         message: AbstractPublisherMessage,  # ruff: ignore[ARG002]
     ) -> None:
-        """Handle a pool state update.
+        """
+        Handle a pool state update.
 
         Updates both reserve orientations in the Rust cache.
         """

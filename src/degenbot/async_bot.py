@@ -53,7 +53,8 @@ if TYPE_CHECKING:
 
 
 class AsyncBot:
-    """Async session object that owns the runtime state for a degenbot run.
+    """
+    Async session object that owns the runtime state for a degenbot run.
 
     Mirrors Bot with AsyncConnectionManager and async factory/I-O methods.
     Returns the same I/O-free domain objects as Bot.
@@ -175,7 +176,8 @@ class AsyncBot:
         tick_data: dict[int, Any] | None = None,
         state_cache_depth: int = 8,
     ) -> AbstractLiquidityPool:
-        """Build a pool from an address, automatically resolving its type.
+        """
+        Build a pool from an address, automatically resolving its type.
 
         V4 managed pools should use ``build_managed_pool()`` instead.
         """
@@ -265,7 +267,8 @@ class AsyncBot:
         tick_bitmap: dict[int, Any] | None = None,
         tick_data: dict[int, Any] | None = None,
     ) -> UniswapV4Pool:
-        """Build a V4 managed pool from a PoolManager address and pool ID.
+        """
+        Build a V4 managed pool from a PoolManager address and pool ID.
 
         ``address`` is the PoolManager contract. ``pool_id`` identifies the
         pool within the manager.

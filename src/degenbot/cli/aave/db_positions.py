@@ -1,4 +1,5 @@
-"""Position database operations for Aave V3.
+"""
+Position database operations for Aave V3.
 
 Functions for managing collateral and debt positions.
 """
@@ -49,7 +50,8 @@ def get_or_create_collateral_position(
     user: AaveV3User,
     asset_id: int,
 ) -> AaveV3CollateralPosition:
-    """Get existing collateral position or create new one with zero balance.
+    """
+    Get existing collateral position or create new one with zero balance.
 
     Uses tx_context.modified_positions cache to avoid repeated database queries.
     """
@@ -67,7 +69,8 @@ def get_or_create_debt_position(
     user: AaveV3User,
     asset_id: int,
 ) -> AaveV3DebtPosition:
-    """Get existing debt position or create new one with zero balance.
+    """
+    Get existing debt position or create new one with zero balance.
 
     Uses tx_context.modified_positions cache to avoid repeated database queries.
     """

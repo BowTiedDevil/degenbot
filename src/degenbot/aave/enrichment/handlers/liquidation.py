@@ -1,4 +1,5 @@
-"""LIQUIDATION/GHO_LIQUIDATION operation handler.
+"""
+LIQUIDATION/GHO_LIQUIDATION operation handler.
 
 LIQUIDATION operations emit both DEBT_BURN and COLLATERAL_BURN events.
 GHO_LIQUIDATION emits GHO_DEBT_BURN and COLLATERAL_BURN events.
@@ -70,7 +71,8 @@ class LiquidationHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """Enrich a LIQUIDATION or GHO_LIQUIDATION event.
+        """
+        Enrich a LIQUIDATION or GHO_LIQUIDATION event.
 
         Handles debt burns, collateral burns, and special cases.
         """
@@ -142,7 +144,8 @@ class LiquidationHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """Handle ERC20 transfer events within a liquidation operation.
+        """
+        Handle ERC20 transfer events within a liquidation operation.
 
         Standard ERC20 Transfer events don't carry an Aave index.
         The amount is already in scaled units, so raw_amount = scaled_amount.
@@ -185,7 +188,8 @@ class LiquidationHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """Handle Pool Revision 9+ debt burns with pre-scaled amounts.
+        """
+        Handle Pool Revision 9+ debt burns with pre-scaled amounts.
 
         Pool rev 9+ calculates scaledAmount = debtToCover.rayDivFloor(index)
         and passes it to vToken.burn(). We must calculate this ourselves.
@@ -229,7 +233,8 @@ class LiquidationHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """Handle the net debt increase case during liquidation.
+        """
+        Handle the net debt increase case during liquidation.
 
         When balance_increase > amount on DEBT_MINT, it means the debt repayment
         was less than the accrued interest. This is a net debt increase.

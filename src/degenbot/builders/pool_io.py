@@ -1,4 +1,5 @@
-"""PoolIO and AsyncPoolIO protocols and adapters for builder I/O.
+"""
+PoolIO and AsyncPoolIO protocols and adapters for builder I/O.
 
 These protocols define the narrow I/O surface that pool builders need:
 `call`, `call_raw`, `get_block_number`, `get_block`, `get_block_timestamp`,
@@ -23,7 +24,8 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class PoolIO(Protocol):
-    """I/O primitives needed by pool builders (sync).
+    """
+    I/O primitives needed by pool builders (sync).
 
     Encapsulates the RPC surface builders use so they are agnostic
     to sync vs async execution. Two adapters satisfy this protocol:
@@ -62,7 +64,8 @@ class PoolIO(Protocol):
 
 @runtime_checkable
 class AsyncPoolIOProtocol(Protocol):
-    """Async counterpart of PoolIO.
+    """
+    Async counterpart of PoolIO.
 
     All methods are async. Builders that use AsyncPoolIO must be
     async builders.
@@ -130,7 +133,8 @@ class SyncPoolIO:
 
 
 class AsyncPoolIO:
-    """PoolIO adapter wrapping an AsyncProviderAdapter.
+    """
+    PoolIO adapter wrapping an AsyncProviderAdapter.
 
     All methods are async. Used by AsyncBot's async builders.
     Satisfies the AsyncPoolIOProtocol at runtime.

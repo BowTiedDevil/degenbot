@@ -1,4 +1,5 @@
-"""Parameterized DyCalculator for standard Curve swap paths.
+"""
+Parameterized DyCalculator for standard Curve swap paths.
 
 ``StandardDyCalculator`` is parameterized by four independent axes
 that encode every observed combination:
@@ -54,7 +55,8 @@ class ConversionStyle(Enum):
 
 @dataclass(frozen=True, slots=True)
 class StandardDyCalculator:
-    """Parameterized dy calculator for standard and live-admin Curve swap paths.
+    """
+    Parameterized dy calculator for standard and live-admin Curve swap paths.
 
     Encodes four independent variation axes:
 

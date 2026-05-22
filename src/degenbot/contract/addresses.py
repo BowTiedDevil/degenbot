@@ -12,7 +12,8 @@ def create2_address(
     salt: bytes | str,
     init_code_hash: bytes | str,
 ) -> ChecksumAddress:
-    """Generate the deterministic CREATE2 address for a given deployer, salt, and the keccak hash of.
+    """
+    Generate the deterministic CREATE2 address for a given deployer, salt, and the keccak hash of.
 
     the contract creation (init) bytecode.
 
@@ -33,7 +34,8 @@ def eip_1167_clone_address(
     implementation_contract: ChecksumAddress | str | bytes,
     salt: bytes,
 ) -> ChecksumAddress:
-    """Calculate the contract address for an EIP-1167 minimal proxy contract deployed by `deployer`,.
+    """
+    Calculate the contract address for an EIP-1167 minimal proxy contract deployed by `deployer`,.
 
     using `salt`, delegating calls to the contract at `implementation` address.
 

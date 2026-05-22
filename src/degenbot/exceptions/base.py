@@ -2,7 +2,8 @@
 
 
 class DegenbotError(Exception):
-    """Base exception used as the parent class for all exceptions raised by this package.
+    """
+    Base exception used as the parent class for all exceptions raised by this package.
 
     Calling code should catch `DegenbotError` and derived classes separately before general
     exceptions, e.g.:
@@ -34,16 +35,12 @@ class DegenbotError(Exception):
 class DegenbotValueError(DegenbotError):
     """DegenbotValueError error."""
 
-    ...
-
 
 """DegenbotValueError class."""
 
 
 class DegenbotTypeError(DegenbotError):
     """DegenbotTypeError error."""
-
-    ...
 
 
 """DegenbotTypeError class."""

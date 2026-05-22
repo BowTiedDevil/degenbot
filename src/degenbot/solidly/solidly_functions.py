@@ -1,4 +1,5 @@
-"""Solidly stable pool calculations.
+"""
+Solidly stable pool calculations.
 
 .. deprecated::
     Import from :mod:`degenbot.calculations.solidly_stable` instead.

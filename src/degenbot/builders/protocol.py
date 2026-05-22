@@ -1,4 +1,5 @@
-"""Protocol for pool construction and state updates.
+"""
+Protocol for pool construction and state updates.
 
 Each builder owns:
 - The I/O choreography (DB lookup → RPC fetch → decode → construct)
@@ -22,7 +23,8 @@ if TYPE_CHECKING:
 
 
 class PoolBuilder(Protocol):
-    """Protocol for pool construction and state updates.
+    """
+    Protocol for pool construction and state updates.
 
     Builders must accept ``address`` as the first positional-or-keyword
     parameter in ``build()``, and ``pool`` as the first positional-or-keyword
@@ -54,7 +56,8 @@ class PoolBuilder(Protocol):
 
 
 class AsyncPoolBuilder(Protocol):
-    """Async counterpart of PoolBuilder.
+    """
+    Async counterpart of PoolBuilder.
 
     Satisfies the same interface but with async build/update methods.
     Used by AsyncBot.

@@ -1,4 +1,5 @@
-"""Pool Manager: add index.
+"""
+Pool Manager: add index.
 
 Revision ID: b20f5564b3b6
 Revises: 8aa4babb128a

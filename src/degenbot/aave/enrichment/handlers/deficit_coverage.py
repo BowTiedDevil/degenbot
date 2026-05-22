@@ -1,4 +1,5 @@
-"""DEFICIT_COVERAGE operation handler.
+"""
+DEFICIT_COVERAGE operation handler.
 
 Umbrella deficit coverage involves a BalanceTransfer event followed by a
 Burn event pair. This operation type handles both event types:
@@ -34,7 +35,8 @@ class DeficitCoverageHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """Enrich a DEFICIT_COVERAGE event.
+        """
+        Enrich a DEFICIT_COVERAGE event.
 
         Handles both COLLATERAL_TRANSFER and COLLATERAL_BURN events.
         - Transfers: raw_amount = scaled_amount (no index scaling)

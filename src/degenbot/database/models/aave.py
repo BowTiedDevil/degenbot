@@ -63,7 +63,8 @@ ForeignKeyAaveMarketId = Annotated[
 
 
 class AaveV3EModeCategory(Base):
-    """eMode category configuration for correlated assets.
+    """
+    eMode category configuration for correlated assets.
 
     Users in eMode get better LTV and liquidation terms for assets in the
     same category. Liquidators need this to calculate effective thresholds.
@@ -332,7 +333,8 @@ ForeignKeyAaveAssetId = Annotated[
 
 
 class AaveV3AssetConfig(Base):
-    """Asset configuration for liquidation monitoring.
+    """
+    Asset configuration for liquidation monitoring.
 
     Stores durable configuration values that affect liquidation calculations:
     LTV, liquidation threshold, liquidation bonus, and feature flags.
@@ -471,7 +473,8 @@ Index(
 
 
 class AaveV3UserCollateralConfig(Base):
-    """Tracks which assets each user has enabled as collateral.
+    """
+    Tracks which assets each user has enabled as collateral.
 
     A user can hold aTokens for an asset but choose not to use it as collateral.
     This table tracks that preference state, updated by
@@ -521,7 +524,8 @@ Index(
 
 
 class AaveGhoToken(Base):
-    """GHO token attributes for Aave V3 markets.
+    """
+    GHO token attributes for Aave V3 markets.
 
     GHO tokens are chain-unique: multiple markets on the same chain share the same GHO token.
     This table stores global GHO configuration (discount token, discount rate strategy) that

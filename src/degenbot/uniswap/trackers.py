@@ -75,7 +75,8 @@ class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool
         *,
         silent: bool = False,
     ) -> Pool:
-        """Get a pool from its address. If the pool is already tracked or found in the global registry,.
+        """
+        Get a pool from its address. If the pool is already tracked or found in the global registry,.
 
         that instance will be returned. Otherwise, a new one will be built.
         """
@@ -122,7 +123,8 @@ class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool
 
 
 class UniswapV2PoolTracker(AbstractUniswapV2PoolTracker[UniswapV2Pool], pool_factory=UniswapV2Pool):
-    """A class that generates and tracks concrete instances of a Uniswap V2 liquidity pool helper or.
+    """
+    A class that generates and tracks concrete instances of a Uniswap V2 liquidity pool helper or.
 
     one of its child classes.
     """
@@ -222,7 +224,8 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
         *,
         silent: bool = False,
     ) -> Pool:
-        """Get a pool from its address. If the pool is already tracked or found in the pool registry,.
+        """
+        Get a pool from its address. If the pool is already tracked or found in the pool registry,.
 
         that instance will be returned. Otherwise, a new one will be built via Bot.
         """
@@ -275,7 +278,8 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
 
 
 class UniswapV3PoolTracker(AbstractUniswapV3PoolTracker[UniswapV3Pool], pool_factory=UniswapV3Pool):
-    """A class that generates and tracks concrete instances of a Uniswap V3 liquidity pool helper or.
+    """
+    A class that generates and tracks concrete instances of a Uniswap V3 liquidity pool helper or.
 
     one of its child classes.
     """

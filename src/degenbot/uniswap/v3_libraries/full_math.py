@@ -9,7 +9,8 @@ def muldiv(
     b: int,
     denominator: int,
 ) -> int:
-    """Compute a * b / d with full 512-bit precision, matching the Solidity implementation designed to.
+    """
+    Compute a * b / d with full 512-bit precision, matching the Solidity implementation designed to.
 
     the intermediate result.
 

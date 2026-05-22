@@ -22,7 +22,8 @@ if TYPE_CHECKING:
 
 
 class V2PoolBuilder(V2BuilderBase):
-    """Builds and updates base Uniswap V2-style pools.
+    """
+    Builds and updates base Uniswap V2-style pools.
 
     Owns the full I/O choreography: DB lookup → RPC fetch → decode →
     construct pool → register.

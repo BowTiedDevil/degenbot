@@ -1,4 +1,5 @@
-"""Uniswap V4: Reconfigure pool hash index.
+"""
+Uniswap V4: Reconfigure pool hash index.
 
 Revision ID: 4c5e6157714b
 Revises: 12321f192db4

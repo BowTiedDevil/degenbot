@@ -1,4 +1,5 @@
-"""GHO variable debt token processor for revision 4.
+"""
+GHO variable debt token processor for revision 4.
 
 Revision 4 deprecates the discount mechanism and uses standard rayDiv
 (rounding half up) like earlier revisions. Floor division was added
@@ -21,7 +22,8 @@ from degenbot.aave.processors.base import (
 
 
 class GhoV4Processor(GhoDebtTokenProcessor):
-    """Processor for GHO VariableDebtToken revision 4.
+    """
+    Processor for GHO VariableDebtToken revision 4.
 
     Revision 4 has the discount mechanism deprecated and uses standard
     rayDiv (rounding half up). Floor division was added in revision 5.
@@ -49,7 +51,8 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         return False
 
     def calculate_mint_scaled_amount(self, raw_amount: int, index: int) -> int:
-        """Calculate scaled amount from raw underlying amount for mint operations.
+        """
+        Calculate scaled amount from raw underlying amount for mint operations.
 
         GHO revision 4 uses standard rayDiv (rounding half up) since the discount
         mechanism was deprecated. The _mintScaled function in the revision 4
@@ -80,7 +83,8 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         previous_discount: int,  # noqa: ARG002
         actual_repay_amount: int | None = None,
     ) -> GhoScaledTokenMintResult:
-        """Process a GHO debt mint event without discount.
+        """
+        Process a GHO debt mint event without discount.
 
         For accurate balance tracking, the scaled_delta parameter should be
         pre-calculated using calculate_mint_scaled_amount() from the original
@@ -172,7 +176,8 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         previous_index: int,  # noqa: ARG002
         previous_discount: int,  # noqa: ARG002
     ) -> GhoScaledTokenBurnResult:
-        """Process a GHO debt burn event without discount.
+        """
+        Process a GHO debt burn event without discount.
 
         Args:
             event_data: The burn event data
@@ -213,7 +218,8 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         current_index: int,
         discount_percent: int,  # noqa: ARG002
     ) -> int:
-        """Calculate balance without discount.
+        """
+        Calculate balance without discount.
 
         In revision 4+, this simply returns rayMul(scaled_balance, current_index).
 
@@ -243,7 +249,8 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         discount_percent: int,
         current_index: int,
     ) -> int:
-        """Calculate debt accrual without discount.
+        """
+        Calculate debt accrual without discount.
 
         In revision 4+, the discount mechanism is deprecated, so this
         always returns 0.

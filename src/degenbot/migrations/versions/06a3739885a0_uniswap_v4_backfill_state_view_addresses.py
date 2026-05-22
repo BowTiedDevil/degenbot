@@ -1,4 +1,5 @@
-"""Uniswap V4: Backfill state view addresses.
+"""
+Uniswap V4: Backfill state view addresses.
 
 Revision ID: 06a3739885a0
 Revises: 6f376d34618b

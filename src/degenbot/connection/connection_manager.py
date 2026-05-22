@@ -37,7 +37,8 @@ class ConnectionManager:
         self._default_chain_id = None
 
     def get_provider(self, chain_id: ChainId) -> ProviderAdapter:
-        """Get a ProviderAdapter for the specified chain ID.
+        """
+        Get a ProviderAdapter for the specified chain ID.
 
         Args:
             chain_id: The chain ID to get the provider for
@@ -62,7 +63,8 @@ class ConnectionManager:
         *,
         optimize: bool = True,
     ) -> None:
-        """Register a ProviderAdapter.
+        """
+        Register a ProviderAdapter.
 
         Args:
             provider: The ProviderAdapter to register

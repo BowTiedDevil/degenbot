@@ -1,4 +1,5 @@
-"""Swap encoding and payload generation.
+"""
+Swap encoding and payload generation.
 
 - EncodedCall: a minimal EVM call fragment (to, data, value)
 - encode() on each SwapAmounts subclass produces per-hop calldata
@@ -29,7 +30,8 @@ class EncodedCall:
 
 @runtime_checkable
 class ApprovalStrategy(Protocol):
-    """Pluggable approval injection.
+    """
+    Pluggable approval injection.
 
     Given the swap amounts and the encoded calls, return any
     approval calls that should be prepended.

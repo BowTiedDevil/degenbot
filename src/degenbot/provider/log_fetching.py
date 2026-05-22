@@ -97,7 +97,8 @@ def fetch_logs_retrying(
     address: list[ChecksumAddress] | None = None,
     topic_signature: Sequence[Sequence[HexBytes] | HexBytes] | None = None,
 ) -> list[LogReceipt]:
-    """Fetch all event logs for the given topic signature (or all logs, if omitted), inclusive for the.
+    """
+    Fetch all event logs for the given topic signature (or all logs, if omitted), inclusive for the.
 
     given block range.
 

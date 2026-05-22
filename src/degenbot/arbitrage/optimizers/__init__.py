@@ -1,4 +1,5 @@
-"""Arbitrage optimizers for different pool types.
+"""
+Arbitrage optimizers for different pool types.
 
 Usage
 -----

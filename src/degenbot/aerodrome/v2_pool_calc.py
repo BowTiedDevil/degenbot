@@ -1,4 +1,5 @@
-"""Calculation mixin for Aerodrome V2 pools.
+"""
+Calculation mixin for Aerodrome V2 pools.
 
 Provides calculation methods that operate on state held by AerodromeV2PoolState.
 At construction time, the stable flag determines which underlying calculation
@@ -33,7 +34,8 @@ if TYPE_CHECKING:
 
 
 class AerodromeV2PoolCalc:
-    """Calculation methods for Aerodrome V2 pools.
+    """
+    Calculation methods for Aerodrome V2 pools.
 
     Wires the correct calculation function at construction time based on
     the stable flag. All methods delegate to the pre-bound calculation
@@ -55,7 +57,8 @@ class AerodromeV2PoolCalc:
     tokens: tuple[Erc20Token, Erc20Token]
 
     def _wire_stable_calculations(self, *, stable: bool) -> None:
-        """Wire calculation functions based on the stable flag.
+        """
+        Wire calculation functions based on the stable flag.
 
         Called by the pool's __init__ after setting self._stable.
         """

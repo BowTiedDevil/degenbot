@@ -77,7 +77,8 @@ class UniswapV2Pool(
         reserves_token0: int,
         reserves_token1: int,
     ) -> None:
-        """I/O-free representation of an x*y=k invariant automatic matchmaker, based on Uniswap V2.
+        """
+        I/O-free representation of an x*y=k invariant automatic matchmaker, based on Uniswap V2.
 
         Construct via Bot.build_pool() or manager.get_pool() to fetch data from the chain.
         """

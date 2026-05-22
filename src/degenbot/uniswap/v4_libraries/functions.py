@@ -6,7 +6,8 @@ def mulmod(
     y: int,
     k: int,
 ) -> int:
-    """Return (x*y)%k, as implemented by Yul.
+    """
+    Return (x*y)%k, as implemented by Yul.
 
     ref: https://docs.soliditylang.org/en/latest/yul.html
     """

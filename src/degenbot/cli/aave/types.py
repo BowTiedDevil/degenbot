@@ -100,7 +100,8 @@ class TransactionContext:
         log_index: int,
         default_discount: int,
     ) -> int:
-        """Get the discount percent in effect at a specific log index.
+        """
+        Get the discount percent in effect at a specific log index.
 
         When a user has multiple DiscountPercentUpdated events in a transaction,
         each Mint/Burn event must use the discount that was in effect at that

@@ -7,7 +7,8 @@ from degenbot.types.state_cache import StateCache
 
 
 class PoolPickleMixin:
-    """Mixin providing pickle serialization for pool objects.
+    """
+    Mixin providing pickle serialization for pool objects.
 
     Subclasses define:
         _pickle_drops: frozenset of attribute names to remove before pickling
@@ -21,7 +22,8 @@ class PoolPickleMixin:
     _pickle_reconstructs: ClassVar[dict[str, Any]] = {}
 
     def _pickle_lock(self) -> AbstractContextManager[None]:
-        """Return a context manager that guards pickle serialization.
+        """
+        Return a context manager that guards pickle serialization.
 
         Pools using StateCache delegate the lock there.
         Pools with their own _state_lock can override this method.

@@ -27,7 +27,8 @@ if TYPE_CHECKING:
 
 
 class BalancerPairView:
-    """Adapts an N-token Balancer pool to a 2-token pair view for ArbitragePath.
+    """
+    Adapts an N-token Balancer pool to a 2-token pair view for ArbitragePath.
 
     Delegates swap calculations and hop state to the underlying pool,
     for a specific (token_a, token_b) pair. Cheap to create (no I/O).
@@ -160,7 +161,8 @@ class BalancerPairView:
     # --- Subscription relay ---
 
     def subscribe(self, subscriber: Subscriber) -> None:
-        """Subscribe to state updates from this view.
+        """
+        Subscribe to state updates from this view.
 
         The view relays notifications from the underlying pool.
         Subscribers receive messages with publisher=self (the view),
@@ -173,7 +175,8 @@ class BalancerPairView:
         self._subscribers.discard(subscriber)
 
     def notify(self, publisher: Publisher, message: AbstractPublisherMessage) -> None:  # noqa: ARG002
-        """Relay notifications from the underlying pool.
+        """
+        Relay notifications from the underlying pool.
 
         Re-publishes to this view's subscribers with publisher=self,
         so that ArbitragePath._pool_index identity checks work

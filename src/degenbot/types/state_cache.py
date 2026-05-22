@@ -1,4 +1,5 @@
-"""Generic temporal state cache for pool state snapshots.
+"""
+Generic temporal state cache for pool state snapshots.
 
 Owns the deque and the lock. Pool classes compose with
 ``StateCache[TheirPoolState]`` instead of re-implementing the
@@ -33,7 +34,8 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class CacheableState(Protocol):
-    """A pool state that can be stored in a :class:`StateCache`.
+    """
+    A pool state that can be stored in a :class:`StateCache`.
 
     Requires a ``block`` attribute for temporal navigation.
     """
@@ -72,7 +74,8 @@ class StateCache[T: CacheableState]:
 
     @contextmanager
     def lock(self) -> Generator[None, None, None]:
-        """Acquire the internal lock for a compound operation.
+        """
+        Acquire the internal lock for a compound operation.
 
         Use this when the pool needs to hold the lock across multiple
         reads or read-then-write sequences (e.g. simulation methods
@@ -108,7 +111,8 @@ class StateCache[T: CacheableState]:
 
     @property
     def state_block(self) -> int:
-        """The block number of the current state.
+        """
+        The block number of the current state.
 
         Raises:
             ValueError: If the current state's block is ``None``.
@@ -126,7 +130,8 @@ class StateCache[T: CacheableState]:
         *,
         block: int | None = None,
     ) -> bool:
-        """Append a new state to the cache.
+        """
+        Append a new state to the cache.
 
         If ``block`` is provided and matches the current state's block,
         replaces the current state (same-block update).
@@ -154,7 +159,8 @@ class StateCache[T: CacheableState]:
         return True
 
     def discard_before_block(self, block: BlockNumber) -> None:
-        """Discard cached states earlier than the given block.
+        """
+        Discard cached states earlier than the given block.
 
         **Unlocked** — call inside ``with cache.lock():``.
 
@@ -173,7 +179,8 @@ class StateCache[T: CacheableState]:
             self._cache.popleft()
 
     def restore_before_block(self, block: BlockNumber) -> T:
-        """Restore the last state recorded prior to a target block.
+        """
+        Restore the last state recorded prior to a target block.
 
         Removes states at or after the target block, returning the
         state just before it.

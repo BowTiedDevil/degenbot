@@ -1,4 +1,5 @@
-"""Database session manager providing indirection over a scoped_session.
+"""
+Database session manager providing indirection over a scoped_session.
 
 This allows the underlying scoped session to be swapped at runtime (e.g. for
 test overrides with an in-memory database) without rebinding the module-level
@@ -12,7 +13,8 @@ from sqlalchemy.orm import Session, scoped_session
 
 
 class DatabaseSessionManager:
-    """Callable proxy over a :class:`scoped_session`.
+    """
+    Callable proxy over a :class:`scoped_session`.
 
     Delegates ``__call__``, ``connection``, ``remove``, and any attribute
     access to the underlying scoped session so that existing usage patterns

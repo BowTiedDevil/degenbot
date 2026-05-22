@@ -1,4 +1,5 @@
-"""Calculation mixin for Uniswap V2-style constant-product pools.
+"""
+Calculation mixin for Uniswap V2-style constant-product pools.
 
 Provides read-only calculation methods that operate on state held by
 V2PoolState (or a compatible state mixin). All methods are non-mutating
@@ -29,7 +30,8 @@ if TYPE_CHECKING:
 
 
 class UniswapV2PoolCalc:
-    """Calculation methods matching the Uniswap V2 contract.
+    """
+    Calculation methods matching the Uniswap V2 contract.
 
     All methods operate on state held by the concrete class via V2PoolState.
     Subclasses override as needed for contract-specific differences.

@@ -1,4 +1,5 @@
-"""Calculator construction for Curve StableSwap pool strategies.
+"""
+Calculator construction for Curve StableSwap pool strategies.
 
 This module breaks the circular dependency between degenbot.curve.types
 and the calculator modules in degenbot.curve.calculators. Calculators
@@ -45,7 +46,8 @@ if TYPE_CHECKING:
 
 
 class DyCalculator(Protocol):
-    """Calculates dy (output amount) for a Curve StableSwap swap.
+    """
+    Calculates dy (output amount) for a Curve StableSwap swap.
 
     Each SwapStyle variant maps to a frozen dataclass implementing this
     protocol. The pool's get_dy() delegates to the injected calculator
@@ -133,7 +135,8 @@ def make_metapool_underlying_calculator(
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class PoolStrategies:
-    """Resolved calculation strategies for a Curve pool instance.
+    """
+    Resolved calculation strategies for a Curve pool instance.
 
     Set at construction time by the builder from the pool address.
     The pool class is address-agnostic — it only reads these strategy values.

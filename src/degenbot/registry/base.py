@@ -1,4 +1,5 @@
-"""Generic address-based registry base classes.
+"""
+Generic address-based registry base classes.
 
 This module provides abstract base classes for registries that index items by
 chain ID and address(es). The common pattern (checksumming, deduplication, key
@@ -85,7 +86,8 @@ class AbstractAddressRegistry[T](AbstractRegistry, ABC):
         on_duplicate: str = "error",
         name: str = "AbstractAddressRegistry",
     ) -> None:
-        """Initialize the registry.
+        """
+        Initialize the registry.
 
         Args:
             checksum_fn: Function to convert addresses to checksummed form.
@@ -124,7 +126,8 @@ class AbstractAddressRegistry[T](AbstractRegistry, ABC):
         chain_id: int,
         **address_args: str | bytes,
     ) -> T | None:
-        """Retrieve an item by chain and addresses.
+        """
+        Retrieve an item by chain and addresses.
 
         Args:
             chain_id: Chain ID
@@ -144,7 +147,8 @@ class AbstractAddressRegistry[T](AbstractRegistry, ABC):
         chain_id: int,
         **address_args: str | bytes,
     ) -> None:
-        """Register an item.
+        """
+        Register an item.
 
         Args:
             item: The item to register
@@ -171,7 +175,8 @@ class AbstractAddressRegistry[T](AbstractRegistry, ABC):
         chain_id: int,
         **address_args: str | bytes,
     ) -> None:
-        """Remove an item from the registry.
+        """
+        Remove an item from the registry.
 
         Args:
             chain_id: Chain ID
@@ -195,7 +200,8 @@ class AbstractAddressRegistry[T](AbstractRegistry, ABC):
 
 
 class AddressRegistry[T](AbstractAddressRegistry[T]):
-    """Simple address-based registry with a single primary address field.
+    """
+    Simple address-based registry with a single primary address field.
 
     Key structure: (chain_id, checksummed_address)
 
@@ -225,7 +231,8 @@ class AddressRegistry[T](AbstractAddressRegistry[T]):
         checksum_fn: AddressFunction = get_checksum_address,
         on_duplicate: str = "error",
     ) -> None:
-        """Initialize the registry.
+        """
+        Initialize the registry.
 
         Args:
             name: Registry name for debugging/error messages
@@ -255,7 +262,8 @@ class AddressRegistry[T](AbstractAddressRegistry[T]):
 
 
 class MultiKeyAddressRegistry[T](AbstractAddressRegistry[T]):
-    """Address-based registry with multiple address fields in the key.
+    """
+    Address-based registry with multiple address fields in the key.
 
     Key structure: (chain_id, checksummed_address_1, checksummed_address_2, ...)
 
@@ -290,7 +298,8 @@ class MultiKeyAddressRegistry[T](AbstractAddressRegistry[T]):
         checksum_fn: AddressFunction = get_checksum_address,
         on_duplicate: str = "error",
     ) -> None:
-        """Initialize the registry.
+        """
+        Initialize the registry.
 
         Args:
             address_fields: List of address field names in key order

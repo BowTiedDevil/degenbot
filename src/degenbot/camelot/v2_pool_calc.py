@@ -1,4 +1,5 @@
-"""Calculation mixin for Camelot V2 pools.
+"""
+Calculation mixin for Camelot V2 pools.
 
 Camelot pools can operate in volatile (constant-product) or stable mode,
 determined at construction time. This mixin wires the correct calculation
@@ -24,7 +25,8 @@ if TYPE_CHECKING:
 
 
 class CamelotPoolCalc(UniswapV2PoolCalc):
-    """Camelot calculations — extends V2PoolCalc with stable swap support.
+    """
+    Camelot calculations — extends V2PoolCalc with stable swap support.
 
     Adds:
     - fee_denominator: Camelot uses integer fee values with a denominator

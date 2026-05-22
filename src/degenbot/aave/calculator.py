@@ -8,7 +8,8 @@ from degenbot.aave.models import EnrichmentError
 
 
 class ScaledAmountCalculator:
-    """Calculates scaled amounts using TokenMath.
+    """
+    Calculates scaled amounts using TokenMath.
 
     Mirrors the Pool contract's calculation exactly. Uses the same
     TokenMath methods and rounding behaviors.
@@ -26,7 +27,8 @@ class ScaledAmountCalculator:
         raw_amount: int,
         index: int,
     ) -> int:
-        """Calculate scaled amount for the given event type.
+        """
+        Calculate scaled amount for the given event type.
 
         Args:
             event_type: Type of scaled token event

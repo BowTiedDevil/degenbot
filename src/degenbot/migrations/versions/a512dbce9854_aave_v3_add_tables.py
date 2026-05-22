@@ -1,4 +1,5 @@
-"""Aave V3: add tables.
+"""
+Aave V3: add tables.
 
 Revision ID: a512dbce9854
 Revises: eb4080485a56

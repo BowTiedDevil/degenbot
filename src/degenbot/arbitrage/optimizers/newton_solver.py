@@ -13,7 +13,8 @@ from degenbot.exceptions import OptimizationError
 
 
 class NewtonSolver(Solver):
-    """Newton's method solver for 2-hop V2-V2 arbitrage.
+    """
+    Newton's method solver for 2-hop V2-V2 arbitrage.
 
     Converges in 3-4 iterations. Useful as a fallback when Möbius
     is not available or for validation.

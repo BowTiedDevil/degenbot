@@ -72,7 +72,8 @@ def div_up(a: int, b: int) -> int:
 
 
 def pow_down(x: int, y: int, *, version: PowVersion = PowVersion.V1) -> int:
-    """Return x^y, assuming both are fixed point numbers, rounding down. The result is guaranteed to.
+    """
+    Return x^y, assuming both are fixed point numbers, rounding down. The result is guaranteed to.
 
     not be above the true value (that is, the error function expected - actual is always positive).
 
@@ -98,7 +99,8 @@ def pow_down(x: int, y: int, *, version: PowVersion = PowVersion.V1) -> int:
 
 
 def pow_up(x: int, y: int, *, version: PowVersion = PowVersion.V1) -> int:
-    """Return x^y, assuming both are fixed point numbers, rounding up. The result is guaranteed to not.
+    """
+    Return x^y, assuming both are fixed point numbers, rounding up. The result is guaranteed to not.
 
     be below the true value (that is, the error function expected - actual is always negative).
 

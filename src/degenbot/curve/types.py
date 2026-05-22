@@ -22,7 +22,8 @@ if TYPE_CHECKING:
 
 
 class DVariant(Enum):
-    """Which D-calculation formula to use in _get_d.
+    """
+    Which D-calculation formula to use in _get_d.
 
     The original code had 5 address groups selecting different d_func and dp_func
     pairs. Groups 1 and 3 both use variant_alpha dp but differ on d_func:
@@ -39,7 +40,8 @@ class DVariant(Enum):
 
 
 class YVariant(Enum):
-    """Which Y-calculation formula to use in _get_y.
+    """
+    Which Y-calculation formula to use in _get_y.
 
     The original code had two overlapping address sets controlling independent
     behaviours: Y_VARIANT_GROUP_0 (amp divisor) and Y_VARIANT_GROUP_1 (c/b formula).
@@ -60,7 +62,8 @@ class YDVariant(Enum):
 
 
 class SwapStyle(Enum):
-    """Which computation path to use in get_dy.
+    """
+    Which computation path to use in get_dy.
 
     Each value identifies a complete swap calculation path differing in rate source,
     balance source, fee application, and rate conversion. These are not independent
@@ -103,7 +106,8 @@ class MetapoolUnderlyingStyle(Enum):
 
 
 class LendingRateStyle(Enum):
-    """Which rate-fetching method to use for lending tokens.
+    """
+    Which rate-fetching method to use for lending tokens.
 
     Used by get_dy() to select which stored-rate resolution path to call
     via CurveDataProvider.lending_rates().
@@ -120,7 +124,8 @@ class LendingRateStyle(Enum):
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class DyCalculationInputs:
-    """Pre-resolved data for a single dy calculation.
+    """
+    Pre-resolved data for a single dy calculation.
 
     Constructed by CurveStableswapPool.get_dy() before delegating to the
     injected DyCalculator. The calculator reads only from this object —
@@ -179,7 +184,8 @@ class DyCalculationInputs:
 
 @runtime_checkable
 class CurveDataProvider(Protocol):
-    """On-chain data access for a Curve StableSwap pool.
+    """
+    On-chain data access for a Curve StableSwap pool.
 
     Consolidates the 13 individual fetcher callbacks into a single interface.
     The pool checks provider availability before calling; a provider that
@@ -192,21 +198,27 @@ class CurveDataProvider(Protocol):
     def virtual_price(self, block_number: int) -> int:
         """Return virtual price."""
         ...
+
     def base_virtual_price(self, block_number: int) -> int:
         """Return base virtual price."""
         ...
+
     def base_cache_updated(self, block_number: int) -> int:
         """Return base cache updated."""
         ...
+
     def admin_balances(self, block_number: int) -> tuple[int, ...]:
         """Return admin balances."""
         ...
+
     def d(self, block_number: int) -> int:  # crypto only
         """Return the D invariant value."""
         ...
+
     def gamma(self, block_number: int) -> int:  # crypto only
         """Return the gamma parameter."""
         ...
+
     def price_scale(self, block_number: int) -> tuple[int, ...]:  # crypto only
         """Return the price scale values."""
         ...
@@ -215,6 +227,7 @@ class CurveDataProvider(Protocol):
     def block_timestamp(self, block_number: int) -> int:
         """Return the block timestamp."""
         ...
+
     def block_number(self) -> int:
         """Return block number."""
         ...
@@ -223,12 +236,15 @@ class CurveDataProvider(Protocol):
     def token_balance(self, token_address: str, holder_address: str, block_number: int) -> int:
         """Return token balance."""
         ...
+
     def token_total_supply(self, token_address: str, block_number: int) -> int:
         """Return token total supply."""
         ...
+
     def lending_rates(self, block_number: int) -> tuple[int, ...]:
         """Return lending rates."""
         ...
+
     def redemption_price(self, block_number: int) -> int:
         """Return redemption price."""
         ...

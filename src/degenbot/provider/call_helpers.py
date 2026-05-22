@@ -1,4 +1,5 @@
-"""Low-level RPC call helpers.
+"""
+Low-level RPC call helpers.
 
 Thin wrappers around ProviderAdapter.call() that handle
 ABI encoding/decoding and block identifier resolution.
@@ -19,7 +20,8 @@ from degenbot.provider.interface import AsyncProviderAdapter
 def encode_function_calldata(
     function_prototype: str, function_arguments: Sequence[Any] | None
 ) -> bytes:
-    """Encode the calldata to execute a call to the given function prototype, with ordered arguments.
+    """
+    Encode the calldata to execute a call to the given function prototype, with ordered arguments.
 
     The resulting bytes array will include the 4-byte function selector, followed by the
     ABI-encoded arguments.
@@ -34,7 +36,8 @@ def encode_function_calldata(
 
 
 def extract_argument_types_from_function_prototype(function_prototype: str) -> list[str]:
-    """Extract the argument types from the function prototype.
+    """
+    Extract the argument types from the function prototype.
 
     e.g. the argument types for the prototype 'function(address,uint256)' are ['address','uint256']
     """
@@ -53,7 +56,8 @@ def raw_call(
     return_types: list[str],
     block_identifier: BlockIdentifier | None = None,
 ) -> tuple[Any, ...]:
-    """Perform an eth_call at the given address and return the decoded response.
+    """
+    Perform an eth_call at the given address and return the decoded response.
 
     Args:
         provider: ProviderAdapter instance
@@ -80,7 +84,8 @@ async def async_raw_call(
     return_types: list[str],
     block_identifier: BlockIdentifier | None = None,
 ) -> tuple[Any, ...]:
-    """Perform an async eth_call at the given address and return the decoded response.
+    """
+    Perform an async eth_call at the given address and return the decoded response.
 
     Same as raw_call but uses await provider.call().
     """

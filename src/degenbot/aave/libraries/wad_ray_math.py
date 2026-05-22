@@ -72,7 +72,8 @@ def ray_mul_ceil(a: int, b: int) -> int:
 
 
 def ray_div(a: int, b: int, rounding: Rounding | None = None) -> int:
-    """Divides two ray, rounding half up to the nearest ray if a specific rounding mode is not.
+    """
+    Divides two ray, rounding half up to the nearest ray if a specific rounding mode is not.
 
     specified.
     """

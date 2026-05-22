@@ -49,7 +49,8 @@ INVARIANT_V2 = 2
 
 @runtime_checkable
 class BalancerRateProvider(Protocol):
-    """Fetches per-block scaling factor rates from on-chain rate providers.
+    """
+    Fetches per-block scaling factor rates from on-chain rate providers.
 
     ComposableStablePools override ``_beforeSwapJoinExit()`` to refresh rate
     caches before reading ``_scalingFactors()``. To match this on-chain behavior,
@@ -62,7 +63,8 @@ class BalancerRateProvider(Protocol):
     """
 
     def get_rates(self, block_identifier: int | str | None = None) -> tuple[int, ...]:
-        """Return the current rate for each pool token.
+        """
+        Return the current rate for each pool token.
 
         The returned tuple has one entry per pool token (including BPT if
         present). Tokens without a rate provider should return ONE (1e18).
@@ -71,7 +73,8 @@ class BalancerRateProvider(Protocol):
 
 
 class _StaticRateProvider:
-    """A rate provider that always returns construction-time rates.
+    """
+    A rate provider that always returns construction-time rates.
 
     Used when no I/O-capable provider is injected.
     """
@@ -84,7 +87,8 @@ class _StaticRateProvider:
 
 
 class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
-    """Balancer V2 Stable Pool (MetaStablePool or ComposableStablePool).
+    """
+    Balancer V2 Stable Pool (MetaStablePool or ComposableStablePool).
 
     Supports token-to-token swaps using StableMath. For ComposableStablePools,
     the BPT token is automatically dropped from the invariant and swap calculations.
@@ -252,7 +256,8 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
 
     @property
     def requires_io_at_calculation_time(self) -> bool:
-        """Whether this pool may call its rate_provider during swap calculations.
+        """
+        Whether this pool may call its rate_provider during swap calculations.
 
         Returns True for ComposableStablePools with a live rate provider
         (time-varying rates from yield-bearing tokens). Returns False for
@@ -292,7 +297,8 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
     def _resolve_scaling_factors(
         self, block_identifier: int | str | None = None
     ) -> tuple[int, ...]:
-        """Resolve scaling factors at the given block.
+        """
+        Resolve scaling factors at the given block.
 
         If a live rate provider is available, fetches rates for the block
         and computes scaling factors as base_sf * rate // ONE (mulDown).
@@ -312,7 +318,8 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         return [b * sf // ONE for b, sf in zip(balances, scaling_factors, strict=False)]
 
     def _compute_invariant(self, upscaled_balances: list[int]) -> int:
-        """Compute invariant using the pool's deployed StableMath version.
+        """
+        Compute invariant using the pool's deployed StableMath version.
 
         V1 (INVARIANT_V1): always-roundDown, D_P accumulation.
         V2 (INVARIANT_V2): round_up=True for swaps, P_D accumulation.
@@ -328,7 +335,8 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         return _calculate_invariant_deployed(self.amp, balances_for_inv, round_up=True)
 
     def _skip_bpt_index(self, index: int) -> int:
-        """Map a full token list index to the non-BPT index.
+        """
+        Map a full token list index to the non-BPT index.
 
         Matches Solidity's _skipBptIndex: returns index if index < bpt_idx,
         otherwise index - 1.
@@ -338,7 +346,8 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         return index if index < self.bpt_idx else index - 1
 
     def _should_warn_stale_rates(self) -> bool:
-        """Whether a StaleRateResult should wrap the computed result.
+        """
+        Whether a StaleRateResult should wrap the computed result.
 
         ComposableStablePools have time-varying rates (bb-a-* tokens accrue
         yield). Without a live rate provider, the construction-time rates
@@ -359,7 +368,8 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         override_state: PoolState | None = None,
         block_identifier: int | str | None = None,
     ) -> int:
-        """Compute the amount of token_out received for a GIVEN_IN swap.
+        """
+        Compute the amount of token_out received for a GIVEN_IN swap.
 
         Flow (matches deployed MetaStablePool and ComposableStablePool):
         1. Subtract swap fee from raw input amount
@@ -430,7 +440,8 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         override_state: PoolState | None = None,
         block_identifier: int | str | None = None,
     ) -> int:
-        """Compute the amount of token_in needed for a GIVEN_OUT swap.
+        """
+        Compute the amount of token_in needed for a GIVEN_OUT swap.
 
         Flow (matches deployed MetaStablePool and ComposableStablePool):
         1. Upscale output amount and balances (using block-specific rates)
@@ -566,7 +577,8 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         token_in: Erc20Token | None = None,
         token_out: Erc20Token | None = None,
     ) -> HopType:
-        """Create a hop state for this pool.
+        """
+        Create a hop state for this pool.
 
         For 2-token pools, zero_for_one maps to token[0] -> token[1] direction.
         For N-token pools, pass token_in/token_out to select the pair.
@@ -634,7 +646,8 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         token_in: Erc20Token | None = None,
         token_out: Erc20Token | None = None,
     ) -> BalancerV2SwapAmounts:
-        """Build a BalancerV2SwapAmounts for this pool's swap.
+        """
+        Build a BalancerV2SwapAmounts for this pool's swap.
 
         For N > 2 token pools, token_in and token_out must be provided.
         Use BalancerPairView for ArbitragePathPool conformance.

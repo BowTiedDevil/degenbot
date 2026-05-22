@@ -40,7 +40,8 @@ def min_usable_tick(tick_spacing: int) -> int:
 
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
 def get_sqrt_price_at_tick(tick: int) -> int:
-    """Calculate sqrt(1.0001^tick) * 2^96, a fixed point Q64.96 number representing the sqrt of the.
+    """
+    Calculate sqrt(1.0001^tick) * 2^96, a fixed point Q64.96 number representing the sqrt of the.
 
     price of the two assets (currency1/currency0) at the given tick.
 
@@ -101,7 +102,8 @@ def get_sqrt_price_at_tick(tick: int) -> int:
 
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
 def get_tick_at_sqrt_price(sqrt_price_x96: int) -> int:
-    """Calculate the greatest tick value such that getSqrtPriceAtTick(tick) <= sqrtPriceX96.
+    """
+    Calculate the greatest tick value such that getSqrtPriceAtTick(tick) <= sqrtPriceX96.
 
     @dev raises exception if sqrt_price_x96 is below MIN_SQRT_PRICE or above MAX_SQRT_PRICE.
     """

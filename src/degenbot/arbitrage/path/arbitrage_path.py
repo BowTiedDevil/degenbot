@@ -53,7 +53,8 @@ class _StateUpdatedNoProfit(AbstractPublisherMessage):
 
 
 class ArbitragePath(PublisherMixin):
-    """Event-driven arbitrage path helper.
+    """
+    Event-driven arbitrage path helper.
 
     Wraps a sequence of Mobius-compatible pools, validates token flow, pre-computes directional
     data, subscribes to state updates, and delegates solving to a swappable Solver
@@ -221,7 +222,8 @@ class ArbitragePath(PublisherMixin):
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
         state_overrides: Mapping[ChecksumAddress, AbstractPoolState] | None = None,
     ) -> asyncio.Future[SolveResult]:
-        """Execute calculation in the given executor (ProcessPool recommended for CPU-bound work).
+        """
+        Execute calculation in the given executor (ProcessPool recommended for CPU-bound work).
 
         Unlike the legacy UniswapLpCycle.calculate_with_pool, this method serializes only
         the lightweight SolveInput (tuple of frozen HopType dataclasses) — not full pool

@@ -1,4 +1,5 @@
-"""Calculation mixin for Uniswap V4 concentrated-liquidity pools.
+"""
+Calculation mixin for Uniswap V4 concentrated-liquidity pools.
 
 Provides pricing and fee calculation methods that operate on state held
 by V4PoolState. The swap calculation methods (calculate_tokens_in/out)
@@ -20,7 +21,8 @@ if TYPE_CHECKING:
 
 
 class UniswapV4PoolCalc:
-    """Pricing and fee methods for Uniswap V4 pools.
+    """
+    Pricing and fee methods for Uniswap V4 pools.
 
     Class variables that V4 subclasses may override:
     - FEE_DENOMINATOR

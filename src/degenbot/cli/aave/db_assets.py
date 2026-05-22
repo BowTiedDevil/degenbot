@@ -1,4 +1,5 @@
-"""Asset and token database operations for Aave V3.
+"""
+Asset and token database operations for Aave V3.
 
 Functions for managing ERC20 tokens, Aave assets, contracts, and related lookups.
 """
@@ -21,7 +22,8 @@ def get_or_create_erc20_token(
     chain_id: int,
     token_address: ChecksumAddress,
 ) -> Erc20TokenTable:
-    """Get existing ERC20 token or create new one.
+    """
+    Get existing ERC20 token or create new one.
 
     When creating a new token, attempts to fetch name, symbol, and decimals
     from the blockchain and populate the database record.
@@ -137,7 +139,8 @@ def get_asset_by_token_type(
 
 
 def get_asset_identifier(asset: AaveV3Asset) -> str:
-    """Get a human-readable identifier for an asset.
+    """
+    Get a human-readable identifier for an asset.
 
     This provides consistent asset identification in debug logs and error messages.
     """

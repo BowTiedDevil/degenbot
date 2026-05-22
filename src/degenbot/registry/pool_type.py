@@ -44,7 +44,7 @@ def _derive_family(pool_class: type[AbstractLiquidityPool]) -> PoolFamily:
     - ConstantProductPool shape: has reserves_token0, reserves_token1, fee_token0, fee_token1
     - StableswapPool shape: has tokens (multi-token)
     
-        Raises:
+    Raises:
             ValueError: 
     
     Returns:
@@ -169,8 +169,9 @@ class PoolTypeRegistry:
                 STABLESWAP instead of WEIGHTED).
 
         
-            Raises:
+        Raises:
                 ValueError: 
+
         """
         checksummed_factory = get_checksum_address(factory_address)
 

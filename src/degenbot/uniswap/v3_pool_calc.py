@@ -1,4 +1,5 @@
-"""Calculation mixin for Uniswap V3 concentrated-liquidity pools.
+"""
+Calculation mixin for Uniswap V3 concentrated-liquidity pools.
 
 Provides calculation methods that operate on state held by V3PoolState.
 All methods are read-only with respect to pool state — they compute
@@ -29,7 +30,8 @@ if TYPE_CHECKING:
 
 
 class UniswapV3PoolCalc:
-    """Calculation methods matching the Uniswap V3 contract.
+    """
+    Calculation methods matching the Uniswap V3 contract.
 
     All methods operate on state held by the concrete class via V3PoolState.
 
@@ -143,7 +145,8 @@ class UniswapV3PoolCalc:
         token: Erc20Token,
         override_state: UniswapV3PoolState | None = None,
     ) -> Fraction:
-        """Get the absolute exchange rate for the given token.
+        """
+        Get the absolute exchange rate for the given token.
 
         A V3 pool encodes the token1/token0 exchange rate in sqrt_price_x96,
         so it can be directly obtained.

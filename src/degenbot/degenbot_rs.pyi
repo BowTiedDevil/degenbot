@@ -1,4 +1,5 @@
-"""Type stubs for the degenbot Rust extension module (degenbot_rs).
+"""
+Type stubs for the degenbot Rust extension module (degenbot_rs).
 
 This module provides high-performance implementations of common operations
 used by the degenbot Python package.
@@ -21,7 +22,8 @@ from degenbot.types.rpc_types import (
 # ------------------------------------------------------------------
 
 def get_sqrt_ratio_at_tick(tick: int) -> int:
-    """Convert a tick value to its corresponding sqrt price (X96 format).
+    """
+    Convert a tick value to its corresponding sqrt price (X96 format).
 
     Args:
         tick: The tick value in range [-887272, 887272]
@@ -47,7 +49,8 @@ def decode(
     data: bytes,
     checksum: bool = True,
 ) -> list[str | bool | int | bytes | list[Any]]:
-    """Decode ABI-encoded data for multiple types.
+    """
+    Decode ABI-encoded data for multiple types.
 
     Args:
         types: List of ABI type strings
@@ -163,7 +166,8 @@ def encode(
     types: list[str],
     values: list[str | bool | int | bytes],
 ) -> bytes:
-    """Encode multiple ABI values.
+    """
+    Encode multiple ABI values.
 
     Args:
         types: List of ABI type strings
@@ -178,7 +182,8 @@ def encode(
     """
 
 def encode_function_call(function_signature: str, args: list[str]) -> bytes:
-    """Encode function arguments into calldata.
+    """
+    Encode function arguments into calldata.
 
     Args:
         function_signature: Function signature like "transfer(address,uint256)"
@@ -193,7 +198,8 @@ def encode_function_call(function_signature: str, args: list[str]) -> bytes:
     """
 
 def encode_single(abi_type: str, value: str | bool | int | bytes) -> bytes:
-    """Encode a single ABI value.
+    """
+    Encode a single ABI value.
 
     Args:
         abi_type: ABI type string (e.g., "uint256", "address", "bytes")
@@ -208,7 +214,8 @@ def encode_single(abi_type: str, value: str | bool | int | bytes) -> bytes:
     """
 
 def decode_return_data(data: bytes, output_types: list[str]) -> list[str]:
-    """Decode return data from a contract call.
+    """
+    Decode return data from a contract call.
 
     Args:
         data: Return data as bytes
@@ -223,7 +230,8 @@ def decode_return_data(data: bytes, output_types: list[str]) -> list[str]:
     """
 
 def get_function_selector(function_signature: str) -> str:
-    """Parse a function signature and return its selector.
+    """
+    Parse a function signature and return its selector.
 
     Args:
         function_signature: Function signature like "transfer(address,uint256)"
@@ -250,7 +258,8 @@ class Contract:
         args: list[str],
         block_number: int | None = None,
     ) -> list[str]:
-        """Execute a contract call.
+        """
+        Execute a contract call.
 
         Args:
             function_signature: Function signature like "balanceOf(address)"
@@ -282,7 +291,8 @@ class LogFilter:
     def topics(self) -> list[list[str]]: ...
 
 class AlloyProvider:
-    r"""Synchronous Ethereum RPC provider.
+    r"""
+    Synchronous Ethereum RPC provider.
 
     Automatically detects connection type from URL:
     - HTTP/HTTPS URLs use HTTP transport with connection pooling

@@ -37,14 +37,13 @@ class NoLiquidity(ArbitrageError):
 class InvalidForwardAmount(ArbitrageError):
     """InvalidForwardAmount class."""
 
-    ...
-
 
 """InvalidForwardAmount class."""
 
 
 class IncompatiblePoolInvariant(ArbitrageError):
-    """Raised when a pool's invariant type is not supported for.
+    """
+    Raised when a pool's invariant type is not supported for.
 
     arbitrage path construction (e.g. Aerodrome stable pools).
     """
@@ -52,8 +51,6 @@ class IncompatiblePoolInvariant(ArbitrageError):
 
 class Unprofitable(ArbitrageError):
     """Unprofitable class."""
-
-    ...
 
 
 """Unprofitable class."""
@@ -74,7 +71,8 @@ class NoSolverSolution(ArbitrageError):
 
 
 class OptimizationError(ArbitrageError):
-    """Raised when an optimizer fails to find a profitable solution,.
+    """
+    Raised when an optimizer fails to find a profitable solution,.
 
     fails to converge, or receives invalid inputs.
 

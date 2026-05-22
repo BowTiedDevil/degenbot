@@ -39,7 +39,8 @@ if TYPE_CHECKING:
 
 
 class V4PoolBuilder(V4BuilderBase):
-    """Builds and updates V4 singleton-architecture concentrated-liquidity pools.
+    """
+    Builds and updates V4 singleton-architecture concentrated-liquidity pools.
 
     Owns the full I/O choreography: DB lookup → RPC fetch → decode →
     construct pool → register.

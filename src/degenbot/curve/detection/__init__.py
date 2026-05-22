@@ -1,4 +1,5 @@
-"""Curve pool detection sub-modules.
+"""
+Curve pool detection sub-modules.
 
 Each detector is independently testable with a fake w3 instance.
 The builder orchestrator calls them in sequence and feeds results

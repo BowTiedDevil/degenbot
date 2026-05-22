@@ -196,7 +196,8 @@ class _UniswapCurveCycle(PublisherMixin):
         state_overrides: Mapping[ChecksumAddress, CurveOrUniswapPoolState],
         block_number: BlockNumber | None = None,
     ) -> tuple[CurveOrUniswapSwapAmount, ...]:
-        """Generate inputs for all swaps along the arbitrage path, starting with the specified amount.
+        """
+        Generate inputs for all swaps along the arbitrage path, starting with the specified amount.
 
         of the input token defined in the constructor.
         """
@@ -330,7 +331,8 @@ class _UniswapCurveCycle(PublisherMixin):
         self,
         state_overrides: Mapping[ChecksumAddress, CurveOrUniswapPoolState],
     ) -> None:
-        """Perform liquidity and minimum rate of exchange checks and raise an exception if further.
+        """
+        Perform liquidity and minimum rate of exchange checks and raise an exception if further.
 
         optimization should be avoided.
         """
@@ -535,7 +537,8 @@ class _UniswapCurveCycle(PublisherMixin):
     ) -> ArbitrageCalculationResult[
         CurveStableSwapPoolSwapAmounts | UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
     ]:
-        """Calculate the results of the arbitrage at the current pool states, or at one or more.
+        """
+        Calculate the results of the arbitrage at the current pool states, or at one or more.
 
         overridden pool states if provided.
         """
@@ -551,7 +554,8 @@ class _UniswapCurveCycle(PublisherMixin):
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
         state_overrides: Mapping[ChecksumAddress, CurveOrUniswapPoolState] | None = None,
     ) -> Awaitable[Any]:
-        """Wrap the arbitrage calculation into an asyncio future using the.
+        """
+        Wrap the arbitrage calculation into an asyncio future using the.
 
         specified executor.
 
@@ -623,7 +627,8 @@ class _UniswapCurveCycle(PublisherMixin):
         pool_swap_amounts: Sequence[CurveOrUniswapSwapAmount],
         infinite_approval: bool = False,
     ) -> list[tuple[ChecksumAddress, bytes, int]]:
-        """Generate a list of tuple-formatted payloads for each step in the swap path.
+        """
+        Generate a list of tuple-formatted payloads for each step in the swap path.
 
         Calldata is built using the eth_abi.encode method and the ABI for the
         swap functions at each pool. Curve V1 and Uniswap V2/V3 pools are supported.

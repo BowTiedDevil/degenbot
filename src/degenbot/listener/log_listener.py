@@ -1,4 +1,5 @@
-"""LogListener — dispatch registry for eth_subscribe log events.
+"""
+LogListener — dispatch registry for eth_subscribe log events.
 
 A pure Python lookup table mapping ``(address, topic0)`` → handler list.
 Receives raw log dicts via ``dispatch(log)``, looks up handlers, and
@@ -41,7 +42,8 @@ def _normalize_hex(value: str | bytes) -> str:
 
 
 class LogListener:
-    """Dispatch registry mapping ``(address, topic0)`` → handler list.
+    """
+    Dispatch registry mapping ``(address, topic0)`` → handler list.
 
     Handlers are sync ``Callable[[dict], None]``. Registration and
     unregistration are O(1). Dispatch is O(handlers) for matched logs,
@@ -67,7 +69,8 @@ class LogListener:
         topic0: str,
         handler: Callable[[dict], None],
     ) -> None:
-        """Register a handler for ``(address, topic0)``.
+        """
+        Register a handler for ``(address, topic0)``.
 
         Args:
             address: Contract address (checksummed or lowercase —
@@ -97,7 +100,8 @@ class LogListener:
         topic0: str,
         handler: Callable[[dict], None],
     ) -> None:
-        """Remove a handler for ``(address, topic0)``.
+        """
+        Remove a handler for ``(address, topic0)``.
 
         No-op if the handler was not registered.
         """
@@ -115,7 +119,8 @@ class LogListener:
             del self._handler_sets[key]
 
     def dispatch(self, log: dict) -> None:
-        """Dispatch a raw log dict to all matching handlers.
+        """
+        Dispatch a raw log dict to all matching handlers.
 
         Looks up ``(log["address"], log["topics"][0])`` in the registry.
         If found, calls each handler sequentially in insertion order.
