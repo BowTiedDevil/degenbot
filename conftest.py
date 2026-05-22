@@ -23,7 +23,7 @@ pytest_collect_file = Sybil(
 ).pytest()
 
 
-@pytest.hookimpl(trylast=True)
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """
     Restore document order for README.md sybil items and pin them to one
@@ -36,9 +36,12 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     - pytest-xdist distributes items across workers, so each worker sees
       an unbalanced subset of skip:start/skip:end pairs.
 
-    This hook uses ``trylast=True`` so it runs after pytest-randomly's
-    shuffle, then re-sorts README items back into document (line) order
-    and marks them with a shared ``xdist_group`` so ``--dist=loadgroup``
+    This hook runs before pytest-randomly's shuffle (``tryfirst=True``)
+    and uses ``pytest.mark.order(N)`` to pin each README item to its
+    document position. pytest-order (``trylast=True`` by default) then
+    re-orders these items back into sequence after the random shuffle.
+
+    It also marks them with a shared ``xdist_group`` so ``--dist=loadgroup``
     sends them to a single worker.
     """
     readme_items = []
@@ -61,7 +64,8 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
     readme_items.sort(key=readme_sort_key)
 
-    for item in readme_items:
+    for index, item in enumerate(readme_items):
+        item.add_marker(pytest.mark.order(index))
         item.add_marker(pytest.mark.xdist_group("readme_sybil"))
 
     items[:] = readme_items + other_items
