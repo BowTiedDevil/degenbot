@@ -14,7 +14,7 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic ~= 1.18",
     "click ~= 8.3",
-    "cvxpy ~= 1.9",
+    "cvxpy ~= 1.8",
     "networkx ~= 3.6",
     "pydantic ~= 2.12",
     "pydantic-settings ~= 2.13",
@@ -209,10 +209,6 @@ cache-keys = [
     {file = "rust/Cargo.toml"},
     {file = "rust/src/**/*.rs"},
 ]
-
-[tool.uv.exclude-newer-package]
-cvxpy = false
-sparsediffpy = false
 
 [tool.maturin]
 manifest-path = "rust/Cargo.toml"
