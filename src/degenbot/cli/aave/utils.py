@@ -18,7 +18,6 @@ from degenbot.cli.aave.types import TransactionContext
 from degenbot.cli.aave_utils import decode_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.database.models.aave import AaveGhoToken, AaveV3Asset, AaveV3Contract, AaveV3Market
-from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.logging import logger
 from degenbot.provider.interface import ProviderAdapter
 
