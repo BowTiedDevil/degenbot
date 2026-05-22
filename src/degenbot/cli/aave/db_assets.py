@@ -75,13 +75,17 @@ def get_gho_asset(
     # AaveGhoToken is a tiny table. Query it directly with eager-loaded
     # relationships, then filter in Python to avoid the expensive JOIN
     # through Erc20TokenTable (572K+ rows).
-    gho_assets = session.scalars(
-        select(AaveGhoToken)
-        .options(
-            joinedload(AaveGhoToken.token),
-            joinedload(AaveGhoToken.v_token),
+    gho_assets = (
+        session
+        .scalars(
+            select(AaveGhoToken).options(
+                joinedload(AaveGhoToken.token),
+                joinedload(AaveGhoToken.v_token),
+            )
         )
-    ).unique().all()
+        .unique()
+        .all()
+    )
 
     for gho in gho_assets:
         if gho.token.chain == market.chain_id:

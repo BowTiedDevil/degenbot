@@ -87,9 +87,7 @@ class Bot:
 
         # Builders own I/O orchestration; Bot hands them its I/O dependencies.
         # Erc20Builder is a leaf — constructed before BuilderContext.
-        self._erc20_builder = Erc20Builder(
-            default_chain_id=None, db=self.db, tokens=self.tokens
-        )
+        self._erc20_builder = Erc20Builder(default_chain_id=None, db=self.db, tokens=self.tokens)
         ctx = BuilderContext(
             db=self.db,
             pools=self.pools,
@@ -259,9 +257,7 @@ class Bot:
         # If type resolution fails (e.g. Curve pools lack a factory() method),
         # fall back to the Curve builder which handles its own discovery.
         try:
-            pool_type = _resolve_pool_type_impl(
-                address, chain_id=chain_id, io=io, db=self.db
-            )
+            pool_type = _resolve_pool_type_impl(address, chain_id=chain_id, io=io, db=self.db)
         except DegenbotValueError:
             # Fallback: try Curve builder as last resort
             return self._dispatch_build(

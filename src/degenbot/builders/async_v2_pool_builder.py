@@ -146,9 +146,7 @@ class AsyncV2PoolBuilder:
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
 
         state_block = (
-            request.state_block
-            if request.state_block is not None
-            else await io.get_block_number()
+            request.state_block if request.state_block is not None else await io.get_block_number()
         )
 
         common = await self._fetch_v2_common_data(

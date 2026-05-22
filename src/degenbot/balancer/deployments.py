@@ -8,9 +8,7 @@ BALANCER_V2_WEIGHTED_POOL_FACTORY = get_checksum_address(
 )
 
 # Balancer V2 Stable Pool Factory (v1)
-BALANCER_V2_STABLE_POOL_FACTORY = get_checksum_address(
-    "0x8519F5A4A85678E0e03395586E2E223d70E9E09B"
-)
+BALANCER_V2_STABLE_POOL_FACTORY = get_checksum_address("0x8519F5A4A85678E0e03395586E2E223d70E9E09B")
 
 # ComposableStablePool Factory (v2)
 BALANCER_V2_COMPOSABLE_STABLE_POOL_FACTORY = get_checksum_address(

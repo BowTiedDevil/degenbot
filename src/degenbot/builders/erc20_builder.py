@@ -295,9 +295,7 @@ class Erc20Builder:
 # --- Package-level helpers (PoolIO equivalents of Erc20Token.fetch_*) ---
 
 
-def _resolve_block_number(
-    io: PoolIO, block_identifier: BlockIdentifier | None
-) -> int:
+def _resolve_block_number(io: PoolIO, block_identifier: BlockIdentifier | None) -> int:
     """Resolve a block identifier to a block number."""
     if block_identifier is None:
         return io.get_block_number()
@@ -307,9 +305,7 @@ def _resolve_block_number(
     return io.get_block_number()
 
 
-def _fetch_name_symbol_decimals_batched(
-    *, address: str, io: PoolIO
-) -> tuple[str, str, int]:
+def _fetch_name_symbol_decimals_batched(*, address: str, io: PoolIO) -> tuple[str, str, int]:
     """Fetch token name, symbol, and decimals via batched RPC calls."""
     name_calldata = encode_function_calldata(
         function_prototype="name()",

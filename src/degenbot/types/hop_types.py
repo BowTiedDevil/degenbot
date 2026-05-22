@@ -206,7 +206,7 @@ class BalancerStableHop:
     amp: int
     n_tokens: int
     invariant: int  # Pre-computed D invariant for float approximation
-    token_index_in: int   # Index in the non-BPT token list (BPT-skipped)
+    token_index_in: int  # Index in the non-BPT token list (BPT-skipped)
     token_index_out: int  # Index in the non-BPT token list (BPT-skipped)
     swap_fn: Callable[[int], int] | None = field(default=None, compare=False, hash=False)
     pool_invariant: PoolInvariant = PoolInvariant.BALANCER_STABLESWAP

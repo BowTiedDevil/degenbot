@@ -13,6 +13,7 @@ class BalancerV2PoolState(AbstractPoolState):
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
 class BalancerV2WeightedPoolExternalUpdate:
     """State update for a Balancer V2 weighted pool."""
+
     block_number: BlockNumber
     balances: tuple[int, ...]
 
@@ -25,6 +26,7 @@ class BalancerV2StablePoolExternalUpdate:
     construction in this plan. A future slice may add amp tracking to
     support A ramping.
     """
+
     block_number: BlockNumber
     balances: tuple[int, ...]
 
@@ -32,4 +34,5 @@ class BalancerV2StablePoolExternalUpdate:
 @dataclasses.dataclass(slots=True, frozen=True)
 class BalancerV2PoolStateUpdated(PoolStateMessage):
     """Message published when a Balancer V2 pool's state changes."""
+
     state: BalancerV2PoolState
