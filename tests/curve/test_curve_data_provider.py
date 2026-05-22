@@ -41,12 +41,17 @@ class FakeProviderBackend:
         return self._block_number
 
     def get_block(
-        self, block_identifier: int | str  # noqa: ARG002
+        self,
+        block_identifier: int | str,  # noqa: ARG002
     ) -> dict | None:
         return {"number": self._block_number, "timestamp": self._block_timestamp}
 
     def get_logs(
-        self, from_block: int, to_block: int, addresses, topics  # noqa: ARG002
+        self,
+        from_block: int,
+        to_block: int,
+        addresses,
+        topics,  # noqa: ARG002
     ) -> list:
         return []
 
@@ -68,12 +73,17 @@ class FakeProviderBackend:
         return 0
 
     def get_storage_at(
-        self, address: str, position: int, block: int | None  # noqa: ARG002
+        self,
+        address: str,
+        position: int,
+        block: int | None,  # noqa: ARG002
     ) -> HexBytes:
         return HexBytes(b"\x00" * 32)
 
     def get_transaction_count(
-        self, address: str, block: int | None  # noqa: ARG002
+        self,
+        address: str,
+        block: int | None,  # noqa: ARG002
     ) -> int:
         return 0
 
@@ -147,9 +157,7 @@ class TestVirtualPrice:
         """virtual_price() calls get_virtual_price() on the pool contract."""
         vp_value = 10**18
         fake = _make_fake_provider({
-            _selector("get_virtual_price()"): eth_abi.abi.encode(
-                ["uint256"], [vp_value]
-            ),
+            _selector("get_virtual_price()"): eth_abi.abi.encode(["uint256"], [vp_value]),
         })
         impl = CurveDataProviderImpl(
             io=SyncPoolIO(fake),
@@ -161,9 +169,7 @@ class TestVirtualPrice:
         """virtual_price() with base_pool_address calls get_virtual_price() on base pool."""
         vp_value = 10**18
         fake = _make_fake_provider({
-            _selector("get_virtual_price()"): eth_abi.abi.encode(
-                ["uint256"], [vp_value]
-            ),
+            _selector("get_virtual_price()"): eth_abi.abi.encode(["uint256"], [vp_value]),
         })
         impl = CurveDataProviderImpl(
             io=SyncPoolIO(fake),
@@ -180,9 +186,7 @@ class TestBaseVirtualPrice:
         """base_virtual_price() calls base_virtual_price() on the pool contract."""
         bvp_value = 10**18 + 1
         fake = _make_fake_provider({
-            _selector("base_virtual_price()"): eth_abi.abi.encode(
-                ["uint256"], [bvp_value]
-            ),
+            _selector("base_virtual_price()"): eth_abi.abi.encode(["uint256"], [bvp_value]),
         })
         impl = CurveDataProviderImpl(
             io=SyncPoolIO(fake),
@@ -198,9 +202,7 @@ class TestBaseCacheUpdated:
         """base_cache_updated() calls base_cache_updated() on the pool contract."""
         bcu_value = 1_700_000_000
         fake = _make_fake_provider({
-            _selector("base_cache_updated()"): eth_abi.abi.encode(
-                ["uint256"], [bcu_value]
-            ),
+            _selector("base_cache_updated()"): eth_abi.abi.encode(["uint256"], [bcu_value]),
         })
         impl = CurveDataProviderImpl(
             io=SyncPoolIO(fake),
@@ -248,7 +250,7 @@ class TestD:
             io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
         )
-        assert impl.D(18_000_000) == d_value
+        assert impl.d(18_000_000) == d_value
 
 
 class TestGamma:
@@ -272,17 +274,11 @@ class TestRedemptionPrice:
 
     def test_redemption_price_two_step_fetch(self) -> None:
         """redemption_price() fetches snap contract then snapped price, divides by 10^9."""
-        snap_address = get_checksum_address(
-            "0x0000000000000000000000000000000000000003"
-        )
+        snap_address = get_checksum_address("0x0000000000000000000000000000000000000003")
         raw_rate = 10**18
         fake = _make_fake_provider({
-            _selector("redemption_price_snap()"): eth_abi.abi.encode(
-                ["address"], [snap_address]
-            ),
-            _selector("snappedRedemptionPrice()"): eth_abi.abi.encode(
-                ["uint256"], [raw_rate]
-            ),
+            _selector("redemption_price_snap()"): eth_abi.abi.encode(["address"], [snap_address]),
+            _selector("snappedRedemptionPrice()"): eth_abi.abi.encode(["uint256"], [raw_rate]),
         })
         impl = CurveDataProviderImpl(
             io=SyncPoolIO(fake),
@@ -301,9 +297,7 @@ class TestPriceScale:
         # both indices get the same response. We test that the
         # method returns the right number of elements.
         fake = _make_fake_provider({
-            _selector("price_scale(uint256)"): eth_abi.abi.encode(
-                ["uint256"], [price0]
-            ),
+            _selector("price_scale(uint256)"): eth_abi.abi.encode(["uint256"], [price0]),
         })
         impl = CurveDataProviderImpl(
             io=SyncPoolIO(fake),
@@ -323,9 +317,7 @@ class TestTokenBalance:
         """token_balance() calls balanceOf on the token contract."""
         balance = 5000 * 10**18
         fake = _make_fake_provider({
-            _selector("balanceOf(address)"): eth_abi.abi.encode(
-                ["uint256"], [balance]
-            ),
+            _selector("balanceOf(address)"): eth_abi.abi.encode(["uint256"], [balance]),
         })
         impl = CurveDataProviderImpl(
             io=SyncPoolIO(fake),
@@ -343,9 +335,7 @@ class TestTokenTotalSupply:
         """token_total_supply() calls totalSupply on the token contract."""
         supply = 1_000_000 * 10**18
         fake = _make_fake_provider({
-            _selector("totalSupply()"): eth_abi.abi.encode(
-                ["uint256"], [supply]
-            ),
+            _selector("totalSupply()"): eth_abi.abi.encode(["uint256"], [supply]),
         })
         impl = CurveDataProviderImpl(
             io=SyncPoolIO(fake),
@@ -363,9 +353,7 @@ class TestAdminBalances:
         """admin_balances() fetches admin_balances(i) until the contract reverts."""
         ab0 = 1000
         fake = _make_fake_provider({
-            _selector("admin_balances(uint256)"): eth_abi.abi.encode(
-                ["uint256"], [ab0]
-            ),
+            _selector("admin_balances(uint256)"): eth_abi.abi.encode(["uint256"], [ab0]),
         })
         # The second call should fail — but our FakeProvider returns the same
         # response for the same selector. To test the break-on-revert behavior,
@@ -392,15 +380,9 @@ class TestLendingRatesCToken:
         block_number = 11
 
         fake = _make_fake_provider({
-            _selector("exchangeRateStored()"): eth_abi.abi.encode(
-                ["uint256"], [exchange_rate]
-            ),
-            _selector("supplyRatePerBlock()"): eth_abi.abi.encode(
-                ["uint256"], [supply_rate]
-            ),
-            _selector("accrualBlockNumber()"): eth_abi.abi.encode(
-                ["uint256"], [old_block]
-            ),
+            _selector("exchangeRateStored()"): eth_abi.abi.encode(["uint256"], [exchange_rate]),
+            _selector("supplyRatePerBlock()"): eth_abi.abi.encode(["uint256"], [supply_rate]),
+            _selector("accrualBlockNumber()"): eth_abi.abi.encode(["uint256"], [old_block]),
         })
         impl = CurveDataProviderImpl(
             io=SyncPoolIO(fake),
@@ -426,9 +408,7 @@ class TestLendingRatesYToken:
         pps = 105 * 10**16  # 1.05
 
         fake = _make_fake_provider({
-            _selector("getPricePerFullShare()"): eth_abi.abi.encode(
-                ["uint256"], [pps]
-            ),
+            _selector("getPricePerFullShare()"): eth_abi.abi.encode(["uint256"], [pps]),
         })
         impl = CurveDataProviderImpl(
             io=SyncPoolIO(fake),
