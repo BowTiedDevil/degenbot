@@ -279,11 +279,11 @@ Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` f
 
 ## Architecture Plans
 
-Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. See `plans/README.md` for the full list of active and completed plans.
+Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Each plan tracks its own status via the checklist at the bottom of its file.
 
 **New plans must follow [`plans/TEMPLATE.md`](plans/TEMPLATE.md).** The template requires: deletion test, specific friction table, vertical slices, design decisions, relationship to other plans, and status checklist.
 
-When a plan is marked complete: (1) move its file from `plans/` to `plans/completed/`, (2) move its row in `plans/README.md` from the Active Plans table to the Completed Plans table, and (3) update the link to point to the new `completed/` path.
+When a plan is marked complete: (1) move its file from `plans/` to `plans/completed/` and (2) update the link in any referencing documents to point to the new `completed/` path.
 
 ### Legacy Arbitrage Cycles (Deprecated)
 
