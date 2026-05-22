@@ -399,21 +399,21 @@ def compute_mobius_coefficients(hops: list[MobiusFloatHop]) -> MobiusCoefficient
 
     # Initialize from first hop
     first = hops[0]
-    K = first.gamma * first.reserve_out
-    M = first.reserve_in
-    N = first.gamma
+    k = first.gamma * first.reserve_out
+    m = first.reserve_in
+    n = first.gamma
 
     # Update for each subsequent hop
     # Note: N update uses K before it is updated in this step
     for hop in hops[1:]:
-        old_K = K
-        K = old_K * hop.gamma * hop.reserve_out
-        M *= hop.reserve_in
-        N = N * hop.reserve_in + old_K * hop.gamma
+        old_k = k
+        k = old_k * hop.gamma * hop.reserve_out
+        m *= hop.reserve_in
+        n = n * hop.reserve_in + old_k * hop.gamma
 
-    is_profitable = K > M
+    is_profitable = k > m
 
-    return MobiusCoefficients(K=K, M=M, N=N, is_profitable=is_profitable)
+    return MobiusCoefficients(K=k, M=m, N=n, is_profitable=is_profitable)
 
 
 def simulate_path(x: float, hops: list[MobiusFloatHop]) -> float:
