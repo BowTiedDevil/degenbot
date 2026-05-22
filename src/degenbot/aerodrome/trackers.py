@@ -125,9 +125,9 @@ class AerodromeV2PoolTracker(
 
         self._lock = Lock()
         self._chain_id = chain_id
-        self._deployer_address = deployer_address
+        self._deployer_address = get_checksum_address(deployer_address)
         self._factory_address = factory_address
-        self._pool_init_hash = pool_init_hash
+        self._pool_init_hash = pool_init_hash or ""
         self._tracked_pools = {}
         self._untracked_pools: set[ChecksumAddress] = set()
 

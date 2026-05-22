@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.pool_io import PoolIO
-    from degenbot.builders.request import BuildPoolRequest
+    from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
@@ -80,7 +80,7 @@ class V3PoolBuilder(V3BuilderBase):
         *,
         chain_id: ChainId | None = None,
         io: PoolIO,
-        request: BuildPoolRequest,
+        request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free V3-style pool."""
 

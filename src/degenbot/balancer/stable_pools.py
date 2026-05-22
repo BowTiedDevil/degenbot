@@ -540,11 +540,11 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         update: BalancerV2StablePoolExternalUpdate,
     ) -> None:
         """Apply an external state update with new balances."""
-        if update.block_number < self.state.block:
+        if self.state.block is not None and update.block_number < self.state.block:
             return
         with self._state_lock:
             # Re-check after acquiring lock
-            if update.block_number < self.state.block:
+            if self.state.block is not None and update.block_number < self.state.block:
                 return
             self._state = BalancerV2PoolState(
                 address=self.address,

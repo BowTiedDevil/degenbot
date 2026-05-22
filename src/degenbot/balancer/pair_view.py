@@ -83,7 +83,7 @@ class BalancerPairView:
             token_in=token_in,
             token_out=token_out,
             token_in_quantity=token_in_quantity,
-            override_state=override_state,
+            override_state=override_state,  # ty: ignore[invalid-argument-type]
         )
 
     def simulate_swap(
@@ -116,7 +116,7 @@ class BalancerPairView:
             token_out = self._token1 if zero_for_one else self._token0
         return self._pool.to_hop_state(
             zero_for_one=zero_for_one,
-            state_override=state_override,
+            state_override=state_override,  # ty: ignore[invalid-argument-type]
             token_in=token_in,
             token_out=token_out,
         )
@@ -169,4 +169,4 @@ class BalancerPairView:
         if not isinstance(message, PoolStateMessage):
             return
         for subscriber in self._subscribers:
-            subscriber.notify(publisher=self, message=message)
+            subscriber.notify(publisher=self, message=message)  # ty: ignore[invalid-argument-type]

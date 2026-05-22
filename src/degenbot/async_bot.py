@@ -284,6 +284,8 @@ class AsyncBot:
             pool_id=pool_id_bytes,
         )
         if existing is not None:
+            if TYPE_CHECKING:
+                assert isinstance(existing, UniswapV4Pool)
             return existing
 
         provider = self.connections.get_provider(chain_id)
@@ -303,7 +305,7 @@ class AsyncBot:
             tick_data=tick_data,
         )
 
-        return await self._dispatch_build(  # type: ignore[return-value]
+        return await self._dispatch_build(  # ty: ignore[invalid-return-type]
             builder=self._v4_builder,
             address=address,
             chain_id=chain_id,
@@ -332,7 +334,7 @@ class AsyncBot:
         deployment = pool_type_registry.get_deployment(chain_id, factory)
         if deployment is not None:
             resolved_deployer = deployment.deployer
-            resolved_init_hash = deployment.pool_init_hash
+            resolved_init_hash = deployment.pool_init_hash or default_init_hash
         return resolved_deployer, resolved_init_hash
 
     # ------------------------------------------------------------------

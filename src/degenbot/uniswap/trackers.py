@@ -59,9 +59,9 @@ class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool
 
         self._lock = Lock()
         self._chain_id = chain_id
-        self._deployer_address = deployer_address
+        self._deployer_address = get_checksum_address(deployer_address)
         self._factory_address = factory_address
-        self._pool_init_hash = pool_init_hash
+        self._pool_init_hash = pool_init_hash or ""
         self._tracked_pools = {}
         self._untracked_pools: set[ChecksumAddress] = set()
 
@@ -197,8 +197,8 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
         self._lock = Lock()
         self._chain_id = chain_id
         self._factory_address = factory_address
-        self._deployer_address = deployer_address
-        self._pool_init_hash = pool_init_hash
+        self._deployer_address = get_checksum_address(deployer_address)
+        self._pool_init_hash = pool_init_hash or ""
         self._snapshot = snapshot
         self._tracked_pools = {}
         self._untracked_pools = set()
