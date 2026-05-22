@@ -87,17 +87,6 @@ Bypass with `--no-verify` if needed, but CI will still reject non-conforming mes
 - Prefer frozen `dataclass` for value objects passed between functions
 - Prefer `TypedDict` if key and value types are known
 
-### Docstrings
-Minimal PEP 257. Type hints supersede parameter docs. No reST/Sphinx tags:
-```python
-class SomeClass:
-    """
-    Class description.
-    
-    [additional detail as needed]
-    """
-```
-
 ### Error Handling
 - All exceptions inherit from `DegenbotError` in `src/degenbot/exceptions/base.py`
 - Create specific subtypes for distinct categories
