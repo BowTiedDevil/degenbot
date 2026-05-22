@@ -38,13 +38,13 @@ def _register_uniswap_deployments() -> None:
             "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
             "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
             None,
-        ),  # noqa: E501
+        ),
         (
             8453,
             "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6",
             "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
             None,
-        ),  # noqa: E501
+        ),
     ]
     v3_deployments = [
         (
@@ -52,19 +52,19 @@ def _register_uniswap_deployments() -> None:
             "0x1F98431c8aD98523631AE4a59f267346ea31F984",
             "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
             None,
-        ),  # noqa: E501
+        ),
         (
             8453,
             "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
             "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
             None,
-        ),  # noqa: E501
+        ),
         (
             42161,
             "0x1F98431c8aD98523631AE4a59f267346ea31F984",
             "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
             None,
-        ),  # noqa: E501
+        ),
     ]
 
     for chain_id, factory, init_hash, deployer in v2_deployments:

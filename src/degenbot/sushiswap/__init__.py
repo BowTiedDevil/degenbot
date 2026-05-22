@@ -17,19 +17,19 @@ def _register_sushiswap_deployments() -> None:
             "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac",
             "0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303",
             None,
-        ),  # noqa: E501
+        ),
         (
             8453,
             "0x71524B4f93c58fcbF659783284E38825f0622859",
             "0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303",
             None,
-        ),  # noqa: E501
+        ),
         (
             42161,
             "0xc35DADB65012eC5796536bD9864eD8773aBc74C4",
             "0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303",
             None,
-        ),  # noqa: E501
+        ),
     ]
     v3_deployments = [
         (
@@ -37,19 +37,19 @@ def _register_sushiswap_deployments() -> None:
             "0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F",
             "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
             None,
-        ),  # noqa: E501
+        ),
         (
             8453,
             "0xc35DADB65012eC5796536bD9864eD8773aBc74C4",
             "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
             None,
-        ),  # noqa: E501
+        ),
         (
             42161,
             "0x1af415a1EbA07a4986a52B6f2e7dE7003D82231e",
             "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
             None,
-        ),  # noqa: E501
+        ),
     ]
 
     for chain_id, factory, init_hash, deployer in v2_deployments:
