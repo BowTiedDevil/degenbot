@@ -17,10 +17,7 @@ import eth_abi.abi
 from eth_abi.exceptions import DecodingError
 from web3.exceptions import Web3Exception
 
-from degenbot.balancer.deployments import (
-    BALANCER_V2_VAULT_ADDRESS,
-    BROKEN_BALANCER_V2_POOLS,
-)
+from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS, BROKEN_BALANCER_V2_POOLS
 from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
 from degenbot.balancer.pools import BalancerV2Pool, detect_pow_version
@@ -29,10 +26,8 @@ from degenbot.balancer.types import (
     BalancerV2StablePoolExternalUpdate,
     BalancerV2WeightedPoolExternalUpdate,
 )
-from degenbot.builders.balancer_builder_base import (
-    BalancerBuilderBase,
-    _BalancerPoolType,
-)
+from degenbot.builders.balancer_builder_base import BalancerBuilderBase, _BalancerPoolType
+from degenbot.builders.request import BuildPoolRequest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import BrokenPool
@@ -41,7 +36,7 @@ from degenbot.provider.call_helpers import encode_function_calldata
 if TYPE_CHECKING:
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.pool_io import PoolIO
-    from degenbot.builders.request import BuildPoolRequest, BuildRequest
+    from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
@@ -86,9 +81,7 @@ class BalancerBuilder(BalancerBuilderBase):
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
         state_block = (
-            request.state_block
-            if request.state_block is not None
-            else io.get_block_number()
+            request.state_block if request.state_block is not None else io.get_block_number()
         )
 
         # 1. Check broken pools
@@ -125,7 +118,10 @@ class BalancerBuilder(BalancerBuilderBase):
 
         if pool_type == _BalancerPoolType.STABLE:
             return self._build_stable(
-                io, build_ctx, request, pool_id_decoded.specialization,
+                io,
+                build_ctx,
+                request,
+                pool_id_decoded.specialization,
             )
 
         msg = f"Unknown Balancer pool type at {pool_address}"
@@ -173,7 +169,9 @@ class BalancerBuilder(BalancerBuilderBase):
         request: BuildRequest,
         specialization: int,
     ) -> BalancerV2StablePool:
-        assert isinstance(request, BuildPoolRequest)  # Balancer never receives BuildManagedPoolRequest
+        assert isinstance(
+            request, BuildPoolRequest
+        )  # Balancer never receives BuildManagedPoolRequest
         # Build tokens
         tokens = [
             self._erc20_builder.build(addr, chain_id=ctx.chain_id, silent=request.silent, io=io)
@@ -277,10 +275,13 @@ class BalancerBuilder(BalancerBuilderBase):
 
     @staticmethod
     def _fetch_vault_tokens(
-        io: PoolIO, pool_id: bytes, block: int | None,
+        io: PoolIO,
+        pool_id: bytes,
+        block: int | None,
     ) -> tuple[list[str], list[int]]:
         data = encode_function_calldata(
-            "getPoolTokens(bytes32)", [pool_id],
+            "getPoolTokens(bytes32)",
+            [pool_id],
         )
         result = io.call(
             to=BALANCER_V2_VAULT_ADDRESS,
@@ -313,7 +314,9 @@ class BalancerBuilder(BalancerBuilderBase):
 
     @staticmethod
     def _fetch_rate_providers(
-        io: PoolIO, address: str, block: int,
+        io: PoolIO,
+        address: str,
+        block: int,
     ) -> list[str]:
         try:
             data = encode_function_calldata("getRateProviders()", None)
@@ -326,7 +329,9 @@ class BalancerBuilder(BalancerBuilderBase):
 
     @staticmethod
     def _fetch_rates(
-        io: PoolIO, rate_providers: list[str], block: int,
+        io: PoolIO,
+        rate_providers: list[str],
+        block: int,
     ) -> list[int]:
         rates: list[int] = []
         for provider in rate_providers:
@@ -341,7 +346,9 @@ class BalancerBuilder(BalancerBuilderBase):
 
     @staticmethod
     def _detect_pool_type(
-        io: PoolIO, address: str, block: int,
+        io: PoolIO,
+        address: str,
+        block: int,
     ) -> _BalancerPoolType:
         """Determine weighted vs stable by probing contract methods.
 

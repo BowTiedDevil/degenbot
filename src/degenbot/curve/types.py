@@ -95,23 +95,36 @@ class SwapStyle(Enum):
             LiveAdminOracleDyCalculator,
         )
         from degenbot.curve.calculators.standard import (  # noqa: PLC0415
-            CytokenDyCalculator,
-            NoOneFeeRateDyCalculator,
-            RateAdjustedDyCalculator,
-            RateAdjustedNoOneDyCalculator,
-            RawBalanceDyCalculator,
+            BalanceSource,
+            ConversionStyle,
             StandardDyCalculator,
         )
 
         match self:
-            case SwapStyle.STANDARD:
-                return StandardDyCalculator()
+            case SwapStyle.STANDARD | SwapStyle.CYTOKEN:
+                return StandardDyCalculator(swap_style=self)
             case SwapStyle.RATE_ADJUSTED:
-                return RateAdjustedDyCalculator()
+                return StandardDyCalculator(
+                    swap_style=self,
+                    conversion_style=ConversionStyle.RATE_THEN_FEE,
+                )
             case SwapStyle.RATE_ADJUSTED_NO_ONE:
-                return RateAdjustedNoOneDyCalculator()
+                return StandardDyCalculator(
+                    swap_style=self,
+                    subtract_one=False,
+                    conversion_style=ConversionStyle.RATE_THEN_FEE,
+                )
             case SwapStyle.RAW_BALANCE:
-                return RawBalanceDyCalculator()
+                return StandardDyCalculator(
+                    swap_style=self,
+                    balance_source=BalanceSource.RAW_BALANCES,
+                    conversion_style=ConversionStyle.FEE_ONLY,
+                )
+            case SwapStyle.NO_ONE_FEE_RATE:
+                return StandardDyCalculator(
+                    swap_style=self,
+                    subtract_one=False,
+                )
             case SwapStyle.CRYPTO:
                 return CryptoDyCalculator()
             case SwapStyle.LIVE_ADMIN:
@@ -122,10 +135,6 @@ class SwapStyle(Enum):
                 return LiveAdminDynamicPrecisionDyCalculator()
             case SwapStyle.LIVE_ADMIN_ORACLE:
                 return LiveAdminOracleDyCalculator()
-            case SwapStyle.NO_ONE_FEE_RATE:
-                return NoOneFeeRateDyCalculator()
-            case SwapStyle.CYTOKEN:
-                return CytokenDyCalculator()
 
 
 class MetapoolRateStyle(Enum):

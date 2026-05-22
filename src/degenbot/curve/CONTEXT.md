@@ -45,7 +45,7 @@
 
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|
-| **SwapStyle** | An enum identifying which computation path `get_dy()` uses for dy calculation. Has a `make_calculator()` factory method returning the matching `DyCalculator` instance. | Fee style, swap type |
+| **SwapStyle** | An enum identifying which computation path `get_dy()` uses for dy calculation. Has a `make_calculator()` factory method returning the matching `DyCalculator` instance. `CYTOKEN` is preserved as a label (the pool contracts differ) but maps to the same `StandardDyCalculator` configuration as `STANDARD` because the arithmetic is identical | Fee style, swap type |
 | **MetapoolRateStyle** | An enum identifying how a metapool constructs its rate tuple. Has a `make_calculator()` factory method returning the matching metapool `DyCalculator` instance. | Metapool rate |
 | **MetapoolUnderlyingStyle** | An enum identifying how a metapool computes `get_dy_underlying()`. Has a `make_calculator()` factory method returning the matching metapool underlying `DyCalculator` instance. | Underlying style |
 | **LendingRateStyle** | An enum identifying which rate source provides lending rates | Rate source, rate style |
@@ -57,17 +57,14 @@
 |------|------------|------------------|
 | **DyCalculationInputs** | A frozen dataclass constructed by `CurveStableswapPool.get_dy()` carrying all pre-resolved data for a single dy calculation (balances, rates, xp, block data, variant enums `d_variant`/`y_variant`/`yd_variant`, `a_precision`, and optional I/O results for crypto/live-admin/metapool). All I/O and cache lookups happen before this object is created — calculators read only from it and call pure `stableswap_get_y`/`stableswap_newton_y` functions directly. No callable fields. | Calculation inputs, inputs object |
 | **DyCalculator** | A runtime-checkable protocol defining `calculate(i, j, dx, *, inputs: DyCalculationInputs, override_state) -> int` | Dy strategy, dy solver |
-| **StandardDyCalculator** | Computes dy for STANDARD swap style (plain pool, no rate adjustment) | Basic calculator |
-| **RateAdjustedDyCalculator** | Computes dy for RATE_ADJUSTED swap style using `rate_multipliers` | Lending calculator |
-| **RateAdjustedNoOneDyCalculator** | Computes dy for RATE_ADJUSTED_NO_ONE (no `-1` minimum) | No-one rate calculator |
-| **RawBalanceDyCalculator** | Computes dy from raw balances without rate adjustment | Balance calculator |
+| **StandardDyCalculator** | Parameterized dy calculator for all non-crypto/live-admin swap paths. Three axes (`balance_source`, `subtract_one`, `conversion_style`) replace six former class-per-variant dataclasses | Parameterized calculator |
+| **BalanceSource** | Enum: `RATE_ADJUSTED_XP` (inputs.xp + resolved_rates) or `RAW_BALANCES` (inputs.balances, no rate adjustment) | Balance source |
+| **ConversionStyle** | Enum: `FEE_THEN_RATE` (fee on raw dy, then rate convert), `RATE_THEN_FEE` (rate convert first, then fee), `FEE_ONLY` (fee only, no rate conversion) | Conversion style |
 | **CryptoDyCalculator** | Computes dy using CryptoSwap invariant (Newton's method, dynamic fee, price_scale) | Crypto calculator |
 | **LiveAdminDyCalculator** | Computes dy with admin balance subtraction (live A amplification) | Admin calculator |
 | **LiveAdminDynamicDyCalculator** | Computes dy with admin balances and dynamic fee | Dynamic admin calculator |
 | **LiveAdminDynamicPrecisionDyCalculator** | Computes dy with admin balances, dynamic fee, and precision adjustment | Precision admin calculator |
-| **LiveAdminOracleDyCalculator** | Computes dy with admin balances and oracle price | Oracle admin calculator |
-| **NoOneFeeRateDyCalculator** | Computes dy without the `-1` slip on fee calculation | No-one fee calculator |
-| **CytokenDyCalculator** | Computes dy for cyToken pools with cyToken rate conversion | Cytoken calculator |
+| **LiveAdminOracleDyCalculator** | Computes dy with admin balances and oracle price | Oracle calculator |
 | **Metapool*DyCalculator** | A family of calculators (PrecisionVp, RedemptionVp, Standard) for metapool `get_dy` | Metapool rate calculator |
 | **MetapoolUnderlying*DyCalculator** | A family of calculators (Redemption, PrecisionVp, Standard) for `get_dy_underlying` | Metapool underlying calculator |
 
