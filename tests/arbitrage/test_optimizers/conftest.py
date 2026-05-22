@@ -5,8 +5,9 @@ from scipy.optimize import minimize_scalar
 import degenbot.degenbot_rs as rs_mobius
 from degenbot.arbitrage.optimizers._mobius_math import MobiusFloatHop, V3TickRangeHop, simulate_path
 from degenbot.arbitrage.optimizers.solver import SolveInput
-from degenbot.arbitrage.optimizers.v3_tick_predictor import tick_to_sqrt_price
 from degenbot.types.hop_types import ConstantProductHop
+from degenbot.uniswap.v3_libraries.constants import Q96
+from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 
 # ==============================================================================
 # Shared constants — realistic reserve magnitudes with correct decimals
@@ -94,6 +95,11 @@ def make_2hop_v2_input(
     )
 
 
+def _tick_to_float_sqrt_price(tick: int) -> float:
+    """Convert tick to float sqrt price via the canonical integer Q64.96 conversion."""
+    return get_sqrt_ratio_at_tick(tick) / Q96
+
+
 def make_v3_tick_range(
     liquidity: float,
     current_tick: int,
@@ -106,9 +112,9 @@ def make_v3_tick_range(
     tick_lower = (current_tick // tick_spacing) * tick_spacing
     tick_upper = tick_lower + tick_spacing
 
-    sqrt_price_current = tick_to_sqrt_price(current_tick)
-    sqrt_price_lower = tick_to_sqrt_price(tick_lower)
-    sqrt_price_upper = tick_to_sqrt_price(tick_upper)
+    sqrt_price_current = _tick_to_float_sqrt_price(current_tick)
+    sqrt_price_lower = _tick_to_float_sqrt_price(tick_lower)
+    sqrt_price_upper = _tick_to_float_sqrt_price(tick_upper)
 
     return V3TickRangeHop(
         liquidity=liquidity,

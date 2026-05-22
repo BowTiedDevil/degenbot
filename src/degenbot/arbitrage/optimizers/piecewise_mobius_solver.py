@@ -25,7 +25,6 @@ from degenbot.arbitrage.optimizers._mobius_math import simulate_path as _mobius_
 from degenbot.arbitrage.optimizers._solver_utils import _infer_zero_for_one
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult, SolverMethod
 from degenbot.arbitrage.optimizers.mobius_solver import MobiusSolver
-from degenbot.arbitrage.optimizers.v3_tick_predictor import estimate_price_impact
 from degenbot.degenbot_rs import (
     RustArbSolver as _RustArbSolver,
 )
@@ -46,6 +45,34 @@ from degenbot.types.hop_types import (
     PoolInvariant,
 )
 from degenbot.uniswap.v3_libraries.constants import Q96
+
+# ---------------------------------------------------------------------------
+# V3 sqrt-price estimation (pure math, no I/O)
+# ---------------------------------------------------------------------------
+
+
+def _estimate_sqrt_price_after_swap(
+    amount_in: float,
+    liquidity: float,
+    current_sqrt_price: float,
+    fee: float = 0.003,
+    zero_for_one: bool = True,  # noqa: FBT001, FBT002
+) -> float:
+    """Estimate the sqrt price after swapping *amount_in* within a single V3 tick range.
+
+    Uses the V3 swap approximation:
+    - zfo (token0→token1): new_sqrt_p = L / (L / sqrt_p + amount_in / gamma)
+    - ofo (token1→token0): new_sqrt_p = sqrt_p + amount_in * gamma / L
+
+    Returns *current_sqrt_price* unchanged when *amount_in* ≤ 0 or *liquidity* ≤ 0.
+    """
+    if amount_in <= 0 or liquidity <= 0:
+        return current_sqrt_price
+
+    gamma = 1.0 - fee
+    if zero_for_one:
+        return liquidity / (liquidity / current_sqrt_price + amount_in / gamma)
+    return current_sqrt_price + amount_in * gamma / liquidity
 
 
 class PiecewiseMobiusSolver(Solver):
@@ -379,11 +406,11 @@ class PiecewiseMobiusSolver(Solver):
             if ending_liq < current_liq * 2:  # Need 2x liquidity to justify 2-range crossing
                 return False
 
-        # Price impact pruning: use quick estimate to check if swap stays in ending range
-        # This is cheaper than full golden section search
+        # Price impact pruning: quick estimate to check if swap stays in ending range.
+        # Uses the V3 swap formula: new_sqrt_p ≈ L / (L / sqrt_p + amount * gamma) for zfo,
+        # or sqrt_p + amount * gamma / L for ofo.
         if end_idx > start_idx:
-            # Estimate price after crossing (roughly the input needed for crossing)
-            estimated_sqrt_price = estimate_price_impact(
+            estimated_sqrt_price = _estimate_sqrt_price_after_swap(
                 amount_in=crossing_input * 1.1,  # 10% buffer for safety
                 liquidity=float(ending_range.liquidity),
                 current_sqrt_price=float(ending_range.sqrt_price_lower) / Q96,
@@ -550,7 +577,13 @@ class PiecewiseMobiusSolver(Solver):
             v3_out = crossing.crossing_output + variable_out
 
             # Validate ending range
-            final_sqrt_p = self._estimate_final_sqrt_price(remaining, crossing.ending_range)
+            final_sqrt_p = _estimate_sqrt_price_after_swap(
+                amount_in=remaining,
+                liquidity=crossing.ending_range.liquidity,
+                current_sqrt_price=crossing.ending_range.sqrt_price_current,
+                fee=crossing.ending_range.fee,
+                zero_for_one=crossing.ending_range.zero_for_one,
+            )
             if not crossing.ending_range.contains_sqrt_price(final_sqrt_p):
                 return -x  # Out of range
 
@@ -862,28 +895,6 @@ class PiecewiseMobiusSolver(Solver):
             iterations=result.iterations if hasattr(result, "iterations") else 0,
             method=SolverMethod.PIECEWISE_MOBIUS.name,
         )
-
-    @staticmethod
-    def _estimate_final_sqrt_price(
-        amount_in: float,
-        ending_range: V3TickRangeHop,
-    ) -> float:
-        """Estimate the final sqrt price after swapping within ending range."""
-        if amount_in <= 0:
-            return ending_range.sqrt_price_current
-
-        # For constant product, price moves as: 1/sqrt_p_new = 1/sqrt_p + amount/L
-        # So: sqrt_p_new = 1 / (1/sqrt_p + amount/L) # noqa: ERA001
-        liq = ending_range.liquidity
-        sqrt_p = ending_range.sqrt_price_current
-        gamma = 1.0 - ending_range.fee
-
-        if ending_range.zero_for_one:
-            new_sqrt_p = liq / (liq / sqrt_p + amount_in / gamma)
-        else:
-            new_sqrt_p = sqrt_p + amount_in * gamma / liq
-
-        return new_sqrt_p
 
 
 # ---------------------------------------------------------------------------

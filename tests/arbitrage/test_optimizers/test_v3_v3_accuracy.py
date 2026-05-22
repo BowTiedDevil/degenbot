@@ -17,7 +17,7 @@ import pytest
 from scipy.optimize import minimize_scalar
 
 import degenbot.degenbot_rs as rs_mobius
-from degenbot.arbitrage.optimizers.v3_tick_predictor import tick_to_sqrt_price
+from degenbot.uniswap.v3_libraries.constants import Q96
 from degenbot.uniswap.v3_libraries.swap_math import compute_swap_step
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 
@@ -64,7 +64,8 @@ def tick_to_sqrt_price_x96(tick: int) -> int:
 
 
 def tick_to_sqrt_price_float(tick: int) -> float:
-    return tick_to_sqrt_price(tick)
+    """Convert tick to float sqrt price via the canonical integer Q64.96 conversion."""
+    return get_sqrt_ratio_at_tick(tick) / Q96
 
 
 def compute_v3_v3_profit_manual(
