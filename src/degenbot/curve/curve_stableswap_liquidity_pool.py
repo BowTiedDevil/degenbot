@@ -368,14 +368,14 @@ class CurveStableswapPool(
         self._cache_block_timestamps[block_number] = result
         return result
 
-    def _get_cached_contract_D(self, block_number: BlockNumber) -> int:
+    def _get_cached_contract_d(self, block_number: BlockNumber) -> int:
         """Fetch or retrieve cached contract D value (crypto pools)."""
         with contextlib.suppress(KeyError):
             return self._cache_contract_D[block_number]
         if self._data_provider is None:
             msg = "contract_D requires a data_provider. Provide one via Bot.build_pool()."
             raise MissingCurveData(self.address, "D", msg)
-        result = self._data_provider.D(block_number)
+        result = self._data_provider.d(block_number)
         self._cache_contract_D[block_number] = result
         return result
 
@@ -674,7 +674,7 @@ class CurveStableswapPool(
 
         # ── Crypto-specific I/O ──
         if swap_style == SwapStyle.CRYPTO:
-            d_val = self._get_cached_contract_D(block_number)
+            d_val = self._get_cached_contract_d(block_number)
             gamma_val = self._get_cached_gamma(block_number)
             price_scale_val = self._get_cached_price_scale(block_number)
 
