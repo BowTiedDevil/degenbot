@@ -371,46 +371,6 @@ class V3TickRangeSequence:
         )
 
 
-def piecewise_v3_swap(
-    gross_input: float,
-    crossing: TickRangeCrossing,
-) -> tuple[float, bool]:
-    """
-    Compute V3 swap output including tick crossings.
-
-    For a V3 swap that crosses ranges 0..K-1 and ends in range K:
-        total_output = crossing_output + mobius(remaining, range_K)
-
-    Parameters
-    ----------
-    gross_input : float
-        Total gross input (including fees) to the V3 pool.
-    crossing : TickRangeCrossing
-        Pre-computed crossing data.
-
-    Returns
-    -------
-    tuple[float, bool]
-        (output, valid) where valid=True if the input covers the crossing
-        and the result stays within the ending range.
-    """
-    if gross_input < crossing.crossing_gross_input:
-        return 0.0, False
-
-    remaining = gross_input - crossing.crossing_gross_input
-    ending_hop = crossing.ending_range.to_hop_state()
-    variable_output = simulate_path(remaining, [ending_hop])
-
-    total_output = crossing.crossing_output + variable_output
-
-    # Validate that the remaining input stays in the ending range
-    final_sqrt_price = estimate_v3_final_sqrt_price(remaining, crossing.ending_range)
-    if not crossing.ending_range.contains_sqrt_price(final_sqrt_price):
-        return total_output, False
-
-    return total_output, True
-
-
 def compute_mobius_coefficients(hops: list[MobiusFloatHop]) -> MobiusCoefficients:
     """
     Compute the Möbius transformation coefficients K, M, N for an n-hop
@@ -522,40 +482,3 @@ def mobius_solve(
     profit = output - x_opt
 
     return x_opt, profit, 0
-
-
-def estimate_v3_final_sqrt_price(
-    amount_in: float,
-    v3_hop: V3TickRangeHop,
-) -> float:
-    """
-    Estimate the final sqrt price after a V3 swap.
-
-    Uses the V3 swap formula for price impact estimation.
-
-    Parameters
-    ----------
-    amount_in : float
-        Input amount to the V3 pool.
-    v3_hop : V3TickRangeHop
-        V3 tick range hop data.
-
-    Returns
-    -------
-    float
-        Estimated final sqrt price.
-    """
-    liquidity = v3_hop.liquidity
-    gamma = 1.0 - v3_hop.fee
-    sqrt_p = v3_hop.sqrt_price_current
-
-    if liquidity <= 0:
-        return sqrt_p
-
-    if v3_hop.zero_for_one:
-        denom = liquidity + amount_in * gamma * sqrt_p
-        if denom <= 0:
-            return sqrt_p
-        return sqrt_p * liquidity / denom
-
-    return sqrt_p + amount_in * gamma / liquidity
