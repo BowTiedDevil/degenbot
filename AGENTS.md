@@ -143,9 +143,9 @@ PoolClass -> PublisherMixin -> PoolPickleMixin -> StateMixin -> CalcMixin -> Abs
 | CamelotLiquidityPool | (inherits V2) | `CamelotPoolCalc` | Inherits V2's `StateCache`. `if self.stable_swap` eliminated |
 | UniswapV3Pool | `V3PoolState` | `UniswapV3PoolCalc` | Base V3. Uses `ConcentratedLiquidityStateManager` which composes `StateCache` |
 | UniswapV4Pool | `V4PoolState` | `UniswapV4PoolCalc` | Same manager pattern as V3. V4-specific swap calc stays in pool |
-| CurveStableswapPool | `StableswapPoolState` | `DyCalculator` seam | Curve uses `BoundedCache` (dict-based) for per-block on-chain data, not `StateCache`. Per-block cache fields (`_cache_*`) with `_get_cached_*` accessors are private on the pool class (Plan 068). `_get_cached_base_cache_updated` and `_get_cached_base_virtual_price` update side-effect mirrors (`_base_cache_updated_value`, `_base_virtual_price_value`) read by `_get_cached_virtual_price` for base-cache-expiry logic. Calculators in `curve/calculators/`; pure math in `calculations/stableswap.py` |
-| BalancerV2Pool | `BalancerV2PoolState` | `WeightedMath` functions | Balancer uses no state cache. Math in `balancer/libraries/`; version-dependent pow via `PowVersion` enum. `external_update()` with `_state_lock`. `to_hop_state()` returns `BalancerWeightedHop` with `swap_fn`. `build_swap_amount()` raises for N>2 without explicit pair — use `BalancerPairView` for `ArbitragePathPool` conformance. Builder: `BalancerBuilder` (Plan 070) |
-| BalancerV2StablePool | `BalancerV2PoolState` | `StableMath` functions | MetaStable or Composable pool. Two invariant versions (V1/V2). `StaleRateResult` when no rate provider. `BalancerRateProvider` protocol for cache-aware rate resolution. `external_update()` with `_state_lock`. `to_hop_state()` returns `BalancerStableHop` with `swap_fn` that catches `StaleRateResult`. `build_swap_amount()` raises for N>2 without explicit pair — use `BalancerPairView` for `ArbitragePathPool` conformance. Builder: `BalancerBuilder` (Plan 070) |
+| CurveStableswapPool | `StableswapPoolState` | `DyCalculator` seam | Curve uses `BoundedCache` (dict-based) for per-block on-chain data, not `StateCache`. Per-block cache fields (`_cache_*`) with `_get_cached_*` accessors are private on the pool class. `_get_cached_base_cache_updated` and `_get_cached_base_virtual_price` update side-effect mirrors (`_base_cache_updated_value`, `_base_virtual_price_value`) read by `_get_cached_virtual_price` for base-cache-expiry logic. Calculators in `curve/calculators/`; pure math in `calculations/stableswap.py` |
+| BalancerV2Pool | `BalancerV2PoolState` | `WeightedMath` functions | Balancer uses no state cache. Math in `balancer/libraries/`; version-dependent pow via `PowVersion` enum. `external_update()` with `_state_lock`. `to_hop_state()` returns `BalancerWeightedHop` with `swap_fn`. `build_swap_amount()` raises for N>2 without explicit pair — use `BalancerPairView` for `ArbitragePathPool` conformance. Builder: `BalancerBuilder` |
+| BalancerV2StablePool | `BalancerV2PoolState` | `StableMath` functions | MetaStable or Composable pool. Two invariant versions (V1/V2). `StaleRateResult` when no rate provider. `BalancerRateProvider` protocol for cache-aware rate resolution. `external_update()` with `_state_lock`. `to_hop_state()` returns `BalancerStableHop` with `swap_fn` that catches `StaleRateResult`. `build_swap_amount()` raises for N>2 without explicit pair — use `BalancerPairView` for `ArbitragePathPool` conformance. Builder: `BalancerBuilder` |
 
 ### StateCache
 
@@ -162,7 +162,7 @@ Use `hasattr()` structural checks for class-level dispatch (not `issubclass()` �
 
 ### Calculations Module
 
-Standalone pure-math functions in `src/degenbot/calculations/`: `solidly_stable`, `camelot`, `stableswap`, `concentrated_liquidity`, `evm_math`. No `self`, no class references. V3/V4 libraries remain in `uniswap/v3_libraries/` and `v4_libraries/`. Constant-product swap math lives in `uniswap/v2_functions.py` (`constant_product_calc_exact_in`, `constant_product_calc_exact_out`); the former `calculations/constant_product.py` was deleted (Plan 073 — buggy intermediate truncation in fee deduction diverged from on-chain behavior for small inputs).
+Standalone pure-math functions in `src/degenbot/calculations/`: `solidly_stable`, `camelot`, `stableswap`, `concentrated_liquidity`, `evm_math`. No `self`, no class references. V3/V4 libraries remain in `uniswap/v3_libraries/` and `v4_libraries/`. Constant-product swap math lives in `uniswap/v2_functions.py` (`constant_product_calc_exact_in`, `constant_product_calc_exact_out`); the former `calculations/constant_product.py` was deleted — its intermediate truncation in fee deduction diverged from on-chain behavior for small inputs.
 
 ### Exception Module Structure
 
@@ -191,7 +191,7 @@ token = bot.build_erc20token("0x...")  # Fetches metadata, registers in token re
 
 **Don't** instantiate pools directly from classes in new code — that's the **deprecated singleton pattern**.
 
-**AsyncBot** mirrors `Bot`'s delegation pattern: its public I/O methods (`get_token_balance`, `get_token_approval`, `get_token_total_supply`, `get_ether_balance`) delegate to `AsyncErc20Builder` instead of duplicating the logic inline, matching `Bot`'s delegation to `Erc20Builder` (Plan 065).
+**AsyncBot** mirrors `Bot`'s delegation pattern: its public I/O methods (`get_token_balance`, `get_token_approval`, `get_token_total_supply`, `get_ether_balance`) delegate to `AsyncErc20Builder` instead of duplicating the logic inline, matching `Bot`'s delegation to `Erc20Builder`.
 
 #### Type Resolution
 
@@ -202,11 +202,11 @@ token = bot.build_erc20token("0x...")  # Fetches metadata, registers in token re
 3. **Pool Type Registry** — a module-level singleton mapping `(chain_id, factory_address) → pool class + identity + deployment data`; each DEX module self-registers at import time via `pool_type_registry.register()`
 4. **On-chain probing** — fallback: call `slot0()`, `getReserves()`, or `coins()` to identify the invariant
 
-The type resolution code in `type_resolution.py` collapses sync/async mirrors into thin wrappers over shared pure functions (`_build_descriptor_from_db_result`, `_descriptor_from_probing_result`), eliminating ~56 lines of duplicated logic (Plan 066).
+The type resolution code in `type_resolution.py` collapses sync/async mirrors into thin wrappers over shared pure functions (`_build_descriptor_from_db_result`, `_descriptor_from_probing_result`), eliminating duplicated logic between sync and async paths.
 
 V4 pools are built via `build_managed_pool(address, pool_id)` — a dedicated method with `BuildManagedPoolRequest` that requires `pool_id`. `build_pool()` no longer accepts `pool_id` or V4-specific kwargs.
 
-Adding a new pool family now requires only creating a builder and registering it via `register_builder()`, down from 5 touch points. The typed `build_v2_pool`/`build_v3_pool`/`build_v4_pool`/`build_curve_pool` methods were removed by Plan 059 — `build_pool()` handles all non-V4 pools, `build_managed_pool()` handles V4.
+Adding a new pool family requires only creating a builder and registering it via `register_builder()`. The typed `build_v2_pool`/`build_v3_pool`/`build_v4_pool`/`build_curve_pool` methods have been removed — `build_pool()` handles all non-V4 pools, `build_managed_pool()` handles V4.
 
 #### BuilderContext
 
@@ -214,12 +214,12 @@ All pool builders accept a `BuilderContext` (frozen dataclass in `src/degenbot/b
 
 #### Builder Base Classes
 
-Sync pool builders for each pool family inherit a base class with shared `@staticmethod` helpers for pure-logic operations (decode, DB extract, snapshot loading). Async builders call the same static methods without inheriting — mirroring the `AsyncV2PoolBuilder` pattern established in Plan 043.
+Sync pool builders for each pool family inherit a base class with shared `@staticmethod` helpers for pure-logic operations (decode, DB extract, snapshot loading). Async builders call the same static methods without inheriting — mirroring the `AsyncV2PoolBuilder` pattern.
 
 - **`V2BuilderBase`** — helpers: `decode_immutable_data`, `extract_db_values`, `resolve_deployer_and_init_hash` (`V2PoolBuilder`, `AerodromeV2Builder`, `CamelotBuilder` inherit)
 - **`V3BuilderBase`** — helpers: `decode_immutable_data`, `decode_slot0`, `extract_db_values`, `load_tick_snapshot`, `resolve_tick_data_args`; frozen dataclasses `V3ImmutableData`, `V3Slot0Data`, `V3DbValues` (`V3PoolBuilder` inherits; `AsyncV3PoolBuilder` calls static methods)
 - **`V4BuilderBase`** — helpers: `decode_slot0`, `extract_db_values`, `load_tick_snapshot`, `resolve_tick_data_args`; frozen dataclasses `V4Slot0Data`, `V4DbValues` (`V4PoolBuilder` inherits; `AsyncV4PoolBuilder` calls static methods)
-- **`BalancerBuilderBase`** — helpers: `decode_pool_id`, `decode_vault_tokens`, `detect_bpt_index`, `resolve_invariant_version`; frozen dataclasses `DecodedPoolId`, `VaultTokensResult`, `_BalancerPoolType` enum (`BalancerBuilder` inherits; future `AsyncBalancerBuilder` calls static methods) (Plan 070)
+- **`BalancerBuilderBase`** — helpers: `decode_pool_id`, `decode_vault_tokens`, `detect_bpt_index`, `resolve_invariant_version`; frozen dataclasses `DecodedPoolId`, `VaultTokensResult`, `_BalancerPoolType` enum (`BalancerBuilder` inherits; future `AsyncBalancerBuilder` calls static methods)
 
 ### Fetcher Protocols
 
@@ -231,13 +231,13 @@ Sync pool builders for each pool family inherit a base class with shared `@stati
 pool = bot.build_pool("0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7")
 ```
 
-The former 13 individual fetcher callback constructor parameters (`_D_fetcher`, `_gamma_fetcher`, `_virtual_price_fetcher`, etc.) were collapsed into a single `data_provider: CurveDataProvider | None` parameter (Plan 040). The 850-line closure-based `CurveFetcherFactory` has been replaced by `CurveDataProviderImpl` (Plan 049) — a structured class in `data_provider_impl.py` with real methods and shared I/O helpers (`_call`, `_call_single`, `_call_raw_single`, `_wrap_revert`). Builders construct `CurveDataProviderImpl` directly with a `ProviderAdapter`. Tests use `FakeCurveDataProvider` instead of individual lambda fetchers.
+The former individual fetcher callback constructor parameters (`_D_fetcher`, `_gamma_fetcher`, `_virtual_price_fetcher`, etc.) were collapsed into a single `data_provider: CurveDataProvider | None` parameter. The closure-based `CurveFetcherFactory` has been replaced by `CurveDataProviderImpl` — a structured class in `data_provider_impl.py` with real methods and shared I/O helpers (`_call`, `_call_single`, `_call_raw_single`, `_wrap_revert`). Builders construct `CurveDataProviderImpl` directly with a `ProviderAdapter`. Tests use `FakeCurveDataProvider` instead of individual lambda fetchers.
 
-The `DyCalculator` seam (Plan 039) replaces 14 `match`/`if` dispatch branches in `get_dy()` with injectable calculator objects keyed on `SwapStyle`, `MetapoolRateStyle`, and `MetapoolUnderlyingStyle` enums. Pure math functions in `calculations/stableswap.py` raise `ValueError`; calculators call these directly and wrap with `EVMRevertError` (Plan 069).
+The `DyCalculator` seam replaces `match`/`if` dispatch branches in `get_dy()` with injectable calculator objects keyed on `SwapStyle`, `MetapoolRateStyle`, and `MetapoolUnderlyingStyle` enums. Pure math functions in `calculations/stableswap.py` raise `ValueError`; calculators call these directly and wrap with `EVMRevertError`.
 
-**DyCalculationInputs** (Plan 045) replaces the `pool: CurveStableswapPool` parameter in `DyCalculator.calculate()` with a frozen dataclass carrying pre-resolved data (including `d_variant`/`y_variant`/`yd_variant`/`a_precision` for variant-aware invariant solving). The pool's `get_dy()` performs all I/O (rate resolution, cache lookups, block data) before constructing a `DyCalculationInputs` and passing it to the calculator. Calculators are pure consumers of this object — no private member access, no I/O, no cache mutation, no closures. `DyCalculationInputs` is now a pure value object (all fields are ints, tuples, enums, or None — zero callables); calculators call `stableswap_get_y()` / `stableswap_newton_y()` directly (Plan 069). This eliminated 77 SLF001 (private member access) errors across the calculator modules.
+**DyCalculationInputs** replaces the `pool: CurveStableswapPool` parameter in `DyCalculator.calculate()` with a frozen dataclass carrying pre-resolved data (including `d_variant`/`y_variant`/`yd_variant`/`a_precision` for variant-aware invariant solving). The pool's `get_dy()` performs all I/O (rate resolution, cache lookups, block data) before constructing a `DyCalculationInputs` and passing it to the calculator. Calculators are pure consumers of this object — no private member access, no I/O, no cache mutation, no closures. `DyCalculationInputs` is a pure value object (all fields are ints, tuples, enums, or None — zero callables); calculators call `stableswap_get_y()` / `stableswap_newton_y()` directly.
 
-**V2/V3/V4/Aerodrome/Camelot pools** are fully I/O-free — builders fetch all data from DB/RPC, pass it to the pool constructor, and no provider references remain on the pool object. All updates flow through `external_update()` (pure logic). No pool class imports `ProviderAdapter` or carries provider-dependent methods (ADR-001 Phase 3 complete).
+**V2/V3/V4/Aerodrome/Camelot pools** are fully I/O-free — builders fetch all data from DB/RPC, pass it to the pool constructor, and no provider references remain on the pool object. All updates flow through `external_update()` (pure logic). No pool class imports `ProviderAdapter` or carries provider-dependent methods.
 
 See `docs/architecture/io-free-pools.md` and `src/degenbot/curve/CONTEXT.md` for details.
 
@@ -255,7 +255,7 @@ Pools that register with the Rust solver cache implement the `CacheablePool` pro
 
 ### Swap Encoding Pipeline
 
-Each `SwapAmounts` subclass (V2, V3, Curve, V4, Balancer) has an `encode(recipient=)` method that produces an `EncodedCall(to, data, value)`, plus `input_amount()` / `output_amount()` for generic amount extraction (replacing the former match/case dispatch). Pool classes implement `build_swap_amount()` from the `ArbitragePathPool` protocol, making the per-pool swap-amount construction fully local. `BalancerV2SwapAmounts` encodes a Vault.swap() call with SingleSwap and FundManagement structs (Plan 070). The `generate_payloads()` function wires a three-layer pipeline:
+Each `SwapAmounts` subclass (V2, V3, Curve, V4, Balancer) has an `encode(recipient=)` method that produces an `EncodedCall(to, data, value)`, plus `input_amount()` / `output_amount()` for generic amount extraction (replacing the former match/case dispatch). Pool classes implement `build_swap_amount()` from the `ArbitragePathPool` protocol, making the per-pool swap-amount construction fully local. `BalancerV2SwapAmounts` encodes a Vault.swap() call with SingleSwap and FundManagement structs. The `generate_payloads()` function wires a three-layer pipeline:
 
 1. **Per-hop encoding** — `SwapAmounts.encode()` (pool-type-specific ABI encoding)
 2. **Approval injection** — `ApprovalStrategy` protocol (default: `NoApprovals`)
@@ -279,7 +279,7 @@ Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` f
 
 ## Architecture Plans
 
-Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. Plans 001–073 are all complete. The only active plans are 014 (Async REPL) and the arbitrage optimizer project. See `plans/README.md` for the full list.
+Refactoring plans live in `plans/`. Completed plans are in `plans/completed/`. See `plans/README.md` for the full list of active and completed plans.
 
 **New plans must follow [`plans/TEMPLATE.md`](plans/TEMPLATE.md).** The template requires: deletion test, specific friction table, vertical slices, design decisions, relationship to other plans, and status checklist.
 
@@ -344,11 +344,3 @@ The Rust extension (`rust/`) provides PyO3-wrapped ABI encoding/decoding, subscr
 ### Subscription Buffer
 
 `SubscriptionHandle` uses a double-buffer pattern with `drain_raw()` (pure Rust, no GIL) for GIL-free accumulation. The Python-facing `drain_buffer()` wraps it with `Python::attach()`.
-
-### Testing
-
-- **293 Rust tests**: 269 unit + 1 concurrency_stress + 14 integration + 9 doc-tests
-- **`auto-initialize` is the default Cargo feature** — simplifies test gating
-- **Proptests** use full U256 range with `arb_u256()` and sign-bit-concentrated strategies (`arb_u256_near_sign_bit()`)
-- **Strict clippy**: `-D clippy::unwrap_used`, `-D clippy::expect_used`, and more (see `just lint-rust`)
-- **Benchmarks**: `benches/address_utils.rs`, `benches/abi_decode.rs`, `benches/abi_encode.rs`, `benches/mobius_solver.rs`

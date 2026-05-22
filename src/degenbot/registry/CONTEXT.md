@@ -42,7 +42,7 @@ A Registry is a simple lookup table. A Pool Tracker (e.g., `UniswapV2PoolTracker
 
 ### FACTORY_DEPLOYMENTS (removed) vs Pool Type Registry
 
-**Ruling: The `FACTORY_DEPLOYMENTS` dict has been removed. `pool_type_registry` is the sole source of truth for `(chain_id, factory) → (deployer, pool_init_hash)` data.** Each DEX `__init__.py` passes hardcoded values directly to `pool_type_registry.register()` instead of reading from and populating a separate dict. Trackers resolve deployment data via `pool_type_registry.get_deployment()`. Pool constructors trust builder-provided values instead of silently overwriting from `FACTORY_DEPLOYMENTS` (Plan 072).
+**Ruling: The `FACTORY_DEPLOYMENTS` dict has been removed. `pool_type_registry` is the sole source of truth for `(chain_id, factory) → (deployer, pool_init_hash)` data.** Each DEX `__init__.py` passes hardcoded values directly to `pool_type_registry.register()` instead of reading from and populating a separate dict. Trackers resolve deployment data via `pool_type_registry.get_deployment()`. Pool constructors trust builder-provided values instead of silently overwriting from `FACTORY_DEPLOYMENTS`.
 
 - ✅ "Resolve deployer from `pool_type_registry.get_deployment()`"
 - ✅ "Register the exchange with hardcoded deployer and pool_init_hash via `pool_type_registry.register()`"

@@ -28,7 +28,7 @@
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
-| **Pool Adapter** | A protocol object that translates a specific pool type into solver-compatible Hop State; pool `to_hop_state()` is the single source of truth (the external `solver_hop_builders.py` has been deleted); N-token pools accept `token_in`/`token_out` kwargs for pair selection (Plan 071) | Adapter, bridge |
+| **Pool Adapter** | A protocol object that translates a specific pool type into solver-compatible Hop State; pool `to_hop_state()` is the single source of truth; N-token pools accept `token_in`/`token_out` kwargs for pair selection | Adapter, bridge |
 | **Pool Cache Adapter** | A subscriber that auto-registers pools in the Rust solver cache on state updates; uses **CacheablePool** protocol methods | ArbPoolCacheAdapter, cache adapter |
 | **SwapEncoder** | The swap encoding layer: each `SwapAmounts` subclass self-encodes into an `EncodedCall`; the pipeline function `generate_payloads()` wires encoding → approval → composition | Calldata builder, payload encoder |
 | **EncodedCall** | A minimal EVM call fragment (`to`, `data`, `value`) ready for on-chain submission; produced by `SwapAmounts.encode()` | Payload, call tuple |

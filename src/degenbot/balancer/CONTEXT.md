@@ -175,7 +175,7 @@ The monorepo's `_calculateInvariant` always rounds the last iteration down. The 
 
 ComposableStablePool on-chain tests achieve **exact 0-wei matching** when constructed with a `CacheAwareRateProvider`. The former tolerance of ≤3000 wei was eliminated by (a) replicating `_cacheTokenRateIfNecessary` exactly (read `getTokenRateCache()`, check expiry, call `getRate()` only if expired), and (b) using the correct invariant version (`INVARIANT_V1` for most deployed ComposableStablePools, `INVARIANT_V2` for MetaStablePools). Without a rate provider, `StaleRateResult` is raised — the computed amounts are approximate and should not be used for on-chain operations.
 
-## Builder, Pair View, and Swap Amounts (Plan 070)
+## Builder, Pair View, and Swap Amounts
 
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|

@@ -37,16 +37,6 @@ function _transfer(address sender, address recipient, uint256 amount, uint256 in
 - The user's **effective balance** increases because the index increased
 - Mint event `amount` field = interest in underlying units (for tracking)
 
-**Implementation:**
-```python
-# In enrichment.py - INTEREST_ACCRUAL operations
-if operation.operation_type.name == "INTEREST_ACCRUAL":
-    raw_amount = scaled_event.amount  # Interest in underlying units
-    scaled_amount = 0  # NO balance change - event is tracking-only
-```
-
-**Issue Reference:** `debug/aave/0004 - Interest Accrual Scaling Error in Enrichment.md`
-
 ---
 
 ### Pool Versions and Scaling
@@ -523,7 +513,7 @@ else:
 2. The standalone BalanceTransfer processing loop would create a duplicate operation
 3. Validation would fail with "Event at logIndex X assigned to multiple operations"
 
-**Example Transaction:** `0x4a88a8c6a43b5df2ee59ebcf266225fbc5b876f202009422f0f9d05cc4915f35`
+**Example Transaction:** Multi-asset liquidations with separate logIndex entries for ERC20 and BalanceTransfer events representing the same transfer.
 - logIndex 104: `ERC20_COLLATERAL_TRANSFER` (ERC20 Transfer)
 - logIndex 107: `COLLATERAL_TRANSFER` (BalanceTransfer with index)
 - These represent the same transfer but have different event types
@@ -627,8 +617,6 @@ if matched_event.amount > position.balance * 2:
 **Documentation:**
 See full architectural documentation: `docs/architecture/semantic-matching.md`
 
-**Issue Reference:** `debug/aave/0029 - Multi-Asset Liquidation Missing Secondary Debt Burns Fix.md`
-
 ---
 
 ### General Lessons
@@ -643,8 +631,6 @@ See full architectural documentation: `docs/architecture/semantic-matching.md`
 
 ### Burn Event Matching
 
-**Lesson:** When matching Burn events to WITHDRAW operations, the total burned is `amount + balanceIncrease`, not `amount - balanceIncrease`.
-
 **Context:** The Aave V3 Burn event has the following structure:
 ```solidity
 event Burn(address indexed from, address indexed target, uint256 value, uint256 balanceIncrease, uint256 index);
@@ -654,11 +640,6 @@ event Burn(address indexed from, address indexed target, uint256 value, uint256 
 - `balanceIncrease`: Accrued interest since last user interaction
 - **Total burned** = `value` + `balanceIncrease`
 
-This total matches the Withdraw event's amount exactly. A single-character error (`-` instead of `+`) caused burn events to fail matching, leaving them unassigned and classified as INTEREST_ACCRUAL operations (which zero out the scaled amount).
-
-**Issue Reference:** `debug/aave/0007 - Interest Accrual Burn Amount Zeroed in Enrichment.md`
+The total is `value + balanceIncrease` (addition, not subtraction). A single-character error (`-` instead of `+`) causes burn events to fail matching, leaving them unassigned and classified as INTEREST_ACCRUAL operations (which zero out the scaled amount).
 
 ---
-
-*Last updated: 2026-04-13*
-*Contributors: Issue #0004, #0007, #0029 investigation teams*

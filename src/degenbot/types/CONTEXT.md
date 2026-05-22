@@ -41,7 +41,7 @@
 | **Pool Invariant** | A solver-dispatch enum identifying which mathematical invariant governs a pool's swap pricing for the arbitrage solver: `CONSTANT_PRODUCT`, `BOUNDED_PRODUCT`, `SOLIDLY_STABLE`, `CURVE_STABLESWAP`, `BALANCER_WEIGHTED`, `BALANCER_MULTI_TOKEN`; see [Arbitrage CONTEXT.md](../arbitrage/CONTEXT.md) | Pool family, pool category |
 | **Pool Type Descriptor** | A frozen dataclass carrying the resolved pool identity: `PoolFamily` + variant name (e.g., `"sushiswap"`) + factory address | Type descriptor, pool descriptor |
 | **Pool Variant** | A string identifying the DEX-specific subclass within an invariant family (e.g., `"sushiswap"`, `"camelot"`, `"aerodrome"`); `None` for the canonical Uniswap variant | DEX variant, subclass name |
-| **Type Resolution** | The process of determining a pool's `PoolTypeDescriptor` from its address, consulting DB `kind` column → Pool Type Registry → on-chain probing; sync/async top-level functions are thin wrappers delegating to shared pure functions `_build_descriptor_from_db_result` and `_descriptor_from_probing_result` (Plan 066) | Pool discovery, type detection |
+| **Type Resolution** | The process of determining a pool's `PoolTypeDescriptor` from its address, consulting DB `kind` column → Pool Type Registry → on-chain probing; sync/async top-level functions are thin wrappers delegating to shared pure functions `_build_descriptor_from_db_result` and `_descriptor_from_probing_result` | Pool discovery, type detection |
 | **Kind** | The polymorphic identity string stored in the database `kind` column (e.g., `"uniswap_v2"`, `"sushiswap_v3"`, `"camelot_v2"`); derived from `derive_kind(family, variant)` — the family adds the `_v2`/`_v3` suffix | Polymorphic type, DB type |
 | **Builder variant method** | A method on a pool builder that fetches class-specific state from chain and constructs variant pools | Variant builder, chain constructor |
 
@@ -81,7 +81,7 @@
 | **Provider Method** | A single method on a DataProvider (e.g., `CurveDataProvider.D()`) called lazily when data is needed | — |
 | **PoolFamily** | An enum identifying a pool's mathematical invariant family for type resolution: `CONSTANT_PRODUCT`, `CONCENTRATED_LIQUIDITY`, `STABLESWAP`, `WEIGHTED` | Pool family (lowercase) |
 | **CacheablePool** | A protocol for pools that register with the Rust solver cache, requiring `reserves_for_cache()` and `fee_for_cache()` methods | Cacheable adapter |
-| **Pair Selection** | The `token_in`/`token_out` keyword-only kwargs on `to_hop_state()` (both `ArbitrageCapablePool` and `ArbitragePathPool` protocols) that allow N-token pools to select an arbitrary coin pair; both-or-neither, resolve against `self.tokens`, override `zero_for_one` when both provided (Plan 071) | Token pair kwargs |
+| **Pair Selection** | The `token_in`/`token_out` keyword-only kwargs on `to_hop_state()` (both `ArbitrageCapablePool` and `ArbitragePathPool` protocols) that allow N-token pools to select an arbitrary coin pair; both-or-neither, resolve against `self.tokens`, override `zero_for_one` when both provided | Token pair kwargs |
 | **V4PoolKey** | A frozen dataclass carrying the V4 pool identification struct (currency0, currency1, fee, tick_spacing, hooks) | Pool key, V4 key |
 
 ## DEX Protocols (Supported)
