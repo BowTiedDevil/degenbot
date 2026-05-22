@@ -26,8 +26,7 @@ class UnknownHandler:
         operation: "Operation",
         context: "EnrichmentContext",  # noqa: ARG002
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Raise EnrichmentError for UNKNOWN operations.
+        """Raise EnrichmentError for UNKNOWN operations.
 
         When an operation cannot be classified, enrichment should fail
         rather than produce incorrect results.

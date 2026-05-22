@@ -262,7 +262,6 @@ def _create_mock_liquidation_pool_event(
     debt_to_cover: int, collateral_liquidated: int
 ) -> LogReceipt:
     """Create a mock LiquidationCall Pool event."""
-
     # LiquidationCall event:
     # (debtToCover, liquidatedCollateralAmount, liquidator, receiveAToken)
     data = eth_abi.abi.encode(
@@ -372,7 +371,6 @@ def _create_mock_context_debt() -> MagicMock:
 
 def _create_mock_context_debt_rev9() -> MagicMock:
     """Context for Pool rev 9+ which pre-scales debt amounts."""
-
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 9  # Rev 9+
@@ -495,7 +493,6 @@ def _create_mock_context_collateral() -> MagicMock:
 
 def _create_mock_context_debt_mint() -> MagicMock:
     """Context for net debt increase case."""
-
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
@@ -556,7 +553,6 @@ def _create_mock_context_debt_mint() -> MagicMock:
 
 def _create_mock_context_erc20_transfer() -> MagicMock:
     """Context for ERC20 transfer events within liquidation (no index, no scaling)."""
-
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
     mock_context.token_revisions = {}

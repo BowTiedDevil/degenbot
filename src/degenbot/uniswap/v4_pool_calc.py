@@ -84,4 +84,8 @@ class UniswapV4PoolCalc:
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
+        """Extract fee."""
         return Fraction(self.fee, self.FEE_DENOMINATOR)
+
+        """Extract fee."""
+        return None

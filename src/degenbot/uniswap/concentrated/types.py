@@ -32,6 +32,7 @@ class SwapResult:
         liquidity: int | None = None,
         tick: int | None = None,
     ) -> Self:
+        """With replaced."""
         return self.__class__(
             amount0=amount0 if amount0 is not None else self.amount0,
             amount1=amount1 if amount1 is not None else self.amount1,

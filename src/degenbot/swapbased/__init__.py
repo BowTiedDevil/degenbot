@@ -1,3 +1,5 @@
+"""SwapBased DEX pool type registration."""
+
 from degenbot.registry.pool_type import pool_type_registry
 
 from .pools import SwapbasedV2Pool

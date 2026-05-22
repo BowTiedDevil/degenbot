@@ -29,8 +29,7 @@ class SupplyHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich a SUPPLY event.
+        """Enrich a SUPPLY event.
 
         For SUPPLY operations:
         1. Extract raw amount from the Pool SUPPLY event

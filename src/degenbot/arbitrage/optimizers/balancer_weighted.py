@@ -1,5 +1,4 @@
-"""
-Closed-form solver for N-token Balancer weighted pool arbitrage.
+"""Closed-form solver for N-token Balancer weighted pool arbitrage.
 
 Based on "Closed-form solutions for generic N-token AMM arbitrage"
 by Willetts & Harrington (QuantAMM.fi, Feb 2024).
@@ -28,8 +27,7 @@ TradeSignature = tuple[int, ...]
 
 @dataclass(frozen=True, slots=True)
 class BalancerMultiTokenState:
-    """
-    State for an N-token Balancer weighted pool.
+    """State for an N-token Balancer weighted pool.
 
     Attributes
     ----------
@@ -43,6 +41,7 @@ class BalancerMultiTokenState:
         Decimal places for each token (e.g. 18 for ETH, 6 for USDC).
         All reserves are internally upscaled to 18-decimal before applying
         the closed-form formula, matching Balancer Vault behavior.
+
     """
 
     reserves: tuple[int, ...]
@@ -52,6 +51,7 @@ class BalancerMultiTokenState:
 
     @property
     def n_tokens(self) -> int:
+        """Return n tokens."""
         return len(self.reserves)
 
     def _scaling_factors(self) -> list[int]:
@@ -75,8 +75,7 @@ class BalancerMultiTokenState:
 
 @dataclass(frozen=True, slots=True)
 class MultiTokenArbitrageResult:
-    """
-    Result of multi-token arbitrage optimization.
+    """Result of multi-token arbitrage optimization.
 
     Attributes
     ----------
@@ -90,6 +89,7 @@ class MultiTokenArbitrageResult:
         Trade signature that produced this result.
     iterations : int
         Number of signatures evaluated.
+
     """
 
     trades: tuple[float, ...]
@@ -108,8 +108,7 @@ INVARIANT_TOLERANCE = 1e-6
 
 
 def generate_trade_signatures(n_tokens: int) -> list[TradeSignature]:
-    """
-    Generate all valid trade signatures for an N-token pool.
+    """Generate all valid trade signatures for an N-token pool.
 
     N=3: 12 signatures, N=4: 50, N=5: 180.
     """
@@ -122,8 +121,7 @@ def generate_trade_signatures(n_tokens: int) -> list[TradeSignature]:
 
 
 def _compute_d(signature: TradeSignature) -> list[int]:
-    """
-    Compute d_i = I_{s_i=1} per the paper's definition.
+    """Compute d_i = I_{s_i=1} per the paper's definition.
 
     d_i = 1 if depositing (signature[i] == 1)
     d_i = 0 if withdrawing (signature[i] == -1)
@@ -137,8 +135,7 @@ def compute_optimal_trade(
     market_prices: tuple[float, ...],
     signature: TradeSignature,
 ) -> tuple[float, ...]:
-    """
-    Compute optimal trade amounts for a given signature using Equation 9.
+    """Compute optimal trade amounts for a given signature using Equation 9.
 
     All reserves are internally upscaled to 18-decimal before applying
     the formula. The resulting trades are in the upscaled 18-decimal space
@@ -197,11 +194,11 @@ def validate_trade(
     signature: TradeSignature,
     pool: BalancerMultiTokenState,
 ) -> bool:
-    """
-    Validate that the trade:
+    """Validate that the trade.
+
     1. Respects the signature (direction matches)
     2. Doesn't withdraw more than available
-    3. Maintains the invariant with fees
+    3. Maintains the invariant with fees.
 
     All calculations use upscaled 18-decimal reserves.
     """
@@ -242,8 +239,7 @@ def compute_profit_token_units(
     trades: tuple[float, ...],
     market_prices: tuple[float, ...],
 ) -> float:
-    """
-    Compute profit from upscaled 18-decimal trades at market prices.
+    """Compute profit from upscaled 18-decimal trades at market prices.
 
     Converts upscaled 18-decimal trades to token units before
     multiplying by market prices, ensuring dimensional consistency.
@@ -269,8 +265,7 @@ def refine_to_integer(
     market_prices: tuple[float, ...],
     search_radius: int = 3,
 ) -> tuple[int, ...]:
-    """
-    Refine float trades to integer amounts in native token units.
+    """Refine float trades to integer amounts in native token units.
 
     Trades are in upscaled 18-decimal units. We descale to native
     units (accounting for each token's decimals), round, and search.

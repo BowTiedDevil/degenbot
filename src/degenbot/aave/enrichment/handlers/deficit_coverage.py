@@ -34,8 +34,7 @@ class DeficitCoverageHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich a DEFICIT_COVERAGE event.
+        """Enrich a DEFICIT_COVERAGE event.
 
         Handles both COLLATERAL_TRANSFER and COLLATERAL_BURN events.
         - Transfers: raw_amount = scaled_amount (no index scaling)

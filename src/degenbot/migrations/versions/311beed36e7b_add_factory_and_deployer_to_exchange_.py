@@ -1,4 +1,4 @@
-"""add factory and deployer to exchange table
+"""add factory and deployer to exchange table.
 
 Revision ID: 311beed36e7b
 Revises: 723fe25c87b8

@@ -1,3 +1,4 @@
+"""Aerodrome contract ABI definitions and decoders."""
 import pydantic_core
 
 AERODROME_V2_FACTORY_ABI = pydantic_core.from_json(

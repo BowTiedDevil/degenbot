@@ -1,4 +1,5 @@
 # ruff: noqa: E501
+"""Uniswap contract ABI definitions and decoders."""
 
 import pydantic_core
 

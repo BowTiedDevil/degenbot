@@ -29,10 +29,7 @@ def cleanup_zero_balance_positions(
     session: Session,
     market: AaveV3Market,
 ) -> None:
-    """
-    Delete all zero-balance debt and collateral positions for the market.
-    """
-
+    """Delete all zero-balance debt and collateral positions for the market."""
     # Delete zero-balance collateral positions using bulk delete
     session.execute(
         delete(AaveV3CollateralPosition).where(
@@ -72,13 +69,11 @@ def verify_positions_for_users(
     show_progress: bool,
     user_addresses: set[ChecksumAddress] | None = None,
 ) -> None:
-    """
-    Verify positions for specified users or all users.
+    """Verify positions for specified users or all users.
 
     If user_addresses is provided, only verifies those specific users.
     Otherwise, verifies all users in the market.
     """
-
     verify_scaled_token_positions(
         provider=provider,
         market=market,
@@ -125,8 +120,7 @@ def verify_all_positions(
     block_number: int,
     show_progress: bool,
 ) -> None:
-    """
-    Verify all positions in the market against on-chain state.
+    """Verify all positions in the market against on-chain state.
 
     This performs a comprehensive verification of all collateral positions,
     debt positions, stkAAVE balances, and GHO discount amounts for the
@@ -138,8 +132,8 @@ def verify_all_positions(
         session: Database session
         block_number: The block number to verify against
         show_progress: If True, show progress bars
-    """
 
+    """
     logger.info(f"Performing full verification of all positions at block {block_number:,}")
 
     gho_asset = get_gho_asset(session=session, market=market)
@@ -165,13 +159,11 @@ def verify_scaled_token_positions(
     show_progress: bool,
     user_addresses: set[ChecksumAddress] | None = None,
 ) -> None:
-    """
-    Verify that database position balances match the contract.
+    """Verify that database position balances match the contract.
 
     If user_addresses is provided, only verifies positions for those specific users.
     Otherwise, verifies all users in the market.
     """
-
     stmt = (
         select(position_table)
         .join(AaveV3User)

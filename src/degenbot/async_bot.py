@@ -1,4 +1,5 @@
-"""AsyncBot — the async counterpart to Bot.
+"""
+AsyncBot — the async counterpart to Bot.
 
 Owns an AsyncConnectionManager and provides async factory/I-O methods.
 Returns the same I/O-free domain objects as Bot.
@@ -52,14 +53,14 @@ if TYPE_CHECKING:
 
 
 class AsyncBot:
-    """
-    Async session object that owns the runtime state for a degenbot run.
+    """Async session object that owns the runtime state for a degenbot run.
 
     Mirrors Bot with AsyncConnectionManager and async factory/I-O methods.
     Returns the same I/O-free domain objects as Bot.
     """
 
     def __init__(self, config: DegenbotConfig) -> None:
+        """Initialize the instance."""
         self.config = config
         self.connections = AsyncConnectionManager()
         self.db = DatabaseSessionManager(
@@ -97,6 +98,7 @@ class AsyncBot:
 
     @classmethod
     def from_config_file(cls) -> AsyncBot:
+        """From config file."""
         return cls(config=_init_config())
 
     def _register_builder(
@@ -173,8 +175,7 @@ class AsyncBot:
         tick_data: dict[int, Any] | None = None,
         state_cache_depth: int = 8,
     ) -> AbstractLiquidityPool:
-        """
-        Build a pool from an address, automatically resolving its type.
+        """Build a pool from an address, automatically resolving its type.
 
         V4 managed pools should use ``build_managed_pool()`` instead.
         """
@@ -264,8 +265,7 @@ class AsyncBot:
         tick_bitmap: dict[int, Any] | None = None,
         tick_data: dict[int, Any] | None = None,
     ) -> UniswapV4Pool:
-        """
-        Build a V4 managed pool from a PoolManager address and pool ID.
+        """Build a V4 managed pool from a PoolManager address and pool ID.
 
         ``address`` is the PoolManager contract. ``pool_id`` identifies the
         pool within the manager.
@@ -419,4 +419,5 @@ class AsyncBot:
         )
 
     def get_provider(self, *, chain_id: ChainId) -> AsyncProviderAdapter:
+        """Return provider."""
         return self.connections.get_provider(chain_id)

@@ -23,8 +23,8 @@ from degenbot.arbitrage.optimizers.mobius import (
     mobius_solve,
     simulate_path,
 )
-
 from degenbot.arbitrage.optimizers.v3_tick_predictor import tick_to_sqrt_price
+
 from degenbot.exceptions.arbitrage import OptimizationError
 from degenbot.uniswap.v3_libraries.swap_math import compute_swap_step
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick

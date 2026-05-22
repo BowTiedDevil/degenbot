@@ -1,5 +1,4 @@
-"""
-Port of Balancer V2 StableMath library.
+"""Port of Balancer V2 StableMath library.
 
 Solidity source:
 https://github.com/balancer/balancer-v2-monorepo/blob/master/pkg/pool-stable/contracts/StableMath.sol
@@ -27,7 +26,8 @@ Two invariant implementations are provided:
 The difference between these implementations produces a small (~0.01%) discrepancy in
 swap amounts: the monorepo version is off by ~0.01% vs on-chain, while the deployed version
 matches exactly. Both are mathematically correct -- the discrepancy is purely due to rounding
-direction in the Newton-Raphson iteration."""
+direction in the Newton-Raphson iteration.
+"""
 
 from degenbot.balancer.libraries.fixed_point import (
     ONE,
@@ -53,8 +53,7 @@ def _calculate_invariant(
     amplification_parameter: int,
     balances: list[int],
 ) -> int:
-    """
-    Computes the invariant given the current balances, using Newton-Raphson approximation.
+    """Compute the invariant given the current balances, using Newton-Raphson approximation.
 
     The amplification parameter equals: A * n^(n-1)
 
@@ -105,8 +104,7 @@ def _calculate_invariant_deployed(
     *,
     round_up: bool,
 ) -> int:
-    """
-    Computes the invariant using the DEPLOYED contract's implementation.
+    """Compute the invariant using the DEPLOYED contract's implementation.
 
     This matches the deployed MetaStablePool and ComposableStablePool contracts exactly.
     The deployed contracts use a `roundUp` parameter and P_D accumulation
@@ -170,8 +168,8 @@ def _calc_out_given_in(  # noqa: PLR0917
     token_amount_in: int,
     invariant: int,
 ) -> int:
-    """
-    Computes how many tokens can be taken out of a pool if tokenAmountIn are sent,
+    """Compute how many tokens can be taken out of a pool if tokenAmountIn are sent,.
+
     given the current balances and invariant.
 
     Amount out, so we round down overall.
@@ -202,8 +200,8 @@ def _calc_in_given_out(  # noqa: PLR0917
     token_amount_out: int,
     invariant: int,
 ) -> int:
-    """
-    Computes how many tokens must be sent to a pool if tokenAmountOut are sent,
+    """Compute how many tokens must be sent to a pool if tokenAmountOut are sent,.
+
     given the current balances and invariant.
 
     Amount in, so we round up overall.
@@ -232,8 +230,8 @@ def _get_token_balance_given_invariant_and_all_other_balances(
     invariant: int,
     token_index: int,
 ) -> int:
-    """
-    Calculates the balance of a given token (tokenIndex) given all the other
+    """Calculate the balance of a given token (tokenIndex) given all the other.
+
     balances and the invariant, using Newton-Raphson iteration.
 
     Rounds result up overall.
@@ -521,8 +519,7 @@ def _math_mul(a: int, b: int) -> int:
 
 
 def _math_div(a: int, b: int, round_up: bool) -> int:  # noqa: FBT001
-    """
-    Plain integer division with rounding direction, matching Solidity's Math.div.
+    """Plain integer division with rounding direction, matching Solidity's Math.div.
 
     When round_up is True, rounds up (Math.divUp). When False, rounds down (Math.divDown).
     """

@@ -1,4 +1,4 @@
-"""adjust index
+"""adjust index.
 
 Revision ID: fb9abf7c7d57
 Revises: 2afcff276d90
@@ -19,7 +19,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     with op.batch_alter_table("erc20_tokens", schema=None) as batch_op:
         batch_op.drop_index(batch_op.f("ix_erc20_tokens_address_chain"))
         batch_op.create_index("ix_erc20_tokens_chain_address", ["chain", "address"], unique=True)

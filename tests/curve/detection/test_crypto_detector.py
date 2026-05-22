@@ -24,7 +24,6 @@ def _encode_uint256(val: int) -> bytes:
 class TestDetectCryptoParams:
     def testNotCryptoPool(self):
         """Pool where fee_gamma() reverts is not a crypto pool."""
-
         io = make_fake_pool_io({})
 
         result = detect_crypto_params(io, POOL_ADDR, block_identifier=18_000_000)
@@ -37,7 +36,6 @@ class TestDetectCryptoParams:
 
     def testFeeGammaZeroIsNotCrypto(self):
         """Pool where fee_gamma() returns 0 is not a crypto pool."""
-
         io = make_fake_pool_io({
             FEE_GAMMA: _encode_uint256(0),
         })
@@ -47,7 +45,6 @@ class TestDetectCryptoParams:
 
     def testCryptoPoolWithAllParams(self):
         """Crypto pool with fee_gamma > 0 fetches all related parameters."""
-
         io = make_fake_pool_io({
             FEE_GAMMA: _encode_uint256(5_000_000_000_000_000),
             MID_FEE: _encode_uint256(4_000_000),
@@ -66,7 +63,6 @@ class TestDetectCryptoParams:
 
     def testCryptoPoolWithMissingMidFee(self):
         """Crypto pool where mid_fee() reverts still reports is_crypto=True."""
-
         io = make_fake_pool_io({
             FEE_GAMMA: _encode_uint256(5_000_000_000_000_000),
             # MID_FEE not provided — will revert
@@ -82,7 +78,6 @@ class TestDetectCryptoParams:
 
     def testCryptoPoolWithoutOffpegFee(self):
         """Crypto pool where offpeg_fee_multiplier() reverts returns None for it."""
-
         io = make_fake_pool_io({
             FEE_GAMMA: _encode_uint256(5_000_000_000_000_000),
             MID_FEE: _encode_uint256(4_000_000),

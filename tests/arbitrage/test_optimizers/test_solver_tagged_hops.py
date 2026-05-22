@@ -431,8 +431,10 @@ class TestArbSolverTaggedDispatch:
         assert result.method == SolverMethod.MOBIUS
 
     def test_solidly_stable_falls_to_brent(self):
-        """Paths with Solidly stable hops should fall back to Brent until
-        SolidlyStableSolver is implemented."""
+        """
+        Paths with Solidly stable hops should fall back to Brent until
+        SolidlyStableSolver is implemented.
+        """
         solver = ArbSolver()
         inp = SolveInput(
             hops=(

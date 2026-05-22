@@ -39,7 +39,7 @@ class TestStkAaveTransferHandler:
 
     def test_stkaave_transfer_uses_amount_directly(self, handler: StkAaveTransferHandler) -> None:
         """
-        stkAAVE transfers bypass index-based scaling.
+        StkAAVE transfers bypass index-based scaling.
 
         stkAAVE is an ERC20 token (GHO discount token), so transfers
         don't use index scaling. raw_amount = scaled_amount.
@@ -118,7 +118,6 @@ def _create_mock_operation(operation_type: OperationType) -> "Operation":
 
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for stkAAVE transfers."""
-
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
@@ -131,7 +130,6 @@ def _create_mock_context() -> MagicMock:
         scaled_amount: int | None,
     ) -> EnrichedScaledTokenEvent:
         """Build enriched event for testing."""
-
         # Map ERC20 transfer to base type
         actual_event_type = ScaledTokenEventType.COLLATERAL_TRANSFER
 

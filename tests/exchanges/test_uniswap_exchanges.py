@@ -1,4 +1,5 @@
-"""Tests for exchange registration via pool_type_registry.
+"""
+Tests for exchange registration via pool_type_registry.
 
 Replaces the former FACTORY_DEPLOYMENTS/register_exchange tests.
 pool_type_registry is now the sole source of truth for deployment data.
@@ -12,7 +13,6 @@ from eth_typing import ChecksumAddress
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 
 def _generate_random_address() -> ChecksumAddress:

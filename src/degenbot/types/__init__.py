@@ -1,3 +1,5 @@
+"""Shared types: AddressComparable, state caches, pool enums, and aliases."""
+
 from .address_comparable import AddressComparable
 from .concrete import BoundedCache, KeyedDefaultDict
 from .hop_types import (

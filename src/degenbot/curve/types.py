@@ -1,3 +1,4 @@
+"""Curve-specific type definitions (swap style, metapool enums)."""
 from __future__ import annotations
 
 import dataclasses
@@ -188,39 +189,84 @@ class CurveDataProvider(Protocol):
     """
 
     # Pool-state fetchers
-    def virtual_price(self, block_number: int) -> int: ...
-    def base_virtual_price(self, block_number: int) -> int: ...
-    def base_cache_updated(self, block_number: int) -> int: ...
-    def admin_balances(self, block_number: int) -> tuple[int, ...]: ...
-    def d(self, block_number: int) -> int: ...  # crypto only
-    def gamma(self, block_number: int) -> int: ...  # crypto only
-    def price_scale(self, block_number: int) -> tuple[int, ...]: ...  # crypto only
+    def virtual_price(self, block_number: int) -> int:
+        """Return virtual price."""
+        ...
+    def base_virtual_price(self, block_number: int) -> int:
+        """Return base virtual price."""
+        ...
+    def base_cache_updated(self, block_number: int) -> int:
+        """Return base cache updated."""
+        ...
+    def admin_balances(self, block_number: int) -> tuple[int, ...]:
+        """Return admin balances."""
+        ...
+    def d(self, block_number: int) -> int:  # crypto only
+        """Return the D invariant value."""
+        ...
+    def gamma(self, block_number: int) -> int:  # crypto only
+        """Return the gamma parameter."""
+        ...
+    def price_scale(self, block_number: int) -> tuple[int, ...]:  # crypto only
+        """Return the price scale values."""
+        ...
 
     # Chain-state fetchers
-    def block_timestamp(self, block_number: int) -> int: ...
-    def block_number(self) -> int: ...
+    def block_timestamp(self, block_number: int) -> int:
+        """Return the block timestamp."""
+        ...
+    def block_number(self) -> int:
+        """Return block number."""
+        ...
 
     # Helper fetchers
-    def token_balance(self, token_address: str, holder_address: str, block_number: int) -> int: ...
-    def token_total_supply(self, token_address: str, block_number: int) -> int: ...
-    def lending_rates(self, block_number: int) -> tuple[int, ...]: ...
-    def redemption_price(self, block_number: int) -> int: ...
+    def token_balance(self, token_address: str, holder_address: str, block_number: int) -> int:
+        """Return token balance."""
+        ...
+    def token_total_supply(self, token_address: str, block_number: int) -> int:
+        """Return token total supply."""
+        ...
+    def lending_rates(self, block_number: int) -> tuple[int, ...]:
+        """Return lending rates."""
+        ...
+    def redemption_price(self, block_number: int) -> int:
+        """Return redemption price."""
+        ...
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
 class CurveStableswapPoolState(AbstractPoolState):
+    """Return virtual price."""
+
+    """Return base virtual price."""
+    """Return base cache updated."""
+    """Return admin balances."""
+    """Return d."""
+    """Return gamma."""
+    """Price scale."""
+    """Return block timestamp."""
+    """Return block number."""
+    """Return token balance."""
+    """Return token total supply."""
+    """Return lending rates."""
+    """Return redemption price."""
+    """CurveStableswapPoolState class."""
     balances: tuple[int, ...]
     base: CurveStableswapPoolState | None = None
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class CurveStableswapPoolExternalUpdate:
+    """CurveStableswapPoolExternalUpdate class."""
+
     block_number: BlockNumber
     balances: tuple[int, ...]
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class CurveStableswapPoolSimulationResult:
+    """CurveStableswapPoolSimulationResult class."""
+
     amount0_delta: int
     amount1_delta: int
     current_state: CurveStableswapPoolState
@@ -229,6 +275,8 @@ class CurveStableswapPoolSimulationResult:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class CurveStableSwapPoolAttributes:
+    """CurveStableSwapPoolAttributes class."""
+
     address: HexAddress
     lp_token_address: HexAddress
     coin_addresses: list[HexAddress]
@@ -240,4 +288,6 @@ class CurveStableSwapPoolAttributes:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class CurveStableSwapPoolStateUpdated(PoolStateMessage):
+    """CurveStableSwapPoolStateUpdated class."""
+
     state: CurveStableswapPoolState

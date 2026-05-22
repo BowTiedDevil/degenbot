@@ -45,6 +45,7 @@ class AsyncErc20Builder:
         db: DatabaseSessionManager,
         tokens: TokenRegistry,
     ) -> None:
+        """Initialize the instance."""
         self._default_chain_id = default_chain_id
         self._db = db
         self._tokens = tokens
@@ -58,7 +59,6 @@ class AsyncErc20Builder:
         io: AsyncPoolIO | None = None,
     ) -> Erc20Token:
         """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token."""
-
         address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"

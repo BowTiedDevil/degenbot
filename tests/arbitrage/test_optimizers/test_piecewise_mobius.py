@@ -195,7 +195,8 @@ def test_piecewise_mobius_solver_multi_range_detection():
 
 
 def test_piecewise_mobius_solver_multi_range_routing():
-    """Test that PiecewiseMobiusSolver detects multi-range hops and routes correctly.
+    """
+    Test that PiecewiseMobiusSolver detects multi-range hops and routes correctly.
 
     Verifies the routing logic (detection, hop identification) without
     depending on the profitability of the test data.
@@ -251,12 +252,12 @@ def test_piecewise_mobius_solver_multi_range_routing():
 
 
 def test_piecewise_mobius_crossing_math():
-    """Test that crossing math produces correct TickRangeCrossing values.
+    """
+    Test that crossing math produces correct TickRangeCrossing values.
 
     This verifies the V3TickRangeSequence.compute_crossing() integration
     produces correct crossing amounts.
     """
-
     # Create two adjacent ranges with known properties
     # Range 0: price [1.0, 2.0), liquidity = 1000
     # Range 1: price [2.0, 4.0), liquidity = 2000
@@ -338,7 +339,8 @@ def test_piecewise_mobius_crossing_math():
 
 
 def test_piecewise_mobius_golden_section_convergence():
-    """Test that golden section search converges to a reasonable solution.
+    """
+    Test that golden section search converges to a reasonable solution.
 
     Uses a simple 2-hop path with known profitable solution.
     """
@@ -390,7 +392,8 @@ def test_piecewise_mobius_golden_section_convergence():
 
 
 def test_arb_solver_piecewise_dispatch():
-    """Test that ArbSolver correctly dispatches through solver chain.
+    """
+    Test that ArbSolver correctly dispatches through solver chain.
 
     For single-range V3 paths, MobiusSolver is faster and succeeds first.
     For multi-range V3 paths, PiecewiseMobiusSolver handles them.
@@ -422,7 +425,8 @@ def test_arb_solver_piecewise_dispatch():
 
 
 def test_piecewise_lazy_candidate_filtering():
-    """Test that lazy candidate filtering skips implausible ranges.
+    """
+    Test that lazy candidate filtering skips implausible ranges.
 
     Creates a scenario where distant ranges have high crossing costs
     but low liquidity - should be filtered out.
@@ -486,13 +490,13 @@ def test_piecewise_lazy_candidate_filtering():
 
 
 def test_tick_range_caching():
-    """Test that tick range caching works correctly.
+    """
+    Test that tick range caching works correctly.
 
     This test verifies the cache stores and returns results.
     Note: We can't easily test cache hits without a real pool,
     but we can verify the cache infrastructure exists.
     """
-
     # Verify cache infrastructure exists
     assert isinstance(_tick_range_cache, dict)
 
@@ -508,11 +512,11 @@ def test_tick_range_caching():
 
 
 def test_mobius_solver_rejects_multi_range_v3():
-    """Test that MobiusSolver rejects multi-range V3 hops.
+    """
+    Test that MobiusSolver rejects multi-range V3 hops.
 
     Multi-range V3 paths should be handled by PiecewiseMobiusSolver.
     """
-
     mobius_solver = MobiusSolver()
 
     # Multi-range hop
@@ -555,14 +559,14 @@ def test_mobius_solver_rejects_multi_range_v3():
 
 
 def test_arb_solver_dispatches_multi_range_to_piecewise():
-    """Test that ArbSolver dispatches multi-range V3 to PiecewiseMobiusSolver.
+    """
+    Test that ArbSolver dispatches multi-range V3 to PiecewiseMobiusSolver.
 
     This verifies the complete dispatch chain:
     1. MobiusSolver.supports() returns False for multi-range V3
     2. PiecewiseMobiusSolver.supports() returns True
     3. ArbSolver attempts PiecewiseMobiusSolver (may fall back to Brent if not profitable)
     """
-
     mobius_solver = MobiusSolver()
     piecewise_solver = PiecewiseMobiusSolver()
     arb_solver = ArbSolver()
@@ -631,7 +635,8 @@ def test_arb_solver_dispatches_multi_range_to_piecewise():
 
 
 def test_single_range_v3_uses_mobius():
-    """Test that single-range V3 hops still use MobiusSolver.
+    """
+    Test that single-range V3 hops still use MobiusSolver.
 
     Single-range V3 should be fast-pathed through MobiusSolver.
     """

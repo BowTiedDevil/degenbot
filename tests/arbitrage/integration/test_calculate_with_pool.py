@@ -75,7 +75,8 @@ def t2() -> FakeToken:
 def v2_v2_v2_pools(
     t0: FakeToken, t1: FakeToken, t2: FakeToken
 ) -> tuple[UniswapV2Pool, UniswapV2Pool, UniswapV2Pool]:
-    """3-hop V2 cycle: t0 -> t1 -> t2 -> t0.
+    """
+    3-hop V2 cycle: t0 -> t1 -> t2 -> t0.
 
     Same reserve ratios as verify_legacy_equivalence.py, known profitable.
     """
@@ -119,7 +120,6 @@ def v2_v2_v2_pools(
 @pytest.fixture
 def v3_profitable_pair(usdc: FakeToken, weth: FakeToken) -> list[UniswapV3Pool]:
     """A 2-hop single-range V3 cycle with 10% price spread."""
-
     tick_2200 = round(math.log(2200.0) / math.log(1.0001))
     tick_2000 = round(math.log(2000.0) / math.log(1.0001))
     sqrt_2200 = get_sqrt_ratio_at_tick(tick_2200)
@@ -226,7 +226,8 @@ class TestCalculateWithPool:
         assert async_result.profit == sync_result.profit
 
     def test_v3_processpool_matches_sync(self, usdc, v3_profitable_pair):
-        """ProcessPoolExecutor: V3 single-range cycle result identical.
+        """
+        ProcessPoolExecutor: V3 single-range cycle result identical.
 
         This is the critical improvement over legacy UniswapLpCycle: the
         legacy method fails with "Cannot perform calculation with process
@@ -256,7 +257,6 @@ class TestCalculateWithPool:
 
     def test_state_override_with_pool(self, t0, v2_v2_v2_pools):
         """calculate_with_pool respects state_overrides."""
-
         path = ArbitragePath(
             pools=v2_v2_v2_pools,
             input_token=t0,
@@ -287,7 +287,6 @@ class TestCalculateWithPool:
 
     def test_unprofitable_path_raises(self, usdc, dai):
         """Unprofitable cycle raises OptimizationError in executor too."""
-
         # Symmetric pools — no arb
         fee = Fraction(3, 1000)
         pool_a = UniswapV2Pool(

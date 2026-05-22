@@ -1,3 +1,4 @@
+"""Abstract liquidity pool protocol definition."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -14,12 +15,16 @@ if TYPE_CHECKING:
 
 
 class AbstractLiquidityPool(AddressComparable, ABC):
+    """AbstractLiquidityPool class."""
+
     address: ChecksumAddress
     name: str
 
     @property
     @abstractmethod
-    def tokens(self) -> tuple[Erc20Token, ...]: ...
+    def tokens(self) -> tuple[Erc20Token, ...]:
+        """Tokens."""
+        ...
 
     @abstractmethod
     def simulate_swap(
@@ -28,7 +33,12 @@ class AbstractLiquidityPool(AddressComparable, ABC):
         amount_in: int,
         token_out: ChecksumAddress,
         state_override: AbstractPoolState | None = None,
-    ) -> SimulationResult: ...
+    ) -> SimulationResult:
+        """Simulate swap."""
+        ...
 
     def __str__(self) -> str:
+        """Tokens."""
+        """Simulate swap."""
+        """Return a string representation."""
         return self.name

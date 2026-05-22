@@ -77,7 +77,6 @@ class V3BuilderBase:
         tick_spacing_result: HexBytes,
     ) -> V3ImmutableData:
         """Decode raw call results into typed immutable V3 pool data."""
-
         (factory_raw,) = eth_abi.abi.decode(types=["address"], data=factory_result)
         (token0_raw,) = eth_abi.abi.decode(types=["address"], data=token0_result)
         (token1_raw,) = eth_abi.abi.decode(types=["address"], data=token1_result)
@@ -99,7 +98,6 @@ class V3BuilderBase:
         V3 slot0() returns [uint160 sqrtPriceX96, int24 tick, uint16, uint16,
         uint16, uint8, bool]. Only the first two fields are needed.
         """
-
         sqrt_price_x96, tick, *_ = eth_abi.abi.decode(
             types=["uint160", "int24", "uint16", "uint16", "uint16", "uint8", "bool"],
             data=slot0_result,
@@ -112,7 +110,6 @@ class V3BuilderBase:
     @staticmethod
     def extract_db_values(pool_from_db: UniswapV3PoolTableBase) -> V3DbValues:
         """Extract factory, token addresses, fee, tick_spacing, deployer from a DB row."""
-
         return V3DbValues(
             factory=get_checksum_address(pool_from_db.exchange.factory),
             token0_address=get_checksum_address(pool_from_db.token0.address),
@@ -137,7 +134,6 @@ class V3BuilderBase:
         Returns (working_tick_bitmap, working_tick_data, db_snapshot_loaded).
         If the snapshot cannot be loaded, returns ({}, {}, False).
         """
-
         init_maps = pool_with_data.initialization_maps
         liq_positions = pool_with_data.liquidity_positions
 
@@ -175,7 +171,6 @@ class V3BuilderBase:
         Returns (tick_bitmap_arg, tick_data_arg). Only passes data when
         we have a complete DB snapshot with actual tick data.
         """
-
         if db_snapshot_loaded and working_tick_data:
             return working_tick_bitmap, working_tick_data
         return None, None

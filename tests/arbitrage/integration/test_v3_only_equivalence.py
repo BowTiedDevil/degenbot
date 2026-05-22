@@ -189,7 +189,6 @@ class TestV3OnlyEquivalance:
         MobiusSolver's optimal input must maximize profit as verified
         by manual simulation using the same BoundedProductHop math.
         """
-
         t0, t1 = tokens
         pool_a, pool_b = _make_profitable_v3_v3_cycle(t0, t1)
 
@@ -230,7 +229,6 @@ class TestV3OnlyEquivalance:
         share. If the directions and prices are asymmetric, the path can be
         profitable even with 0.05% fees.
         """
-
         # Ticks for prices: 2200, 3.0, and 1/5.0 (which is -tick of 5.0)
         tick_2200 = round(math.log(2200.0) / math.log(1.0001))
         tick_3 = round(math.log(3.0) / math.log(1.0001))

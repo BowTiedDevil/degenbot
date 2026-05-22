@@ -1,3 +1,4 @@
+"""ERC-20 token builder that fetches on-chain metadata."""
 from __future__ import annotations
 
 import contextlib
@@ -33,8 +34,7 @@ if TYPE_CHECKING:
 
 
 class Erc20Builder:
-    """
-    Builds Erc20Token instances from DB lookups and RPC calls.
+    """Builds Erc20Token instances from DB lookups and RPC calls.
 
     Owns the full I/O choreography: check registry → check DB → fetch
     from chain → construct token → register.
@@ -47,6 +47,7 @@ class Erc20Builder:
         db: DatabaseSessionManager,
         tokens: TokenRegistry,
     ) -> None:
+        """Initialize the instance."""
         self._default_chain_id = default_chain_id
         self._db = db
         self._tokens = tokens
@@ -60,7 +61,6 @@ class Erc20Builder:
         io: PoolIO | None = None,
     ) -> Erc20Token:
         """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token."""
-
         address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
@@ -186,7 +186,6 @@ class Erc20Builder:
         io: PoolIO | None = None,
     ) -> int:
         """Retrieve the ERC-20 balance for the given address."""
-
         address = get_checksum_address(address)
         assert token.chain_id is not None
         assert io is not None
@@ -220,7 +219,6 @@ class Erc20Builder:
         io: PoolIO | None = None,
     ) -> int:
         """Retrieve the amount that can be spent by `spender` on behalf of `owner`."""
-
         owner = get_checksum_address(owner)
         spender = get_checksum_address(spender)
         assert token.chain_id is not None
@@ -253,7 +251,6 @@ class Erc20Builder:
         io: PoolIO | None = None,
     ) -> int:
         """Retrieve the total supply for this token."""
-
         assert token.chain_id is not None
         assert io is not None
 

@@ -1,4 +1,5 @@
-"""Tests for the shared type resolution module.
+"""
+Tests for the shared type resolution module.
 
 These verify the functions extracted from Bot/AsyncBot into
 src/degenbot/builders/type_resolution.py — a pure-logic function

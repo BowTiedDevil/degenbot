@@ -1,5 +1,4 @@
-"""
-Liquidation pattern types for multi-liquidation scenarios.
+"""Liquidation pattern types for multi-liquidation scenarios.
 
 This module contains pure data types for liquidation pattern detection:
 - SINGLE: 1 liquidation with 1 burn event (standard)
@@ -16,9 +15,7 @@ from eth_typing import ChecksumAddress
 
 
 class LiquidationPattern(Enum):
-    """
-    Patterns for handling multiple liquidations of the same (user, debt_asset).
-    """
+    """Patterns for handling multiple liquidations of the same (user, debt_asset)."""
 
     SINGLE = auto()  # 1 liquidation, 1 burn
     COMBINED_BURN = auto()  # N liquidations, 1 combined burn (Issue 0056)
@@ -27,9 +24,7 @@ class LiquidationPattern(Enum):
 
 @dataclass
 class LiquidationGroup:
-    """
-    Represents a group of liquidations sharing the same (user, debt_v_token).
-    """
+    """Represents a group of liquidations sharing the same (user, debt_v_token)."""
 
     user: ChecksumAddress
     debt_v_token: ChecksumAddress
@@ -42,14 +37,17 @@ class LiquidationGroup:
 
     @property
     def liquidation_count(self) -> int:
+        """Return liquidation count."""
         return len(self.liquidations)
 
     @property
     def burn_event_count(self) -> int:
+        """Return burn event count."""
         return len(self.burn_events)
 
     @property
     def total_debt_to_cover(self) -> int:
+        """Return total debt to cover."""
         return sum(debt for _, debt, _ in self.liquidations)
 
     def detect_pattern(self) -> LiquidationPattern:
@@ -63,8 +61,7 @@ class LiquidationGroup:
 
 @dataclass
 class LiquidationPatternContext:
-    """
-    Context for pattern-aware liquidation processing.
+    """Context for pattern-aware liquidation processing.
 
     Replaces liquidation_aggregates, liquidation_counts, and processed_liquidations.
     """

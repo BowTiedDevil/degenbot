@@ -45,8 +45,7 @@ def _hop_to_float_state(hop: HopType) -> tuple[float, float, float]:
 
 @dataclass(frozen=True, slots=True)
 class _MobiusCoefficients:
-    """
-    Internal Möbius coefficients l(x) = K*x / (M + N*x).
+    """Internal Möbius coefficients l(x) = K*x / (M + N*x).
 
     Computed from Hop data via an O(n) recurrence.
     """
@@ -72,8 +71,7 @@ class _MobiusCoefficients:
 
 
 def _compute_mobius_coefficients(hops: tuple[HopType, ...]) -> _MobiusCoefficients:
-    """
-    Compute Möbius transformation coefficients from hops.
+    """Compute Möbius transformation coefficients from hops.
 
     The recurrence:
         Initialize: K = gamma_1 * s_1, M = r_1, N = gamma_1

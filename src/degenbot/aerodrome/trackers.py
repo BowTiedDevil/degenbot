@@ -1,3 +1,4 @@
+"""Aerodrome pool and factory trackers for event-driven updates."""
 from __future__ import annotations
 
 import contextlib
@@ -29,8 +30,8 @@ if TYPE_CHECKING:
 
 
 class _AbstractAerodromeV2PoolTracker[Pool: AerodromeV2Pool](AbstractPoolTracker[Pool]):
-    """
-    Abstract class used to inject the AerodromeV2Pool class into the parent abstract pool manager
+    """Abstract class used to inject the AerodromeV2Pool class into the parent abstract pool manager.
+
     class where the tracking dicts are defined.
     """
 
@@ -41,11 +42,10 @@ class _AbstractAerodromeV2PoolTracker[Pool: AerodromeV2Pool](AbstractPoolTracker
         silent: bool = False,
         pool_class_kwargs: dict[str, Any] | None = None,
     ) -> Pool:
-        """
-        Get a pool from its address. If the pool is already tracked or found in the global registry,
+        """Get a pool from its address. If the pool is already tracked or found in the global registry,.
+
         that instance will be returned. Otherwise, a new one will be built.
         """
-
         pool_address = get_checksum_address(pool_address)
 
         with contextlib.suppress(KeyError):
@@ -86,8 +86,8 @@ class _AbstractAerodromeV2PoolTracker[Pool: AerodromeV2Pool](AbstractPoolTracker
 class AerodromeV2PoolTracker(
     _AbstractAerodromeV2PoolTracker[AerodromeV2Pool], pool_factory=AerodromeV2Pool
 ):
-    """
-    A class that generates and tracks concrete instances of a Uniswap V2 liquidity pool helper or
+    """A class that generates and tracks concrete instances of a Uniswap V2 liquidity pool helper or.
+
     one of its child classes.
     """
 
@@ -102,6 +102,7 @@ class AerodromeV2PoolTracker(
         deployer_address: ChecksumAddress | str | None = None,
         pool_init_hash: str | None = None,
     ) -> None:
+        """Initialize the instance."""
         factory_address = get_checksum_address(factory_address)
 
         self._bot = bot
@@ -132,6 +133,7 @@ class AerodromeV2PoolTracker(
         self._untracked_pools: set[ChecksumAddress] = set()
 
     def __repr__(self) -> str:  # pragma: no cover
+        """Return the canonical string representation."""
         return f"{self.__class__.__name__}(factory={self._factory_address})"
 
     def get_stable_pool(
@@ -141,10 +143,9 @@ class AerodromeV2PoolTracker(
         silent: bool = False,
         pool_class_kwargs: dict[str, Any] | None = None,
     ) -> AerodromeV2Pool:
-        """
-        Get a stable pool by its token addresses. The token addresses may be passed in any order.
-        """
-
+        """Return the canonical string representation."""
+        """Return a string representation."""
+        """Get a stable pool by its token addresses. The token addresses may be passed in any order."""
         pool_address = generate_aerodrome_v2_pool_address(
             deployer_address=self._deployer_address,
             token_addresses=sorted(token_addresses),
@@ -165,10 +166,7 @@ class AerodromeV2PoolTracker(
         silent: bool = False,
         pool_class_kwargs: dict[str, Any] | None = None,
     ) -> AerodromeV2Pool:
-        """
-        Get a volatile pool by its token addresses. The token addresses may be passed in any order.
-        """
-
+        """Get a volatile pool by its token addresses. The token addresses may be passed in any order."""
         pool_address = generate_aerodrome_v2_pool_address(
             deployer_address=self._deployer_address,
             token_addresses=sorted(token_addresses),
@@ -186,9 +184,12 @@ class AerodromeV2PoolTracker(
 class AerodromeV3PoolTracker(
     AbstractUniswapV3PoolTracker[AerodromeV3Pool], pool_factory=AerodromeV3Pool
 ):
+    """AerodromeV3PoolTracker class."""
+
     POOL_IMPLEMENTATION_ADDRESS = get_checksum_address("0xeC8E5342B19977B4eF8892e02D8DAEcfa1315831")
 
     def __repr__(self) -> str:  # pragma: no cover
+        """Return the canonical string representation."""
         return f"{self.__class__.__name__}(factory={self._factory_address})"
 
     def get_pool_from_tokens_and_fee(
@@ -196,6 +197,9 @@ class AerodromeV3PoolTracker(
         *args: Any,
         **kwargs: Any,
     ) -> Never:
+        """Return the canonical string representation."""
+        """Return a string representation."""
+        """Return pool from tokens and fee."""
         raise NotImplementedError
 
     def get_pool_from_tokens_and_tick_spacing(
@@ -207,6 +211,7 @@ class AerodromeV3PoolTracker(
         # keyword arguments passed to the pool class constructor
         pool_class_kwargs: dict[str, Any] | None = None,
     ) -> AerodromeV3Pool:
+        """Return pool from tokens and tick spacing."""
         pool_address = generate_aerodrome_v3_pool_address(
             deployer_address=self._deployer_address,
             token_addresses=sorted(token_addresses),

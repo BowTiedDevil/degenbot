@@ -42,6 +42,7 @@ class AsyncV3PoolBuilder:
     """
 
     def __init__(self, ctx: AsyncBuilderContext) -> None:
+        """Initialize the instance."""
         assert ctx.managed_pools is not None, (
             "AsyncV3PoolBuilder requires managed_pools in BuilderContext"
         )
@@ -61,7 +62,6 @@ class AsyncV3PoolBuilder:
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free V3-style pool."""
-
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
@@ -314,7 +314,6 @@ class AsyncV3PoolBuilder:
         io: AsyncPoolIO | None = None,
     ) -> bool:
         """Fetch current state from chain and push update to the pool."""
-
         if isinstance(pool, UniswapV4Pool):
             msg = f"AsyncV3PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)

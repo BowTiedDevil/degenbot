@@ -56,7 +56,6 @@ class FakeErc20Token:
 class TestDetectLendingTokens:
     def testNoLendingTokens(self):
         """Plain pool with no cTokens or yTokens."""
-
         token_addresses = (DAI, USDC, USDT)
         tokens = tuple(starmap(FakeErc20Token, [(DAI, 18), (USDC, 6), (USDT, 6)]))
 
@@ -76,8 +75,7 @@ class TestDetectLendingTokens:
         assert result.precision_multipliers is None
 
     def testCTokenDetection(self):
-        """cToken detection via isCToken(), with underlying decimals for precision."""
-
+        """CToken detection via isCToken(), with underlying decimals for precision."""
         # Pool with cDAI (8 decimals) and USDC (6 decimals)
         token_addresses = (CDAI, USDC)
         tokens = tuple(starmap(FakeErc20Token, [(CDAI, 8), (USDC, 6)]))
@@ -119,8 +117,7 @@ class TestDetectLendingTokens:
         assert result.precision_multipliers[1] == 10**12  # 10^(18-6) for USDC
 
     def testCTokenWithDifferentUnderlyingDecimals(self):
-        """cUSDC has 8 decimals, USDC underlying has 6 → precision = 10^12."""
-
+        """CUSDC has 8 decimals, USDC underlying has 6 → precision = 10^12."""
         token_addresses = (CUSDC, DAI)
         tokens = tuple(starmap(FakeErc20Token, [(CUSDC, 8), (DAI, 18)]))
 
@@ -156,8 +153,7 @@ class TestDetectLendingTokens:
         assert result.precision_multipliers[0] == 10**12
 
     def testYTokenDetection(self):
-        """yToken detection via token() returning a non-zero address."""
-
+        """YToken detection via token() returning a non-zero address."""
         token_addresses = (YDAI, USDC)
         tokens = tuple(starmap(FakeErc20Token, [(YDAI, 18), (USDC, 6)]))
 
@@ -188,8 +184,7 @@ class TestDetectLendingTokens:
         assert result.precision_multipliers is not None
 
     def testYTokenWithZeroAddressNotLending(self):
-        """yToken where token() returns zero address is not treated as lending."""
-
+        """YToken where token() returns zero address is not treated as lending."""
         token_addresses = (DAI, USDC)
         tokens = tuple(starmap(FakeErc20Token, [(DAI, 18), (USDC, 6)]))
 

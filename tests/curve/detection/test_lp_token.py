@@ -46,7 +46,6 @@ class TestFindLpToken:
 
     def testLpTokenFromSecondRegistry(self):
         """First registry returns zero address, second registry finds the LP token."""
-
         call_count = {"count": 0}
 
         def handle_get_lp_token(to: str, data: bytes, block: int) -> bytes:
@@ -69,7 +68,6 @@ class TestFindLpToken:
 
     def testNoLpTokenFound(self):
         """Both registries revert or return zero — no LP token found."""
-
         io = make_fake_pool_io({})  # All calls revert
 
         result = find_lp_token(

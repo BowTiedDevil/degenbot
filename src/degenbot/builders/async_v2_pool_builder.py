@@ -37,6 +37,7 @@ class AsyncV2PoolBuilder:
     """
 
     def __init__(self, ctx: AsyncBuilderContext) -> None:
+        """Initialize the instance."""
         self._default_chain_id = ctx.default_chain_id
         self._db = ctx.db
         self._pools = ctx.pools
@@ -52,7 +53,6 @@ class AsyncV2PoolBuilder:
         io: AsyncPoolIO,
     ) -> V2CommonData:
         """Fetch data shared by all V2 variants using async I/O."""
-
         pool_address = get_checksum_address(pool_address)
 
         # Try DB first
@@ -140,7 +140,6 @@ class AsyncV2PoolBuilder:
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free V2-style pool."""
-
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"

@@ -41,8 +41,7 @@ class WithdrawHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich a WITHDRAW event.
+        """Enrich a WITHDRAW event.
 
         Handles both standard burns and the interest>withdrawal Mint case.
         """
@@ -81,8 +80,7 @@ class WithdrawHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Handle the case where interest exceeds withdrawal amount.
+        """Handle the case where interest exceeds withdrawal amount.
 
         The Mint event's amount represents the net interest (interest - withdrawal),
         not the actual withdrawal. Extract the actual withdrawal amount from the

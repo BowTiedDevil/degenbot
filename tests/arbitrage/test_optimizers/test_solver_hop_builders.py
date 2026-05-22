@@ -76,7 +76,6 @@ class TestArbSolverParityWithLpCycle:
 
     def test_v2_v2_pair_parity(self):
         """ArbSolver should find profitable V2-V2 arbitrage."""
-
         usdc = Erc20Token(
             address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             name="USD Coin",
@@ -133,7 +132,6 @@ class TestArbSolverParityWithLpCycle:
 
     def test_v2_v3_pair_parity(self):
         """ArbSolver and _calculate() should agree on V2-V3 cycle using FakeV3Pool."""
-
         usdc = FakeToken(
             address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", symbol="USDC", decimals=6
         )
@@ -195,7 +193,6 @@ class TestArbSolverParityWithLpCycle:
 
     def test_v3_v3_pair_parity(self):
         """ArbSolver and _calculate() should agree on V3-V3 cycle using FakeV3Pool."""
-
         usdc = FakeToken(
             address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", symbol="USDC", decimals=6
         )
@@ -236,7 +233,6 @@ class TestArbSolverParityWithLpCycle:
         """
         Walk through V2 pools manually to verify the solver's optimal input produces real profit.
         """
-
         usdc = Erc20Token(
             address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             name="USD Coin",

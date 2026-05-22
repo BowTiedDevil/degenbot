@@ -14,8 +14,7 @@ def get_number_for_block_identifier(
     identifier: BlockIdentifier | None,
     provider: ProviderAdapter,
 ) -> BlockNumber:
-    """
-    Convert a block identifier to a block number.
+    """Convert a block identifier to a block number.
 
     Args:
         identifier: Block identifier (None, int, or string tag like 'latest')
@@ -23,8 +22,8 @@ def get_number_for_block_identifier(
 
     Returns:
         Block number as integer
-    """
 
+    """
     match identifier:
         case None:
             return provider.get_block_number()
@@ -55,6 +54,7 @@ async def get_number_for_block_identifier_async(
     identifier: BlockIdentifier | None,
     provider: AsyncProviderAdapter,
 ) -> BlockNumber:
+    """Resolve a block identifier to a block number asynchronously."""
     match identifier:
         case None:
             return await provider.get_block_number()

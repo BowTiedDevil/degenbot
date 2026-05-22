@@ -30,8 +30,7 @@ class BorrowHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich a BORROW or GHO_BORROW event.
+        """Enrich a BORROW or GHO_BORROW event.
 
         For BORROW operations:
         1. Extract raw amount from the Pool BORROW event

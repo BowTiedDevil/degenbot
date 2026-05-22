@@ -19,8 +19,8 @@ if TYPE_CHECKING:
 
 
 class ArbPoolCacheAdapter(Subscriber):
-    """
-    Subscribes to pool state updates and auto-registers them in the
+    """Subscribes to pool state updates and auto-registers them in the.
+
     ArbSolver's Rust pool cache.
 
     Each pool is registered in both reserve orientations (token0→token1
@@ -33,12 +33,12 @@ class ArbPoolCacheAdapter(Subscriber):
     """
 
     def __init__(self, *, solver: ArbSolver) -> None:
+        """Initialize the instance."""
         self._solver = solver
         self._pool_to_ids: dict[int, tuple[int, int]] = {}  # id(pool) → (forward_id, reverse_id)
 
     def register(self, pool: AbstractLiquidityPool) -> int:
-        """
-        Register a pool for auto-updates.
+        """Register a pool for auto-updates.
 
         Subscribes to the pool's state notifications and registers both
         reserve orientations in the solver's cache.
@@ -81,8 +81,7 @@ class ArbPoolCacheAdapter(Subscriber):
         publisher: Publisher,
         message: AbstractPublisherMessage,  # ruff: ignore[ARG002]
     ) -> None:
-        """
-        Called when a pool publishes a state update.
+        """Handle a pool state update.
 
         Updates both reserve orientations in the Rust cache.
         """

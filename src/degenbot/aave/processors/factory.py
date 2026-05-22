@@ -41,6 +41,7 @@ class TokenProcessorFactory:
 
         Raises:
             ValueError: If revision is not supported
+
         """
         if revision not in COLLATERAL_STRATEGIES:
             msg = f"No processor for collateral revision {revision}"
@@ -69,6 +70,7 @@ class TokenProcessorFactory:
 
         Raises:
             ValueError: If revision is not supported
+
         """
         if revision not in DEBT_STRATEGIES:
             msg = f"No processor for debt revision {revision}"
@@ -97,6 +99,7 @@ class TokenProcessorFactory:
 
         Raises:
             ValueError: If revision is not supported
+
         """
         if revision not in GHO_STRATEGIES:
             msg = f"No processor for GHO revision {revision}"

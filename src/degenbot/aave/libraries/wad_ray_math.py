@@ -1,3 +1,4 @@
+"""Aave WadRayMath library for 18/27-decimal fixed-point arithmetic."""
 from enum import Enum
 
 from degenbot.constants import MAX_UINT256
@@ -16,6 +17,8 @@ WAD_RAY_RATIO = 10**9
 
 
 class Rounding(Enum):
+    """Rounding class."""
+
     FLOOR = 0
     CEIL = 1
 
@@ -31,26 +34,21 @@ def _raise_on_zero_division(divisor: int) -> None:
 
 
 def wad_mul(a: int, b: int) -> int:
-    """
-    Multiplies two wad, rounding half up to the nearest wad.
-    """
-
+    """Multiplies two wad, rounding half up to the nearest wad."""
     if a * b + HALF_WAD > MAX_UINT256:
         raise EVMRevertError
     return (a * b + HALF_WAD) // WAD
 
 
 def wad_div(a: int, b: int) -> int:
-    """
-    Divides two wad, rounding half up to the nearest wad.
-    """
-
+    """Divides two wad, rounding half up to the nearest wad."""
     _raise_on_overflow(a * WAD + b // 2)
     _raise_on_zero_division(b)
     return (a * WAD + b // 2) // b
 
 
 def ray_mul(a: int, b: int, rounding: Rounding | None = None) -> int:
+    """Return ray mul."""
     match rounding:
         case None:
             _raise_on_overflow(a * b + HALF_RAY)
@@ -62,21 +60,22 @@ def ray_mul(a: int, b: int, rounding: Rounding | None = None) -> int:
 
 
 def ray_mul_floor(a: int, b: int) -> int:
+    """Return ray mul floor."""
     _raise_on_overflow(a * b)
     return (a * b) // RAY
 
 
 def ray_mul_ceil(a: int, b: int) -> int:
+    """Return ray mul ceil."""
     _raise_on_overflow(a * b)
     return ((a * b) // RAY) + ((a * b) % RAY != 0)
 
 
 def ray_div(a: int, b: int, rounding: Rounding | None = None) -> int:
-    """
-    Divides two ray, rounding half up to the nearest ray if a specific rounding mode is not
+    """Divides two ray, rounding half up to the nearest ray if a specific rounding mode is not.
+
     specified.
     """
-
     _raise_on_zero_division(b)
 
     match rounding:
@@ -91,29 +90,25 @@ def ray_div(a: int, b: int, rounding: Rounding | None = None) -> int:
 
 
 def ray_div_ceil(a: int, b: int) -> int:
+    """Return ray div ceil."""
     _raise_on_overflow(a * RAY)
     _raise_on_zero_division(b)
     return ((a * RAY) // b) + (((a * RAY) % b) != 0)
 
 
 def ray_div_floor(a: int, b: int) -> int:
+    """Return ray div floor."""
     _raise_on_overflow(a * RAY)
     _raise_on_zero_division(b)
     return (a * RAY) // b
 
 
 def ray_to_wad(a: int) -> int:
-    """
-    Casts ray value down to wad, rounding half up to the nearest wad.
-    """
-
+    """Casts ray value down to wad, rounding half up to the nearest wad."""
     return (a // WAD_RAY_RATIO) + (a % WAD_RAY_RATIO > WAD_RAY_RATIO // 2)
 
 
 def wad_to_ray(a: int) -> int:
-    """
-    Convert wad value up to ray.
-    """
-
+    """Convert wad value up to ray."""
     _raise_on_overflow(a * WAD_RAY_RATIO)
     return a * WAD_RAY_RATIO

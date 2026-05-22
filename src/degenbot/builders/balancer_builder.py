@@ -58,6 +58,7 @@ class BalancerBuilder(BalancerBuilderBase):
     """
 
     def __init__(self, ctx: BuilderContext) -> None:
+        """Initialize the instance."""
         self._default_chain_id = ctx.default_chain_id
         self._db = ctx.db
         self._pools = ctx.pools

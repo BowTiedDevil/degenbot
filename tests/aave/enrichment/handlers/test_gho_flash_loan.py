@@ -109,7 +109,6 @@ def _create_mock_scaled_event(
 
 def _create_mock_pool_event(amount: int) -> LogReceipt:
     """Create a mock DEFICIT_CREATED Pool event."""
-
     # DEFICIT_CREATED event has: (address indexed reserve, uint256 amount)
     data = eth_abi.abi.encode(
         ["uint256"],
@@ -148,7 +147,6 @@ def _create_mock_operation(
 
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for GHO_FLASH_LOAN."""
-
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
@@ -166,7 +164,6 @@ def _create_mock_context() -> MagicMock:
         operation_type: OperationType | None = None,
     ) -> int:
         """Extract amount from the mock pool event."""
-
         (amount,) = eth_abi.abi.decode(["uint256"], pool_event["data"])
         return amount
 

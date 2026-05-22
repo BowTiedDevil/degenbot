@@ -1,3 +1,4 @@
+"""Balancer V2 swap amount types with Vault ABI encoding."""
 from __future__ import annotations
 
 import dataclasses
@@ -20,8 +21,7 @@ _MAX_UINT256 = 2**256 - 1
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class BalancerV2SwapAmounts:
-    """
-    Swap amounts for a Balancer V2 Vault swap.
+    """Swap amounts for a Balancer V2 Vault swap.
 
     Encodes a call to Vault.swap() with:
     - SingleSwap: (poolId, kind, assetIn, assetOut, amount, userData)
@@ -39,14 +39,17 @@ class BalancerV2SwapAmounts:
     token_out: ChecksumAddress
 
     def __post_init__(self) -> None:
+        """Post-initialization hook."""
         if isinstance(self.pool_id, (bytes, bytearray)) and len(self.pool_id) != _POOL_ID_LENGTH:
             msg = f"pool_id must be {_POOL_ID_LENGTH} bytes, got {len(self.pool_id)}"
             raise DegenbotValueError(message=msg)
 
     def input_amount(self) -> int:
+        """Return input amount."""
         return self.amount_in
 
     def output_amount(self) -> int:
+        """Return output amount."""
         return self.amount_out
 
     def encode(self, *, recipient: ChecksumAddress | None = None) -> EncodedCall:

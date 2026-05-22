@@ -1,3 +1,4 @@
+"""Uniswap V3 TickMath: conversions between tick and sqrt-price."""
 import functools
 
 from degenbot.constants import MAX_UINT128, MAX_UINT256
@@ -23,10 +24,7 @@ MAX_ERROR = 3402992956809132418596140100660247210
 
 @functools.lru_cache(maxsize=V3_LIB_CACHE_SIZE)
 def get_sqrt_ratio_at_tick(tick: int) -> int:
-    """
-    Find the square root ratio in Q128.96 form for the given tick.
-    """
-
+    """Find the square root ratio in Q128.96 form for the given tick."""
     abs_tick = abs(tick)
     if not (abs_tick <= MAX_TICK):
         raise EVMRevertError(error="required: abs_tick <= MAX_TICK")
@@ -70,10 +68,7 @@ def get_sqrt_ratio_at_tick(tick: int) -> int:
 def get_tick_at_sqrt_ratio(
     sqrt_price_x96: int,
 ) -> Tick:
-    """
-    Calculates the greatest tick value such that get_tick_at_sqrt_ratio(tick) <= ratio
-    """
-
+    """Compute the greatest tick value such that ``get_tick_at_sqrt_ratio(tick) <= ratio``."""
     if not (sqrt_price_x96 >= MIN_SQRT_RATIO and sqrt_price_x96 < MAX_SQRT_RATIO):
         msg = "R"
         raise EVMRevertError(msg)

@@ -1,4 +1,5 @@
-"""Tests for the 2-pool CVXPY problem factory.
+"""
+Tests for the 2-pool CVXPY problem factory.
 
 Validates that build_2pool_cvxpy_problem produces solved problems
 with correct status and value, matching the inline construction it

@@ -243,7 +243,7 @@ class TestLoadTickSnapshot:
         assert loaded is False
 
     def test_returns_not_loaded_when_positions_exist_but_maps_empty(self):
-        """positions exist but init_maps empty → not loaded."""
+        """Positions exist but init_maps empty → not loaded."""
 
         class FakeLiqPosition:
             tick = 60

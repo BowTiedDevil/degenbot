@@ -32,12 +32,16 @@ from .conftest import (
 
 
 class TestRustArbSolverMergedIntRefinement:
-    """Tests for RustArbSolver.solve() accepting RustIntHopState objects
-    and returning EVM-exact integer results in a single call."""
+    """
+    Tests for RustArbSolver.solve() accepting RustIntHopState objects
+    and returning EVM-exact integer results in a single call.
+    """
 
     def test_solve_with_int_hops_returns_integer_results(self):
-        """When RustIntHopState hops are provided, solve() should return
-        EVM-exact integer optimal_input and profit, not floats."""
+        """
+        When RustIntHopState hops are provided, solve() should return
+        EVM-exact integer optimal_input and profit, not floats.
+        """
         int_hops = [
             rs_mobius.RustIntHopState(1_000_000, 5_000_000, 997, 1000),
             rs_mobius.RustIntHopState(1_500_000, 3_000_000, 997, 1000),
@@ -51,8 +55,10 @@ class TestRustArbSolverMergedIntRefinement:
         assert int(result.profit_int) > 0
 
     def test_solve_with_int_hops_evm_exact(self):
-        """Integer results from merged solve must be EVM-exact:
-        simulate(x) - x == profit exactly."""
+        """
+        Integer results from merged solve must be EVM-exact:
+        simulate(x) - x == profit exactly.
+        """
         int_hops = [
             rs_mobius.RustIntHopState(1_000_000, 5_000_000, 997, 1000),
             rs_mobius.RustIntHopState(1_500_000, 3_000_000, 997, 1000),
@@ -67,8 +73,10 @@ class TestRustArbSolverMergedIntRefinement:
         )
 
     def test_solve_with_int_hops_matches_two_step(self):
-        """Merged solve (int hops in one call) should produce the same result
-        as the old two-step: float tuple solve + py_mobius_refine_int."""
+        """
+        Merged solve (int hops in one call) should produce the same result
+        as the old two-step: float tuple solve + py_mobius_refine_int.
+        """
         int_hops = [
             rs_mobius.RustIntHopState(1_000_000, 5_000_000, 997, 1000),
             rs_mobius.RustIntHopState(1_500_000, 3_000_000, 997, 1000),
@@ -176,8 +184,10 @@ class TestRustArbSolverMergedIntRefinement:
 
 
 class TestArbSolverMergedIntRefinement:
-    """Tests that ArbSolver._try_rust_solve uses the merged single-call
-    integer refinement path, and results remain EVM-exact."""
+    """
+    Tests that ArbSolver._try_rust_solve uses the merged single-call
+    integer refinement path, and results remain EVM-exact.
+    """
 
     def test_v2_2hop_evm_exact(self):
         """V2-V2 result via ArbSolver must be EVM-exact."""

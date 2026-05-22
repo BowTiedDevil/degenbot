@@ -1,3 +1,4 @@
+"""CLI commands for Aave position analysis."""
 import sys
 from typing import TYPE_CHECKING, cast
 
@@ -84,15 +85,12 @@ __all__ = [
 
 @cli.group
 def aave() -> None:
-    """
-    Aave commands
-    """
+    """Aave commands."""
 
 
 @aave.group
 def activate() -> None:
-    """
-    Activate an Aave market.
+    """Activate an Aave market.
 
     Positions for activated markets are included when running `degenbot aave position update`.
     """
@@ -101,10 +99,7 @@ def activate() -> None:
 @activate.command("ethereum_aave_v3")
 @click.pass_obj
 def activate_ethereum_aave_v3(bot: Bot, chain_id: ChainId = ChainId.ETH) -> None:
-    """
-    Activate Aave V3 on Ethereum mainnet.
-    """
-
+    """Activate Aave V3 on Ethereum mainnet."""
     # GHO Token Address (Ethereum Mainnet) - only needed for market activation
     gho_token_address = get_checksum_address("0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f")
 
@@ -177,8 +172,7 @@ def activate_ethereum_aave_v3(bot: Bot, chain_id: ChainId = ChainId.ETH) -> None
 
 @aave.group
 def deactivate() -> None:
-    """
-    Deactivate an Aave market.
+    """Deactivate an Aave market.
 
     Positions for deactivated markets are not included when running `degenbot aave position update`.
     """
@@ -191,10 +185,7 @@ def deactivate_mainnet_aave_v3(
     chain_id: ChainId = ChainId.ETH,
     market_name: str = "Aave Ethereum Market",
 ) -> None:
-    """
-    Deactivate the Aave V3 Ethereum mainnet market.
-    """
-
+    """Deactivate the Aave V3 Ethereum mainnet market."""
     with bot.db() as session:
         market = session.scalar(
             select(AaveV3Market).where(
@@ -330,13 +321,13 @@ def aave_update(
     enable_backup: bool,
     backup_interval: int,
 ) -> None:
-    """
-    Update positions for active Aave markets.
+    """Update positions for active Aave markets.
 
     Processes blockchain events from the last updated block to the specified block,
     updating all user positions, interest rates, and indices in the database.
 
     Args:
+        bot: Active Bot session for on-chain data access and database queries.
         chunk_size: Maximum number of blocks to process before committing changes.
         to_block: Target block identifier (e.g., 'latest', 'latest:-64', 'finalized:128').
         verify_block: If True, verify positions at each block boundary.
@@ -347,8 +338,8 @@ def aave_update(
         dry_run: If True, preview changes without committing to the database.
         enable_backup: If True, create database backups at verification intervals.
         backup_interval: Number of blocks between database backups.
-    """
 
+    """
     with (  # noqa:PLR1702
         logging_redirect_tqdm(
             loggers=[logger],
@@ -544,9 +535,7 @@ def aave_update(
 
 @aave.group()
 def position() -> None:
-    """
-    Position commands
-    """
+    """Position commands."""
 
 
 @position.command("show")
@@ -567,12 +556,10 @@ def position() -> None:
     help="Chain ID to query (default: 1 for Ethereum mainnet).",
 )
 def position_show(bot: Bot, address: str, market: str, chain_id: int) -> None:
-    """
-    Display current Aave positions for a user.
+    """Display current Aave positions for a user.
 
     Shows collateral and debt positions for the specified address on the given market.
     """
-
     try:
         user_address = get_checksum_address(address)
     except Exception as exc:
@@ -706,8 +693,7 @@ def position_risk(  # noqa: PLR0917
     show_positions: bool,  # noqa: FBT001
     skip_prices: bool,  # noqa: FBT001
 ) -> None:
-    """
-    Analyze positions for liquidation risk.
+    """Analyze positions for liquidation risk.
 
     Identifies users with low health factors who are at risk of liquidation.
     Users are categorized as:
@@ -719,7 +705,6 @@ def position_risk(  # noqa: PLR0917
     factor calculations. Use --skip-prices for faster analysis when you only
     need relative risk comparisons.
     """
-
     # Get provider for price fetching
     provider = None if skip_prices else get_provider_from_config(chain_id=chain_id)
 
@@ -824,9 +809,7 @@ def _display_user_risk(
 
 @aave.group()
 def market() -> None:
-    """
-    Market commands
-    """
+    """Market commands."""
 
 
 @market.command("show")
@@ -845,12 +828,10 @@ def market() -> None:
     help="Filter by market name (default: show all markets).",
 )
 def market_show(bot: Bot, chain_id: int | None, name: str | None) -> None:
-    """
-    Display Aave market information.
+    """Display Aave market information.
 
     Shows all markets or filters by chain ID and/or market name.
     """
-
     with bot.db() as session:
         query = select(AaveV3Market)
 
@@ -914,8 +895,7 @@ def update_aave_market(
     verify_chunk: bool,
     show_progress: bool,
 ) -> None:
-    """
-    Update the Aave V3 market.
+    """Update the Aave V3 market.
 
     Processes events in three phases:
     1. Bootstrap: Fetch and process proxy creation events to discover Pool and PoolConfigurator
@@ -923,7 +903,6 @@ def update_aave_market(
     2. Asset Discovery: Fetch all targeted events and build transaction contexts
     3. User Event Processing: Process transactions with assertions that classifying events exist
     """
-
     logger.debug(
         f"Updating {market.name} (chain {market.chain_id}): "
         f"block range {start_block:,} - {end_block:,}"

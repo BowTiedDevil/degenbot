@@ -1,3 +1,4 @@
+"""CLI commands for pool state queries."""
 import itertools
 from collections import defaultdict
 from collections.abc import Callable
@@ -61,15 +62,21 @@ from degenbot.uniswap.concentrated.types import LiquidityAtTick as ConcentratedL
 
 
 class TicksAtWord(pydantic.BaseModel):
+    """TicksAtWord class."""
+
     bitmap: int
 
 
 class LiquidityAtTick(pydantic.BaseModel):
+    """LiquidityAtTick class."""
+
     liquidity_net: int
     liquidity_gross: int
 
 
 class PoolLiquidityMap(pydantic.BaseModel):
+    """PoolLiquidityMap class."""
+
     tick_bitmap: dict[Word, TicksAtWord]
     tick_data: dict[Tick, LiquidityAtTick]
 
@@ -116,8 +123,7 @@ def apply_v3_liquidity_updates(
     exchanges_in_scope: set[ExchangeTable],
     session: Session,
 ) -> None:
-    """
-    Apply the liquidity updates to the provided pool.
+    """Apply the liquidity updates to the provided pool.
 
     This function assumes that the liquidity updates are ordered by block number and log index,
     ascending.
@@ -130,7 +136,6 @@ def apply_v3_liquidity_updates(
     verify the updates or validate the resulting mapping against the chain state.
     Omitting updates will corrupt the liquidity map!
     """
-
     pool_in_db = session.scalar(
         select(LiquidityPoolTable).where(
             LiquidityPoolTable.address == pool_address,
@@ -319,8 +324,7 @@ def apply_v4_liquidity_updates(
     pool_manager: PoolManagerTable,
     session: Session,
 ) -> None:
-    """
-    Apply the liquidity updates to the provided pool.
+    """Apply the liquidity updates to the provided pool.
 
     This function assumes that the liquidity updates are ordered by block number and log index,
     ascending.
@@ -333,7 +337,6 @@ def apply_v4_liquidity_updates(
     verify the updates or validate the resulting mapping against the chain state.
     Omitting updates will corrupt the liquidity map!
     """
-
     pool_in_db = session.scalar(
         select(UniswapV4PoolTable).where(
             UniswapV4PoolTable.pool_hash == pool_id.to_0x_hex(),
@@ -644,9 +647,7 @@ def _pool_updater(
 
 @cli.group()
 def pool() -> None:
-    """
-    Pool commands
-    """
+    """Pool commands."""
 
 
 @pool.command("update")
@@ -671,10 +672,7 @@ def pool() -> None:
 )
 @click.pass_obj
 def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
-    """
-    Update liquidity pool information for activated exchanges.
-    """
-
+    """Update liquidity pool information for activated exchanges."""
     with bot.db() as session, logging_redirect_tqdm(loggers=[logger]):
         active_chains = set(
             session.scalars(select(ExchangeTable.chain_id).where(ExchangeTable.active)).all()
@@ -853,6 +851,7 @@ def get_events_from_contract(
     address: ChecksumAddress,
     event_hash: HexBytes,
 ) -> list[LogReceipt]:
+    """Return events from contract."""
     return fetch_logs_retrying(
         provider=provider,
         start_block=start_block,
@@ -868,10 +867,7 @@ def get_v3_liquidity_events(
     end_block: int,
     address: ChecksumAddress | None = None,
 ) -> dict[ChecksumAddress, list[LogReceipt]]:
-    """
-    Fetch new Mint & Burn events for the given range.
-    """
-
+    """Fetch new Mint & Burn events for the given range."""
     pool_updates: dict[ChecksumAddress, list[LogReceipt]] = defaultdict(list)
 
     for liquidity_event in fetch_logs_retrying(
@@ -897,10 +893,7 @@ def get_v4_liquidity_events(
     end_block: int,
     address: ChecksumAddress | None = None,
 ) -> dict[HexBytes, list[LogReceipt]]:
-    """
-    Fetch new ModifyLiquidity events for the given range.
-    """
-
+    """Fetch new ModifyLiquidity events for the given range."""
     pool_updates: dict[HexBytes, list[LogReceipt]] = defaultdict(list)
 
     for liquidity_event in fetch_logs_retrying(

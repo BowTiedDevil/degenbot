@@ -38,16 +38,20 @@ class V4PoolState:
 
     @property
     def token0(self) -> Erc20Token:
+        """Token0."""
         return self._token0
 
     @property
     def token1(self) -> Erc20Token:
+        """Token1."""
         return self._token1
 
     @property
     def sparse_liquidity_map(self) -> bool:
+        """Determine sparse liquidity map."""
         return self._sparse_liquidity_map
 
     @property
     def tokens(self) -> tuple[Erc20Token, Erc20Token]:
+        """Tokens."""
         return self._token0, self._token1

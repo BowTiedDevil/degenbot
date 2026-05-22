@@ -25,9 +25,7 @@ LogReceiptField = Annotated[LogReceipt, PlainValidator(lambda x: x)]
 
 
 class EnrichmentError(Exception):
-    """
-    Raised when scaled amount enrichment fails.
-    """
+    """Raised when scaled amount enrichment fails."""
 
 
 class ScaledAmountValidationError(Exception):
@@ -46,6 +44,7 @@ class ScaledAmountValidationError(Exception):
         index: int,
         token_math_method: str,
     ) -> None:
+        """Initialize the instance."""
         self.event_type = event_type
         self.pool_revision = pool_revision
         self.token_revision = token_revision
@@ -155,8 +154,7 @@ _INDEX_SCALED_TYPES: set[ScaledTokenEventType] = _MINT_TYPES | _BURN_TYPES | _IN
 
 
 class EnrichedScaledTokenEvent(BaseModel):
-    """
-    Unified enriched scaled token event.
+    """Unified enriched scaled token event.
 
     Replaces the previous 18 specific event classes. The event_type
     field (ScaledTokenEventType enum) fully describes each event's
@@ -234,35 +232,43 @@ class EnrichedScaledTokenEvent(BaseModel):
 
     @property
     def is_collateral(self) -> bool:
+        """Check if collateral."""
         return self.event_type in _COLLATERAL_TYPES
 
     @property
     def is_debt(self) -> bool:
+        """Check if debt."""
         return self.event_type in _DEBT_TYPES
 
     @property
     def is_burn(self) -> bool:
+        """Check if burn."""
         return self.event_type in _BURN_TYPES
 
     @property
     def is_mint(self) -> bool:
+        """Check if mint."""
         return self.event_type in _MINT_TYPES
 
     @property
     def is_transfer(self) -> bool:
+        """Check if transfer."""
         return self.event_type in _TRANSFER_TYPES
 
     @property
     def is_gho(self) -> bool:
+        """Check if gho."""
         return self.event_type in _GHO_TYPES
 
     @property
     def is_interest(self) -> bool:
+        """Check if interest."""
         return self.event_type in _INTEREST_TYPES
 
     @field_validator("discount_percent")
     @classmethod
     def validate_discount_percent(cls, v: int | None) -> int | None:
+        """Validate discount percent."""
         if v is not None and not 0 <= v <= 10000:  # noqa:PLR2004
             msg = f"discount_percent must be 0-10000, got {v}"
             raise ValueError(msg)
@@ -271,7 +277,6 @@ class EnrichedScaledTokenEvent(BaseModel):
     @model_validator(mode="after")
     def validate_scaled_amount(self) -> "EnrichedScaledTokenEvent":
         """Validate scaled amount using TokenMath for index-scaled events."""
-
         # Interest accrual events: no TokenMath validation
         if self.event_type in _INTEREST_TYPES:
             return self

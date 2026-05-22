@@ -1,3 +1,4 @@
+"""Camelot V2 liquidity pool implementation."""
 from __future__ import annotations
 
 from fractions import Fraction
@@ -17,6 +18,8 @@ if TYPE_CHECKING:
 
 
 class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
+    """CamelotLiquidityPool class."""
+
     variant: ClassVar[str | None] = "camelot"
 
     CAMELOT_ARBITRUM_POOL_INIT_HASH = (
@@ -40,6 +43,7 @@ class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
         state_block: int | None = None,
         deployer_address: str | None = None,
     ) -> None:
+        """Initialize the instance."""
         address = get_checksum_address(address)
         self.fee_denominator = fee_denominator
         self.stable_swap = stable_swap
@@ -70,6 +74,7 @@ class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
         token_in: Erc20Token | None = None,  # ruff: ignore[ARG002]
         token_out: Erc20Token | None = None,  # ruff: ignore[ARG002]
     ) -> HopType:
+        """Convert to hop state."""
         # token_in/token_out unused — 2-token pools determine pair from zero_for_one.
         # Callers should ensure these match pool.token0/pool.token1 if provided.
         state = state_override or self.state

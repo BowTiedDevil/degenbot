@@ -117,7 +117,6 @@ def _create_mock_pool_event(
     amount: int,
 ) -> LogReceipt:
     """Create a mock Pool event."""
-
     # Encode the amount in the event data (valid hex address)
     data = eth_abi.abi.encode(
         ["address", "uint256"],
@@ -152,7 +151,6 @@ def _create_mock_operation(
 
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for SUPPLY."""
-
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1

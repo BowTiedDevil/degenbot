@@ -228,7 +228,6 @@ class TestMultiKeyAddressRegistry:
 
     def test_pool_id_not_checksummed(self):
         """Verify pool_id is kept as HexBytes, not checksummed."""
-
         registry = MultiKeyAddressRegistry(
             address_fields=("pool_manager_address", "pool_id"),
         )

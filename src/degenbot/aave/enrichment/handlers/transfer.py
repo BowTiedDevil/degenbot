@@ -26,8 +26,7 @@ class BalanceTransferHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich a BALANCE_TRANSFER event.
+        """Enrich a BALANCE_TRANSFER event.
 
         Transfers bypass index-based scaling entirely - the amount is already
         in scaled units. raw_amount = scaled_amount.

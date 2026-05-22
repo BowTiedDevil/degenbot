@@ -1,4 +1,4 @@
-"""add exchange relationship
+"""add exchange relationship.
 
 Revision ID: 4eada4ae4a55
 Revises: 7dc2ca38053f

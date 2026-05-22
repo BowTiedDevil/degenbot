@@ -1,4 +1,5 @@
-"""Live WebSocket integration tests for eth_subscribe.
+"""
+Live WebSocket integration tests for eth_subscribe.
 
 These tests require a live Ethereum node with WebSocket support.
 They are skipped unless the ETHEREUM_ARCHIVE_NODE_WS_URI environment

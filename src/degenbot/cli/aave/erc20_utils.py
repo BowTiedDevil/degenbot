@@ -1,5 +1,4 @@
-"""
-ERC20 token utilities for Aave CLI.
+"""ERC20 token utilities for Aave CLI.
 
 Provides functions to fetch ERC20 token metadata.
 """
@@ -23,10 +22,7 @@ def _try_fetch_token_string(
     lower_func: str,
     upper_func: str,
 ) -> str | None:
-    """
-    Try to fetch a string value from an ERC20 token, with fallback to bytes32.
-    """
-
+    """Try to fetch a string value from an ERC20 token, with fallback to bytes32."""
     for func_prototype in (lower_func, upper_func):
         with contextlib.suppress(Exception):
             result = provider.call(
@@ -58,10 +54,7 @@ def _try_fetch_token_uint256(
     lower_func: str,
     upper_func: str,
 ) -> int | None:
-    """
-    Try to fetch a uint256 value from an ERC20 token.
-    """
-
+    """Try to fetch a uint256 value from an ERC20 token."""
     for func_prototype in (lower_func, upper_func):
         with contextlib.suppress(Exception):
             result: int
@@ -83,8 +76,7 @@ def _fetch_erc20_token_metadata(
     provider: "ProviderAdapter",
     token_address: ChecksumAddress,
 ) -> tuple[str | None, str | None, int | None]:
-    """
-    Fetch ERC20 token metadata (name, symbol, decimals) from the blockchain.
+    """Fetch ERC20 token metadata (name, symbol, decimals) from the blockchain.
 
     Attempts to fetch using standard ERC20 function signatures, falling back
     to uppercase versions and bytes32 decoding as needed.
@@ -95,8 +87,8 @@ def _fetch_erc20_token_metadata(
 
     Returns:
         Tuple of (name, symbol, decimals) or (None, None, None) if all fetch attempts fail
-    """
 
+    """
     name = _try_fetch_token_string(
         provider=provider,
         token_address=token_address,

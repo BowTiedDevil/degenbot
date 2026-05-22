@@ -1,3 +1,5 @@
+"""Aerodrome V2/V3 liquidity pools and trackers."""
+
 from degenbot.registry.pool_type import pool_type_registry
 
 from . import (

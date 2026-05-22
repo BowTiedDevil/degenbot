@@ -48,6 +48,7 @@ class CurveDataProviderImpl:
         precision_multipliers: list[int] | None = None,
         rate_multipliers: tuple[int, ...] | None = None,
     ) -> None:
+        """Initialize the instance."""
         self._io = io
         self._pool_address = pool_address
         self._base_pool_address = base_pool_address
@@ -114,6 +115,7 @@ class CurveDataProviderImpl:
     # ── CurveDataProvider protocol methods ──
 
     def virtual_price(self, block_number: int) -> int:
+        """Return virtual price."""
         target = self._base_pool_address or self._pool_address
         return cast(
             "int",
@@ -123,6 +125,7 @@ class CurveDataProviderImpl:
         )
 
     def base_virtual_price(self, block_number: int) -> int:
+        """Return base virtual price."""
         return cast(
             "int",
             self._wrap_revert(
@@ -135,6 +138,7 @@ class CurveDataProviderImpl:
         )
 
     def base_cache_updated(self, block_number: int) -> int:
+        """Return base cache updated."""
         return cast(
             "int",
             self._wrap_revert(
@@ -147,6 +151,7 @@ class CurveDataProviderImpl:
         )
 
     def admin_balances(self, block_number: int) -> tuple[int, ...]:
+        """Admin balances."""
         balances: list[int] = []
         for token_index in range(8):  # max 8 tokens for Curve V1
             try:
@@ -165,6 +170,7 @@ class CurveDataProviderImpl:
         return tuple(balances)
 
     def d(self, block_number: int) -> int:
+        """Return d."""
         return cast(
             "int",
             self._wrap_revert(
@@ -173,6 +179,7 @@ class CurveDataProviderImpl:
         )
 
     def gamma(self, block_number: int) -> int:
+        """Return gamma."""
         return cast(
             "int",
             self._wrap_revert(
@@ -181,6 +188,7 @@ class CurveDataProviderImpl:
         )
 
     def price_scale(self, block_number: int) -> tuple[int, ...]:
+        """Price scale."""
         price_scale = [0] * (self._n_coins - 1)
         for token_index in range(self._n_coins - 1):
             data = Web3.keccak(text="price_scale(uint256)")[:4] + eth_abi.abi.encode(
@@ -194,12 +202,15 @@ class CurveDataProviderImpl:
         return tuple(price_scale)
 
     def block_timestamp(self, block_number: int) -> int:
+        """Return block timestamp."""
         return self._io.get_block_timestamp(block=block_number)
 
     def block_number(self) -> int:
+        """Return block number."""
         return self._io.get_block_number()
 
     def token_balance(self, token_address: str, holder_address: str, block_number: int) -> int:
+        """Return token balance."""
         data = encode_function_calldata(
             "balanceOf(address)", [get_checksum_address(holder_address)]
         )
@@ -212,6 +223,7 @@ class CurveDataProviderImpl:
         return cast("int", balance)
 
     def token_total_supply(self, token_address: str, block_number: int) -> int:
+        """Return token total supply."""
         data = encode_function_calldata("totalSupply()", None)
         result = self._io.call(
             to=get_checksum_address(token_address),
@@ -222,6 +234,7 @@ class CurveDataProviderImpl:
         return cast("int", total_supply)
 
     def lending_rates(self, block_number: int) -> tuple[int, ...]:
+        """Lending rates."""
         if self._lending_rate_style == LendingRateStyle.NONE:
             msg = "lending_rates() not available for this pool type"
             raise ValueError(msg)
@@ -368,6 +381,7 @@ class CurveDataProviderImpl:
         )
 
     def redemption_price(self, block_number: int) -> int:
+        """Return redemption price."""
         (snap_contract_address,) = self._call(
             self._pool_address, "redemption_price_snap()", ["address"], block_number
         )

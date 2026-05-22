@@ -9,7 +9,6 @@ def test_no_solver_solution_pickling() -> None:
     Test that the `NoSolverSolution` exception's `__reduce__` method allows the exception to be
     pickled and unpickled correctly.
     """
-
     # Create an instance with a custom message
     original_message = "Custom solver error message"
     original_exception = NoSolverSolution(message=original_message)

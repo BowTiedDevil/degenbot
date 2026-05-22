@@ -233,7 +233,8 @@ class TestAlloyProviderFeatureParity:
 
     @pytest.fixture
     def mock_alloy_provider(self):
-        """Create a mock AlloyProvider for signature testing.
+        """
+        Create a mock AlloyProvider for signature testing.
 
         We use a mock because we don't want to require a real RPC endpoint
         just to check method signatures.
@@ -345,7 +346,7 @@ class TestAlloyProviderMethodSignatures:
         return AlloyProvider
 
     def test_call_signature(self, mock_alloy_provider):
-        """call method should accept (to, data, block_number)."""
+        """Call method should accept (to, data, block_number)."""
         sig = inspect.signature(mock_alloy_provider.call)
         params = list(sig.parameters.keys())
         assert "to" in params
@@ -406,7 +407,6 @@ class TestProviderAdapterIntegration:
 
     def test_provider_adapter_from_alloy(self):
         """ProviderAdapter can be created from AlloyProvider."""
-
         # Just test that the factory method exists and works
         # (we use a mock URL since we're not making real calls)
         assert hasattr(ProviderAdapter, "from_alloy")

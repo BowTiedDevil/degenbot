@@ -1,3 +1,4 @@
+"""UniswapV3Pool: concentrated liquidity AMM with tick state."""
 import dataclasses
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
@@ -60,12 +61,16 @@ type Token1Amount = int
 
 
 class LiquidityAtTickAsDict(TypedDict):
+    """LiquidityAtTickAsDict class."""
+
     block: int
     liquidity_gross: int
     liquidity_net: int
 
 
 class BitmapAtWordAsDict(TypedDict):
+    """BitmapAtWordAsDict class."""
+
     bitmap: int
     block: int
 
@@ -77,6 +82,8 @@ class UniswapV3Pool(
     UniswapV3PoolCalc,
     AbstractLiquidityPool,
 ):
+    """UniswapV3Pool class."""
+
     variant: ClassVar[str | None] = None
 
     LOG_HANDLERS: ClassVar[dict[str, Any]] = {
@@ -153,6 +160,7 @@ class UniswapV3Pool(
         liquidity: int,
         tick_data_fetcher: Callable[[int, int], None] | None = None,
     ) -> None:
+        """Initialize the instance."""
         self.address = get_checksum_address(address)
         self._chain_id = chain_id if chain_id is not None else token0.chain_id
         self._token0 = token0
@@ -227,16 +235,20 @@ class UniswapV3Pool(
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
     def __getnewargs_ex__(self) -> tuple[tuple[()], dict[str, Any]]:
-        """
-        Return empty args so __init__ is not called during unpickling.
+        """Return empty args so __init__ is not called during unpickling.
+
         The object is reconstructed via __setstate__.
         """
         return (), {}
 
     def __repr__(self) -> str:  # pragma: no cover
+        """Return the canonical string representation."""
         return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1}, fee={100 * self._fee / self.FEE_DENOMINATOR:.2f}%, tick spacing={self._tick_spacing})"  # noqa:E501
 
     def __str__(self) -> str:
+        """Return the canonical string representation."""
+        """Return a string representation."""
+        """Return a string representation."""
         return self.name
 
     def _calculate_swap(
@@ -247,9 +259,9 @@ class UniswapV3Pool(
         sqrt_price_limit_x96: int,
         override_state: PoolState | None = None,
     ) -> tuple[Token0Amount, Token1Amount, SqrtPriceX96, Liquidity, Tick]:
-        """
-        This function is ported and adapted from the UniswapV3Pool.sol contract at
-        https://github.com/Uniswap/v3-core/blob/main/contracts/UniswapV3Pool.sol
+        """Ported and adapted from the UniswapV3Pool.sol contract.
+
+        https://github.com/Uniswap/v3-core/blob/main/contracts/UniswapV3Pool.sol.
 
         Returns a tuple with amounts and final pool state values for a successful swap:
         (amount0, amount1, sqrt_price_x96, liquidity, tick)
@@ -259,7 +271,6 @@ class UniswapV3Pool(
 
         This method will fetch missing liquidity data as needed, but this data is discarded.
         """
-
         if override_state is not None:
             snapshot = LiquidityMapSnapshot.from_state(
                 override_state,
@@ -354,14 +365,17 @@ class UniswapV3Pool(
 
     @property
     def chain_id(self) -> int | None:
+        """Return chain id."""
         return self._chain_id
 
     @property
     def liquidity(self) -> int:
+        """Return liquidity."""
         return self._state_mgr.liquidity
 
     @property
     def sqrt_price_x96(self) -> int:
+        """Return sqrt price x96."""
         return self._state_mgr.sqrt_price_x96
 
     @property
@@ -378,22 +392,27 @@ class UniswapV3Pool(
 
     @property
     def state(self) -> PoolState:
+        """State."""
         return self._state_mgr.state
 
     @property
     def tick(self) -> int:
+        """Return tick."""
         return self._state_mgr.tick
 
     @property
     def tick_bitmap(self) -> InitializedTickMap:
+        """Tick bitmap."""
         return cast("InitializedTickMap", self._state_mgr.tick_bitmap)
 
     @property
     def tick_data(self) -> LiquidityMap:
+        """Tick data."""
         return cast("LiquidityMap", self._state_mgr.tick_data)
 
     @property
     def update_block(self) -> BlockNumber:
+        """Update block."""
         if TYPE_CHECKING:
             assert self.state.block is not None
         return self.state.block
@@ -403,6 +422,7 @@ class UniswapV3Pool(
         state: PoolState,
         vector: UniswapPoolSwapVector,
     ) -> bool:
+        """Swap is viable."""
         return self._state_mgr.swap_is_viable(
             state=state,
             zero_for_one=vector.zero_for_one,
@@ -432,12 +452,12 @@ class UniswapV3Pool(
         self,
         update: UniswapV3PoolExternalUpdate,
     ) -> bool:
-        """
-        Process a `UniswapV3PoolExternalUpdate` with one or more of the following update types:
+        """Process a `UniswapV3PoolExternalUpdate` with one or more of the following update types.
+
             - `block_number`: int
             - `tick`: int
             - `liquidity`: int
-            - `sqrt_price_x96`: int
+            - `sqrt_price_x96`: int.
 
         `block_number` is validated against the most recently recorded block prior to recording any
         changes.
@@ -447,7 +467,6 @@ class UniswapV3Pool(
         @dev This method uses a lock to guard state-modifying methods that might cause race
         conditions when used with threads.
         """
-
         if (
             update.block_number <= self._initial_state_block
             or update.block_number < self.update_block
@@ -484,13 +503,11 @@ class UniswapV3Pool(
         self,
         update: UniswapV3PoolLiquidityMappingUpdate,
     ) -> None:
-        """
-        Applies an update to the liquidity map.
+        """Apply an update to the liquidity map.
 
         @dev This method uses a lock to guard state-modifying methods that might cause race
         conditions when used with threads.
         """
-
         with self._state_cache.lock():  # noqa:PLR1702
             state_block = update.block_number
 
@@ -628,10 +645,7 @@ class UniswapV3Pool(
         sqrt_price_limit_x96: int | None = None,
         override_state: PoolState | None = None,
     ) -> UniswapV3PoolSimulationResult:
-        """
-        Simulate an exact input swap.
-        """
-
+        """Simulate an exact input swap."""
         if token_in not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message=f"Unknown token {token_in}")
 
@@ -676,10 +690,7 @@ class UniswapV3Pool(
         sqrt_price_limit_x96: int | None = None,
         override_state: PoolState | None = None,
     ) -> UniswapV3PoolSimulationResult:
-        """
-        Simulate an exact output swap.
-        """
-
+        """Simulate an exact output swap."""
         if token_out not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message=f"Unknown token {token_out}")
 
@@ -724,6 +735,7 @@ class UniswapV3Pool(
         token_out: ChecksumAddress,  # noqa: ARG002
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
+        """Simulate swap."""
         v3_state: UniswapV3PoolState | None = None
         if state_override is not None:
             if not isinstance(state_override, UniswapV3PoolState):
@@ -758,6 +770,7 @@ class UniswapV3Pool(
         amount_out: int,
         state_override: UniswapV3PoolState | None = None,
     ) -> SimulationResult:
+        """Simulate swap for output."""
         if token_out == self._token0.address:
             token_out_obj = self._token0
         elif token_out == self._token1.address:
@@ -891,6 +904,7 @@ class UniswapV3Pool(
         token_in: Erc20Token | None = None,  # noqa: ARG002
         token_out: Erc20Token | None = None,  # noqa: ARG002
     ) -> HopType:
+        """Convert to hop state."""
         # token_in/token_out unused — 2-token pools determine pair from zero_for_one.
         # Callers should ensure these match pool.token0/pool.token1 if provided.
         state = state_override or self.state
@@ -933,6 +947,7 @@ class UniswapV3Pool(
         amount_in: int,
         amount_out: int,
     ) -> UniswapV3PoolSwapAmounts:
+        """Build swap amount."""
         limit = MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1
         return UniswapV3PoolSwapAmounts(
             pool=self.address,

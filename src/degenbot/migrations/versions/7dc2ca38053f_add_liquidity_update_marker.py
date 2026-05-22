@@ -1,4 +1,4 @@
-"""add liquidity update marker
+"""add liquidity update marker.
 
 Revision ID: 7dc2ca38053f
 Revises: 311beed36e7b

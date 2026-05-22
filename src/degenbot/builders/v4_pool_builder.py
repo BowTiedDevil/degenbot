@@ -1,3 +1,4 @@
+"""Uniswap V4 pool builder (sync)."""
 from __future__ import annotations
 
 import contextlib
@@ -38,14 +39,14 @@ if TYPE_CHECKING:
 
 
 class V4PoolBuilder(V4BuilderBase):
-    """
-    Builds and updates V4 singleton-architecture concentrated-liquidity pools.
+    """Builds and updates V4 singleton-architecture concentrated-liquidity pools.
 
     Owns the full I/O choreography: DB lookup → RPC fetch → decode →
     construct pool → register.
     """
 
     def __init__(self, ctx: BuilderContext) -> None:
+        """Initialize the instance."""
         assert ctx.managed_pools is not None, (
             "V4PoolBuilder requires managed_pools in BuilderContext"
         )
@@ -94,7 +95,6 @@ class V4PoolBuilder(V4BuilderBase):
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free UniswapV4Pool."""
-
         assert isinstance(request, BuildManagedPoolRequest)
         pool_id_bytes = HexBytes(request.pool_id)
         pool_manager_address = get_checksum_address(address)

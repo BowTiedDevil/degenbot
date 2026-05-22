@@ -1,3 +1,4 @@
+"""Aerodrome V2 liquidity pool implementations (volatile and stable)."""
 from __future__ import annotations
 
 import dataclasses
@@ -75,6 +76,8 @@ class AerodromeV2Pool(
     AerodromeV2PoolCalc,
     AbstractLiquidityPool,
 ):
+    """AerodromeV2Pool class."""
+
     variant: ClassVar[str | None] = "aerodrome"
 
     LOG_HANDLERS: ClassVar[dict[str, Any]] = {
@@ -108,6 +111,7 @@ class AerodromeV2Pool(
         state_block: BlockNumber | None = None,
         state_cache_depth: int = 8,
     ) -> None:
+        """Initialize the instance."""
         self.address = get_checksum_address(address)
 
         self._chain_id = chain_id if chain_id is not None else token0.chain_id
@@ -140,26 +144,34 @@ class AerodromeV2Pool(
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
     def __repr__(self) -> str:  # pragma: no cover
+        """Return the canonical string representation."""
         return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1}, stable={self._stable})"  # noqa:E501
 
     @property
     def chain_id(self) -> int | None:
+        """Return the canonical string representation."""
+        """Return a string representation."""
+        """Return chain id."""
         return self._chain_id
 
     @property
     def reserves_token0(self) -> int:
+        """Return reserves token0."""
         return self.state.reserves_token0
 
     @property
     def reserves_token1(self) -> int:
+        """Return reserves token1."""
         return self.state.reserves_token1
 
     @property
     def state(self) -> PoolState:
+        """State."""
         return self._state_cache.current
 
     @property
     def update_block(self) -> BlockNumber:
+        """Update block."""
         if TYPE_CHECKING:
             assert self.state.block is not None
         return self.state.block
@@ -169,6 +181,7 @@ class AerodromeV2Pool(
         state: PoolState,
         vector: UniswapPoolSwapVector,
     ) -> bool:
+        """Swap is viable."""
         if state.reserves_token0 == 0 or state.reserves_token1 == 0:
             return False
         return state.reserves_token1 > 1 if vector.zero_for_one else state.reserves_token0 > 1
@@ -177,6 +190,7 @@ class AerodromeV2Pool(
         self,
         update: AerodromeV2PoolExternalUpdate,
     ) -> None:
+        """External update."""
         if update.block_number < self.update_block:
             raise ExternalUpdateError(
                 message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"  # noqa:E501
@@ -206,6 +220,7 @@ class AerodromeV2Pool(
         int,  # fee
         tuple[int, int],  # reserves
     ]:
+        """Return pool identity values."""
         immutable_calls = [
             {
                 "to": self.address,
@@ -280,9 +295,7 @@ class AerodromeV2Pool(
         self,
         block: BlockNumber,
     ) -> None:
-        """
-        Discard cached states earlier than the given block.
-        """
+        """Discard cached states earlier than the given block."""
         try:
             with self._state_cache.lock():
                 self._state_cache.discard_before_block(block)
@@ -293,8 +306,7 @@ class AerodromeV2Pool(
         self,
         block: BlockNumber,
     ) -> None:
-        """
-        Restore the last pool state recorded prior to a target block.
+        """Restore the last pool state recorded prior to a target block.
 
         Use this method to maintain consistent state data following a chain re-organization.
 
@@ -315,6 +327,7 @@ class AerodromeV2Pool(
         token_out: ChecksumAddress,
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
+        """Simulate swap."""
         aero_state: AerodromeV2PoolState | None = None
         if state_override is not None:
             if not isinstance(state_override, AerodromeV2PoolState):
@@ -355,6 +368,7 @@ class AerodromeV2Pool(
         amount_out: int,
         state_override: AerodromeV2PoolState | None = None,
     ) -> SimulationResult:
+        """Simulate swap for output."""
         if token_out == self._token0.address:
             token_out_obj = self._token0
             expected_token_in = self._token1.address
@@ -397,6 +411,7 @@ class AerodromeV2Pool(
         token_in: Erc20Token | None = None,
         token_out: Erc20Token | None = None,  # noqa: ARG002
     ) -> HopType:
+        """Convert to hop state."""
         # token_in/token_out unused — 2-token pools determine pair from zero_for_one.
         # Callers should ensure these match pool.token0/pool.token1 if provided.
         state = state_override or self.state
@@ -461,6 +476,7 @@ class AerodromeV2Pool(
         amount_in: int,
         amount_out: int,
     ) -> UniswapV2PoolSwapAmounts:
+        """Build swap amount."""
         return UniswapV2PoolSwapAmounts(
             pool=self.address,
             amounts_in=(amount_in, 0) if zero_for_one else (0, amount_in),
@@ -469,6 +485,8 @@ class AerodromeV2Pool(
 
 
 class AerodromeV3Pool(UniswapV3Pool):
+    """AerodromeV3Pool class."""
+
     variant: ClassVar[str | None] = "aerodrome"
 
     type PoolState = AerodromeV3PoolState

@@ -1,3 +1,4 @@
+"""Shared types for the arbitrage module."""
 import dataclasses
 
 import eth_abi.abi
@@ -31,8 +32,7 @@ class AbstractSwapAmounts:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class ArbitrageCalculationResult[SwapAmountType]:
-    """
-    The result of an arbitrage calculation containing profit details and swap amounts.
+    """The result of an arbitrage calculation containing profit details and swap amounts.
 
     This class is generic over the swap amount type. Calculations that build an
     instance should specify this type in the return annotation, e.g.:
@@ -55,11 +55,14 @@ class ArbitrageCalculationResult[SwapAmountType]:
     state_block: BlockNumber | None
 
     def __post_init__(self) -> None:
+        """Post-initialization hook."""
         assert self.input_amount != 0
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class CurveStableSwapPoolSwapAmounts(AbstractSwapAmounts):
+    """CurveStableSwapPoolSwapAmounts class."""
+
     pool: ChecksumAddress
     token_in: Erc20Token
     token_in_index: int
@@ -70,12 +73,15 @@ class CurveStableSwapPoolSwapAmounts(AbstractSwapAmounts):
     underlying: bool
 
     def __post_init__(self) -> None:
+        """Post-initialization hook."""
         assert self.token_in != self.token_out
 
     def input_amount(self) -> int:
+        """Return input amount."""
         return self.amount_in
 
     def output_amount(self) -> int:
+        """Return output amount."""
         return self.min_amount_out
 
     def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:  # noqa: ARG002
@@ -98,21 +104,26 @@ class CurveStableSwapPoolSwapAmounts(AbstractSwapAmounts):
 
 @dataclasses.dataclass(slots=True)
 class UniswapV2PoolSwapAmounts(AbstractSwapAmounts):
+    """UniswapV2PoolSwapAmounts class."""
+
     pool: ChecksumAddress
     amounts_in: tuple[int, int]
     amounts_out: tuple[int, int]
     recipient: ChecksumAddress | None = None
 
     def __post_init__(self) -> None:
+        """Post-initialization hook."""
         assert self.amounts_in != (0, 0)
         assert self.amounts_out != (0, 0)
         assert 0 in self.amounts_in
         assert 0 in self.amounts_out
 
     def input_amount(self) -> int:
+        """Return input amount."""
         return max(self.amounts_in)
 
     def output_amount(self) -> int:
+        """Return output amount."""
         return max(self.amounts_out)
 
     def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:
@@ -127,6 +138,8 @@ class UniswapV2PoolSwapAmounts(AbstractSwapAmounts):
 
 @dataclasses.dataclass(slots=True)
 class UniswapV3PoolSwapAmounts(AbstractSwapAmounts):
+    """UniswapV3PoolSwapAmounts class."""
+
     pool: ChecksumAddress
     amount_in: int
     amount_out: int
@@ -136,12 +149,15 @@ class UniswapV3PoolSwapAmounts(AbstractSwapAmounts):
     recipient: ChecksumAddress | None = None
 
     def __post_init__(self) -> None:
+        """Post-initialization hook."""
         assert self.amount_specified != 0
 
     def input_amount(self) -> int:
+        """Return input amount."""
         return self.amount_in
 
     def output_amount(self) -> int:
+        """Return output amount."""
         return self.amount_out
 
     def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:
@@ -173,6 +189,8 @@ class V4PoolKey:
 
 @dataclasses.dataclass(slots=True)
 class UniswapV4PoolSwapAmounts(AbstractSwapAmounts):
+    """UniswapV4PoolSwapAmounts class."""
+
     address: ChecksumAddress
     id: HexBytes
     pool_key: V4PoolKey
@@ -184,12 +202,15 @@ class UniswapV4PoolSwapAmounts(AbstractSwapAmounts):
     recipient: ChecksumAddress | None = None
 
     def __post_init__(self) -> None:
+        """Post-initialization hook."""
         assert self.amount_specified != 0
 
     def input_amount(self) -> int:
+        """Return input amount."""
         return self.amount_in
 
     def output_amount(self) -> int:
+        """Return output amount."""
         return self.amount_out
 
     def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:
@@ -210,8 +231,11 @@ class UniswapV4PoolSwapAmounts(AbstractSwapAmounts):
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class CurveStableSwapPoolVector:
+    """CurveStableSwapPoolVector class."""
+
     token_in: Erc20Token
     token_out: Erc20Token
 
     def __post_init__(self) -> None:
+        """Post-initialization hook."""
         assert self.token_in != self.token_out

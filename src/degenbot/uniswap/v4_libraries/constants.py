@@ -1,3 +1,4 @@
+"""Uniswap V4 core constants and pool key defaults."""
 from degenbot.checksum_cache import get_checksum_address
 
 # @dev All sqrtPrice calculations are calculated as

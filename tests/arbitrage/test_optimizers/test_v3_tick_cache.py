@@ -155,6 +155,7 @@ class V3TickRangeCache:
 
         Returns:
             TickRangeInfo if found, None if price outside all ranges
+
         """
         if not self._ranges:
             return None
@@ -188,7 +189,6 @@ class V3TickRangeCache:
     @staticmethod
     def _tick_to_sqrt_price_x96(tick: int) -> int:
         """Convert tick to sqrt price in X96 format."""
-
         return int(math.sqrt(1.0001**tick) * (2**96))
 
     @property
@@ -514,7 +514,6 @@ class TestTickCachePerformance:
 
     def test_lookup_performance(self) -> None:
         """Benchmark tick range lookup."""
-
         # Create cache with 100 tick ranges
         tick_data = {}
         for i in range(100):
@@ -545,7 +544,6 @@ class TestTickCachePerformance:
 
     def test_rebuild_performance(self) -> None:
         """Benchmark cache rebuild."""
-
         # Create large tick data
         tick_data = {}
         for i in range(1000):

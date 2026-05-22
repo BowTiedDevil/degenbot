@@ -48,8 +48,7 @@ class RepayHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich a REPAY or GHO_REPAY event.
+        """Enrich a REPAY or GHO_REPAY event.
 
         Handles both standard burns and the interest>repayment Mint case.
         """
@@ -91,8 +90,7 @@ class RepayHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Handle the case where interest exceeds repayment amount.
+        """Handle the case where interest exceeds repayment amount.
 
         The Mint event's amount represents the net debt increase (interest - repayment).
         Extract the actual repayment amount from the Pool event and use

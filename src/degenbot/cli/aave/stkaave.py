@@ -19,8 +19,7 @@ def get_or_init_stk_aave_balance(
     tx_context: TransactionContext,
     log_index: int | None = None,  # noqa: ARG001
 ) -> int:
-    """
-    Get user's last-known stkAAVE balance.
+    """Get user's last-known stkAAVE balance.
 
     If the balance is unknown, perform a contract call at the previous block to ensure
     the balance check is performed before any events in the current block are processed.
@@ -30,7 +29,6 @@ def get_or_init_stk_aave_balance(
     including the pending delta. This handles the reentrancy case where the GHO
     debt token contract sees the post-transfer balance before the Transfer event is emitted.
     """
-
     discount_token = tx_context.gho_asset.v_gho_discount_token
 
     if user.stk_aave_balance is None:
@@ -58,8 +56,7 @@ def process_stk_aave_transfer_event(
     contract_address: ChecksumAddress,
     tx_context: TransactionContext,
 ) -> None:
-    """
-    Process a Transfer event on the stkAAVE token.
+    """Process a Transfer event on the stkAAVE token.
 
     This function updates the stkAAVE balance for Aave V3 users only. If either user is not in
     `AaveV3UsersTable` at the time, it will be skipped.
@@ -73,7 +70,6 @@ def process_stk_aave_transfer_event(
     );
     ```
     """
-
     logger.debug(f"Processing stkAAVE transfer event at block {event['blockNumber']}")
 
     assert contract_address == tx_context.gho_asset.v_gho_discount_token

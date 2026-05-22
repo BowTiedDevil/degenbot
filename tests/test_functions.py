@@ -85,7 +85,6 @@ def test_create2():
     """
     Tests taken from https://eips.ethereum.org/EIPS/eip-1014
     """
-
     assert (
         create2_address(
             deployer="0x0000000000000000000000000000000000000000",
@@ -142,7 +141,6 @@ def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
     """
     Check that all inputs for web3 type `BlockIdentifier` can be converted to an integer
     """
-
     w3 = fork_mainnet_full.w3
     cm = ConnectionManager()
     cm.register_provider(ProviderAdapter.from_web3(w3))

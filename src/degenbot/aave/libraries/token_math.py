@@ -87,37 +87,37 @@ class HalfUpRoundingMath:
 
     @staticmethod
     def get_collateral_mint_scaled_amount(amount: int, liquidity_index: int) -> int:
-        """Standard half-up rounding for collateral mint."""
+        """Apply standard half-up rounding for collateral mint."""
         return wad_ray_math.ray_div(amount, liquidity_index)
 
     @staticmethod
     def get_collateral_burn_scaled_amount(amount: int, liquidity_index: int) -> int:
-        """Standard half-up rounding for collateral burn."""
+        """Apply standard half-up rounding for collateral burn."""
         return wad_ray_math.ray_div(amount, liquidity_index)
 
     @staticmethod
     def get_collateral_transfer_scaled_amount(amount: int, liquidity_index: int) -> int:
-        """Standard half-up rounding for collateral transfer."""
+        """Apply standard half-up rounding for collateral transfer."""
         return wad_ray_math.ray_div(amount, liquidity_index)
 
     @staticmethod
     def get_collateral_balance(scaled_amount: int, liquidity_index: int) -> int:
-        """Standard half-up rounding for collateral balance."""
+        """Apply standard half-up rounding for collateral balance."""
         return wad_ray_math.ray_mul(scaled_amount, liquidity_index)
 
     @staticmethod
     def get_debt_mint_scaled_amount(amount: int, borrow_index: int) -> int:
-        """Standard half-up rounding for debt mint."""
+        """Apply standard half-up rounding for debt mint."""
         return wad_ray_math.ray_div(amount, borrow_index)
 
     @staticmethod
     def get_debt_burn_scaled_amount(amount: int, borrow_index: int) -> int:
-        """Standard half-up rounding for debt burn."""
+        """Apply standard half-up rounding for debt burn."""
         return wad_ray_math.ray_div(amount, borrow_index)
 
     @staticmethod
     def get_debt_balance(scaled_amount: int, borrow_index: int) -> int:
-        """Standard half-up rounding for debt balance."""
+        """Apply standard half-up rounding for debt balance."""
         return wad_ray_math.ray_mul(scaled_amount, borrow_index)
 
 
@@ -197,6 +197,7 @@ class TokenMathFactory:
 
         Raises:
             ValueError: If pool_version is not supported
+
         """
         token_math_class = cls._TOKEN_MATH.get(pool_version)
         if token_math_class is None:
@@ -217,8 +218,8 @@ class TokenMathFactory:
 
         Returns:
             TokenMath instance with appropriate rounding
-        """
 
+        """
         if token_revision <= 3:  # noqa:PLR2004
             return cls.get_token_math(1)
         if token_revision == 4:  # noqa:PLR2004

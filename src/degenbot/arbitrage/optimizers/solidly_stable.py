@@ -29,8 +29,7 @@ def _solidly_swap_output_float(
     decimals_in: int,
     decimals_out: int,
 ) -> float:
-    """
-    Float approximation of Solidly stable swap output.
+    """Float approximation of Solidly stable swap output.
 
     Solves the Solidly invariant x³y + xy³ ≥ k for output given input.
     Uses Newton's method on the implicit equation f(y) = x³y + xy³ - k = 0.
@@ -109,8 +108,7 @@ def _simulate_mixed_path(
     x: float,
     hops: tuple[HopType, ...],
 ) -> float:
-    """
-    Simulate a path with mixed hop types using float math.
+    """Simulate a path with mixed hop types using float math.
 
     For each hop:
     - ConstantProductHop: V2 formula y = gamma*s*x / (r + gamma*x)
@@ -173,8 +171,7 @@ def _simulate_mixed_path_int(
     x: int,
     hops: tuple[HopType, ...],
 ) -> int:
-    """
-    Simulate a path with mixed hop types using integer math.
+    """Simulate a path with mixed hop types using integer math.
 
     For hops with ``swap_fn`` (Solidly, Curve), uses the integer-accurate callable.
     For V2 hops, uses integer constant-product formula.
@@ -234,8 +231,7 @@ def _simulate_mixed_path_int(
 
 
 class SolidlyStableSolver(Solver):
-    """
-    Solver for paths containing Solidly stable pools (x³y + xy³ ≥ k).
+    """Solver for paths containing Solidly stable pools (x³y + xy³ ≥ k).
 
     Uses golden section search on the integer profit function when
     ``swap_fn`` is available on Solidly hops (EVM-exact). Falls back

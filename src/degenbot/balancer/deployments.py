@@ -1,3 +1,4 @@
+"""Balancer V2 deployment addresses and chain configuration."""
 from degenbot.checksum_cache import get_checksum_address
 
 BALANCER_V2_VAULT_ADDRESS = get_checksum_address("0xBA12222222228d8Ba445958a75a0704d566BF2C8")

@@ -187,7 +187,6 @@ def _create_mock_scaled_event(
 
 def _create_mock_pool_event(amount: int) -> LogReceipt:
     """Create a mock Pool REPAY event."""
-
     # REPAY event: (uint256 amount, bool useATokens)
     data = eth_abi.abi.encode(["uint256", "bool"], [amount, False])
 
@@ -223,7 +222,6 @@ def _create_mock_operation(
 
 def _create_mock_context() -> MagicMock:
     """Create a mock EnrichmentContext for REPAY burn."""
-
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
@@ -287,7 +285,6 @@ def _create_mock_context() -> MagicMock:
 
 def _create_mock_context_with_mint() -> MagicMock:
     """Create mock context for REPAY with DEBT_MINT case."""
-
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
@@ -350,7 +347,6 @@ def _create_mock_context_with_mint() -> MagicMock:
 
 def _create_mock_context_gho() -> MagicMock:
     """Create mock context for GHO_REPAY burn."""
-
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1
@@ -416,7 +412,6 @@ def _create_mock_context_gho() -> MagicMock:
 
 def _create_mock_context_gho_mint() -> MagicMock:
     """Create mock context for GHO_REPAY with GHO_DEBT_MINT case."""
-
     MagicMock()
     mock_context = MagicMock(spec=EnrichmentContext)
     mock_context.pool_revision = 1

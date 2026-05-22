@@ -1,3 +1,4 @@
+"""Chainlink price feed oracle contract interface."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -13,8 +14,7 @@ if TYPE_CHECKING:
 
 
 class ChainlinkPriceContract:
-    """
-    Represents an on-chain Chainlink price oracle.
+    """Represents an on-chain Chainlink price oracle.
 
     Constructed with the oracle address and chain_id. The ``price`` property fetches
     the current price and decimals on access.
@@ -31,6 +31,7 @@ class ChainlinkPriceContract:
         decimals: int | None = None,
         bot: Bot | None = None,
     ) -> None:
+        """Initialize the instance."""
         self.address = get_checksum_address(address)
         self._chain_id = chain_id
         self._decimals = decimals
@@ -38,10 +39,12 @@ class ChainlinkPriceContract:
 
     @property
     def chain_id(self) -> ChainId | None:
+        """Chain id."""
         return self._chain_id
 
     @property
     def decimals(self) -> int:
+        """Return decimals."""
         if self._decimals is None:
             if self._bot is None:
                 msg = "ChainlinkPriceContract requires a `bot` to fetch decimals"
@@ -59,6 +62,7 @@ class ChainlinkPriceContract:
 
     @property
     def price(self) -> float:
+        """Price."""
         if self._bot is None:
             msg = "ChainlinkPriceContract requires a `bot` to fetch price"
             raise ValueError(msg)

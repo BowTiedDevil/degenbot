@@ -1,4 +1,4 @@
-"""Drop token0_id, token1_id from subclass tables
+"""Drop token0_id, token1_id from subclass tables.
 
 Revision ID: 082ee8a3d339
 Revises: e453c9cd9e51
@@ -20,7 +20,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     with op.batch_alter_table("aerodrome_v2_pools", schema=None) as batch_op:
         batch_op.drop_index(batch_op.f("ix_aerodrome_v2_pools_token0_id"))
         batch_op.drop_index(batch_op.f("ix_aerodrome_v2_pools_token1_id"))

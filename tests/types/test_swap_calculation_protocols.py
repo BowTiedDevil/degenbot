@@ -23,7 +23,6 @@ class TestSwapCalculationProtocols:
 class TestBalancerParameterOrder:
     def test_balancer_accepts_token_out_before_quantity(self):
         """Balancer's calculate_tokens_out_from_tokens_in has token_out before token_in_quantity."""
-
         sig = inspect.signature(BalancerV2Pool.calculate_tokens_out_from_tokens_in)
         params = list(sig.parameters.keys())
         # self, token_in, token_out, token_in_quantity, override_state

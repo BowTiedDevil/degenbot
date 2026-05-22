@@ -55,6 +55,7 @@ class MetapoolDyCalculator:
         inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
+        """Calculate."""
         pool_balances = override_state.balances if override_state is not None else inputs.balances
 
         match self.rate_style:
@@ -126,6 +127,7 @@ class MetapoolUnderlyingDyCalculator:
         inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
+        """Calculate."""
         assert inputs.base_pool is not None
         assert inputs.virtual_price is not None
         pool_balances = override_state.balances if override_state is not None else inputs.balances

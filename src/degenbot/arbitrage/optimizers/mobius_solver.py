@@ -26,8 +26,7 @@ USE_RAW_ARRAY_MARSHALLING = bool(os.environ.get("DEGENBOT_RAW_ARRAY_MARSHALLING"
 
 
 class MobiusSolver(Solver):
-    """
-    Möbius transformation solver for constant product AMM paths.
+    """Möbius transformation solver for constant product AMM paths.
 
     Zero-iteration closed-form solution. Works for V2 paths and V3
     single-range paths (where the swap stays within one tick range).
@@ -45,6 +44,7 @@ class MobiusSolver(Solver):
     }
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         self._rust_solver = _RustArbSolver()
 
     def __getstate__(self) -> dict[str, Any]:

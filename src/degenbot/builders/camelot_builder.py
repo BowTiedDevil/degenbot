@@ -27,6 +27,7 @@ class CamelotBuilder(V2BuilderBase):
     """Builds and updates Camelot V2 pools."""
 
     def __init__(self, ctx: BuilderContext) -> None:
+        """Initialize the instance."""
         super().__init__(ctx)
 
     def build(
@@ -37,6 +38,7 @@ class CamelotBuilder(V2BuilderBase):
         io: PoolIO,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
+        """Build."""
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
@@ -129,6 +131,7 @@ class CamelotBuilder(V2BuilderBase):
         block_number: BlockIdentifier | None = None,
         io: PoolIO | None = None,
     ) -> bool:
+        """Update."""
         if not isinstance(pool, CamelotLiquidityPool):
             msg = f"CamelotBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)

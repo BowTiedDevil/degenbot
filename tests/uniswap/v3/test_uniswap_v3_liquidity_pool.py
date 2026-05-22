@@ -377,7 +377,6 @@ def test_reorg(
     """
     Provide some updates, then simulate a reorg back to the starting state
     """
-
     # Manipulate the cache depth so additional states beyond the default can be tracked
     old_cache = wbtc_weth_v3_lp_at_historical_block._state_cache
     new_cache = StateCache(max_depth=100)
@@ -1031,7 +1030,6 @@ def test_mint_and_burn_in_empty_word(fork_mainnet_archive: AnvilFork) -> None:
     Test that minting and burning an equal position inside an empty word results in no net
     liquidity in the mapping, and the removal of the position.
     """
-
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_archive.w3))
     block_number = fork_mainnet_archive.w3.eth.block_number
 
@@ -1084,7 +1082,6 @@ def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
 
     State values taken from Tenderly: https://dashboard.tenderly.co/tx/mainnet/0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d/state-diff
     """
-
     state_block = fork_mainnet_archive.w3.eth.block_number
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_archive.w3))
     lp = bot.build_pool("0x3416cF6C708Da44DB2624D63ea0AAef7113527C6")
@@ -1156,7 +1153,6 @@ def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
 
     State values taken from Tenderly: https://dashboard.tenderly.co/tx/mainnet/0xb70e8432d3ee0bcaa0f21ca7c0d0fd496096e9d72f243186dc3880d857114a3b/state-diff
     """
-
     state_block = fork_mainnet_archive.w3.eth.block_number
 
     lp_address = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"

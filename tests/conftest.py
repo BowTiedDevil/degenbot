@@ -123,7 +123,6 @@ def fork_base_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, No
     def test_using_fork(fork_base_archive: AnvilFork): ...
     ```
     """
-
     block_number = getattr(request, "param", None)
 
     fork = AnvilFork(
@@ -159,7 +158,6 @@ def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork,
     def test_using_fork(fork_mainnet_archive: AnvilFork): ...
     ```
     """
-
     block_number = getattr(request, "param", None)
 
     fork = AnvilFork(

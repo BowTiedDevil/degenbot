@@ -198,7 +198,6 @@ class TestDiscoverCoinsEdgeCases:
 
     def testNoCoinsAtAll(self):
         """Both uint256 and int128 revert on the first call returns empty result."""
-
         io = make_fake_pool_io({})  # No handlers — all calls revert
 
         result = discover_coins(io, POOL_ADDR, block_identifier=18_000_000)
@@ -206,7 +205,8 @@ class TestDiscoverCoinsEdgeCases:
         assert len(result.balances) == 0
 
     def testBalanceRevertStopsIteration(self):
-        """If a balance call reverts, iteration stops at that point.
+        """
+        If a balance call reverts, iteration stops at that point.
 
         Note: the coin address for the current index is already appended
         before the balance is fetched. A balance revert breaks the loop,

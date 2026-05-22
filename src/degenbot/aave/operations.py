@@ -1,5 +1,4 @@
-"""
-Domain types for Aave V3 transaction operations.
+"""Domain types for Aave V3 transaction operations.
 
 Contains data classes and validation containers used to represent decoded on-chain
 event data and parsed operations. These are pure domain types with no DB/Session/Provider
@@ -30,9 +29,7 @@ SCALED_AMOUNT_POOL_REVISION = 9
 
 @dataclass(frozen=True)
 class ScaledTokenEvent:
-    """
-    Wrapper for scaled token events with human-readable decoded data.
-    """
+    """Wrapper for scaled token events with human-readable decoded data."""
 
     event: LogReceipt
     event_type: ScaledTokenEventType
@@ -46,6 +43,7 @@ class ScaledTokenEvent:
 
     @property
     def is_collateral(self) -> bool:
+        """Check if collateral."""
         return self.event_type in {
             ScaledTokenEventType.COLLATERAL_BURN,
             ScaledTokenEventType.COLLATERAL_MINT,
@@ -57,6 +55,7 @@ class ScaledTokenEvent:
 
     @property
     def is_debt(self) -> bool:
+        """Check if debt."""
         return self.event_type in {
             ScaledTokenEventType.DEBT_BURN,
             ScaledTokenEventType.DEBT_MINT,
@@ -73,6 +72,7 @@ class ScaledTokenEvent:
 
     @property
     def is_burn(self) -> bool:
+        """Check if burn."""
         return self.event_type in {
             ScaledTokenEventType.COLLATERAL_BURN,
             ScaledTokenEventType.COLLATERAL_INTEREST_BURN,
@@ -164,6 +164,7 @@ class TransactionValidationError(Exception):  # pragma: no cover
         events: list[LogReceipt],
         operations: list[Operation],
     ) -> None:
+        """Initialize the instance."""
         self.tx_hash = tx_hash
         self.events = events
         self.operations = operations
@@ -307,6 +308,7 @@ class TransactionOperations:
         operations: list[Operation],
         unassigned_events: list[LogReceipt],
     ) -> None:
+        """Initialize the instance."""
         self.tx_hash = tx_hash
         self.block_number = block_number
         self.operations = operations

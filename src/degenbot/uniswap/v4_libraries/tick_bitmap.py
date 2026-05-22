@@ -1,3 +1,4 @@
+"""Uniswap V4 TickBitmap: compressed tick position lookup."""
 import bisect
 from collections.abc import Generator
 from itertools import count
@@ -14,10 +15,7 @@ def compress(
     tick: Tick,
     tick_spacing: int,
 ) -> int:
-    """
-    Compress the given tick by the spacing, rounding down towards negative infinity
-    """
-
+    """Compress the given tick by the spacing, rounding down towards negative infinity."""
     # Use Python floor division directly, which matches rounding specified by the function
     return tick // tick_spacing
 
@@ -30,10 +28,7 @@ def flip_tick(
     tick_spacing: int,
     update_block: BlockNumber,
 ) -> None:
-    """
-    Flips the initialized state for a given tick from false to true, or vice versa
-    """
-
+    """Flips the initialized state for a given tick from false to true, or vice versa."""
     if tick % tick_spacing != 0:
         msg = "Invalid tick or spacing"
         raise ValueError(msg)
@@ -62,12 +57,11 @@ def gen_ticks(
     tick_spacing: int,
     less_than_or_equal: bool,
 ) -> Generator[tuple[Tick, bool], None, None]:
-    """
-    Yields ticks from the set of all possible ticks at 32 byte (256 bit) word boundaries and
+    """Yield ticks from the set of all possible ticks at 32 byte (256 bit) word boundaries and.
+
     initialized ticks found in the liquidity mapping. The ticks are yielded in descending order when
     `less_than_or_equal` is True, else ascending.
     """
-
     # Python rounds down to negative infinity, so use it directly instead of the abs and modulo
     # implementation of the Solidity contract
     compressed = starting_tick // tick_spacing
@@ -145,11 +139,10 @@ def next_initialized_tick_within_one_word(
     tick_spacing: int,
     less_than_or_equal: bool,
 ) -> tuple[Tick, bool]:
-    """
-    Returns the next initialized tick contained in the same word (or adjacent word) as the tick that
+    """Return the next initialized tick contained in the same word (or adjacent word) as the tick that.
+
     is either to the left (less than or equal to) or right (greater than) of the given tick.
     """
-
     # Python rounds down to negative infinity, so use it directly instead of the abs and modulo
     # implementation of the Solidity contract
     compressed = tick // tick_spacing
@@ -195,10 +188,7 @@ def next_initialized_tick_within_one_word(
 def position(
     tick: Tick,
 ) -> tuple[int, int]:
-    """
-    Computes the position in the mapping where the initialized bit for a tick is placed
-    """
-
+    """Compute the position in the mapping where the initialized bit for a tick is placed."""
     return (
         tick >> 8,  # word_pos
         tick % 256,  # bit_pos

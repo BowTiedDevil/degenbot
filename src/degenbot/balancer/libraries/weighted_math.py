@@ -1,3 +1,4 @@
+"""Balancer V2 WeightedMath invariant and swap calculations."""
 from degenbot.balancer.libraries.constants import ONE, PowVersion
 from degenbot.balancer.libraries.fixed_point import (
     complement,
@@ -37,6 +38,7 @@ def calculate_invariant(
     *,
     version: PowVersion = PowVersion.V1,
 ) -> int:
+    """Calculate invariant."""
     invariant = ONE
 
     for i in range(len(normalized_weights)):
@@ -60,11 +62,10 @@ def _calc_out_given_in(
     *,
     version: PowVersion = PowVersion.V1,
 ) -> int:
-    """
-    Computes how many tokens can be taken out of a pool if `amountIn` are sent, given the
+    """Compute how many tokens can be taken out of a pool if `amountIn` are sent, given the.
+
     current balances and weights.
     """
-
     # ********************************************************************************************
     # outGivenIn                                                                                //
     # aO = amountOut                                                                            //
@@ -103,11 +104,10 @@ def _calc_in_given_out(
     *,
     version: PowVersion = PowVersion.V1,
 ) -> int:
-    """
-    Computes how many tokens must be sent to a pool in order to take `amountOut`, given the
+    """Compute how many tokens must be sent to a pool in order to take `amountOut`, given the.
+
     current balances and weights.
     """
-
     # ********************************************************************************************
     # inGivenOut                                                                                //
     # aO = amountOut                                                                            //
@@ -137,19 +137,13 @@ def _calc_in_given_out(
 
 
 def _subtract_swap_fee_amount(amount: int, fee_percentage: int) -> int:
-    """
-    Subtracts swap fee amount from `amount`, returning a lower value.
-    """
-
+    """Subtracts swap fee amount from `amount`, returning a lower value."""
     # This returns amount - fee amount, so we round up (favoring a higher fee amount).
     fee_amount = mul_up(amount, fee_percentage)
     return amount - fee_amount
 
 
 def _add_swap_fee_amount(amount: int, fee_percentage: int) -> int:
-    """
-    Adds swap fee amount to `amount`, returning a higher value.
-    """
-
+    """Add swap fee amount to `amount`, returning a higher value."""
     # This returns amount + fee amount on top, so we round down (favoring a higher fee amount).
     return div_up(amount, complement(fee_percentage))

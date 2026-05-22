@@ -1,4 +1,4 @@
-"""Pools: Add composite index for token IDs
+"""Pools: Add composite index for token IDs.
 
 Revision ID: eb4080485a56
 Revises: 06a3739885a0
@@ -19,7 +19,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     with op.batch_alter_table("pools", schema=None) as batch_op:
         batch_op.create_index(
             "ix_liquidity_pools_token_ids", ["token0_id", "token1_id"], unique=False

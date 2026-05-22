@@ -294,7 +294,8 @@ class TestFullRegistration:
 
 
 class TestDeploymentDataMatchesPoolTypeRegistry:
-    """Validate that pool_type_registry has correct deployment data.
+    """
+    Validate that pool_type_registry has correct deployment data.
 
     pool_type_registry is the sole source of truth — there is no longer
     a separate FACTORY_DEPLOYMENTS dict to cross-check against.
@@ -352,13 +353,11 @@ class TestAerodromeV2Registration:
 
     def test_aerodrome_v2_in_registrations(self) -> None:
         """AerodromeV2Pool is registered in the registry."""
-
         key = (8453, BaseAerodromeV2.factory.address)
         assert key in REGISTRATIONS
 
     def test_aerodrome_v2_has_variant(self) -> None:
         """AerodromeV2Pool has a variant attribute used for kind derivation."""
-
         assert AerodromeV2Pool.variant == "aerodrome"
 
 
@@ -367,7 +366,6 @@ class TestV4DeploymentsExcluded:
 
     def test_v4_not_in_registrations(self) -> None:
         """V4 deployments are not keyed by factory address."""
-
         for deployment in [EthereumMainnetUniswapV4, BaseUniswapV4]:
             assert not hasattr(deployment, "factory")
 

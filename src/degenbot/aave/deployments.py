@@ -1,3 +1,4 @@
+"""Aave V3 deployment addresses and chain-specific configuration."""
 from dataclasses import dataclass
 
 import eth_typing
@@ -8,6 +9,8 @@ from degenbot.checksum_cache import get_checksum_address
 
 @dataclass(slots=True, frozen=True)
 class AaveV3Deployment:
+    """AaveV3Deployment class."""
+
     name: str
     chain_id: eth_typing.ChainId
     pool_address_provider: ChecksumAddress

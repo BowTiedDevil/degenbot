@@ -1,3 +1,5 @@
+"""Balancer V2 weighted and stable pools with swap encoding."""
+
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import INVARIANT_V1, INVARIANT_V2, BalancerV2StablePool
 from degenbot.balancer.swap_amounts import BalancerV2SwapAmounts

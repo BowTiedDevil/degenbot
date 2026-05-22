@@ -38,7 +38,7 @@ def calc_d(
     n_coins: int,
     a_precision: int,
 ) -> int:
-    """Standard D step: divides by (a_nn - a_precision) * d / a_precision."""
+    """Apply the standard D step: divide by (a_nn - a_precision) * d / a_precision."""
     return (
         (a_nn * s // a_precision + d_p * n_coins)
         * d
@@ -70,7 +70,7 @@ def calc_dp(
     xp: Sequence[int],
     n_coins: int,
 ) -> int:
-    """Standard D' step: d_p = d_p * d // (x * n_coins) for each x in xp."""
+    """Apply the standard D' step: d_p = d_p * d // (x * n_coins) for each x in xp."""
     for x in xp:
         d_p = d_p * d // (x * n_coins)
     return d_p
@@ -141,6 +141,7 @@ def stableswap_get_d(
     Raises:
         ValueError: If D calculation does not converge within 255 iterations,
             or if the sum of xp is zero.
+
     """
     # Select step functions based on variant
     d_func = calc_d
@@ -216,6 +217,7 @@ def stableswap_get_y(
     Raises:
         ValueError: If y calculation does not converge within 255 iterations.
         AssertionError: If i == j or indices are out of range.
+
     """
     assert i != j, "same coin"
     assert j >= 0, "j below zero"
@@ -289,6 +291,7 @@ def stableswap_get_y_d(
     Raises:
         ValueError: If y calculation does not converge within 255 iterations.
         AssertionError: If indices are out of range.
+
     """
     assert i >= 0  # dev: i below zero
     assert i < n_coins  # dev: i above N_COINS
@@ -356,6 +359,7 @@ def stableswap_newton_y(
     Raises:
         EVMRevertError: If Newton's method does not converge.
         AssertionError: If safety checks fail (unsafe A, gamma, D values).
+
     """
     # Safety checks
     assert (

@@ -54,7 +54,8 @@ def _build_v3_pool(fork: AnvilFork, address: str) -> UniswapV3Pool:
 
 
 def _build_v3_pool_with_tick_data(fork: AnvilFork, address: str) -> UniswapV3Pool:
-    """Build a V3 pool with full tick data (non-sparse mode).
+    """
+    Build a V3 pool with full tick data (non-sparse mode).
 
     This is needed for tests that check the pre-calculation liquidity
     guard, which inspects the tick_bitmap. Sparse-mode pools have an

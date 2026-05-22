@@ -12,13 +12,7 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class OperationHandler(Protocol):
-    """
-    Handle enrichment for a specific OperationType.
-
-    Each handler is a standalone module that knows how to transform
-    a ScaledTokenEvent into the correct enriched model for its
-    operation type. Handlers are stateless and thread-safe.
-    """
+    """Handle enrichment for a specific OperationType."""
 
     operation_types: set[OperationType]
 
@@ -27,4 +21,6 @@ class OperationHandler(Protocol):
         event: "ScaledTokenEvent",
         operation: "Operation",
         context: "EnrichmentContext",
-    ) -> "EnrichedScaledTokenEvent": ...
+    ) -> "EnrichedScaledTokenEvent":
+        """Handle enrichment for a specific operation type."""
+        ...

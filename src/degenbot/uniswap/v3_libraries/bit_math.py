@@ -1,3 +1,4 @@
+"""Uniswap V3 BitMath: bit position and population count."""
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions.pool import EVMRevertError
 
@@ -6,13 +7,11 @@ from degenbot.exceptions.pool import EVMRevertError
 
 
 def least_significant_bit(number: int) -> int:
-    """
-    Find the least significant bit for the given number.
+    """Find the least significant bit for the given number.
 
     This function is rewritten to use simple string manipulation instead of the binary search
     implemented by the official Solidity contract.
     """
-
     if number <= MIN_UINT256:
         raise EVMRevertError(error="required: number > 0")
     if number > MAX_UINT256:
@@ -31,13 +30,11 @@ def least_significant_bit(number: int) -> int:
 
 
 def most_significant_bit(number: int) -> int:
-    """
-    Find the most significant bit for the given number.
+    """Find the most significant bit for the given number.
 
     This function is rewritten to use simple string manipulation instead of the binary search
     implemented by the official Solidity contract.
     """
-
     if number <= MIN_UINT256:
         raise EVMRevertError(error="required: number >= 0 ")
     if number > MAX_UINT256:

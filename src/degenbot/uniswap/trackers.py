@@ -1,3 +1,4 @@
+"""Uniswap pool and factory trackers for event-driven updates."""
 from __future__ import annotations
 
 import contextlib
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
 
 
 class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool]):
+    """AbstractUniswapV2PoolTracker class."""
+
     def __init__(
         self,
         factory_address: str,
@@ -36,6 +39,7 @@ class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool
         deployer_address: ChecksumAddress | str | None = None,
         pool_init_hash: str | None = None,
     ) -> None:
+        """Initialize the instance."""
         factory_address = get_checksum_address(factory_address)
 
         self._bot = bot
@@ -71,11 +75,10 @@ class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool
         *,
         silent: bool = False,
     ) -> Pool:
-        """
-        Get a pool from its address. If the pool is already tracked or found in the global registry,
+        """Get a pool from its address. If the pool is already tracked or found in the global registry,.
+
         that instance will be returned. Otherwise, a new one will be built.
         """
-
         pool_address = get_checksum_address(pool_address)
 
         with contextlib.suppress(KeyError):
@@ -119,16 +122,20 @@ class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool
 
 
 class UniswapV2PoolTracker(AbstractUniswapV2PoolTracker[UniswapV2Pool], pool_factory=UniswapV2Pool):
-    """
-    A class that generates and tracks concrete instances of a Uniswap V2 liquidity pool helper or
+    """A class that generates and tracks concrete instances of a Uniswap V2 liquidity pool helper or.
+
     one of its child classes.
     """
 
     def __repr__(self) -> str:  # pragma: no cover
+        """Return the canonical string representation."""
         return f"{self.__class__.__name__}(factory={self._factory_address})"
 
     @property
     def pool_init_hash(self) -> str:
+        """Return the canonical string representation."""
+        """Return a string representation."""
+        """Return pool init hash."""
         return self._pool_init_hash
 
     def get_pool_from_tokens(
@@ -137,10 +144,7 @@ class UniswapV2PoolTracker(AbstractUniswapV2PoolTracker[UniswapV2Pool], pool_fac
         *,
         silent: bool = False,
     ) -> UniswapV2Pool:
-        """
-        Get a pool by its token addresses
-        """
-
+        """Get a pool by its token addresses."""
         pool_address = generate_v2_pool_address(
             deployer_address=self._deployer_address,
             token_addresses=token_addresses,
@@ -154,6 +158,8 @@ class UniswapV2PoolTracker(AbstractUniswapV2PoolTracker[UniswapV2Pool], pool_fac
 
 
 class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool]):
+    """AbstractUniswapV3PoolTracker class."""
+
     _chain_id: ChainId
     _deployer_address: ChecksumAddress
     _factory_address: ChecksumAddress
@@ -173,6 +179,7 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
         pool_init_hash: str | None = None,
         snapshot: UniswapV3LiquiditySnapshot | None = None,
     ) -> None:
+        """Initialize the instance."""
         self._bot = bot
 
         if chain_id is None:
@@ -204,10 +211,7 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
         self._untracked_pools = set()
 
     def _apply_pending_liquidity_updates(self, pool: UniswapV3Pool) -> None:
-        """
-        Apply all pending updates from the snapshot.
-        """
-
+        """Apply all pending updates from the snapshot."""
         if self._snapshot is not None:
             for liquidity_update in self._snapshot.pending_updates(pool.address):
                 pool.update_liquidity_map(liquidity_update)
@@ -218,11 +222,10 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
         *,
         silent: bool = False,
     ) -> Pool:
-        """
-        Get a pool from its address. If the pool is already tracked or found in the pool registry,
+        """Get a pool from its address. If the pool is already tracked or found in the pool registry,.
+
         that instance will be returned. Otherwise, a new one will be built via Bot.
         """
-
         pool_address = get_checksum_address(pool_address)
 
         with contextlib.suppress(KeyError):
@@ -267,16 +270,18 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
             return new_pool
 
     def unload_snapshot(self) -> None:
+        """Perform unload snapshot."""
         self._snapshot = None
 
 
 class UniswapV3PoolTracker(AbstractUniswapV3PoolTracker[UniswapV3Pool], pool_factory=UniswapV3Pool):
-    """
-    A class that generates and tracks concrete instances of a Uniswap V3 liquidity pool helper or
+    """A class that generates and tracks concrete instances of a Uniswap V3 liquidity pool helper or.
+
     one of its child classes.
     """
 
     def __repr__(self) -> str:  # pragma: no cover
+        """Return the canonical string representation."""
         return f"{self.__class__.__name__}(factory={self._factory_address})"
 
     def get_pool_from_tokens_and_fee(
@@ -289,10 +294,9 @@ class UniswapV3PoolTracker(AbstractUniswapV3PoolTracker[UniswapV3Pool], pool_fac
         *,
         silent: bool = False,
     ) -> UniswapV3Pool:
-        """
-        Get a pool by its token addresses
-        """
-
+        """Return the canonical string representation."""
+        """Return a string representation."""
+        """Get a pool by its token addresses."""
         pool_address = generate_v3_pool_address(
             deployer_address=self._deployer_address,
             token_addresses=sorted(token_addresses),

@@ -34,6 +34,7 @@ class CryptoDyCalculator:
         inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
+        """Calculate."""
         assert inputs.d is not None, "Crypto pool requires d in inputs"
         assert inputs.gamma is not None, "Crypto pool requires gamma in inputs"
         assert inputs.price_scale is not None, "Crypto pool requires price_scale in inputs"

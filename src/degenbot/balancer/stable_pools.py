@@ -1,3 +1,4 @@
+"""Balancer V2 stable pool implementations (MetaStable, ComposableStable)."""
 from __future__ import annotations
 
 from threading import Lock
@@ -83,8 +84,7 @@ class _StaticRateProvider:
 
 
 class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
-    """
-    Balancer V2 Stable Pool (MetaStablePool or ComposableStablePool).
+    """Balancer V2 Stable Pool (MetaStablePool or ComposableStablePool).
 
     Supports token-to-token swaps using StableMath. For ComposableStablePools,
     the BPT token is automatically dropped from the invariant and swap calculations.
@@ -148,6 +148,7 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         chain_id: ChainId | None = None,
         state_block: BlockNumber | None = None,
     ) -> None:
+        """Initialize the instance."""
         self.address = get_checksum_address(address)
 
         self._chain_id = chain_id if chain_id not in {None, 0} else tokens[0].chain_id
@@ -205,6 +206,7 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
     def __repr__(self) -> str:  # pragma: no cover
+        """Return the canonical string representation."""
         pool_type = "ComposableStablePool" if self.bpt_idx is not None else "MetaStablePool"
         return (
             f"{self.__class__.__name__}(address={self.address}, "
@@ -212,23 +214,32 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         )
 
     def __str__(self) -> str:  # pragma: no cover
+        """Return a human-readable string representation."""
         pool_type = "ComposableStablePool" if self.bpt_idx is not None else "MetaStablePool"
         return f"{self.__class__.__name__} {pool_type} @ {self.address}"
 
     @property
     def balances(self) -> tuple[int, ...]:
+        """Return the canonical string representation."""
+        """Return a human-readable string representation."""
+        """Return a string representation."""
+        """Return a string representation."""
+        """Balances."""
         return self.state.balances
 
     @property
     def chain_id(self) -> int | None:
+        """Return chain id."""
         return self._chain_id
 
     @property
     def state(self) -> PoolState:
+        """State."""
         return self._state
 
     @property
     def tokens(self) -> tuple[Erc20Token, ...]:
+        """Tokens."""
         return self._tokens
 
     @property
@@ -348,8 +359,7 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         override_state: PoolState | None = None,
         block_identifier: int | str | None = None,
     ) -> int:
-        """
-        Compute the amount of token_out received for a GIVEN_IN swap.
+        """Compute the amount of token_out received for a GIVEN_IN swap.
 
         Flow (matches deployed MetaStablePool and ComposableStablePool):
         1. Subtract swap fee from raw input amount
@@ -420,8 +430,7 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         override_state: PoolState | None = None,
         block_identifier: int | str | None = None,
     ) -> int:
-        """
-        Compute the amount of token_in needed for a GIVEN_OUT swap.
+        """Compute the amount of token_in needed for a GIVEN_OUT swap.
 
         Flow (matches deployed MetaStablePool and ComposableStablePool):
         1. Upscale output amount and balances (using block-specific rates)
@@ -492,6 +501,7 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         state_override: AbstractPoolState | None = None,
         block_identifier: int | str | None = None,
     ) -> SimulationResult:
+        """Simulate swap."""
         balancer_state: BalancerV2PoolState | None = None
         if state_override is not None:
             if not isinstance(state_override, BalancerV2PoolState):
@@ -523,12 +533,15 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
+        """Return the pool fee regardless of direction."""
         return self.fee
 
     def external_update(
         self,
         update: BalancerV2StablePoolExternalUpdate,
     ) -> None:
+        """Extract fee."""
+        """Extract fee."""
         """Apply an external state update with new balances."""
         if self.state.block is not None and update.block_number < self.state.block:
             return

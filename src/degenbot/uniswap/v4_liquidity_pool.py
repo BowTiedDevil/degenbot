@@ -1,3 +1,4 @@
+"""UniswapV4Pool: concentrated liquidity AMM with hook support."""
 import dataclasses
 from collections.abc import Callable
 from enum import Enum
@@ -69,6 +70,8 @@ from degenbot.uniswap.v4_types import (
 
 @dataclasses.dataclass(slots=True)
 class SwapResult:
+    """SwapResult class."""
+
     sqrt_price_x96: int
     tick: int
     liquidity: int
@@ -76,28 +79,34 @@ class SwapResult:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class SwapDelta:
+    """SwapDelta class."""
+
     currency0: int
     currency1: int
 
     @property
     def amount_in(self) -> int:
-        "The deposited token amount."
+        """The deposited token amount."""
         return -min(self.currency0, self.currency1)
 
     @property
     def amount_out(self) -> int:
-        "The withdrawn token amount."
+        """The withdrawn token amount."""
         return max(self.currency0, self.currency1)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class ProtocolFee:
+    """ProtocolFee class."""
+
     zero_for_one: int
     one_for_zero: int
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class Slot0:
+    """Slot0 class."""
+
     sqrt_price_x96: int
     tick: int
     protocol_fee: ProtocolFee
@@ -109,6 +118,8 @@ NATIVE_CURRENCY_ADDRESS = ZERO_ADDRESS
 
 
 class Hooks(Enum):
+    """Hooks class."""
+
     # ref: https://github.com/Uniswap/v4-core/blob/main/src/libraries/Hooks.sol
     BEFORE_INITIALIZE = 1 << 13
     AFTER_INITIALIZE = 1 << 12
@@ -133,6 +144,8 @@ class UniswapV4Pool(
     UniswapV4PoolCalc,
     AbstractLiquidityPool,
 ):
+    """UniswapV4Pool class."""
+
     _state_mgr: ConcentratedLiquidityStateManager[UniswapV4PoolState]
 
     LOG_HANDLERS: ClassVar[dict[str, Any]] = {
@@ -183,6 +196,7 @@ class UniswapV4Pool(
         state_cache_depth: int = 8,
         tick_data_fetcher: Callable[[int, int], None] | None = None,
     ) -> None:
+        """Initialize the instance."""
         self._pool_manager_address = get_checksum_address(pool_manager_address)
         self._pool_id: Final[HexBytes] = HexBytes(pool_id)
 
@@ -288,17 +302,23 @@ class UniswapV4Pool(
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
     def __eq__(self, other: object) -> bool:
+        """Check equality with another object."""
         if isinstance(other, type(self)):
             return self.address == other.address and self.pool_id == other.pool_id
         return super().__eq__(other)
 
     def __hash__(self) -> int:
+        """Return the hash value."""
         return hash(HexBytes(self.address) + self.pool_id)
 
     def __repr__(self) -> str:  # pragma: no cover
+        """Return the canonical string representation."""
         return f"{self.__class__.__name__}(pool_id={self.pool_id.to_0x_hex()},  token0={self._token0}, token1={self._token1}, fee={self.fee}, tick spacing={self.tick_spacing})"  # noqa:E501
 
     def __str__(self) -> str:
+        """Return the canonical string representation."""
+        """Return a string representation."""
+        """Return a string representation."""
         return self.name
 
     @staticmethod
@@ -319,11 +339,10 @@ class UniswapV4Pool(
         sqrt_price_x96_limit: int,
         override_state: UniswapV4PoolState | None = None,
     ) -> tuple[SwapDelta, FeeToProtocol, SwapFee, SwapResult]:
-        """
-        port from ``UniswapV4Pool._calculate_swap``. Operates on a frozen
+        """Port from ``UniswapV4Pool._calculate_swap``. Operates on a frozen.
+
         ``LiquidityMapSnapshot`` and returns ``SwapResult`` with no side effects.
         """
-
         if override_state is not None:
             snapshot = LiquidityMapSnapshot.from_state(
                 override_state,
@@ -420,6 +439,7 @@ class UniswapV4Pool(
         token_out_quantity: int,
         override_state: UniswapV4PoolState | None = None,
     ) -> int:
+        """Calculate tokens in from tokens out."""
         if token_out not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_out not found!")
 
@@ -466,6 +486,7 @@ class UniswapV4Pool(
         token_in_quantity: int,
         override_state: UniswapV4PoolState | None = None,
     ) -> int:
+        """Calculate tokens out from tokens in."""
         if token_in not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_in not found!")
 
@@ -508,10 +529,12 @@ class UniswapV4Pool(
 
     @property
     def address(self) -> ChecksumAddress:
+        """Address."""
         return self._pool_manager_address
 
     @property
     def chain_id(self) -> int | None:
+        """Return chain id."""
         return self._chain_id
 
     @property
@@ -528,46 +551,57 @@ class UniswapV4Pool(
 
     @property
     def liquidity(self) -> int:
+        """Return liquidity."""
         return self._state_mgr.liquidity
 
     @property
     def pool_id(self) -> HexBytes:
+        """Pool id."""
         return self._pool_id
 
     @property
     def pool_key(self) -> UniswapV4PoolKey:
+        """Pool key."""
         return self._pool_key
 
     @property
     def sqrt_price_x96(self) -> int:
+        """Return sqrt price x96."""
         return self._state_mgr.sqrt_price_x96
 
     @property
     def state(self) -> UniswapV4PoolState:
+        """State."""
         return self._state_mgr.state
 
     @property
     def tick(self) -> int:
+        """Return tick."""
         return self._state_mgr.tick
 
     @property
     def tick_bitmap(self) -> InitializedTickMap:
+        """Tick bitmap."""
         return cast("InitializedTickMap", self._state_mgr.tick_bitmap)
 
     @property
     def tick_data(self) -> LiquidityMap:
+        """Tick data."""
         return cast("LiquidityMap", self._state_mgr.tick_data)
 
     @property
     def tick_spacing(self) -> int:
+        """Return tick spacing."""
         return self.pool_key.tick_spacing
 
     @property
     def fee(self) -> int:
+        """Return fee."""
         return self.pool_key.fee
 
     @property
     def update_block(self) -> BlockNumber:
+        """Update block."""
         block = self._state_mgr.update_block
         if block is None:
             raise DegenbotValueError(message="State does not have a block number.")
@@ -578,6 +612,7 @@ class UniswapV4Pool(
         state: UniswapV4PoolState,
         vector: UniswapPoolSwapVector,
     ) -> bool:
+        """Swap is viable."""
         return self._state_mgr.swap_is_viable(
             state=state,
             zero_for_one=vector.zero_for_one,
@@ -607,12 +642,12 @@ class UniswapV4Pool(
         self,
         update: UniswapV4PoolExternalUpdate,
     ) -> bool:
-        """
-        Process a `UniswapV4PoolExternalUpdate` with one or more of the following update types:
+        """Process a `UniswapV4PoolExternalUpdate` with one or more of the following update types.
+
             - `block_number`: int
             - `tick`: int
             - `liquidity`: int
-            - `sqrt_price_x96`: int
+            - `sqrt_price_x96`: int.
 
         `block_number` is validated against the most recently recorded block prior to recording any
         changes.
@@ -622,7 +657,6 @@ class UniswapV4Pool(
         @dev This method uses a lock to guard state-modifying methods that might cause race
         conditions when used with threads.
         """
-
         if update.block_number < self.update_block:
             raise ExternalUpdateError(
                 message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"  # noqa:E501
@@ -658,13 +692,11 @@ class UniswapV4Pool(
         self,
         update: UniswapV4PoolLiquidityMappingUpdate,
     ) -> None:
-        """
-        Applies an update to the liquidity map.
+        """Apply an update to the liquidity map.
 
         @dev This method uses a lock to guard state-modifying methods that might cause race
         conditions when used with threads.
         """
-
         if update.liquidity == 0:
             return
 
@@ -796,6 +828,7 @@ class UniswapV4Pool(
         token_out: ChecksumAddress,  # noqa: ARG002
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
+        """Simulate swap."""
         v4_state: UniswapV4PoolState | None = None
         if state_override is not None:
             if not isinstance(state_override, UniswapV4PoolState):
@@ -831,6 +864,7 @@ class UniswapV4Pool(
         token_in: Erc20Token | None = None,  # noqa: ARG002
         token_out: Erc20Token | None = None,  # noqa: ARG002
     ) -> HopType:
+        """Convert to hop state."""
         # token_in/token_out unused — 2-token pools determine pair from zero_for_one.
         # Callers should ensure these match pool.token0/pool.token1 if provided.
         state = state_override or self.state
@@ -952,6 +986,7 @@ class UniswapV4Pool(
         amount_in: int,
         amount_out: int,
     ) -> UniswapV4PoolSwapAmounts:
+        """Build swap amount."""
         limit = MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1
         return UniswapV4PoolSwapAmounts(
             address=self.address,

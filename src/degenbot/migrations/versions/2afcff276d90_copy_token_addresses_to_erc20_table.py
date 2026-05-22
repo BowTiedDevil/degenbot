@@ -1,4 +1,4 @@
-"""copy token addresses to erc20 table
+"""copy token addresses to erc20 table.
 
 Revision ID: 2afcff276d90
 Revises: 4eada4ae4a55
@@ -40,7 +40,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     with op.batch_alter_table("erc20_tokens", schema=None) as batch_op:
         batch_op.alter_column("name", existing_type=sa.TEXT(), nullable=True)
         batch_op.alter_column("symbol", existing_type=sa.TEXT(), nullable=True)

@@ -47,8 +47,8 @@ class FakePool:
 
 
 def _build_convex_problem(num_pools: int) -> Problem:
-    """
-    Construct a DPP-compliant cvxpy problem with parameterized values for pool reserves. This
+    """Construct a DPP-compliant cvxpy problem with parameterized values for pool reserves. This.
+
     allows the problem to be defined once at the class level, and rapidly re-solved at the instance
     level by updating the parameters for the specific pools and tokens being evaluated.
 
@@ -56,7 +56,6 @@ def _build_convex_problem(num_pools: int) -> Problem:
 
     ref: https://www.cvxpy.org/tutorial/dpp/index.html
     """
-
     num_tokens = num_pools
 
     logger.info(f"Building initial CVXPY problem: {num_pools} pools")
@@ -225,10 +224,7 @@ class _UniswapMultiPoolCycleTesting(_UniswapLpCycle):
     ) -> ArbitrageCalculationResult[
         UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
     ]:
-        """
-        Calculate the optimal arbitrage profit using the maximum input as an upper bound.
-        """
-
+        """Calculate the optimal arbitrage profit using the maximum input as an upper bound."""
         pool_states: Mapping[Pool, PoolState]
         pool_states = {pool: pool.state for pool in self.swap_pools}
 
@@ -239,8 +235,8 @@ class _UniswapMultiPoolCycleTesting(_UniswapLpCycle):
             pools: Sequence[Pool],
             pool_states: Mapping[Pool, PoolState],
         ) -> ArbitrageCalculationResult[UniswapV2PoolSwapAmounts]:
-            """
-            Calculate the optimal arbitrage for a sequence of Uniswap V2 (or compatible) pools of
+            """Calculate the optimal arbitrage for a sequence of Uniswap V2 (or compatible) pools of.
+
             arbitrary length.
             """
 

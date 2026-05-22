@@ -31,8 +31,7 @@ class InterestAccrualHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """
-        Enrich an interest accrual event.
+        """Enrich an interest accrual event.
 
         Interest accrual does not change scaled balance, so scaled_amount = 0.
         The raw_amount is the interest amount in underlying units.

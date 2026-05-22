@@ -42,6 +42,7 @@ class AsyncV4PoolBuilder:
     """
 
     def __init__(self, ctx: AsyncBuilderContext) -> None:
+        """Initialize the instance."""
         assert ctx.managed_pools is not None, (
             "AsyncV4PoolBuilder requires managed_pools in BuilderContext"
         )
@@ -61,7 +62,6 @@ class AsyncV4PoolBuilder:
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from DB/RPC and construct an I/O-free UniswapV4Pool."""
-
         # For V4, `address` is the pool manager address
         pool_manager_address = get_checksum_address(address)
         assert isinstance(request, BuildManagedPoolRequest)

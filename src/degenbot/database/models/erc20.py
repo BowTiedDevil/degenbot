@@ -1,3 +1,4 @@
+"""SQLAlchemy model for ERC-20 token metadata."""
 from sqlalchemy import Index
 from sqlalchemy.orm import Mapped
 
@@ -6,6 +7,8 @@ from .types import PrimaryKeyInt
 
 
 class Erc20TokenTable(Base):
+    """Erc20TokenTable class."""
+
     __tablename__ = "erc20_tokens"
 
     id: Mapped[PrimaryKeyInt]
@@ -16,6 +19,7 @@ class Erc20TokenTable(Base):
     decimals: Mapped[int | None]
 
     def __repr__(self) -> str:
+        """Return a string representation."""
         return (
             f"{self.__class__.__name__}("
             f"chain={self.chain!r}, "

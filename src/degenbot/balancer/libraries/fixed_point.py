@@ -1,3 +1,4 @@
+"""Balancer V2 FixedPoint arithmetic helpers."""
 from degenbot.balancer.libraries import log_exp_math
 from degenbot.balancer.libraries.constants import FOUR, MAX_POW_RELATIVE_ERROR, ONE, TWO, PowVersion
 from degenbot.constants import MAX_UINT256
@@ -7,18 +8,21 @@ _ZERO = 0
 
 
 def add(a: int, b: int) -> int:
+    """Return add."""
     if a + b > MAX_UINT256:
         raise EVMRevertError(error="ADD_OVERFLOW")
     return a + b
 
 
 def sub(a: int, b: int) -> int:
+    """Return sub."""
     if b > a:
         raise EVMRevertError(error="SUB_OVERFLOW")
     return a - b
 
 
 def mul_down(a: int, b: int) -> int:
+    """Return mul down."""
     product = a * b
     if not (a == 0 or product // a == b):
         raise EVMRevertError(error="MUL_OVERFLOW")
@@ -26,6 +30,7 @@ def mul_down(a: int, b: int) -> int:
 
 
 def mul_up(a: int, b: int) -> int:
+    """Return mul up."""
     product = a * b
 
     if product == 0:
@@ -37,6 +42,7 @@ def mul_up(a: int, b: int) -> int:
 
 
 def div_down(a: int, b: int) -> int:
+    """Return div down."""
     if b == 0:
         raise EVMRevertError(error="ZERO_DIVISION")
 
@@ -51,6 +57,7 @@ def div_down(a: int, b: int) -> int:
 
 
 def div_up(a: int, b: int) -> int:
+    """Return div up."""
     if b == 0:
         raise EVMRevertError(error="ZERO_DIVISION")
 
@@ -65,8 +72,8 @@ def div_up(a: int, b: int) -> int:
 
 
 def pow_down(x: int, y: int, *, version: PowVersion = PowVersion.V1) -> int:
-    """
-    Returns x^y, assuming both are fixed point numbers, rounding down. The result is guaranteed to
+    """Return x^y, assuming both are fixed point numbers, rounding down. The result is guaranteed to.
+
     not be above the true value (that is, the error function expected - actual is always positive).
 
     The `version` parameter controls which deployed contract implementation to match:
@@ -91,8 +98,8 @@ def pow_down(x: int, y: int, *, version: PowVersion = PowVersion.V1) -> int:
 
 
 def pow_up(x: int, y: int, *, version: PowVersion = PowVersion.V1) -> int:
-    """
-    Returns x^y, assuming both are fixed point numbers, rounding up. The result is guaranteed to not
+    """Return x^y, assuming both are fixed point numbers, rounding up. The result is guaranteed to not.
+
     be below the true value (that is, the error function expected - actual is always negative).
 
     The `version` parameter controls which deployed contract implementation to match:
@@ -114,4 +121,5 @@ def pow_up(x: int, y: int, *, version: PowVersion = PowVersion.V1) -> int:
 
 
 def complement(x: int) -> int:
+    """Return complement."""
     return ONE - x if x < ONE else _ZERO

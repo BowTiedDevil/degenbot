@@ -83,7 +83,8 @@ COMPOSABLE_STABLE_POOL_ADDRESSES = {
 
 
 class CacheAwareRateProvider:
-    """Rate provider that replicates the on-chain _cacheTokenRateIfNecessary flow.
+    """
+    Rate provider that replicates the on-chain _cacheTokenRateIfNecessary flow.
 
     For each token, reads getTokenRateCache() to get the cached (rate, oldRate,
     duration, expires). If the cache has expired (block timestamp > expires),
@@ -173,7 +174,8 @@ def _build_stable_pool(
     inject_rate_provider: bool = False,
     invariant_version: int = INVARIANT_V2,
 ) -> BalancerV2StablePool:
-    """Build a BalancerV2StablePool from on-chain data.
+    """
+    Build a BalancerV2StablePool from on-chain data.
 
     If inject_rate_provider is True, constructs a CacheAwareRateProvider
     that replicates the on-chain _cacheTokenRateIfNecessary flow for

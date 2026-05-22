@@ -1,3 +1,4 @@
+"""Async Web3 provider connection manager."""
 from json import JSONDecodeError
 from typing import TYPE_CHECKING, cast
 
@@ -14,10 +15,7 @@ if TYPE_CHECKING:
 
 
 def _fast_decode_rpc_response(raw_response: bytes) -> RPCResponse:
-    """
-    Decode the JSON-RPC response using ujson.
-    """
-
+    """Decode the JSON-RPC response using ujson."""
     try:
         return cast("RPCResponse", ujson_loads(raw_response))
     except ValueError:
@@ -27,7 +25,10 @@ def _fast_decode_rpc_response(raw_response: bytes) -> RPCResponse:
 
 
 class AsyncConnectionManager:
+    """AsyncConnectionManager class."""
+
     def __init__(self) -> None:
+        """Initialize the instance."""
         self.connections: dict[ChainId, AsyncProviderAdapter] = {}
         self._default_chain_id: ChainId | None = None
 
@@ -46,6 +47,7 @@ class AsyncConnectionManager:
 
         Raises:
             DegenbotValueError: If no provider is registered for the chain
+
         """
         try:
             return self.connections[chain_id]
@@ -68,6 +70,7 @@ class AsyncConnectionManager:
 
         Raises:
             DegenbotValueError: If the provider is not connected
+
         """
         async_w3_connected_check_with_retry = tenacity.AsyncRetrying(
             stop=tenacity.stop_after_delay(10),
@@ -92,10 +95,12 @@ class AsyncConnectionManager:
         self.connections[await provider.get_chain_id()] = provider
 
     def set_default_chain(self, chain_id: ChainId) -> None:
+        """Set default chain."""
         self._default_chain_id = chain_id
 
     @property
     def default_chain_id(self) -> ChainId:
+        """Default chain id."""
         if self._default_chain_id is None:
             raise DegenbotValueError(message="A default chain ID has not been provided.")
         return self._default_chain_id

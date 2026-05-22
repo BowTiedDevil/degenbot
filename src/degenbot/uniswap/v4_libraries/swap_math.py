@@ -1,3 +1,4 @@
+"""Uniswap V4 SwapMath: swap step amounts and fees."""
 from degenbot.uniswap.v4_libraries import full_math, sqrt_price_math
 
 MAX_SWAP_FEE = 1 * 10**6
@@ -9,15 +10,13 @@ def get_sqrt_price_target(
     sqrt_price_next_x96: int,
     sqrt_price_limit_x96: int,
 ) -> int:
-    """
-    Computes the price target for the next swap step.
+    """Compute the price target for the next swap step.
 
     @dev This simplified implementation replicates the gas optimized Yul used by the Solidity
     contract.
 
     ref: https://github.com/Uniswap/v4-core/blob/main/src/libraries/SwapMath.sol
     """
-
     return (
         max(sqrt_price_next_x96, sqrt_price_limit_x96)
         if zero_for_one
@@ -33,10 +32,7 @@ def compute_swap_step(
     amount_remaining: int,
     fee_pips: int,
 ) -> tuple[int, int, int, int]:
-    """
-    Computes the result of swapping some amount in, or amount out, given the parameters of the swap.
-    """
-
+    """Compute the result of swapping some amount in, or amount out, given the parameters of the swap."""
     zero_for_one = sqrt_ratio_x96_current >= sqrt_ratio_x96_target
     exact_in = amount_remaining < 0
 

@@ -14,6 +14,7 @@ Example:
     ...     balance = await contract.call("balanceOf(address)", ["0x1234..."])
     ...     print(f"Balance: {balance[0]}")
     >>> asyncio.run(main())
+
 """
 
 from collections.abc import Sequence
@@ -23,8 +24,7 @@ from degenbot.degenbot_rs import AsyncContract as _AsyncContract
 
 
 class AsyncContract:
-    """
-    Async contract interface with automatic ABI encoding/decoding.
+    """Async contract interface with automatic ABI encoding/decoding.
 
     Provides async methods for non-blocking smart contract calls with
     automatic ABI encoding of arguments and decoding of return values.
@@ -51,6 +51,7 @@ class AsyncContract:
         ...     )
         ...     print(f"Balance: {balance[0]}")
         >>> asyncio.run(main())
+
     """
 
     def __init__(
@@ -63,6 +64,7 @@ class AsyncContract:
         Args:
             address: Contract address
             provider_url: RPC provider URL
+
         """
         self._address = address
         self._contract = _AsyncContract.from_provider(
@@ -81,8 +83,7 @@ class AsyncContract:
         args: Sequence[str] | None = None,
         block_number: int | None = None,
     ) -> list[str]:
-        """
-        Execute a contract call asynchronously.
+        """Execute a contract call asynchronously.
 
         Args:
             function_signature: Function signature like "balanceOf(address)" or
@@ -105,6 +106,7 @@ class AsyncContract:
             ...     "balanceOf(address)",
             ...     ["0x742d35Cc6634C0532925a3b8D4C9db96590d6B75"],
             ... )
+
         """
         if args is None:
             args = []
@@ -116,8 +118,7 @@ class AsyncContract:
         calls: Sequence[tuple[str, Sequence[str] | None]],
         block_number: int | None = None,
     ) -> list[list[str]]:
-        """
-        Execute multiple contract calls asynchronously.
+        """Execute multiple contract calls asynchronously.
 
         Args:
             calls: List of (function_signature, args) tuples
@@ -138,6 +139,7 @@ class AsyncContract:
             ...     ("totalSupply()", []),
             ... ])
             >>> name, symbol, decimals, total_supply = [r[0] for r in results]
+
         """
         # Convert calls to the format expected by Rust
         rust_calls: list[tuple[str, list[str]]] = []

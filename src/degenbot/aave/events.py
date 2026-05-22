@@ -6,9 +6,7 @@ from hexbytes import HexBytes
 
 
 class ScaledTokenEventType(Enum):
-    """
-    Types of scaled token events.
-    """
+    """Types of scaled token events."""
 
     # Balance modifying event types
     COLLATERAL_BURN = auto()
@@ -36,9 +34,7 @@ class ScaledTokenEventType(Enum):
 
 
 class AaveV3PoolEvent(Enum):
-    """
-    Aave V3 Pool contract events.
-    """
+    """Aave V3 Pool contract events."""
 
     BORROW = HexBytes("0xb3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0")
     DEFICIT_CREATED = HexBytes("0x2bccfb3fad376d59d7accf970515eb77b2f27b082c90ed0fb15583dd5a942699")
@@ -64,9 +60,7 @@ class AaveV3PoolEvent(Enum):
 
 
 class AaveV3ScaledTokenEvent(Enum):
-    """
-    Aave V3 aToken/vToken events.
-    """
+    """Aave V3 aToken/vToken events."""
 
     BALANCE_TRANSFER = HexBytes(
         "0x4beccb90f994c31aced7a23b5611020728a23d8ec5cddd1a3e9d97b96fda8666"
@@ -76,9 +70,7 @@ class AaveV3ScaledTokenEvent(Enum):
 
 
 class AaveV3PoolConfigEvent(Enum):
-    """
-    Aave V3 pool configuration events.
-    """
+    """Aave V3 pool configuration events."""
 
     ADDRESS_SET = HexBytes("0x9ef0e8c8e52743bb38b83b17d9429141d494b8041ca6d616a6c77cebae9cd8b7")
     ASSET_COLLATERAL_IN_EMODE_CHANGED = HexBytes(
@@ -111,9 +103,7 @@ class AaveV3PoolConfigEvent(Enum):
 
 
 class AaveV3GhoDebtTokenEvent(Enum):
-    """
-    Aave V3 GHO debt token events.
-    """
+    """Aave V3 GHO debt token events."""
 
     DISCOUNT_PERCENT_UPDATED = HexBytes(
         "0x74ab9665e7c36c29ddb78ef88a3e2eac73d35b8b16de7bc573e313e320104956"
@@ -127,25 +117,20 @@ class AaveV3GhoDebtTokenEvent(Enum):
 
 
 class AaveV3StkAaveEvent(Enum):
-    """
-    Aave V3 stkAAVE token events.
-    """
+    """Aave V3 stkAAVE token events."""
 
     REDEEM = HexBytes("0x3f693fff038bb8a046aa76d9516190ac7444f7d69cf952c4cbdc086fdef2d6fc")
     STAKED = HexBytes("0x6c86f3fd5118b3aa8bb4f389a617046de0a3d3d477de1a1673d227f802f616dc")
 
 
 class AaveV3RewardsControllerEvent(Enum):
-    """
-    Aave V3 RewardsController events.
-    """
+    """Aave V3 RewardsController events."""
 
     REWARDS_CLAIMED = HexBytes("0xc052130bc4ef84580db505783484b067ea8b71b3bca78a7e12db7aea8658f004")
 
 
 class AaveV3OracleEvent(Enum):
-    """
-    Aave V3 Oracle contract events.
+    """Aave V3 Oracle contract events.
 
     These events are emitted by the AaveOracle contract when its
     configuration changes.
@@ -157,8 +142,6 @@ class AaveV3OracleEvent(Enum):
 
 
 class ERC20Event(Enum):
-    """
-    Standard ERC20 events.
-    """
+    """Standard ERC20 events."""
 
     TRANSFER = HexBytes("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")

@@ -1,3 +1,4 @@
+"""Balancer V2 weighted pool implementation."""
 from collections.abc import Sequence
 from fractions import Fraction
 from threading import Lock
@@ -61,6 +62,8 @@ def detect_pow_version(bytecode: str) -> PowVersion:
 
 
 class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
+    """BalancerV2Pool class."""
+
     variant: ClassVar[str | None] = "balancer_weighted"
     type PoolState = BalancerV2PoolState
     FEE_DENOMINATOR = 1 * 10**18
@@ -88,6 +91,7 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         chain_id: ChainId | None = None,
         state_block: BlockNumber | None = None,
     ) -> None:
+        """Initialize the instance."""
         self.address = get_checksum_address(address)
 
         self._chain_id = chain_id if chain_id is not None else tokens[0].chain_id
@@ -111,25 +115,35 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
     def __repr__(self) -> str:  # pragma: no cover
+        """Return the canonical string representation."""
         return f"{self.__class__.__name__}(address={self.address}, tokens={len(self._tokens)})"
 
     def __str__(self) -> str:  # pragma: no cover
+        """Return a human-readable string representation."""
         return f"{self.__class__.__name__} WeightedPool @ {self.address}"
 
     @property
     def balances(self) -> tuple[int, ...]:
+        """Return the canonical string representation."""
+        """Return a human-readable string representation."""
+        """Return a string representation."""
+        """Return a string representation."""
+        """Balances."""
         return self.state.balances
 
     @property
     def chain_id(self) -> int | None:
+        """Return chain id."""
         return self._chain_id
 
     @property
     def state(self) -> PoolState:
+        """State."""
         return self._state
 
     @property
     def tokens(self) -> tuple[Erc20Token, ...]:
+        """Tokens."""
         return self._tokens
 
     def calculate_tokens_out_from_tokens_in(
@@ -139,6 +153,7 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         token_in_quantity: int,
         override_state: PoolState | None = None,
     ) -> int:
+        """Calculate tokens out from tokens in."""
         token_in_index = self._tokens.index(token_in)
         token_out_index = self._tokens.index(token_out)
 
@@ -177,7 +192,7 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         token_out_quantity: int,
         override_state: PoolState | None = None,
     ) -> int:
-        """Computes how many tokens must be sent to take `token_out_quantity` out."""
+        """Compute how many tokens must be sent to take `token_out_quantity` out."""
         token_in_index = self._tokens.index(token_in)
         token_out_index = self._tokens.index(token_out)
 
@@ -223,6 +238,7 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         token_out: ChecksumAddress,
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
+        """Simulate swap."""
         balancer_state: BalancerV2PoolState | None = None
         if state_override is not None:
             if not isinstance(state_override, BalancerV2PoolState):
@@ -253,12 +269,15 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
+        """Return the pool fee regardless of direction."""
         return self.fee
 
     def external_update(
         self,
         update: BalancerV2WeightedPoolExternalUpdate,
     ) -> None:
+        """Extract fee."""
+        """Extract fee."""
         """Apply an external state update with new balances."""
         if self.state.block is not None and update.block_number < self.state.block:
             return

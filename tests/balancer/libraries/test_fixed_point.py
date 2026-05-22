@@ -317,7 +317,7 @@ class TestComplement:
         assert fixed_point.complement(5 * 10**17) == 5 * 10**17
 
     def test_greater_than_one(self):
-        """complement clamps to 0 for values > ONE."""
+        """Complement clamps to 0 for values > ONE."""
         assert fixed_point.complement(2 * ONE) == 0
 
     def test_small(self):

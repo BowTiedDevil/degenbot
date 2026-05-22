@@ -1,4 +1,5 @@
-"""Tests for CurveStableswapPoolTracker.
+"""
+Tests for CurveStableswapPoolTracker.
 
 Tracer bullet: a Curve pool tracker that tracks pools,
 delegates construction to Bot, and supports registry-based discovery.

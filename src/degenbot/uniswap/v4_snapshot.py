@@ -1,3 +1,4 @@
+"""Uniswap V4 pool snapshot and subscription handler."""
 import asyncio
 import pathlib
 from collections import defaultdict
@@ -38,13 +39,15 @@ type ManagedPoolIdentifier = tuple[PoolManagerAddress, PoolId]
 
 
 class LiquidityMap(TypedDict):
+    """LiquidityMap class."""
+
     tick_bitmap: dict[int, BitmapAtWord]
     tick_data: dict[int, LiquidityAtTick]
 
 
 class UniswapV4LiquiditySnapshotSource(Protocol):
-    """
-    A minimal protocol allowing the UniswapV4LiquiditySnapshot class to retrieve pool data from a
+    """A minimal protocol allowing the UniswapV4LiquiditySnapshot class to retrieve pool data from a.
+
     generic source.
     """
 
@@ -55,14 +58,25 @@ class UniswapV4LiquiditySnapshotSource(Protocol):
     # necessary to return the specified types.
     def get_liquidity_map(
         self, pool_manager: ChecksumAddress, pool_id: bytes | str
-    ) -> LiquidityMap | None: ...
-    def get_newest_block(self) -> BlockNumber | None: ...
-    def get_pools(self) -> set[PoolId]: ...
+    ) -> LiquidityMap | None:
+        """Return liquidity map."""
+        ...
+    def get_newest_block(self) -> BlockNumber | None:
+        """Return newest block."""
+        ...
+    def get_pools(self) -> set[PoolId]:
+        """Return pools."""
+        ...
 
 
 class MonolithicJsonFileSnapshot:
+    """Return liquidity map."""
+
+    """Return newest block."""
+    """Return pools."""
     """
-    A pool liquidity source backed by a single JSON file with this structure:
+    A pool liquidity source backed by a single JSON file with this structure.
+
     {
         "snapshot_block": int,
         "chain_id": int,
@@ -85,12 +99,13 @@ class MonolithicJsonFileSnapshot:
         "0xPoolId2": { ... },
         "0xPoolId3": { ... },
         ...
-    }
+    }.
     """
 
     storage_kind = "file"
 
     def __init__(self, path: pathlib.Path | str) -> None:
+        """Initialize the instance."""
         path = pathlib.Path(path).expanduser().absolute()
         self._path = path
         self._file_snapshot: dict[PoolId, Any] = pydantic_core.from_json(path.read_bytes())
@@ -101,6 +116,7 @@ class MonolithicJsonFileSnapshot:
         pool_manager: ChecksumAddress,  # noqa: ARG002
         pool_id: bytes | str,
     ) -> LiquidityMap | None:
+        """Return liquidity map."""
         pool_id = HexBytes(pool_id).to_0x_hex()
 
         if pool_id not in self._file_snapshot:
@@ -118,12 +134,14 @@ class MonolithicJsonFileSnapshot:
         )
 
     def get_newest_block(self) -> BlockNumber | None:
+        """Return newest block."""
         newest_block = self._file_snapshot.get("snapshot_block")
         if newest_block is None:
             return None
         return int(newest_block)
 
     def get_pools(self) -> set[PoolId]:
+        """Return pools."""
         # all top-level keys except metadata entries
         return {
             get_checksum_address(key)
@@ -133,8 +151,8 @@ class MonolithicJsonFileSnapshot:
 
 
 class DatabaseSnapshot:
-    """
-    Snapshot source backed by built-in SQLite database using the ORM abstractions defined
+    """Snapshot source backed by built-in SQLite database using the ORM abstractions defined.
+
     in `degenbot.database`.
     """
 
@@ -148,6 +166,7 @@ class DatabaseSnapshot:
         db: DatabaseSessionManager | None = None,
         database_path: pathlib.Path | None = None,
     ) -> None:
+        """Initialize the instance."""
         if db is not None:
             self.session = db
             self.database_path = database_path or pathlib.Path()
@@ -165,6 +184,7 @@ class DatabaseSnapshot:
         pool_manager: ChecksumAddress,  # noqa: ARG002
         pool_id: bytes | str,
     ) -> LiquidityMap | None:
+        """Return liquidity map."""
         pool_in_db = self.session.scalar(
             select(UniswapV4PoolTable).where(
                 UniswapV4PoolTable.pool_hash == HexBytes(pool_id).to_0x_hex()
@@ -188,6 +208,7 @@ class DatabaseSnapshot:
         )
 
     def get_newest_block(self) -> BlockNumber | None:
+        """Return newest block."""
         with self.session() as session:
             last_update_blocks = set(
                 session.scalars(
@@ -208,19 +229,19 @@ class DatabaseSnapshot:
         )
 
     def get_pools(self) -> set[PoolId]:
+        """Return pools."""
         return set(self.session.scalars(select(UniswapV4PoolTable.pool_hash)).all())
 
 
 class UniswapV4LiquiditySnapshot:
-    """
-    Retrieve and maintain liquidity positions for Uniswap V4 pools.
-    """
+    """Retrieve and maintain liquidity positions for Uniswap V4 pools."""
 
     UNISWAP_V4_MODIFYLIQUIDITY_EVENT_HASH = HexBytes(
         Web3().eth.contract(abi=UNISWAP_V4_POOL_MANAGER_ABI).events.ModifyLiquidity().topic
     )
 
     def __init__(self, source: UniswapV4LiquiditySnapshotSource) -> None:
+        """Initialize the instance."""
         self._source = source
         self._chain_id = source.chain_id
 
@@ -246,21 +267,22 @@ class UniswapV4LiquiditySnapshot:
 
     @property
     def chain_id(self) -> int:
+        """Return chain id."""
         return self._chain_id
 
     @property
     def pools(self) -> set[ManagedPoolIdentifier]:
+        """Pools."""
         return {(pool_manager, pool_id) for pool_manager, pool_id in self._liquidity_snapshot}
 
     @staticmethod
     def _process_liquidity_event_log(
         log: LogReceipt,
     ) -> tuple[ChecksumAddress, PoolId, UniswapV4LiquidityEvent]:
-        """
-        Decode an event log and convert to an address, pool ID, and a `UniswapV4LiquidityEvent`
+        """Decode an event log and convert to an address, pool ID, and a `UniswapV4LiquidityEvent`.
+
         for processing with `UniswapV4Pool.update_liquidity_map`.
         """
-
         # ref: https://github.com/Uniswap/v4-core/blob/main/src/interfaces/IPoolManager.sol
         # event ModifyLiquidity(
         #     PoolId indexed id,
@@ -298,11 +320,10 @@ class UniswapV4LiquiditySnapshot:
         provider: ProviderAdapter,
         blocks_per_request: int | None = None,
     ) -> None:
-        """
-        Fetch liquidity events from the block following the last-known event to the target block
+        """Fetch liquidity events from the block following the last-known event to the target block.
+
         using `eth_getLogs`. Blocks per request will be capped at `blocks_per_request`.
         """
-
         logger.info(f"Updating Uniswap V4 snapshot from block {self.newest_block} to {to_block}")
 
         event_logs = fetch_logs_retrying(
@@ -340,14 +361,12 @@ class UniswapV4LiquiditySnapshot:
         provider: AsyncProviderAdapter,
         blocks_per_request: int | None = None,
     ) -> None:
-        """
-        Async version of fetch_new_events.
+        """Async version of fetch_new_events.
 
         Fetch liquidity events from the block following the last-known event to the target block
         using `eth_getLogs` via the async provider. Blocks per request will be capped at
         `blocks_per_request`.
         """
-
         logger.info(f"Updating Uniswap V4 snapshot from block {self.newest_block} to {to_block}")
 
         event_logs = await fetch_logs_retrying_async(
@@ -385,10 +404,7 @@ class UniswapV4LiquiditySnapshot:
         pool_manager: HexAddress | bytes,
         pool_id: HexStr | bytes,
     ) -> tuple[UniswapV4PoolLiquidityMappingUpdate, ...]:
-        """
-        Consume and return all pending liquidity events for this pool.
-        """
-
+        """Consume and return all pending liquidity events for this pool."""
         pool_key = get_checksum_address(pool_manager), HexBytes(pool_id).to_0x_hex()
         pending_events = tuple(self._liquidity_events[pool_key])
         self._liquidity_events[pool_key] = []
@@ -408,10 +424,7 @@ class UniswapV4LiquiditySnapshot:
         pool_manager: HexAddress | bytes,
         pool_id: HexStr | bytes,
     ) -> dict[int, BitmapAtWord] | None:
-        """
-        Consume the tick initialization bitmaps for the pool.
-        """
-
+        """Consume the tick initialization bitmaps for the pool."""
         pool_key: ManagedPoolIdentifier = (
             get_checksum_address(pool_manager),
             HexBytes(pool_id).to_0x_hex(),
@@ -430,10 +443,7 @@ class UniswapV4LiquiditySnapshot:
         pool_manager: HexAddress | bytes,
         pool_id: HexStr | bytes,
     ) -> dict[int, LiquidityAtTick] | None:
-        """
-        Consume the liquidity mapping for the pool.
-        """
-
+        """Consume the liquidity mapping for the pool."""
         pool_key: ManagedPoolIdentifier = (
             get_checksum_address(pool_manager),
             HexBytes(pool_id).to_0x_hex(),
@@ -454,10 +464,7 @@ class UniswapV4LiquiditySnapshot:
         tick_data: dict[int, LiquidityAtTick],
         tick_bitmap: dict[int, BitmapAtWord],
     ) -> None:
-        """
-        Update the liquidity mapping for the pool.
-        """
-
+        """Update the liquidity mapping for the pool."""
         pool_key: ManagedPoolIdentifier = (
             get_checksum_address(pool_manager),
             HexBytes(pool_id).to_0x_hex(),

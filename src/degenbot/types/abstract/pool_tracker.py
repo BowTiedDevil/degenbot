@@ -1,3 +1,4 @@
+"""Abstract pool tracker protocol definition."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -15,9 +16,7 @@ if TYPE_CHECKING:
 
 
 class AbstractPoolTracker[Pool: AbstractLiquidityPool]:
-    """
-    Base class for liquidity trackers.
-    """
+    """Base class for liquidity trackers."""
 
     # Class variables
     pool_factory: type[Pool]  # this class attribute is set by __init_subclass__ at import time
@@ -39,13 +38,14 @@ class AbstractPoolTracker[Pool: AbstractLiquidityPool]:
         chain_id: ChainId | None = None,
         **kwargs: Any,
     ) -> None:
+        """Initialize the instance."""
         # Concrete trackers set instance attributes in their own __init__
         # which override this base. This declaration exists solely so
         # type checkers can validate constructor calls through
         # add_tracker().
-        ...
 
     def __init_subclass__(cls, *, pool_factory: type[Pool] | None = None, **kwargs: Any) -> None:
+        """Implement __init_subclass__."""
         if pool_factory is not None:
             cls.pool_factory = pool_factory
         super().__init_subclass__(**kwargs)
@@ -55,18 +55,22 @@ class AbstractPoolTracker[Pool: AbstractLiquidityPool]:
             self._tracked_pools[pool_helper.address] = pool_helper
 
     def remove(self, pool_address: ChecksumAddress | str) -> None:
+        """Perform remove."""
         pool_address = get_checksum_address(pool_address)
         self._tracked_pools.pop(pool_address, None)
         self._untracked_pools.discard(pool_address)
 
     @property
     def chain_id(self) -> ChainId:
+        """Chain id."""
         return self._chain_id
 
     @property
     def deployer_address(self) -> ChecksumAddress:
+        """Deployer address."""
         return self._deployer_address
 
     @property
     def factory_address(self) -> ChecksumAddress:
+        """Factory address."""
         return self._factory_address

@@ -1,4 +1,5 @@
-"""Tests for solver fast-path integration in cycle classes.
+"""
+Tests for solver fast-path integration in cycle classes.
 
 Validates that the ArbSolver fast-path produces identical results to the
 existing Brent/SCIPY optimization for V2-V2 and V2-V3 arbitrage paths.
@@ -73,7 +74,6 @@ class TestSolverFastPathV2V2:
 
     def test_solver_matches_brent_profit(self, solver, v2_v2_hops):
         """Solver profit should match Brent profit within 1 wei."""
-
         solver_result = solver.solve(SolveInput(hops=v2_v2_hops))
         brent_solver = BrentSolver()
         brent_result = brent_solver.solve(SolveInput(hops=v2_v2_hops))
@@ -250,13 +250,13 @@ class TestSolverTimingComparison:
         assert result.iterations == 0
 
     def test_mobius_faster_than_newton_v2v2(self, solver, v2_v2_input):
-        """ArbSolver (Möbius) should be comparable to Newton for 2-hop V2-V2.
+        """
+        ArbSolver (Möbius) should be comparable to Newton for 2-hop V2-V2.
 
         For 2-hop paths, Möbius and Newton have similar performance.
         Möbius's advantage is zero iterations and multi-hop support.
         Both should be much faster than Brent.
         """
-
         newton_solver = NewtonSolver()
         newton_times = self._benchmark(newton_solver.solve, v2_v2_input)
         solver_times = self._benchmark(solver.solve, v2_v2_input)
@@ -292,7 +292,6 @@ class TestSolverTimingComparison:
     )
     def test_mobius_consistent_profit_across_fees(self, solver, fee):
         """Profit should be consistent across fee tiers for the same reserves."""
-
         hops = (
             ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=fee),
             ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=fee),
@@ -319,7 +318,6 @@ class TestV3VirtualReserves:
 
     def test_virtual_reserves_basic(self):
         """V3 virtual reserves should match L/sqrt_p and L*sqrt_p."""
-
         # L=1e18, sqrt_price_x96 = 2^96 (price = 1.0)
         L = 1_000_000_000_000_000_000  # 1e18
         sqrt_price_x96 = 2**96  # price = 1.0
@@ -340,7 +338,6 @@ class TestV3VirtualReserves:
 
     def test_virtual_reserves_unequal_price(self):
         """At price != 1.0, virtual reserves should reflect the price."""
-
         L = 1_000_000_000_000_000_000
         # sqrt_price = 2.0 → price = 4.0 (token1 is 4x token0)
         sqrt_price_x96 = int(2.0 * (2**96))
@@ -367,7 +364,6 @@ class TestPoolStateToHop:
 
     def test_v3_hop_is_bounded_product(self):
         """Concentrated-liquidity pool should produce a BoundedProductHop."""
-
         # Build a V3-style Hop manually
         L = 1_000_000_000_000_000_000
         sqrt_price_x96 = 2**96
@@ -403,7 +399,6 @@ class TestArbSolverAllPoolTypes:
 
     def test_v3_buy_v2_sell(self, solver):
         """V3 buy pool + V2 sell pool: no arbitrage at same effective rate."""
-
         L = 1_000_000_000_000_000_000
         sqrt_price_x96 = int(1.1 * (2**96))
         v3_r_in, v3_r_out = _v3_virtual_reserves(
@@ -429,7 +424,6 @@ class TestArbSolverAllPoolTypes:
 
     def test_v2_buy_v3_sell(self, solver):
         """V2 buy pool + V3 sell pool: should succeed."""
-
         L = 2_000_000_000_000_000_000
         sqrt_price_x96 = int(2.0 * (2**96))
         v3_r_in, v3_r_out = _v3_virtual_reserves(
@@ -526,7 +520,6 @@ class TestArbSolverMultiHop:
 
     def test_multi_hop_matches_brent(self, solver):
         """Multi-hop Möbius should match Brent for profitable paths."""
-
         # Set up a 3-hop path with clear arbitrage
         hops = (
             ConstantProductHop(

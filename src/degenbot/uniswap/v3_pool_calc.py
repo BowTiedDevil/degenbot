@@ -46,11 +46,15 @@ class UniswapV3PoolCalc:
 
     @property
     @abstractmethod
-    def tokens(self) -> tuple[Erc20Token, Erc20Token]: ...
+    def tokens(self) -> tuple[Erc20Token, Erc20Token]:
+        """Tokens."""
+        ...
 
     @property
     @abstractmethod
-    def state(self) -> UniswapV3PoolState: ...
+    def state(self) -> UniswapV3PoolState:
+        """State."""
+        ...
 
     @abstractmethod
     def _calculate_swap(
@@ -70,6 +74,8 @@ class UniswapV3PoolCalc:
         token_in_quantity: int,
         override_state: UniswapV3PoolState | None = None,
     ) -> int:
+        """Tokens."""
+        """State."""
         """Calculate expected token OUTPUT for a given INPUT at current pool state."""
         if token_in not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_in not found!")
@@ -174,4 +180,8 @@ class UniswapV3PoolCalc:
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
+        """Extract fee."""
         return Fraction(self._fee, self.FEE_DENOMINATOR)
+
+        """Extract fee."""
+        return None

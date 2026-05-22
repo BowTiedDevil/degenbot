@@ -54,6 +54,7 @@ class ArbitrageCycleFixture:
         Known profit at optimum (or 0 if unknown).
     profit_tolerance_bps : int
         Acceptable deviation from expected profit in basis points (default: 10 = 0.1%).
+
     """
 
     id: str
@@ -72,6 +73,7 @@ class ArbitrageCycleFixture:
         -------
         str
             JSON representation of the fixture.
+
         """
         data: dict[str, Any] = {
             "id": self.id,
@@ -100,6 +102,7 @@ class ArbitrageCycleFixture:
         -------
         ArbitrageCycleFixture
             The deserialized fixture.
+
         """
         data = json.loads(json_str)
         pool_states = {
@@ -124,6 +127,7 @@ class ArbitrageCycleFixture:
         ----------
         path : Path
             Path to save the fixture.
+
         """
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self.to_json(), encoding="utf-8")
@@ -142,6 +146,7 @@ class ArbitrageCycleFixture:
         -------
         ArbitrageCycleFixture
             The loaded fixture.
+
         """
         return cls.from_json(path.read_text(encoding="utf-8"))
 
@@ -163,6 +168,7 @@ class ArbitrageCycleFixture:
         ------
         ValueError
             If fixture is invalid.
+
         """
         if len(self.pool_states) < 2:
             msg = f"Fixture must have at least 2 pool states, got {len(self.pool_states)}"
@@ -594,6 +600,7 @@ class FixtureFactory:
         -------
         ArbitrageCycleFixture
             The generated fixture.
+
         """
         random.seed(seed)
 
@@ -647,6 +654,7 @@ class FixtureFactory:
         -------
         ArbitrageCycleFixture
             The generated fixture.
+
         """
         random.seed(seed)
 
@@ -699,6 +707,7 @@ class FixtureFactory:
         -------
         ArbitrageCycleFixture
             The generated fixture.
+
         """
         random.seed(seed)
 
@@ -765,6 +774,7 @@ class FixtureFactory:
         -------
         ArbitrageCycleFixture
             The generated fixture.
+
         """
         if num_pools < 3:
             msg = f"num_pools must be at least 3, got {num_pools}"

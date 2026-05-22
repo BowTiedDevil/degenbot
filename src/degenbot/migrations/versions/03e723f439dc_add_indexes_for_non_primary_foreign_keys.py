@@ -1,4 +1,4 @@
-"""Add indexes for non-primary foreign keys
+"""Add indexes for non-primary foreign keys.
 
 Revision ID: 03e723f439dc
 Revises: b20f5564b3b6
@@ -19,7 +19,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-
     with op.batch_alter_table("aerodrome_v2_pools", schema=None) as batch_op:
         batch_op.create_index(
             batch_op.f("ix_aerodrome_v2_pools_token0_id"), ["token0_id"], unique=False

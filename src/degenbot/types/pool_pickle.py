@@ -1,3 +1,4 @@
+"""Pickle helpers for pool serialization and deserialization."""
 from collections.abc import Generator
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from typing import Any, ClassVar
@@ -6,8 +7,7 @@ from degenbot.types.state_cache import StateCache
 
 
 class PoolPickleMixin:
-    """
-    Mixin providing pickle serialization for pool objects.
+    """Mixin providing pickle serialization for pool objects.
 
     Subclasses define:
         _pickle_drops: frozenset of attribute names to remove before pickling
@@ -43,10 +43,12 @@ class PoolPickleMixin:
         return nullcontext()
 
     def __getstate__(self) -> dict[str, Any]:
+        """Return the pickled state."""
         with self._pickle_lock():
             return {k: v for k, v in self.__dict__.items() if k not in self._pickle_drops}
 
     def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore from pickled state."""
         for key, factory in self._pickle_reconstructs.items():
             state[key] = factory()
         self.__dict__ = state

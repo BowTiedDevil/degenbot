@@ -224,4 +224,8 @@ class UniswapV2PoolCalc:
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
+        """Extract fee."""
         return self._fee_token0 if zero_for_one else self._fee_token1
+
+        """Extract fee."""
+        return None

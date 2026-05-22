@@ -30,6 +30,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
     revision = 4
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         self._math_libs = MathLibraries(
             _ray_div=degenbot.aave.libraries.wad_ray_math.ray_div,
             _ray_div_ceil=degenbot.aave.libraries.wad_ray_math.ray_div_ceil,
@@ -64,6 +65,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
 
         Returns:
             The scaled amount (amountScaled)
+
         """
         return self._math_libs.ray_div(
             a=raw_amount,
@@ -97,6 +99,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         Returns:
             GhoMintResult with balance_delta, new_index, user_operation,
             discount_scaled=0, and should_refresh_discount=False
+
         """
         if event_data.value >= event_data.balance_increase:
             # GHO BORROW: emitted in _mintScaled
@@ -180,6 +183,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
         Returns:
             GhoBurnResult with balance_delta, new_index, discount_scaled=0,
             and should_refresh_discount=False
+
         """
         # uint256 amountToBurn = amount - balanceIncrease
         requested_amount = event_data.value + event_data.balance_increase
@@ -221,6 +225,7 @@ class GhoV4Processor(GhoDebtTokenProcessor):
 
         Returns:
             The balance without discount
+
         """
         if scaled_balance == 0:
             return 0
@@ -251,5 +256,6 @@ class GhoV4Processor(GhoDebtTokenProcessor):
 
         Returns:
             Always returns 0
+
         """
         return 0

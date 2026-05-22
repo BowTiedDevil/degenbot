@@ -1,4 +1,5 @@
-"""Tests for subscription support mixins.
+"""
+Tests for subscription support mixins.
 
 Verifies that SyncSubscriptionSupport and AsyncSubscriptionSupport correctly
 raise SubscriptionNotSupported for all subscribe methods, and that adapters

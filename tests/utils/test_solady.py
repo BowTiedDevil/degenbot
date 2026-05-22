@@ -146,6 +146,5 @@ def test_solady_compress_decompress_fuzz(data: bytes):
     """
     Perform a round-trip compression/decompression, verify the lossless result
     """
-
     compressed = flz_compress(data)
     assert flz_decompress(compressed).hex() == data.hex()

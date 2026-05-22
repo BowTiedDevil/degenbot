@@ -1,3 +1,4 @@
+"""Balancer V2 token amount scaling and rate normalization."""
 from collections.abc import Sequence
 from typing import cast
 
@@ -28,11 +29,10 @@ def _downscale_down(
     amount: int,
     scaling_factor: int,
 ) -> int:
-    """
-    Reverses the `scaling_factor` applied to `amount`, resulting in a smaller or equal value
+    """Reverses the `scaling_factor` applied to `amount`, resulting in a smaller or equal value.
+
     depending on whether it needed scaling or not. The result is rounded down.
     """
-
     return div_down(amount, scaling_factor)
 
 
@@ -40,39 +40,33 @@ def _downscale_up(
     amount: int,
     scaling_factor: int,
 ) -> int:
-    """
-    Reverses the `scaling_factor` applied to `amount`, resulting in a smaller or equal value
+    """Reverses the `scaling_factor` applied to `amount`, resulting in a smaller or equal value.
+
     depending on whether it needed scaling or not. The result is rounded up.
     """
-
     return div_up(amount, scaling_factor)
 
 
 def _upscale_array(amounts: list[int], scaling_factors: Sequence[int]) -> None:
-    """
-    Same as `_upscale`, but for an entire array. This function mutates the `amounts` array in-place.
-    """
-
+    """Upscale an entire array in-place, equivalent to ``_upscale`` per element."""
     for i in range(len(amounts)):
         amounts[i] = mul_down(amounts[i], scaling_factors[i])
 
 
 def _downscale_down_array(amounts: list[int], scaling_factors: list[int]) -> None:
-    """
-    Same as `_downscale_down`, but for an entire array. This function mutates the `amounts` array
+    """Downscale an entire array in-place (rounding down), equivalent to ``_downscale_down`` per.
+
     in-place.
     """
-
     for i in range(len(amounts)):
         amounts[i] = div_down(amounts[i], scaling_factors[i])
 
 
 def _downscale_up_array(amounts: list[int], scaling_factors: list[int]) -> None:
-    """
-    Same as `_downscale_up`, but for an entire array. This function mutates the `amounts` array
+    """Downscale an entire array in-place (rounding up), equivalent to ``_downscale_up`` per.
+
     in-place.
     """
-
     for i in range(len(amounts)):
         amounts[i] = div_up(amounts[i], scaling_factors[i])
 
