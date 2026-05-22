@@ -1,4 +1,5 @@
-"""TokenMath library for calculating scaled amounts.
+"""
+TokenMath library for calculating scaled amounts.
 
 This module implements the Pool contract's TokenMath library which provides
 rounding-aware calculations for mint/burn operations. The logic is separated
@@ -12,7 +13,8 @@ from degenbot.aave.libraries import wad_ray_math
 
 
 class TokenMath(Protocol):
-    """Protocol for Pool contract's TokenMath library operations.
+    """
+    Protocol for Pool contract's TokenMath library operations.
 
     All methods follow the on-chain TokenMath library specification:
     - Mint operations round DOWN for collateral (aTokens), UP for debt (vTokens)
@@ -22,7 +24,8 @@ class TokenMath(Protocol):
 
     @abstractmethod
     def get_collateral_mint_scaled_amount(self, amount: int, liquidity_index: int) -> int:
-        """Calculate scaled amount for collateral mint (supply).
+        """
+        Calculate scaled amount for collateral mint (supply).
 
         Rounds down to ensure minted aTokens <= supplied amount.
         """
@@ -30,7 +33,8 @@ class TokenMath(Protocol):
 
     @abstractmethod
     def get_collateral_burn_scaled_amount(self, amount: int, liquidity_index: int) -> int:
-        """Calculate scaled amount for collateral burn (withdraw).
+        """
+        Calculate scaled amount for collateral burn (withdraw).
 
         Rounds up to ensure sufficient balance reduction.
         """
@@ -38,7 +42,8 @@ class TokenMath(Protocol):
 
     @abstractmethod
     def get_collateral_transfer_scaled_amount(self, amount: int, liquidity_index: int) -> int:
-        """Calculate scaled amount for collateral transfer.
+        """
+        Calculate scaled amount for collateral transfer.
 
         Rounds up to ensure recipient receives at least the requested amount.
         """
@@ -46,7 +51,8 @@ class TokenMath(Protocol):
 
     @abstractmethod
     def get_collateral_balance(self, scaled_amount: int, liquidity_index: int) -> int:
-        """Calculate actual balance from scaled collateral balance.
+        """
+        Calculate actual balance from scaled collateral balance.
 
         Rounds down to prevent over-accounting.
         """
@@ -54,7 +60,8 @@ class TokenMath(Protocol):
 
     @abstractmethod
     def get_debt_mint_scaled_amount(self, amount: int, borrow_index: int) -> int:
-        """Calculate scaled amount for debt mint (borrow).
+        """
+        Calculate scaled amount for debt mint (borrow).
 
         Rounds up to ensure protocol never underaccounts user's debt.
         """
@@ -62,7 +69,8 @@ class TokenMath(Protocol):
 
     @abstractmethod
     def get_debt_burn_scaled_amount(self, amount: int, borrow_index: int) -> int:
-        """Calculate scaled amount for debt burn (repay).
+        """
+        Calculate scaled amount for debt burn (repay).
 
         Rounds down to prevent over-burning of vTokens.
         """
@@ -70,7 +78,8 @@ class TokenMath(Protocol):
 
     @abstractmethod
     def get_debt_balance(self, scaled_amount: int, borrow_index: int) -> int:
-        """Calculate actual balance from scaled debt balance.
+        """
+        Calculate actual balance from scaled debt balance.
 
         Rounds up to prevent under-accounting user's debt.
         """
@@ -78,7 +87,8 @@ class TokenMath(Protocol):
 
 
 class HalfUpRoundingMath:
-    """Standard half-up rounding for pool revisions 1-3.
+    """
+    Standard half-up rounding for pool revisions 1-3.
 
     Uses traditional ray_div/ray_mul with half-up rounding.
     This was the default before explicit floor/ceil rounding was introduced
@@ -122,7 +132,8 @@ class HalfUpRoundingMath:
 
 
 class ExplicitRoundingMath:
-    """Explicit floor/ceil rounding for pool revisions 4+.
+    """
+    Explicit floor/ceil rounding for pool revisions 4+.
 
     Introduced in token revision 4 to provide protocol-controlled rounding:
     - Floor for collateral mints (prevent over-minting)
@@ -187,7 +198,8 @@ class TokenMathFactory:
 
     @classmethod
     def get_token_math(cls, pool_version: int) -> TokenMath:
-        """Get TokenMath instance for the given pool version.
+        """
+        Get TokenMath instance for the given pool version.
 
         Args:
             pool_version: The pool revision number (1-5)
@@ -207,7 +219,8 @@ class TokenMathFactory:
 
     @classmethod
     def get_token_math_for_token_revision(cls, token_revision: int) -> TokenMath:
-        """Get TokenMath instance appropriate for a token revision.
+        """
+        Get TokenMath instance appropriate for a token revision.
 
         Maps token revisions to rounding implementations:
         - Token rev 1-3 -> HalfUpRoundingMath (standard half-up rounding)

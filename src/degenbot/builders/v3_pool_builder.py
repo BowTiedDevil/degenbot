@@ -37,7 +37,8 @@ if TYPE_CHECKING:
 
 
 class V3PoolBuilder(V3BuilderBase):
-    """Builds and updates V3-style concentrated-liquidity pools.
+    """
+    Builds and updates V3-style concentrated-liquidity pools.
 
     Owns the full I/O choreography: DB lookup → RPC fetch → decode →
     construct pool → register.

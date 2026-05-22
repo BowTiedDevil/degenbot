@@ -12,7 +12,8 @@ from degenbot.types.hop_types import BalancerMultiTokenHop
 
 
 class BrentSolver(Solver):
-    """Brent's method solver via scipy. Handles all pool types including.
+    """
+    Brent's method solver via scipy. Handles all pool types including.
 
     V3-V3 with tick crossings.
 

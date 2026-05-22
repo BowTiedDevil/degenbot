@@ -10,7 +10,8 @@ if TYPE_CHECKING:
 
 
 class PoolFamily(Enum):
-    """The mathematical family governing swap pricing.
+    """
+    The mathematical family governing swap pricing.
 
     Used for pool type identification (build_pool dispatch, DB kind derivation).
     Each DEX pool class belongs to exactly one family.
@@ -24,7 +25,8 @@ class PoolFamily(Enum):
 
 @dataclass(frozen=True)
 class PoolTypeDescriptor:
-    """Describes the resolved type of a pool.
+    """
+    Describes the resolved type of a pool.
 
     Produced by the type resolver, consumed by the dispatch in build_pool.
     """
@@ -37,7 +39,8 @@ class PoolTypeDescriptor:
 
 
 def derive_kind(family: PoolFamily, variant: str | None) -> str:
-    """Derive the DB kind string from family + variant.
+    """
+    Derive the DB kind string from family + variant.
 
     Examples:
         CONSTANT_PRODUCT + None → "uniswap_v2"

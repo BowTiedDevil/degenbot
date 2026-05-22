@@ -1,4 +1,5 @@
-"""Domain types for Aave V3 transaction operations.
+"""
+Domain types for Aave V3 transaction operations.
 
 Contains data classes and validation containers used to represent decoded on-chain
 event data and parsed operations. These are pure domain types with no DB/Session/Provider
@@ -151,7 +152,8 @@ class Operation:
 
 
 class TransactionValidationError(Exception):  # pragma: no cover
-    """Raised when transaction validation fails.
+    """
+    Raised when transaction validation fails.
 
     Provides comprehensive plain-text dump of all events and operations
     for debugging.
@@ -287,7 +289,8 @@ class TransactionValidationError(Exception):  # pragma: no cover
 
     @staticmethod
     def _try_decode_address(topic: HexBytes | str) -> ChecksumAddress | None:
-        """Try to decode topic as address.
+        """
+        Try to decode topic as address.
 
         Handles both HexBytes objects (with .hex() method) and strings.
         """

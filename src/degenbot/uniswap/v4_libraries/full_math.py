@@ -9,7 +9,8 @@ def muldiv(
     b: int,
     denominator: int,
 ) -> int:
-    """Calculate floor(a*b/denominator) with full precision. Throws if result overflows a uint256 or.
+    """
+    Calculate floor(a*b/denominator) with full precision. Throws if result overflows a uint256 or.
 
     denominator == 0.
 
@@ -36,7 +37,8 @@ def muldiv_rounding_up(
     b: int,
     denominator: int,
 ) -> int:
-    """Calculate ceil(a*b//denominator) with full precision. Throws if result overflows a uint256 or.
+    """
+    Calculate ceil(a*b//denominator) with full precision. Throws if result overflows a uint256 or.
 
     denominator == 0.
 

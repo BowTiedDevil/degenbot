@@ -1,4 +1,5 @@
-"""Drop token0_id, token1_id from subclass tables.
+"""
+Drop token0_id, token1_id from subclass tables.
 
 Revision ID: 082ee8a3d339
 Revises: e453c9cd9e51

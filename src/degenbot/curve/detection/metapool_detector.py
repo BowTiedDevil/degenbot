@@ -1,4 +1,5 @@
-"""Metapool detection for Curve pools.
+"""
+Metapool detection for Curve pools.
 
 Detects whether a Curve pool is a metapool by querying the Curve
 registry/factory for is_meta(). If detected, resolves the base pool
@@ -39,7 +40,8 @@ def detect_metapool(
     registry_addresses: tuple[ChecksumAddress, ...],
     block_identifier: int,
 ) -> MetapoolDetectionResult:
-    """Detect whether a Curve pool is a metapool and resolve base pool info.
+    """
+    Detect whether a Curve pool is a metapool and resolve base pool info.
 
     Checks Curve registry and factory via is_meta(), then resolves
     base pool address and underlying coins.

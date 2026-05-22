@@ -1,4 +1,5 @@
-"""ERC20 token utilities for Aave CLI.
+"""
+ERC20 token utilities for Aave CLI.
 
 Provides functions to fetch ERC20 token metadata.
 """
@@ -76,7 +77,8 @@ def _fetch_erc20_token_metadata(
     provider: "ProviderAdapter",
     token_address: ChecksumAddress,
 ) -> tuple[str | None, str | None, int | None]:
-    """Fetch ERC20 token metadata (name, symbol, decimals) from the blockchain.
+    """
+    Fetch ERC20 token metadata (name, symbol, decimals) from the blockchain.
 
     Attempts to fetch using standard ERC20 function signatures, falling back
     to uppercase versions and bytes32 decoding as needed.

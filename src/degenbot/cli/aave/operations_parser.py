@@ -1,4 +1,5 @@
-"""Parses transaction events into logical operations based on asset flows.
+"""
+Parses transaction events into logical operations based on asset flows.
 
 Provides strict validation with detailed plain-text error reporting.
 """
@@ -47,7 +48,8 @@ class TransactionOperationsParser:
         pool_address: ChecksumAddress,
         treasury_address: ChecksumAddress | None = None,
     ) -> None:
-        """Initialize parser.
+        """
+        Initialize parser.
 
         Args:
             market: Aave V3 market with assets containing aToken and vToken relationships.
@@ -104,7 +106,8 @@ class TransactionOperationsParser:
         raise ValueError(msg)
 
     def _get_token_type(self, token_address: ChecksumAddress) -> TokenType | None:
-        """Get token type (aToken or vToken) for a given token address.
+        """
+        Get token type (aToken or vToken) for a given token address.
 
         Queries the database directly to avoid stale ORM relationship cache issues.
 
@@ -244,7 +247,8 @@ class TransactionOperationsParser:
         token_address: ChecksumAddress,
         event_category: Literal["mint", "burn", "transfer"],
     ) -> ScaledTokenEventType:
-        """Determine the event type based on token type and event category.
+        """
+        Determine the event type based on token type and event category.
 
         Uses GHO token check first (special case), then falls back to token type lookup.
         """
@@ -286,7 +290,8 @@ class TransactionOperationsParser:
         pool_revision: int,
         tolerance: int = TOKEN_AMOUNT_MATCH_TOLERANCE,
     ) -> bool:
-        """Check if calculated amount matches expected, accounting for pool revision tolerance.
+        """
+        Check if calculated amount matches expected, accounting for pool revision tolerance.
 
         Pool revision 9+ uses ray math with flooring which can cause ±2 wei deviations.
         """
@@ -299,7 +304,8 @@ class TransactionOperationsParser:
         ev1: ScaledTokenEvent,
         ev2: ScaledTokenEvent,
     ) -> bool:
-        """Check if two transfer events are compatible (ERC20 Transfer + BalanceTransfer).
+        """
+        Check if two transfer events are compatible (ERC20 Transfer + BalanceTransfer).
 
         Allows matching between ERC20 Transfer events and BalanceTransfer events
         of the same token type (collateral or debt).
@@ -472,7 +478,8 @@ class TransactionOperationsParser:
         return sorted(result, key=lambda e: e.event["logIndex"])
 
     def _decode_mint_event(self, event: LogReceipt) -> ScaledTokenEvent:
-        """Decode a Mint event.
+        """
+        Decode a Mint event.
 
         Event definition:
             event Mint(
@@ -530,7 +537,8 @@ class TransactionOperationsParser:
         )
 
     def _decode_balance_transfer_event(self, event: LogReceipt) -> ScaledTokenEvent:
-        """Decode a BalanceTransfer event.
+        """
+        Decode a BalanceTransfer event.
 
         BalanceTransfer events represent internal scaled balance movements in aTokens.
         During liquidations, collateral may be transferred to the treasury instead of burned.
@@ -559,7 +567,8 @@ class TransactionOperationsParser:
         )
 
     def _decode_transfer_event(self, event: LogReceipt) -> ScaledTokenEvent | None:
-        """Decode an ERC20 Transfer event for three specific token types.
+        """
+        Decode an ERC20 Transfer event for three specific token types.
 
         - aToken
         - vToken
@@ -677,7 +686,8 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation:
-        """Create SUPPLY operation.
+        """
+        Create SUPPLY operation.
 
         Event definition:
             event Supply(
@@ -782,7 +792,8 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation:
-        """Create WITHDRAW operation.
+        """
+        Create WITHDRAW operation.
 
         Event definition:
             event Withdraw(
@@ -924,7 +935,8 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation:
-        """Create BORROW operation.
+        """
+        Create BORROW operation.
 
         Event definition:
             event Borrow(
@@ -1018,7 +1030,8 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation:
-        """Create REPAY operation.
+        """
+        Create REPAY operation.
 
         Event definition:
             event Repay(
@@ -1074,7 +1087,8 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation:
-        """Create standard REPAY or GHO_REPAY operation.
+        """
+        Create standard REPAY or GHO_REPAY operation.
 
         Attaches the principal debt event (Burn or Mint) to the operation.
         The event contains the repayment data including any accrued interest
@@ -1171,7 +1185,8 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> ScaledTokenEvent:
-        """Find the principal debt event (Burn or Mint) associated with a REPAY operation.
+        """
+        Find the principal debt event (Burn or Mint) associated with a REPAY operation.
 
         For REPAY operations, the VariableDebtToken emits either:
         - Burn event: when repayment > interest (net decrease in unscaled debt)
@@ -1236,7 +1251,8 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> ScaledTokenEvent:
-        """Find the collateral adjustment event for a REPAY_WITH_ATOKENS operation.
+        """
+        Find the collateral adjustment event for a REPAY_WITH_ATOKENS operation.
 
         In a REPAY_WITH_ATOKENS operation, the user burns aTokens to repay debt.
         The contract emits either:
@@ -1324,7 +1340,8 @@ class TransactionOperationsParser:
         self,
         all_events: list[LogReceipt],
     ) -> dict[tuple[ChecksumAddress, ChecksumAddress], int]:
-        """Pre-analyze liquidations to detect multi-liquidation scenarios.
+        """
+        Pre-analyze liquidations to detect multi-liquidation scenarios.
 
         Returns a mapping of (user, debt_v_token_address) -> liquidation_count.
         This allows proper disambiguation when the same user is liquidated
@@ -1350,7 +1367,8 @@ class TransactionOperationsParser:
     def _analyze_user_liquidation_count(
         all_events: list[LogReceipt],
     ) -> dict[ChecksumAddress, int]:
-        """Count total liquidations per user (not per user+asset pair).
+        """
+        Count total liquidations per user (not per user+asset pair).
 
         When a user has exactly 1 liquidation, ALL debt burns for that user belong
         to that single liquidation. This handles bad debt liquidations where the
@@ -1378,7 +1396,8 @@ class TransactionOperationsParser:
         user_liquidation_count: int = 1,
         liquidation_position: int = 0,
     ) -> list[ScaledTokenEvent]:
-        """Collect debt burns for the liquidated user.
+        """
+        Collect debt burns for the liquidated user.
 
         Collection strategy:
         - Single liquidation per user: Collect ALL debt burns (no asset filter)
@@ -1487,7 +1506,8 @@ class TransactionOperationsParser:
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
     ) -> tuple[ScaledTokenEvent | None, list[ScaledTokenEvent]]:
-        """Collect collateral events (burns and transfers) for the liquidation.
+        """
+        Collect collateral events (burns and transfers) for the liquidation.
 
         During liquidations, borrower may have BOTH collateral burned AND multiple transfers.
         Collateral may be burned OR transferred to treasury (BalanceTransfer).
@@ -1537,7 +1557,8 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation:
-        """Create LIQUIDATION operation.
+        """
+        Create LIQUIDATION operation.
 
         Event definition:
             event LiquidationCall(
@@ -1691,7 +1712,8 @@ class TransactionOperationsParser:
         deficit_event: LogReceipt,
         pool_revision: int,
     ) -> Operation:
-        """Create DEFICIT_CREATED operation.
+        """
+        Create DEFICIT_CREATED operation.
 
         Event definition:
             event DeficitCreated(
@@ -1732,7 +1754,8 @@ class TransactionOperationsParser:
         starting_operation_id: int,
         pool_revision: int,
     ) -> list[Operation]:
-        """Create DEFICIT_COVERAGE operations for paired BalanceTransfer + Burn events.
+        """
+        Create DEFICIT_COVERAGE operations for paired BalanceTransfer + Burn events.
 
         Umbrella protocol's executeCoverReserveDeficits transfers aTokens to a user
         (via BalanceTransfer) and then burns them to cover reserve deficits. These
@@ -1857,7 +1880,8 @@ class TransactionOperationsParser:
         starting_operation_id: int,
         pool_revision: int,
     ) -> list[Operation]:
-        """Create INTEREST_ACCRUAL operations for unassigned interest events.
+        """
+        Create INTEREST_ACCRUAL operations for unassigned interest events.
 
         Interest accrual events are mints where amount == balance_increase.
         These represent pure interest accrual with no corresponding pool event.
@@ -1940,7 +1964,8 @@ class TransactionOperationsParser:
 
     @staticmethod
     def _extract_minted_to_treasury_events(events: list[LogReceipt]) -> list[LogReceipt]:
-        """Extract MintedToTreasury events from Pool contract.
+        """
+        Extract MintedToTreasury events from Pool contract.
 
         These events contain the actual amount minted to treasury (underlying for Rev 8,
         which equals the scaled amount passed to the AToken).
@@ -1955,7 +1980,8 @@ class TransactionOperationsParser:
         pool_revision: int,
         minted_to_treasury_events: list[LogReceipt],
     ) -> list[Operation]:
-        """Create MINT_TO_TREASURY operations for unassigned scaled token mints to the Pool.
+        """
+        Create MINT_TO_TREASURY operations for unassigned scaled token mints to the Pool.
 
         When the Pool contract calls mintToTreasury(), it emits ScaledTokenMint events
         where the caller_address is the Pool itself. These represent protocol reserves being
@@ -2060,7 +2086,8 @@ class TransactionOperationsParser:
         starting_operation_id: int,
         pool_revision: int,
     ) -> list[Operation]:
-        """Create TRANSFER operations for unassigned transfer events.
+        """
+        Create TRANSFER operations for unassigned transfer events.
 
         Transfer events (ERC20 Transfer for aTokens/vTokens) are standalone
         and don't have corresponding pool events. When both an ERC20 Transfer
@@ -2412,7 +2439,8 @@ class TransactionOperationsParser:
 
     @staticmethod
     def _validate_interest_accrual(op: Operation) -> list[str]:
-        """Validate INTEREST_ACCRUAL operation.
+        """
+        Validate INTEREST_ACCRUAL operation.
 
         Interest accrual operations have no pool event. The scaled token event
         represents pure interest accrual where amount == balance_increase.
@@ -2453,7 +2481,8 @@ class TransactionOperationsParser:
 
     @staticmethod
     def _validate_deficit_coverage(op: Operation) -> list[str]:
-        """Validate DEFICIT_COVERAGE operation.
+        """
+        Validate DEFICIT_COVERAGE operation.
 
         DEFICIT_COVERAGE operations group paired BalanceTransfer + Burn events
         that occur during Umbrella protocol's deficit coverage operations.

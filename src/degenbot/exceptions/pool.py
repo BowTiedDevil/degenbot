@@ -1,4 +1,5 @@
-"""Pool-related exceptions.
+"""
+Pool-related exceptions.
 
 Includes exceptions for:
 - Generic pool operations (LiquidityPoolError, BrokenPool, ...)
@@ -81,8 +82,6 @@ class PoolNotAssociated(TrackerError):
 class PoolCreationFailed(TrackerError):
     """PoolCreationFailed class."""
 
-    ...
-
 
 """PoolCreationFailed class."""
 
@@ -147,7 +146,8 @@ class LateUpdateError(LiquidityPoolError):
 
 
 class NoPoolStateAvailable(LiquidityPoolError):
-    """Raised by the `restore_state_before_block` method when a previous pool state is not available.
+    """
+    Raised by the `restore_state_before_block` method when a previous pool state is not available.
 
     This can occur, e.g. if a pool was created in a block at or after a re-organization.
     """
@@ -166,7 +166,8 @@ class InvalidSwapInputAmount(LiquidityPoolError):
 
 
 class PossibleInaccurateResult(LiquidityPoolError):
-    """Raised when a swap calculation may not match the on-chain result.
+    """
+    Raised when a swap calculation may not match the on-chain result.
 
     The computed ``amount_in`` and ``amount_out`` are available on the
     exception so callers can inspect or use the approximate values
@@ -188,7 +189,8 @@ class PossibleInaccurateResult(LiquidityPoolError):
 
 
 class HookedPoolResult(PossibleInaccurateResult):
-    """Raised when a V4 pool has active hooks that may mutate the swap result.
+    """
+    Raised when a V4 pool has active hooks that may mutate the swap result.
 
     The pool's ``beforeSwap`` / ``afterSwap`` hooks can modify amounts or
     revert, so the pure-math result may differ from what the contract returns.
@@ -210,7 +212,8 @@ class HookedPoolResult(PossibleInaccurateResult):
 
 
 class StaleRateResult(PossibleInaccurateResult):
-    """Raised when a Balancer ComposableStablePool's rate cache is stale.
+    """
+    Raised when a Balancer ComposableStablePool's rate cache is stale.
 
     ComposableStablePools with time-varying rates (e.g. bb-a-* yield tokens)
     cache rates in ``_tokenRateCaches`` and refresh them before each swap
@@ -233,7 +236,8 @@ class StaleRateResult(PossibleInaccurateResult):
 
 
 class UnknownPool(LiquidityPoolError):
-    """Raised by the liquidity snapshot class `update` methods when an update is provided for a pool.
+    """
+    Raised by the liquidity snapshot class `update` methods when an update is provided for a pool.
 
     address not present in the existing snapshot. Updates of this kind can lead to inconsistent
     state, because the pool state prior to the update is unknown.
@@ -245,7 +249,8 @@ class UnknownPool(LiquidityPoolError):
 
 
 class UnknownPoolId(LiquidityPoolError):
-    """Raised by the liquidity snapshot class `update` methods when an update is provided for a pool.
+    """
+    Raised by the liquidity snapshot class `update` methods when an update is provided for a pool.
 
     address not present in the existing snapshot. Updates of this kind can lead to inconsistent
     state, because the pool state prior to the update is unknown.

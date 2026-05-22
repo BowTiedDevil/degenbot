@@ -1,4 +1,5 @@
-"""Curve StableSwap invariant calculations.
+"""
+Curve StableSwap invariant calculations.
 
 Pure functions implementing the Curve V1 StableSwap invariant D and Y solvers
 and their variant forms.
@@ -123,7 +124,8 @@ def stableswap_get_d(
     a_precision: int,
     d_variant: DVariant,
 ) -> int:
-    """Solve for the Curve StableSwap invariant D using modified Newton's method.
+    """
+    Solve for the Curve StableSwap invariant D using modified Newton's method.
 
     Direct port of the Vyper contract's D calculation. Iterates until convergence
     (difference ≤ 1) or 255 steps (revert).
@@ -194,7 +196,8 @@ def stableswap_get_y(
     y_variant: YVariant,
     d_variant: DVariant,
 ) -> int:
-    """Calculate x[j] if one makes x[i] = x in a Curve StableSwap pool.
+    """
+    Calculate x[j] if one makes x[i] = x in a Curve StableSwap pool.
 
     Solves the quadratic equation iteratively using Newton's method.
     Direct port of Vyper contract logic.
@@ -271,7 +274,8 @@ def stableswap_get_y_d(
     a_precision: int,
     yd_variant: YDVariant,
 ) -> int:
-    """Calculate y given A, xp, and D in a Curve StableSwap pool.
+    """
+    Calculate y given A, xp, and D in a Curve StableSwap pool.
 
     Used by calc_token_amount and calc_withdraw_one_coin.
     Direct port of Vyper contract logic.
@@ -339,7 +343,8 @@ def stableswap_newton_y(
     n_coins: int,
     a_multiplier: int,
 ) -> int:
-    """Calculate xp[i] given other balances and invariant D, using Newton's method.
+    """
+    Calculate xp[i] given other balances and invariant D, using Newton's method.
 
     Used by crypto (volatile) Curve pools.
     Direct port of Vyper contract logic.
@@ -435,7 +440,8 @@ def stableswap_reduction_coefficient(
     fee_gamma: int,
     n_coins: int,
 ) -> int:
-    """fee_gamma / (fee_gamma + (1 - K)) where K = prod(x) / (sum(x) / N)**N.
+    """
+    fee_gamma / (fee_gamma + (1 - K)) where K = prod(x) / (sum(x) / N)**N.
 
     All values normalized to 1e18.
     Used by crypto (volatile) Curve pools for dynamic fee calculation.

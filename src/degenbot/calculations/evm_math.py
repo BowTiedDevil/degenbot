@@ -18,7 +18,8 @@ def next_base_fee(
     base_fee_max_change_denominator: int = 8,
     elasticity_multiplier: int = 2,
 ) -> int:
-    """Calculate next base fee for an EIP-1559 compatible blockchain. The.
+    """
+    Calculate next base fee for an EIP-1559 compatible blockchain. The.
 
     formula is taken from the example code in the EIP-1559 proposal (ref:
     https://eips.ethereum.org/EIPS/eip-1559).

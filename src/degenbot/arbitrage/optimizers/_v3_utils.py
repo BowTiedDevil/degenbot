@@ -14,7 +14,8 @@ def _v3_virtual_reserves(
     sqrt_price_x96: int,
     zero_for_one: bool,
 ) -> tuple[int, int]:
-    """Compute virtual reserves for a V3/V4 tick range.
+    """
+    Compute virtual reserves for a V3/V4 tick range.
 
     For a concentrated-liquidity pool, the effective (virtual) reserves
     within the current tick range are:
@@ -69,7 +70,8 @@ def _get_cached_tick_ranges(
     zero_for_one: bool,
     max_ranges: int = 3,
 ) -> tuple[tuple[V3TickRangeInfo, ...], int] | None:
-    """Cache _v3_get_adjacent_tick_ranges results.
+    """
+    Cache _v3_get_adjacent_tick_ranges results.
 
     Uses LRU-style cache keyed by (pool_address, current_tick, zero_for_one).
     Cache is cleared when it exceeds _MAX_TICK_RANGE_CACHE_SIZE entries.
@@ -101,7 +103,8 @@ def _v3_get_adjacent_tick_ranges(
     zero_for_one: bool,
     max_ranges: int = 3,
 ) -> tuple[tuple[V3TickRangeInfo, ...], int] | None:
-    """Fetch adjacent tick ranges from a V3/V4 pool for multi-range support.
+    """
+    Fetch adjacent tick ranges from a V3/V4 pool for multi-range support.
 
     Returns a tuple of (tick_ranges, current_range_index) where current_range_index
     indicates which range contains the current price. Returns None if the pool

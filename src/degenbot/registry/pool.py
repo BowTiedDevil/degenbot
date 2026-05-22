@@ -117,7 +117,8 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
         pool_address: ChecksumAddress,
         pool_id: PoolId | None = None,
     ) -> None:
-        """Register a pool.
+        """
+        Register a pool.
 
         When pool_id is provided, the pool must satisfy the
         ConcentratedLiquidityPool protocol and is registered in the

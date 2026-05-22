@@ -235,7 +235,8 @@ class UniswapV3Pool(
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
     def __getnewargs_ex__(self) -> tuple[tuple[()], dict[str, Any]]:
-        """Return empty args so __init__ is not called during unpickling.
+        """
+        Return empty args so __init__ is not called during unpickling.
 
         The object is reconstructed via __setstate__.
         """
@@ -259,7 +260,8 @@ class UniswapV3Pool(
         sqrt_price_limit_x96: int,
         override_state: PoolState | None = None,
     ) -> tuple[Token0Amount, Token1Amount, SqrtPriceX96, Liquidity, Tick]:
-        """Ported and adapted from the UniswapV3Pool.sol contract.
+        """
+        Ported and adapted from the UniswapV3Pool.sol contract.
 
         https://github.com/Uniswap/v3-core/blob/main/contracts/UniswapV3Pool.sol.
 
@@ -435,7 +437,8 @@ class UniswapV3Pool(
         tick_data: dict[int, Any],
         block: int,
     ) -> None:
-        """Apply updated tick bitmap and data from the tick data fetcher.
+        """
+        Apply updated tick bitmap and data from the tick data fetcher.
 
         Replaces the tick_bitmap and tick_data on the current state and
         pushes the new state through the state manager.
@@ -452,7 +455,8 @@ class UniswapV3Pool(
         self,
         update: UniswapV3PoolExternalUpdate,
     ) -> bool:
-        """Process a `UniswapV3PoolExternalUpdate` with one or more of the following update types.
+        """
+        Process a `UniswapV3PoolExternalUpdate` with one or more of the following update types.
 
             - `block_number`: int
             - `tick`: int
@@ -503,7 +507,8 @@ class UniswapV3Pool(
         self,
         update: UniswapV3PoolLiquidityMappingUpdate,
     ) -> None:
-        """Apply an update to the liquidity map.
+        """
+        Apply an update to the liquidity map.
 
         @dev This method uses a lock to guard state-modifying methods that might cause race
         conditions when used with threads.

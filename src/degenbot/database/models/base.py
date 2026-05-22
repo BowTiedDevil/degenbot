@@ -10,7 +10,8 @@ from .types import PrimaryKeyInt
 
 
 class IntMappedToString(TypeDecorator[int]):
-    """EVM integers can be up to 32 bytes, which exceeds the usual 8 byte limit for most SQL backends.
+    """
+    EVM integers can be up to 32 bytes, which exceeds the usual 8 byte limit for most SQL backends.
 
     Map these values to a 78 character VARCHAR which can hold a string representation of all
     possible values.

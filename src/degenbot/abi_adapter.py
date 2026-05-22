@@ -1,4 +1,5 @@
-"""ABI encoding/decoding adapter.
+"""
+ABI encoding/decoding adapter.
 
 Provides a unified interface for ABI operations that can delegate to either:
 - The Rust implementation (`_rs` module) for high-performance decoding
@@ -41,7 +42,8 @@ class AbiBackend(Enum):
 
 
 def _get_default_backend_from_env() -> AbiBackend:
-    """Determine the default backend from the DEGENBOT_USE_RUST_ABI_DECODER environment variable.
+    """
+    Determine the default backend from the DEGENBOT_USE_RUST_ABI_DECODER environment variable.
 
     Returns:
         AbiBackend.RUST if the envvar is set to a truthy value or unset.
@@ -67,7 +69,8 @@ class AbiUnsupportedOperation(DegenbotError):
 
 
 class AbiAdapter:
-    """Adapter for ABI encoding/decoding operations.
+    """
+    Adapter for ABI encoding/decoding operations.
 
     Allows switching between Rust (fast decoding) and eth_abi (full support)
     implementations.
@@ -86,7 +89,8 @@ class AbiAdapter:
     __slots__ = ("_backend",)
 
     def __init__(self, backend: AbiBackend | None = None) -> None:
-        """Initialize the adapter with the specified backend.
+        """
+        Initialize the adapter with the specified backend.
 
         Args:
             backend: The backend to use for ABI operations. If None, uses the
@@ -106,7 +110,8 @@ class AbiAdapter:
         self._backend = value
 
     def encode(self, types: Sequence[str], args: Sequence[Any]) -> bytes:
-        """Encode values into ABI-encoded bytes.
+        """
+        Encode values into ABI-encoded bytes.
 
         Args:
             types: ABI type strings (e.g., ["uint256", "address"])
@@ -138,7 +143,8 @@ class AbiAdapter:
         *,
         checksum: bool = True,
     ) -> tuple[Any, ...]:
-        """Decode ABI-encoded bytes into Python values.
+        """
+        Decode ABI-encoded bytes into Python values.
 
         Args:
             types: ABI type strings (e.g., ["uint256", "address"])
@@ -193,7 +199,8 @@ class AbiAdapter:
         *,
         checksum: bool = True,
     ) -> Any:  # noqa: ANN401 - return type depends on abi_type
-        """Decode a single ABI value.
+        """
+        Decode a single ABI value.
 
         Convenience method for decoding a single value.
 
@@ -248,7 +255,8 @@ class AbiAdapter:
         return self._backend == AbiBackend.ETH_ABI
 
     def supports_type(self, abi_type: str, operation: str = "decode") -> bool:
-        """Check if the current backend supports a specific ABI type.
+        """
+        Check if the current backend supports a specific ABI type.
 
         Args:
             abi_type: ABI type string to check
@@ -273,7 +281,8 @@ _default_adapter: Final[AbiAdapter] = AbiAdapter()
 
 
 def get_default_adapter() -> AbiAdapter:
-    """Get the default ABI adapter instance.
+    """
+    Get the default ABI adapter instance.
 
     Returns:
         The module-level default adapter. The backend is determined by
@@ -284,7 +293,8 @@ def get_default_adapter() -> AbiAdapter:
 
 
 def get_default_backend() -> AbiBackend:
-    """Get the default backend determined by the environment variable.
+    """
+    Get the default backend determined by the environment variable.
 
     Returns:
         The default AbiBackend based on DEGENBOT_USE_RUST_ABI_DECODER.
@@ -294,7 +304,8 @@ def get_default_backend() -> AbiBackend:
 
 
 def encode(types: Sequence[str], args: Sequence[Any]) -> bytes:
-    """Encode values into ABI-encoded bytes using eth_abi.
+    """
+    Encode values into ABI-encoded bytes using eth_abi.
 
     Note: This always uses eth_abi since the Rust backend
     does not support encoding.
@@ -320,7 +331,8 @@ def decode(
     backend: AbiBackend | None = None,
     checksum: bool = True,
 ) -> tuple[Any, ...]:
-    """Decode ABI-encoded bytes into Python values.
+    """
+    Decode ABI-encoded bytes into Python values.
 
     Args:
         types: ABI type strings
@@ -367,7 +379,8 @@ def decode_single(
     backend: AbiBackend | None = None,
     checksum: bool = True,
 ) -> Any:  # noqa: ANN401 - return type depends on abi_type
-    """Decode a single ABI value.
+    """
+    Decode a single ABI value.
 
     Args:
         abi_type: ABI type string

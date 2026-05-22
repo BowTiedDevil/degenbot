@@ -123,7 +123,8 @@ def apply_v3_liquidity_updates(
     exchanges_in_scope: set[ExchangeTable],
     session: Session,
 ) -> None:
-    """Apply the liquidity updates to the provided pool.
+    """
+    Apply the liquidity updates to the provided pool.
 
     This function assumes that the liquidity updates are ordered by block number and log index,
     ascending.
@@ -324,7 +325,8 @@ def apply_v4_liquidity_updates(
     pool_manager: PoolManagerTable,
     session: Session,
 ) -> None:
-    """Apply the liquidity updates to the provided pool.
+    """
+    Apply the liquidity updates to the provided pool.
 
     This function assumes that the liquidity updates are ordered by block number and log index,
     ascending.

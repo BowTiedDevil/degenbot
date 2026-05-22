@@ -49,7 +49,8 @@ def _dfs(
     min_depth: int,
     max_depth: int | None,
 ) -> Iterator[Sequence[PathStep]]:
-    """Perform an iterative depth-first search from the start token to the end token. When a valid.
+    """
+    Perform an iterative depth-first search from the start token to the end token. When a valid.
 
     path is found, yield the result and backtrack one step to discover additional paths.
     """
@@ -135,7 +136,8 @@ async def _dfs_async(
     min_depth: int,
     max_depth: int | None,
 ) -> AsyncIterator[Sequence[PathStep]]:
-    """Perform an iterative depth-first search from the start token to the end token. When a valid.
+    """
+    Perform an iterative depth-first search from the start token to the end token. When a valid.
 
     path is found, yield the result and backtrack one step to discover additional paths.
     """
@@ -331,7 +333,8 @@ def _prepare_traversal_plan(
     start_tokens: set[ChecksumAddress],
     end_tokens: set[ChecksumAddress],
 ) -> dict[tuple[ChecksumAddress, ChecksumAddress], Direction]:
-    """Prepare a traversal plan that will cover all combinations from the given starting and ending.
+    """
+    Prepare a traversal plan that will cover all combinations from the given starting and ending.
 
     sets.
     """
@@ -369,7 +372,8 @@ def find_paths(
     pool_types: Sequence[type] = (LiquidityPoolTable, UniswapV4PoolTable),
     db: DatabaseSessionManager,
 ) -> Iterator[Sequence[PathStep]]:
-    """Find paths from each of the given start tokens to each of the given end tokens using a.
+    """
+    Find paths from each of the given start tokens to each of the given end tokens using a.
 
     depth-first search strategy. The search will exhaustively discover paths from a minimum depth
     to an optional maximum.

@@ -1,4 +1,5 @@
-"""Orchestrator that assembles data and delegates to core functions.
+"""
+Orchestrator that assembles data and delegates to core functions.
 
 This is where I/O lives: database queries and oracle price fetching.
 The orchestrator converts ORM objects to flat records before passing
@@ -38,7 +39,8 @@ ORACLE_CONTRACT_NAME = "PRICE_ORACLE"
 
 
 class DatabasePositionQuery:
-    """PositionQuery implementation backed by SQLAlchemy.
+    """
+    PositionQuery implementation backed by SQLAlchemy.
 
     Converts ORM objects to flat records at the query boundary.
     Core never sees ORM objects.
@@ -244,7 +246,8 @@ class OraclePriceFetcher:
 
 
 class PositionAnalysisService:
-    """Service that coordinates position analysis with I/O.
+    """
+    Service that coordinates position analysis with I/O.
 
     Created by Bot or CLI. Injects fetchers for testing.
     Orchestrator converts ORM → flat records, then delegates to core.
@@ -314,7 +317,8 @@ def analyze_positions_for_market(
     limit: int | None = None,
     provider: ProviderAdapter | None = None,
 ) -> PositionAnalysisResult:
-    """Backward-compatible entry point.
+    """
+    Backward-compatible entry point.
 
     Creates a PositionAnalysisService from session + optional provider,
     then delegates to analyze_market().

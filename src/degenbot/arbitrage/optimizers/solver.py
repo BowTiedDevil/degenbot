@@ -1,4 +1,5 @@
-"""Unified solver interface for arbitrage optimization.
+"""
+Unified solver interface for arbitrage optimization.
 
 All optimizers accept the same ``SolveInput`` (a sequence of ``HopType`` objects)
 and return the same ``SolveResult``.  The ``ArbSolver`` dispatcher automatically
@@ -46,7 +47,8 @@ __all__ = [
 
 
 class ArbSolver(Solver):
-    """Top-level solver that dispatches to the best method.
+    """
+    Top-level solver that dispatches to the best method.
 
     Each sub-solver tries Rust first and falls back to Python internally.
     ArbSolver is a pure dispatcher.
@@ -102,7 +104,8 @@ class ArbSolver(Solver):
     # ------------------------------------------------------------------
 
     def get_pool_cache(self) -> _RustPoolCache:
-        """Return the Rust-side pool state cache.
+        """
+        Return the Rust-side pool state cache.
 
         The cache can be used to register pool states at update time,
         then solve by pool ID reference without any Python object
@@ -118,7 +121,8 @@ class ArbSolver(Solver):
         *,
         pool_id: int | None = None,
     ) -> int:
-        """Register a pool's state in the Rust cache.
+        """
+        Register a pool's state in the Rust cache.
 
         Call this at pool state update time (once per block). The returned
         pool_id can then be used in ``solve_cached()`` calls.
@@ -145,7 +149,8 @@ class ArbSolver(Solver):
         reserve_out: int,
         fee: Fraction,
     ) -> None:
-        """Update a previously registered pool's state in the Rust cache.
+        """
+        Update a previously registered pool's state in the Rust cache.
 
         Equivalent to register_pool() with an explicit pool_id.
         """
@@ -155,7 +160,8 @@ class ArbSolver(Solver):
         cache.insert(pool_id, reserve_in, reserve_out, gamma_numer, fee_denom)
 
     def remove_pool(self, pool_id: int) -> bool:
-        """Remove a pool from the Rust cache.
+        """
+        Remove a pool from the Rust cache.
 
         Returns True if the pool was found and removed.
         """
@@ -168,7 +174,8 @@ class ArbSolver(Solver):
         *,
         max_input: int | None = None,
     ) -> SolveResult:
-        """Solve an arbitrage path using cached pool states by ID.
+        """
+        Solve an arbitrage path using cached pool states by ID.
 
         This is the fastest solve path: no Python object construction,
         no per-item extraction, just a list of integer pool IDs passed
@@ -247,7 +254,8 @@ class ArbSolver(Solver):
 
     @override
     def solve(self, solve_input: SolveInput) -> SolveResult:
-        """Solve with automatic method selection.
+        """
+        Solve with automatic method selection.
 
         Dispatches to sub-solvers in order. Each sub-solver tries
         Rust first, then falls back to Python internally.

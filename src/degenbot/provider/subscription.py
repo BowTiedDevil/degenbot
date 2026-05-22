@@ -1,4 +1,5 @@
-"""Subscription primitives for eth_subscribe support.
+"""
+Subscription primitives for eth_subscribe support.
 
 Provides the `Subscription` async iterator (wrapping the Rust-backed
 `AlloySubscription`) and the `LogSubscriptionFilter` dataclass.
@@ -35,7 +36,8 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class LogSubscriptionFilter:
-    """Filter parameters for log subscriptions.
+    """
+    Filter parameters for log subscriptions.
 
     Unlike the polling `LogFilter`, this type has no block range fields
     because block ranges are meaningless for push subscriptions — you
@@ -52,7 +54,8 @@ class LogSubscriptionFilter:
 
 
 class Subscription:
-    """Async iterator wrapping an AlloySubscription.
+    """
+    Async iterator wrapping an AlloySubscription.
 
     Created by `AsyncAlloyProvider.subscribe_*()` methods. Iterate with
     `async for`:
@@ -79,7 +82,8 @@ class Subscription:
         return self
 
     async def __anext__(self) -> Any:  # noqa: ANN401
-        """Return the next event from the subscription.
+        """
+        Return the next event from the subscription.
 
         Re-raises `RuntimeError` from the Rust layer as
         `SubscriptionDisconnected` when the connection drops.
@@ -95,7 +99,8 @@ class Subscription:
             raise
 
     def drain(self) -> list[Any]:
-        """Drain accumulated items from the subscription.
+        """
+        Drain accumulated items from the subscription.
 
         Swaps the internal double-buffer and bulk-converts all
         accumulated items to Python dicts. Returns a list of items.
@@ -118,7 +123,8 @@ class Subscription:
             raise
 
     async def started(self) -> None:
-        """Wait for the subscription to be confirmed by the node.
+        """
+        Wait for the subscription to be confirmed by the node.
 
         Resolves when the WS subscription is active. Raises
         `SubscriptionDisconnected` if the subscription failed to

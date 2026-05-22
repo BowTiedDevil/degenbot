@@ -35,7 +35,8 @@ def exchange() -> None:
 
 @exchange.group
 def activate() -> None:
-    """Activate the exchange. Liquidity pools for all activated exchanges are included when running.
+    """
+    Activate the exchange. Liquidity pools for all activated exchanges are included when running.
 
     "pool update".
     """
@@ -43,7 +44,8 @@ def activate() -> None:
 
 @exchange.group
 def deactivate() -> None:
-    """Deactivate the exchange. Liquidity pools for all deactivated exchanges are not included when.
+    """
+    Deactivate the exchange. Liquidity pools for all deactivated exchanges are not included when.
 
     running "pool update".
     """

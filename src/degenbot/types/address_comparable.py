@@ -4,7 +4,8 @@ from hexbytes import HexBytes
 
 
 class AddressComparable:
-    """Mixin providing address-based comparison, ordering, and hashing.
+    """
+    Mixin providing address-based comparison, ordering, and hashing.
 
     Any on-chain entity identified by a ChecksumAddress can inherit from this
     to get consistent equality, ordering, and hashing by address.

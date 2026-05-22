@@ -58,7 +58,8 @@ def _estimate_sqrt_price_after_swap(
     fee: float = 0.003,
     zero_for_one: bool = True,  # noqa: FBT001, FBT002
 ) -> float:
-    """Estimate the sqrt price after swapping *amount_in* within a single V3 tick range.
+    """
+    Estimate the sqrt price after swapping *amount_in* within a single V3 tick range.
 
     Uses the V3 swap approximation:
     - zfo (token0→token1): new_sqrt_p = L / (L / sqrt_p + amount_in / gamma)
@@ -76,7 +77,8 @@ def _estimate_sqrt_price_after_swap(
 
 
 class PiecewiseMobiusSolver(Solver):
-    """Piecewise-Möbius solver for V3 paths with tick crossings.
+    """
+    Piecewise-Möbius solver for V3 paths with tick crossings.
 
     For V3 swaps that cross tick boundaries, the swap function is
     piecewise-Möbius: fixed crossing output from crossed ranges plus
@@ -306,7 +308,8 @@ class PiecewiseMobiusSolver(Solver):
         current_idx: int,
         candidates: list[int],
     ) -> list[SolveResult]:
-        """Evaluate multiple candidate ranges.
+        """
+        Evaluate multiple candidate ranges.
 
         Uses sequential evaluation for 1-2 candidates (avoids thread overhead).
         Only uses threads for 3+ candidates where parallelism pays off.
@@ -359,7 +362,8 @@ class PiecewiseMobiusSolver(Solver):
         end_idx: int,
         current_best_profit: int,
     ) -> bool:
-        """Cheap check to filter out candidates that can't be profitable.
+        """
+        Cheap check to filter out candidates that can't be profitable.
 
         Returns False if this candidate can be skipped (saves expensive evaluation).
         """
@@ -435,7 +439,8 @@ class PiecewiseMobiusSolver(Solver):
         v3_hop: BoundedProductHop,
         end_idx: int,
     ) -> SolveResult:
-        """Try a candidate ending range using proper V3 tick crossing math.
+        """
+        Try a candidate ending range using proper V3 tick crossing math.
 
         Uses the exact V3 swap formulas from mobius.py:
         - Computes TickRangeCrossing with proper fee handling
@@ -673,7 +678,8 @@ class PiecewiseMobiusSolver(Solver):
         x_high: float,
         eval_profit_scalar: Callable[[float], float],
     ) -> SolveResult | None:
-        """Vectorized bracket search using NumPy for parallel evaluation.
+        """
+        Vectorized bracket search using NumPy for parallel evaluation.
 
         Evaluates profit at multiple points simultaneously to quickly
         narrow down the optimal region before golden section refinement.
@@ -792,7 +798,8 @@ class PiecewiseMobiusSolver(Solver):
         solve_input: SolveInput,
         start_ns: int,
     ) -> SolveResult:
-        """Try V3-V3 Rust solver for 2-hop paths where both hops are V3.
+        """
+        Try V3-V3 Rust solver for 2-hop paths where both hops are V3.
 
         Raises OptimizationError on failure.
         """
@@ -854,7 +861,8 @@ class PiecewiseMobiusSolver(Solver):
         v3_hop: BoundedProductHop,
         start_ns: int,
     ) -> SolveResult:
-        """Try to solve multi-range V3 using Rust's full sequence solver.
+        """
+        Try to solve multi-range V3 using Rust's full sequence solver.
 
         Uses cached Rust objects to minimize Python-Rust marshalling overhead.
         Raises OptimizationError on failure.

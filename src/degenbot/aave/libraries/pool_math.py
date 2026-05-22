@@ -1,4 +1,5 @@
-"""Pool-level math calculations that depend on Pool revision.
+"""
+Pool-level math calculations that depend on Pool revision.
 
 Pool and Token revisions can change independently. Pool-level operations
 (such as MINT_TO_TREASURY) depend on Pool revision, not Token revision.
@@ -23,7 +24,8 @@ from degenbot.logging import logger
 
 
 class PoolMath:
-    """Pool-level calculations for Aave V3 Pool contract.
+    """
+    Pool-level calculations for Aave V3 Pool contract.
 
     These calculations are performed by the Pool contract (specifically
     PoolLogic library) and depend on the Pool revision, not the Token revision.
@@ -38,7 +40,8 @@ class PoolMath:
         index: int,
         pool_revision: int,
     ) -> int:
-        """Calculate underlying amount to mint to treasury.
+        """
+        Calculate underlying amount to mint to treasury.
 
         This is the forward calculation performed by PoolLogic.executeMintToTreasury.
 
@@ -80,7 +83,8 @@ class PoolMath:
         liquidity_index: int,
         pool_revision: int,
     ) -> int:
-        """Convert underlying amount to scaled collateral amount.
+        """
+        Convert underlying amount to scaled collateral amount.
 
         This is the INVERSE of calculating collateral balance from scaled amount.
         Used by MINT_TO_TREASURY operations to determine the actual scaled
@@ -121,7 +125,8 @@ class PoolMath:
         borrow_index: int,
         pool_revision: int,
     ) -> int:
-        """Convert underlying amount to scaled debt amount.
+        """
+        Convert underlying amount to scaled debt amount.
 
         This is the INVERSE of calculating debt balance from scaled amount.
 

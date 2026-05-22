@@ -35,7 +35,8 @@ if TYPE_CHECKING:
 
 
 class AsyncV4PoolBuilder:
-    """Async counterpart of V4PoolBuilder.
+    """
+    Async counterpart of V4PoolBuilder.
 
     Builds UniswapV4Pool instances using AsyncPoolIO for I/O.
     Shares pure decode/resolve logic with V4BuilderBase via static methods.

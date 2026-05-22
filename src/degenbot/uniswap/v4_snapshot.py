@@ -46,7 +46,8 @@ class LiquidityMap(TypedDict):
 
 
 class UniswapV4LiquiditySnapshotSource(Protocol):
-    """A minimal protocol allowing the UniswapV4LiquiditySnapshot class to retrieve pool data from a.
+    """
+    A minimal protocol allowing the UniswapV4LiquiditySnapshot class to retrieve pool data from a.
 
     generic source.
     """
@@ -61,9 +62,11 @@ class UniswapV4LiquiditySnapshotSource(Protocol):
     ) -> LiquidityMap | None:
         """Return liquidity map."""
         ...
+
     def get_newest_block(self) -> BlockNumber | None:
         """Return newest block."""
         ...
+
     def get_pools(self) -> set[PoolId]:
         """Return pools."""
         ...
@@ -151,7 +154,8 @@ class MonolithicJsonFileSnapshot:
 
 
 class DatabaseSnapshot:
-    """Snapshot source backed by built-in SQLite database using the ORM abstractions defined.
+    """
+    Snapshot source backed by built-in SQLite database using the ORM abstractions defined.
 
     in `degenbot.database`.
     """
@@ -279,7 +283,8 @@ class UniswapV4LiquiditySnapshot:
     def _process_liquidity_event_log(
         log: LogReceipt,
     ) -> tuple[ChecksumAddress, PoolId, UniswapV4LiquidityEvent]:
-        """Decode an event log and convert to an address, pool ID, and a `UniswapV4LiquidityEvent`.
+        """
+        Decode an event log and convert to an address, pool ID, and a `UniswapV4LiquidityEvent`.
 
         for processing with `UniswapV4Pool.update_liquidity_map`.
         """
@@ -320,7 +325,8 @@ class UniswapV4LiquiditySnapshot:
         provider: ProviderAdapter,
         blocks_per_request: int | None = None,
     ) -> None:
-        """Fetch liquidity events from the block following the last-known event to the target block.
+        """
+        Fetch liquidity events from the block following the last-known event to the target block.
 
         using `eth_getLogs`. Blocks per request will be capped at `blocks_per_request`.
         """
@@ -361,7 +367,8 @@ class UniswapV4LiquiditySnapshot:
         provider: AsyncProviderAdapter,
         blocks_per_request: int | None = None,
     ) -> None:
-        """Async version of fetch_new_events.
+        """
+        Async version of fetch_new_events.
 
         Fetch liquidity events from the block following the last-known event to the target block
         using `eth_getLogs` via the async provider. Blocks per request will be capped at

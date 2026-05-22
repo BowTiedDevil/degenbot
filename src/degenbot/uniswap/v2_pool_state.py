@@ -1,4 +1,5 @@
-"""State mixin for V2-style constant-product pools.
+"""
+State mixin for V2-style constant-product pools.
 
 Holds all data attributes (immutable and mutable) and their properties.
 No calculation logic — calculations live in UniswapV2PoolCalc.
@@ -23,7 +24,8 @@ if TYPE_CHECKING:
 
 
 class V2PoolState:
-    """State for V2-style constant-product pools with directional fees.
+    """
+    State for V2-style constant-product pools with directional fees.
 
     Matches the Uniswap V2 contract's data model:
     - token0, token1: the paired ERC-20 tokens (immutable)

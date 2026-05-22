@@ -47,7 +47,8 @@ if TYPE_CHECKING:
 
 
 def _decode_aerodrome_v2_sync(log: dict) -> Any:  # noqa: ANN401
-    """Decode a V2 Sync event for Aerodrome pools.
+    """
+    Decode a V2 Sync event for Aerodrome pools.
 
     Same format as Uniswap V2 Sync, but creates an AerodromeV2PoolExternalUpdate.
     """
@@ -306,7 +307,8 @@ class AerodromeV2Pool(
         self,
         block: BlockNumber,
     ) -> None:
-        """Restore the last pool state recorded prior to a target block.
+        """
+        Restore the last pool state recorded prior to a target block.
 
         Use this method to maintain consistent state data following a chain re-organization.
 

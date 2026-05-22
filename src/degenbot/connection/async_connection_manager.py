@@ -37,7 +37,8 @@ class AsyncConnectionManager:
         self._default_chain_id = None
 
     def get_provider(self, chain_id: ChainId) -> AsyncProviderAdapter:
-        """Get an AsyncProviderAdapter for the specified chain ID.
+        """
+        Get an AsyncProviderAdapter for the specified chain ID.
 
         Args:
             chain_id: The chain ID to get the provider for
@@ -62,7 +63,8 @@ class AsyncConnectionManager:
         *,
         optimize: bool = True,
     ) -> None:
-        """Register an AsyncProviderAdapter.
+        """
+        Register an AsyncProviderAdapter.
 
         Args:
             provider: The AsyncProviderAdapter to register

@@ -46,7 +46,8 @@ class DegenbotConfig(BaseSettings):
         cls,  # noqa: N805
         rpc_dict: dict[ChainId, HttpUrl | WebsocketUrl | Path],
     ) -> dict[ChainId, HttpUrl | WebsocketUrl | Path]:
-        """Validate the endpoints.
+        """
+        Validate the endpoints.
 
         This will convert all file paths to an absolute reference, leaving HTTP and WS URLs as-is.
         """

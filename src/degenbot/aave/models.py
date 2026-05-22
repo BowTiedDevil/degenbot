@@ -1,4 +1,5 @@
-"""Unified enriched Aave token event model.
+"""
+Unified enriched Aave token event model.
 
 Replaces the 18 specific Pydantic event classes with a single
 EnrichedScaledTokenEvent class. The event_type field (ScaledTokenEventType
@@ -154,7 +155,8 @@ _INDEX_SCALED_TYPES: set[ScaledTokenEventType] = _MINT_TYPES | _BURN_TYPES | _IN
 
 
 class EnrichedScaledTokenEvent(BaseModel):
-    """Unified enriched scaled token event.
+    """
+    Unified enriched scaled token event.
 
     Replaces the previous 18 specific event classes. The event_type
     field (ScaledTokenEventType enum) fully describes each event's

@@ -3,7 +3,8 @@ from degenbot.exceptions.pool import EVMRevertError
 
 
 def _truncated_div(a: int, b: int) -> int:
-    """Integer division that matches Solidity's truncation-toward-zero semantics.
+    """
+    Integer division that matches Solidity's truncation-toward-zero semantics.
 
     Python's // floors toward -infinity for negative dividends, but Solidity's /
     truncates toward zero. This helper replicates the Solidity behavior, which is

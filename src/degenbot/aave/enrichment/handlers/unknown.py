@@ -1,4 +1,5 @@
-"""UNKNOWN operation handler.
+"""
+UNKNOWN operation handler.
 
 UNKNOWN operations are those that cannot be classified into a specific
 operation type. Enrichment should fail rather than produce incorrect results.
@@ -26,7 +27,8 @@ class UnknownHandler:
         operation: "Operation",
         context: "EnrichmentContext",  # noqa: ARG002
     ) -> "EnrichedScaledTokenEvent":
-        """Raise EnrichmentError for UNKNOWN operations.
+        """
+        Raise EnrichmentError for UNKNOWN operations.
 
         When an operation cannot be classified, enrichment should fail
         rather than produce incorrect results.

@@ -1,4 +1,5 @@
-"""Verification database operations for Aave V3.
+"""
+Verification database operations for Aave V3.
 
 Functions for verifying on-chain state against database state.
 """
@@ -32,7 +33,8 @@ def verify_gho_discount_amounts(
     show_progress: bool,
     user_addresses: set[ChecksumAddress] | None = None,
 ) -> None:
-    """Verify that GHO discount values in the database match the contract.
+    """
+    Verify that GHO discount values in the database match the contract.
 
     If user_addresses is provided, only verifies those specific users.
     Otherwise, verifies all users in the market.
@@ -100,7 +102,8 @@ def verify_stk_aave_balances(
     show_progress: bool,
     user_addresses: set[ChecksumAddress] | None = None,
 ) -> None:
-    """Verify that tracked stkAAVE balances in the database match the contract.
+    """
+    Verify that tracked stkAAVE balances in the database match the contract.
 
     If user_addresses is provided, only verifies those specific users.
     Otherwise, verifies all users in the market.

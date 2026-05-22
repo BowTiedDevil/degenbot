@@ -37,7 +37,8 @@ _REGISTRY_ADDRESSES = (CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS)
 
 
 class CurvePoolBuilder:
-    """Builds and updates Curve StableSwap pools.
+    """
+    Builds and updates Curve StableSwap pools.
 
     Owns the full I/O choreography: DB lookup → RPC fetch → decode →
     construct pool → register.

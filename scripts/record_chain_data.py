@@ -91,7 +91,6 @@ class RecordedCode:
 
 def fetch_token_calls(w3: Web3, token_address: str, block_number: int) -> list[RecordedCall]:
     """Fetch and record all calls needed for a token at a specific block."""
-
     checksum_address = w3.to_checksum_address(token_address)
     calls: list[RecordedCall] = []
 
@@ -137,7 +136,6 @@ def fetch_token_calls(w3: Web3, token_address: str, block_number: int) -> list[R
 
 def fetch_v2_pool_calls(w3: Web3, pool_config: dict, block_number: int) -> list[RecordedCall]:
     """Fetch and record all calls needed for a V2 pool at a specific block."""
-
     address = pool_config["address"]
     checksum_address = w3.to_checksum_address(address)
     calls: list[RecordedCall] = []
@@ -188,7 +186,6 @@ def _safe_eth_call(
 
 def fetch_v3_pool_calls(w3: Web3, pool_config: dict, block_number: int) -> list[RecordedCall]:
     """Fetch and record all calls needed for a V3 pool at a specific block."""
-
     address = pool_config["address"]
     checksum_address = w3.to_checksum_address(address)
     calls: list[RecordedCall] = []
@@ -343,7 +340,6 @@ def fetch_v3_pool_tick_data(
 
 def fetch_v4_pool_calls(w3: Web3, pool_config: dict, block_number: int) -> list[RecordedCall]:
     """Fetch and record all calls needed for a V4 pool at a specific block."""
-
     pool_id = pool_config["pool_id"]
     state_view = pool_config["state_view"]
     checksum_state_view = w3.to_checksum_address(state_view)
@@ -362,7 +358,6 @@ def fetch_v4_pool_calls(w3: Web3, pool_config: dict, block_number: int) -> list[
 
 def fetch_curve_pool_calls(w3: Web3, pool_config: dict, block_number: int) -> list[RecordedCall]:
     """Fetch and record all calls needed for a Curve pool at a specific block."""
-
     address = pool_config["address"]
     checksum_address = w3.to_checksum_address(address)
     calls: list[RecordedCall] = []

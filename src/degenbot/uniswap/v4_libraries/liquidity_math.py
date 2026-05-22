@@ -7,7 +7,8 @@ def add_delta(
     x: int,
     y: int,
 ) -> int:
-    """Check that the result fits in a uint128.
+    """
+    Check that the result fits in a uint128.
 
     Instead of inline Yul as implemented by the Solidity contract.
 

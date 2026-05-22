@@ -1,4 +1,5 @@
-"""Standalone swap amount construction.
+"""
+Standalone swap amount construction.
 
 Delegates to pool.build_swap_amount() for protocol-based dispatch.
 Kept for backward compatibility; prefer calling pool.build_swap_amount() directly.

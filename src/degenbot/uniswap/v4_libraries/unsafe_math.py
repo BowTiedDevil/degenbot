@@ -5,7 +5,8 @@ def div_rounding_up(
     x: int,
     y: int,
 ) -> int:
-    """Calculate ceil(x/y).
+    """
+    Calculate ceil(x/y).
 
     @dev division by 0 will return 0, and should be checked externally.
     """
@@ -13,7 +14,8 @@ def div_rounding_up(
 
 
 def simple_mul_div(a: int, b: int, denominator: int) -> int:
-    """Calculate floor((a*b)/denominator)).
+    """
+    Calculate floor((a*b)/denominator)).
 
     @dev division by 0 will return 0, and should be checked externally
     """

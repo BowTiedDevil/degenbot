@@ -21,7 +21,8 @@ class CurveStableswapPoolTracker(
     AbstractPoolTracker["CurveStableswapPool"],
     pool_factory=None,
 ):
-    """Manages Curve StableSwap pool instances.
+    """
+    Manages Curve StableSwap pool instances.
 
     Tracks Curve pools by address, delegates construction to Bot.build_pool(),
     and supports registry-based discovery.
@@ -46,7 +47,8 @@ class CurveStableswapPoolTracker(
         *,
         silent: bool = False,
     ) -> CurveStableswapPool:
-        """Get a Curve pool from its address.
+        """
+        Get a Curve pool from its address.
 
         If the pool is already tracked, that instance is returned.
         If the pool is in the bot's pool registry, it is tracked and returned.

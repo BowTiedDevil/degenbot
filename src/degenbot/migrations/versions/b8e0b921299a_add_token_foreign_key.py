@@ -1,4 +1,5 @@
-"""V2 pools: convert token0/token1 to foreign keys.
+"""
+V2 pools: convert token0/token1 to foreign keys.
 
 Revision ID: b8e0b921299a
 Revises: fb9abf7c7d57

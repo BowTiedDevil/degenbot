@@ -62,7 +62,8 @@ def _calc_out_given_in(
     *,
     version: PowVersion = PowVersion.V1,
 ) -> int:
-    """Compute how many tokens can be taken out of a pool if `amountIn` are sent, given the.
+    """
+    Compute how many tokens can be taken out of a pool if `amountIn` are sent, given the.
 
     current balances and weights.
     """
@@ -104,7 +105,8 @@ def _calc_in_given_out(
     *,
     version: PowVersion = PowVersion.V1,
 ) -> int:
-    """Compute how many tokens must be sent to a pool in order to take `amountOut`, given the.
+    """
+    Compute how many tokens must be sent to a pool in order to take `amountOut`, given the.
 
     current balances and weights.
     """

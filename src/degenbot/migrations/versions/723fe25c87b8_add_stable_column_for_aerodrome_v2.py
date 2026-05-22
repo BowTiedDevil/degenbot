@@ -1,4 +1,5 @@
-"""add stable column for Aerodrome V2.
+"""
+add stable column for Aerodrome V2.
 
 Revision ID: 723fe25c87b8
 Revises: fec1e047973b

@@ -1,4 +1,5 @@
-"""Convert index.
+"""
+Convert index.
 
 Revision ID: fec1e047973b
 Revises: 3eb6b82dc42d

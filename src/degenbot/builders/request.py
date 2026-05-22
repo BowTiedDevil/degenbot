@@ -11,7 +11,8 @@ if TYPE_CHECKING:
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class BuildPoolRequest:
-    """Typed request object carrying optional parameters for pool construction.
+    """
+    Typed request object carrying optional parameters for pool construction.
 
     Carries all optional parameters for build_pool() and its dispatched
     builders. Required parameters (address, chain_id, io) remain on
@@ -36,7 +37,8 @@ class BuildPoolRequest:
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class BuildManagedPoolRequest:
-    """Typed request object for V4 managed-pool construction.
+    """
+    Typed request object for V4 managed-pool construction.
 
     ``pool_id`` is required — V4 pools cannot be discovered without it.
     Immutable data (``state_view_address``, ``tokens``, ``fee``,

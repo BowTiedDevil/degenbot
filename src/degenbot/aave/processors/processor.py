@@ -24,7 +24,8 @@ from degenbot.aave.processors.strategies import (
 
 
 class UnifiedCollateralProcessor:
-    """Unified processor for collateral (aToken) operations.
+    """
+    Unified processor for collateral (aToken) operations.
 
     Implements CollateralTokenProcessor protocol with strategy-based rounding.
     """
@@ -69,7 +70,8 @@ class UnifiedCollateralProcessor:
         previous_index: int,  # noqa: ARG002
         scaled_delta: int | None = None,  # noqa: ARG002
     ) -> ScaledTokenMintResult:
-        """Process a collateral mint event.
+        """
+        Process a collateral mint event.
 
         Mint events can be triggered by:
         - SUPPLY: value > balance_increase
@@ -121,7 +123,8 @@ class UnifiedCollateralProcessor:
         previous_index: int,  # noqa: ARG002
         scaled_delta: int | None = None,
     ) -> ScaledTokenBurnResult:
-        """Process a collateral burn event.
+        """
+        Process a collateral burn event.
 
         Burn events are triggered by WITHDRAW operations.
         """
@@ -158,7 +161,8 @@ class UnifiedCollateralProcessor:
 
 
 class UnifiedDebtProcessor:
-    """Unified processor for debt (vToken) operations.
+    """
+    Unified processor for debt (vToken) operations.
 
     Implements DebtTokenProcessor protocol with strategy-based rounding.
     """
@@ -203,7 +207,8 @@ class UnifiedDebtProcessor:
         previous_index: int,  # noqa: ARG002
         scaled_delta: int | None = None,  # noqa: ARG002
     ) -> ScaledTokenMintResult:
-        """Process a debt mint event.
+        """
+        Process a debt mint event.
 
         Mint events can be triggered by:
         - BORROW: value > balance_increase
@@ -250,7 +255,8 @@ class UnifiedDebtProcessor:
         previous_index: int,  # noqa: ARG002
         scaled_delta: int | None = None,
     ) -> ScaledTokenBurnResult:
-        """Process a debt burn event.
+        """
+        Process a debt burn event.
 
         Burn events are triggered by REPAY operations.
         """
@@ -280,7 +286,8 @@ class UnifiedDebtProcessor:
 
 
 class UnifiedGhoProcessor:
-    """Unified processor for GHO debt operations.
+    """
+    Unified processor for GHO debt operations.
 
     Implements GhoDebtTokenProcessor protocol with strategy-based rounding
     and optional discount support.

@@ -1,4 +1,5 @@
-"""Uniswap V4: Add state view column.
+"""
+Uniswap V4: Add state view column.
 
 Revision ID: 6f376d34618b
 Revises: 4c5e6157714b

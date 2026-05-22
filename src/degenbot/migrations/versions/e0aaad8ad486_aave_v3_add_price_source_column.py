@@ -1,4 +1,5 @@
-"""Aave V3: add price_source column.
+"""
+Aave V3: add price_source column.
 
 Revision ID: e0aaad8ad486
 Revises: b0b9e84d5527

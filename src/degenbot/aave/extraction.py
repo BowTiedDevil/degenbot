@@ -12,7 +12,8 @@ EVENT_EXTRACTORS: dict[AaveV3PoolEvent, Callable[[LogReceipt], int]] = {}
 
 
 class RawAmountExtractor:
-    """Extracts raw amounts from Pool events.
+    """
+    Extracts raw amounts from Pool events.
 
     Each Pool event type has specific data encoding. This class provides
     type-safe extraction of the raw amount (the input to TokenMath).
@@ -49,7 +50,8 @@ class RawAmountExtractor:
 
     @staticmethod
     def extract_supply(event: LogReceipt) -> int:
-        """Extract amount from Supply event.
+        """
+        Extract amount from Supply event.
 
         Event definition:
             event Supply(
@@ -69,7 +71,8 @@ class RawAmountExtractor:
 
     @staticmethod
     def extract_borrow(event: LogReceipt) -> int:
-        """Extract amount from Borrow event.
+        """
+        Extract amount from Borrow event.
 
         Event definition:
             event Borrow(
@@ -91,7 +94,8 @@ class RawAmountExtractor:
 
     @staticmethod
     def extract_repay(event: LogReceipt) -> int:
-        """Extract amount from Repay event.
+        """
+        Extract amount from Repay event.
 
         Event definition:
             event Repay(
@@ -111,7 +115,8 @@ class RawAmountExtractor:
 
     @staticmethod
     def extract_withdraw(event: LogReceipt) -> int:
-        """Extract amount from Withdraw event.
+        """
+        Extract amount from Withdraw event.
 
         Event definition:
             event Withdraw(
@@ -130,7 +135,8 @@ class RawAmountExtractor:
 
     @staticmethod
     def extract_liquidation_debt(event: LogReceipt) -> int:
-        """Extract debt amount from LiquidationCall event.
+        """
+        Extract debt amount from LiquidationCall event.
 
         Event definition:
             event LiquidationCall(
@@ -152,7 +158,8 @@ class RawAmountExtractor:
 
     @staticmethod
     def extract_liquidation_collateral(event: LogReceipt) -> int:
-        """Extract collateral amount from LiquidationCall event.
+        """
+        Extract collateral amount from LiquidationCall event.
 
         Event definition:
             event LiquidationCall(

@@ -20,7 +20,8 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class V4Slot0Data:
-    """Decoded V4 slot0 data.
+    """
+    Decoded V4 slot0 data.
 
     Produced by V4BuilderBase.decode_slot0().
     Shared by both build() and update().
@@ -35,7 +36,8 @@ class V4Slot0Data:
 
 @dataclass(frozen=True)
 class V4DbValues:
-    """Immutable values extracted from a V4 DB row.
+    """
+    Immutable values extracted from a V4 DB row.
 
     Produced by V4BuilderBase.extract_db_values().
     """
@@ -49,7 +51,8 @@ class V4DbValues:
 
 
 class V4BuilderBase:
-    """Shared pure-logic helpers for V4 pool builders.
+    """
+    Shared pure-logic helpers for V4 pool builders.
 
     Both V4PoolBuilder (sync) and AsyncV4PoolBuilder (async) delegate
     decode/extract/snapshot steps to these helpers. Only the I/O
@@ -58,7 +61,8 @@ class V4BuilderBase:
 
     @staticmethod
     def decode_slot0(slot0_result: HexBytes) -> V4Slot0Data:
-        """Decode sqrt_price, tick, protocol fees, and lp_fee from V4 getSlot0(bytes32).
+        """
+        Decode sqrt_price, tick, protocol fees, and lp_fee from V4 getSlot0(bytes32).
 
         V4 getSlot0 returns [uint160 sqrtPriceX96, int24 tick, uint24 protocolFee,
         uint24 lpFee]. The protocol fee uint24 packs two uint12 values:
@@ -92,7 +96,8 @@ class V4BuilderBase:
     def load_tick_snapshot(
         pool_with_data: UniswapV4PoolTableBase,
     ) -> tuple[dict[BitmapWord, BitmapAtWord], dict[Tick, LiquidityAtTick], bool]:
-        """Load tick bitmap and tick data from a re-queried V4 DB row with active relationships.
+        """
+        Load tick bitmap and tick data from a re-queried V4 DB row with active relationships.
 
         The caller is responsible for re-querying the pool row within an
         active SQLAlchemy session so that lazy-loaded relationships
@@ -132,7 +137,8 @@ class V4BuilderBase:
         working_tick_data: dict[Tick, LiquidityAtTick],
         working_tick_bitmap: dict[BitmapWord, BitmapAtWord],
     ) -> tuple[dict[BitmapWord, BitmapAtWord] | None, dict[Tick, LiquidityAtTick] | None]:
-        """Decide whether to pass tick data to the pool constructor.
+        """
+        Decide whether to pass tick data to the pool constructor.
 
         V4 passes tick data when any tick data was populated.
         Otherwise passes None (sparse mode).

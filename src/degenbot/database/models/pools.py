@@ -106,7 +106,8 @@ class UniswapFeeMixin:
 
 
 class UniswapV2PoolTableBase(LiquidityPoolTable, UniswapFeeMixin):
-    """Abstract parent for all Uniswap V2 variants.
+    """
+    Abstract parent for all Uniswap V2 variants.
 
     It may be used to identify concrete subclasses at runtime, but otherwise is not useful for
     performing database queries.
@@ -183,7 +184,8 @@ class UniswapV2PoolTable(UniswapV2PoolTableBase):
 
 
 class UniswapV3PoolTableBase(LiquidityPoolTable, UniswapFeeMixin):
-    """Abstract parent for all Uniswap V3 variants.
+    """
+    Abstract parent for all Uniswap V3 variants.
 
     It may be used to identify concrete subclasses at runtime.
     """
@@ -341,7 +343,8 @@ class ManagedLiquidityPoolTable(Base):
 
 
 class UniswapV4PoolTableBase(ManagedLiquidityPoolTable):
-    """Abstract parent for all Uniswap V4 variants.
+    """
+    Abstract parent for all Uniswap V4 variants.
 
     It should not be instantiated directly, but may be used to query and select child classes.
     """

@@ -22,8 +22,6 @@ class AbstractSimulationResult:
 class AbstractRegistry:
     """Abstract base for pool and token registries."""
 
-    ...
-
 
 __all__ = (
     "AbstractErc20Token",

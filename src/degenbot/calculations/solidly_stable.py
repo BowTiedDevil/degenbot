@@ -1,4 +1,5 @@
-"""Solidly StableSwap invariant calculations.
+"""
+Solidly StableSwap invariant calculations.
 
 Pure functions implementing the Solidly stable pool invariant
 (x^3*y + y^3*x >= k) and its Newton's method solvers.
@@ -16,7 +17,8 @@ from degenbot.exceptions.pool import EVMRevertError
 
 
 def calc_d(x0: int, y: int) -> int:
-    """Calculate the Solidly stable D value for normalized reserves x0, y.
+    """
+    Calculate the Solidly stable D value for normalized reserves x0, y.
 
     D = 3*x0*y^2 + x0^3*y, all scaled by 10^18.
     """
@@ -29,7 +31,8 @@ def calc_k(
     decimals_0: int,
     decimals_1: int,
 ) -> int:
-    """Calculate the Solidly stable k invariant for unnormalized reserves.
+    """
+    Calculate the Solidly stable k invariant for unnormalized reserves.
 
     Scales reserves by decimals, then computes k = a*b where a = x*y, b = x^2 + y^2.
     """
@@ -42,7 +45,8 @@ def calc_k(
 
 
 def calc_f(x0: int, y: int) -> int:
-    """Evaluate the Solidly stable invariant f(x0, y) = x0*y^3 + x0^3*y.
+    """
+    Evaluate the Solidly stable invariant f(x0, y) = x0*y^3 + x0^3*y.
 
     Used by Newton's method solvers to find y given x0 and target k.
     """
@@ -63,7 +67,8 @@ def calc_exact_in_stable(
     k_func: Callable[[int, int, int, int], int],
     get_y_func: Callable[[int, int, int, int, int], int],
 ) -> int:
-    """Calculate the amount out for an exact input to a Solidly stable pool.
+    """
+    Calculate the amount out for an exact input to a Solidly stable pool.
 
     Generic over the k() and get_y() implementations to accommodate
     DEX-specific variants (Aerodrome, Camelot).
@@ -120,7 +125,8 @@ def get_y_solidly(
     decimals0: int,
     decimals1: int,
 ) -> int:
-    """Solve for y in the Solidly stable invariant using Newton's method.
+    """
+    Solve for y in the Solidly stable invariant using Newton's method.
 
     Finds the minimum y such that f(x0, y) >= xy.
 

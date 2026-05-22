@@ -30,7 +30,8 @@ if TYPE_CHECKING:
 
 
 class AsyncV2PoolBuilder:
-    """Async counterpart of V2PoolBuilder.
+    """
+    Async counterpart of V2PoolBuilder.
 
     Builds UniswapV2Pool instances using AsyncPoolIO for I/O.
     Shares pure decode/resolve logic with V2BuilderBase via static methods.

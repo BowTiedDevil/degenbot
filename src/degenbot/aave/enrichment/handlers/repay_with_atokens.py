@@ -1,4 +1,5 @@
-"""REPAY_WITH_ATOKENS operation handler.
+"""
+REPAY_WITH_ATOKENS operation handler.
 
 REPAY_WITH_ATOKENS is a composite operation that burns both aTokens (collateral)
 and vTokens (debt). It has two special cases:
@@ -38,7 +39,8 @@ class RepayWithAtokensHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """Enrich a REPAY_WITH_ATOKENS event.
+        """
+        Enrich a REPAY_WITH_ATOKENS event.
 
         Handles both collateral and debt events with their respective
         special cases for interest exceeding repayment.

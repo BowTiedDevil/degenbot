@@ -8,7 +8,8 @@ from degenbot.types.abstract import AbstractPoolState
 
 
 class KeyedDefaultDict[KT, VT](defaultdict[KT, VT]):
-    """A modified defaultdict that passes the key to default_factory at runtime and records it.
+    """
+    A modified defaultdict that passes the key to default_factory at runtime and records it.
 
     This differs from the defaultdict behavior, which calls default_factory with no arguments.
     """
@@ -76,7 +77,8 @@ class Publisher(Protocol):
 
 
 class PublisherMixin:
-    """A set of default methods to accept subscribe & unsubscribe requests, and notify all.
+    """
+    A set of default methods to accept subscribe & unsubscribe requests, and notify all.
 
     subscribers of a message. Classes using this mixin meet the `Publisher` protocol requirements.
     """
@@ -102,7 +104,8 @@ class Subscriber(Protocol):
 
 
 class BoundedCache[KT, VT](OrderedDict[KT, VT]):
-    """A cache holding key-value pairs, tracked by entry order. The cache automatically removes old.
+    """
+    A cache holding key-value pairs, tracked by entry order. The cache automatically removes old.
 
     items if the number of items would exceed the maximum number of entries set by `max_items`.
 

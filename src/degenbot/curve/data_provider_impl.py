@@ -1,4 +1,5 @@
-"""Structured CurveDataProvider implementation.
+"""
+Structured CurveDataProvider implementation.
 
 Replaces the closure-based CurveFetcherFactory with a class where each
 CurveDataProvider protocol method is a real method. Shared I/O patterns
@@ -29,7 +30,8 @@ if TYPE_CHECKING:
 
 
 class CurveDataProviderImpl:
-    """Production implementation of CurveDataProvider.
+    """
+    Production implementation of CurveDataProvider.
 
     Each protocol method is a real method on this class. Shared I/O patterns
     (provider call → ABI decode → type cast) are concentrated in private helpers.

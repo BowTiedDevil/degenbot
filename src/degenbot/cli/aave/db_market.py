@@ -1,4 +1,5 @@
-"""Market-level database operations for Aave V3.
+"""
+Market-level database operations for Aave V3.
 
 Functions for managing market state, eMode categories, and asset configurations.
 """

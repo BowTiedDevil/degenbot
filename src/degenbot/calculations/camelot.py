@@ -1,4 +1,5 @@
-"""Camelot invariant calculations.
+"""
+Camelot invariant calculations.
 
 Pure functions implementing the Camelot DEX's variant of the Solidly stable invariant.
 Camelot uses its own f() and k() implementations that differ slightly from the
@@ -12,7 +13,8 @@ from degenbot.calculations.solidly_stable import calc_d as solidly_calc_d
 
 
 def f_camelot(x0: int, y: int) -> int:
-    """Evaluate the Camelot invariant f(x0, y) = x0*y^3 + x0^3*y.
+    """
+    Evaluate the Camelot invariant f(x0, y) = x0*y^3 + x0^3*y.
 
     Same mathematical form as Solidly/Aerodrome but with different operation ordering
     to match the Camelot contract's arithmetic.
@@ -29,7 +31,8 @@ def k_camelot(
     decimals_0: int,
     decimals_1: int,
 ) -> int:
-    """Calculate the Camelot k invariant for unnormalized reserves.
+    """
+    Calculate the Camelot k invariant for unnormalized reserves.
 
     Same mathematical form as Solidly calc_k but exposed as a separate function
     because Camelot codebases import it by name.
@@ -47,7 +50,8 @@ def get_y_camelot(
     xy: int,
     y: int,
 ) -> int:
-    """Solve for y in the Camelot invariant using Newton's method.
+    """
+    Solve for y in the Camelot invariant using Newton's method.
 
     Uses the Solidly calc_d (same D function) but the Camelot f() and a
     simpler convergence check (delta <= 1 in either direction).

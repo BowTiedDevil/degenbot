@@ -2,7 +2,8 @@
 
 
 def div_rounding_up(x: int, y: int) -> int:
-    """Perform an x//y floored division, rounding up any remainder.
+    """
+    Perform an x//y floored division, rounding up any remainder.
 
     ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/UnsafeMath.sol
     """

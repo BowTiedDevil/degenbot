@@ -1,4 +1,5 @@
-"""Liquidation pattern types for multi-liquidation scenarios.
+"""
+Liquidation pattern types for multi-liquidation scenarios.
 
 This module contains pure data types for liquidation pattern detection:
 - SINGLE: 1 liquidation with 1 burn event (standard)
@@ -61,7 +62,8 @@ class LiquidationGroup:
 
 @dataclass
 class LiquidationPatternContext:
-    """Context for pattern-aware liquidation processing.
+    """
+    Context for pattern-aware liquidation processing.
 
     Replaces liquidation_aggregates, liquidation_counts, and processed_liquidations.
     """

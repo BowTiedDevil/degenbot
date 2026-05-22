@@ -1,4 +1,5 @@
-"""Transform pool hash to lowercase.
+"""
+Transform pool hash to lowercase.
 
 Revision ID: bd7ca13a7d39
 Revises: d1f98e2c3b18

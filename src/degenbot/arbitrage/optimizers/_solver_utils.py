@@ -15,7 +15,8 @@ from degenbot.uniswap.v3_libraries.constants import Q96
 
 
 def _infer_zero_for_one(v3_hop: BoundedProductHop) -> bool:
-    """Infer swap direction from BoundedProductHop data.
+    """
+    Infer swap direction from BoundedProductHop data.
 
     Uses the stored zero_for_one if available. Otherwise computes it
     from the reserve ratio vs the expected ratio from L/sqrt_price.
@@ -45,7 +46,8 @@ def _hop_to_float_state(hop: HopType) -> tuple[float, float, float]:
 
 @dataclass(frozen=True, slots=True)
 class _MobiusCoefficients:
-    """Internal Möbius coefficients l(x) = K*x / (M + N*x).
+    """
+    Internal Möbius coefficients l(x) = K*x / (M + N*x).
 
     Computed from Hop data via an O(n) recurrence.
     """
@@ -71,7 +73,8 @@ class _MobiusCoefficients:
 
 
 def _compute_mobius_coefficients(hops: tuple[HopType, ...]) -> _MobiusCoefficients:
-    """Compute Möbius transformation coefficients from hops.
+    """
+    Compute Möbius transformation coefficients from hops.
 
     The recurrence:
         Initialize: K = gamma_1 * s_1, M = r_1, N = gamma_1
@@ -100,7 +103,8 @@ def _compute_mobius_coefficients(hops: tuple[HopType, ...]) -> _MobiusCoefficien
 
 
 def _simulate_path(x: float, hops: tuple[HopType, ...]) -> float:
-    """Simulate a swap through all hops for verification.
+    """
+    Simulate a swap through all hops for verification.
 
     Supports ConstantProduct, BoundedProduct, SolidlyStable (with swap_fn),
     and CurveStableswap (with swap_fn). Falls back to constant-product
@@ -131,7 +135,8 @@ def _rust_integer_refinement(
     hops: tuple[HopType, ...],
     max_input: int | None,
 ) -> tuple[int, int]:
-    """Integer refinement in Rust using EVM-exact U256 arithmetic.
+    """
+    Integer refinement in Rust using EVM-exact U256 arithmetic.
 
     Converts Python hops to RustIntHopState, calls py_mobius_refine_int
     to search around the float optimum with U256 simulation, and

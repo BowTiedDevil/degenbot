@@ -1,4 +1,5 @@
-"""Curve pool strategy resolution.
+"""
+Curve pool strategy resolution.
 
 Maps pool addresses to their PoolStrategies, combining all calculation
 variant enums into a single lookup.
@@ -295,7 +296,8 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
 
 
 def resolve_pool_strategies(pool_address: ChecksumAddress | str) -> PoolStrategies:
-    """Resolve the complete PoolStrategies for a Curve pool address.
+    """
+    Resolve the complete PoolStrategies for a Curve pool address.
 
     Combines the address lookup from _POOL_STRATEGIES with the variant
     group resolution from _variant_groups. Returns a PoolStrategies with

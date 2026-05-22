@@ -1,4 +1,5 @@
-"""BORROW operation handler.
+"""
+BORROW operation handler.
 
 BORROW operations emit a DEBT_MINT event from the VariableDebtToken contract.
 GHO_BORROW operations emit a GHO_DEBT_MINT event.
@@ -30,7 +31,8 @@ class BorrowHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """Enrich a BORROW or GHO_BORROW event.
+        """
+        Enrich a BORROW or GHO_BORROW event.
 
         For BORROW operations:
         1. Extract raw amount from the Pool BORROW event

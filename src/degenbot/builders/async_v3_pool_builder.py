@@ -35,7 +35,8 @@ from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 
 class AsyncV3PoolBuilder:
-    """Async counterpart of V3PoolBuilder.
+    """
+    Async counterpart of V3PoolBuilder.
 
     Builds UniswapV3Pool instances using AsyncPoolIO for I/O.
     Shares pure decode/resolve logic with V3BuilderBase via static methods.

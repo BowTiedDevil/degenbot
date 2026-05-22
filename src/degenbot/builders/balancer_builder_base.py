@@ -22,7 +22,8 @@ if TYPE_CHECKING:
 
 
 class _BalancerPoolType(IntEnum):
-    """Internal enum for _detect_pool_type return values.
+    """
+    Internal enum for _detect_pool_type return values.
 
     Used instead of string literals to enable type-checker
     exhaustiveness checking and prevent typos.
@@ -51,7 +52,8 @@ class VaultTokensResult:
 
 
 class BalancerBuilderBase:
-    """Shared helpers for Balancer pool builders.
+    """
+    Shared helpers for Balancer pool builders.
 
     Sync and async builders call these @staticmethod helpers
     without duplicating decode/extract logic. I/O helpers take
@@ -88,7 +90,8 @@ class BalancerBuilderBase:
         token_addresses: list[str] | tuple[str, ...],
         pool_address: str,
     ) -> int | None:
-        """Detect the BPT index for ComposableStablePools.
+        """
+        Detect the BPT index for ComposableStablePools.
 
         Heuristic: the token whose address matches the pool address is BPT.
         Returns None for MetaStablePools (no BPT in token list).
@@ -105,7 +108,8 @@ class BalancerBuilderBase:
         specialization: int,
         override: int | None = None,
     ) -> int:
-        """Determine which StableMath invariant version to use.
+        """
+        Determine which StableMath invariant version to use.
 
         specialization comes from the decoded pool ID:
         - 0 (General): most likely ComposableStablePool → INVARIANT_V1
@@ -209,7 +213,8 @@ class BalancerBuilderBase:
         address: str,
         block: int,
     ) -> _BalancerPoolType:
-        """Determine weighted vs stable by probing contract methods.
+        """
+        Determine weighted vs stable by probing contract methods.
 
         Probes in order:
         1. getNormalizedWeights() → WEIGHTED

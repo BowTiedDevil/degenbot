@@ -1,4 +1,5 @@
-"""Log decoders for Uniswap pool events.
+"""
+Log decoders for Uniswap pool events.
 
 Each decoder takes a raw log dict (as produced by the Rust subscription
 layer) and returns a closure that applies the decoded update to the
@@ -79,7 +80,8 @@ def get_topic_bytes(log: dict, index: int) -> bytes:
 
 
 def decode_v2_sync(log: dict) -> Callable[[UniswapV2Pool], None]:
-    """Decode a V2 Sync event and return a closure that applies the update.
+    """
+    Decode a V2 Sync event and return a closure that applies the update.
 
     Sync(uint112,uint112) — data is tightly packed reserve0, reserve1.
     """
@@ -105,7 +107,8 @@ def decode_v2_sync(log: dict) -> Callable[[UniswapV2Pool], None]:
 
 
 def decode_v3_swap(log: dict) -> Callable[[UniswapV3Pool], None]:
-    """Decode a V3 Swap event and return a closure that applies the update.
+    """
+    Decode a V3 Swap event and return a closure that applies the update.
 
     Swap(address,address,int256,int256,uint160,uint128,int24)
     Data: amount0, amount1, sqrtPriceX96, liquidity, tick.
@@ -130,7 +133,8 @@ def decode_v3_swap(log: dict) -> Callable[[UniswapV3Pool], None]:
 
 
 def decode_v3_mint(log: dict) -> Callable[[UniswapV3Pool], None]:
-    """Decode a V3 Mint event and return a closure for the liquidity update.
+    """
+    Decode a V3 Mint event and return a closure for the liquidity update.
 
     Mint(address,address,int24,int24,uint128,uint256,uint256)
     Data: tickLower, tickUpper, amount, amount0, amount1.
@@ -155,7 +159,8 @@ def decode_v3_mint(log: dict) -> Callable[[UniswapV3Pool], None]:
 
 
 def decode_v3_burn(log: dict) -> Callable[[UniswapV3Pool], None]:
-    """Decode a V3 Burn event and return a closure for the liquidity update.
+    """
+    Decode a V3 Burn event and return a closure for the liquidity update.
 
     Burn(address,int24,int24,uint128,uint256,uint256)
     Data: tickLower, tickUpper, amount, amount0, amount1.
@@ -188,7 +193,8 @@ def _extract_v4_pool_id_from_topics(log: dict) -> bytes:
 
 
 def decode_v4_swap(log: dict) -> Callable[[UniswapV4Pool], None]:
-    """Decode a V4 Swap event and return a closure that applies the update.
+    """
+    Decode a V4 Swap event and return a closure that applies the update.
 
     Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)
     Data: amount0, amount1, sqrtPriceX96, liquidity, tick, fee.
@@ -213,7 +219,8 @@ def decode_v4_swap(log: dict) -> Callable[[UniswapV4Pool], None]:
 
 
 def decode_v4_modify_liquidity(log: dict) -> Callable[[UniswapV4Pool], None]:
-    """Decode a V4 ModifyLiquidity event and return a closure for the update.
+    """
+    Decode a V4 ModifyLiquidity event and return a closure for the update.
 
     ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)
     Data: tickLower, tickUpper, liquidityDelta, salt.

@@ -28,8 +28,6 @@ class SolidlyExchangeDeployment(AbstractExchangeDeployment):
 class AerodromeV2PoolExternalUpdate(UniswapV2PoolExternalUpdate):
     """AerodromeV2PoolExternalUpdate class."""
 
-    ...
-
 
 """AerodromeV2PoolExternalUpdate class."""
 
@@ -61,8 +59,6 @@ class AerodromeV2PoolStateUpdated(PoolStateMessage):
 
 class AerodromeV3PoolState(UniswapV3PoolState):
     """AerodromeV3PoolState class."""
-
-    ...
 
 
 """AerodromeV3PoolState class."""

@@ -62,7 +62,8 @@ from degenbot.types.aliases import ChainId  # noqa: TC001
 
 
 class Bot:
-    """Explicit session object that owns the runtime state for a degenbot run.
+    """
+    Explicit session object that owns the runtime state for a degenbot run.
 
     Replaces the four module-level singletons (`config`, `db_session`,
     `connection_manager`, `pool_registry`/`token_registry`/`managed_pool_registry`)
@@ -192,7 +193,8 @@ class Bot:
         pool_class: type[AbstractLiquidityPool],
         builder: PoolBuilder,
     ) -> None:
-        """Register a builder for a concrete pool type.
+        """
+        Register a builder for a concrete pool type.
 
         After registration, ``update()`` will use ``type(pool)`` dict lookup
         instead of isinstance chains to find the right builder.
@@ -232,7 +234,8 @@ class Bot:
         tick_data: dict[int, Any] | None = None,
         state_cache_depth: int = 8,
     ) -> AbstractLiquidityPool:
-        """Build a pool from an address, automatically resolving its type.
+        """
+        Build a pool from an address, automatically resolving its type.
 
         V4 managed pools should use ``build_managed_pool()`` instead.
         """
@@ -322,7 +325,8 @@ class Bot:
         tick_bitmap: dict[int, Any] | None = None,
         tick_data: dict[int, Any] | None = None,
     ) -> UniswapV4Pool:
-        """Build a V4 managed pool from a PoolManager address and pool ID.
+        """
+        Build a V4 managed pool from a PoolManager address and pool ID.
 
         ``address`` is the PoolManager contract. ``pool_id`` identifies the
         pool within the manager.
@@ -429,7 +433,8 @@ class Bot:
         self,
         chain_id: ChainId | None = None,
     ) -> tuple[Subscription, Subscription]:
-        """Start WS subscriptions for newHeads and unfiltered logs.
+        """
+        Start WS subscriptions for newHeads and unfiltered logs.
 
         Creates an AsyncProviderAdapter from the configured WS URI for
         the given chain, subscribes to new block headers and unfiltered
@@ -481,7 +486,8 @@ class Bot:
         *,
         block_number: BlockIdentifier | None = None,
     ) -> bool:
-        """Fetch the current state of a pool from the chain and apply it via.
+        """
+        Fetch the current state of a pool from the chain and apply it via.
 
         ``pool.external_update()``.
 
@@ -501,7 +507,8 @@ class Bot:
         self,
         pool: AbstractLiquidityPool,
     ) -> PoolBuilder:
-        """Select the appropriate builder for the pool type.
+        """
+        Select the appropriate builder for the pool type.
 
         Uses the builder registry (dict lookup on type(pool)) first, then
         falls back to isinstance checks for subclasses not explicitly registered

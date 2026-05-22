@@ -1,4 +1,5 @@
-"""Concentrated liquidity (Uniswap V3/V4) tick math.
+"""
+Concentrated liquidity (Uniswap V3/V4) tick math.
 
 This module is intentionally minimal — the bulk of concentrated liquidity math
 already lives in well-organized DEX-specific libraries:
@@ -41,7 +42,8 @@ def apply_liquidity_mapping_update(
     tick_upper: int,
     liquidity_delta: int,
 ) -> LiquidityMappingUpdateResult:
-    """Apply a liquidity mapping update to tick bitmap and tick data dicts.
+    """
+    Apply a liquidity mapping update to tick bitmap and tick data dicts.
 
     This is the pure computation core extracted from
     ``UniswapV3Pool.update_liquidity_map`` and ``UniswapV4Pool.update_liquidity_map``.

@@ -30,7 +30,8 @@ if TYPE_CHECKING:
 
 
 class _AbstractAerodromeV2PoolTracker[Pool: AerodromeV2Pool](AbstractPoolTracker[Pool]):
-    """Abstract class used to inject the AerodromeV2Pool class into the parent abstract pool manager.
+    """
+    Abstract class used to inject the AerodromeV2Pool class into the parent abstract pool manager.
 
     class where the tracking dicts are defined.
     """
@@ -42,7 +43,8 @@ class _AbstractAerodromeV2PoolTracker[Pool: AerodromeV2Pool](AbstractPoolTracker
         silent: bool = False,
         pool_class_kwargs: dict[str, Any] | None = None,
     ) -> Pool:
-        """Get a pool from its address. If the pool is already tracked or found in the global registry,.
+        """
+        Get a pool from its address. If the pool is already tracked or found in the global registry,.
 
         that instance will be returned. Otherwise, a new one will be built.
         """
@@ -86,7 +88,8 @@ class _AbstractAerodromeV2PoolTracker[Pool: AerodromeV2Pool](AbstractPoolTracker
 class AerodromeV2PoolTracker(
     _AbstractAerodromeV2PoolTracker[AerodromeV2Pool], pool_factory=AerodromeV2Pool
 ):
-    """A class that generates and tracks concrete instances of a Uniswap V2 liquidity pool helper or.
+    """
+    A class that generates and tracks concrete instances of a Uniswap V2 liquidity pool helper or.
 
     one of its child classes.
     """

@@ -1,4 +1,5 @@
-"""State manager for concentrated-liquidity pools.
+"""
+State manager for concentrated-liquidity pools.
 
 Delegates temporal state navigation (deque, lock, discard/restore) to
 a :class:`~degenbot.types.state_cache.StateCache` and adds CL-specific
@@ -52,7 +53,8 @@ class _StateLike(Protocol):
 
 
 class ConcentratedLiquidityStateManager[StateT: _StateLike]:
-    """Unlocked data structure for a bounded history of pool states.
+    """
+    Unlocked data structure for a bounded history of pool states.
 
     Delegates the deque and temporal navigation to a
     :class:`~degenbot.types.state_cache.StateCache`. Adds CL-specific
@@ -134,7 +136,8 @@ class ConcentratedLiquidityStateManager[StateT: _StateLike]:
             raise NoPoolStateAvailable(block=block) from e
 
     def restore_state_before_block(self, block: BlockNumber) -> StateT:
-        """Rewind to the most recent state prior to *block*.
+        """
+        Rewind to the most recent state prior to *block*.
 
         Returns the restored state so the caller can emit an event or
         subscribe notification.

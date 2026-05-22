@@ -45,7 +45,8 @@ class LiquidityMap(TypedDict):
 
 
 class UniswapV3LiquiditySnapshotSource(Protocol):
-    """A minimal protocol allowing the UniswapV3LiquiditySnapshot class to retrieve pool data from a.
+    """
+    A minimal protocol allowing the UniswapV3LiquiditySnapshot class to retrieve pool data from a.
 
     generic source.
     """
@@ -58,9 +59,11 @@ class UniswapV3LiquiditySnapshotSource(Protocol):
     def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
         """Return liquidity map."""
         ...
+
     def get_newest_block(self) -> BlockNumber | None:
         """Return newest block."""
         ...
+
     def get_pools(self) -> set[ChecksumAddress]:
         """Return pools."""
         ...
@@ -142,7 +145,8 @@ class MonolithicJsonFileSnapshot:
 
 
 class IndividualJsonFileSnapshot:
-    """Snapshot source backed by a directory of JSON files with this tree structure.
+    """
+    Snapshot source backed by a directory of JSON files with this tree structure.
 
         /path/to/snapshots/
         ├── _metadata.json              -> { "block": int, "chain_id": int }
@@ -196,7 +200,8 @@ class IndividualJsonFileSnapshot:
 
 
 class DatabaseSnapshot:
-    """Snapshot source backed by built-in SQLite database using the ORM abstractions defined.
+    """
+    Snapshot source backed by built-in SQLite database using the ORM abstractions defined.
 
     in `degenbot.database`.
     """
@@ -319,7 +324,8 @@ class UniswapV3LiquiditySnapshot:
         self,
         log: LogReceipt,
     ) -> tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
-        """Decode an event log and convert to an address and a `UniswapV3LiquidityEvent` for.
+        """
+        Decode an event log and convert to an address and a `UniswapV3LiquidityEvent` for.
 
         processing with `UniswapV3Pool.update_liquidity_map`.
         """
@@ -378,7 +384,8 @@ class UniswapV3LiquiditySnapshot:
         provider: ProviderAdapter,
         blocks_per_request: int | None = None,
     ) -> None:
-        """Fetch liquidity events from the block following the last-known event to the target block.
+        """
+        Fetch liquidity events from the block following the last-known event to the target block.
 
         using `eth_getLogs`. Blocks per request will be capped at `blocks_per_request`.
         """
@@ -418,7 +425,8 @@ class UniswapV3LiquiditySnapshot:
         provider: AsyncProviderAdapter,
         blocks_per_request: int | None = None,
     ) -> None:
-        """Async version of fetch_new_events.
+        """
+        Async version of fetch_new_events.
 
         Fetch liquidity events from the block following the last-known event to the target block
         using `eth_getLogs` via the async provider. Blocks per request will be capped at

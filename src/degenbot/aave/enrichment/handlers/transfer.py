@@ -1,4 +1,5 @@
-"""BALANCE_TRANSFER operation handler.
+"""
+BALANCE_TRANSFER operation handler.
 
 Balance transfers are internal transfers between users that don't involve
 Pool events. For transfers, raw_amount = scaled_amount (no index-based
@@ -26,7 +27,8 @@ class BalanceTransferHandler:
         operation: "Operation",
         context: "EnrichmentContext",
     ) -> "EnrichedScaledTokenEvent":
-        """Enrich a BALANCE_TRANSFER event.
+        """
+        Enrich a BALANCE_TRANSFER event.
 
         Transfers bypass index-based scaling entirely - the amount is already
         in scaled units. raw_amount = scaled_amount.

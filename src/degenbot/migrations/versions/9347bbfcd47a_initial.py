@@ -1,4 +1,5 @@
-"""initial.
+"""
+initial.
 
 Revision ID: 9347bbfcd47a
 Revises:

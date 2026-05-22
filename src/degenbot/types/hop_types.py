@@ -1,4 +1,5 @@
-"""Hop state types for arbitrage solvers.
+"""
+Hop state types for arbitrage solvers.
 
 These data types represent a pool's numerical state in a form suitable for
 solver consumption. They are shared across the arbitrage and pool modules,
@@ -28,7 +29,8 @@ class PoolInvariant(Enum):
 
 @dataclass(frozen=True, slots=True)
 class ConstantProductHop:
-    """A constant-product (x*y=k) pool hop.
+    """
+    A constant-product (x*y=k) pool hop.
 
     For V2 pools: UniswapV2Pool, AerodromeV2Pool (volatile), CamelotLiquidityPool.
     Supports asymmetric fees via fee_out (Camelot has different fees per direction).
@@ -59,7 +61,8 @@ class V3TickRangeInfo:
 
 @dataclass(frozen=True, slots=True)
 class BoundedProductHop:
-    """A bounded-product (concentrated liquidity) pool hop for V3/V4.
+    """
+    A bounded-product (concentrated liquidity) pool hop for V3/V4.
 
     V3/V4 tick ranges are bounded product CFMMs with effective reserves
     (R0+alpha, R1+beta) that follow the same Möbius form.
@@ -94,7 +97,8 @@ class BoundedProductHop:
 
 @dataclass(frozen=True, slots=True)
 class SolidlyStableHop:
-    """A Solidly stable (x³y + xy³ ≥ k) pool hop.
+    """
+    A Solidly stable (x³y + xy³ ≥ k) pool hop.
 
     Used by AerodromeV2Pool (stable=True) and CamelotLiquidityPool (stable_swap=True).
     Not a Möbius transformation — the swap function comes from solving a cubic.
@@ -121,7 +125,8 @@ class SolidlyStableHop:
 
 @dataclass(frozen=True, slots=True)
 class BalancerWeightedHop:
-    """A Balancer weighted pool (∏xᵂⁱ ≥ k) hop.
+    """
+    A Balancer weighted pool (∏xᵂⁱ ≥ k) hop.
 
     Not a Möbius transformation — the swap function uses power-law exponents.
     A 50/50 pool reduces to constant product.
@@ -148,7 +153,8 @@ class BalancerWeightedHop:
 
 @dataclass(frozen=True, slots=True)
 class CurveStableswapHop:
-    """A Curve stableswap pool hop.
+    """
+    A Curve stableswap pool hop.
 
     Uses the invariant: A*n^n*Σx + D = A*n^n*D + (D^(n+1) / n^n / ∏x)
     The swap function is inherently iterative (Newton's method for get_y).
@@ -179,7 +185,8 @@ class CurveStableswapHop:
 
 @dataclass(frozen=True, slots=True)
 class BalancerStableHop:
-    """A Balancer stable pool hop (StableSwap invariant).
+    """
+    A Balancer stable pool hop (StableSwap invariant).
 
     Not a Möbius transformation — the swap function requires iterative
     invariant computation (Newton's method). Follows the same pattern as
@@ -218,7 +225,8 @@ class BalancerStableHop:
 
 @dataclass(frozen=True, slots=True)
 class BalancerMultiTokenHop:
-    """An N-token Balancer weighted pool for multi-token basket arbitrage.
+    """
+    An N-token Balancer weighted pool for multi-token basket arbitrage.
 
     Unlike pairwise hops, this represents the entire pool state and
     enables closed-form basket trade optimization.

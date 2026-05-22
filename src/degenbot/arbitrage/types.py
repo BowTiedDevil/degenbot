@@ -32,7 +32,8 @@ class AbstractSwapAmounts:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class ArbitrageCalculationResult[SwapAmountType]:
-    """The result of an arbitrage calculation containing profit details and swap amounts.
+    """
+    The result of an arbitrage calculation containing profit details and swap amounts.
 
     This class is generic over the swap amount type. Calculations that build an
     instance should specify this type in the return annotation, e.g.:
@@ -214,7 +215,8 @@ class UniswapV4PoolSwapAmounts(AbstractSwapAmounts):
         return self.amount_out
 
     def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:
-        """Encode a Uniswap V4 swap() call.
+        """
+        Encode a Uniswap V4 swap() call.
 
         V4 swaps are dispatched through PoolManager which requires an
         unlock/swap callback pattern. The default implementation encodes

@@ -4,7 +4,8 @@ from degenbot.exceptions.pool import EVMRevertError
 
 
 def add_delta(x: int, y: int) -> int:
-    """Check that the result fits in a uint128.
+    """
+    Check that the result fits in a uint128.
 
     Instead of checking via < or >= tricks via Solidity's built-in casting as implemented at
     https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/LiquidityMath.sol.

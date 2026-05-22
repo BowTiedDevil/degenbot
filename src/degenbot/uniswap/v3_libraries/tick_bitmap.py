@@ -53,7 +53,8 @@ def gen_ticks(
     tick_spacing: int,
     less_than_or_equal: bool,
 ) -> Generator[tuple[Tick, bool], None, None]:
-    """Yield ticks from the set of all possible ticks at 32 byte (256 bit) word boundaries and.
+    """
+    Yield ticks from the set of all possible ticks at 32 byte (256 bit) word boundaries and.
 
     initialized ticks found in the liquidity mapping. The ticks are yielded in descending order when
     `less_than_or_equal` is True, else ascending.
@@ -135,7 +136,8 @@ def next_initialized_tick_within_one_word(
     tick_spacing: int,
     less_than_or_equal: bool,
 ) -> tuple[Tick, bool]:
-    """Return the next initialized tick contained in the same word (or adjacent word) as the tick that.
+    """
+    Return the next initialized tick contained in the same word (or adjacent word) as the tick that.
 
     is either to the left (less than or equal to) or right (greater than) of the given tick.
     """

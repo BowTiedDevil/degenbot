@@ -11,7 +11,8 @@ from degenbot.validation.evm_values import ValidatedInt128, ValidatedUint128, Va
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class SwapResult:
-    """Core mutable state produced by a concentrated-liquidity swap simulation.
+    """
+    Core mutable state produced by a concentrated-liquidity swap simulation.
 
     This is algorithmically identical for V3 and V4. Variant-specific wrappers
     (e.g. V3 five-tuple or V4 SwapDelta) are assembled from these fields.

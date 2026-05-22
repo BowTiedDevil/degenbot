@@ -1,4 +1,5 @@
-"""Shared dependency context for pool builders.
+"""
+Shared dependency context for pool builders.
 
 Collected from Bot's constructor wiring so builders receive a single
 parameter instead of 5-6 individual dependencies. Adding a new builder
@@ -19,7 +20,8 @@ if TYPE_CHECKING:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class BuilderContext:
-    """Shared dependencies for all pool builders.
+    """
+    Shared dependencies for all pool builders.
 
     Bot creates one ``BuilderContext`` and passes it to all builders.
     Each builder unpacks what it needs. ``Erc20Builder`` is a leaf

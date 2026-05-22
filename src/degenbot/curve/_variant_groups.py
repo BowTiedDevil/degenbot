@@ -1,4 +1,5 @@
-"""Curve pool variant group membership.
+"""
+Curve pool variant group membership.
 
 Maps pool addresses to their D-variant, Y-variant, and Y_D-variant group,
 determining which calculation formula to use in _get_d(), _get_y(), and _get_y_d().
@@ -121,7 +122,8 @@ _Y_D_VARIANT_GROUP_0: frozenset[ChecksumAddress] = frozenset(
 
 
 def resolve_d_variant(pool_address: ChecksumAddress | str) -> DVariant:
-    """Resolve the D-calculation variant for a Curve pool address.
+    """
+    Resolve the D-calculation variant for a Curve pool address.
 
     Returns DVariant.STANDARD for unrecognized addresses.
     """
@@ -140,7 +142,8 @@ def resolve_d_variant(pool_address: ChecksumAddress | str) -> DVariant:
 
 
 def resolve_y_variant(pool_address: ChecksumAddress | str) -> YVariant:
-    """Resolve the Y-calculation variant for a Curve pool address.
+    """
+    Resolve the Y-calculation variant for a Curve pool address.
 
     Y_VARIANT_GROUP_0 ⊂ Y_VARIANT_GROUP_1, so addresses resolve to:
     - VARIANT_0: in both groups (amp without A_PRECISION divisor + c/b without A_PRECISION)
@@ -158,7 +161,8 @@ def resolve_y_variant(pool_address: ChecksumAddress | str) -> YVariant:
 
 
 def resolve_yd_variant(pool_address: ChecksumAddress | str) -> YDVariant:
-    """Resolve the Y_D-calculation variant for a Curve pool address.
+    """
+    Resolve the Y_D-calculation variant for a Curve pool address.
 
     Returns YDVariant.STANDARD for unrecognized addresses.
     """

@@ -31,7 +31,8 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class V2CommonData:
-    """Data fetched from DB/chain that all V2 variants need.
+    """
+    Data fetched from DB/chain that all V2 variants need.
 
     Produced by V2BuilderBase._fetch_v2_common_data().
     Consumed by variant-specific build() methods.
@@ -52,7 +53,8 @@ class V2CommonData:
 
 
 class V2BuilderBase:
-    """Base class for V2-style pool builders.
+    """
+    Base class for V2-style pool builders.
 
     Provides shared I/O orchestration (DB lookup, chain fetch,
     token construction, reserve fetch, registry lookup).
@@ -126,7 +128,8 @@ class V2BuilderBase:
         state_block: int,
         io: PoolIO,
     ) -> V2CommonData:
-        """Fetch data shared by all V2 variants.
+        """
+        Fetch data shared by all V2 variants.
 
         Returns a frozen dataclass with all values needed
         for variant-specific construction.
