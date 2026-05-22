@@ -166,7 +166,6 @@ addopts = [
     "--cov", "src/degenbot",
     "--cov-branch",
     "--cov-report", "html",
-    "--random-order",
     "-m", "not slow and not base",
 ]
 asyncio_mode = "auto"
@@ -190,7 +189,7 @@ dev = [
     "maturin",
     "pytest-asyncio",
     "pytest-cov",
-    "pytest-random-order",
+    "pytest-randomly",
     "pytest-xdist",
     "pytest",
     "python-dotenv",
