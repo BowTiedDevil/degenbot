@@ -433,7 +433,12 @@ def _process_operation(
     operation: Operation,
     tx_context: TransactionContext,
 ) -> None:
-    """Process a single operation."""
+    """Process a single operation.
+
+    Raises:
+        ValueError: See function documentation.
+
+    """
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing operation {operation.operation_id}: "
         f"{operation.operation_type.name}"

@@ -91,9 +91,6 @@ class Contract:
             provider: AlloyProvider instance (optional, for future use)
             provider_url: RPC provider URL (optional, defaults to http://localhost:8545)
 
-        Raises:
-            ValueError: If the address is invalid
-
         """
         self._address = address
         self._provider = provider
@@ -130,9 +127,6 @@ class Contract:
 
         Returns:
             List of decoded return values as strings
-
-        Raises:
-            ValueError: If the call fails or encoding/decoding fails
 
         Example:
             >>> # Simple call without arguments
@@ -176,9 +170,6 @@ class Contract:
 
         Returns:
             List of results, where each result is a list of decoded return values
-
-        Raises:
-            ValueError: If any call fails
 
         Example:
             >>> # Fetch multiple token properties in one batch

@@ -19,7 +19,12 @@ def backup_sqlite_database(
     suffix: str | None = None,
     skip_confirmation: bool = False,
 ) -> None:
-    """Backup sqlite database."""
+    """Backup sqlite database.
+
+    Raises:
+        BackupExists: See function documentation.
+
+    """
     session_engine = session.bind
     assert isinstance(session_engine, Engine)
     assert session_engine.url.database is not None
@@ -133,6 +138,9 @@ def get_alembic_config(database_path: pathlib.Path | None = None) -> Config:
 
     Returns:
         The computed value.
+
+    Raises:
+        ValueError: See function documentation.
 
     """
     cfg = Config()

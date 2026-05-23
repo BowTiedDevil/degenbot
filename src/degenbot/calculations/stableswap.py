@@ -248,7 +248,7 @@ def stableswap_get_y(
         ValueError: If y calculation does not converge within 255 iterations.
         AssertionError: If i == j or indices are out of range.
 
-    """
+    """  # noqa: DOC502
     assert i != j, "same coin"
     assert j >= 0, "j below zero"
     assert j < n_coins, "j above N_COINS"
@@ -322,7 +322,7 @@ def stableswap_get_y_d(
         ValueError: If y calculation does not converge within 255 iterations.
         AssertionError: If indices are out of range.
 
-    """
+    """  # noqa: DOC502
     assert i >= 0  # dev: i below zero
     assert i < n_coins  # dev: i above N_COINS
 
@@ -387,10 +387,10 @@ def stableswap_newton_y(
         The computed y value.
 
     Raises:
-        EVMRevertError: If Newton's method does not converge.
         AssertionError: If safety checks fail (unsafe A, gamma, D values).
+        ValueError: If Newton's method does not converge within 255 iterations.
 
-    """
+    """  # noqa: DOC502
     # Safety checks
     assert (
         n_coins**n_coins * a_multiplier - 1 < ann < 10000 * n_coins**n_coins * a_multiplier + 1

@@ -177,6 +177,9 @@ class Bot:
         Returns:
             The computed value.
 
+        Raises:
+            TrackerAlreadyInitialized: See function documentation.
+
         """
         factory_address = get_checksum_address(factory_address)
         chain_id = chain_id or self.connections.default_chain_id
@@ -258,6 +261,9 @@ class Bot:
 
         Returns:
             The computed value.
+
+        Raises:
+            DegenbotValueError: See function documentation.
 
         """
         address = get_checksum_address(address)
@@ -505,7 +511,6 @@ class Bot:
 
         Raises:
             DegenbotValueError: If no WS URI is configured for the chain.
-            SubscriptionNotSupported: If the provider doesn't support WS.
 
         """
         chain_id = chain_id or self.connections.default_chain_id
@@ -571,6 +576,9 @@ class Bot:
 
         Returns:
             The computed value.
+
+        Raises:
+            TypeError: See function documentation.
 
         """
         # Fast path: exact type match in the registry

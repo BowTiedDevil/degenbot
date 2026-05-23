@@ -90,6 +90,9 @@ class TransactionOperationsParser:
         Returns:
             The computed value.
 
+        Raises:
+            ValueError: See function documentation.
+
         """
         # AaveGhoToken is a tiny table (1 row per chain). Query it directly
         # with eager-loaded relationships, then filter in Python to avoid
@@ -251,6 +254,9 @@ class TransactionOperationsParser:
         Returns:
             The computed value.
 
+        Raises:
+            ValueError: See function documentation.
+
         """
         # Select the appropriate relationship based on token type
         if token_type == TokenType.A_TOKEN:
@@ -290,6 +296,9 @@ class TransactionOperationsParser:
 
         Returns:
             The computed value.
+
+        Raises:
+            ValueError: See function documentation.
 
         """
         if event_category == "mint":
@@ -702,6 +711,9 @@ class TransactionOperationsParser:
 
         Returns:
             The computed value.
+
+        Raises:
+            ValueError: See function documentation.
 
         """
         topic = pool_event["topics"][0]
@@ -1297,6 +1309,9 @@ class TransactionOperationsParser:
         Returns:
             The computed value.
 
+        Raises:
+            ValueError: See function documentation.
+
         """
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
@@ -1369,6 +1384,9 @@ class TransactionOperationsParser:
 
         Returns:
             The computed value.
+
+        Raises:
+            ValueError: See function documentation.
 
         """
         # Get the aToken address for this reserve
@@ -2226,8 +2244,6 @@ class TransactionOperationsParser:
             assigned_indices: Set of log indices already assigned to operations
             starting_operation_id: The next available operation ID
             pool_revision: Revision counter for pool state versioning
-            existing_operations: Operations already created (for finding BalanceTransfer events
-                that were assigned to LIQUIDATION operations)
 
         Returns:
             List of TRANSFER operations for unassigned transfer events
@@ -2420,7 +2436,12 @@ class TransactionOperationsParser:
         return operations, operation_id
 
     def _validate_operation(self, op: Operation) -> None:
-        """Strict validation of operation completeness."""
+        """Strict validation of operation completeness.
+
+        Raises:
+            ValueError: See function documentation.
+
+        """
         errors: list[str] = []
 
         validators = {

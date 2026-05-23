@@ -126,6 +126,9 @@ class CurveDataProviderImpl:
         Returns:
             The computed value.
 
+        Raises:
+            EVMRevertError: See function documentation.
+
         """
         try:
             return callable_fn(*args, **kwargs)
@@ -313,6 +316,9 @@ class CurveDataProviderImpl:
 
         Returns:
             The computed value.
+
+        Raises:
+            ValueError: See function documentation.
 
         """
         if self._lending_rate_style == LendingRateStyle.NONE:

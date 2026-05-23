@@ -49,9 +49,14 @@ def _dfs(
     min_depth: int,
     max_depth: int | None,
 ) -> Iterator[Sequence[PathStep]]:
-    """Perform an iterative depth-first search from the start token to the end token. When a valid.
+    """Perform an iterative depth-first search from the start token to the end token.
 
-    path is found, yield the result and backtrack one step to discover additional paths.
+    When a valid path is found, yield the result and backtrack one step to discover
+    additional paths.
+
+    Yields:
+        Sequence[PathStep]: A valid path from start token to end token.
+
     """
     if start_token_id not in graph:
         logger.debug("returning early, token not in graph")
@@ -135,9 +140,14 @@ async def _dfs_async(
     min_depth: int,
     max_depth: int | None,
 ) -> AsyncIterator[Sequence[PathStep]]:
-    """Perform an iterative depth-first search from the start token to the end token. When a valid.
+    """Perform an iterative depth-first search from the start token to the end token.
 
-    path is found, yield the result and backtrack one step to discover additional paths.
+    When a valid path is found, yield the result and backtrack one step to discover
+    additional paths.
+
+    Yields:
+        Sequence[PathStep]: A valid path from start token to end token.
+
     """
     await asyncio.sleep(0)
 
@@ -373,27 +383,34 @@ def find_paths(
     pool_types: Sequence[type] = (LiquidityPoolTable, UniswapV4PoolTable),
     db: DatabaseSessionManager,
 ) -> Iterator[Sequence[PathStep]]:
-    """Find paths from each of the given start tokens to each of the given end tokens using a.
+    """Find paths from each of the given start tokens to each of the given end tokens.
 
-    depth-first search strategy. The search will exhaustively discover paths from a minimum depth
-    to an optional maximum.
+    Uses a depth-first search strategy. The search will exhaustively discover paths
+    from a minimum depth to an optional maximum.
 
-    Paths may be constrained to a subset of pool types. If not specified, all valid pool types will
-    be included.
+    Paths may be constrained to a subset of pool types. If not specified, all valid
+    pool types will be included.
 
-    The function is a generator which yields results one-by-one as they are discovered. Callers
-    must consume the results or capture the yielded results in a container.
+    The function is a generator which yields results one-by-one as they are discovered.
+    Callers must consume the results or capture the yielded results in a container.
 
     The path search assumes this strategy:
-        Beginning at an arbitrary start token, T_s, perform successive swaps through a sequence of
-        pools. Swaps between successive pools require a common forward token F_n between.
-        The final swap yields an arbitrary end token, T_e.
+        Beginning at an arbitrary start token, T_s, perform successive swaps through
+        a sequence of pools. Swaps between successive pools require a common forward
+        token F_n between. The final swap yields an arbitrary end token, T_e.
 
         POOL    TOKEN PAIR
         0       T_s  - T_f0
         1       T_f0 - T_f1
         2       T_f1 - T_f2
         3       T_f2 - T_e
+
+    Yields:
+        Sequence[PathStep]: A valid arbitrage path from a start token to an end token.
+
+    Raises:
+        DegenbotValueError: If no pools are found for the given chain ID or tokens.
+
     """
     # @dev Liquidity pool lookups using a token ID are implicitly filtered for the chain ID, since
     # token addresses are unique to the chain. WHERE clauses can therefore be omitted from SELECTs.
@@ -469,7 +486,15 @@ async def find_paths_async(
     pool_types: Sequence[type] = [LiquidityPoolTable, UniswapV4PoolTable],
     db: DatabaseSessionManager,
 ) -> AsyncIterator[Sequence[PathStep]]:
-    """Async version of ``find_paths``."""
+    """Async version of ``find_paths``.
+
+    Yields:
+        Sequence[PathStep]: A valid arbitrage path from a start token to an end token.
+
+    Raises:
+        DegenbotValueError: If no pools are found for the given chain ID or tokens.
+
+    """
     start = time.perf_counter()
 
     with db() as session:

@@ -35,6 +35,9 @@ def get_provider_from_config(
     Returns:
         A ProviderAdapter wrapping either Web3 or AlloyProvider
 
+    Raises:
+        ValueError: See function documentation.
+
     """
     if use_alloy is None:
         use_alloy = _get_use_alloy_from_env()

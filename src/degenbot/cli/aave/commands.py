@@ -339,6 +339,10 @@ def aave_update(
         enable_backup: If True, create database backups at verification intervals.
         backup_interval: Number of blocks between database backups.
 
+    Raises:
+        DegenbotValueError: See function documentation.
+        ValueError: See function documentation.
+
     """
     with (  # noqa:PLR1702
         logging_redirect_tqdm(
@@ -559,6 +563,10 @@ def position_show(bot: Bot, address: str, market: str, chain_id: int) -> None:
     """Display current Aave positions for a user.
 
     Shows collateral and debt positions for the specified address on the given market.
+
+    Raises:
+        Abort: See function documentation.
+
     """
     try:
         user_address = get_checksum_address(address)

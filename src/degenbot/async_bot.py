@@ -124,6 +124,9 @@ class AsyncBot:
         Returns:
             The computed value.
 
+        Raises:
+            TrackerAlreadyInitialized: See function documentation.
+
         """
         # Inject bot reference
         kwargs["bot"] = self
@@ -200,6 +203,9 @@ class AsyncBot:
 
         Returns:
             The computed value.
+
+        Raises:
+            DegenbotValueError: See function documentation.
 
         """
         address = get_checksum_address(address)

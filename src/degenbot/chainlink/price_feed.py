@@ -44,7 +44,12 @@ class ChainlinkPriceContract:
 
     @property
     def decimals(self) -> int:
-        """Return decimals."""
+        """Return decimals.
+
+        Raises:
+            ValueError: See function documentation.
+
+        """
         if self._decimals is None:
             if self._bot is None:
                 msg = "ChainlinkPriceContract requires a `bot` to fetch decimals"
@@ -62,7 +67,12 @@ class ChainlinkPriceContract:
 
     @property
     def price(self) -> float:
-        """Price."""
+        """Price.
+
+        Raises:
+            ValueError: See function documentation.
+
+        """
         if self._bot is None:
             msg = "ChainlinkPriceContract requires a `bot` to fetch price"
             raise ValueError(msg)

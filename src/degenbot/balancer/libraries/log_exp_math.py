@@ -80,6 +80,9 @@ def pow(x: int, y: int) -> int:  # noqa: A001
     Returns:
         The computed integer value.
 
+    Raises:
+        EVMRevertError: See function documentation.
+
     """
     if y == 0:
         """Return pow."""
@@ -136,6 +139,9 @@ def exp(x: int) -> int:
 
     Returns:
         The computed integer value.
+
+    Raises:
+        EVMRevertError: See function documentation.
 
     """
     if not (MIN_NATURAL_EXPONENT <= x <= MAX_NATURAL_EXPONENT):
@@ -293,6 +299,9 @@ def ln(a: int) -> int:
 
     Returns:
         The computed integer value.
+
+    Raises:
+        EVMRevertError: See function documentation.
 
     """
     # The real natural logarithm is not defined for negative numbers or zero.

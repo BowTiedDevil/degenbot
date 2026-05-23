@@ -13,6 +13,9 @@ def add(a: int, b: int) -> int:
     Returns:
         The computed integer value.
 
+    Raises:
+        EVMRevertError: See function documentation.
+
     """
     if a + b > MAX_UINT256:
         raise EVMRevertError(error="ADD_OVERFLOW")
@@ -24,6 +27,9 @@ def sub(a: int, b: int) -> int:
 
     Returns:
         The computed integer value.
+
+    Raises:
+        EVMRevertError: See function documentation.
 
     """
     if b > a:
@@ -37,6 +43,9 @@ def mul_down(a: int, b: int) -> int:
     Returns:
         The computed integer value.
 
+    Raises:
+        EVMRevertError: See function documentation.
+
     """
     product = a * b
     if not (a == 0 or product // a == b):
@@ -49,6 +58,9 @@ def mul_up(a: int, b: int) -> int:
 
     Returns:
         The computed integer value.
+
+    Raises:
+        EVMRevertError: See function documentation.
 
     """
     product = a * b
@@ -66,6 +78,9 @@ def div_down(a: int, b: int) -> int:
 
     Returns:
         The computed integer value.
+
+    Raises:
+        EVMRevertError: See function documentation.
 
     """
     if b == 0:
@@ -86,6 +101,9 @@ def div_up(a: int, b: int) -> int:
 
     Returns:
         The computed integer value.
+
+    Raises:
+        EVMRevertError: See function documentation.
 
     """
     if b == 0:

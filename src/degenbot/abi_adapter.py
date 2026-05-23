@@ -149,9 +149,6 @@ class AbiAdapter:
         Returns:
             Tuple of decoded values
 
-        Raises:
-            AbiDecodeError: If decoding fails
-
         """
         if self._backend == AbiBackend.RUST:
             return self._decode_rust(types, data, checksum)
@@ -167,6 +164,9 @@ class AbiAdapter:
 
         Returns:
             The computed value.
+
+        Raises:
+            AbiDecodeError: See function documentation.
 
         """
         # Convert HexBytes to bytes if needed
@@ -187,6 +187,9 @@ class AbiAdapter:
 
         Returns:
             The computed value.
+
+        Raises:
+            AbiDecodeError: See function documentation.
 
         """
         # eth_abi requires plain bytes
@@ -216,9 +219,6 @@ class AbiAdapter:
         Returns:
             The decoded value
 
-        Raises:
-            AbiDecodeError: If decoding fails
-
         """
         if self._backend == AbiBackend.RUST:
             return self._decode_single_rust(abi_type, data, checksum)
@@ -234,6 +234,9 @@ class AbiAdapter:
 
         Returns:
             The computed value.
+
+        Raises:
+            AbiDecodeError: See function documentation.
 
         """
         # Convert HexBytes to bytes if needed
@@ -252,6 +255,9 @@ class AbiAdapter:
 
         Returns:
             The computed value.
+
+        Raises:
+            AbiDecodeError: See function documentation.
 
         """
         # eth_abi requires plain bytes
@@ -331,6 +337,9 @@ def encode(types: Sequence[str], args: Sequence[Any]) -> bytes:
     Returns:
         ABI-encoded bytes
 
+    Raises:
+        AbiEncodeError: See function documentation.
+
     """
     try:
         return eth_abi.abi.encode(types=list(types), args=list(args))
@@ -356,6 +365,9 @@ def decode(
 
     Returns:
         Tuple of decoded values
+
+    Raises:
+        AbiDecodeError: See function documentation.
 
     """
     if backend is None:
@@ -403,6 +415,9 @@ def decode_single(
 
     Returns:
         The decoded value
+
+    Raises:
+        AbiDecodeError: See function documentation.
 
     """
     if backend is None:

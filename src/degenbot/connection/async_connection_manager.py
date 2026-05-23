@@ -20,6 +20,9 @@ def _fast_decode_rpc_response(raw_response: bytes) -> RPCResponse:
     Returns:
         The computed value.
 
+    Raises:
+        JSONDecodeError: See function documentation.
+
     """
     try:
         return cast("RPCResponse", ujson_loads(raw_response))
@@ -105,7 +108,12 @@ class AsyncConnectionManager:
 
     @property
     def default_chain_id(self) -> ChainId:
-        """Default chain id."""
+        """Default chain id.
+
+        Raises:
+            DegenbotValueError: See function documentation.
+
+        """
         if self._default_chain_id is None:
             raise DegenbotValueError(message="A default chain ID has not been provided.")
         return self._default_chain_id

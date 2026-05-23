@@ -336,6 +336,9 @@ class CurveStableswapPool(
         Returns:
             The computed integer value.
 
+        Raises:
+            MissingCurveData: See function documentation.
+
         """
         if self._data_provider is not None and block_identifier is not None:
             return self._data_provider.token_balance(token.address, address, block_identifier)
@@ -353,6 +356,9 @@ class CurveStableswapPool(
         Returns:
             The computed integer value.
 
+        Raises:
+            MissingCurveData: See function documentation.
+
         """
         if self._data_provider is not None and block_identifier is not None:
             return self._data_provider.token_total_supply(token.address, block_identifier)
@@ -367,6 +373,9 @@ class CurveStableswapPool(
 
         Returns:
             The computed integer value.
+
+        Raises:
+            MissingCurveData: See function documentation.
 
         """
         if isinstance(block_identifier, int):
@@ -388,6 +397,9 @@ class CurveStableswapPool(
         Returns:
             The computed integer value.
 
+        Raises:
+            MissingCurveData: See function documentation.
+
         """
         with contextlib.suppress(KeyError):
             return self._cache_block_timestamps[block_number]
@@ -403,6 +415,9 @@ class CurveStableswapPool(
 
         Returns:
             The computed integer value.
+
+        Raises:
+            MissingCurveData: See function documentation.
 
         """
         with contextlib.suppress(KeyError):
@@ -420,6 +435,9 @@ class CurveStableswapPool(
         Returns:
             The computed integer value.
 
+        Raises:
+            MissingCurveData: See function documentation.
+
         """
         with contextlib.suppress(KeyError):
             return self._cache_gamma[block_number]
@@ -435,6 +453,9 @@ class CurveStableswapPool(
 
         Returns:
             The computed value.
+
+        Raises:
+            MissingCurveData: See function documentation.
 
         """
         with contextlib.suppress(KeyError):
@@ -452,6 +473,9 @@ class CurveStableswapPool(
         Returns:
             The computed value.
 
+        Raises:
+            MissingCurveData: See function documentation.
+
         """
         with contextlib.suppress(KeyError):
             return self._cache_admin_balances[block_number]
@@ -467,6 +491,9 @@ class CurveStableswapPool(
 
         Returns:
             The computed integer value.
+
+        Raises:
+            MissingCurveData: See function documentation.
 
         """
         with contextlib.suppress(KeyError):
@@ -489,6 +516,9 @@ class CurveStableswapPool(
         Returns:
             The computed integer value.
 
+        Raises:
+            MissingCurveData: See function documentation.
+
         """
         with contextlib.suppress(KeyError):
             return self._cache_base_cache_updated[block_number]
@@ -508,6 +538,9 @@ class CurveStableswapPool(
 
         Returns:
             The computed integer value.
+
+        Raises:
+            MissingCurveData: See function documentation.
 
         """
         with contextlib.suppress(KeyError):
@@ -531,6 +564,9 @@ class CurveStableswapPool(
 
         Returns:
             The computed integer value.
+
+        Raises:
+            MissingCurveData: See function documentation.
 
         """
         with contextlib.suppress(KeyError):
@@ -692,6 +728,9 @@ class CurveStableswapPool(
 
         Returns:
             The computed value.
+
+        Raises:
+            MissingCurveData: See function documentation.
 
         """
         pool_balances = override_state.balances if override_state is not None else self.balances
@@ -926,6 +965,9 @@ class CurveStableswapPool(
         Returns:
             The computed integer value.
 
+        Raises:
+            EVMRevertError: See function documentation.
+
         """
         try:
             return stableswap_get_d(
@@ -946,6 +988,9 @@ class CurveStableswapPool(
 
         Returns:
             The computed integer value.
+
+        Raises:
+            EVMRevertError: See function documentation.
 
         """
         amp = (
@@ -977,6 +1022,9 @@ class CurveStableswapPool(
         Returns:
             The computed integer value.
 
+        Raises:
+            EVMRevertError: See function documentation.
+
         """
         try:
             return stableswap_get_y_d(
@@ -1005,6 +1053,9 @@ class CurveStableswapPool(
         Returns:
             The computed value.
 
+        Raises:
+            MissingCurveData: See function documentation.
+
         """
         if self._strategies.lending_rate_style == LendingRateStyle.NONE:
             return rates
@@ -1031,6 +1082,9 @@ class CurveStableswapPool(
 
         Returns:
             The computed integer value.
+
+        Raises:
+            EVMRevertError: See function documentation.
 
         """
         try:
@@ -1073,6 +1127,11 @@ class CurveStableswapPool(
         Returns:
             The computed integer value.
 
+        Raises:
+            DegenbotValueError: See function documentation.
+            InvalidSwapInputAmount: See function documentation.
+            NoLiquidity: See function documentation.
+
         """
         block_number = self._resolve_block_number(block_identifier)
 
@@ -1111,7 +1170,7 @@ class CurveStableswapPool(
                 assert self.base_pool is not None
                 assert self.tokens_underlying is not None
 
-            # TODO: see if any of these checks are unnecessary (partial zero balance OK?)
+            # TODO:  # noqa: FIX002 see if any of these checks are unnecessary (partial zero balance OK?)
             if any(balance == 0 for balance in self.base_pool.balances):
                 raise NoLiquidity(message="One or more of the base pool tokens has a zero balance.")
             if any(balance == 0 for balance in self.balances):
@@ -1187,6 +1246,9 @@ class CurveStableswapPool(
         Returns:
             The computed value.
 
+        Raises:
+            DegenbotValueError: See function documentation.
+
         """
         curve_state: CurveStableswapPoolState | None = None
         if state_override is not None:
@@ -1260,6 +1322,9 @@ class CurveStableswapPool(
 
         Returns:
             The computed value.
+
+        Raises:
+            DegenbotValueError: See function documentation.
 
         """
         state = state_override or self.state

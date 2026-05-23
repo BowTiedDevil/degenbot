@@ -607,7 +607,12 @@ def _pool_updater(
     exchange: ExchangeTable,
     session: Session,
 ) -> None:
-    """Dispatch to the appropriate parameterized pool updater."""
+    """Dispatch to the appropriate parameterized pool updater.
+
+    Raises:
+        ValueError: See function documentation.
+
+    """
     exchange_name = exchange.name
 
     if exchange_name in _V2_CONFIGS:
@@ -672,7 +677,12 @@ def pool() -> None:
 )
 @click.pass_obj
 def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
-    """Update liquidity pool information for activated exchanges."""
+    """Update liquidity pool information for activated exchanges.
+
+    Raises:
+        ValueError: See function documentation.
+
+    """
     with bot.db() as session, logging_redirect_tqdm(loggers=[logger]):
         active_chains = set(
             session.scalars(select(ExchangeTable.chain_id).where(ExchangeTable.active)).all()

@@ -60,6 +60,9 @@ class MetapoolDyCalculator:
         Returns:
             The computed integer value.
 
+        Raises:
+            EVMRevertError: See function documentation.
+
         """
         pool_balances = override_state.balances if override_state is not None else inputs.balances
 
@@ -136,6 +139,9 @@ class MetapoolUnderlyingDyCalculator:
 
         Returns:
             The computed integer value.
+
+        Raises:
+            EVMRevertError: See function documentation.
 
         """
         assert inputs.base_pool is not None

@@ -80,6 +80,9 @@ class CamelotPoolCalc(UniswapV2PoolCalc):
         Returns:
             The computed integer value.
 
+        Raises:
+            DegenbotValueError: See function documentation.
+
         """
         if override_state is not None:  # pragma: no cover
             pass  # logger.debug(f"State overrides applied: {override_state}")

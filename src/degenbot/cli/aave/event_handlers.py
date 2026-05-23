@@ -856,6 +856,10 @@ def _process_scaled_token_upgrade_event(
         address indexed implementation
     );
     ```
+
+    Raises:
+        ValueError: See function documentation.
+
     """
     logger.debug(f"Processing scaled token upgrade event at block {event['blockNumber']}")
 

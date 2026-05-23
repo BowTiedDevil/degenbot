@@ -69,7 +69,12 @@ class AnvilFork:
         ipc_provider_kwargs: dict[str, Any] | None = None,
         anvil_opts: list[str] | None = None,  # Additional options passed to the Anvil command
     ) -> None:
-        """Initialize the instance."""
+        """Initialize the instance.
+
+        Raises:
+            AnvilNotFound: See function documentation.
+
+        """
 
         def _parse_base_fee_arg(command: AnvilOptions) -> None:
             if base_fee:
@@ -230,7 +235,12 @@ class AnvilFork:
         self.w3 = w3
 
     def _setup_process(self, anvil_command: AnvilOptions, timeout: int = 10) -> None:
-        """Launch an Anvil subprocess, waiting for the IPC socket to be created."""
+        """Launch an Anvil subprocess, waiting for the IPC socket to be created.
+
+        Raises:
+            IPCSocketTimeout: See function documentation.
+
+        """
         # Log the command being executed for debugging
         logger.debug(f"Launching Anvil with command: {' '.join(anvil_command)}")
 
@@ -276,7 +286,12 @@ class AnvilFork:
             self.stdout_capture_filename.unlink(missing_ok=True)
 
     def mine(self) -> None:
-        """Perform mine."""
+        """Perform mine.
+
+        Raises:
+            AnvilError: See function documentation.
+
+        """
         method = "evm_mine"
         resp = self.w3.provider.make_request(
             method=RPCEndpoint(method),
@@ -295,7 +310,12 @@ class AnvilFork:
 
     @contextlib.asynccontextmanager
     async def async_w3(self) -> AsyncIterator[AsyncWeb3[AsyncBaseProvider]]:
-        """Yield an async Web3 instance connected via IPC."""
+        """Yield an async Web3 instance connected via IPC.
+
+        Yields:
+            AsyncWeb3: An async Web3 instance connected via IPC.
+
+        """
         async with AsyncWeb3(AsyncIPCProvider(self.ipc_filename)) as async_w3:
             if TYPE_CHECKING:
                 assert isinstance(async_w3, AsyncWeb3)
@@ -305,7 +325,12 @@ class AnvilFork:
         self,
         block_number: BlockNumber,
     ) -> None:
-        """Reset to a new block number."""
+        """Reset to a new block number.
+
+        Raises:
+            AnvilError: See function documentation.
+
+        """
         method = "anvil_reset"
         async with self.async_w3() as async_w3:
             resp = await async_w3.provider.make_request(
@@ -326,6 +351,11 @@ class AnvilFork:
         Resetting to a new block number only can be done in-place without relaunching the Anvil
         process or recreating the Web3 object. Resetting to a new endpoint or from a transaction
         hash will create a new Anvil process, which is slower.
+
+        Raises:
+            AnvilError: See function documentation.
+            DegenbotValueError: See function documentation.
+
         """
         if fork_url is not None or transaction_hash is not None:
             self.close()
@@ -378,7 +408,13 @@ class AnvilFork:
             raise DegenbotValueError(message="No options provided.")
 
     def return_to_snapshot(self, snapshot_id: int) -> None:
-        """Perform return to snapshot."""
+        """Perform return to snapshot.
+
+        Raises:
+            AnvilError: See function documentation.
+            DegenbotValueError: See function documentation.
+
+        """
         if snapshot_id < 0:
             raise DegenbotValueError(message="ID cannot be negative")
 
@@ -435,7 +471,12 @@ class AnvilFork:
         self,
         fee: ValidatedUint256,
     ) -> None:
-        """Set the next block base fee asynchronously."""
+        """Set the next block base fee asynchronously.
+
+        Raises:
+            AnvilError: See function documentation.
+
+        """
         method = "anvil_setNextBlockBaseFeePerGas"
         async with self.async_w3() as async_w3:
             resp = await async_w3.provider.make_request(
@@ -450,7 +491,12 @@ class AnvilFork:
         self,
         fee: ValidatedUint256,
     ) -> None:
-        """Set next base fee."""
+        """Set next base fee.
+
+        Raises:
+            AnvilError: See function documentation.
+
+        """
         method = "anvil_setNextBlockBaseFeePerGas"
         resp = self.w3.provider.make_request(
             method=RPCEndpoint(method),
@@ -464,7 +510,12 @@ class AnvilFork:
         self,
         timestamp: ValidatedUint256,
     ) -> None:
-        """Set the next block timestamp asynchronously."""
+        """Set the next block timestamp asynchronously.
+
+        Raises:
+            AnvilError: See function documentation.
+
+        """
         method = "evm_setNextBlockTimestamp"
         async with self.async_w3() as async_w3:
             resp = await async_w3.provider.make_request(
@@ -479,7 +530,12 @@ class AnvilFork:
         self,
         timestamp: ValidatedUint256,
     ) -> None:
-        """Set next block timestamp."""
+        """Set next block timestamp.
+
+        Raises:
+            AnvilError: See function documentation.
+
+        """
         method = "evm_setNextBlockTimestamp"
         resp = self.w3.provider.make_request(
             method=RPCEndpoint(method),
@@ -489,7 +545,12 @@ class AnvilFork:
             raise AnvilError(method=method, error=str(resp["error"]))
 
     def set_nonce(self, address: str, nonce: int) -> None:
-        """Set nonce."""
+        """Set nonce.
+
+        Raises:
+            AnvilError: See function documentation.
+
+        """
         method = "anvil_setNonce"
         resp = self.w3.provider.make_request(
             method=RPCEndpoint(method),
